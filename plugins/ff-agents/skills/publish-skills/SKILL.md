@@ -13,30 +13,51 @@ and are installed as Claude Code plugins at user scope. Editing anything under a
 Live sessions read from Claude Code's own clone plus a per-version cache, **not** from any
 working checkout. So an edit only reaches anybody after a version bump + push + update.
 
-## 1. Find (or create) the working checkout
+## 1. Locate the working checkout — STOP if it cannot be verified
 
 The checkout can be anywhere — its location differs per machine, so never assume a path.
-`registerClaude.sh` records where it lives when it runs. Read that marker first:
+`registerClaude.sh` records where it lives when it runs. Read that marker:
 
 ```sh
 cat ~/.claude/final-factory-agents-checkout
 ```
 
-That file holds one absolute path (native form, e.g. `D:/work/final-factory-agents` or
-`/home/ben/src/final-factory-agents`), usable by both shell and file tools. Verify it still
-has `.claude-plugin/marketplace.json` before trusting it.
+It must hold one absolute path (native form, e.g. `D:/work/final-factory-agents` or
+`/home/ben/src/final-factory-agents`), usable by both shell and file tools. Check ALL of:
 
-If the marker is missing or stale (the machine never ran the bootstrap, or the checkout moved),
-clone a fresh one and record it so this never repeats:
+1. The marker file exists and is non-empty.
+2. It contains exactly one path — not multiple lines, not a comment, not stray text.
+3. That path exists and is a directory.
+4. That directory contains `.claude-plugin/marketplace.json`.
+5. That directory is a git repo (`git -C <path> rev-parse --show-toplevel` succeeds).
 
-```sh
-git clone https://github.com/Final-Factory/final-factory-agents ~/final-factory-agents
-sh ~/final-factory-agents/registerClaude.sh     # installs AND writes the marker
-```
+### If ANY check fails: STOP and do nothing else
 
-Do NOT edit `~/.claude/plugins/marketplaces/final-factory-agents/` — that is Claude Code's
-managed clone, and marketplace updates reset it. Once you have the real checkout, `git pull`
-before editing so you are not branching off stale content.
+Report to the user, in plain language: which check failed, the exact value found in the
+marker (or that it was missing), and how to fix it —
+
+> Run `sh registerClaude.sh` from your final-factory-agents checkout to re-record the path.
+> If there is no checkout on this machine, clone one first:
+> `git clone https://github.com/Final-Factory/final-factory-agents`
+
+Then **end your turn**. Do not work around it. Specifically, do NOT:
+
+- clone the repo yourself to "fix" it, or write the marker file yourself
+- guess or search for a checkout in other directories
+- edit `~/.claude/plugins/marketplaces/final-factory-agents/` (Claude Code's managed clone —
+  marketplace updates reset it, so edits there are silently lost)
+- edit any `.claude/skills/` or `.claude/agents/` directory in the game repo (those copies
+  were deliberately removed; edits there reach nobody)
+- make the requested change anywhere else, or hold it "for later"
+
+A broken marker means the machine's setup is wrong, and the user is the one who should decide
+where their checkout lives. Fixing it silently hides a setup problem that will recur; leaving
+the edit unpublished but unreported is worse than not starting.
+
+### If every check passes
+
+`git -C <checkout> pull` before editing so you are not branching off stale content, then
+continue to step 2.
 
 ## 2. Make the change
 
