@@ -7,11 +7,13 @@ branch of FinalFactory. See README.md for install instructions.
 ## Layout
 
 ```
-.claude-plugin/marketplace.json     marketplace manifest — 3 plugin entries, each with a version
+.claude-plugin/marketplace.json     Claude Code marketplace — 3 entries, each with a version
+.agents/plugins/marketplace.json    Codex marketplace — same 3 plugins, NO versions here
 plugins/<name>/
-  .claude-plugin/plugin.json        plugin manifest — name + version (MUST match marketplace entry)
-  skills/<skill>/SKILL.md           YAML frontmatter: name + description required
-  agents/<role>.md                  frontmatter: name, description, model, tools
+  .claude-plugin/plugin.json        Claude plugin manifest — name + version
+  .codex-plugin/plugin.json         Codex plugin manifest — name + version + skills globs
+  skills/<skill>/SKILL.md           SHARED by both tools. YAML frontmatter: name + description
+  agents/<role>.md                  Claude Code ONLY — Codex plugins cannot carry subagent roles
 registerClaude.sh                   idempotent per-machine bootstrap (marketplace add + install);
                                     --reinstall (remove + re-add, for a stale clone),
                                     --remove, --help; also records this checkout's path to
@@ -30,9 +32,12 @@ copy, and the cache refreshes **only on a version change**. Editing a file here 
 nothing to live sessions until you publish:
 
 1. Edit skills/agents under `plugins/<plugin>/`.
-2. Bump the version in **BOTH** places (they must stay equal):
+2. Bump the version in **ALL THREE** places (they must stay equal):
    - `plugins/<plugin>/.claude-plugin/plugin.json` → `version`
+   - `plugins/<plugin>/.codex-plugin/plugin.json` → `version`
    - `.claude-plugin/marketplace.json` → that plugin's entry → `version`
+
+   (`.agents/plugins/marketplace.json` carries no versions — nothing to bump there.)
 3. Commit and push.
 4. On each machine: `claude plugin update <plugin>@final-factory-agents`
    (if the marketplace was added from GitHub rather than a local path, run
@@ -59,6 +64,24 @@ New durable project lessons go in `plugins/ff-agents/skills/project-memory/` —
 Create `plugins/<name>/.claude-plugin/plugin.json`, add a matching entry (same name, same
 version) to `.claude-plugin/marketplace.json`, and add the plugin to the `PLUGINS` line in
 `registerClaude.sh` if every machine should install it.
+
+## Codex support
+
+Codex has its own plugin marketplace with the SAME `skills/<name>/SKILL.md` layout, so both
+tools read one shared `skills/` tree — no duplication, no symlink bridge (the old
+`.agents/skills/` bridge in the game repo is retired; it never worked on Windows anyway).
+Codex install: `/plugin marketplace add Final-Factory/final-factory-agents`,
+`/plugin install ff-agents@final-factory-agents`, `/reload-plugins`.
+
+Two asymmetries to keep in mind when editing:
+
+- **Subagent roles are Claude-only.** Codex plugins carry skills, MCP servers, app connectors,
+  and hooks — not agents. Codex roles stay repo-local in the game repo's `.codex/agents/*.toml`.
+- **Skill bodies that delegate to Claude subagents degrade under Codex** (e.g. `deep-think`
+  refers to the `deep-thinker` agent). Codex is expected to do the work inline instead. Do not
+  fork skill bodies per tool — keep one copy and let it degrade gracefully.
+
+The Codex manifests are UNVERIFIED — nobody on the Claude side runs Codex. Ben tests and fixes.
 
 ## Gotchas
 

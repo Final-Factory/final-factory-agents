@@ -1,0 +1,44 @@
+{
+  "name": "final-factory-agents",
+  "interface": {
+    "displayName": "Final Factory Agents"
+  },
+  "plugins": [
+    {
+      "name": "ff-agents",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ff-agents"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_FIRST_USE"
+      },
+      "category": "Development"
+    },
+    {
+      "name": "ff-speckit",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ff-speckit"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_FIRST_USE"
+      },
+      "category": "Development"
+    },
+    {
+      "name": "ff-discord",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ff-discord"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_FIRST_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

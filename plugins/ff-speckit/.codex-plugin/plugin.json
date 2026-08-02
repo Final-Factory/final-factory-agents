@@ -1,0 +1,8 @@
+{
+  "name": "ff-speckit",
+  "version": "1.0.1",
+  "description": "Spec Kit workflow skills — specify, clarify, plan, tasks, analyze, checklist, implement. Operates on the .specify/ machinery in the project you invoke it from.",
+  "skills": [
+    "./skills/"
+  ]
+}

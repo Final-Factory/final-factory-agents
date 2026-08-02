@@ -25,6 +25,19 @@ Or by hand:
 /plugin install ff-discord@final-factory-agents     # optional: needs ffdiscord bot credentials
 ```
 
+### Codex
+
+The same repo is also a Codex marketplace — both tools read the same `skills/` directories.
+
+```
+/plugin marketplace add Final-Factory/final-factory-agents
+/plugin install ff-agents@final-factory-agents
+/reload-plugins
+```
+
+Codex plugins cannot carry subagent roles, so Codex still loads those from the game repo's
+`.codex/agents/*.toml`. The Codex manifests have not been tested yet.
+
 ## Update
 
 ```

@@ -71,15 +71,22 @@ Plugins: `ff-agents` (core roles + workflow skills), `ff-speckit` (speckit-*),
 `ff-discord` (Discord roles + skills). Skill frontmatter needs `name:` and `description:`;
 role frontmatter needs `name:`, `description:`, `model:`, `tools:`.
 
+Skills are shared by Claude Code AND Codex (same `skills/<name>/SKILL.md` layout), so keep ONE
+copy per skill — never fork a body per tool. Subagent roles under `agents/` are Claude-only;
+Codex loads its roles from the game repo's `.codex/agents/*.toml` instead.
+
 **Never** write durable lessons to `~/.claude/projects/*/memory/` — those are machine-local,
 keyed on checkout path, and never propagate. That fragmentation is why this repo exists.
 
-## 3. Bump the version — MANDATORY, in BOTH files
+## 3. Bump the version — MANDATORY, in ALL THREE files
 
 They must stay equal, or the publish silently no-ops:
 
 - `plugins/<plugin>/.claude-plugin/plugin.json` → `version`
+- `plugins/<plugin>/.codex-plugin/plugin.json` → `version`
 - `.claude-plugin/marketplace.json` → that plugin's entry → `version`
+
+(`.agents/plugins/marketplace.json` — the Codex marketplace — carries no versions.)
 
 Patch bump for a fix or a new memory; minor for a new skill or role.
 
