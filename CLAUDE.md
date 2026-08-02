@@ -14,6 +14,8 @@ plugins/<name>/
   .codex-plugin/plugin.json         Codex plugin manifest — name + version + skills globs
   skills/<skill>/SKILL.md           SHARED by both tools. YAML frontmatter: name + description
   agents/<role>.md                  Claude Code ONLY — Codex plugins cannot carry subagent roles
+bumpVersion.sh                      the ONLY sanctioned way to change a version — updates all
+                                    three manifests at once; --check audits for drift
 registerClaude.sh                   idempotent per-machine bootstrap (marketplace add + install);
                                     --reinstall (remove + re-add, for a stale clone),
                                     --remove, --help; also records this checkout's path to
@@ -32,10 +34,11 @@ copy, and the cache refreshes **only on a version change**. Editing a file here 
 nothing to live sessions until you publish:
 
 1. Edit skills/agents under `plugins/<plugin>/`.
-2. Bump the version in **ALL THREE** places (they must stay equal):
-   - `plugins/<plugin>/.claude-plugin/plugin.json` → `version`
-   - `plugins/<plugin>/.codex-plugin/plugin.json` → `version`
-   - `.claude-plugin/marketplace.json` → that plugin's entry → `version`
+2. Bump the version with **`sh bumpVersion.sh <plugin> [patch|minor|major]`** — never by hand.
+   It updates all three files that record a version (`.claude-plugin/plugin.json`,
+   `.codex-plugin/plugin.json`, and the plugin's entry in `.claude-plugin/marketplace.json`)
+   and verifies they agree. `sh bumpVersion.sh --check` audits every plugin and exits 1 on
+   drift — run it before committing.
 
    (`.agents/plugins/marketplace.json` carries no versions — nothing to bump there.)
 3. Commit and push.

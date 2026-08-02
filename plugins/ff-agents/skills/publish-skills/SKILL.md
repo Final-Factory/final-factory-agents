@@ -78,30 +78,35 @@ Codex loads its roles from the game repo's `.codex/agents/*.toml` instead.
 **Never** write durable lessons to `~/.claude/projects/*/memory/` — those are machine-local,
 keyed on checkout path, and never propagate. That fragmentation is why this repo exists.
 
-## 3. Bump the version — MANDATORY, in ALL THREE files
+## 3. Bump the version — MANDATORY, via the script
 
-They must stay equal, or the publish silently no-ops:
+A plugin's version is recorded in three files that must stay equal. **Do not edit them by
+hand** — run the script from the checkout root, which updates all three and verifies them:
 
-- `plugins/<plugin>/.claude-plugin/plugin.json` → `version`
-- `plugins/<plugin>/.codex-plugin/plugin.json` → `version`
-- `.claude-plugin/marketplace.json` → that plugin's entry → `version`
+```sh
+sh bumpVersion.sh <plugin> patch      # a fix, a reworded skill, a new memory
+sh bumpVersion.sh <plugin> minor      # a new skill or role
+sh bumpVersion.sh --check             # verify every plugin agrees (also run before committing)
+```
 
-(`.agents/plugins/marketplace.json` — the Codex marketplace — carries no versions.)
+It prints `old -> new` and a per-plugin consistency table, and fails loudly rather than
+leaving the manifests half-updated.
 
-Patch bump for a fix or a new memory; minor for a new skill or role.
-
-> Skipping this is the classic failure: `registerClaude.sh` reports "already at the latest
-> version" and keeps serving the OLD content, with no error anywhere.
+> Skipping the bump is the classic failure: `registerClaude.sh` reports "already at the latest
+> version" and keeps serving the OLD content, with no error anywhere. Drifted versions fail the
+> same silent way, which is why `--check` exists.
 
 ## 4. Validate, commit, push
 
 ```sh
-claude plugin validate .        # checks the manifests
+sh bumpVersion.sh --check       # versions agree across all three files
+claude plugin validate .        # manifests parse and resolve
 git add -A && git commit -m "<what changed>" && git push
 ```
 
-Both manifests are UTF-8 with literal em-dashes — edit them with Edit/Write, never with
-scripted JSON re-serialization, which mangles the encoding.
+The manifests are UTF-8 with literal em-dashes. `bumpVersion.sh` uses sed, which rewrites only
+the matched bytes; never reimplement a version edit by parsing and re-serializing the JSON,
+which mangles the encoding.
 
 ## 5. Install it here, and tell the user
 

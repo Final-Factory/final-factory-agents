@@ -9,7 +9,7 @@
     {
       "name": "ff-agents",
       "description": "Core Final Factory development tooling: delegation roles (implementor, mech-executor, scout, Explore, build-verifier, deep-thinker, game-driver) plus the skills for deep thinking, determinism audits, driving the game, playtests, handoff/resume, and doc upkeep.",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "author": {
         "name": "Final Factory"
       },
