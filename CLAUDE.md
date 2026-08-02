@@ -12,7 +12,10 @@ plugins/<name>/
   .claude-plugin/plugin.json        plugin manifest — name + version (MUST match marketplace entry)
   skills/<skill>/SKILL.md           YAML frontmatter: name + description required
   agents/<role>.md                  frontmatter: name, description, model, tools
-registerClaude.sh                   idempotent per-machine bootstrap (marketplace add + install)
+registerClaude.sh                   idempotent per-machine bootstrap (marketplace add + install);
+                                    also records this checkout's path to
+                                    ~/.claude/final-factory-agents-checkout so publish-skills
+                                    can find it on any machine, wherever it was cloned
 ```
 
 Plugins: `ff-agents` (core roles + skills, incl. `project-memory`), `ff-speckit`

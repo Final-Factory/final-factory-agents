@@ -15,19 +15,28 @@ working checkout. So an edit only reaches anybody after a version bump + push + 
 
 ## 1. Find (or create) the working checkout
 
-Do NOT edit `~/.claude/plugins/marketplaces/final-factory-agents/` — that is Claude Code's
-managed clone and gets reset by marketplace updates. Work in a normal checkout. Try in order:
+The checkout can be anywhere — its location differs per machine, so never assume a path.
+`registerClaude.sh` records where it lives when it runs. Read that marker first:
 
 ```sh
-# a) common locations
-ls -d /d/work/final-factory-agents ~/final-factory-agents 2>/dev/null
-# b) sibling of the current repo
-ls -d ../final-factory-agents 2>/dev/null
-# c) none found — clone one
-git clone https://github.com/Final-Factory/final-factory-agents ~/final-factory-agents
+cat ~/.claude/final-factory-agents-checkout
 ```
 
-Once found, `git pull` before editing so you are not branching off stale content.
+That file holds one absolute path (native form, e.g. `D:/work/final-factory-agents` or
+`/home/ben/src/final-factory-agents`), usable by both shell and file tools. Verify it still
+has `.claude-plugin/marketplace.json` before trusting it.
+
+If the marker is missing or stale (the machine never ran the bootstrap, or the checkout moved),
+clone a fresh one and record it so this never repeats:
+
+```sh
+git clone https://github.com/Final-Factory/final-factory-agents ~/final-factory-agents
+sh ~/final-factory-agents/registerClaude.sh     # installs AND writes the marker
+```
+
+Do NOT edit `~/.claude/plugins/marketplaces/final-factory-agents/` — that is Claude Code's
+managed clone, and marketplace updates reset it. Once you have the real checkout, `git pull`
+before editing so you are not branching off stale content.
 
 ## 2. Make the change
 

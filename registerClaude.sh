@@ -13,6 +13,22 @@ set -eu
 MP_NAME="final-factory-agents"
 MP_SOURCE="Final-Factory/final-factory-agents"
 PLUGINS="ff-agents"                        # add ff-speckit / ff-discord here to install those too
+CHECKOUT_MARKER="$HOME/.claude/final-factory-agents-checkout"
+
+# --- record where this checkout lives -------------------------------------------------------
+# This script ships inside the repo, so its own directory IS the working checkout. Recording
+# that path lets the publish-skills skill find the checkout on ANY machine, wherever it was
+# cloned, without hardcoded paths or environment variables.
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -f "$SCRIPT_DIR/.claude-plugin/marketplace.json" ]; then
+  # Prefer a native path (git-bash `pwd -W` yields D:/... which both shell and file tools accept)
+  NATIVE_DIR=$(cd "$SCRIPT_DIR" && { pwd -W 2>/dev/null || pwd; })
+  mkdir -p "$(dirname "$CHECKOUT_MARKER")"
+  printf '%s\n' "$NATIVE_DIR" > "$CHECKOUT_MARKER"
+  echo "recorded checkout location: $NATIVE_DIR"
+else
+  echo "note: not running from a final-factory-agents checkout — skipping checkout marker" >&2
+fi
 
 # --- marketplace ---------------------------------------------------------------------------
 if claude plugin marketplace list 2>/dev/null | grep -q "${MP_NAME}"; then
