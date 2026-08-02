@@ -36,15 +36,8 @@ The same repo is also a Codex marketplace — both tools read the same `skills/`
 `registerAgents.sh` drives the `codex plugin` CLI, which needs Codex ~v0.121 or newer; on an
 older build the script says so and prints the in-session equivalents to run instead:
 
-```
-/plugin marketplace add Final-Factory/final-factory-agents
-/plugin install ff-agents@final-factory-agents
-/reload-plugins
-```
-
 Codex plugins cannot carry subagent roles, so Codex still loads those from the game repo's
-`.codex/agents/*.toml`. The Codex manifests and the script's Codex path have not been tested on
-a real Codex install yet.
+`.codex/agents/*.toml`.
 
 ## Plugins
 
