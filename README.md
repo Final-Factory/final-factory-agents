@@ -38,7 +38,7 @@ branch picks up the new version at once — nothing to commit in the game repo.
 
 | Plugin | Contents |
 |---|---|
-| `ff-agents` | 7 delegation roles (`implementor`, `mech-executor`, `scout`, `Explore`, `build-verifier`, `deep-thinker`, `game-driver`) + 10 skills: `deep-think`, `determinism-audit`, `drive-game`, `handoff`, `learnToPlay`, `massdriver-visual-e2e`, `playtest`, `project-memory`, `resumeFromHandoff`, `update-docs` |
+| `ff-agents` | 7 delegation roles (`implementor`, `mech-executor`, `scout`, `Explore`, `build-verifier`, `deep-thinker`, `game-driver`) + 11 skills: `deep-think`, `determinism-audit`, `drive-game`, `handoff`, `learnToPlay`, `massdriver-visual-e2e`, `playtest`, `project-memory`, `publish-skills`, `resumeFromHandoff`, `update-docs` |
 | `ff-speckit` | 10 `speckit-*` skills. Operates on the `.specify/` machinery in whichever project you invoke it from — that stays in the game repo. |
 | `ff-discord` | 3 roles (`discord-answerer`, `discord-dev-agent`, `discord-triager`) + 3 skills: `ask-claude`, `ask-dev`, `discord-triage`. Requires the bot token in `~/.config/ffdiscord/`. |
 

@@ -38,6 +38,10 @@ nothing to live sessions until you publish:
 Forgetting step 2 is the classic failure: `claude plugin update` reports "already at the
 latest version" and silently serves the old content. No version bump = no publish.
 
+The `publish-skills` skill in `ff-agents` carries this same workflow, so a Claude session in
+ANY repo (the game repo included, where skills no longer exist locally) knows to come here
+and how to publish. Keep the two in sync when the workflow changes.
+
 ## Adding a skill
 
 Create `plugins/<plugin>/skills/<name>/SKILL.md` with `name:` and `description:` frontmatter
