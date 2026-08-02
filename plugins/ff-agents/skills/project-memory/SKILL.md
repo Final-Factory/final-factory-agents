@@ -15,6 +15,8 @@ worktrees and apply to ALL branches.
 - [MCP bridge down = stop](memories/feedback_mcp_bridge_down_stop.md) — if the Unity MCP bridge isn't up, STOP and tell the user first; never silently use the file-watch fallback
 - [No cd prefix in Bash](memories/feedback_no_cd_prefix.md) — never prefix commands with `cd` into the working dir; it triggers approval prompts, use paths directly
 - [Drive interactive verification myself](memories/drive-interactive-verification.md) — I CAN run/screenshot the app and drive paired multiplayer/determinism audits; don't punt visual/interactive checks to the user
+- [Watch logs without full scans](memories/watch-logs-without-full-scans.md) — never poll a big log by re-scanning it each tick (the watcher falls behind and stalls silently); query once directly first, then tail/byte-offset only
+- [Skill docs go decision-first](memories/skill-docs-decision-first.md) — when a doc fails to stop a mistake, restructure it: falsifying test first, look-alike traps contrastive, recipes to a companion file
 
 ## Unity MCP bridge
 
@@ -22,6 +24,8 @@ worktrees and apply to ALL branches.
 - [Unity MCP resource URIs](memories/unity-mcp-resource-uris.md) — resource URIs use slashes and differ from the `name` field; editor readiness is `mcpforunity://editor/state` NOT `editor_state`; read the `uri` field, don't build from name
 - [UnityMCP per-project config](memories/unitymcp-per-project-config.md) — the Unity bridge tools require a per-project UnityMCP server in ~/.claude.json (claude mcp add + restart)
 - [Verify compile via DLL string check](memories/verify-compile-dll-string-check.md) — refresh_unity can compile before a just-written Edit lands or skip compiling entirely (refresh_triggered false); confirm edits are live via DLL mtime, a new UTF-16 literal, or the live method's IL
+- [Bridge TCP fallback facts](memories/bridge-tcp-fallback.md) — policy says bridge-down = stop-and-notify (use the `unity` CLI for diagnostics), but the editor-driving facts hold: Roslyn execute_code works on Windows, UI clickable via reflection, read_console returns from the START of the buffer, LoadGame by name
+- [Unity Editor.log gotchas](memories/unity-editor-log-gotchas.md) — line numbers unreliable (binary content), slice with `awk` after a dropped marker, `grep -a`, map bridge port→PID to find the right editor, saturated main thread freezes the bridge without hanging the editor
 
 ## Editor & play mode traps
 
@@ -37,6 +41,18 @@ worktrees and apply to ALL branches.
 - [ItemEntities baking pipeline](memories/itementities-baking-pipeline.md) — Resources/ItemEntities/*.prefab bake via EntityPrefabContainerBaker; author companion entities with CreateAdditionalEntity(ManualOverride) → in LinkedEntityGroup, remapped on Instantiate
 - [ECS runtime material unload gotcha](memories/ecs-runtime-material-unload-gotcha.md) — runtime new Material() in a RenderMeshArray needs HideFlags.HideAndDontSave or UnloadUnusedAssets nulls it (BRG MaterialID <null> error)
 - [Remote-player presentation position bug](memories/remote-player-presentation-position-bug.md) — FIXED & verified: host ship renders on client smoothly; the 3-part fix (Apply Option A + exclude remotes from LinearMotionSystem + per-frame presentation group)
+- [BlockAllocator budget crash](memories/blockallocator-budget-crash.md) — "Cannot exceed budget of 16777216": the two fixed 16MB allocators, what actually grows them (distinct-archetype count, NOT repeated identical CreateEntityQuery), and the save-load one-at-a-time AddComponent archetype explosion + ComponentTypeSet batching fix
+
+## Localization
+
+- [French percent = Arabic sign](memories/french-percent-arabic-sign.md) — Unity's Mono culture data gives fr `PercentSymbol` = U+066A ٪ (no font has the glyph); fixed by CultureSetup.cs, plus the Mono Clone()-shares-NumberFormatInfo gotcha
+- [TextLocalization duplicate gotcha](memories/textlocalization-duplicate-gotcha.md) — TextLocalization caches live TMP text as its key, so duplicating it on a label (Checkbox prefabs already have it) locks that label to one language; never put it on proper-noun labels
+
+## Gameplay diagnosis & live-test recipes
+
+- [Cargo ship teleport diagnosis](memories/cargo-ship-teleport-diagnosis.md) — camera-gated presentation sync over ungated simulation = ghost-then-snap artifact (InserterRenderSystem); plus the live-probe/A-B methodology via execute_code (onBeforeRender probes, GravityForces mover, Error-Pause gotcha)
+- [Mobile station merge bug](memories/mobile-station-merge-bug.md) — why stations merged on landing (overlap-only checks vs EntityMap, flying stations absent from the map); fixed via landing-footprint claims (TryClaimLandingZone, landed on master); bug-report saves load by filename via SaveGameManager.LoadGame
+- [Black hole visual test recipe](memories/blackhole-visual-test-recipe.md) — "BlackHole" save + teleport coords, 200u death radius, swirl = rotating skybox (the shader never animates), fixed-res Game view screenshot workaround
 
 ## Modding
 
