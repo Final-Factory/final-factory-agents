@@ -131,7 +131,7 @@ echo "$PLUGIN: $CUR -> $NEW ($PART)"
 echo "version consistency:"
 if check_all; then
   echo
-  echo "Next: commit + push, then 'sh registerClaude.sh' on each machine, then restart sessions."
+  echo "Next: commit + push, then 'sh registerAgents.sh' on each machine, then restart sessions."
 else
   echo "ERROR: files are inconsistent AFTER the bump — inspect them before committing." >&2
   exit 1

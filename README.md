@@ -1,33 +1,40 @@
 # final-factory-agents
 
-A [Claude Code plugin marketplace](https://docs.claude.com/en/docs/claude-code/plugins) holding
-the agent tooling for Final Factory: skills and subagent roles.
+A [Claude Code plugin marketplace](https://docs.claude.com/en/docs/claude-code/plugins) — and a
+Codex one, from the same tree — holding the agent tooling for Final Factory: skills and subagent
+roles.
 
 These used to live in `.claude/` inside the game repo, which made them **branch-scoped** — an
 older branch got older skills, and every worktree carried its own copy. Installed as plugins they
 live at the user level instead, so one checkout of this repo serves every clone, worktree, and
 branch of FinalFactory.
 
-## Install
+## Install and update
 
-Once per machine (installs and later also updates — safe to re-run any time):
-
-```
-sh registerClaude.sh
-```
-
-Or by hand:
+Always go through the script — once per machine to install, and again any time to update:
 
 ```
-/plugin marketplace add Final-Factory/final-factory-agents
-/plugin install ff-agents@final-factory-agents
-/plugin install ff-speckit@final-factory-agents     # optional: Spec Kit workflow
-/plugin install ff-discord@final-factory-agents     # optional: needs ffdiscord bot credentials
+sh registerAgents.sh
 ```
+
+One script covers **both** Claude Code and Codex: it registers the marketplace and installs the
+plugins with whichever of the `claude` / `codex` CLIs are on `PATH`, and skips the one that
+isn't. Re-running it refreshes the marketplace from GitHub (a `git pull` in each tool's own
+managed clone) and updates the installed plugins. Every project and branch picks up the new
+version at once — nothing to commit in the game repo.
+
+Other modes: `--claude` / `--codex` (limit to one tool), `--reinstall` (remove and re-add, for a
+stale or branch-pinned clone), `--remove`, `--help`. Restart open sessions afterward — plugins
+are discovered at session start only; in Codex, `/reload-plugins` does it without a restart.
+
+To install `ff-speckit` (Spec Kit workflow) or `ff-discord` (needs ffdiscord bot credentials on
+top), add them to the `PLUGINS` line in `registerAgents.sh` and re-run it.
 
 ### Codex
 
 The same repo is also a Codex marketplace — both tools read the same `skills/` directories.
+`registerAgents.sh` drives the `codex plugin` CLI, which needs Codex ~v0.121 or newer; on an
+older build the script says so and prints the in-session equivalents to run instead:
 
 ```
 /plugin marketplace add Final-Factory/final-factory-agents
@@ -36,16 +43,8 @@ The same repo is also a Codex marketplace — both tools read the same `skills/`
 ```
 
 Codex plugins cannot carry subagent roles, so Codex still loads those from the game repo's
-`.codex/agents/*.toml`. The Codex manifests have not been tested yet.
-
-## Update
-
-```
-/plugin marketplace update final-factory-agents
-```
-
-That is a `git pull` in `~/.claude/plugins/marketplaces/final-factory-agents/`. Every project and
-branch picks up the new version at once — nothing to commit in the game repo.
+`.codex/agents/*.toml`. The Codex manifests and the script's Codex path have not been tested on
+a real Codex install yet.
 
 ## Plugins
 
@@ -61,8 +60,11 @@ Skills live at `plugins/<plugin>/skills/<name>/SKILL.md` and need YAML frontmatt
 and `description:`. Subagent roles live at `plugins/<plugin>/agents/<name>.md` with `name:`,
 `description:`, `model:`, and `tools:`.
 
-Edit, commit, push. Collaborators pick it up with `/plugin marketplace update`. Restart open
-Claude Code sessions to re-discover changed skills.
+Edit, then bump the version with `sh bumpVersion.sh <plugin> [patch|minor|major]` — installed
+plugins are served from a cache that refreshes only on a version change, so no bump means no
+publish. Commit and push. Collaborators pick it up by running `sh registerAgents.sh`, then
+restarting open sessions to re-discover changed skills. See CLAUDE.md for the full publish
+workflow.
 
 ## Project memory
 
@@ -70,7 +72,7 @@ Claude Code sessions to re-discover changed skills.
 per-worktree `~/.claude/projects/*/memory/` dirs (which are machine-local, keyed on checkout
 path, and never propagate). The imported set is the union of the develop and master worktree
 memories. New lessons worth keeping get promoted here — one file under `memories/`, one index
-line in `SKILL.md`, commit, push.
+line in `SKILL.md`, then bump, commit, push as above.
 
 ## What deliberately stays in the game repo
 

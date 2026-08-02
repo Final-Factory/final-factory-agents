@@ -16,9 +16,11 @@ plugins/<name>/
   agents/<role>.md                  Claude Code ONLY — Codex plugins cannot carry subagent roles
 bumpVersion.sh                      the ONLY sanctioned way to change a version — updates all
                                     three manifests at once; --check audits for drift
-registerClaude.sh                   idempotent per-machine bootstrap (marketplace add + install);
-                                    --reinstall (remove + re-add, for a stale clone),
-                                    --remove, --help; also records this checkout's path to
+registerAgents.sh                   idempotent per-machine bootstrap for BOTH Claude Code and
+                                    Codex (marketplace add + install, for whichever CLIs are on
+                                    PATH); --claude / --codex to limit it to one, --reinstall
+                                    (remove + re-add, for a stale clone), --remove, --help;
+                                    also records this checkout's path to
                                     ~/.claude/final-factory-agents-checkout so publish-skills
                                     can find it on any machine, wherever it was cloned
 ```
@@ -42,10 +44,13 @@ nothing to live sessions until you publish:
 
    (`.agents/plugins/marketplace.json` carries no versions — nothing to bump there.)
 3. Commit and push.
-4. On each machine: `claude plugin update <plugin>@final-factory-agents`
-   (if the marketplace was added from GitHub rather than a local path, run
-   `claude plugin marketplace update final-factory-agents` first — that is the git pull).
-5. Restart open Claude Code sessions — plugins are discovered at session start only.
+4. On each machine: `sh registerAgents.sh` — it pulls the marketplace and updates the plugins
+   for both Claude Code and Codex. (By hand that is
+   `claude plugin marketplace update final-factory-agents` — the git pull — then
+   `claude plugin update <plugin>@final-factory-agents`; for Codex,
+   `codex plugin marketplace upgrade final-factory-agents`.)
+5. Restart open sessions — plugins are discovered at session start only. Codex has
+   `/reload-plugins`, which does it without a restart.
 
 Forgetting step 2 is the classic failure: `claude plugin update` reports "already at the
 latest version" and silently serves the old content. No version bump = no publish.
@@ -66,15 +71,22 @@ New durable project lessons go in `plugins/ff-agents/skills/project-memory/` —
 
 Create `plugins/<name>/.claude-plugin/plugin.json`, add a matching entry (same name, same
 version) to `.claude-plugin/marketplace.json`, and add the plugin to the `PLUGINS` line in
-`registerClaude.sh` if every machine should install it.
+`registerAgents.sh` if every machine should install it.
 
 ## Codex support
 
 Codex has its own plugin marketplace with the SAME `skills/<name>/SKILL.md` layout, so both
 tools read one shared `skills/` tree — no duplication, no symlink bridge (the old
 `.agents/skills/` bridge in the game repo is retired; it never worked on Windows anyway).
-Codex install: `/plugin marketplace add Final-Factory/final-factory-agents`,
+Codex install is handled by `registerAgents.sh` alongside Claude Code — it drives the
+`codex plugin` CLI (`marketplace add|upgrade|remove`, `plugin add|list|remove`), which landed
+around Codex v0.121. On an older build that CLI is missing; the script detects that and prints
+the in-session equivalents instead: `/plugin marketplace add Final-Factory/final-factory-agents`,
 `/plugin install ff-agents@final-factory-agents`, `/reload-plugins`.
+
+Note that Codex ALSO auto-discovers `.agents/plugins/marketplace.json` when a session starts
+inside this checkout — that is separate from the registration the script performs, which is
+what every other repo on the machine sees.
 
 Two asymmetries to keep in mind when editing:
 
@@ -90,9 +102,10 @@ The Codex manifests are UNVERIFIED — nobody on the Claude side runs Codex. Ben
 
 - `marketplace.json` and `plugin.json` are UTF-8 with literal em-dashes; edit them with
   Edit/Write, not scripted re-serialization that can mangle the encoding.
-- Machine registration is once per machine (`sh registerClaude.sh`), user scope — never
+- Machine registration is once per machine (`sh registerAgents.sh`), user scope — never
   per project. The marketplace is registered from GitHub (`Final-Factory/final-factory-agents`),
-  so the machine needs git read access to the repo; Claude Code keeps its own clone under
-  `~/.claude/plugins/marketplaces/` — this working copy is NOT what live sessions read.
+  so the machine needs git read access to the repo; each tool keeps its own clone
+  (`~/.claude/plugins/marketplaces/`, `~/.codex/`) — this working copy is NOT what live
+  sessions read.
 - The game repo may still carry legacy copies of these skills in `.claude/skills/` on some
   branches; those shadow the plugin for bare `/name` invocations until removed there.

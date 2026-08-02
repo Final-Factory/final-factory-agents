@@ -16,7 +16,7 @@ working checkout. So an edit only reaches anybody after a version bump + push + 
 ## 1. Locate the working checkout — STOP if it cannot be verified
 
 The checkout can be anywhere — its location differs per machine, so never assume a path.
-`registerClaude.sh` records where it lives when it runs. Read that marker:
+`registerAgents.sh` records where it lives when it runs. Read that marker:
 
 ```sh
 cat ~/.claude/final-factory-agents-checkout
@@ -36,7 +36,7 @@ It must hold one absolute path (native form, e.g. `D:/work/final-factory-agents`
 Report to the user, in plain language: which check failed, the exact value found in the
 marker (or that it was missing), and how to fix it —
 
-> Run `sh registerClaude.sh` from your final-factory-agents checkout to re-record the path.
+> Run `sh registerAgents.sh` from your final-factory-agents checkout to re-record the path.
 > If there is no checkout on this machine, clone one first:
 > `git clone https://github.com/Final-Factory/final-factory-agents`
 
@@ -92,7 +92,7 @@ sh bumpVersion.sh --check             # verify every plugin agrees (also run bef
 It prints `old -> new` and a per-plugin consistency table, and fails loudly rather than
 leaving the manifests half-updated.
 
-> Skipping the bump is the classic failure: `registerClaude.sh` reports "already at the latest
+> Skipping the bump is the classic failure: `registerAgents.sh` reports "already at the latest
 > version" and keeps serving the OLD content, with no error anywhere. Drifted versions fail the
 > same silent way, which is why `--check` exists.
 
@@ -111,12 +111,15 @@ which mangles the encoding.
 ## 5. Install it here, and tell the user
 
 ```sh
-sh registerClaude.sh            # in the marketplace checkout: pulls + installs the new version
+sh registerAgents.sh            # in the marketplace checkout: pulls + installs the new version
 ```
+
+It registers/updates both Claude Code and Codex — whichever CLIs are on the machine.
 
 Then tell the user plainly: **open Claude Code sessions must be restarted** to pick up the
 change — plugins are discovered only at session start, so the edit is not live in the current
-conversation. Other machines get it when someone runs `registerClaude.sh` there.
+conversation (in Codex, `/reload-plugins` does it without a restart). Other machines get it
+when someone runs `registerAgents.sh` there.
 
 ## Reporting
 
