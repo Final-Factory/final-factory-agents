@@ -1,0 +1,40 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "final-factory-agents",
+  "description": "Final Factory agent tooling — skills and subagent roles shared across every clone, worktree, and branch of the game repo.",
+  "owner": {
+    "name": "Final Factory"
+  },
+  "plugins": [
+    {
+      "name": "ff-agents",
+      "description": "Core Final Factory development tooling: delegation roles (implementor, mech-executor, scout, Explore, build-verifier, deep-thinker, game-driver) plus the skills for deep thinking, determinism audits, driving the game, playtests, handoff/resume, and doc upkeep.",
+      "version": "1.0.2",
+      "author": {
+        "name": "Final Factory"
+      },
+      "source": "./plugins/ff-agents",
+      "category": "development"
+    },
+    {
+      "name": "ff-speckit",
+      "description": "Spec Kit workflow skills — specify, clarify, plan, tasks, analyze, checklist, implement, constitution, taskstoissues, and agent-context updates. Operates on the .specify/ machinery in the project you invoke it from.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Final Factory"
+      },
+      "source": "./plugins/ff-speckit",
+      "category": "workflow"
+    },
+    {
+      "name": "ff-discord",
+      "description": "Discord integration for Final Factory — triage bug reports from the #bug-reports forum, answer player questions in #ask-assistant, and ask the other developer a question in #dev-chat. Requires the ffdiscord bot credentials.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Final Factory"
+      },
+      "source": "./plugins/ff-discord",
+      "category": "productivity"
+    }
+  ]
+}
