@@ -1,13 +1,8 @@
 #!/bin/sh
 # registerClaude.sh — register the final-factory-agents plugin marketplace with Claude Code
-# and install the ff-agents plugin. Safe to run repeatedly: first run registers + installs,
-# later runs refresh the marketplace from GitHub (a git pull) and pick up any published
-# plugin updates (a version bump in the manifests — see CLAUDE.md's publish workflow).
-#
-# It also self-heals a stale marketplace clone. Claude Code clones the repo once and pins it
-# to whatever the default branch was at that moment; a later default-branch change (or a
-# deleted branch) leaves the clone stranded, still reporting successful updates while serving
-# frozen content. This script detects that and re-registers.
+# and install its plugins. Safe to run repeatedly: the first run registers + installs, later
+# runs refresh the marketplace from GitHub (a git pull) and pick up any published plugin
+# updates (a version bump in the manifests — see CLAUDE.md's publish workflow).
 #
 # Needs git credentials with read access to the repo. Marketplace + plugins install at
 # USER scope, so one run covers every clone, worktree, and branch of FinalFactory on this
@@ -20,7 +15,51 @@ MP_SOURCE="Final-Factory/final-factory-agents"
 PLUGINS="ff-agents"                        # add ff-speckit / ff-discord here to install those too
 CHECKOUT_MARKER="$HOME/.claude/final-factory-agents-checkout"
 
-# --- record where this checkout lives -------------------------------------------------------
+usage() {
+  cat <<EOF
+Usage: sh registerClaude.sh [option]
+
+Registers the '${MP_NAME}' marketplace with Claude Code and installs its
+plugins (${PLUGINS}) at user scope. Idempotent — re-run any time to update.
+
+Options:
+  (none)       Register if needed, otherwise refresh the marketplace and update
+               installed plugins. The normal path; safe to re-run.
+  --reinstall  Remove the marketplace and add it back from scratch, then install.
+               Use when the local clone is stale or broken — e.g. it was registered
+               before the default branch changed, so it is pinned to a branch that
+               no longer exists and 'update' silently keeps serving old content.
+  --remove     Remove the marketplace and stop. This also uninstalls its plugins.
+               Cached versions on disk are kept, so open sessions keep working.
+  --help       Show this message.
+
+After any change, restart open Claude Code sessions — plugins are discovered
+only at session start.
+EOF
+}
+
+MODE="update"
+case "${1:-}" in
+  "")           MODE="update" ;;
+  --reinstall)  MODE="reinstall" ;;
+  --remove)     MODE="remove" ;;
+  --help|-h)    usage; exit 0 ;;
+  *)            echo "ERROR: unknown option '$1'" >&2; echo >&2; usage >&2; exit 1 ;;
+esac
+
+# --- --remove: tear down and stop ------------------------------------------------------------
+if [ "$MODE" = "remove" ]; then
+  if claude plugin marketplace list 2>/dev/null | grep -q "${MP_NAME}"; then
+    echo "removing marketplace '${MP_NAME}' (this uninstalls its plugins)"
+    claude plugin marketplace remove "$MP_NAME"
+    echo "done. Restart Claude Code sessions to drop the plugins."
+  else
+    echo "marketplace '${MP_NAME}' is not registered — nothing to remove"
+  fi
+  exit 0
+fi
+
+# --- record where this checkout lives ---------------------------------------------------------
 # This script ships inside the repo, so its own directory IS the working checkout. Recording
 # that path lets the publish-skills skill find the checkout on ANY machine, wherever it was
 # cloned, without hardcoded paths or environment variables.
@@ -35,51 +74,23 @@ else
   echo "note: not running from a final-factory-agents checkout — skipping checkout marker" >&2
 fi
 
-# --- helpers ----------------------------------------------------------------------------------
-# Path of Claude Code's managed clone for our marketplace ("" if not registered).
-marketplace_clone_dir() {
-  claude plugin marketplace list --json 2>/dev/null \
-    | sed -n "/\"name\": \"${MP_NAME}\"/,/}/p" \
-    | sed -n 's/.*"installLocation": *"\(.*\)".*/\1/p' \
-    | tr '\\' '/' | tr -s '/'
-}
-
-# True when the managed clone is a git repo sitting on the remote's CURRENT default branch.
-# Unreachable remote => treated as healthy, so being offline never causes churn.
-marketplace_clone_is_current() {
-  dir="$1"
-  [ -n "$dir" ] || return 1
-  [ -d "$dir" ] || return 1
-  git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || return 1
-
-  cur=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || return 1
-  [ -n "$cur" ] || return 1
-
-  def=$(git -C "$dir" ls-remote --symref origin HEAD 2>/dev/null \
-        | sed -n 's|^ref: refs/heads/\(.*\)[[:space:]]HEAD$|\1|p')
-  [ -n "$def" ] || return 0
-
-  [ "$cur" = "$def" ]
-}
-
-# --- marketplace ---------------------------------------------------------------------------
+# --- marketplace --------------------------------------------------------------------------------
 if claude plugin marketplace list 2>/dev/null | grep -q "${MP_NAME}"; then
-  CLONE_DIR=$(marketplace_clone_dir)
-  if marketplace_clone_is_current "$CLONE_DIR"; then
-    echo "marketplace '${MP_NAME}' already registered — refreshing from GitHub"
-    claude plugin marketplace update "$MP_NAME"
-  else
-    echo "marketplace '${MP_NAME}' clone is stale (wrong or deleted branch) — re-registering"
+  if [ "$MODE" = "reinstall" ]; then
+    echo "reinstalling marketplace '${MP_NAME}' from ${MP_SOURCE}"
     claude plugin marketplace remove "$MP_NAME"
     claude plugin marketplace add "$MP_SOURCE"
+  else
+    echo "marketplace '${MP_NAME}' already registered — refreshing from GitHub"
+    claude plugin marketplace update "$MP_NAME"
   fi
 else
   echo "adding marketplace '${MP_NAME}' from ${MP_SOURCE}"
   claude plugin marketplace add "$MP_SOURCE"
 fi
 
-# --- plugins --------------------------------------------------------------------------------
-# Listed AFTER the marketplace block: a re-register drops the installs, and this reinstates them.
+# --- plugins ---------------------------------------------------------------------------------
+# Listed AFTER the marketplace block: a reinstall drops the installs, and this reinstates them.
 INSTALLED=$(claude plugin list 2>/dev/null || true)
 for p in $PLUGINS; do
   if printf '%s\n' "$INSTALLED" | grep -q "${p}@${MP_NAME}"; then

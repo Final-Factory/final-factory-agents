@@ -13,7 +13,8 @@ plugins/<name>/
   skills/<skill>/SKILL.md           YAML frontmatter: name + description required
   agents/<role>.md                  frontmatter: name, description, model, tools
 registerClaude.sh                   idempotent per-machine bootstrap (marketplace add + install);
-                                    also records this checkout's path to
+                                    --reinstall (remove + re-add, for a stale clone),
+                                    --remove, --help; also records this checkout's path to
                                     ~/.claude/final-factory-agents-checkout so publish-skills
                                     can find it on any machine, wherever it was cloned
 ```
