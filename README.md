@@ -10,19 +10,19 @@ branch of FinalFactory.
 
 ## Install
 
-Once per machine:
+Once per machine (installs and later also updates — safe to re-run any time):
+
+```
+sh registerClaude.sh
+```
+
+Or by hand:
 
 ```
 /plugin marketplace add Final-Factory/final-factory-agents
 /plugin install ff-agents@final-factory-agents
 /plugin install ff-speckit@final-factory-agents     # optional: Spec Kit workflow
 /plugin install ff-discord@final-factory-agents     # optional: needs ffdiscord bot credentials
-```
-
-To develop against a local checkout instead of GitHub, point the marketplace at the directory:
-
-```
-/plugin marketplace add D:\work\final-factory-agents
 ```
 
 ## Update

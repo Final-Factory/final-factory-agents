@@ -57,8 +57,8 @@ version) to `.claude-plugin/marketplace.json`, and add the plugin to the `PLUGIN
 - `marketplace.json` and `plugin.json` are UTF-8 with literal em-dashes; edit them with
   Edit/Write, not scripted re-serialization that can mangle the encoding.
 - Machine registration is once per machine (`sh registerClaude.sh`), user scope — never
-  per project. The script requires the `FINAL_FACTORY_AGENTS_DIR` environment variable to
-  point at the local checkout of this repo, and errors out descriptively if it is unset or
-  wrong (`setx FINAL_FACTORY_AGENTS_DIR D:\work\final-factory-agents`, then a new terminal).
+  per project. The marketplace is registered from GitHub (`Final-Factory/final-factory-agents`),
+  so the machine needs git read access to the repo; Claude Code keeps its own clone under
+  `~/.claude/plugins/marketplaces/` — this working copy is NOT what live sessions read.
 - The game repo may still carry legacy copies of these skills in `.claude/skills/` on some
   branches; those shadow the plugin for bare `/name` invocations until removed there.
