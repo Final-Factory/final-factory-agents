@@ -18,8 +18,16 @@ bumpVersion.sh                      the ONLY sanctioned way to change a version 
                                     three manifests at once; --check audits for drift
 registerAgents.sh                   idempotent per-machine bootstrap for BOTH Claude Code and
                                     Codex (marketplace add + install, for whichever CLIs are on
-                                    PATH); --claude / --codex to limit it to one, --reinstall
-                                    (remove + re-add, for a stale clone), --remove, --help;
+                                    PATH); installs ff-agents + ff-speckit by default, --plugin
+                                    NAME (repeatable / comma-separated) adds others and
+                                    --remove --plugin NAME drops one — both edit the remembered
+                                    set in ~/.claude/final-factory-agents-plugins so later bare
+                                    runs keep it accurate; --claude / --codex to limit it to
+                                    one, --reinstall (remove + re-add, for a stale clone),
+                                    --remove (whole marketplace + forget the set), --help;
+                                    a plugin removal also deletes its cache copy, since
+                                    'claude plugin uninstall' only unregisters and would
+                                    leave the skills on disk;
                                     also records this checkout's path to
                                     ~/.claude/final-factory-agents-checkout so publish-skills
                                     can find it on any machine, wherever it was cloned
@@ -70,8 +78,10 @@ New durable project lessons go in `plugins/ff-agents/skills/project-memory/` —
 ## Adding a plugin
 
 Create `plugins/<name>/.claude-plugin/plugin.json`, add a matching entry (same name, same
-version) to `.claude-plugin/marketplace.json`, and add the plugin to the `PLUGINS` line in
-`registerAgents.sh` if every machine should install it.
+version) to `.claude-plugin/marketplace.json`, and add the plugin to the `DEFAULT_PLUGINS` line
+in `registerAgents.sh` if every machine should install it. If it is opt-in instead, leave it out
+— users add it per run with `sh registerAgents.sh --plugin <name>` — and list it under
+"Optional extras" in the script's `usage()` and in the README.
 
 ## Codex support
 

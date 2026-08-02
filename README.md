@@ -27,8 +27,32 @@ Other modes: `--claude` / `--codex` (limit to one tool), `--reinstall` (remove a
 stale or branch-pinned clone), `--remove`, `--help`. Restart open sessions afterward — plugins
 are discovered at session start only; in Codex, `/reload-plugins` does it without a restart.
 
-To install `ff-speckit` (Spec Kit workflow) or `ff-discord` (needs ffdiscord bot credentials on
-top), add them to the `PLUGINS` line in `registerAgents.sh` and re-run it.
+### Which plugins get installed
+
+By default: **`ff-agents`** and **`ff-speckit`**. Anything else goes on top with `--plugin`,
+which is repeatable and also takes a comma-separated list. `--remove --plugin` takes one back
+out — that form leaves the marketplace and the other plugins alone:
+
+```
+sh registerAgents.sh --plugin ff-discord            # add
+sh registerAgents.sh --plugin ff-discord,ff-speckit # add several
+sh registerAgents.sh --remove --plugin ff-speckit   # drop one
+sh registerAgents.sh                                # updates whatever you ended up with
+```
+
+`ff-discord` is the only extra today, and it additionally needs the bot token in
+`~/.config/ffdiscord/`.
+
+Both forms edit a remembered set in `~/.claude/final-factory-agents-plugins` (shared by Claude
+Code and Codex), so a plain re-run updates every plugin you added and does not reinstall the
+ones you dropped — including a dropped default. Re-adding a removed plugin un-does the removal.
+A bare `--remove` (no `--plugin`) removes the whole marketplace and forgets the set, so the next
+run starts from the defaults again.
+
+Removing a plugin takes its **skills** with it, not just its registration: `claude plugin
+uninstall` only unregisters, leaving the extracted copy under
+`~/.claude/plugins/cache/final-factory-agents/<plugin>/<version>/`, so the script deletes that
+directory too. Restart any open session that still had the plugin loaded.
 
 ### Codex
 

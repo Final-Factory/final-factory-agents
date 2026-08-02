@@ -8,6 +8,10 @@
 # Both tools read the SAME repo: Claude Code from .claude-plugin/marketplace.json, Codex from
 # .agents/plugins/marketplace.json, both serving the same plugins/<name>/skills/ tree.
 #
+# Installs ff-agents + ff-speckit by default; '--plugin NAME' adds others (ff-discord), and
+# '--remove --plugin NAME' drops one. Both edit a remembered plugin set under ~/.claude, so a
+# later bare run keeps every plugin you asked for up to date and leaves the ones you dropped out.
+#
 # Needs git credentials with read access to the repo. Everything installs at USER scope, so one
 # run covers every clone, worktree, and branch of FinalFactory on this machine. Restart open
 # sessions afterward (Codex: /reload-plugins) so they re-discover skills.
@@ -16,31 +20,53 @@ set -eu
 
 MP_NAME="final-factory-agents"
 MP_SOURCE="Final-Factory/final-factory-agents"
-PLUGINS="ff-agents"                        # add ff-speckit / ff-discord here to install those too
+DEFAULT_PLUGINS="ff-agents ff-speckit"     # installed on every machine unless explicitly removed
 CHECKOUT_MARKER="$HOME/.claude/final-factory-agents-checkout"
+PLUGIN_STATE="$HOME/.claude/final-factory-agents-plugins"
 
 usage() {
   cat <<EOF
 Usage: sh registerAgents.sh [options]
 
 Registers the '${MP_NAME}' marketplace with every supported coding agent found
-on this machine (Claude Code, Codex) and installs its plugins (${PLUGINS})
-at user scope. Idempotent — re-run any time to update.
+on this machine (Claude Code, Codex) and installs its plugins at user scope.
+Idempotent — re-run any time to update.
 
-Options:
-  (none)       Register if needed, otherwise refresh the marketplace and update
-               installed plugins. The normal path; safe to re-run.
-  --claude     Only touch Claude Code.
-  --codex      Only touch Codex.
-  --reinstall  Remove the marketplace and add it back from scratch, then install.
-               Use when the local clone is stale or broken — e.g. it was registered
-               before the default branch changed, so it is pinned to a branch that
-               no longer exists and 'update' silently keeps serving old content.
-  --remove     Remove the marketplace and stop. This also uninstalls its plugins.
-               Cached versions on disk are kept, so open sessions keep working.
-  --help       Show this message.
+Default plugins: ${DEFAULT_PLUGINS}
+Optional extras: ff-discord (needs the ffdiscord bot token in ~/.config/ffdiscord/)
 
---claude/--codex combine with --reinstall/--remove, e.g.
+Options (alphabetical):
+  (none)         Register if needed, otherwise refresh the marketplace and update
+                 every remembered plugin. The normal path; safe to re-run.
+  --claude       Only touch Claude Code.
+  --codex        Only touch Codex.
+  --help         Show this message.
+  --plugin NAME  Also install NAME, on top of the defaults, and remember it — later
+                 bare runs keep it updated too. Repeatable, and accepts a
+                 comma-separated list:
+                   sh registerAgents.sh --plugin ff-discord
+                   sh registerAgents.sh --plugin ff-discord,ff-speckit
+                 Re-adding a plugin you previously removed un-does the removal.
+  --reinstall    Remove the marketplace and add it back from scratch, then install
+                 the remembered set. Use when the local clone is stale or broken —
+                 e.g. it was registered before the default branch changed, so it is
+                 pinned to a branch that no longer exists and 'update' silently
+                 keeps serving old content.
+  --remove       With --plugin: uninstall just those plugins and forget them, so
+                 later runs stop reinstalling them; the marketplace and every other
+                 plugin stay. Removing a default this way sticks until you add it
+                 back.
+                   sh registerAgents.sh --remove --plugin ff-speckit
+                 This also deletes each removed plugin's cached copy, so its skills
+                 are off the disk and not just unregistered — restart any open
+                 session that still has the plugin loaded.
+                 Without --plugin: remove the whole marketplace (which uninstalls
+                 all of its plugins) and forget the remembered set, then stop.
+                 Cached versions on disk are kept there, so open sessions keep
+                 working.
+
+The remembered plugin set lives in ~/.claude/final-factory-agents-plugins and is
+shared by both tools. --claude/--codex combine with the other flags, e.g.
 'sh registerAgents.sh --codex --reinstall'.
 
 After any change, restart open sessions — plugins are discovered only at session
@@ -50,17 +76,99 @@ EOF
 
 MODE="update"
 TOOLS="both"
+EXTRA_PLUGINS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --reinstall)  MODE="reinstall" ;;
     --remove)     MODE="remove" ;;
     --claude)     TOOLS="claude" ;;
     --codex)      TOOLS="codex" ;;
+    --plugin)
+      [ $# -ge 2 ] || { echo "ERROR: --plugin needs a plugin name" >&2; exit 1; }
+      # accept both '--plugin a --plugin b' and '--plugin a,b'
+      EXTRA_PLUGINS="$EXTRA_PLUGINS $(printf '%s' "$2" | tr ',' ' ')"
+      shift ;;
+    --plugin=*)
+      EXTRA_PLUGINS="$EXTRA_PLUGINS $(printf '%s' "${1#--plugin=}" | tr ',' ' ')" ;;
     --help|-h)    usage; exit 0 ;;
     *)            echo "ERROR: unknown option '$1'" >&2; echo >&2; usage >&2; exit 1 ;;
   esac
   shift
 done
+
+# '--remove --plugin X' is a different operation from '--remove': it drops X and leaves the
+# marketplace (and every other plugin) in place.
+if [ "$MODE" = "remove" ] && [ -n "$EXTRA_PLUGINS" ]; then
+  MODE="remove-plugins"
+fi
+
+# --- remembered plugin set --------------------------------------------------------------------
+# ~/.claude/final-factory-agents-plugins records what this machine asked for, so a later bare run
+# updates the extras too instead of leaving them frozen at their cached version. Two lists:
+#   installed: the resolved set. excluded: plugins removed on purpose, so a DEFAULT that was
+#   removed does not come back on the next run. The two are kept disjoint.
+# Defaults are unioned in on every run, so a plugin added to DEFAULT_PLUGINS later reaches
+# machines that already have a state file.
+list_has() {
+  for _it in $1; do
+    if [ "$_it" = "$2" ]; then return 0; fi
+  done
+  return 1
+}
+list_add() {  # echo list with $2 appended if absent
+  if list_has "$1" "$2"; then printf '%s' "$1"; else printf '%s' "${1:+$1 }$2"; fi
+}
+list_del() {  # echo list with $2 dropped
+  _out=""
+  for _it in $1; do
+    if [ "$_it" != "$2" ]; then _out="${_out:+$_out }$_it"; fi
+  done
+  printf '%s' "$_out"
+}
+
+REMEMBERED=""
+EXCLUDED=""
+if [ -f "$PLUGIN_STATE" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=$(printf '%s' "$line" | tr -d '\r')
+    case "$line" in
+      installed:*) for p in ${line#installed:}; do REMEMBERED=$(list_add "$REMEMBERED" "$p"); done ;;
+      excluded:*)  for p in ${line#excluded:};  do EXCLUDED=$(list_add "$EXCLUDED" "$p"); done ;;
+    esac
+  done < "$PLUGIN_STATE"
+fi
+
+PLUGINS=""
+for p in $DEFAULT_PLUGINS $REMEMBERED; do
+  if list_has "$EXCLUDED" "$p"; then continue; fi
+  PLUGINS=$(list_add "$PLUGINS" "$p")
+done
+
+REMOVE_TARGETS=""
+if [ "$MODE" = "remove-plugins" ]; then
+  for p in $EXTRA_PLUGINS; do
+    REMOVE_TARGETS=$(list_add "$REMOVE_TARGETS" "$p")
+    PLUGINS=$(list_del "$PLUGINS" "$p")
+    EXCLUDED=$(list_add "$EXCLUDED" "$p")
+  done
+else
+  for p in $EXTRA_PLUGINS; do
+    PLUGINS=$(list_add "$PLUGINS" "$p")
+    EXCLUDED=$(list_del "$EXCLUDED" "$p")   # re-adding un-does an earlier removal
+  done
+fi
+
+# Written BEFORE touching any tool: it records intent, so a run that dies halfway (network, a
+# broken CLI) still leaves the next run knowing what to install.
+save_plugin_state() {
+  mkdir -p "$(dirname "$PLUGIN_STATE")"
+  {
+    echo "# registerAgents.sh — plugins remembered for this machine. Edit via"
+    echo "# 'sh registerAgents.sh --plugin NAME' / '--remove --plugin NAME'."
+    echo "installed: $PLUGINS"
+    echo "excluded: $EXCLUDED"
+  } > "$PLUGIN_STATE"
+}
 
 want() { [ "$TOOLS" = "both" ] || [ "$TOOLS" = "$1" ]; }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -83,6 +191,20 @@ record_checkout() {
   fi
 }
 
+# --- uninstall leftovers -----------------------------------------------------------------------
+# 'claude plugin uninstall' drops the plugin from enabledPlugins/installed_plugins.json — the
+# skills stop loading — but leaves the extracted copy (skills and all) under
+# plugins/cache/<marketplace>/<plugin>/<version>/. Delete it so a removed plugin's skills are
+# actually off the disk. A later re-install re-extracts it from the marketplace clone.
+purge_cache() {  # $1 = tool root (~/.claude, ~/.codex), $2 = plugin name
+  [ -n "${2:-}" ] || return 0                       # never let an empty name widen the rm
+  _dir="$1/plugins/cache/${MP_NAME}/$2"
+  if [ -d "$_dir" ]; then
+    rm -rf "$_dir"
+    echo "  deleted cached copy: $_dir"
+  fi
+}
+
 # --- Claude Code -------------------------------------------------------------------------------
 register_claude() {
   echo "== Claude Code =="
@@ -95,6 +217,22 @@ register_claude() {
     else
       echo "marketplace '${MP_NAME}' is not registered — nothing to remove"
     fi
+    return 0
+  fi
+
+  if [ "$MODE" = "remove-plugins" ]; then
+    INSTALLED=$(claude plugin list 2>/dev/null || true)
+    for p in $REMOVE_TARGETS; do
+      if printf '%s\n' "$INSTALLED" | grep -q "${p}@${MP_NAME}"; then
+        echo "uninstalling '${p}@${MP_NAME}'"
+        claude plugin uninstall "${p}@${MP_NAME}" --scope user
+      else
+        echo "'${p}@${MP_NAME}' is not installed — nothing to remove"
+      fi
+      purge_cache "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$p"
+    done
+    echo "still remembered: ${PLUGINS:-(none)}"
+    echo "done. Restart Claude Code sessions to drop them."
     return 0
   fi
 
@@ -163,6 +301,26 @@ register_codex() {
     return 0
   fi
 
+  if [ "$MODE" = "remove-plugins" ]; then
+    # UNVERIFIED like the rest of the Codex path: 'codex plugin remove' takes the bare plugin
+    # name (that is what 'codex plugin list' prints), not the name@marketplace form 'add' wants.
+    INSTALLED=$(codex plugin list 2>/dev/null || true)
+    for p in $REMOVE_TARGETS; do
+      if printf '%s\n' "$INSTALLED" | grep -q "${p}"; then
+        echo "uninstalling '${p}'"
+        codex plugin remove "$p"
+      else
+        echo "'${p}' is not installed — nothing to remove"
+      fi
+      # Codex's cache layout is assumed to mirror Claude's; purge_cache is a no-op if it differs,
+      # so this is safe either way. Ben: if a stale copy survives, fix the path here.
+      purge_cache "${CODEX_HOME:-$HOME/.codex}" "$p"
+    done
+    echo "still remembered: ${PLUGINS:-(none)}"
+    echo "done. Run /reload-plugins in open Codex sessions to drop them."
+    return 0
+  fi
+
   if printf '%s\n' "$MARKETPLACES" | grep -q "${MP_NAME}"; then
     if [ "$MODE" = "reinstall" ]; then
       echo "reinstalling marketplace '${MP_NAME}' from ${MP_SOURCE}"
@@ -195,6 +353,11 @@ register_codex() {
 # --- drive ----------------------------------------------------------------------------------------
 if [ "$MODE" != "remove" ]; then
   record_checkout
+  save_plugin_state
+  if [ "$MODE" = "remove-plugins" ]; then
+    echo "removing: $REMOVE_TARGETS"
+  fi
+  echo "plugins: ${PLUGINS:-(none)}"
   echo
 fi
 
@@ -220,4 +383,11 @@ fi
 if [ "$RAN" -eq 0 ]; then
   echo "ERROR: no supported agent CLI found on PATH (looked for: claude, codex)" >&2
   exit 1
+fi
+
+# A full marketplace removal takes the remembered set with it — the next plain run starts from
+# DEFAULT_PLUGINS again, which is what someone re-registering from scratch expects.
+if [ "$MODE" = "remove" ] && [ -f "$PLUGIN_STATE" ]; then
+  rm -f "$PLUGIN_STATE"
+  echo "forgot the remembered plugin set ($PLUGIN_STATE)"
 fi
