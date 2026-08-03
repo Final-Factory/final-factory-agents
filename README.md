@@ -99,4 +99,6 @@ line in `SKILL.md`, then bump, commit, push as above.
 - **`CLAUDE.md`** — most of it describes the code (ECS layout, build commands, file paths) and
   *should* track the branch it belongs to.
 - **`.specify/`** — Spec Kit machinery is coupled to `specs/` in the repo.
-- **`.codex/`** — Codex does not read Claude Code plugins; it loads roles from the repo.
+- **`.codex/`** — Codex plugins do not carry subagent roles, so the game repo keeps the small
+  Codex-specific role adapters in `.codex/agents/*.toml`. Shared skill bodies still come only
+  from this marketplace.
