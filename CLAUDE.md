@@ -98,13 +98,15 @@ Note that Codex ALSO auto-discovers `.agents/plugins/marketplace.json` when a se
 inside this checkout — that is separate from the registration the script performs, which is
 what every other repo on the machine sees.
 
-Two asymmetries to keep in mind when editing:
+Two runtime-format asymmetries to keep in mind when editing:
 
-- **Subagent roles are Claude-only.** Codex plugins carry skills, MCP servers, app connectors,
-  and hooks — not agents. Codex roles stay repo-local in the game repo's `.codex/agents/*.toml`.
-- **Skill bodies that delegate to Claude subagents degrade under Codex** (e.g. `deep-think`
-  refers to the `deep-thinker` agent). Codex is expected to do the work inline instead. Do not
-  fork skill bodies per tool — keep one copy and let it degrade gracefully.
+- **Plugin-packaged subagent roles are Claude-only.** Codex plugins carry skills, MCP servers,
+  app connectors, and hooks — not agents. Codex's matching role adapters stay repo-local in the
+  game repo's `.codex/agents/*.toml`; this is an unavoidable runtime adapter, not a second skill
+  source.
+- **Shared skill bodies stay runtime-neutral.** When a skill requests a role, Codex uses the
+  matching repo-local role where available and otherwise performs that leg inline. Never fork a
+  skill body per tool.
 
 The Codex path was live-verified on macOS with `codex-cli 0.145.0` on 2026-08-02: marketplace
 registration, default-plugin installation, an idempotent update run, and fresh-session exposure of
