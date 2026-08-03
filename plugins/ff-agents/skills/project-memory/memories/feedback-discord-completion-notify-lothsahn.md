@@ -16,6 +16,12 @@ development task, keep Lothsahn in the loop with an **extremely brief** Discord 
   attempt.
 - Keep it genuinely terse: what finished and, when useful, one commit/PR identifier. No technical
   wall, status template, or request for action unless Ben separately asked for one.
+- **Plain English, behavior-first (Ben, 2026-08-03): say what CHANGED FOR THE PLAYER or the
+  workflow, not how it was done.** "Enemy ships used to stutter — now they glide; fleets spread
+  out and follow the player again" is right; commit hashes, heartbeat counts, system/class names,
+  RNG identities, and audit statistics are wrong unless Lothsahn asks. Write it like you'd tell a
+  teammate across the room, not like a commit message. (Origin: Ben rewrote a too-technical FYI
+  live — the corrected form is message 1533919898323914872 in #dev-chat.)
 - If the Discord CLI, credentials, channel access, or post fails, tell Ben the exact failure and do
   not claim Lothsahn was notified.
 
