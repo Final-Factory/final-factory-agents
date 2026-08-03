@@ -18,7 +18,7 @@ worktrees and apply to ALL branches.
 - [Watch logs without full scans](memories/watch-logs-without-full-scans.md) — never poll a big log by re-scanning it each tick (the watcher falls behind and stalls silently); query once directly first, then tail/byte-offset only
 - [Skill docs go decision-first](memories/skill-docs-decision-first.md) — when a doc fails to stop a mistake, restructure it: falsifying test first, look-alike traps contrastive, recipes to a companion file
 - [Choose the smallest representative playtest fixture](memories/feedback-focused-fixtures-before-meltcpu.md) — default to Wittle Base, FlatMap, or another focused 16-UPS fixture for behavior/visual/feel tests; reserve MeltCPU for explicit worst-case scale and performance questions
-- [Notify Lothsahn when a repository task finishes](memories/feedback-discord-completion-notify-lothsahn.md) — after successful implementation and verification, post one extremely brief `@lothsahn` FYI in Discord `#dev-chat`; batch related substeps into one completion ping
+- [Notify Lothsahn when a repository task finishes](memories/feedback-discord-completion-notify-lothsahn.md) — after successful implementation and verification, post one extremely brief `@lothsahn` FYI in Discord `#dev-chat`, in PLAIN ENGLISH saying what behavior changed (no hashes/system names/audit stats); batch related substeps into one completion ping
 
 ## Unity MCP bridge
 
