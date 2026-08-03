@@ -56,6 +56,17 @@ plugin_names() {
   ls -d plugins/*/ 2>/dev/null | sed 's|plugins/||;s|/||'
 }
 
+# BSD sed (macOS) requires an explicit empty backup suffix after -i; GNU sed does not.
+# Keep that platform detail here so every manifest edit below uses the same portable path.
+sed_in_place() {
+  expr="$1"
+  file="$2"
+  case "$(uname -s)" in
+    Darwin) sed -i '' "$expr" "$file" ;;
+    *)      sed -i "$expr" "$file" ;;
+  esac
+}
+
 check_all() {
   rc=0
   for p in $(plugin_names); do
@@ -123,9 +134,9 @@ esac
 NEW="$MAJOR.$MINOR.$PATCH"
 
 # --- apply ---------------------------------------------------------------------------------
-sed -i "s/\"version\": \"$CUR\"/\"version\": \"$NEW\"/" "$CLAUDE_MANIFEST"
-sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW\"/" "$CODEX_MANIFEST"
-sed -i "/\"name\": \"$PLUGIN\"/,/\"version\"/ s/\"version\": \"[^\"]*\"/\"version\": \"$NEW\"/" "$MARKETPLACE"
+sed_in_place "s/\"version\": \"$CUR\"/\"version\": \"$NEW\"/" "$CLAUDE_MANIFEST"
+sed_in_place "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW\"/" "$CODEX_MANIFEST"
+sed_in_place "/\"name\": \"$PLUGIN\"/,/\"version\"/ s/\"version\": \"[^\"]*\"/\"version\": \"$NEW\"/" "$MARKETPLACE"
 
 echo "$PLUGIN: $CUR -> $NEW ($PART)"
 echo "version consistency:"

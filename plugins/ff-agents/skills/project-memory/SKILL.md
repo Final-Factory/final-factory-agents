@@ -50,6 +50,8 @@ worktrees and apply to ALL branches.
 
 ## Gameplay diagnosis & live-test recipes
 
+- [Unified 16 UPS smooth presentation](memories/project-unified-16ups-smooth-presentation.md) — feature 057 goal and current progress: player, belts, and projectiles smooth; next formal belt jam-stop checkpoint and Phase C movers
+- [Player domain is already conventional](memories/player-domain-already-conventional.md) — the player replication/simulation boundary already matches the proposed split; presentation rate is the real issue, while combat remains the open domain decision
 - [Cargo ship teleport diagnosis](memories/cargo-ship-teleport-diagnosis.md) — camera-gated presentation sync over ungated simulation = ghost-then-snap artifact (InserterRenderSystem); plus the live-probe/A-B methodology via execute_code (onBeforeRender probes, GravityForces mover, Error-Pause gotcha)
 - [Mobile station merge bug](memories/mobile-station-merge-bug.md) — why stations merged on landing (overlap-only checks vs EntityMap, flying stations absent from the map); fixed via landing-footprint claims (TryClaimLandingZone, landed on master); bug-report saves load by filename via SaveGameManager.LoadGame
 - [Black hole visual test recipe](memories/blackhole-visual-test-recipe.md) — "BlackHole" save + teleport coords, 200u death radius, swirl = rotating skybox (the shader never animates), fixed-res Game view screenshot workaround
