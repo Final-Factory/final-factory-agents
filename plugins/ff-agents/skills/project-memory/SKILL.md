@@ -1,6 +1,6 @@
 ---
 name: project-memory
-description: Accumulated Final Factory project memory — hard-won lessons about the Unity MCP bridge, Burst/ECS gotchas, baking, modding ABI, screenshot/play-mode traps, and standing user feedback (test commands, no-cd rule, bridge-down = stop). Consult BEFORE debugging the MCP bridge, running tests, entering play mode, editing open scenes, diagnosing Burst NREs after a merge, or working on mod loading. Also the place to CHECK FIRST when something in the editor behaves inexplicably.
+description: Accumulated Final Factory project memory — standing user feedback plus hard-won Unity, Burst/ECS, baking, modding, and play-mode lessons. Consult at the start and end of every Final Factory repository development task so fixture-selection and the required @lothsahn Discord completion notification are not missed; also consult BEFORE debugging the MCP bridge, running tests, entering play mode, editing open scenes, diagnosing Burst NREs after a merge, or working on mod loading.
 ---
 
 # Final Factory project memory
@@ -18,6 +18,7 @@ worktrees and apply to ALL branches.
 - [Watch logs without full scans](memories/watch-logs-without-full-scans.md) — never poll a big log by re-scanning it each tick (the watcher falls behind and stalls silently); query once directly first, then tail/byte-offset only
 - [Skill docs go decision-first](memories/skill-docs-decision-first.md) — when a doc fails to stop a mistake, restructure it: falsifying test first, look-alike traps contrastive, recipes to a companion file
 - [Choose the smallest representative playtest fixture](memories/feedback-focused-fixtures-before-meltcpu.md) — default to Wittle Base, FlatMap, or another focused 16-UPS fixture for behavior/visual/feel tests; reserve MeltCPU for explicit worst-case scale and performance questions
+- [Notify Lothsahn when a repository task finishes](memories/feedback-discord-completion-notify-lothsahn.md) — after successful implementation and verification, post one extremely brief `@lothsahn` FYI in Discord `#dev-chat`; batch related substeps into one completion ping
 
 ## Unity MCP bridge
 
