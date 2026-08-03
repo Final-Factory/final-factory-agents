@@ -1,6 +1,6 @@
 ---
 name: playtest
-description: Run a goal-directed agent playtest of Final Factory through the 020 harness — boot or attach a session, drive the game with ffauto pointer/ui/movement commands, observe via state snapshots + screenshots, wait on predicates non-blockingly, judge outcomes, and author reproducible bug reports. Use when asked to playtest the game, pursue a gameplay goal, verify a feature by playing, or hunt gameplay bugs.
+description: Run a goal-directed agent playtest of Final Factory through the 020 harness — boot or attach a session, drive the game with ffauto pointer/ui/movement commands, observe via state snapshots, screenshots, and temporal visual episodes (the Watch/playback surface), wait on predicates non-blockingly, judge outcomes, and author reproducible bug reports. Use when asked to playtest or watch the game, pursue a gameplay goal, verify a feature by playing, judge motion/pacing, or hunt gameplay bugs.
 ---
 
 # Agent playtest sessions (feature 020)
@@ -41,6 +41,12 @@ The editor is usually OCCLUDED, so the player loop is FROZEN except when you pum
 `Assets/Scenes/main.unity` (a null/empty scene deadlocks the boot forever), and two
 `Time.frameCount` reads to tell an occluded-frozen editor from a free-running one. Run it again
 before ever reporting the editor or bridge as wedged. See `drive-game/SKILL.md`, top section.
+
+**Choose the fixture by the hypothesis.** Default to Wittle Base, FlatMap plus a targeted
+blueprint, or the smallest focused save that contains the behavior under test. Reserve MeltCPU for
+an explicitly stated worst-case population/performance/load question; its extreme scale and low
+frame rate obscure ordinary behavior, visual-continuity, and feel judgments. A focused 16-UPS
+scenario plus a visual episode is the normal motion-acceptance path.
 
 **Interactive attach (F8 — the normal playtest flow):** boot the game via the drive-game
 recipes (New Game or Load Game), then `ffauto:session.start|<label>`. The session records the
@@ -98,6 +104,38 @@ blueprint-in-hand trap). Don't re-derive them here. Playtest-specific on top of 
   (T020: the camera-specified render returns BLANK), so what you get still has overlay UI. Say
   so when a finding leans on it.
 
+## Watch motion over time — temporal visual episodes (feature 058)
+
+**Use a visual episode whenever the claim is about motion, pacing, stutter, animation continuity,
+or another multi-frame presentation behavior. A screenshot cannot prove those properties.** The
+engine-side source of truth is `Documentation/Agent-Playtest-Harness.md` → “Temporal visual
+episodes”; exact syntax and artifact rules live under
+`specs/058-agent-visual-episodes/contracts/`. Do not substitute a hand-recorded screen capture for
+that evidence path.
+
+1. From an active playtest session, run
+   `ffauto:visualepisode.start|<episode-id>|[scenario-id]|[tracker-kind]`.
+2. Poll `ffauto:visualepisode.status` until `status=Recording` and
+   `preflight.status=Passed`. Stop on `Invalid`/`Incomplete`; capture is not active during the
+   two-second timing preflight.
+3. Exercise the real player action. Put `ffauto:visualepisode.mark|<name>|[note]` immediately
+   around the event that matters so the review can jump to it.
+4. Run `ffauto:visualepisode.stop|<reason>` after 2–15 seconds. `Complete` means the raw evidence
+   finalized cleanly; it does **not** mean the behavior passed.
+5. Resolve a Python runtime with Pillow/NumPy (use the Codex workspace-dependency helper when
+   available; do not assume system Python), then build:
+   `<python> scripts/visual-episode-review.py build --episode <absolute-episode-directory>
+   [--scenario <scenario-json>]`.
+6. Open the generated `review.html` — this is the **Watch** surface. Play at normal speed and slow
+   motion, step individual observations, jump through markers, and check its visible playback
+   status plus `window.visualEpisodePlaybackDiagnostics`. Skipped paints/observations invalidate
+   the playback; never judge a stutter from a player that skipped evidence silently.
+
+Raw frames/JSONL are immutable evidence. Add an agent judgment only after watching the generated
+review, and cite exact markers/observations. Use the CLI's `list` and one-exact-path `prune`
+operations for eligible machine-local episodes; never manually delete an active, incomplete,
+referenced, or bug-linked episode directory.
+
 ## Bug reports (D6 — the journal IS the repro)
 
 For each finding, write `bugs/<n>-<slug>.md` in the session dir
@@ -128,6 +166,8 @@ returns against `observe.state` — the journal doesn't lie.
 ## Cleanup checklist (SC-006 — leave no trace)
 
 - `ffauto:session.stop` (interactive attach) or let the bootstrap auto-stop.
+- If a visual episode is active, `ffauto:visualepisode.stop|session-cleanup`; if calibration-only
+  motion control was armed, `ffauto:visualepisode.control|smooth-linear|off`.
 - Delete `.ff-local-automation.json` from the project root (BOTH roots if a clone was used).
 - `pointer.clear` if a session ended abnormally mid-drive; exit play mode.
 - `git status` must be clean (session dirs + saves live outside the repo; `claude_*` saves in

@@ -17,6 +17,7 @@ worktrees and apply to ALL branches.
 - [Drive interactive verification myself](memories/drive-interactive-verification.md) — I CAN run/screenshot the app and drive paired multiplayer/determinism audits; don't punt visual/interactive checks to the user
 - [Watch logs without full scans](memories/watch-logs-without-full-scans.md) — never poll a big log by re-scanning it each tick (the watcher falls behind and stalls silently); query once directly first, then tail/byte-offset only
 - [Skill docs go decision-first](memories/skill-docs-decision-first.md) — when a doc fails to stop a mistake, restructure it: falsifying test first, look-alike traps contrastive, recipes to a companion file
+- [Choose the smallest representative playtest fixture](memories/feedback-focused-fixtures-before-meltcpu.md) — default to Wittle Base, FlatMap, or another focused 16-UPS fixture for behavior/visual/feel tests; reserve MeltCPU for explicit worst-case scale and performance questions
 
 ## Unity MCP bridge
 
