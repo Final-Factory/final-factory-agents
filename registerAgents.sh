@@ -302,13 +302,14 @@ register_codex() {
   fi
 
   if [ "$MODE" = "remove-plugins" ]; then
-    # UNVERIFIED like the rest of the Codex path: 'codex plugin remove' takes the bare plugin
-    # name (that is what 'codex plugin list' prints), not the name@marketplace form 'add' wants.
     INSTALLED=$(codex plugin list 2>/dev/null || true)
     for p in $REMOVE_TARGETS; do
-      if printf '%s\n' "$INSTALLED" | grep -q "${p}"; then
+      # `codex plugin list` includes available plugins whose status is "not installed", so a
+      # name-only grep is a false positive. Match the full selector and installed status columns.
+      if printf '%s\n' "$INSTALLED" |
+        awk -v id="${p}@${MP_NAME}" '$1 == id && $2 ~ /^installed/ { found=1 } END { exit !found }'; then
         echo "uninstalling '${p}'"
-        codex plugin remove "$p"
+        codex plugin remove "${p}@${MP_NAME}"
       else
         echo "'${p}' is not installed — nothing to remove"
       fi
@@ -339,7 +340,10 @@ register_codex() {
   # already-listed plugin is served from the newly pulled marketplace clone.
   INSTALLED=$(codex plugin list 2>/dev/null || true)
   for p in $PLUGINS; do
-    if printf '%s\n' "$INSTALLED" | grep -q "${p}"; then
+    # Available-but-uninstalled plugins are also listed. Check the full selector plus status so
+    # first registration actually installs them.
+    if printf '%s\n' "$INSTALLED" |
+      awk -v id="${p}@${MP_NAME}" '$1 == id && $2 ~ /^installed/ { found=1 } END { exit !found }'; then
       echo "'${p}' already installed — refreshed by the marketplace upgrade above"
     else
       echo "installing '${p}@${MP_NAME}'"
