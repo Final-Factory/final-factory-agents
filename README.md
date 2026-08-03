@@ -60,6 +60,9 @@ The same repo is also a Codex marketplace — both tools read the same `skills/`
 `registerAgents.sh` drives the `codex plugin` CLI, which needs Codex ~v0.121 or newer; on an
 older build the script says so and prints the in-session equivalents to run instead:
 
+The full path was live-verified on macOS with `codex-cli 0.145.0` on 2026-08-02: marketplace
+registration, default installs, idempotent refresh, and fresh-session skill discovery all passed.
+
 Codex plugins cannot carry subagent roles, so Codex still loads those from the game repo's
 `.codex/agents/*.toml`.
 

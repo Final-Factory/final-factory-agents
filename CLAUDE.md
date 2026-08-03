@@ -106,7 +106,9 @@ Two asymmetries to keep in mind when editing:
   refers to the `deep-thinker` agent). Codex is expected to do the work inline instead. Do not
   fork skill bodies per tool — keep one copy and let it degrade gracefully.
 
-The Codex manifests are UNVERIFIED — nobody on the Claude side runs Codex. Ben tests and fixes.
+The Codex path was live-verified on macOS with `codex-cli 0.145.0` on 2026-08-02: marketplace
+registration, default-plugin installation, an idempotent update run, and fresh-session exposure of
+the namespaced skills all passed. Keep testing other Codex versions and platforms as they come online.
 
 ## Gotchas
 
