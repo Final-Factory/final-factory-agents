@@ -65,6 +65,16 @@ Headless alternative without UI (what `Assets/Editor/DevLoadSave.cs` does):
 ⚠️ The `NewGame` save is a **modded** save and the editor disables mods, so it loads with missing
 items/tech — pick a non-modded save for clean loads.
 
+⚠️ **A loaded save can come in paused (`GameMetaState.IsPaused=true, GameStarted=false`) — never
+clear it with a raw ECS write** (proven 2026-08-04, 057 US3 probe leg). Setting the fields via
+`EntityManager.SetComponentData` clears the flag but leaves EVERY `FFSystems.*` system/group
+disabled at the World level (`SystemManager.PauseAllFFSystems()`'s effect persists). The decoy:
+`Heartbeat.CurrentHeartbeatFrame` keeps advancing while `FFTimeData.realElapsedTime` and all sim
+state (e.g. `Crafter.CraftProgress`) stay frozen — it looks like a sim bug, not a pause. The real
+unpause path is `UI.UiController.UnpauseGame()` then `FFSystems.SystemManager.ResumeAllFFSystems()`
+— both `internal`, call via reflection. Verify recovery by checking a system's
+`SystemState.Enabled` flipped to true and `realElapsedTime` advances.
+
 **Screenshots (menus/HUD included)**: the capture mechanics live in ONE place — `SKILL.md` →
 "📸 Screenshots — THE canonical recipe" (Free Aspect prerequisite, the composited `manage_camera`
 channel vs `ScreenCapture` + focused GameView, and the never-`gv.Focus()`-with-a-blueprint-in-hand
