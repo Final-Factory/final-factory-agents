@@ -145,6 +145,13 @@ return "frame=" + UnityEngine.Time.frameCount;                       // ALWAYS v
 - **When you finish driving, clear the pause**: `UnityEditor.EditorApplication.isPaused = false`.
   `Step()` leaves the editor paused, so skipping this makes the game look dead the moment the user
   focuses the window.
+- **When you finish driving, ALSO clear the pointer**: any leg that issued `ffauto:pointer.*` MUST
+  end with `ffauto:pointer.clear` (or `PlayerController.AutomationPointer.Clear()`) — on normal end
+  as much as abnormal. The position override is a static (`AutomationPointer._positionOverride`)
+  that survives play-mode cycles while domain reload is off, so a skipped clear leaves the user's
+  NEXT session reading a frozen mouse position — selection, hover, and ability indicators all
+  ignore the real mouse, which presents as a gameplay regression (cost a live diagnosis 2026-08-04,
+  057 US3 probe leg).
 
 ## Standard workflow
 

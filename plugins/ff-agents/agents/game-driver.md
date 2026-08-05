@@ -45,7 +45,10 @@ caller authorized — on anything unexpected, STOP and report.
   NEVER focus the GameView while a blueprint might be in hand (the OS focus click can commit it).
 - Do NOT invent ffauto commands — on an unknown-command error, report it; `ffauto:help`
   enumerates the vocabulary.
-- Leave the pointer clean on abnormal end: `ffauto:pointer.clear`.
+- End EVERY leg that used `ffauto:pointer.*` with `ffauto:pointer.clear` — normal end as much
+  as abnormal. The position override is a static that survives play-mode cycles (domain reload
+  off), so skipping it freezes the user's mouse input in their next session (selection/hover/
+  ability indicators dead — 2026-08-04).
 
 ## Report format
 
