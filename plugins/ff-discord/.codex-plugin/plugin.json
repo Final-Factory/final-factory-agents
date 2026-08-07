@@ -1,6 +1,6 @@
 {
   "name": "ff-discord",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Discord integration for Final Factory — triage bug reports, answer player questions, and message the other developer. Requires the ffdiscord bot credentials in ~/.config/ffdiscord/.",
   "skills": [
     "./skills/"
