@@ -44,6 +44,23 @@ exist, the run succeeded — evaluate them directly (source `determinism_audit_l
 `da_find_report` / `da_assert_field_aligned`, which key off file CONTENT) instead of restarting
 editors.**
 
+## Missing reports on BOTH sides: check for a leaked UDP port first {#port-leak}
+
+(2026-08-07, cost three audit attempts.) `ERROR: missing report(s) — host='none' client='none'`
+on a CLEAN start (phase-1 suites green on both editors) with the clone left stuck in play mode
+is the signature of the HOST failing to bind its transport: the client's console shows
+`Failed to connect to server` / `[MP join] ... transport failure`, and the host's shows
+`Failed to bind UDP socket ... port 7777` + `Host is shutting down due to network transport
+start failure`. The squatter can be the host editor's OWN leaked socket from a previous paired
+run that died without a clean transport shutdown — `lsof -nP -iUDP:7777` names the PID; match
+its `-projectPath` before touching anything. **A domain reload does NOT free the leaked socket**
+(native allocation, no managed finalizer path) — restart exactly that editor process
+(scheduled `EditorApplication.Exit(0)` via delayCall may never fire on an unfocused editor;
+direct `Exit(0)` or SIGTERM to the verified PID works, then relaunch with
+`open -na .../Unity.app --args -projectPath <checkout>`). Do NOT keep re-running the audit —
+the second attempt fails identically and "back-to-back flake, re-run" is the WRONG diagnosis
+for this signature.
+
 ## Divergence triage: check command TIMING first {#command-timing}
 
 ⚠️ **A mode-3 divergence is not automatically a SIM defect — check command TIMING first**
