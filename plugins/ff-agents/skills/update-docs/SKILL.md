@@ -80,7 +80,10 @@ CLAUDE.md still listed them as "active".)
 
 5. **Verify nothing else broke.** These are doc edits, so no compile/test is usually needed — but if
    you changed a code comment or a doc that a test or tool reads, re-check that. Run `git status` and
-   make sure only intended files changed.
+   make sure only intended files changed. Also run
+   `python scripts/generate-ffauto-reference.py --check` — exit 1 means
+   `docs/ffauto-command-reference.md` drifted from the runner's dispatch table; regenerate it
+   (never hand-edit the generated doc) and include it in the docs commit.
 
 6. **Commit (and push if the user asked) in coherent chunks.** Group by doc area with clear messages
    (`docs: correct stale <area> — <what>`). Per repo policy, push only when the user OKs; on a shared

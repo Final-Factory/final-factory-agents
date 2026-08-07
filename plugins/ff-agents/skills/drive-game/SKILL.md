@@ -268,3 +268,8 @@ Proven, dated gameplay recipes — driving menus, starting a new game, loading s
 abilities, blueprint placement, research, inventory, objectives, and the full tutorial playthrough
 notes — live in **`recipes.md`** next to this file. Read it when you need to *play*; this file is
 what you need to *drive the editor safely*.
+
+For the **complete `ffauto:` command vocabulary** (every family, args, descriptions), read the
+game repo's generated **`docs/ffauto-command-reference.md`** — do not grep
+`LocalMultiplayerAutomationCommandRunner.cs`; the doc is generated from its dispatch table and
+`python scripts/generate-ffauto-reference.py --check` keeps it honest.
