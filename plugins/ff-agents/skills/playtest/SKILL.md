@@ -7,9 +7,11 @@ description: Run a goal-directed agent playtest of Final Factory through the 020
 
 You drive the REAL game — real input paths, real validation, real UI raycasts. The engine
 provides fidelity + memory (the session journal); **judgment stays with you**: decide whether
-what you observed is correct, and write up what isn't. Read `ffauto:help` at session start —
-it is the runtime mirror of the supported vocabulary (FR-009); anything not listed is not
-drivable yet, and that gap is worth noting, not working around silently.
+what you observed is correct, and write up what isn't. The full command vocabulary is
+**`docs/ffauto-command-reference.md`** (generated from the runner's dispatch table —
+regenerate with `python scripts/generate-ffauto-reference.py`, never grep the runner);
+`ffauto:help` is its runtime mirror (FR-009). Anything in neither place is not drivable yet,
+and that gap is worth noting, not working around silently.
 
 Prerequisites: the MCP bridge is up and pinned to THIS project's instance (CLAUDE.md 🔌 rule).
 The `drive-game` skill documents boot mechanics (menus, saves, Step()-pumping, screenshots) —

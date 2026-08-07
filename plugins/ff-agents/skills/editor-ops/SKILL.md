@@ -144,6 +144,23 @@ compile failure in the editor may never update the watched file, hanging the wat
 Recover MCP first; if targeted recovery genuinely fails, report that compile/test proof
 remains unavailable.
 
+**Deterministic hooks back this ritual** (feature 061; the game repo's `.claude/settings.json`
++ `scripts/hooks/`, state under `Library/ClaudeHookState/`). What each signal means and how to
+clear it:
+
+- **Stop block listing `.cs` files** = those files were edited with no `refresh_unity` since.
+  Clear it by running the ritual above (refresh → fresh domain reload → `error CS` check →
+  fast suite if behavior changed), or state explicitly why verification isn't needed, then
+  finish. It blocks once per turn-end, never loops.
+- **Missing-`.meta` warning after a refresh** = the named new `.cs` files were NEVER imported —
+  the false-green trap above is live for them; force a reimport / `scope=all` refresh and
+  confirm the `.meta` before trusting any result.
+- **Crown-jewel warning on an Edit/Write** = the target matches a glob in
+  `Documentation/Crown-Jewel-Surfaces.md` — determinism-critical, driver-only edit territory;
+  non-blocking, but re-read the tier rules before proceeding.
+- Hooks **fail open** (a broken hook exits silently rather than bricking the session), so hook
+  silence is a missing signal, not proof of a clean state — the ritual itself stays binding.
+
 **Bridge console caveat** (Windows box): `read_console` reliably returns warnings/errors/
 exceptions but generally NOT plain `Debug.Log` entries — never treat "0 log entries" as proof
 a log-line marker didn't fire. For Log-level markers, use a state probe via `execute_code`

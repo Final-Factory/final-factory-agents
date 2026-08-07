@@ -36,10 +36,12 @@ worktrees and apply to ALL branches.
 - [No external edits to open Unity scenes](memories/no-external-edits-to-open-unity-scenes.md) — Write/Edit on an open .unity/.prefab raises a modal reload dialog that blocks the main thread and hangs the MCP bridge; edit via SerializedObject + SaveScene instead
 - [Unity keyword-remap shader crash](memories/unity-keyword-remap-shader-crash.md) — known Unity engine bug crashing import worker on ParticlesUnlit fallback keyword remap
 - [wsay voice notifications](memories/wsay-voice-notifications.md) — global hooks speak via wsay when Claude finishes (Stop) or needs input (Notification); don't disable
+- [Profiling ECS + fork pin bumps](memories/knn-profiling-and-fork-pin-gotchas.md) — ProfilerRecorder never samples system markers (use ProfilerDriver.enabled + GetRawFrameDataView); clone Packages/ can be a real dir: copy manifests + Client.Resolve() on the clone, verify PackageCache sha + fresh assembly mtime before trusting any run
 
 ## ECS / Burst / baking
 
 - [Stale Burst after merge](memories/stale-burst-after-merge.md) — post-merge Burst-job NREs (managed passes) = STALE Burst native code from changed job struct layouts, not a source bug; force a fresh Burst recompile and re-run twice
+- [Test-assembly systems need [DisableAutoCreation]](memories/test-assembly-systems-need-disableautocreation.md) — unmarked SystemBase/ISystem in Assets/Tests auto-creates into live play mode (static entities accumulate render-only drift the fingerprints can't see); always mark; diff LtW vs LocalTransform to detect
 - [FFSystems/Player namespace collision](memories/ffsystems-player-namespace-collision.md) — systems in FFSystems/Player/ MUST use namespace `FFSystems.Players` (plural); `FFSystems.Player` collides with the Player component type and breaks all of FFSystems
 - [ItemEntities baking pipeline](memories/itementities-baking-pipeline.md) — Resources/ItemEntities/*.prefab bake via EntityPrefabContainerBaker; author companion entities with CreateAdditionalEntity(ManualOverride) → in LinkedEntityGroup, remapped on Instantiate
 - [ECS runtime material unload gotcha](memories/ecs-runtime-material-unload-gotcha.md) — runtime new Material() in a RenderMeshArray needs HideFlags.HideAndDontSave or UnloadUnusedAssets nulls it (BRG MaterialID <null> error)
