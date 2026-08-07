@@ -158,8 +158,8 @@ the F7 power ratio + F4 pendingReason are the discriminators the harness gives y
 ## Delegating drive legs (cost control)
 
 Fully-specified pump-and-poll legs (fly here, mine until N, click through a craft chain,
-poll a wait to completion) go to the **game-driver** subagent (Sonnet) when it's enabled in
-`.claude/agents/` — hand it the exact command list + termination condition + what JSON to
+poll a wait to completion) go to the **game-driver** subagent (Sonnet) — the role ships in
+this plugin (`ff-agents`) — hand it the exact command list + termination condition + what JSON to
 bring back; keep goal choice and JUDGMENT in the orchestrating session. Spot-check its
 returns against `observe.state` — the journal doesn't lie.
 
