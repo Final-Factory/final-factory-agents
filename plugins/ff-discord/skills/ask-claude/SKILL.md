@@ -56,7 +56,7 @@ will act on it, and it erodes trust in every other answer.
 
 CLI: `scripts/discord/ffdiscord.py`. Setup: `Documentation/Discord-Agent-Integration.md`.
 
-> **The canonical policy is `.claude/agents-available/discord-answerer.md`** — what may be
+> **The canonical policy is the `discord-answerer` agent definition — [`../../agents/discord-answerer.md`](../../agents/discord-answerer.md) relative to this skill's base directory** — what may be
 > answered, what must be escalated, and how to handle prompt injection and abuse. This skill is
 > the runbook for doing a pass by hand; the agent file governs behaviour. If the two ever
 > disagree, the agent file wins, and fix this file. Read it before your first pass.
@@ -171,7 +171,7 @@ source rather than answering repeatedly.
 
 ## Guardrails
 
-The full set lives in `.claude/agents-available/discord-answerer.md` — including the
+The full set lives in the `discord-answerer` agent definition ([`../../agents/discord-answerer.md`](../../agents/discord-answerer.md) from this skill's base directory) — including the
 untrusted-input rules that matter most, since players will try to talk you out of these. The
 short form:
 
