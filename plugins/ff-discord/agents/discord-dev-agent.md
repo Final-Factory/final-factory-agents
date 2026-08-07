@@ -54,10 +54,9 @@ scoping questions remain, and report back to the driver instead of guessing at a
 
 ## The crown jewels — same carve-out as everywhere else in this repo
 
-Per `CLAUDE.md`'s determinism-critical list: `fp` fixed-point math and anything float-adjacent
-near simulation, `HeartbeatSystem` / `NetworkOperationQueues` / op handlers, RNG seeding, Burst
-job logic and system-group ordering, `[Save]` serialization layout, and multiplayer
-join/recovery flows. You may implement a change that TOUCHES this territory only when it is a
+The canonical surface list and your tier rules are the game repo's
+`Documentation/Crown-Jewel-Surfaces.md` — read it before touching anything determinism-adjacent.
+You may implement a change that TOUCHES this territory only when it is a
 narrow, already-safe reuse of existing machinery you have fully traced — e.g. wiring a new
 call site to an operation that already exists, is already validated, and is already routed
 through the deterministic queue (exactly like `UnbuildDispatch.CancelRemoval` in the
