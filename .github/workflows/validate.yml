@@ -1,0 +1,118 @@
+# Harness validation (feature 061-harness-hardening in the game repo).
+#
+# Scope: this repo only. Game-repo paths referenced by skills (e.g.
+# scripts/discord/ffdiscord.py, Documentation/*.md) CANNOT be verified here and
+# are deliberately out of scope — the game repo's update-docs skill owns those.
+# `claude plugin validate` is not run as a gate (CLI availability in CI
+# unproven); manifest checks below cover the structural basics.
+name: validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Version consistency (bumpVersion.sh --check)
+        run: sh bumpVersion.sh --check
+
+      - name: Bump-on-change
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -eu
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BASE=$(git merge-base "$PR_BASE_SHA" HEAD)
+          else
+            BASE="$PUSH_BEFORE_SHA"
+          fi
+          # First push of a branch / force-push: before-SHA is unusable -> previous commit.
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            BASE=$(git rev-parse HEAD~1 2>/dev/null || true)
+          fi
+          if [ -z "$BASE" ]; then
+            echo "single-commit history; skipping bump-on-change"
+            exit 0
+          fi
+          echo "comparing against base $BASE"
+          CHANGED=$(git diff --name-only "$BASE"..HEAD)
+          fail=0
+          for dir in plugins/*/; do
+            name=$(basename "$dir")
+            if printf '%s\n' "$CHANGED" | grep -q "^plugins/$name/"; then
+              new=$(jq -r .version "plugins/$name/.claude-plugin/plugin.json")
+              old=$(git show "$BASE:plugins/$name/.claude-plugin/plugin.json" 2>/dev/null | jq -r .version || true)
+              if [ -n "$old" ] && [ "$old" != "null" ] && [ "$old" = "$new" ]; then
+                echo "::error::plugin '$name' has changes since $BASE but its version is still $new — run bumpVersion.sh $name"
+                fail=1
+              fi
+            fi
+          done
+          exit $fail
+
+      - name: Manifest well-formedness
+        run: |
+          set -eu
+          fail=0
+          for f in plugins/*/.claude-plugin/plugin.json plugins/*/.codex-plugin/plugin.json; do
+            if ! jq -e '.name and .version' "$f" >/dev/null; then
+              echo "::error::$f is not valid JSON with required fields name+version"
+              fail=1
+            fi
+          done
+          # Marketplace manifests: shapes differ by design (the .agents one carries
+          # no version field — see README.md) so require only valid JSON + names.
+          for f in .claude-plugin/marketplace.json .agents/plugins/marketplace.json; do
+            if ! jq -e '.plugins | map(.name) | all(length > 0)' "$f" >/dev/null; then
+              echo "::error::$f failed JSON/name validation"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Dead references
+        run: |
+          set -eu
+          fail=0
+          # 4a: patterns that are dead ANYWHERE (the game repo's .claude/agents-available
+          # and .agents/skills bridges were deleted in the marketplace migration).
+          # NOTE: .claude/skills and .claude/agents are NOT denylisted — they appear in
+          # legitimate "never edit these" prohibition prose (publish-skills, update-docs).
+          if grep -rn --include='*.md' -e '\.claude/agents-available' -e '\.agents/skills' plugins/; then
+            echo "::error::dead path pattern found (see grep hits above)"
+            fail=1
+          fi
+          # 4b: intra-repo references must exist (markdown links + backticked plugins/ paths).
+          python3 - <<'EOF' || fail=1
+          import re, sys, pathlib
+          bad = []
+          for md in pathlib.Path('plugins').rglob('*.md'):
+              text = md.read_text(encoding='utf-8', errors='replace')
+              for m in re.finditer(r'\]\(([^)#\s]+)\)', text):
+                  t = m.group(1)
+                  if t.startswith(('http://', 'https://', 'mailto:')):
+                      continue
+                  if any(c in t for c in '<>*{'):
+                      continue
+                  target = (md.parent / t) if not t.startswith('plugins/') else pathlib.Path(t)
+                  if not target.exists():
+                      bad.append(f"{md}: broken link -> {t}")
+              for m in re.finditer(r'`(plugins/[^`\s]+)`', text):
+                  t = m.group(1).rstrip('/')
+                  if any(c in t for c in '<>*{'):
+                      continue
+                  if not pathlib.Path(t).exists():
+                      bad.append(f"{md}: backticked path missing -> {t}")
+          for b in bad:
+              print(f"::error::{b}")
+          sys.exit(1 if bad else 0)
+          EOF
+          exit $fail
