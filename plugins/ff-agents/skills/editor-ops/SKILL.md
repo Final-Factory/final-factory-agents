@@ -134,6 +134,16 @@ alone. **Verify through the MCP bridge, not by watching files**:
 4. Where a **behavioral signal** is available (a new log line, a changed test count, a changed
    result), prefer confirming it too. Identical-as-before behavior after a "fix" usually means
    the old assembly is still running.
+5. **Prove the new code path EXECUTES, not just that it compiled.** A fix shipped behind a
+   never-matching gate — an ECS query missing a component the live data doesn't have, a
+   `RequireForUpdate`, a feature flag — "lands" cleanly (compiles, suite green, review passes)
+   while never executing once, and the dead gate also hides downstream bugs (an unassigned
+   lookup, a bad job field) until the gate opens. Probe the live world for the fix's EFFECT
+   (state it should have changed, a counter, an instrumented sample), and prove the probe can
+   go positive before believing its negative. (057 round 3, 2026-08-08: the beam re-anchor
+   system's query required `WeaponOwner`, which no live beam owner carried — two shipped
+   "fixes" in it had never run, and the second bug, a never-assigned `ComponentLookup` that
+   threw on first scheduling, only surfaced when the query was fixed.)
 
 **New `.cs` files**: an unimported script is not compiled at all — 0 errors + fresh domain
 reload + green tests can all be true while your new file is absent from the build. Confirm the
