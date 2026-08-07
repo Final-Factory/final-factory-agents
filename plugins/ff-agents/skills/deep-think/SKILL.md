@@ -87,8 +87,8 @@ assumptions as facts. Re-read it before sending.
 
 ## Runtime translation
 
-- **Claude Code**: spawn the `deep-thinker` agent (`model: fable`, `effort: high`). Requires the
-  opt-in agent link — see `.claude/agents-available/README.md`.
+- **Claude Code**: spawn the `deep-thinker` agent (`model: fable`, `effort: high`) — the role
+  ships in this plugin (`ff-agents`); no repo-local setup is needed.
 - **Codex**: spawn the `deep-thinker` role (`.codex/agents/deep-thinker.toml`). Never invoke the
   `claude` CLI. Record the runtime/model actually used; never claim Codex ran Fable.
 
