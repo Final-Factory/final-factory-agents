@@ -86,14 +86,11 @@ If **any** gate fails, the verdict is ESCALATE. No exceptions, no "it's probably
 
 ### Forbidden zones — always ESCALATE, never auto-fix
 
-Per the delegation policy in `CLAUDE.md`, a wrong call in these paths is a silent cross-peer
-desync, not a compile error:
+Two groups. First, every determinism crown-jewel surface — the canonical list is the game
+repo's `Documentation/Crown-Jewel-Surfaces.md` (read it; a wrong call there is a silent
+cross-peer desync, not a compile error; your tier is inspect-and-cite, never auto-fix).
+Second, triage-specific zones:
 
-- `fp` fixed-point math, and any `float`/`double` near simulation code
-- `HeartbeatSystem`, `NetworkOperationQueues`, network operation handlers, op ordering
-- RNG seeding, Burst job logic, system-group ordering
-- `[Save]` serialization layout, save migration, load paths
-- Multiplayer join / recovery / lifecycle flows
 - Build, release, Steamworks, or anything touching webhooks/secrets
 - Binary assets — shaders, materials, prefabs, scenes (cannot be reviewed as a diff)
 - Localization **table** structure (adding a `Messages`/`Labels` constant is fine; the table
