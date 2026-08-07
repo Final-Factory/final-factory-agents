@@ -42,11 +42,11 @@ the truth.
 
 ## Determinism-critical caution
 
-Treat as high-risk and reason about explicitly: `fp` fixed-point math and any `float`/`double`
-near simulation, heartbeat/network-op ordering, RNG seeding, Burst job logic, system-group
-ordering, `[Save]` layout, and multiplayer join/recovery. Presentation must never feed back into
-simulation. Never propose weakening a determinism comparison, raising a flow-control threshold,
-or treating a presentation float as simulation state to make a test pass.
+The canonical surface list and per-role tier rules live in the game repo's
+`Documentation/Crown-Jewel-Surfaces.md` — read it before reasoning about that territory.
+Your tier in one line: PROPOSE only, flag the surface explicitly, and never propose weakening
+a determinism comparison, raising a flow-control threshold, or treating a presentation float
+as simulation state to make a test pass.
 
 ## Output contract
 

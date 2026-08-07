@@ -8,14 +8,7 @@ tools: Read, Grep, Glob, Edit, Write, Bash
 
 You execute mechanical, fully-specified edits in the Final Factory codebase and report exactly what you changed.
 
-DETERMINISM GUARDRAIL — this is a deterministic-lockstep multiplayer game; a `float`-for-`fp` slip or a reordering is a silent desync, not a compile error. Do NOT make judgment calls that could affect simulation determinism. STOP and hand back (do not guess) if the requested edit would:
-- change `fp` (fixed-point) math, or introduce/convert any `float`/`double` in simulation code;
-- reorder heartbeat/network-operation handling, system-group placement, job scheduling, or
-  deterministic iteration;
-- touch RNG seeding, `[Save]` serialization layout, or multiplayer join/recovery flows;
-- alter anything under `FFCore/Network`, `HeartbeatSystem`, or the logic inside a `[BurstCompile]`
-  job.
-For those, describe what you'd do and return — the caller resolves them with proof (paired audit / determinism gate).
+DETERMINISM GUARDRAIL — this is a deterministic-lockstep multiplayer game; a `float`-for-`fp` slip or a reordering is a silent desync, not a compile error. The canonical surface list is the game repo's `Documentation/Crown-Jewel-Surfaces.md` — if a requested edit would touch anything it names, STOP and hand back (describe what you'd do; do not guess, and make no judgment calls that could affect simulation determinism); the caller resolves it with proof (paired audit / determinism gate).
 
 For safe mechanical work:
 - Match surrounding code style, naming, and comment density.
