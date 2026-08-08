@@ -113,6 +113,32 @@ copies**. Whichever copy ran last clobbers it, so it will silently report anothe
 results. The MCP job result is the only authoritative source. Trust ONLY the
 `run_tests` / `get_test_job` result for the pinned instance.
 
+### ⚠️ Long single-NUnit-test PlayMode jobs: two bridge defects (2026-08-07, M3, feature 049)
+
+Jobs shaped like `PlayModeTests.Runner.DeterminismTestRunner.RunDeterminismGate` — ONE NUnit
+test that internally loops many scenarios — emit no sub-test `TestStarted`/`TestFinished`
+events, and the bridge's test tracking mis-handles that two ways (evidence:
+`specs/049-determinism-gate-coverage/plan.md`, legs 1–2):
+
+1. **False stall flag.** `get_test_job` reports `stuck_suspected: true, blocked_reason:
+   "editor_unfocused"` for the entire run and never clears it. Not a stop signal for this job
+   shape — ground truth is the on-disk `Editor.log` (real heartbeat/testcase advancement).
+2. **Destructive premature teardown.** The bridge's `TestRunnerNoThrottle` can conclude the
+   run finished and execute end-of-run teardown ("Restored Interaction Mode after test run" +
+   `TestResults.xml` write) while the test is still executing — observed mid-corpus,
+   destroying Netcode + the DOTS world under the running test; everything downstream NREs
+   (`Ecs.GetCachedSingletonQuery`). Signature: `[TestRunnerNoThrottle] Restored Interaction
+   Mode` at a non-boundary, then `[Netcode] ShutdownInternal`. Mitigations: keep the editor
+   frontmost for the duration (`osascript -e 'tell application "Unity" to activate'`), treat a
+   mid-run teardown as the bridge's failure and retry once, and capture verdicts from the
+   Editor.log rather than the job result alone (the job result also loses per-scenario detail).
+
+**Probe hygiene while a bridge is attached:** never clear an `EditorApplication.update` probe
+with `EditorApplication.update = null` — that wipes the ENTIRE multicast delegate including
+the bridge's own polling, silently killing `editor_state`/`execute_code` (a leg had to
+recover the editor to get the bridge back). Subscribe with `+=`, keep the reference, remove
+with `-=` — or avoid subscribing and diff `editor_state` sequence/time across calls instead.
+
 ## Compile verification — a PASSED result does NOT prove your code compiled
 
 The editor will NOT recompile while it is in **play mode** (compilation blocks during play),
