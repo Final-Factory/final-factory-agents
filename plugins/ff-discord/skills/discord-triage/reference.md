@@ -1,6 +1,7 @@
 # Discord triage reference — gates, zones, templates
 
 Companion to `SKILL.md` (the flow). Consult the section the flow points you at.
+Command examples say `python3`; on Windows substitute `python` (no `python3` on PATH).
 
 ## TOC
 

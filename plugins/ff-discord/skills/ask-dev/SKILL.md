@@ -9,6 +9,9 @@ Ben and Lothsahn each drive their own Claude Code session against this repo. Thi
 one session put a question to the other developer in Discord `#dev-chat`, so the user doesn't
 have to context-switch to write it themselves.
 
+Command examples say `python3`; on Windows there is no `python3` on PATH — run the same
+commands with `python`.
+
 ```bash
 python3 scripts/discord/ffdiscord.py ask lothsahn \
   --context "<what you're working on, one line>" \

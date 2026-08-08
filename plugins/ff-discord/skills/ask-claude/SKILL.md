@@ -55,6 +55,8 @@ human.** A confidently wrong answer about game mechanics is worse than a slow on
 will act on it, and it erodes trust in every other answer.
 
 CLI: `scripts/discord/ffdiscord.py`. Setup: `Documentation/Discord-Agent-Integration.md`.
+Command examples below say `python3`; on Windows there is no `python3` on PATH — run the same
+commands with `python`.
 
 > **The canonical policy is the `discord-answerer` agent definition — [`../../agents/discord-answerer.md`](../../agents/discord-answerer.md) relative to this skill's base directory** — what may be
 > answered, what must be escalated, and how to handle prompt injection and abuse. This skill is
