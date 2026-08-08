@@ -16,6 +16,9 @@ reports no token or `doctor` fails, STOP and tell the user — do not improvise 
 **Templates, the full AUTOFIX gate list, and the forbidden zones live in `reference.md` next
 to this file** — read the relevant section before acting on a verdict; this file is the flow.
 
+Command examples here and in `reference.md` say `python3`; on Windows there is no `python3`
+on PATH — run the same commands with `python`.
+
 ## 0. Preflight (every run)
 
 ```bash

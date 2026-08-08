@@ -31,6 +31,8 @@ like a person, not a ticket queue. Read the message and enough surrounding conte
 (`python3 scripts/discord/ffdiscord.py read <channel_id> --limit 20`, or `thread <thread_id>`
 if it's in a forum thread) to tell the difference between a real ask and ordinary
 conversation, a reaction, or banter that happened to mention the bot.
+(`ffdiscord.py` examples say `python3`; on Windows there is no `python3` on PATH — use
+`python`.)
 
 - **If it's not a work request**, do nothing — no code changes, no reply needed unless
   something is genuinely unclear and worth a one-line clarifying question back in the same
