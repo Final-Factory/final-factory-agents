@@ -142,6 +142,18 @@ return "frame=" + UnityEngine.Time.frameCount;                       // ALWAYS v
   batch — and separately a loop totalling 3000 — blocked the editor main thread past the bridge
   timeout; every later call times out for minutes. A timed-out call may still have fully executed:
   re-sync with a light `frameCount` probe once the bridge answers.
+- **Wall-clock command windows expire between bridge calls (cost three driver legs, 2026-08-10):**
+  `ffauto:movement.hold`'s duration is WALL-CLOCK, and on an occluded editor ZERO frames run
+  between `execute_code` calls — issue the hold in one call and the `Step()` pump in the next and
+  the window can expire before a single frame ticks, while the command still returns success. The
+  player never moves and nothing errors; a drive/trace that "did nothing" (velocity never nonzero,
+  `moving_frames=0`) is the tell. **Always issue the command AND its Step-pump batch in the SAME
+  `execute_code` call.** Assume the same for any other wall-clock-windowed ffauto verb.
+- **Pace pumped Steps when capturing motion traces (057 Design C′, 2026-08-10):** `Step()` pins
+  `Time.deltaTime` at 20 ms while stepping much faster in real time, which trips the per-frame
+  player mover's stall gate (`LocalPlayerMotionSystem`) — a trace comes back mostly `stallGated`
+  in its mover-attribution column and is a BROKEN capture, not a clean one. Pace pumps to roughly
+  one Step per 20 ms of wall time for motion-trace work.
 - **When you finish driving, clear the pause**: `UnityEditor.EditorApplication.isPaused = false`.
   `Step()` leaves the editor paused, so skipping this makes the game look dead the moment the user
   focuses the window.
