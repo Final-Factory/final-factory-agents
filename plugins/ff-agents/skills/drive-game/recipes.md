@@ -39,6 +39,13 @@ foreach (var b in buttons) { var l = b.GetComponentInChildren<TMPro.TMP_Text>(tr
 // then pump Steps so the panel opens/animates
 ```
 
+**⚠️ Boot gate before ANY new game (cost a stranded world, 2026-08-10):** never invoke
+`StartNewGame` until `FFCore.Extensions.Ecs.Ready && Ecs.HasSingleton<FFCore.Config.ItemConfig>()`
+returns true (namespace is `FFCore.Config`, NOT `FFComponents`). A `TitleScreenManager.Instance != null`
+probe passes far too early (frame ~20 on a fresh boot); starting a game mid-boot strands the world —
+missing `ItemConfig`/`MapGenerationData` singletons, an NRE in `TitleScreenManager.PrepareSceneForGame`,
+and `MePlayer` never appears, with no loud failure at the call site.
+
 **Start a new game**: click `New Game` → the panel opens (world-type tabs
 Standard/Explorer/Hardcore/Custom, pre-rolled seed field, Tutorial/Enemy Difficulty/Attack Frequency
 toggles) → click `Begin Game` → pump ~200+ steps for world-gen → probe `CurrentMode == InGame`.

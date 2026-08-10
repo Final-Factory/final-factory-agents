@@ -1,6 +1,6 @@
 {
   "name": "ff-agents",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Core Final Factory development skills — deep thinking, determinism audits, driving the game, playtests, handoff/resume, doc upkeep, project memory, and skill publishing. Subagent roles ship alongside for Claude Code only; Codex loads its roles from the game repo's .codex/agents/.",
   "skills": [
     "./skills/"
