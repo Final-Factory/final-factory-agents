@@ -59,6 +59,42 @@ recover, and monitor readiness yourself:
    after targeted recovery has genuinely failed or an external prerequisite (licensing, OS dialog,
    missing installation) requires human action.
 
+### A hung BOOT is usually a native modal — relaunching reproduces it
+
+(2026-08-11, M3 Pro; cost ~10 min and two pointless relaunches before it was diagnosed.) An
+editor that never finishes booting is more often blocked on a modal dialog than crashed or
+stuck importing. Symptom triad — all three together:
+
+- `Editor.log` frozen at ~2 KB, last line `[Licensing::Module] Licensing Background thread has
+  ended` (nothing after the licensing handshake);
+- the process at **0% CPU**, state `SN`, **RSS stuck near 150 MB** (a real booting FinalFactory
+  editor climbs past 1 GB within seconds);
+- `mcpforunity://instances` reports `instance_count: 0` while `ps` shows a live Unity with the
+  correct `-projectPath`.
+
+**Diagnose it with `sample`, not the log** — the log will never say anything, because the modal
+blocks before the next write:
+
+```sh
+sample <pid> 2 -f /tmp/unity_sample.txt && grep -A 40 "Call graph" /tmp/unity_sample.txt
+```
+
+A main-thread graph ending in `Application::InitializeProject() ->
+Application::HandleDanglingSceneBackups() -> GetDialogResponse ->
+EditorDialog::DisplayDecisionDialogNative -> ShowAlertDialog -> [NSAlert runModal]` means Unity
+is waiting on the **"recover backed-up scene?"** decision dialog. An earlier editor CRASH left
+`Temp/__Backupscenes/0.backup` behind, and EVERY subsequent launch re-pops it — so the standard
+kill-and-relaunch recovery *reproduces* the hang instead of fixing it.
+
+Fix: kill the editor (precondition-check its `-projectPath` first), delete
+`Temp/__Backupscenes` and any stale `Temp/UnityLockfile`, then relaunch. Boot proceeds normally
+and the bridge registers.
+
+⚠️ Deleting that backup discards unsaved SCENE edits from the crashed session — check
+`git status -- '*.unity'` first. After an agent-driven play session there is normally nothing
+of value there. Note `osascript`/System Events cannot enumerate the dialog (no assistive
+access), so `sample` is the tool that works headlessly.
+
 ## Unity CLI fallback channel
 
 (Added 2026-07-21 on the Windows box; Mac shim added 2026-07-22.) The project carries
