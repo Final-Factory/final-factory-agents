@@ -95,7 +95,30 @@ and the bridge registers.
 of value there. Note `osascript`/System Events cannot enumerate the dialog (no assistive
 access), so `sample` is the tool that works headlessly.
 
-## Unity CLI fallback channel
+### A stalled RUNNING editor (Windows): system + editor modals, and FindWindow lies
+
+(2026-08-11, BEAST, 049 toggles-join harness leg; cost ~40 min.) Same symptom family as the
+boot modal but on ALREADY-RUNNING editors: process `Responding=True` at ~0% CPU, the editor
+log fills with MCP `Command TCS timed out (N consecutive)`, a requested script compilation
+never starts, and `run-tests-fast.trigger` is never picked up — the editor UPDATE LOOP is
+stalled, not the process. Two modal classes confirmed live, STACKED (dismissing the first
+revealed the second):
+
+1. **Windows Security firewall prompt** for a launched player build (mode-2 gate runs spawn
+   one per run's fresh build path). It is a UWP window — `user32 FindWindow(null, "Windows
+   Security")` returns NOTHING while it is on screen, so "no dialog found" proves nothing.
+   Only a screenshot shows it. Dismiss with a DPI-aware click on **Cancel** (= keep the
+   default block; localhost pairing is unaffected — whole corpus runs pass with it blocked).
+2. **Unity "open scene(s) have been modified externally — Reload/Ignore"** — appears when a
+   `git pull` changes an open scene on disk under a running editor (clones sharing `Assets`
+   by symlink get it too). **Reload** is correct unless the editor holds deliberate unsaved
+   scene work.
+
+Recovery recipe: DPI-aware screenshot FIRST (`SetProcessDPIAware` before `CopyFromScreen`,
+and capture+click in ONE process — the DPI trap is per-process and bidirectional), click the
+top modal, screenshot again — modals stack, so repeat until the desktop is clean. The editor
+loop resumes instantly; re-trigger whatever was queued. Both editors on a box can be stalled
+by ONE system modal at the same time.
 
 (Added 2026-07-21 on the Windows box; Mac shim added 2026-07-22.) The project carries
 `com.unity.pipeline` (exp), which runs a loopback HTTP server in the editor (ports 7800–7849,
