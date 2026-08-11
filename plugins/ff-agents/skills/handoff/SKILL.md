@@ -44,6 +44,14 @@ gotchas; don't summarize away the details that cost this session to learn.
    memory rules. If external memory is unavailable, make the committed SESSION HANDOFF fully
    self-contained and state that memory was not updated.
 
+4b. **If this session CLOSED a spec lane, append its lesson rows to `docs/Lessons-Index.md`**
+   (game repo) — 1-3 rows per closed spec: symptom-shape keywords | root cause | fix pattern |
+   `NNN` + file:line cite. Write rows findable by SYMPTOM ("desync heals then recurs",
+   "green locally red cross-machine"), not by feature name. A CI checker
+   (`scripts/check_lessons_index.sh`, warn-only) flags closed specs with no row — beat it to
+   the punch. This is the repo's institutional-memory search surface; a closure without its
+   rows is invisible to every future symptom search.
+
 5. **Update any docs that drifted** this session (so they're accurate for the next reader), e.g. a
    how-to / reference doc you learned things for.
 
