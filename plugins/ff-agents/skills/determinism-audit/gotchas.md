@@ -129,7 +129,7 @@ this project. (First run on stale code otherwise silently uses the old build.)
   them*. A short window makes an audit look like it passed when it merely did not run long
   enough to disagree. **Override `HOST_DWELL_MS` / `CLIENT_DWELL_MS`** to buy the heartbeats a
   criterion needs instead of quietly accepting a short run — e.g.
-  `MODE=build HOST_DWELL_MS=100000 CLIENT_DWELL_MS=88000 ./run_construction_audit.sh` gave
+  `MODE=build HOST_DWELL_MS=100000 CLIENT_DWELL_MS=88000 ./scripts/audit/run_construction_audit.sh` gave
   **323** shared heartbeats where the 60 s default gave 183. `CLIENT_DWELL_MS` must be **less
   than** `HOST_DWELL_MS` (hard-enforced, exit 2) so the host outlives the client and the shared
   window is not truncated.
@@ -141,7 +141,7 @@ this project. (First run on stale code otherwise silently uses the old build.)
   re-run (the compile is warm the second time). The ceiling is `RECOMPILE_WAIT_TICKS`
   (240 ticks × 2 s = 480 s default), raised from a fixed 180 s that three consecutive runs
   overran on a loaded machine.
-- **Launch long audits detached**: `nohup ./run_construction_audit.sh > log 2>&1 < /dev/null &
+- **Launch long audits detached**: `nohup ./scripts/audit/run_construction_audit.sh > log 2>&1 < /dev/null &
   disown`, and monitor the LOG FILE rather than the job — a tracked background task was reaped
   mid-phase-1 and reported as killed with no audit failure at all. (`setsid` does not exist on
   macOS.) Wait for BOTH editors to report ready + `playMode: stopped`
