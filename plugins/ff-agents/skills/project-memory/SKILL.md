@@ -47,6 +47,7 @@ worktrees and apply to ALL branches.
 - [ECS runtime material unload gotcha](memories/ecs-runtime-material-unload-gotcha.md) — runtime new Material() in a RenderMeshArray needs HideFlags.HideAndDontSave or UnloadUnusedAssets nulls it (BRG MaterialID <null> error)
 - [Remote-player presentation position bug](memories/remote-player-presentation-position-bug.md) — FIXED & verified: host ship renders on client smoothly; the 3-part fix (Apply Option A + exclude remotes from LinearMotionSystem + per-frame presentation group)
 - [BlockAllocator budget crash](memories/blockallocator-budget-crash.md) — "Cannot exceed budget of 16777216": the two fixed 16MB allocators, what actually grows them (distinct-archetype count, NOT repeated identical CreateEntityQuery), and the save-load one-at-a-time AddComponent archetype explosion + ComponentTypeSet batching fix
+- [Unscoped marker sweeps fork multiplayer](memories/unscoped-marker-sweeps-fork-multiplayer.md) — a query over "every entity with kind-marker X" mutates other peers' preview ghosts (4 instances on BlueprintItemMarker); scope by BlueprintGhostOwner IDENTITY (never timing), fail closed on a missing stamp, and check shared-hash queries for peer-local matches via BAKED components (grep the prefab, don't trust "structure-only")
 
 ## Localization
 
