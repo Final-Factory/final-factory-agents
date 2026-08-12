@@ -16,7 +16,7 @@ description: Verify multiplayer determinism work — the paired two-editor local
 > regression suite lives under `Assets/Resources/TestRunner/<Subject>/*.playtest` (folders name
 > WHAT is tested — Smoke/ConstructionBots/Crafters/Power/Logistics/Mining/Settings — never the run mode).
 > One testcase, three run modes: **mode 1** run-once golden (`FinalTestRunner.RunAllTests`),
-> **mode 2** two-editor divergence (`./run_determinism_testcases.sh`), **mode 3** same-editor
+> **mode 2** two-editor divergence (`./scripts/audit/run_determinism_testcases.sh`), **mode 3** same-editor
 > run-twice divergence with snapshot-restore (`DeterminismTestRunner.RunDeterminismGate` — runs
 > in the normal play-mode loop, no build/clone). See the "Persistent determinism testcases"
 > section of `Documentation/Determinism-Test-Strategy.md` and
@@ -36,7 +36,7 @@ Two complementary layers, plus the cross-machine harness:
    and a client on ANOTHER LAN machine (over SSH) and compares per-heartbeat fingerprints. This is
    the ONLY way to catch desyncs that only appear across genuinely different hardware (different CPU
    core counts / Job-System scheduling) — a single box can't. One command, no MCP:
-   `SCENARIO=movement|construction|save [SAVE=Wittlebase] [LINES=12 BOTS=8 DURATION_S=60] [MIN_HB=0] [CLIENT_HOST=10.0.0.110] ./run_cross_machine_audit.sh`
+   `SCENARIO=movement|construction|save [SAVE=Wittlebase] [LINES=12 BOTS=8 DURATION_S=60] [MIN_HB=0] [CLIENT_HOST=10.0.0.110] ./scripts/audit/run_cross_machine_audit.sh`
    (exit 0 = NO DIVERGENCE). It pre-flights (SSH, same-sim-commit, free port, no stale state), writes
    both `.ff-local-automation.json` configs, waits for both reports, `scp`s the client's, compares
    with `compare_determinism_reports.sh`, and always cleans up (configs + play-mode `.mat` nulling on
