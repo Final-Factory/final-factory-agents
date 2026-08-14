@@ -120,6 +120,42 @@ top modal, screenshot again — modals stack, so repeat until the desktop is cle
 loop resumes instantly; re-trigger whatever was queued. Both editors on a box can be stalled
 by ONE system modal at the same time.
 
+### The scene-modified modal on macOS: signature, recovery, and the prevention that beats both
+
+(2026-08-14, M5+M3, 062 order-instrument cycles; the modal wedged three editors across two
+days and twice masqueraded as "slow compile".) The macOS signature of a RUNNING editor blocked
+by the **"open scene(s) have been modified externally — Reload/Ignore"** dialog: process alive
+at ~0% CPU in state `SN`, `Editor.log` still receiving worker-thread writes — specifically the
+pipeline server logging `Main thread operation timed out after 60000ms` on every request — and
+BOTH control channels (MCP bridge `execute_code` and `unity-cli`) timing out. When things
+"take a long time", suspect this FIRST, before diagnosing compiles: look at the window (Orca
+computer-use; accessibility granted on M5 2026-08-14) and click **Reload** (correct unless the
+editor holds deliberate unsaved scene work). If UI automation is unavailable, kill the
+path-verified editor process and use the prevention recipe below on relaunch.
+
+**Prevention — the standard harness bring-up, which makes the dialog structurally impossible:**
+
+1. Quit editors BEFORE any git operation that changes `.unity` files (merge, checkout, rebase).
+   Clean quit from inside: `EditorApplication.delayCall += () => EditorApplication.Exit(0)` via
+   `execute_code` (needs `safety_checks=false`) or `unity-cli eval_file`.
+2. Delete `Library/LastSceneManagerSetup.txt` before relaunching — the editor then auto-opens
+   NO scene, so no open scene exists for a disk change to invalidate.
+3. After the editor reports ready, open the boot scene explicitly from current disk state:
+   `EditorSceneManager.OpenScene("Assets/Scenes/main.unity")` via `eval_file`.
+
+Two adjacent traps from the same incident:
+
+- **`open -n` double-instance:** launching over ssh with `open -n … -projectPath X` while an
+  editor already runs on X silently spawns a SECOND instance that wedges on the
+  "project already open" dialog and poisons probes for both. Count
+  `ps -axo pid,command | grep "[M]acOS/Unity -projectPath"` and kill/reuse before launching.
+  (And path-verify EVERY remote kill — `MacOS/Unity` also matches the licensing client.)
+- **Post-checkout stale assemblies look "ready":** after a `git checkout <older-rev>` under an
+  editor whose Library was built at tip, `editor_status` reports ready and types shared by both
+  revisions resolve — proving nothing. Verify the loaded assemblies with a symbol that exists
+  in ONLY one of the two revisions (e.g. a type the newer rev added must be ABSENT after an
+  older-rev checkout), then force `recompile` if wrong.
+
 (Added 2026-07-21 on the Windows box; Mac shim added 2026-07-22.) The project carries
 `com.unity.pipeline` (exp), which runs a loopback HTTP server in the editor (ports 7800–7849,
 auto-starts, survives domain reloads) that a standalone `unity` CLI talks to with NO MCP
