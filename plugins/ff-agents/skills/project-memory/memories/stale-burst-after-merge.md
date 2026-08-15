@@ -1,12 +1,32 @@
 ---
 name: stale-burst-after-merge
-description: "Burst compiles ASYNCHRONOUSLY — an empty console right after refresh_unity proves nothing; wait on BurstLoader.BurstProgressId first. And after a merge that changes job structs or their callees, the editor can run STALE Burst native code (NRE) or fail to resolve new types (BC1054) — wipe Library/BurstCache/JIT, it's not a source bug"
+description: "Burst can be switched OFF entirely (check EnableBurstCompilation before every test run — a green suite then proves nothing about the Burst compile, and runs ~10x slower); it compiles ASYNCHRONOUSLY — an empty console right after refresh_unity proves nothing; wait on BurstLoader.BurstProgressId first. And after a merge that changes job structs or their callees, the editor can run STALE Burst native code (NRE) or fail to resolve new types (BC1054) — wipe Library/BurstCache/JIT, it's not a source bug"
 metadata: 
   node_type: memory
   type: project
   originSessionId: 5283ba8b-e465-4f26-a90d-3829a4297ca6
   modified: 2026-08-10T01:40:00.000Z
 ---
+
+## ZEROTH: Burst may be switched OFF entirely — check before every test run
+
+Everything below assumes Burst is actually compiling. It is an editor setting and it can be
+off, with no signal anywhere:
+
+```csharp
+var o = Unity.Burst.BurstCompiler.Options;
+var was = o.EnableBurstCompilation;
+if (!was) o.EnableBurstCompilation = true;   // == Jobs > Burst > Enable Compilation
+return new { was, now = o.EnableBurstCompilation };
+```
+
+With it off, every job runs managed: a suite can go green while the Burst compile is broken
+(no `BC` error can be produced at all), and the run is roughly 10x slower — measured
+2026-08-15, `FFPerformanceTests` at 476 s vs ~45–60 s, which then failed on the test
+framework's default 180 s watchdog for reasons unrelated to the code. Enabling it queues a full
+background compile, so wait it out per the section below before starting the run. The binding
+pre-test rule lives in the `editor-ops` skill ("Before ANY test run"); say so in your report if
+you turned it on, since it is persistent and the user may have disabled it on purpose.
 
 ## FIRST: you cannot read Burst's results until Burst has FINISHED
 
