@@ -36,6 +36,21 @@ gh pr diff <n> --repo Final-Factory/FinalFactory        # the diff
 - What matters, in order: correctness bugs; determinism (float/wall-clock/iteration-order in
   sim code, mutations bypassing the op queue); broken contracts with callers; project
   conventions (fp math, Messages constants, ECS patterns per docs/dots-reference.md).
+- Then engineering quality, judged for the long term, not the diff in isolation:
+  - Hacks and bandaids: special-case patches over the real cause, magic sleeps/retries,
+    hardcoded values that will drift, suppressed errors. If the PR papers over a bug
+    instead of fixing it, say so.
+  - Architecture and maintainability: does the change live in the right assembly/layer, or
+    does it smear responsibility across callers? Would the next person understand why it
+    exists? Watch for leaky abstractions and cross-layer reach-ins.
+  - Duplication: grep the codebase for existing helpers before accepting new ones; near
+    copies of logic that already exists elsewhere get flagged with a pointer to the
+    original.
+  - Dead code: unused params/fields/branches the diff adds or strands, commented-out code,
+    debug leftovers.
+  - Tests: behavior changes should come with tests when the repo has a natural home for
+    them (EditMode suites, determinism testcases); flag missing coverage, and also tests
+    that assert nothing real.
 - Few and real beats many and maybe. 0 comments is a valid review result; nitpicks that a
   formatter or reviewer bot could make are not worth Ben's name.
 
