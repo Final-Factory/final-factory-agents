@@ -196,11 +196,49 @@ Run tests through the MCP bridge with the instance pinned: start a run with `run
 poll `get_test_job` for results. Run the fast EditMode suite (`FFEditorTests`) by default;
 pass both `FFEditorTests` and `FFEditorTestsSlow` (or all EditMode assemblies) only when all
 tests are explicitly requested. After making code changes, run the fast tests and verify they
-pass before considering work complete. Only run slow tests if explicitly asked.
+pass before considering work complete. Only run slow tests if explicitly asked. **Confirm Burst
+is enabled and idle before starting any run** — see the next subsection.
 
 - **Editor tests** (fast): `Assets/Tests/` — FFEditorTests
 - **Editor tests** (slow): `Assets/TestsSlow/` — FFEditorTestsSlow
 - **Play mode tests**: `Assets/Scripts/PlayModeTests/` — FFPlayModeTests
+
+### Before ANY test run: Burst must be ENABLED, and finished compiling
+
+Burst compilation is an editor setting that can be off, and it does not announce itself. Check
+it, turn it on if it is off, then wait for its background queue to drain before starting the
+run. Both halves are load-bearing:
+
+- **Correctness — the reason this is a rule.** Code that compiles fine as C#/IL can still FAIL
+  Burst (`BC1054`, "Unable to resolve type", internal compiler errors). With Burst off, every
+  job silently runs managed, so a green suite proves nothing about whether the Burst-compiled
+  code builds at all. Same false-green family as the stale-assembly and missing-`.meta` traps
+  below, and it hides the exact class of error the shipped build would hit.
+- **Runtime.** Managed job execution is roughly an order of magnitude slower. Measured
+  2026-08-15: `FFPerformanceTests` took 476 s with Burst off versus ~45–60 s estimated with it
+  on — ~13x, uniformly across production `KnnSystem` and benchmark jobs alike — which blew the
+  test framework's default 180 s per-test watchdog (`UnityWorkItem.k_DefaultTimeout`) and
+  reported a timeout failure that had nothing to do with the code under test.
+
+Check and enable through `execute_code`:
+
+```csharp
+var o = Unity.Burst.BurstCompiler.Options;
+var was = o.EnableBurstCompilation;
+if (!was) o.EnableBurstCompilation = true;   // == Jobs > Burst > Enable Compilation
+return new { was, now = o.EnableBurstCompilation };
+```
+
+Enabling it queues a full background compile, and **Burst is asynchronous** — `refresh_unity`
+returning, `ready_for_tools`, and `compilation.is_compiling: false` all say nothing about it.
+Poll `Unity.Burst.Editor.BurstLoader.BurstProgressId` until the queue is empty, then scan for
+`BC`/`error CS` entries; the polling recipe, the `EnableBurstCompileSynchronously` variant for
+when a verdict must be airtight, and the `read_console` filter caveat are all in the
+`stale-burst-after-merge` project memory. A run started mid-queue measures the managed fallback
+and lets Burst errors hide behind it.
+
+If you turned Burst on, say so in your report — it is a persistent editor setting, and the user
+may have switched it off deliberately.
 
 **Never read `…/AppData/LocalLow/Never Games/finalfactory/TestResults.xml`** (or
 `PerformanceTestResults.json`). The Unity Performance Testing package
@@ -272,6 +310,10 @@ alone. **Verify through the MCP bridge, not by watching files**:
 **New `.cs` files**: an unimported script is not compiled at all — 0 errors + fresh domain
 reload + green tests can all be true while your new file is absent from the build. Confirm the
 `.meta` appeared next to it after refresh.
+
+**Burst disabled**: `error CS` clean + green suite covers the C#/IL compile only. If Burst
+compilation is off, no `BC` error can even be produced, so nothing here says the Burst path
+builds. Enable Burst and let its queue drain before the run — see "Before ANY test run" above.
 
 **Why not file-based checks**: they're slow and error-prone in a lot of edge cases (e.g. a
 compile failure in the editor may never update the watched file, hanging the watcher forever).

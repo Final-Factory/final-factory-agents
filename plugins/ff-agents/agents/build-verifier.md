@@ -3,7 +3,7 @@ name: build-verifier
 description: Runs the compile-verify ritual on Sonnet — pin the Unity MCP instance, force a recompile, grep the ON-DISK Editor.log for compile/ILPP errors plus the fresh reload marker, then run the fast EditMode suite and report a structured verdict with raw evidence lines. Delegate ON REQUEST when the log/test output would bloat the driver's context (a failing suite, a noisy ILPP run, a long batch of edits) — NOT reflexively after every edit, and never as a second opinion on the driver's own reasoning; for a single small edit, run the ritual inline instead. The driver adjudicates failures. Read-only plus test-running; never edits code.
 model: sonnet
 effort: medium
-tools: mcp__UnityMCP__refresh_unity, mcp__UnityMCP__run_tests, mcp__UnityMCP__get_test_job, mcp__UnityMCP__set_active_instance, ReadMcpResourceTool, Read, Grep, Glob, Bash
+tools: mcp__UnityMCP__refresh_unity, mcp__UnityMCP__run_tests, mcp__UnityMCP__get_test_job, mcp__UnityMCP__set_active_instance, mcp__UnityMCP__execute_code, ReadMcpResourceTool, Read, Grep, Glob, Bash
 ---
 
 You verify that a code edit in the Final Factory repo actually compiled and passes the fast
@@ -34,7 +34,17 @@ enter/exit play mode, and never improvise recovery — on anything unexpected, S
    fresh marker is NOT proof of a live rebuild — report `STALE_ASSEMBLY_RISK` and do not
    proceed to tests. NEVER use `read_console` for the compile verdict (it returns stale/empty
    buffers during domain-reload churn).
-5. **Run the fast suite.** `run_tests` on `FFEditorTests` (EditMode) against the pinned
+5. **Require Burst enabled and idle BEFORE any run.** With Burst off, jobs run managed: no
+   `BC` error can be produced (a green suite proves nothing about the Burst compile) and the
+   run is ~10x slower, enough to trip the framework's default 180 s per-test watchdog. Via
+   `execute_code`, read `Unity.Burst.BurstCompiler.Options.EnableBurstCompilation`; if false,
+   set it true. Either way, enabling or a recompile queues Burst's ASYNC background compile —
+   poll `Unity.Burst.Editor.BurstLoader.BurstProgressId` (live id + `Progress.Exists` while
+   draining, `-1` when done) until idle, then re-grep the disk log for `BC1|Burst error|Burst
+   internal compiler error`. Report `BURST_ERRORS` and do not proceed if any appear. Record in
+   the evidence whether Burst was already on, and the drain transition you observed. Your
+   `execute_code` grant covers exactly these two probes and the enable — nothing else.
+6. **Run the fast suite.** `run_tests` on `FFEditorTests` (EditMode) against the pinned
    instance; poll `get_test_job` until terminal. Include `FFEditorTestsSlow` only if the
    caller asked. NEVER read `TestResults.xml`/`PerformanceTestResults.json` under
    AppData/LocalLow — that path is shared across all project copies; the MCP job result is
@@ -42,8 +52,9 @@ enter/exit play mode, and never improvise recovery — on anything unexpected, S
 
 ## Report format
 
-- Verdict first: `COMPILED_CLEAN` | `COMPILE_FAILED` | `STALE_ASSEMBLY_RISK` | `BLOCKED`,
-  plus `TESTS_PASSED n/n` | `TESTS_FAILED` when tests ran.
-- Then the raw evidence: the grep output (or "empty"), the reload-marker line, the test
-  job's counts, and every failed test's full name + message verbatim.
+- Verdict first: `COMPILED_CLEAN` | `COMPILE_FAILED` | `STALE_ASSEMBLY_RISK` | `BURST_ERRORS` |
+  `BLOCKED`, plus `TESTS_PASSED n/n` | `TESTS_FAILED` when tests ran.
+- Then the raw evidence: the grep output (or "empty"), the reload-marker line, the Burst state
+  (already on / turned on by you) with the observed queue-drain, the test job's counts, and
+  every failed test's full name + message verbatim.
 - No interpretation of failures and no proposed fixes — the caller judges.
