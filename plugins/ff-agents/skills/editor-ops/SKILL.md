@@ -147,8 +147,11 @@ Two adjacent traps from the same incident:
 
 - **`open -n` double-instance:** launching over ssh with `open -n … -projectPath X` while an
   editor already runs on X silently spawns a SECOND instance that wedges on the
-  "project already open" dialog and poisons probes for both. Count
-  `ps -axo pid,command | grep "[M]acOS/Unity -projectPath"` and kill/reuse before launching.
+  "project already open" / "another Unity instance is running" dialog and poisons probes for
+  both. The race that keeps causing it: relaunching right after QUEUEING a quit (delayCall
+  Exit or SIGTERM) without waiting for the old process to die. HARD RULE: after any quit/kill,
+  POLL `ps -axo pid,command | grep -c "[M]acOS/Unity -projectPath <path>$"` until it reads
+  ZERO, and only then launch — a fixed sleep is not a substitute (bit three times 2026-08-15).
   (And path-verify EVERY remote kill — `MacOS/Unity` also matches the licensing client.)
 - **Post-checkout stale assemblies look "ready":** after a `git checkout <older-rev>` under an
   editor whose Library was built at tip, `editor_status` reports ready and types shared by both
