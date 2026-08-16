@@ -125,6 +125,18 @@ Fix: kill the editor (precondition-check its `-projectPath` first), delete
 `Temp/__Backupscenes` and any stale `Temp/UnityLockfile`, then relaunch. Boot proceeds normally
 and the bridge registers.
 
+**PREVENTION IS NOW MANDATORY (2026-08-16, Ben: top priority — this modal kept recurring): on
+macOS, launch automation editors ONLY through the game repo's `scripts/launch-editor.sh`**
+(landed `d9a3dced0`). Before launching it clears all three boot-wedge hazards —
+`Temp/__Backupscenes`, stale `Temp/UnityLockfile`, `Library/LastSceneManagerSetup.txt` (the
+no-auto-scene guard) — resolves the editor version from `ProjectSettings/ProjectVersion.txt`,
+and refuses to double-launch onto a project that already has a live editor (the `open -n`
+trap). Any unclean editor death (crash, SIGKILL) re-arms the modal for the NEXT boot, and the
+modal is native and pre-boot — no MCP/unity-cli channel exists yet to dismiss it — so ad-hoc
+`nohup Unity -projectPath …` launches WILL eventually wedge. After the script launches, open
+the boot scene explicitly via `eval_file` as usual. Automation editors never hold deliberate
+unsaved scene work, so discarding the backups is always correct on this path.
+
 ⚠️ Deleting that backup discards unsaved SCENE edits from the crashed session — check
 `git status -- '*.unity'` first. After an agent-driven play session there is normally nothing
 of value there. Note `osascript`/System Events cannot enumerate the dialog (no assistive
