@@ -67,6 +67,7 @@ worktrees and apply to ALL branches.
 
 - [Mod ABI package pinning](memories/mod-abi-package-pinning.md) — why Entities/URP versions are pinned (entities 1.3.10 / URP 17 on Unity 6000.0.71f1)
 - [ModLoader metadata inspection](memories/modloader-metadata-inspection.md) — mods inspected reflection-only (MetadataLoadContext) before Assembly.Load; which 3 plugin DLLs, the 4 polyfills to skip, and the FFCore.Unity namespace-shadowing gotcha (use global::Unity.Entities)
+- [Mod template breaks on new global-namespace game types](memories/mod-template-global-debug-autoreference.md) — FFCore's global `Debug` class produced ~260 CS0576 errors in the template's Unity packages via DLL auto-reference; fixed with tracked Auto-Reference-off metas + explicit precompiledReferences; check the template after shipping global types
 
 ## Maintaining this skill
 
