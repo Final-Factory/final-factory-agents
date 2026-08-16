@@ -19,9 +19,23 @@ while checking connector changes against the Wittlebase / MeltCPU saves):
 - **Grep with `-a`** or it reports "Binary file matches" and prints nothing.
 - **Drop a marker before an action** you'll want to isolate later:
   `UnityEngine.Debug.Log("CLAUDE_<thing>_START ...")` via `execute_code`, then `awk` from it.
-- **Several Unity processes write here.** A tail can show a *player build* from a different
-  process (its `##utp:{"type":"PlayerBuildInfo","processId":N}` names the builder), which reads
-  like the editor is idle/stale when it isn't. Don't infer the editor's state from a tail alone.
+- **⚠️ THE LOG IS SHARED, SO IT IS NOT EVIDENCE ABOUT YOUR INSTANCE.** Every running editor
+  interleaves into this one per-user file (macOS: `~/Library/Logs/Unity/Editor.log`). Nothing in
+  it is attributable to your pinned MCP instance unless something else proves it. This is the
+  same rule CLAUDE.md already states for the shared
+  `…/LocalLow/Never Games/finalfactory/TestResults.xml`, and it fails the same silent way: the
+  content is real, plausible, and about someone else's editor.
+  **Only instance-pinned MCP results are evidence** — a `run_tests` job id, `read_console` on the
+  pinned instance, or a report file under an explicitly-resolved project root.
+  *Ben caught this on 2026-08-15 (feature 064):* with four editors running, I read a
+  `[determinism] PASS` sweep out of `Editor.log`, concluded "my slow suite is blocking my editor",
+  and reported the passes as corroboration that my refactor was determinism-safe. The gate
+  belonged to a **different checkout** and never ran my code. The disproof was one line — my
+  instance's heartbeat was fresh and idle while the log kept growing 1.5 MB/8 s. If you catch
+  yourself explaining your own editor's behaviour from this file, stop.
+- A tail can likewise show a *player build* from a different process (its
+  `##utp:{"type":"PlayerBuildInfo","processId":N}` names the builder), which reads like the editor
+  is idle/stale when it isn't. Don't infer the editor's state from a tail alone.
 - **Identify THIS project's editor by port, not by CPU or guesswork:**
   `Get-NetTCPConnection -LocalPort 6401 -State Listen` → OwningProcess, cross-checked against
   `~/.unity-mcp/unity-mcp-port-<hash>.json` (`project_path`, `unity_port`) for the hash of the
