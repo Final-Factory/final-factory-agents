@@ -28,7 +28,7 @@ worktrees and apply to ALL branches.
 - [UnityMCP per-project config](memories/unitymcp-per-project-config.md) — the Unity bridge tools require a per-project UnityMCP server in ~/.claude.json (claude mcp add + restart)
 - [Verify compile via DLL string check](memories/verify-compile-dll-string-check.md) — refresh_unity can compile before a just-written Edit lands or skip compiling entirely (refresh_triggered false); confirm edits are live via DLL mtime, a new UTF-16 literal, or the live method's IL
 - [Bridge TCP fallback facts](memories/bridge-tcp-fallback.md) — policy says bridge-down = stop-and-notify (use the `unity` CLI for diagnostics), but the editor-driving facts hold: Roslyn execute_code works on Windows, UI clickable via reflection, read_console returns from the START of the buffer, LoadGame by name
-- [Unity Editor.log gotchas](memories/unity-editor-log-gotchas.md) — line numbers unreliable (binary content), slice with `awk` after a dropped marker, `grep -a`, map bridge port→PID to find the right editor, saturated main thread freezes the bridge without hanging the editor
+- [Unity Editor.log gotchas](memories/unity-editor-log-gotchas.md) — **the log is SHARED by every running editor, so nothing in it is evidence about YOUR pinned instance** (only MCP job ids / pinned `read_console` are — same rule as the shared TestResults.xml); line numbers unreliable (binary content), slice with `awk` after a dropped marker, `grep -a`, map bridge port→PID to find the right editor, saturated main thread freezes the bridge without hanging the editor
 
 ## Editor & play mode traps
 

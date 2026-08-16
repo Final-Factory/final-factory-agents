@@ -59,6 +59,41 @@ recover, and monitor readiness yourself:
    after targeted recovery has genuinely failed or an external prerequisite (licensing, OS dialog,
    missing installation) requires human action.
 
+### `busy: compiling` forever = the editor is stuck in PLAY MODE (2026-08-15, feature 064)
+
+`run_tests` kept returning `{"error":"busy","reason":"compiling"}` on every retry, while
+`~/.unity-mcp/unity-mcp-status-<hash>.json` said `"reason":"ready"` with a fresh heartbeat and
+`refresh_unity` timed out waiting for readiness. The editor was in play mode, which blocks script
+compilation indefinitely, so it was permanently "about to compile" and never would be.
+
+Diagnose and clear it in two calls — do not restart the editor for this:
+
+```csharp
+// 1. execute_code — the MCP status file will NOT tell you this
+return "isPlaying=" + UnityEditor.EditorApplication.isPlaying
+     + " isCompiling=" + UnityEditor.EditorApplication.isCompiling;
+// 2. execute_code
+UnityEditor.EditorApplication.isPlaying = false;
+```
+
+`isPlaying=True isCompiling=True` that never resolves is the signature. Note `execute_code` keeps
+working while play mode blocks compiles, so the bridge looks healthy — and a stray
+`.ff-local-automation.json` is a common cause but not the only one (there was none in this case).
+
+### NUnit `TestCaseSource` is enumerated at DISCOVERY, not at run
+
+A parameterized test whose source reads the filesystem (a saves folder, an artifact directory)
+builds its case list when the assembly is discovered. Changing those files mid-session does not
+change the case list — the next run replays the stale cases. **Force a domain reload
+(`UnityEditor.EditorUtility.RequestScriptReload()`) after changing anything a `TestCaseSource`
+reads**, or you will "verify" against the previous state and believe the result.
+
+Corollary from the same session: **`[Explicit]` does not stop such a test from running.** Invoking
+`run_tests(assembly_names: [...])` executes explicit tests — confirmed by a stack trace showing the
+body had entered. If a test is expensive enough that firing it unintentionally hurts (feature 064's
+corpus sweep: ~18 min of blocked editor), gate it on something real — an environment variable
+checked *before* it touches the filesystem. Treat `[Explicit]` as a label, not a guard.
+
 ### A hung BOOT is usually a native modal — relaunching reproduces it
 
 (2026-08-11, M3 Pro; cost ~10 min and two pointless relaunches before it was diagnosed.) An
