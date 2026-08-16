@@ -21,6 +21,22 @@ the workflow below, then return to MCP for authoritative work. The file-trigger 
 documented elsewhere (memory snapshots, the determinism harness) remain limited to their
 explicit workflows.
 
+## Mechanized preflight — run the script, don't recall the prose
+
+**`scripts/editor-preflight.sh <project-path>`** (game repo, 2026-08-16 harness review G9) is
+the executable form of this skill's recurring editor-readiness traps. Run it BEFORE any task
+that needs the live editor; each failure message carries its own diagnosis and fix:
+
+- exit 1 — no editor process owns the project (launch via `scripts/launch-editor.sh`);
+- exit 2 — process alive but loopback silent = the NATIVE MODAL class; the message gives the
+  `sample`-based diagnosis recipe;
+- exit 3 — not idle (compiling / play mode — where compiles are silently ignored);
+- exit 5 — Burst disabled or still draining (codegen asymmetry forks the sim, 062).
+
+`scripts/editor-preflight.sh --await-zero <project-path>` is the zero-poll gate before any
+relaunch (the `open -n` double-instance trap). The prose sections below remain the
+explanation of WHAT the failures mean; the script is how you check.
+
 ## Resolve and pin the target instance FIRST
 
 For ANY task that needs the live editor (compile/test confirmation, play mode, screenshots,
