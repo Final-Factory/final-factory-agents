@@ -20,6 +20,7 @@ worktrees and apply to ALL branches.
 - [Choose the smallest representative playtest fixture](memories/feedback-focused-fixtures-before-meltcpu.md) — default to Wittle Base, FlatMap, or another focused 16-UPS fixture for behavior/visual/feel tests; reserve MeltCPU for explicit worst-case scale and performance questions
 - [Notify Lothsahn when a repository task finishes](memories/feedback-discord-completion-notify-lothsahn.md) — after successful implementation and verification, post one extremely brief `@lothsahn` FYI in Discord `#dev-chat`, in PLAIN ENGLISH saying what behavior changed (no hashes/system names/audit stats); batch related substeps into one completion ping
 - [Publish harness changes/lessons to ff-agents proactively](memories/feedback-publish-harness-changes-to-ff-agents.md) — whenever a session changes shared harness behavior or learns a durable, reusable lesson, run the publish-skills workflow in that SAME session without being asked; batch the session's lessons into one version bump; report a blocked publish explicitly
+- [Write status reports in simpler, plainer language](memories/feedback-simple-report-language.md) — Ben wants the TL;DR-first shape and full detail kept, but carried by plain words and short sentences; run ids and codenames go in parentheses or bullets, never woven into dense prose
 
 ## Unity MCP bridge
 
