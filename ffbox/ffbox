@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+#
+# ffbox — hand a prompt to Claude, running one-shot inside a disposable Final Factory container.
+#
+#   ffbox "make the belt merger respect item priority"
+#   ffbox --no-unity "summarise how the save migration system works"
+#   ffbox --keep --prompt-file ./task.md
+#
+# Each run gets its own ZFS clone of the golden checkout, bind-mounted into a container built on
+# the same Unity image CI uses. The clone is instant and costs ~0 bytes no matter how large the
+# checkout is, and it inherits golden's warm Library/, so Unity does not re-import from cold.
+# When the run ends, the changes are harvested as a patch and the clone is destroyed.
+set -euo pipefail
+
+# --- configuration (override via environment) ------------------------------------------------
+IMAGE=${FFBOX_IMAGE:-ffbox:latest}
+GOLDEN_DS=${FFBOX_GOLDEN_DS:-rpool/ff/golden}
+GOLDEN_MNT=${FFBOX_GOLDEN_MNT:-/opt/FinalFactory}
+RUNS_DS=${FFBOX_RUNS_DS:-rpool/ff}
+RUNS_MNT=${FFBOX_RUNS_MNT:-/opt/ffruns}
+SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
+RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
+
+KEEP=0
+UNITY=1
+OUTPUT_FORMAT=text
+PROMPT=
+PROMPT_FILE=
+
+usage() {
+    sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+    cat <<'EOF'
+
+Options:
+  --prompt-file FILE   Read the prompt from FILE instead of the command line.
+  --no-unity           Skip Unity activation. Use for read-only or code-only prompts; it
+                       consumes no activation seat and starts much faster.
+  --keep               Leave the ZFS clone and its mountpoint in place for inspection.
+                       Destroy it yourself with: sudo zfs destroy <dataset>
+  --json               Emit Claude's stream-json output instead of plain text.
+  --image NAME         Container image to run (default: ffbox:latest).
+  -h, --help           Show this help.
+
+Secrets are read from an env file, never from the command line — anything in argv is visible
+in /proc/<pid>/cmdline and lands in shell history. Default location:
+  ~/.config/ffbox/secrets.env   (chmod 600; see secrets.env.example)
+EOF
+}
+
+# --- argument parsing --------------------------------------------------------------------------
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --prompt-file) PROMPT_FILE=${2:?--prompt-file needs a path}; shift 2 ;;
+        --no-unity)    UNITY=0; shift ;;
+        --keep)        KEEP=1; shift ;;
+        --json)        OUTPUT_FORMAT=stream-json; shift ;;
+        --image)       IMAGE=${2:?--image needs a name}; shift 2 ;;
+        -h|--help)     usage; exit 0 ;;
+        --)            shift; break ;;
+        -*)            echo "ffbox: unknown option $1" >&2; usage >&2; exit 2 ;;
+        *)             break ;;
+    esac
+done
+
+if [ -n "$PROMPT_FILE" ]; then
+    [ -r "$PROMPT_FILE" ] || { echo "ffbox: cannot read $PROMPT_FILE" >&2; exit 2; }
+    PROMPT=$(cat "$PROMPT_FILE")
+elif [ $# -gt 0 ]; then
+    PROMPT="$*"
+elif [ ! -t 0 ]; then
+    PROMPT=$(cat)
+fi
+
+if [ -z "${PROMPT// }" ]; then
+    echo "ffbox: no prompt given" >&2
+    usage >&2
+    exit 2
+fi
+
+# --- secrets ------------------------------------------------------------------------------------
+if [ -r "$SECRETS" ]; then
+    perms=$(stat -c '%a' "$SECRETS")
+    case "$perms" in
+        600|400) ;;
+        *) echo "ffbox: WARNING: $SECRETS is mode $perms; expected 600" >&2 ;;
+    esac
+    set -a
+    # shellcheck disable=SC1090
+    . "$SECRETS"
+    set +a
+else
+    echo "ffbox: WARNING: no secrets file at $SECRETS" >&2
+    echo "       Run 'sh ffbox/setup.sh' to create it from the template." >&2
+fi
+
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    echo "ffbox: CLAUDE_CODE_OAUTH_TOKEN is not set. Generate one with 'claude setup-token'" >&2
+    echo "       and put it in $SECRETS — it bills against your subscription, not an API key." >&2
+    exit 78
+fi
+
+# A Unity .ulf does not contain a usable license for the container: game-ci extracts the 27-char
+# serial out of it and activates online with that. Replicate the decode here so the secrets file
+# can hold either UNITY_SERIAL directly or a path to the .ulf.
+if [ "$UNITY" = 1 ] && [ -z "${UNITY_SERIAL:-}" ] && [ -n "${UNITY_LICENSE_FILE:-}" ]; then
+    if [ ! -r "$UNITY_LICENSE_FILE" ]; then
+        echo "ffbox: cannot read UNITY_LICENSE_FILE=$UNITY_LICENSE_FILE" >&2
+        exit 78
+    fi
+    # <DeveloperData Value="base64"/> — decode, then drop 4 leading garbage bytes.
+    UNITY_SERIAL=$(sed -n 's/.*<DeveloperData Value="\([^"]*\)".*/\1/p' "$UNITY_LICENSE_FILE" \
+                   | head -1 | base64 -d 2>/dev/null | cut -c5-)
+    export UNITY_SERIAL
+    if [ ${#UNITY_SERIAL} -ne 27 ]; then
+        echo "ffbox: extracted a ${#UNITY_SERIAL}-char serial from $UNITY_LICENSE_FILE; expected 27" >&2
+        exit 78
+    fi
+fi
+
+# --- preflight ------------------------------------------------------------------------------------
+command -v docker >/dev/null || { echo "ffbox: docker not found" >&2; exit 127; }
+docker image inspect "$IMAGE" >/dev/null 2>&1 || {
+    echo "ffbox: image '$IMAGE' not built. Run: ffbox/build.sh" >&2
+    exit 69
+}
+[ -d "$GOLDEN_MNT" ] || { echo "ffbox: golden checkout missing at $GOLDEN_MNT" >&2; exit 69; }
+
+RUN_ID=$(date +%Y%m%d-%H%M%S)-$$
+SNAP="${GOLDEN_DS}@ffbox-${RUN_ID}"
+CLONE="${RUNS_DS}/run-${RUN_ID}"
+MNT="${RUNS_MNT}/run-${RUN_ID}"
+OUT="${RESULTS}/${RUN_ID}"
+
+mkdir -p "$OUT"
+printf '%s' "$PROMPT" > "$OUT/prompt.txt"
+
+# --- lifecycle ---------------------------------------------------------------------------------
+cleanup() {
+    local rc=$?
+    set +e
+
+    # Stop rather than kill: SIGTERM reaches run-as-user.sh as PID 1 so it can hand the Unity
+    # activation seat back before dying. A killed container leaks the seat.
+    if docker ps -q --filter "name=ffbox-${RUN_ID}" | grep -q .; then
+        echo "[ffbox] stopping container (allowing license return)..." >&2
+        docker stop --timeout 120 "ffbox-${RUN_ID}" >/dev/null 2>&1
+    fi
+
+    if [ "$KEEP" = 1 ]; then
+        echo "[ffbox] --keep: clone left at $MNT (dataset $CLONE)" >&2
+        echo "[ffbox]         destroy with: sudo zfs destroy $CLONE && sudo zfs destroy $SNAP" >&2
+    else
+        # Order matters: a snapshot cannot be destroyed while a clone still depends on it.
+        [ -n "${CLONE_MADE:-}" ] && sudo zfs destroy "$CLONE" 2>/dev/null
+        [ -n "${SNAP_MADE:-}" ]  && sudo zfs destroy "$SNAP"  2>/dev/null
+    fi
+    return $rc
+}
+trap cleanup EXIT INT TERM
+
+echo "[ffbox] run $RUN_ID"
+echo "[ffbox] snapshotting $GOLDEN_DS"
+sudo zfs snapshot "$SNAP"
+SNAP_MADE=1
+
+sudo zfs clone -o mountpoint="$MNT" "$SNAP" "$CLONE"
+CLONE_MADE=1
+echo "[ffbox] workspace: $MNT (clone of $SNAP)"
+
+# --- run -----------------------------------------------------------------------------------------
+# Secrets go in as environment variables read from the host-side env file. They are never baked
+# into the image and never appear in argv.
+set +e
+docker run --rm \
+    --name "ffbox-${RUN_ID}" \
+    --hostname ffbox \
+    -v "$MNT:/workspace" \
+    -v "$OUT:/ffbox/out" \
+    -v "$OUT/prompt.txt:/ffbox/prompt.txt:ro" \
+    -e CLAUDE_CODE_OAUTH_TOKEN \
+    -e UNITY_SERIAL -e UNITY_EMAIL -e UNITY_PASSWORD \
+    -e FFBOX_UNITY="$UNITY" \
+    -e FFBOX_OUTPUT_FORMAT="$OUTPUT_FORMAT" \
+    "$IMAGE"
+RUN_RC=$?
+set -e
+
+# --- harvest ---------------------------------------------------------------------------------------
+# Do this before cleanup destroys the clone, or the work evaporates with it.
+if [ -d "$MNT/.git" ]; then
+    git -C "$MNT" status --porcelain > "$OUT/status.txt" 2>/dev/null || true
+    git -C "$MNT" add -A -- . 2>/dev/null || true
+    git -C "$MNT" diff --cached --binary > "$OUT/changes.patch" 2>/dev/null || true
+    git -C "$MNT" reset >/dev/null 2>&1 || true
+
+    if [ -s "$OUT/changes.patch" ]; then
+        files=$(wc -l < "$OUT/status.txt")
+        echo "[ffbox] harvested changes to $files file(s): $OUT/changes.patch"
+        echo "[ffbox] apply with: git -C $GOLDEN_MNT apply $OUT/changes.patch"
+    else
+        echo "[ffbox] no file changes in this run"
+        rm -f "$OUT/changes.patch"
+    fi
+fi
+
+echo "[ffbox] results: $OUT"
+exit "$RUN_RC"
