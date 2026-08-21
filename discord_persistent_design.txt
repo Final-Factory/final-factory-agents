@@ -1,0 +1,728 @@
+ffbox + Discord: persistent conversation design
+===============================================
+
+Revision 2, 2026-08-21. Supersedes revision 1 entirely.
+
+What changed: revision 1 was written before feature 059 was found. 059 is a complete,
+offline-tested, never-deployed Discord-to-Claude pipeline already in the game repo that
+overlaps most of this design. Revision 2 folds it in, and fixes five pieces of discipline
+revision 1 was missing that 059 already had right.
+
+Scope: wire the Final Factory Discord pipeline into ffbox, with per-thread conversation
+continuity and queryable state for a web UI.
+
+
+0. The five corrections
+-----------------------
+
+Revision 1 got these wrong or skipped them. They are 059's, and they are the reason this
+revision exists. Each is folded into its section below; they are listed together here so they
+cannot be lost in the detail.
+
+  1. CAPABILITIES ARE CONSTRUCTED, NOT REQUESTED (section 7). Revision 1 leaned on each agent
+     role's `tools:` frontmatter and then ran ffbox with --dangerously-skip-permissions. That
+     is defensible for a disposable clone and wrong here: the container acts on text written
+     by strangers and has Discord side effects. Every lane now names its tools on the command
+     line, so a read-only run is incapable of writing rather than asked not to. The tool
+     allowlist is real enforcement; the per-command deny patterns are not, and section 7 says
+     which controls actually hold the write lanes.
+
+  2. FAIL CLOSED (section 7). If classification does not complete, the run gets the least
+     privileged capability set, and the reply says so. Revision 1 had no failure path at all.
+
+  3. TIME CEILINGS (section 8). Revision 1 had no timeouts anywhere. Unattended loops need a
+     working-time ceiling, a separate warm-up ceiling, and a force-kill after the stop signal
+     is ignored.
+
+  4. POSTING DISCIPLINE IS ENFORCED HOST-SIDE (section 11). `ffdiscord post` expands `@name`
+     into a real ping on whole-word matches, and `check_length` exits rather than truncating
+     above Discord's 2000 characters. Revision 1 left both as advice inside skill bodies.
+     They belong in the sender, along with persist-before-post ordering.
+
+  5. THE RESULTS-PATH RACE (section 14). Unity's Performance Testing package writes to
+     a companyName/productName-derived path that every copy of the project shares. The game
+     repo's CLAUDE.md names it as `.../LocalLow/Never Games/finalfactory/TestResults.xml` and
+     says never read it. Revision 1 said "run the EditMode suite" and never mentioned it.
+
+
+1. What exists
+--------------
+
+Three layers. Only the third is contested.
+
+TRANSPORT (keep, unchanged)
+
+  ffdiscord            REST client. doctor, channels, threads, read, thread, post, ask, edit,
+                       react, thread-create, download, unseen, mark-seen, cursors, config, set.
+                       Config and cursors under ~/.config/ffdiscord/, relocatable with
+                       FFDISCORD_HOME. Token also from FFDISCORD_TOKEN. Cursor writes are
+                       flock-protected.
+
+  ffdiscord-listener   Gateway websocket. Appends one JSON line per event to
+                       ~/.config/ffdiscord/events.jsonl. Kinds: message, thread,
+                       thread_message, player_mention, lothsahn_directive, catchup. Intents are
+                       GUILDS | GUILD_MESSAGES; MESSAGE_CONTENT is deliberately not requested,
+                       so the line carries ids only and never message text.
+
+  Both now ship in this repo, in the ff-discord plugin at
+  plugins/ff-discord/skills/discord-cli/, with a launcher on PATH installed by
+  registerAgents.sh. Callers say `ffdiscord ...`, not a path. Max's voice moved too, to
+  plugins/ff-discord/skills/max-voice/SKILL.md. The game-repo copies still exist and still
+  work; DISCORD-MIGRATION-CLEANUP.md is the runbook for removing them.
+
+BEHAVIOUR (keep, amend)
+
+  plugins/ff-discord/  skills ask-claude, discord-triage, ask-dev, discord-cli, max-voice;
+                       agents discord-answerer (Opus, read-only), discord-triager (Opus,
+                       read-only, may post to the thread it investigates), discord-dev-agent
+                       (Fable, implements and opens PRs, never merges).
+
+CONSUMERS (three today, none survives as the primary path)
+
+  a. The standing-watch Claude session. A permanently-running Haiku session tails
+     events.jsonl with a Monitor and spawns the agents. ffwatch replaces it. The ask-claude
+     skill already says this driver must never read Discord content or compose an answer, only
+     route on `kind`, which is a way of saying the job does not need a model. Demote to the
+     documented fallback for a machine without ffbox (BEAST, Windows).
+
+  b. The polling recipes, /loop 15m /discord-triage and /loop 5m /ask-claude. Redundant once
+     the listener exists. Demote to "running a pass by hand".
+
+  c. Feature 059, scripts/pipeline/ plus deploy/pipeline/. Section 4.
+
+ffbox, for reference: snapshot rpool/ff/golden, zfs clone, bind mount at /workspace, docker run
+on the CI Unity image, entrypoint.sh setpriv to the host UID, run-as-user.sh activates Unity and
+runs `claude -p`, harvest a patch, destroy the clone. FFBOX_ENTRY selects an alternate task.
+
+
+2. Verified facts
+-----------------
+
+Established by running things on this host, not by reading docs.
+
+  a. Golden is /opt/FinalFactory on master at 0579c37b8. The Discord code is on develop. Every
+     ZFS clone ffbox hands a container is therefore missing it. Solved two ways now: the CLI
+     ships in the plugin, and the workspace gets --ref develop (section 16).
+
+  b. ~/.config/ffdiscord/ does not exist on this host. No bot config here yet.
+
+  c. The ffbox image has Python 3.10.12 and git. It has no gh.
+
+  d. Nested bind mounts work: a host directory mounts at a subpath of the /workspace bind mount,
+     and Docker creates the intermediate directories.
+
+  e. `claude -p --plugin-dir <plugin>` exposes that plugin's skills AND agents, namespaced.
+     Verified against plugins/ff-discord: it listed ask-claude, ask-dev, discord-triage,
+     discord-answerer, discord-dev-agent, discord-triager. No image bake, no CLAUDE_CONFIG_DIR
+     juggling, no registerAgents.sh in the container.
+
+  f. Session resume works. Two-turn round trip with --session-id then --resume, with
+     CLAUDE_CONFIG_DIR pointed at a scratch directory and CLAUDE_CODE_OAUTH_TOKEN in the
+     environment. Turn 2 answered from turn 1's context; the session id stayed stable; the
+     transcript landed at <config>/projects/<cwd-slug>/<session>.jsonl.
+
+  g. The cwd slug is the working directory with separators replaced by dashes. ffbox always
+     runs with cwd /workspace, so the slug is always "-workspace" and the transcript path is
+     deterministic across runs even though the clone underneath differs every time.
+
+  h. Transcript records are JSONL with type, uuid, parentUuid, sessionId, timestamp, cwd,
+     gitBranch, isSidechain, message, version. parentUuid gives a DAG; isSidechain marks
+     subagent records. Better for a review UI than stream-json.
+
+  i. --tools, --allowedTools and --disallowed-tools are all real flags on the installed CLI, so
+     059's capability construction ports directly.
+
+  j. ffdiscord's cmd_post does not send a `nonce`. Discord's create-message endpoint supports
+     nonce with enforce_nonce for server-side dedupe (section 12).
+
+  k. The container's HOME is not bind-mounted. entrypoint.sh creates /home/ffbox inside the
+     container filesystem, so concurrent ffbox runs do not share a Unity results directory.
+     This is
+     the structural reason ffbox is less exposed to the results-path race than 059's pooled
+     workers, which share one host user's HOME. Not a reason to skip section 14.
+
+  l. Capability flags were measured on this host, on Haiku, with a harmless stand-in deny
+     pattern `Bash(echo secret*)`:
+       A. --tools Read,Grep,Glob, asked to run a shell command -> reported it had no Bash tool,
+          and permission_denials was EMPTY. The tool was never offered.
+       B. --allowedTools Bash --disallowed-tools "Bash(echo secret*)", direct form -> denied,
+          denial recorded.
+       C. Same flags, `sh -c 'echo secret-payload'` -> RAN, output returned, no denials. The
+          deny pattern is evaded by a trivial wrapper.
+       D. --dangerously-skip-permissions plus the same deny rule, direct form -> still denied.
+          Deny rules survive bypass mode, so the guard is not silently erased if someone adds
+          that flag later.
+
+3. What died with revision 1
+----------------------------
+
+Kept here so the next reader does not resurrect them.
+
+  - The debounce timer. Replaced by claiming messages against a turn (section 12), which
+    batches correctly and cannot drop a message that lands mid-run.
+  - Container-side cursors. The host owns watermarks in the database, so the container never
+    runs unseen or mark-seen. ~/.config/ffdiscord/state.json becomes host-only.
+  - Baking plugins into the image. --plugin-dir (2e) replaced it.
+  - --dangerously-skip-permissions for Discord lanes (section 7).
+
+
+4. Feature 059
+--------------
+
+2,604 lines across eleven modules in scripts/pipeline/, plus deploy/pipeline/,
+docs/appsscript/runs.gs, scripts/ffresume.{sh,ps1}, and specs/059-claude-discord-pipeline/.
+Documentation/Claude-Discord-Pipeline.md says code complete and offline-tested 2026-08-02, not
+deployed. ~/ff-pipeline does not exist on this host, so it has never run here.
+
+Its shape: one Discord channel behind an author allowlist, a dispatcher, a pool of workers each
+with its own checkout and a warm-standby Unity container, a harness-owned classifier, a
+harness-owned verification step, harness-owned branch and PR publication, a durable JSON job
+record per run, and a Google Sheet as the review log.
+
+REPLACED BY ffwatch + ffbox + SQLite
+
+  ffpipeline.py (377)    dispatcher and pool
+  worker.py (258)        warm-standby state machine
+  unity_runner.py (244)  container lifecycle
+  jobs.py (199)          JSON job records, queue, dedupe, recovery
+  sheets.py (78)         plus docs/appsscript/runs.gs, the review log
+
+  The worker model is the main casualty. 059 gives each worker a full checkout and a multi-GB
+  Library/, and its own deploy README says pool size is "a measurement, not a guess" because
+  each slot is expensive. A ZFS clone from golden costs approximately nothing and inherits the
+  warm Library, so the scarcity 059 spends most of its complexity managing stops existing.
+
+PORTED, NOT DELETED
+
+  classifier.py (100)    the capability boundary and its fail-closed status. Section 7.
+  runner.py (222)        build_capabilities and the time bounding. Sections 7 and 8.
+  github_api.py (84)     retrying, rate-limit-aware GitHub client. Section 17 needs it.
+  report.py (130)        compose_head, HEAD_CAP=1500 with file attachment overflow, --silent
+                         everywhere, the state emoji table, the `ffresume <session_id>` footer,
+                         and the ordering that writes the record before posting. Section 11.
+  pipeline_config.py     the pattern of a config block inside ~/.config/ffdiscord/config.json.
+  scripts/ffresume.*     takes a session id and resumes it interactively on a desktop. Works
+                         unchanged against per-conversation session ids. Keep as-is.
+
+INVARIANTS PORTED FROM data-model.md
+
+  - The session id is generated before the agent launches, so a run that crashes, hangs, or is
+    killed is still identifiable and resumable. This design goes further: the id is uuid5 of
+    the thread id, so it does not depend on anything surviving.
+  - The harness is the system of record. Branch, PR and verification come from git, the GitHub
+    API response, and the harness's own test run, never parsed from the agent's prose.
+  - Every terminal state writes both a durable record and a Discord reply. Silence is not a
+    permitted outcome.
+  - Nothing merges. 059 states this as "the agent is denied git push and gh outright"; section 7
+    shows that denial by command pattern is a tripwire, so here it is held by the agent having
+    no credential and no gh binary at all.
+  - The harness only ever destroys containers it named. Section 14.
+
+WHAT 059 CANNOT DO, WHICH IS WHY IT IS NOT SIMPLY ADOPTED
+
+  - No conversation continuity. Its data model is Request 1-1 Run, message_id is the
+    idempotency key, one Run per message ever. There is no resume across messages in a thread.
+  - One channel behind an allowlist, not the public #ask-assistant and #bug-reports the
+    ff-discord skills are written for.
+  - A Google Sheet as the review log, not something a web UI can query.
+
+Caveat on the "replaced" column: ffpipeline.py's body and the 743-line test suite have not been
+read line by line. Treat it as a considered proposal, not a verdict, until they have been.
+
+
+5. Architecture
+---------------
+
+The host daemon is a conversation manager. The container is a stateless turn worker. The
+container thinks; the host remembers, decides what the container may do, and owns every fact.
+
+  Discord Gateway
+        |  persistent websocket, host
+  ffdiscord-listener  ---->  ~/.config/ffdiscord/events.jsonl
+        |  tail -F
+  +-----v----------------------------------------------+
+  | ffwatch (new: ffbox/ffwatch.py, host)               |
+  |   ingest       fetch messages, download attachments |
+  |   classify     decide the lane and the capability   |
+  |                set, fail closed                     |
+  |   schedule     serialize per conversation, cap      |
+  |                concurrency, enforce ceilings        |
+  |   verify       compile + EditMode, harness-owned    |
+  |   publish      push, open the PR, from git and the  |
+  |                GitHub API                           |
+  |   send         validate and post the outbox         |
+  +---+---------------------------------------------+--+
+      |                                             |
+  SQLite + blobs                              ffbox run (one container per turn)
+      |                                             |
+      |   /workspace           clone at the pinned sha, --ref develop
+      |   /ffbox/claude        rw, CLAUDE_CONFIG_DIR, the session transcript
+      |   /ffbox/plugins       ro, passed to --plugin-dir
+      |   /ffbox/attachments   ro, downloaded blobs for this conversation
+      |   /ffbox/job.json      ro, this turn
+      |   /usr/local/bin/ffdiscord  ro, the outbox shim, resolved by name
+      +-- /ffbox/out           rw, outbox.jsonl, stream.jsonl, result.json
+
+The listener stays on the host: it is a long-lived socket with a single-instance lock, and
+containers are disposable.
+
+
+6. Conversations
+----------------
+
+A conversation is a Discord thread. Bug report threads and suggestion threads map one to one.
+For #ask-assistant, which is a text channel with reply chains rather than threads, key the
+conversation on the root of the reply chain; the listener provides referenced_message, so
+walking to the root is cheap. Fall back to a one-shot conversation when there is no chain.
+
+    session_id = uuid5(FFBOX_NS, "discord:" + thread_id)
+
+Deterministic, a valid UUID as --session-id requires, and reconstructible without a lookup.
+Store it on the conversation row anyway, because compaction and forking create new ids.
+
+    turn 1 :  claude -p --session-id <session_id> ...
+    turn N :  claude -p --resume <session_id> ...
+
+If the transcript is missing or unreadable, fall back to --session-id with a host-rendered
+summary of the conversation so far, which the database can always produce. The session file
+carries the investigation forward; the database is the system of record.
+
+BASE PINNING. A conversation pins the commit sha it was first cloned from and stays there for
+its lifetime. Otherwise turn 5 resumes a transcript full of file.cs:214 evidence gathered
+against a tree that has since moved, and the model reasons from stale line numbers. Re-base
+deliberately when a thread escalates to the fix lane, and say so in that turn's prompt.
+
+
+7. Capability construction  [correction 1 and 2]
+------------------------------------------------
+
+The classification is turned into the actual process invocation. A read-only run is launched
+with no write tools, so it is incapable of writing. An instruction in a prompt can be argued
+with by a player who writes a clever message; a process launched without Edit cannot.
+
+ffwatch classifies before launching, using the doorbell kind plus a cheap model call for the
+ambiguous cases, and records the classification on the turn whatever the outcome.
+
+  lane      tools                              disallowed                        unity
+  ------    -------------------------------    ------------------------------    -----
+  answer    Read,Grep,Glob                     -                                 no
+  triage    Read,Grep,Glob                     -                                 no
+  fix       Read,Grep,Glob,Edit,Write,Bash     Bash(git push*), Bash(gh *),      yes
+                                               Bash(git remote*)
+  dev       Read,Grep,Glob,Edit,Write,Bash     same                              yes
+
+Deliberately coarse, following 059: a read-only lane gets no Bash at all, which removes
+git commit along with everything else. There is no clever subset to get wrong.
+
+THE TWO COLUMNS ARE NOT THE SAME KIND OF CONTROL. Measured, not assumed (2l):
+
+  `tools` is STRUCTURAL. The excluded tools are never placed in the tool list sent to the
+  model, so there is nothing to call and nothing to deny. A read-only lane cannot write no
+  matter what a player talks it into wanting. The answer and triage lanes, which are the ones
+  directly fed untrusted player text, are genuinely contained by this.
+
+  `disallowed` is a STRING MATCHER on the command text, and it is evadable. `Bash(git push*)`
+  stops `git push`; it does not stop `sh -c 'git push'`, `cd x && git push`, a two-space
+  `git  push`, `/usr/bin/gh`, or a script written and then executed. Treat it as a tripwire
+  that turns an accident into a recorded permission_denials entry, never as a boundary.
+
+  This matters for the write lanes specifically, because a fix job's prompt derives from a
+  player-written bug report. Those lanes are adversary-exposed too.
+
+WHAT ACTUALLY CONTAINS THE WRITE LANES, in order of load borne:
+
+  1. No credentials in the container. `git push` fails for want of auth, `gh` fails for want of
+     a token and is not in the image (2c). The host holds both. Section 17.
+  2. Host-owned publish. The container commits locally; ffbox harvests a bundle; ffwatch
+     decides what is pushed and what PR opens. Nothing the agent does reaches origin directly.
+  3. A disposable clone. The workspace is destroyed at the end of the run.
+  4. Egress control, if we want it. Not designed yet, and the honest gap in this list: a write
+     lane can still make arbitrary outbound requests. Worth deciding before phase 3.
+  5. The disallowed list, as the tripwire above.
+
+FAIL CLOSED. If classification does not complete, the turn runs in the answer lane and the
+record carries status=failed_closed plus the reason. The reply says the run was read-only and
+why. A failure to decide never widens capability.
+
+"Nothing merges" is held by items 1 and 2 above, not by the disallowed list. ffwatch owns
+publish and pull-request creation (section 17); the agent is not merely forbidden them, it has
+no credential to use.
+
+This replaces --dangerously-skip-permissions for every Discord lane. ffbox keeps it for
+ordinary interactive one-shots, where the operator chose the prompt.
+
+
+8. Ceilings and kill discipline  [correction 3]
+-----------------------------------------------
+
+Three separate clocks, because conflating them makes a slow import look like a hung agent.
+
+  agent_secs      900     agent working time. Starts when the container's claude process
+                          starts, not when ffbox does.
+  warmup_secs     3600    clone, container start, Unity activation, Library delta. Not in the
+                          agent's budget.
+  kill_grace      10      after SIGTERM is ignored, force.
+
+Exceeding agent_secs is a terminal state (timed_out), not a retry. It writes a record and a
+Discord reply like any other terminal state.
+
+Stopping goes through `docker stop` with a grace period, never `docker kill`, because
+run-as-user.sh is PID 1 and its trap returns the Unity activation seat. A killed container
+leaks the seat. This is already true in ffbox; it is stated here because the ceiling logic is
+what will be tempted to shortcut it.
+
+
+9. State on disk
+----------------
+
+  ~/ffbox-state/
+    ffwatch.db                                     SQLite, WAL mode
+    conversations/<id>/
+      claude/projects/-workspace/<session>.jsonl   mounted rw at CLAUDE_CONFIG_DIR
+      runs/<run_id>/job.json                       the turn spec
+      runs/<run_id>/stream.jsonl                   raw stream-json
+      runs/<run_id>/outbox.jsonl                   what the container wants posted
+      runs/<run_id>/result.json                    structured verdict
+      runs/<run_id>/summary.md                     overflow text, attached when too long
+    blobs/<sha256[0:2]>/<sha256>                   attachments, content-addressed
+
+Blobs are shared across conversations and content-addressed because the same save file gets
+re-posted, and because Discord attachment URLs are signed and expire. Download at ingest.
+
+
+10. Database
+------------
+
+SQLite in WAL mode. One writer, any number of readers, nothing to operate, and a web UI can
+open it read-only or go through a small read API when it moves off-box.
+
+  conversation(id, guild_id, channel_id, thread_id UNIQUE, root_message_id,
+               kind,            -- bug_report | suggestion | ask | mention | directive
+               title, opener_discord_id,
+               state,           -- idle | queued | running | blocked | closed
+               session_id, session_generation, base_sha, lane,
+               in_watermark_id, out_watermark_id,
+               verdict, github_issue, github_pr,
+               created_at, last_activity_at)
+
+  message(id, conversation_id, discord_id UNIQUE, direction,   -- in | out
+          author_id, author_name, is_bot, content,
+          referenced_discord_id, turn_id, created_at)
+
+  attachment(id, message_id, filename, content_type, bytes,
+             sha256, blob_path, kind,   -- log | save | image | other
+             discord_url, downloaded_at)
+
+  turn(id, conversation_id, seq, trigger, lane, status,
+       classification_json, failed_closed, failed_closed_reason,
+       queued_at, started_at, ended_at, error)
+
+  run(id, turn_id, ffbox_run_id, container_name, session_id, resumed,
+      base_sha, unity, tools, disallowed,
+      exit_code, terminal_state, num_turns, cost_usd,
+      input_tokens, output_tokens, cache_read_tokens,
+      warmup_secs, agent_secs, stream_path, patch_path)
+
+  verification(id, run_id, ran, compiled, compile_errors,
+               tests_run, tests_passed, tests_failed,
+               results_path, evidence)
+
+  transcript_event(id, run_id, seq, uuid, parent_uuid, is_sidechain, agent,
+                   type,   -- user | assistant | thinking | tool_use | tool_result
+                   tool_name, text, payload_json, ts)
+
+  outbound(id, run_id, conversation_id, action,   -- post | react | edit
+           payload_json, nonce, status,           -- pending | sent | rejected | dry
+           discord_id, reject_reason, created_at, sent_at)
+
+verification is its own table, not a column on run, because it is produced by the harness after
+the agent exits and the agent must not be able to write it. transcript_event is an index over
+the session JSONL, not a replacement: the file stays as source of truth and payload_json keeps
+full fidelity for indexed rows. parent_uuid plus is_sidechain give the UI a tree where each
+subagent's work, thinking included, nests under the tool call that spawned it.
+
+Capture flags: --output-format stream-json for live progress, --forward-subagent-text to get
+subagent text and thinking into that stream, and index the session transcript after the run for
+the parentUuid DAG that stream-json does not carry.
+
+
+11. Who talks to Discord  [correction 4]
+----------------------------------------
+
+The host does all reads: fetch new messages, download attachments, resolve replies, advance
+watermarks. The container gets job.json with the new messages, their authors, thread metadata,
+and local paths for every downloaded attachment.
+
+The container posts by writing intents to /ffbox/out/outbox.jsonl. The shim is mounted at
+/usr/local/bin/ffdiscord, so it is picked up by name exactly as the plugin's launcher would be.
+(Revision 1 put it at /workspace/scripts/discord/ffdiscord.py, which was correct then and is
+wrong now: the ff-discord skills were rewritten on 2026-08-21 to invoke `ffdiscord` on PATH, so
+a shim at the old repo-relative path would never be called.) It keeps the command surface
+identical so skill text does not change: thread and read print from the job bundle, download copies from the mounted blob
+directory, post and react append to the outbox, unseen and mark-seen are no-ops that print the
+job's messages, doctor reports healthy against the bundle. The container holds no credentials
+for anything but the Claude API.
+
+THE SENDER ENFORCES, the skills only advise:
+
+  - --silent on every reply. ffdiscord post expands @name into a real ping on whole-word
+    matches, so an agent quoting @ben out of a code comment pings a person. Nothing reaches
+    Discord without it unless a lane explicitly asks to ping, and dev-chat escalation is the
+    only lane that does.
+  - Length. check_length exits rather than truncating above 2000 characters. Compose a head
+    under HEAD_CAP (1500, leaving room for framing lines) and attach the remainder as a file.
+    Never let the cap turn into a failed post or a halved reply.
+  - Persist before post. The record is written first, so the record survives a Discord outage.
+    A post failure is logged and swallowed; a record failure aborts the turn.
+  - Kill switch, rate limits, dry-run. One place, applied to everything.
+
+Every outbound message exists in the database before it exists in Discord, so the web UI gets a
+moderation queue by rendering outbound WHERE status='pending', and approval-before-send becomes
+a config flag rather than a redesign.
+
+The reply itself follows 059's compose_head: state and job id, cost and turn count, the
+classification (including a visible warning when failed_closed), the verification result,
+branch and PR or the reason there is none, the summary, and an `ffresume <session_id>` footer
+so a human can pull the whole conversation onto a desktop.
+
+Fallback if the shim is not worth its maintenance: put the bot token in the container and let
+the real CLI run, with the host mirroring the outbox log afterwards. Less safe, less capable,
+about a day less work.
+
+
+12. Ordering, batching, crash recovery
+--------------------------------------
+
+One in-flight run per conversation, enforced by conversation.state plus a lock file. Two
+concurrent runs resuming one session id would fork the transcript.
+
+Messages arriving during a run are inserted with turn_id = NULL. When the run finishes the
+scheduler checks for unclaimed messages and immediately queues the next turn. A burst of three
+follow-ups while Claude is thinking becomes one turn, and nothing is dropped.
+
+Across conversations, run in parallel up to a cap, with the Unity lanes limited to one because
+of the activation seat.
+
+Recovery on restart, following jobs.recover():
+
+  - Any run marked running with no live container is terminal-failed and its turn requeued.
+    A non-terminal record at startup is by definition a crash; the run that owns it can never
+    write that state itself.
+  - Any outbound row still pending is the dangerous case, because posting is not idempotent.
+    Discord's create-message endpoint accepts nonce with enforce_nonce: true for server-side
+    dedupe. ffdiscord's cmd_post does not send it today (2j), so add it and use the outbound
+    row's uuid. Then a restart can safely retry every pending row.
+  - Message-level dedupe: an O(1) marker keyed on discord_id, so a duplicate doorbell cannot
+    create a second turn. The UNIQUE constraint on message.discord_id gives this for free.
+
+
+13. Lanes
+---------
+
+  answer  message on ask_claude, player_mention, catchup. --no-unity, read-only capability set.
+          discord-answerer. High volume, low risk, no seat.
+
+  triage  thread and thread_message on bug_reports and suggestions. --no-unity, read-only.
+          discord-triager reads the thread, the downloaded log and save, path-traces against
+          source, returns a verdict. An AUTOFIX verdict enqueues a separate fix job.
+
+  fix     enqueued by triage. Unity on, one at a time, write capability set.
+
+  dev     lothsahn_directive. Unity on, one at a time, write capability set. Trust is anchored
+          only to Discord's authenticated author.id on the dispatch, never message content.
+
+
+14. Verification  [correction 5]
+--------------------------------
+
+Produced by the harness after the agent exits. The agent cannot write it, which is why it is
+its own table.
+
+Batchmode `unity-editor -runTests -testPlatform EditMode` in the container, on the same GameCI
+image CI uses. A cold compile in a fresh container, so the stale-assembly trap the MCP bridge
+rule exists to catch cannot occur. Then amend discord-triage's reference.md and
+discord-dev-agent.md to accept "MCP bridge or ffbox batchmode" by name, rather than letting the
+skills quietly skip a gate they still claim to enforce.
+
+TWO RULES, TAKEN FROM 059 AND NOT NEGOTIABLE:
+
+  1. Never read the shared results file. Unity's Performance Testing package writes to
+     a companyName/productName-derived path every copy of the project shares. The game repo's
+     CLAUDE.md names it as `.../LocalLow/Never Games/finalfactory/TestResults.xml` and says
+     never read it; confirm the Linux container's actual path rather than assuming the Windows
+     one translates. Pass an explicit per-invocation results path and read only that.
+     Per-container HOME (2k) means concurrent
+     ffbox runs are already isolated, unlike 059's pooled workers sharing one host user, but
+     the explicit path costs nothing and survives anyone later deciding to mount HOME.
+
+  2. Only ever destroy containers we named. Every destructive docker call is addressed by the
+     exact `ffbox-<run_id>` name. There is deliberately no "find stray Unity processes and work
+     out which are mine" path: a running editor process is not proof of which project it
+     serves, and on a shared box guessing eventually kills a developer's own editor.
+
+No pull request opens for a game-code change without compiled=true and zero failures,
+regardless of what the agent's verdict claims about its own confidence.
+
+
+15. Context growth
+------------------
+
+Set --autocompact auto and let Claude Code handle the common case. Track input_tokens per run.
+When a conversation crosses a threshold, retire the session: new session id, seeded with a
+host-rendered summary built from the message and turn tables, old id recorded in the chain,
+session_generation bumped. The database always holds enough to rebuild a conversation from
+nothing, which is what makes it safe to throw a session away.
+
+
+16. Base ref and the CLI in the container
+-----------------------------------------
+
+Add --ref REF to ffbox and run Discord jobs with --ref develop. PRs target develop, and the
+clone carries the full .git so `git checkout -B ffbox/<run> origin/develop` works offline.
+Library/ was warmed against master, so the Unity lanes pay an import delta; measure it before
+phase 3, and warm golden on develop if it hurts.
+
+The container's `ffdiscord` is the shim (section 11), mounted onto its PATH. The host's own
+`ffdiscord` is the plugin launcher. Both are resolved by name, and neither depends on what the
+workspace branch contains, which is what makes --ref a free choice rather than a coupling. This
+is the payoff from moving the CLI into the plugin: before that, the container needed the game
+repo checked out at a branch that had scripts/discord/.
+
+
+17. Getting code back out
+-------------------------
+
+The container commits to a local branch created at the pinned base sha, which is a ref move
+rather than a checkout, so nothing churns under the warm Library. ffbox harvests a git bundle
+alongside the patch. ffwatch fetches from the bundle, pushes, and opens the PR through 059's
+github_api client, which already handles retries and rate limits.
+
+Branch, PR number and PR url are recorded from git and the GitHub API response. They are never
+parsed from the agent's summary, and they are correct even when the summary omits or
+contradicts them.
+
+Confidence gates the pull request, not the branch. Work is always published so it cannot be
+lost; only the proposal to merge is withheld. No changed files means no branch left behind and
+no PR. Nothing merges, ever.
+
+GitHub credentials and push rights never enter the container. This, not the disallowed list,
+is what makes "nothing merges" true: section 7's measurements show the deny patterns are a
+tripwire rather than a boundary, so credential absence is carrying the weight here.
+
+
+18. Supervision
+---------------
+
+Every skill ends by reporting to the user, and unattended there is no user.
+
+  - Reports go to the database, to ~/ffbox-runs/<id>/report.md, and to a #dev-chat or private
+    log channel.
+  - Kill switch: ffwatch refuses to launch while ~/.config/ffbox/discord.disabled exists.
+  - Rate limits per lane. At most three fix jobs per day, mirroring the existing "max 3
+    autofixes per pass" rule.
+  - A sweep every fifteen minutes that enqueues a catchup turn with no doorbell.
+    player_mention and lothsahn_directive have no cursor, so a mention arriving during genuine
+    listener downtime is otherwise lost.
+  - systemd user units with Restart=always for the listener and ffwatch.
+  - --dry-run marks every outbound row dry instead of sending.
+
+Exactly one listener per bot, on one machine. If BEAST owns #ask-assistant, this box must not
+also run the answer lane, and the mention kinds double-fire from two listeners regardless of
+how the cursor keys are split.
+
+
+19. Web UI
+----------
+
+Read-only over ffwatch.db plus the blob directory:
+
+  - conversation list, filterable by kind, state, verdict, lane
+  - a thread view interleaving message, turn, run and verification rows
+  - per-run trace: transcript_event as a tree via parent_uuid, subagent work collapsed under
+    the spawning tool call, thinking inline
+  - attachments served from blobs/, so screenshots and logs render in place
+  - cost, tokens, and the warm-up and agent durations per conversation and per lane
+  - the pending outbound queue when approval-before-send is on
+
+Keep ffwatch the sole writer. If the UI needs to act, it goes through a small write API so the
+UI can move off-box later. transcript_event holds repo internals and raw model thinking: the UI
+is internal-only, and none of its text is ever reused in a Discord post.
+
+
+20. Files this touches
+----------------------
+
+  ffbox/ (this repo)
+    ffwatch.py            new: host daemon, ingest/classify/schedule/verify/publish/send
+    ffwatch_schema.sql    new
+    ffdiscord_shim.py     new: container-side CLI shim
+    discord-task.sh       new: container task selected by FFBOX_ENTRY
+    discord-setup.sh      new: provision ~/.config/ffdiscord and ~/ffbox-state, systemd units
+    systemd/              new: ffdiscord-listener.service, ffwatch.service (user units)
+    ffbox                 edit: --ref, --task, --job-file, extra mounts, lane locking, ceilings
+    secrets.env.example   edit: FFDISCORD_TOKEN, GH_TOKEN (host-side only)
+    README.md             edit: a Discord section
+
+  plugins/ff-discord/
+    skills/ask-claude/SKILL.md          demote standing watch to the no-ffbox fallback
+    skills/discord-triage/reference.md  verification profile, host-side PR flow
+    agents/discord-dev-agent.md         same
+    then bumpVersion.sh ff-discord minor
+
+  game repo, on develop
+    scripts/discord/ffdiscord.py        add nonce + enforce_nonce to cmd_post
+    scripts/pipeline/                   whatever section 4 concludes
+    Documentation/Discord-Agent-Integration.md   document the ffbox consumer
+
+  ported from 059 into ffwatch (section 4 has the full list, including the two that are
+  reused rather than absorbed: pipeline_config.py's config-block pattern and ffresume)
+    classifier.py, runner.build_capabilities, github_api.py, report.compose_head
+
+
+21. Open questions
+------------------
+
+  Feature 059's fate. This design ports six of its pieces and replaces five. Deleting the
+  rest is a decision for Ben and Lothsahn, not a cleanup, and it should follow a read of
+  ffpipeline.py's body and the 743-line test suite. Until then it stays where it is;
+  DISCORD-MIGRATION-CLEANUP.md asks only for a one-line path change in pipeline_config.py.
+
+  Suggestions channel. Adding it to --channels is trivial, but there is no agent role for it.
+  discord-triager is written around reproducing bug claims against source, which is the wrong
+  frame for a feature request. New role, an extension of the answerer, or log-and-acknowledge?
+
+  Who keeps a thread alive. Anything a human posts in a watched thread currently wakes a turn.
+  In a bug thread with three players chatting that is a lot of turns producing nothing worth
+  posting. An empty outbox is a fine outcome, but the run still costs. Options: wake only on a
+  direct mention after the first reply, rate-limit per conversation, or eat the cost.
+
+  Closure. Nothing marks a conversation done. Thread archival is the obvious signal, plus an
+  explicit close when a PR merges or a verdict lands.
+
+  Retention. Keep database rows forever, expire blobs after a window. Affects whether the UI
+  can replay old threads with attachments intact.
+
+  The shim (section 11). The one place proposing meaningful extra work for a security and
+  reviewability gain. Confirm before phase 2.
+
+
+22. Phasing
+-----------
+
+  Phase 0   Prove a two-turn conversation end to end in a container. Same thread, second turn
+            resumes, transcript persists on the host, plugin loads via --plugin-dir, capability
+            flags are honoured. The pieces are individually verified (section 2); this proves
+            them together.
+
+  Phase 1   Database, ingest, classification with fail-closed, ceilings, and the read-only
+            lanes. Bug and suggestion threads hold multi-turn conversations, attachments
+            download and mount, everything lands in SQLite. No Unity, no PRs, no repo writes.
+
+  Phase 2   The shim and host-side sending, with the posting discipline of section 11 enforced
+            in the sender. Makes the outbound queue, dry-run, and optional approval real.
+
+  Phase 3   Fix and dev lanes: the batchmode verification profile with its own results path and
+            named-container discipline, --ref develop, git bundle harvest, PR creation through
+            the ported github_api.
+
+  Phase 4   The web UI, over the schema phase 1 already wrote.
