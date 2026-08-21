@@ -776,6 +776,20 @@ def cmd_post(client, args):
     )
     if args.reply_to:
         payload["message_reference"] = {"message_id": args.reply_to}
+    if args.nonce:
+        # Server-side dedupe. Posting is not idempotent, so an unattended sender that crashes
+        # between "sent" and "recorded as sent" would double-post on restart. With
+        # enforce_nonce, Discord returns the ORIGINAL message for a repeated nonce inside its
+        # dedupe window instead of creating a second one. Optional, so every existing caller
+        # is unaffected — omitting it is exactly the old behaviour.
+        #
+        # Discord validates nonce as a string of at most 25 characters (or an integer);
+        # anything longer is a 400 on a request that would otherwise have succeeded, so it is
+        # rejected here where the caller can see why.
+        if len(args.nonce) > 25:
+            die(f"--nonce is {len(args.nonce)} chars; Discord allows at most 25")
+        payload["nonce"] = args.nonce
+        payload["enforce_nonce"] = True
     if args.dry_run:
         print("DRY RUN — would post to channel %s:\n%s" % (channel, json.dumps(payload, indent=2)))
         return
@@ -1059,6 +1073,9 @@ def build_parser():
     sp.add_argument("--file", action="append", help="attach a file (repeatable)")
     sp.add_argument("--silent", action="store_true", help="suppress all pings")
     sp.add_argument("--dry-run", action="store_true", help="print instead of sending")
+    sp.add_argument("--nonce", help="idempotency key sent with enforce_nonce, so a retry of "
+                                    "this exact post cannot create a second message "
+                                    "(max 25 characters)")
 
     sp = add("edit", cmd_edit, "edit one of the bot's own messages (correct a wrong answer)")
     sp.add_argument("channel")

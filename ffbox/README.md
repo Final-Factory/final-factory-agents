@@ -284,6 +284,13 @@ The host does every Discord read and write. The container gets `job.json` with t
 messages, their authors and local paths to already-downloaded attachments — so the agent, which
 is reading text written by strangers, holds no credential that can speak as the bot.
 
+Inside the container, `ffdiscord` is `ffdiscord_shim.py`, bind-mounted at
+`/usr/local/bin/ffdiscord`. The skills invoke the CLI by name, so they cannot tell: `thread`,
+`read` and `download` answer out of the mounted job bundle and the attachment mount, and
+`post`, `react`, `edit`, `ask` and `thread-create` append one JSON intent per line to
+`/ffbox/out/outbox.jsonl`. It imports no HTTP client and holds no token — this container cannot
+reach Discord at all.
+
 Every lane names its tools on the command line. The answer and triage lanes get
 `Read,Grep,Glob` and no Bash at all, which makes a read-only run *incapable* of writing rather
 than asked not to. If classification cannot complete, the turn runs read-only anyway and the
@@ -302,17 +309,56 @@ python3 ffbox/ffwatch.py status
 | `~/ffbox-state/ffwatch.db` | conversations, messages, turns, runs, transcript index, outbound queue |
 | `~/ffbox-state/blobs/<sha[0:2]>/<sha>` | attachments, content-addressed and shared across conversations |
 | `~/ffbox-state/conversations/<id>/claude/` | `CLAUDE_CONFIG_DIR` for that conversation — the session transcript lives here |
-| `~/ffbox-state/conversations/<id>/runs/<run>/` | `job.json`, `stream.jsonl`, `result.json`, `summary.md` |
-| `~/.config/ffbox/discord.disabled` | kill switch. While it exists, ffwatch refuses to launch anything. Ingest keeps running, so nothing is lost. |
+| `~/ffbox-state/conversations/<id>/runs/<run>/` | `job.json`, `stream.jsonl`, `result.json`, `outbox.jsonl`, `summary.md` |
+| `~/ffbox-state/outbound/<row>.md` | the overflow of a reply too long for one Discord message, attached to it |
+| `~/.config/ffbox/discord.disabled` | kill switch. While it exists, ffwatch neither launches a run nor sends a reply. Ingest keeps running, so nothing is lost. |
 
-Phase 1 is what is implemented: ingest, classification with fail-closed, the ceilings, and the
-read-only lanes. **Nothing is posted to Discord yet.** Replies are recorded as `outbound` rows
-with `status='pending'` and a nonce; the sender is phase 2. The write lanes (`fix`, `dev`) are
+### Sending
+
+Every outbound message exists in `ffwatch.db` before it exists in Discord, so a Discord outage
+cannot lose a reply. The sender is the only thing that talks to the bot, and it enforces what
+the skills merely advise:
+
+- **`--silent` on every post.** `ffdiscord post` turns `@name` into a real ping on a whole-word
+  match, so an agent quoting `@ben` out of a code comment would ping a person. The only
+  exception is a `dev_chat` escalation that explicitly asks to ping.
+- **The 2000-character limit never fails a post.** `check_length` exits rather than truncating,
+  so anything longer goes out as a head under `HEAD_CAP` (1500) with the whole message attached
+  as a file. Nothing is lost and nothing is halved.
+- **`nonce` + `enforce_nonce`.** Posting is not idempotent, so a crash between "Discord
+  accepted it" and "the row says sent" would double-post on restart. The nonce is derived from
+  the outbound row's uuid — deterministic, so the retry presents the same one and Discord hands
+  back the original message.
+- **One place for the kill switch, send-side rate limits and `--dry-run`.** `send_limits`
+  caps sends per hour overall and per conversation; `--dry-run` marks every row `dry` and posts
+  nothing.
+- **Retries are bounded.** A transient failure leaves the row `pending` with `attempts` and
+  `last_error` recorded and an exponential backoff; after `max_send_attempts` it becomes
+  `rejected` so it stops consuming send slots and shows up in `ffwatch status`. `ask` and
+  `thread-create` are never retried — a retry would ping a human twice or make a second thread.
+
+Approval before send is a config flag, not a redesign — with `approve_before_send` on, rows
+wait at `pending` until a human releases them:
+
+```bash
+python3 ffbox/ffwatch.py --approve-before-send run     # or set it in the config block
+python3 ffbox/ffwatch.py status                        # lists the queue with row ids
+python3 ffbox/ffwatch.py approve 12 13                 # release and send
+python3 ffbox/ffwatch.py reject 14 --reason "wrong"    # drop, with a reason on the row
+python3 ffbox/ffwatch.py send                          # flush the queue once
+```
+
+Phase 2 is what is implemented: ingest, classification with fail-closed, the ceilings, the
+read-only lanes, the container shim, and the sender above. The write lanes (`fix`, `dev`) are
 classified and recorded, then parked — they need Unity batchmode verification, git bundle
-harvest and host-side PR creation, which is phase 3.
+harvest and host-side PR creation, which is phase 3. The reply's verification and branch/PR
+lines are seams for that phase: `compose_head` prints them when the rows exist and prints
+nothing — never a guess from the agent's prose — until then.
 
 Offline tests: `python3 ffbox/test_ffwatch.py`. They stub `ffdiscord`, `ffbox` and `docker`, so
-they need no network, no token, no Docker and no ZFS.
+they need no network, no token, no Docker and no ZFS. The end-to-end case runs the real shim
+inside the stub container, and a parity test asserts the shim's subcommands and flags still
+match `ffdiscord`'s — the two cannot drift apart without a test failing.
 
 ## Known gaps
 
