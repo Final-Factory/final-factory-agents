@@ -246,17 +246,24 @@ does its Unity import. The flags below make it usable from outside this director
 | `--mount HOST:CONTAINER[:ro]` | An extra bind mount, repeatable. Nested paths under `/workspace` work — Docker creates the intermediates. |
 | `--run-id ID` | Caller-supplied run id, so the caller owns the `ffbox-<ID>` container name and can address exactly that container later. |
 | `--ref REF` | Check the clone out at `REF` after cloning. `develop` falls back to `origin/develop`. The resolved sha lands in `base_sha.txt`. |
+| `--branch NAME` | Create `NAME` at that commit before the container starts — a ref move, so nothing churns under the warm `Library/`. At harvest, the run's work is committed on it and bundled to `work.bundle`. No changed files means no commit, no bundle and no branch. |
 | `--agent-timeout N` | Agent working time, default 900s. |
 | `--warmup-timeout N` | Everything before the agent starts, default 3600s. |
+| `--verify-timeout N` | The harness verification phase after the agent exits, default 1800s. |
 | `--kill-grace N` | Seconds between SIGTERM and force, default 10. |
 
-### The three clocks
+### The clocks
 
-A slow Unity import and a hung agent look identical from the outside if you only have one
-timer, so there are two. The task creates `<out>/.agent-started` when it launches Claude;
-before that marker the warm-up ceiling applies, after it the agent ceiling does. Exceeding
-either stops the container and exits **123** (warm-up) or **124** (agent), and writes the word
-`warmup` or `agent` to `<out>/ffbox-timeout`.
+A slow Unity import, a hung agent and a long test run look identical from the outside if you
+only have one timer, so each phase gets its own. The task creates `<out>/.agent-started` when it
+launches Claude and `<out>/.verify-started` when the harness's own Unity run begins; the newest
+marker decides which ceiling applies. Exceeding one stops the container and exits **123**
+(warm-up), **124** (agent) or **125** (verification), and writes `warmup`, `agent` or `verify`
+to `<out>/ffbox-timeout`.
+
+Only 123 and 124 are the turn failing. 125 means the agent had already finished, so its summary
+is still worth posting — the run lands as unverified, which the pull-request gate treats exactly
+like a failed verification.
 
 Stopping always goes through `docker stop`, never `docker kill`, because the task is PID 1 and
 its trap is what returns the Unity seat. With Unity on, the stop allows 120 seconds regardless
@@ -348,12 +355,33 @@ python3 ffbox/ffwatch.py reject 14 --reason "wrong"    # drop, with a reason on 
 python3 ffbox/ffwatch.py send                          # flush the queue once
 ```
 
-Phase 2 is what is implemented: ingest, classification with fail-closed, the ceilings, the
-read-only lanes, the container shim, and the sender above. The write lanes (`fix`, `dev`) are
-classified and recorded, then parked — they need Unity batchmode verification, git bundle
-harvest and host-side PR creation, which is phase 3. The reply's verification and branch/PR
-lines are seams for that phase: `compose_head` prints them when the rows exist and prints
-nothing — never a guess from the agent's prose — until then.
+Phase 3 is what is implemented, which is all four lanes. On top of phase 2's ingest,
+fail-closed classification, ceilings, container shim and sender, the write lanes (`fix`, `dev`)
+add the three things the harness owns and the agent cannot touch:
+
+- **Verification.** After the agent process exits, the container task runs `ffverify` —
+  `unity-editor -runTests -testPlatform EditMode` on the same GameCI image CI uses, a cold
+  compile in a fresh container. It always passes an explicit per-invocation `-testResults` path:
+  Unity's Performance Testing package writes to `$HOME/.config/unity3d/Never Games/finalfactory/`
+  on Linux, which every copy of the project shares, and that file is never read. The task
+  deletes anything already at the report path first, so an agent that wrote its own
+  `verification.json` mid-turn cannot have it believed.
+- **Publication.** ffbox commits the working tree on `ffbox/<run-id>` and harvests a git bundle
+  of `base..branch`. ffwatch verifies the bundle, fetches it under `refs/ffbox/` in the host
+  checkout — no local branch moved, no working tree touched — and pushes it.
+- **The pull request.** Opened through the stdlib GitHub client, targeting `develop`. Branch, PR
+  number and PR url are recorded from git and the API response, never parsed from the agent's
+  summary, and stay correct when the summary contradicts them.
+
+Confidence gates the pull request, not the branch: the work is always published so it cannot be
+lost with the ZFS clone, and only the proposal to merge is withheld. No PR opens without
+`compiled=true` and zero test failures, whatever the agent claims. Zero changed files means no
+branch and no PR. A triage verdict of `AUTOFIX` enqueues a separate fix turn, deliberately
+re-based onto `develop` and told so in its prompt.
+
+`GH_TOKEN` is host-side only and never enters the container, which has no `gh` binary and no
+push credential. That, not the deny list, is what makes "nothing merges" true — and there is
+deliberately no merge method on the GitHub client.
 
 Offline tests: `python3 ffbox/test_ffwatch.py`. They stub `ffdiscord`, `ffbox` and `docker`, so
 they need no network, no token, no Docker and no ZFS. The end-to-end case runs the real shim

@@ -106,7 +106,18 @@ CREATE TABLE IF NOT EXISTS turn (
     queued_at               TEXT,
     started_at              TEXT,
     ended_at                TEXT,
-    error                   TEXT
+    error                   TEXT,
+    -- The triage turn whose AUTOFIX verdict enqueued this one (design section 13). It is also
+    -- the dedupe key: one fix turn per triage verdict, however many times the scheduler runs.
+    parent_turn_id          INTEGER REFERENCES turn(id) ON DELETE SET NULL,
+    -- The base sha this turn deliberately moved OFF. A conversation pins its base for its
+    -- lifetime; escalating to the fix lane is the one moment that re-bases, and the prompt has
+    -- to say so or the model reasons from line numbers gathered against the older tree
+    -- (design section 6).
+    rebased_from            TEXT,
+    -- Harness instruction for a turn nobody sent a message for — the autofix hand-off carries
+    -- the triager's change outline here, since there is no new Discord message to carry it.
+    note                    TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_turn_seq ON turn(conversation_id, seq);
@@ -137,14 +148,30 @@ CREATE TABLE IF NOT EXISTS run (
     warmup_secs         REAL,
     agent_secs          REAL,
     stream_path         TEXT,
-    patch_path          TEXT         -- phase 3: the harvested bundle/patch
+    patch_path          TEXT,        -- the harvested patch, for a human to read
+    -- Publication (design section 17). Every one of these comes from git or from the GitHub API
+    -- response, never from the agent's summary, so they stay correct when the summary claims a
+    -- branch that was never pushed or a PR that was never opened.
+    bundle_path         TEXT,
+    changed_files       INTEGER,
+    branch              TEXT,
+    pushed              INTEGER NOT NULL DEFAULT 0,
+    pr_number           INTEGER,
+    pr_url              TEXT,
+    -- Why there is no branch, or why there is a branch but no pull request. Confidence and a
+    -- failed verification gate the PR, never the branch: work is always published so it cannot
+    -- be lost, and only the proposal to merge is withheld.
+    no_branch_reason    TEXT,
+    no_pr_reason        TEXT,
+    verify_secs         REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_run_turn ON run(turn_id);
 CREATE INDEX IF NOT EXISTS idx_run_inflight ON run(terminal_state);
 
 -- Its own table, not columns on run, because the harness produces it AFTER the agent exits.
--- The agent must have no way to write its own verification result. Unpopulated until phase 3.
+-- The agent must have no way to write its own verification result: the container task deletes
+-- anything at the report path before running, and by then the agent process is gone.
 CREATE TABLE IF NOT EXISTS verification (
     id              INTEGER PRIMARY KEY,
     run_id          INTEGER NOT NULL REFERENCES run(id) ON DELETE CASCADE,

@@ -28,6 +28,7 @@ OUTPUT_FORMAT=text
 PROMPT=
 PROMPT_FILE=
 REF=
+BRANCH=
 TASK=
 JOB_FILE=
 RUN_ID_OVERRIDE=
@@ -38,6 +39,11 @@ MOUNTS=()
 # always unbounded and quietly acquiring a one-hour ceiling would be a surprise.
 AGENT_TIMEOUT=900        # agent working time, measured from the task's own start marker
 WARMUP_TIMEOUT=3600      # clone, container start, Unity activation, Library delta
+# Harness-owned verification (design section 14) is a fourth phase with a fourth marker. Without
+# its own ceiling it would burn the AGENT clock, and a fix lane whose agent finished in fourteen
+# minutes would then be killed mid-test-run and recorded as a hung agent — which is exactly the
+# conflation the separate clocks exist to prevent.
+VERIFY_TIMEOUT=1800
 KILL_GRACE=10            # after SIGTERM is ignored, force
 CLOCKS=0
 
@@ -56,6 +62,11 @@ Options:
   --ref REF            Check the workspace out at REF after cloning (a branch, tag or sha;
                        "develop" resolves to origin/develop when no local branch matches).
                        The resolved sha is written to <results>/base_sha.txt.
+  --branch NAME        Create NAME at the checked-out commit before the container starts, and
+                       harvest the run's work as a git bundle on it (<results>/work.bundle)
+                       alongside the patch. Creating it is a ref move, so nothing churns under
+                       the warm Library/. No changed files means no commit, no bundle and no
+                       branch left behind.
   --task PATH          Container task to run instead of the default one-shot. A host path is
                        mounted read-only at /ffbox/task.sh; anything else is taken as a path
                        already inside the image. Sets FFBOX_ENTRY.
@@ -67,12 +78,16 @@ Options:
   --agent-timeout N    Seconds of AGENT working time (default 900). The clock starts when the
                        task creates <out>/.agent-started, not when ffbox does.
   --warmup-timeout N   Seconds for everything before that marker (default 3600).
+  --verify-timeout N   Seconds for the harness verification phase after the agent exits, from
+                       <out>/.verify-started (default 1800). Its own clock, so a Unity test run
+                       is never mistaken for a hung agent.
   --kill-grace N       Seconds between SIGTERM and force (default 10). With Unity on, the stop
                        always allows 120s regardless, so the activation seat comes back.
   -h, --help           Show this help.
 
-Timeout exit codes: 123 = warm-up ceiling exceeded, 124 = agent ceiling exceeded. Both also
-write the word "warmup" or "agent" to <results>/ffbox-timeout.
+Timeout exit codes: 123 = warm-up ceiling exceeded, 124 = agent ceiling exceeded, 125 =
+verification ceiling exceeded (the agent had already finished). Each also writes the word
+"warmup", "agent" or "verify" to <results>/ffbox-timeout.
 
 Secrets are read from an env file, never from the command line — anything in argv is visible
 in /proc/<pid>/cmdline and lands in shell history. Default location:
@@ -89,12 +104,14 @@ while [ $# -gt 0 ]; do
         --json)           OUTPUT_FORMAT=stream-json; shift ;;
         --image)          IMAGE=${2:?--image needs a name}; shift 2 ;;
         --ref)            REF=${2:?--ref needs a git ref}; shift 2 ;;
+        --branch)         BRANCH=${2:?--branch needs a name}; shift 2 ;;
         --task)           TASK=${2:?--task needs a path}; CLOCKS=1; shift 2 ;;
         --job-file)       JOB_FILE=${2:?--job-file needs a path}; CLOCKS=1; shift 2 ;;
         --mount)          MOUNTS+=("${2:?--mount needs HOST:CONTAINER[:ro]}"); shift 2 ;;
         --run-id)         RUN_ID_OVERRIDE=${2:?--run-id needs an id}; shift 2 ;;
         --agent-timeout)  AGENT_TIMEOUT=${2:?--agent-timeout needs seconds}; CLOCKS=1; shift 2 ;;
         --warmup-timeout) WARMUP_TIMEOUT=${2:?--warmup-timeout needs seconds}; CLOCKS=1; shift 2 ;;
+        --verify-timeout) VERIFY_TIMEOUT=${2:?--verify-timeout needs seconds}; CLOCKS=1; shift 2 ;;
         --kill-grace)     KILL_GRACE=${2:?--kill-grace needs seconds}; CLOCKS=1; shift 2 ;;
         -h|--help)        usage; exit 0 ;;
         --)               shift; break ;;
@@ -117,6 +134,17 @@ if [ -n "$RUN_ID_OVERRIDE" ]; then
     # than producing a container nobody can address.
     case "$RUN_ID_OVERRIDE" in
         *[!A-Za-z0-9._-]*|"") echo "ffbox: --run-id must match [A-Za-z0-9._-]+" >&2; exit 2 ;;
+    esac
+fi
+
+if [ -n "$BRANCH" ]; then
+    # This name reaches `git checkout -B` and later `git push <remote> <branch>` on the host, so
+    # anything git would treat as an option or a refspec separator is refused here rather than
+    # becoming a surprising ref. Slashes are allowed because ffbox/<run-id> is the whole point.
+    case "$BRANCH" in
+        -*|*..*|*:*|*[!A-Za-z0-9._/-]*|"")
+            echo "ffbox: --branch must match [A-Za-z0-9._/-]+ and not start with '-'" >&2
+            exit 2 ;;
     esac
 fi
 
@@ -282,6 +310,15 @@ if [ -d "$MNT/.git" ]; then
     # Recorded whether or not --ref was given: the harvest step and ffwatch's base pinning both
     # need to know exactly which commit this run reasoned against.
     git -C "$MNT" rev-parse HEAD > "$OUT/base_sha.txt" 2>/dev/null || rm -f "$OUT/base_sha.txt"
+
+    # The work branch, created at the pinned base sha. `checkout -B` on the commit HEAD already
+    # points at is a pure ref move: no file in the working tree is touched, so Library/ stays
+    # warm and Unity has nothing to re-import (design section 17).
+    if [ -n "$BRANCH" ]; then
+        echo "[ffbox] work branch $BRANCH at $(cat "$OUT/base_sha.txt" 2>/dev/null)"
+        git -C "$MNT" checkout -B "$BRANCH" --quiet || {
+            echo "ffbox: could not create branch $BRANCH" >&2; exit 69; }
+    fi
 fi
 
 # --- run -----------------------------------------------------------------------------------------
@@ -317,7 +354,16 @@ if [ "$CLOCKS" = 1 ]; then
     while kill -0 "$DOCKER_PID" 2>/dev/null; do
         sleep 2
         NOW=$(date +%s)
-        if [ -f "$OUT/.agent-started" ]; then
+        # Newest marker wins: the task creates .agent-started when the model starts and
+        # .verify-started when the harness's own Unity run starts, so the phase in flight is the
+        # one with the latest marker and each phase is judged against its own ceiling.
+        if [ -f "$OUT/.verify-started" ]; then
+            MARK=$(stat -c %Y "$OUT/.verify-started" 2>/dev/null || echo "$NOW")
+            if [ "$VERIFY_TIMEOUT" -gt 0 ] && [ $((NOW - MARK)) -gt "$VERIFY_TIMEOUT" ]; then
+                TIMEOUT_KIND=verify
+                break
+            fi
+        elif [ -f "$OUT/.agent-started" ]; then
             MARK=$(stat -c %Y "$OUT/.agent-started" 2>/dev/null || echo "$NOW")
             if [ "$AGENT_TIMEOUT" -gt 0 ] && [ $((NOW - MARK)) -gt "$AGENT_TIMEOUT" ]; then
                 TIMEOUT_KIND=agent
@@ -347,22 +393,64 @@ set -e
 case "$TIMEOUT_KIND" in
     warmup) RUN_RC=123 ;;
     agent)  RUN_RC=124 ;;
+    verify) RUN_RC=125 ;;
 esac
 
 # --- harvest ---------------------------------------------------------------------------------------
 # Do this before cleanup destroys the clone, or the work evaporates with it.
 if [ -d "$MNT/.git" ]; then
     git -C "$MNT" status --porcelain > "$OUT/status.txt" 2>/dev/null || true
-    git -C "$MNT" add -A -- . 2>/dev/null || true
-    git -C "$MNT" diff --cached --binary > "$OUT/changes.patch" 2>/dev/null || true
-    git -C "$MNT" reset >/dev/null 2>&1 || true
+
+    if [ -n "$BRANCH" ]; then
+        # The commit is made HERE, by the harness, after the container is gone — not by the
+        # agent. The write lanes are given no `git commit` at all (see WRITE_ALLOWED in
+        # ffwatch.py), so there is exactly one commit on this branch and its author, message and
+        # contents are facts the harness owns. A lane that "forgot to commit" cannot exist.
+        BASE_SHA=$(cat "$OUT/base_sha.txt" 2>/dev/null || echo "")
+        git -C "$MNT" add -A -- . 2>/dev/null || true
+        if ! git -C "$MNT" diff --cached --quiet 2>/dev/null; then
+            git -C "$MNT" \
+                -c user.name="ffbox" -c user.email="ffbox@final-factory.invalid" \
+                commit --quiet --no-verify \
+                -m "ffbox ${RUN_ID}: agent work" 2>/dev/null || true
+        fi
+        git -C "$MNT" diff --name-only "${BASE_SHA}..HEAD" > "$OUT/changed_files.txt" 2>/dev/null \
+            || true
+        if [ -s "$OUT/changed_files.txt" ]; then
+            printf '%s\n' "$BRANCH" > "$OUT/branch.txt"
+            git -C "$MNT" diff --binary "${BASE_SHA}..HEAD" > "$OUT/changes.patch" 2>/dev/null \
+                || true
+            # A bundle of the RANGE, not of the branch: a full bundle would carry the project's
+            # entire history (gigabytes) where the range carries only what this run added.
+            # base_sha is a commit on origin, so the host already has the prerequisite — which is
+            # exactly the condition `git bundle verify` checks before ffwatch fetches from it.
+            if git -C "$MNT" bundle create "$OUT/work.bundle" "${BASE_SHA}..${BRANCH}" \
+                    >/dev/null 2>&1; then
+                echo "[ffbox] bundled $(wc -l < "$OUT/changed_files.txt") changed file(s) on" \
+                     "$BRANCH: $OUT/work.bundle"
+            else
+                rm -f "$OUT/work.bundle"
+                echo "ffbox: WARNING: could not bundle ${BASE_SHA}..${BRANCH}" >&2
+            fi
+        else
+            # No changed files means no branch left behind and no PR (design section 17). Saying
+            # nothing here would leave ffwatch unable to tell "nothing changed" from "harvest
+            # broke", and those two want very different replies.
+            rm -f "$OUT/work.bundle" "$OUT/branch.txt" "$OUT/changes.patch"
+            echo "[ffbox] no file changes in this run — no branch, no bundle"
+        fi
+    else
+        git -C "$MNT" add -A -- . 2>/dev/null || true
+        git -C "$MNT" diff --cached --binary > "$OUT/changes.patch" 2>/dev/null || true
+        git -C "$MNT" reset >/dev/null 2>&1 || true
+    fi
 
     if [ -s "$OUT/changes.patch" ]; then
         files=$(wc -l < "$OUT/status.txt")
         echo "[ffbox] harvested changes to $files file(s): $OUT/changes.patch"
         echo "[ffbox] apply with: git -C $GOLDEN_MNT apply $OUT/changes.patch"
     else
-        echo "[ffbox] no file changes in this run"
+        [ -n "$BRANCH" ] || echo "[ffbox] no file changes in this run"
         rm -f "$OUT/changes.patch"
     fi
     if [ -f "$OUT/base_sha.txt" ]; then

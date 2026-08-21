@@ -21,8 +21,9 @@ If **any** gate fails, the verdict is ESCALATE. No exceptions, no "it's probably
    no change to a system's execution group or ordering.
 3. **Outside every forbidden zone** (below).
 4. **Verifiable**: the fast EditMode suite (`FFEditorTests`) passes AND the change is
-   confirmed compiled via the MCP bridge. A regression test covering the bug is strongly
-   preferred; if the bug cannot be covered by a test, that is a signal to ESCALATE.
+   confirmed compiled — through **the Unity MCP bridge or ffbox batchmode**, named explicitly
+   because those are the only two channels that prove it. A regression test covering the bug is
+   strongly preferred; if the bug cannot be covered by a test, that is a signal to ESCALATE.
 5. **No design or balance judgement** — if fixing it means deciding how the game *should*
    behave, that is Ben's call, not yours.
 6. **Not a duplicate** of an open PR or issue.
@@ -41,12 +42,29 @@ Second, triage-specific zones:
 
 ## Hard preconditions for any autofix {#hard-preconditions}
 
-- **The Unity MCP bridge must be live** (an instance whose `path` is under this working
-  directory, pinned with `set_active_instance`). Without it you cannot confirm the code
-  compiled, and a green test run proves nothing — the editor keeps the last good assembly.
-  Bridge down → ESCALATE instead, and tell the user the bridge is down.
+- **One of the two verification channels must be available.** There is no third, and "I read
+  the code carefully" is not one of them.
+  - **The Unity MCP bridge**, live and pinned to an instance whose `path` is under this working
+    directory (`set_active_instance`). This is the channel on a developer desktop. Without it
+    you cannot confirm the code compiled, and a green test run proves nothing on its own — the
+    editor keeps the last good assembly.
+  - **ffbox batchmode**, which is the channel when the run is a Discord `fix`/`dev` turn on the
+    build server. There is no editor and no bridge there. The harness runs
+    `unity-editor -runTests -testPlatform EditMode` in the container after the agent exits — a
+    cold compile in a fresh container, so the stale-assembly trap cannot occur — and records
+    the result where the agent cannot write it. You can run the same thing yourself with
+    `ffverify`; it is the only Unity command the lane has, and it writes to its own
+    per-invocation results path.
+  - Neither available → ESCALATE, and say which channel was missing.
+- **Never read Unity's shared results file.** The Performance Testing package writes
+  `TestResults.xml` and `PerformanceTestResults.json` into a companyName/productName path that
+  every copy of the project shares — `…/AppData/LocalLow/Never Games/finalfactory/` on Windows,
+  `~/.config/unity3d/Never Games/finalfactory/` on Linux. Whichever copy ran last clobbers it.
+  Trust the MCP job result, or the results file `ffverify` was told to write, and nothing else.
 - **Max 3 autofixes per pass.** Beyond that, ESCALATE the remainder. Bounded blast radius
-  matters more than throughput.
+  matters more than throughput. On the build server this is enforced rather than advised:
+  ffwatch caps the `fix` lane at three turns per rolling day and blocks the fourth with a
+  reason on the record.
 
 ## AUTOFIX flow — agent steps + close-the-loop templates {#autofix-flow}
 
@@ -59,12 +77,23 @@ Give the agent the complete report text, the log excerpt, your root-cause analys
    `/speckit-specify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement`.
    The spec is short: the report, the root cause, the fix, the regression test.
 3. Implement the fix plus a regression test.
-4. **Verify**: confirm the recompile through the MCP bridge (`refresh_unity`, poll
-   `editor/state` until `is_compiling` is false and the domain reload is newer than the
-   edit, then `read_console` for `error CS`), then run `FFEditorTests` and require green.
-   A `PASSED` result without a confirmed fresh domain reload is worthless — see `CLAUDE.md`.
+4. **Verify** through whichever channel this run has:
+   - *MCP bridge*: confirm the recompile (`refresh_unity`, poll `editor/state` until
+     `is_compiling` is false and the domain reload is newer than the edit, then `read_console`
+     for `error CS`), then run `FFEditorTests` and require green. A `PASSED` result without a
+     confirmed fresh domain reload is worthless — see `CLAUDE.md`.
+   - *ffbox batchmode*: run `ffverify` and read its JSON report. The container is fresh, so the
+     compile is cold and a `PASSED` cannot be stale. The harness re-runs it after you exit
+     regardless, and its result — not your claim — is what gates the PR.
 5. Commit, push the branch, open a PR **targeting `develop`** (never `master`).
 6. Merge the PR to `develop` once tests are green.
+
+**On the build server, steps 5 and 6 are not yours.** A Discord `fix` or `dev` turn holds no
+GitHub token and no push credential, and the image has no `gh` — so `git push` and `gh pr
+create` fail for want of a credential rather than for want of permission. Leave the change in
+the working tree and describe it. ffbox commits it on `ffbox/<run-id>`, ffwatch pushes it and
+opens the PR against `develop`, and the branch and PR recorded come from git and the GitHub API
+response rather than from anything you write. Nothing merges automatically, ever.
 
 Then close the loop with the reporter and the team. The templates below are *content*
 checklists, not wording to copy — the voice is [the `max-voice` skill](../max-voice/SKILL.md):
