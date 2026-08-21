@@ -12,6 +12,13 @@ surfaces, and all three are replaced with stub executables this file writes into
   ffbox       the container launcher. The stub writes a plausible result.json, stream.jsonl,
               task.json, base_sha.txt and a session transcript, then exits with a chosen code.
   docker      only ever asked "is this exact container name alive"; the stub says no.
+  github      a real HTTP server on 127.0.0.1 speaking enough of the REST API that urllib, the
+              retries and the rate-limit handling under test are the genuine ones.
+  unity       a stub `unity-editor` that records its argv and writes an NUnit results file
+              wherever it was told to, so ffverify.sh is exercised for real.
+
+git is deliberately NOT stubbed: publication fetches from a bundle and pushes to a remote, and
+a hand-written bundle would prove nothing about either.
 
 The classifier is a fourth: a stub `claude` that exits non-zero, which is how the fail-closed
 path gets exercised without a model call.
@@ -25,7 +32,9 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 for _stream in (sys.stdout, sys.stderr):
     try:
@@ -168,6 +177,11 @@ Behaviour comes from the environment so one stub covers every case:
   FFBOX_STUB_FIXTURE_ADD   path to a JSON patch merged into the ffdiscord fixture MID-RUN
   FFBOX_STUB_SHIM_POSTS    JSON list of message texts to post THROUGH THE REAL SHIM, exactly
                            as an agent inside the container would
+  FFBOX_STUB_GIT_ORIGIN    a bare repo to clone, branch and bundle from, so the publish path is
+                           exercised against real git rather than a hand-written bundle
+  FFBOX_STUB_CHANGED       JSON list of file names the "agent" changed; empty means no branch
+  FFBOX_STUB_VERIFY        JSON the container task's verification.json would have contained
+  FFBOX_STUB_VERDICT       JSON verdict the agent returned, replacing the default
 """
 import json, os, subprocess, sys
 
@@ -213,6 +227,46 @@ if os.environ.get("FFBOX_STUB_FIXTURE_ADD"):
 with open(os.path.join(out, "base_sha.txt"), "w", encoding="utf-8") as fh:
     fh.write("0579c37b8f000000000000000000000000000000\n")
 
+
+def git(*args):
+    return subprocess.run(["git", *args], capture_output=True, text=True)
+
+
+# --- the write lane's harvest -------------------------------------------------------------
+# Real git, not a fabricated bundle: publish() fetches from this and pushes it, and a bundle
+# whose prerequisite the host does not have is precisely the failure mode `git bundle verify`
+# exists to catch. Faking the file would test nothing.
+branch = opt("--branch")
+if branch and os.environ.get("FFBOX_STUB_GIT_ORIGIN"):
+    work = os.path.join(out, "workspace")
+    git("clone", "--quiet", os.environ["FFBOX_STUB_GIT_ORIGIN"], work)
+    base = git("-C", work, "rev-parse", "origin/develop").stdout.strip()
+    with open(os.path.join(out, "base_sha.txt"), "w", encoding="utf-8") as fh:
+        fh.write(base + "\n")
+    git("-C", work, "checkout", "--quiet", "--detach", base)
+    git("-C", work, "checkout", "--quiet", "-B", branch)
+    changed = json.loads(os.environ.get("FFBOX_STUB_CHANGED", "[]"))
+    for name in changed:
+        path = os.path.join(work, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("// touched by %s\n" % run_id)
+    if changed:
+        git("-C", work, "add", "-A")
+        git("-C", work, "-c", "user.name=ffbox", "-c", "user.email=ffbox@invalid",
+            "commit", "--quiet", "-m", "ffbox %s: agent work" % run_id)
+        with open(os.path.join(out, "changed_files.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(changed) + "\n")
+        with open(os.path.join(out, "branch.txt"), "w", encoding="utf-8") as fh:
+            fh.write(branch + "\n")
+        git("-C", work, "bundle", "create", os.path.join(out, "work.bundle"),
+            "%s..%s" % (base, branch))
+
+# The harness's own verification, written by the container task AFTER the agent exits.
+if os.environ.get("FFBOX_STUB_VERIFY"):
+    with open(os.path.join(out, "verification.json"), "w", encoding="utf-8") as fh:
+        fh.write(os.environ["FFBOX_STUB_VERIFY"])
+
 # The container's own writes. This runs the REAL ffdiscord_shim.py with the environment
 # discord-task.sh exports, so the outbox the host reads afterwards is the one the shim
 # actually produces — not a hand-written fixture that could drift from it.
@@ -239,6 +293,8 @@ if mode == "timeout":
 
 verdict = {"summary": "Checked the belt merger path; this is expected behaviour.",
            "change_required": False, "sources": ["Assets/Scripts/Belt.cs:120"]}
+if os.environ.get("FFBOX_STUB_VERDICT"):
+    verdict = json.loads(os.environ["FFBOX_STUB_VERDICT"])
 result = {"type": "result", "subtype": "success", "is_error": mode == "fail",
           "num_turns": 4, "total_cost_usd": 0.21,
           "usage": {"input_tokens": 1200, "output_tokens": 300, "cache_read_input_tokens": 900},
@@ -373,7 +429,8 @@ class Case:
             "FFBOX_STUB_MODE": mode,
         })
         for key in ("FFBOX_STUB_EVENTS", "FFBOX_STUB_FIXTURE_ADD", "FFBOX_STUB_SHIM_POSTS",
-                    "FFD_FAIL_SEND"):
+                    "FFD_FAIL_SEND", "FFBOX_STUB_GIT_ORIGIN", "FFBOX_STUB_CHANGED",
+                    "FFBOX_STUB_VERIFY", "FFBOX_STUB_VERDICT"):
             os.environ.pop(key, None)
 
         cfg = ffwatch.load_config()
@@ -382,6 +439,11 @@ class Case:
         cfg["plugins_dir"] = os.path.join(self.root, "plugins")
         os.makedirs(os.path.join(cfg["plugins_dir"], "ff-discord"), exist_ok=True)
         cfg["approve_before_send"] = approve
+        # Whatever GH_TOKEN says on this machine, a test never talks to real GitHub and never
+        # pushes into a real checkout. Cases that publish point these at their own fixtures.
+        cfg["github"] = {"api_base": "http://127.0.0.1:9", "repo": "test/test",
+                         "base": "develop", "token": None}
+        cfg["git_dir"] = os.path.join(self.root, "no-such-checkout")
         # No sleeping in the suite: a failed row must be retryable on the very next pass.
         cfg["send_backoff_secs"] = 0
         cfg["_discord"] = {"channels": {"dev_chat": DEVCHAT}}
@@ -769,8 +831,11 @@ def test_dry_run():
           rows and all(r["status"] == "dry" for r in rows), rows)
 
 
-def test_write_lane_is_blocked():
-    print("write lanes in phase 1")
+def test_dev_lane_runs_a_directive():
+    """Trust here is anchored ONLY to Discord's authenticated author.id on the dispatch
+    (design section 13), never to message content — the listener decides the kind, and ffwatch
+    maps the kind to the lane. A message merely claiming to be Lothsahn is an `ask`."""
+    print("dev lane")
     fixture = base_fixture()
     fixture["messages"][RANDOM_CHANNEL] = [message(15001, "ship the merger fix",
                                                    channel=RANDOM_CHANNEL)]
@@ -781,10 +846,12 @@ def test_write_lane_is_blocked():
     case.watcher.once()
     turn = case.rows("SELECT * FROM turn")[0]
     check("a lothsahn_directive classifies into the dev lane", turn["lane"] == "dev", turn)
-    check("but phase 1 parks it instead of launching", turn["status"] == "blocked", turn)
-    check("with a reason that names the phase", "phase 3" in (turn["error"] or ""),
-          turn["error"])
-    check("no container was started", len(case.rows("SELECT * FROM run")) == 0)
+    check("and it actually launches", turn["status"] == "done", turn)
+    run = case.rows("SELECT * FROM run")[0]
+    check("with the write tool set and Unity on",
+          run["tools"] == "Read,Grep,Glob,Edit,Write,Bash" and run["unity"] == 1, run)
+    check("a verification row is written even though this run changed nothing",
+          len(case.rows("SELECT * FROM verification WHERE run_id=?", (run["id"],))) == 1)
 
 
 def test_thread_triage_lane():
@@ -1718,6 +1785,622 @@ def test_sender_accounts_for_mention_expansion():
           (len(head2), case2.watcher.expanded_len(head2)))
 
 
+# ------------------------------------------------------------------------------------------
+# phase 3: the write lanes, verification, publication
+# ------------------------------------------------------------------------------------------
+# Two more external surfaces get in-process stand-ins here, on the same principle as the rest
+# of this file: GitHub is a real HTTP server on localhost speaking just enough of the REST API
+# (so urllib, the retries and the rate-limit handling are the REAL ones), and Unity is a stub
+# `unity-editor` that records its argv and writes an NUnit results file wherever it was told
+# to. git is not stubbed at all — publish() fetches from a bundle and pushes to a remote, and
+# a fake bundle would test nothing.
+
+GH_STATE = {"next_number": 41, "pulls": [], "requests": [], "fail_next": []}
+GH_SERVER = {"base": None}
+
+
+class MockGitHub(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *a):
+        pass
+
+    def _send(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _auth(self):
+        if self.headers.get("Authorization", "") != "Bearer gh-test-token":
+            self._send(401, {"message": "Bad credentials"})
+            return False
+        return True
+
+    def do_GET(self):
+        GH_STATE["requests"].append(("GET", self.path))
+        if not self._auth():
+            return
+        if GH_STATE["fail_next"]:
+            return self._send(GH_STATE["fail_next"].pop(0),
+                              {"message": "You have exceeded a secondary rate limit"})
+        head = ""
+        if "head=" in self.path:
+            head = self.path.split("head=", 1)[1].split("&")[0].split(":")[-1]
+        return self._send(200, [p for p in GH_STATE["pulls"] if p["_head"] == head])
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(length) or b"{}")
+        GH_STATE["requests"].append(("POST", self.path, body))
+        if not self._auth():
+            return
+        if GH_STATE["fail_next"]:
+            return self._send(GH_STATE["fail_next"].pop(0),
+                              {"message": "You have exceeded a secondary rate limit"})
+        number = GH_STATE["next_number"]
+        GH_STATE["next_number"] += 1
+        pull = {"number": number,
+                "html_url": "https://github.com/Final-Factory/FinalFactory/pull/%d" % number,
+                "title": body.get("title"), "base": body.get("base"),
+                "_head": body.get("head"), "body": body.get("body")}
+        GH_STATE["pulls"].append(pull)
+        return self._send(201, pull)
+
+
+def github_base():
+    """Start the mock once and reuse it; a fresh port per test buys nothing."""
+    if GH_SERVER["base"] is None:
+        server = HTTPServer(("127.0.0.1", 0), MockGitHub)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        GH_SERVER["base"] = "http://127.0.0.1:%d" % server.server_address[1]
+    return GH_SERVER["base"]
+
+
+def git_run(*args):
+    return subprocess.run(["git", *args], capture_output=True, text=True)
+
+
+def git_origin(case):
+    """A bare remote with a `develop` branch, plus the host checkout ffwatch publishes from.
+
+    The host checkout stands in for golden. publish() must leave it exactly as it found it:
+    refs under refs/ffbox/ only, no local branch moved, no working tree touched.
+    """
+    origin = os.path.join(case.root, "origin.git")
+    host = os.path.join(case.root, "host")
+    git_run("init", "-q", "--bare", origin)
+    git_run("clone", "-q", origin, host)
+    git_run("-C", host, "config", "user.email", "t@t.invalid")
+    git_run("-C", host, "config", "user.name", "test")
+    os.makedirs(os.path.join(host, "Assets"), exist_ok=True)
+    with open(os.path.join(host, "Assets", "Belt.cs"), "w", encoding="utf-8") as fh:
+        fh.write("// seed\n")
+    git_run("-C", host, "add", "-A")
+    git_run("-C", host, "commit", "-qm", "seed")
+    git_run("-C", host, "push", "-q", "origin", "HEAD:refs/heads/develop")
+    git_run("-C", host, "fetch", "-q", "origin")
+    case.watcher.cfg["git_dir"] = host
+    case.watcher.cfg["push_remote"] = "origin"
+    case.watcher.cfg["github"] = {"api_base": github_base(),
+                                  "repo": "Final-Factory/FinalFactory",
+                                  "base": "develop", "token": "gh-test-token"}
+    os.environ["FFBOX_STUB_GIT_ORIGIN"] = origin
+    return origin, host
+
+
+PASSING_VERIFY = {"ran": True, "compiled": True, "compile_errors": None, "tests_run": 214,
+                  "tests_passed": 214, "tests_failed": 0,
+                  "results_path": "/ffbox/out/verification/TestResults-harness.xml",
+                  "evidence": "unity exit 0 after 240s"}
+
+CONFIDENT_VERDICT = {"summary": "Clamped the merger index.", "confident": True,
+                     "changed_anything": True, "pr_title": "Fix belt merger item loss",
+                     "pr_body": "Root cause in Belt.cs:120.", "verification_claimed": True}
+
+
+def bug_case(name, **kw):
+    """A bug thread that has already had one triage turn, ready to escalate."""
+    fixture = bug_thread(base_fixture(), 30000, "belt merger drops items",
+                         [message(30001, "merger eats items on load", channel="30000")])
+    case = Case(name, fixture, **kw)
+    case.events(thread_event(30000, kind="thread"))
+    case.watcher.once()
+    return case
+
+
+def escalate(case, *, changed, verify, verdict=None):
+    """Take the triage turn's AUTOFIX verdict through to a finished fix run."""
+    os.environ["FFBOX_STUB_CHANGED"] = json.dumps(changed)
+    if verify is None:
+        os.environ.pop("FFBOX_STUB_VERIFY", None)
+    else:
+        os.environ["FFBOX_STUB_VERIFY"] = json.dumps(verify)
+    os.environ["FFBOX_STUB_VERDICT"] = json.dumps(verdict or CONFIDENT_VERDICT)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    triage = case.rows("SELECT * FROM turn ORDER BY id")[0]
+    fix_turn = case.watcher.enqueue_autofix(triage, conv,
+                                            {"verdict": "AUTOFIX",
+                                             "change_outline": "clamp the merger index"})
+    case.watcher.once()
+    return fix_turn
+
+
+def test_autofix_enqueues_one_fix_job():
+    print("triage AUTOFIX hands off to fix")
+    case = bug_case("autofix")
+    conv = case.rows("SELECT * FROM conversation")[0]
+    triage = case.rows("SELECT * FROM turn ORDER BY id")[0]
+    check("the first turn was read-only triage", triage["lane"] == "triage", triage)
+    check("and the conversation pinned a base sha",
+          (conv["base_sha"] or "").startswith("0579c37b8"), conv)
+
+    verdict = {"verdict": "AUTOFIX", "change_outline": "clamp the merger index",
+               "summary": "reproduced", "change_required": True}
+    first = case.watcher.enqueue_autofix(triage, conv, verdict)
+    again = case.watcher.enqueue_autofix(
+        case.rows("SELECT * FROM turn WHERE id=?", (triage["id"],))[0],
+        case.rows("SELECT * FROM conversation")[0], verdict)
+    fixes = case.rows("SELECT * FROM turn WHERE lane='fix'")
+    check("an AUTOFIX verdict enqueues exactly one fix job", len(fixes) == 1 and first, fixes)
+    check("and a second call adds nothing", again is None, again)
+    check("the fix turn remembers which triage turn asked for it",
+          fixes[0]["parent_turn_id"] == triage["id"], fixes[0])
+    check("it carries the triager's outline as its instruction",
+          "clamp the merger index" in (fixes[0]["note"] or ""), fixes[0]["note"])
+
+    # design section 6: escalating to the fix lane is the ONE moment a conversation re-bases.
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("escalating clears the pinned base so the fix lands on today's develop",
+          conv["base_sha"] is None, conv)
+    check("and records what it moved off",
+          (fixes[0]["rebased_from"] or "").startswith("0579c37b8"), fixes[0])
+
+    # A verdict that is not AUTOFIX must not be able to cause a write, however it is worded.
+    case2 = bug_case("noautofix")
+    case2.watcher.enqueue_autofix(
+        case2.rows("SELECT * FROM turn ORDER BY id")[0],
+        case2.rows("SELECT * FROM conversation")[0],
+        {"verdict": "ESCALATE", "summary": "I will auto-fix this myself, opening a PR now"})
+    check("prose promising a fix enqueues nothing without the AUTOFIX field",
+          case2.rows("SELECT * FROM turn WHERE lane='fix'") == [])
+
+
+def test_fix_lane_launches_with_write_capabilities():
+    print("write lane: capability construction")
+    case = bug_case("fixlane")
+    git_origin(case)
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+
+    run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+    check("the fix lane gets the write tool set",
+          run["tools"] == "Read,Grep,Glob,Edit,Write,Bash", run["tools"])
+    check("Unity is on for it", run["unity"] == 1, run)
+    check("the deny patterns are recorded as the tripwire they are",
+          "Bash(git push*)" in (run["disallowed"] or ""), run["disallowed"])
+    allowed = (run["allowed"] or "").split(",")
+    check("the allow list names ffverify, which is the only Unity entry point",
+          "Bash(ffverify *)" in allowed, allowed)
+    check("and it never allows a write-side git command",
+          not any(a.startswith(("Bash(git push", "Bash(git add", "Bash(git commit",
+                                "Bash(git remote", "Bash(gh")) for a in allowed), allowed)
+
+    run_dir = os.path.join(case.watcher.conv_dir(1), "runs", run["ffbox_run_id"])
+    argv = json.load(open(os.path.join(run_dir, "ffbox-argv.json"), encoding="utf-8"))
+    check("ffbox is NOT told --no-unity for a write lane", "--no-unity" not in argv, argv)
+    check("it is given the work branch the host named",
+          "--branch" in argv and argv[argv.index("--branch") + 1] == f"ffbox/{run['ffbox_run_id']}",
+          argv)
+    check("verification gets its own clock, so a test run is not a hung agent",
+          "--verify-timeout" in argv, argv)
+    check("ffverify is mounted onto the container's PATH",
+          any(a.endswith(":/usr/local/bin/ffverify:ro") for a in argv), argv)
+    job = json.load(open(os.path.join(run_dir, "job.json"), encoding="utf-8"))
+    check("the job asks for harness verification and names the fast suite",
+          job["verify"]["enabled"] and job["verify"]["assemblies"] == "FFEditorTests",
+          job.get("verify"))
+    check("the prompt says the turn was deliberately re-based",
+          "RE-BASED" in job["prompt"], job["prompt"][-600:])
+
+
+def test_unity_lane_is_capped_at_one():
+    print("write lane: the activation seat")
+    case = bug_case("unitycap")
+    git_origin(case)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    triage = case.rows("SELECT * FROM turn ORDER BY id")[0]
+    case.watcher.enqueue_autofix(triage, conv, {"verdict": "AUTOFIX"})
+
+    # Another conversation's Unity run, still in flight. running_counts() reads exactly this.
+    case.watcher.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name, unity) VALUES(?,?,?,1)",
+        (triage["id"], "other-unity-run", "ffbox-other-unity-run"))
+    before = len(case.rows("SELECT * FROM run"))
+    started = case.watcher.schedule()
+    check("a second Unity lane does not start while one holds the seat",
+          started == [] and len(case.rows("SELECT * FROM run")) == before, started)
+    check("and the turn stays queued rather than being failed",
+          case.rows("SELECT status FROM turn WHERE lane='fix'")[0]["status"] == "queued")
+
+    # Seat returned: the same turn now starts, with nothing else changed.
+    case.watcher.db.execute("UPDATE run SET terminal_state='done' WHERE ffbox_run_id=?",
+                            ("other-unity-run",))
+    check("once the seat comes back it starts", case.watcher.schedule() != [])
+    case.watcher.join_launches()
+
+
+def test_fix_lane_rate_limit():
+    print("write lane: three fix jobs a day")
+    case = bug_case("fixrate")
+    conv = case.rows("SELECT * FROM conversation")[0]
+    triage = case.rows("SELECT * FROM turn ORDER BY id")[0]
+    # Three fix turns already run today (design section 18, mirroring "max 3 autofixes").
+    for n in range(3):
+        case.watcher.db.execute(
+            "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, started_at,"
+            " ended_at) VALUES(?,?,'fix','done',?,?,?)",
+            (conv["id"], 100 + n, ffwatch.now_iso(), ffwatch.now_iso(), ffwatch.now_iso()))
+    check("the limit is reached at three", case.watcher.rate_limited("fix") is True)
+    check("but the read-only lanes are unaffected",
+          case.watcher.rate_limited("triage") is False)
+
+    case.watcher.enqueue_autofix(triage, conv, {"verdict": "AUTOFIX"})
+    started = case.watcher.schedule()
+    fourth = case.rows("SELECT * FROM turn WHERE lane='fix' AND parent_turn_id IS NOT NULL")[0]
+    check("the fourth fix job of the day does not launch", started == [], started)
+    check("it is blocked, not silently dropped", fourth["status"] == "blocked", fourth)
+    check("with a reason naming the lane and the limit",
+          "rate limit" in (fourth["error"] or "") and "fix" in (fourth["error"] or ""),
+          fourth["error"])
+    check("and no container was started for it",
+          case.rows("SELECT * FROM run WHERE turn_id=?", (fourth["id"],)) == [])
+
+
+def test_publish_opens_a_pull_request():
+    print("publication: branch, push, PR")
+    case = bug_case("publish")
+    origin, host = git_origin(case)
+    # The summary names a DIFFERENT branch and a made-up PR. Nothing recorded may come from it.
+    lying = dict(CONFIDENT_VERDICT,
+                 summary="Pushed feature/my-own-branch and opened PR #999.")
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY, verdict=lying)
+
+    run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+    expected = f"ffbox/{run['ffbox_run_id']}"
+    check("the branch is the one the host named, not the one the summary claims",
+          run["branch"] == expected, run["branch"])
+    check("it was really pushed", run["pushed"] == 1, run)
+    check("the PR number comes from the API response, not from the prose",
+          run["pr_number"] == GH_STATE["pulls"][-1]["number"] and run["pr_number"] != 999, run)
+    check("and so does the url", run["pr_url"] == GH_STATE["pulls"][-1]["html_url"], run)
+    check("the changed-file count is recorded", run["changed_files"] == 1, run)
+
+    pull = GH_STATE["pulls"][-1]
+    check("the PR targets develop, never master", pull["base"] == "develop", pull)
+    check("its head is the pushed branch", pull["_head"] == expected, pull)
+    check("the body carries the harness's verification numbers",
+          "compiled=True" in (pull["body"] or "") and "214" in (pull["body"] or ""),
+          (pull["body"] or "")[-400:])
+
+    remote_branches = git_run("-C", host, "ls-remote", "--heads", "origin").stdout
+    check("the branch really exists on the remote", expected in remote_branches,
+          remote_branches)
+    check("publishing left no local branch behind in the host checkout",
+          expected not in git_run("-C", host, "branch", "--list").stdout,
+          git_run("-C", host, "branch", "--list").stdout)
+    check("and left its working tree clean",
+          git_run("-C", host, "status", "--porcelain").stdout.strip() == "")
+
+    status = case.watcher.status()
+    check("`ffwatch status` shows the branch and PR a human would go looking for",
+          expected in status and str(run["pr_number"]) in status, status[-400:])
+
+    text = json.loads(case.rows(
+        "SELECT * FROM outbound WHERE run_id=? AND action='post'",
+        (run["id"],))[0]["payload_json"])["text"]
+    check("the reply names the real branch and PR",
+          expected in text and str(run["pr_number"]) in text, text[:500])
+    check("and not the branch the agent invented",
+          "feature/my-own-branch" not in text.split(lying["summary"])[0], text[:500])
+    check("the reply reports the harness's verification, not the agent's claim",
+          "compiled ✓" in text and "214/214" in text, text[:500])
+
+
+def test_failed_verification_blocks_the_pull_request():
+    print("publication: verification gates the PR")
+    case = bug_case("verifyfail")
+    origin, host = git_origin(case)
+    calls_before = len(GH_STATE["requests"])
+    failing = dict(PASSING_VERIFY, tests_passed=213, tests_failed=1,
+                   evidence="FF.BeltTests.Merges: expected 3 got 2")
+    # The agent insists it verified and is confident. The harness disagrees, and wins.
+    escalate(case, changed=["Assets/Belt.cs"], verify=failing,
+             verdict=dict(CONFIDENT_VERDICT, summary="All tests pass, ready to merge."))
+
+    run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+    ver = case.rows("SELECT * FROM verification WHERE run_id=?", (run["id"],))
+    check("the harness wrote a verification row", len(ver) == 1, ver)
+    check("recording the failure the agent did not mention",
+          ver and ver[0]["tests_failed"] == 1 and ver[0]["ran"] == 1, ver)
+    check("the work is still published, because confidence gates the PR and not the branch",
+          run["pushed"] == 1 and run["branch"], run)
+    check("but no pull request opened", run["pr_number"] is None, run)
+    check("with a reason a human can act on", "test(s) failed" in (run["no_pr_reason"] or ""),
+          run["no_pr_reason"])
+    check("and GitHub was never asked anything at all",
+          GH_STATE["requests"][calls_before:] == [], GH_STATE["requests"][calls_before:])
+
+    text = json.loads(case.rows(
+        "SELECT * FROM outbound WHERE run_id=? AND action='post'",
+        (run["id"],))[0]["payload_json"])["text"]
+    check("the reply says the branch exists and why there is no PR",
+          run["branch"] in text and "no PR" in text, text[:400])
+
+
+def test_compile_failure_blocks_the_pull_request():
+    print("publication: compiled=false blocks the PR")
+    case = bug_case("compilefail")
+    git_origin(case)
+    broken = {"ran": True, "compiled": False,
+              "compile_errors": "Assets/Belt.cs(120,9): error CS0103: 'foo' does not exist",
+              "tests_run": None, "tests_passed": None, "tests_failed": None,
+              "results_path": "/ffbox/out/verification/TestResults-harness.xml",
+              "evidence": "no parseable results"}
+    escalate(case, changed=["Assets/Belt.cs"], verify=broken)
+
+    run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+    check("the branch is published anyway so the work is not lost", run["pushed"] == 1, run)
+    check("no PR opens for a change that did not compile", run["pr_number"] is None, run)
+    check("and the reason says so", "compile" in (run["no_pr_reason"] or ""),
+          run["no_pr_reason"])
+    ver = case.rows("SELECT * FROM verification WHERE run_id=?", (run["id"],))[0]
+    check("the compile errors are kept verbatim for a human",
+          "error CS0103" in (ver["compile_errors"] or ""), ver["compile_errors"])
+
+    # A run with no verification report at all is treated exactly like a failed one.
+    case2 = bug_case("noverify")
+    git_origin(case2)
+    escalate(case2, changed=["Assets/Belt.cs"], verify=None)
+    run2 = case2.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                      " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+    ver2 = case2.rows("SELECT * FROM verification WHERE run_id=?", (run2["id"],))[0]
+    check("a missing verification report still writes a row saying it did not run",
+          ver2["ran"] == 0, ver2)
+    check("and no PR opens on it", run2["pr_number"] is None, run2)
+    text2 = json.loads(case2.rows(
+        "SELECT * FROM outbound WHERE run_id=? AND action='post'",
+        (run2["id"],))[0]["payload_json"])["text"]
+    check("the reply says NOT VERIFIED rather than staying quiet about it",
+          "NOT VERIFIED" in text2, text2[:400])
+
+
+def test_no_changed_files_means_no_branch_and_no_pr():
+    print("publication: nothing changed")
+    case = bug_case("nochanges")
+    origin, host = git_origin(case)
+    escalate(case, changed=[], verify=PASSING_VERIFY,
+             verdict=dict(CONFIDENT_VERDICT, changed_anything=False,
+                          summary="Already fixed on develop; nothing to do."))
+
+    run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+    check("no branch is published", run["pushed"] == 0 and run["bundle_path"] is None, run)
+    check("and no PR opens", run["pr_number"] is None, run)
+    check("with a reason", "changed no files" in (run["no_branch_reason"] or ""),
+          run["no_branch_reason"])
+    check("nothing reached the remote",
+          "ffbox/" not in git_run("-C", host, "ls-remote", "--heads", "origin").stdout)
+    text = json.loads(case.rows(
+        "SELECT * FROM outbound WHERE run_id=? AND action='post'",
+        (run["id"],))[0]["payload_json"])["text"]
+    check("the reply explains the absence instead of omitting it", "no branch" in text,
+          text[:400])
+
+
+def test_github_client_retries_and_cannot_merge():
+    print("github client")
+    cfg = {"github": {"api_base": github_base(), "repo": "Final-Factory/FinalFactory",
+                      "base": "develop", "token": "gh-test-token"}}
+    gh = ffwatch.GitHub(cfg)
+
+    # 403 and 429 are both how GitHub reports the secondary rate limit. A client that gives up
+    # on them turns a two-second wait into a lost pull request.
+    slept = []
+    GH_STATE["fail_next"] = [403, 429]
+    pr = gh._request("POST", "/repos/Final-Factory/FinalFactory/pulls",
+                     {"title": "t", "head": "ffbox/retry", "base": "develop", "body": "b"},
+                     sleep=slept.append)
+    check("a 403 then a 429 are retried through to success", pr.get("number") is not None, pr)
+    check("with a backoff between attempts", len(slept) == 2, slept)
+
+    GH_STATE["fail_next"] = [403, 403, 403, 403]
+    try:
+        gh._request("GET", "/repos/Final-Factory/FinalFactory/pulls", sleep=slept.append)
+        raised = None
+    except ffwatch.GitHubError as exc:
+        raised = exc
+    check("but a persistent 403 is raised rather than swallowed", raised is not None, raised)
+    check("carrying the status code", getattr(raised, "status", None) == 403, raised)
+    GH_STATE["fail_next"] = []
+
+    # "Nothing merges, ever" is held by the capability not existing in the codebase at all.
+    names = [n for n in dir(ffwatch.GitHub) if not n.startswith("__")]
+    check("the client has no merge method", not any("merge" in n.lower() for n in names), names)
+    source = open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
+    check("and nothing in ffwatch calls the merge endpoint",
+          "/merge" not in source and "put_merge" not in source)
+
+
+def test_verification_results_path_is_per_invocation():
+    """The rule that cost 059 the most to learn: never read Unity's shared results file.
+
+    The Performance Testing package writes TestResults.xml into Application.persistentDataPath,
+    which every copy of the project shares — on Linux that is
+    $HOME/.config/unity3d/Never Games/finalfactory/. This drives the REAL ffverify.sh against a
+    stub editor and asserts that what it passes, and what it later reads, is never that path.
+    """
+    print("verification: the results path")
+    root = os.path.join(TMPROOT, "ffverify")
+    proj = os.path.join(root, "project")
+    out = os.path.join(root, "out")
+    bindir = os.path.join(root, "bin")
+    for d in (os.path.join(proj, "Assets"), out, bindir):
+        os.makedirs(d, exist_ok=True)
+    argv_log = os.path.join(root, "unity-argv.jsonl")
+    shared = os.path.join(root, "home", ".config", "unity3d", "Never Games", "finalfactory",
+                          "TestResults.xml")
+    os.makedirs(os.path.dirname(shared), exist_ok=True)
+    # The shared file exists and says something a reader would obviously believe. Nothing may
+    # ever look at it.
+    with open(shared, "w", encoding="utf-8") as fh:
+        fh.write('<test-run id="1" total="9999" passed="9999" failed="0" />\n')
+
+    write_stub(os.path.join(bindir, "unity-editor"), UNITY_STUB % json.dumps(argv_log))
+    env_unity = os.path.join(bindir, "unity-editor")
+
+    def run_ffverify(*extra):
+        return subprocess.run(
+            ["bash", os.path.join(HERE, "ffverify.sh"), "--project", proj, "--out", out, *extra],
+            capture_output=True, text=True,
+            env=dict(os.environ, FFVERIFY_UNITY=env_unity,
+                     HOME=os.path.join(root, "home")))
+
+    first = run_ffverify("--tag", "harness")
+    check("ffverify runs and reports a failing suite as exit 1", first.returncode == 1,
+          first.stdout + first.stderr)
+    report = json.load(open(os.path.join(out, "verification-harness.json"), encoding="utf-8"))
+    check("it reports the counts out of the file it asked Unity to write",
+          report["tests_run"] == 12 and report["tests_failed"] == 1, report)
+    check("and not the 9999 sitting in Unity's shared results file",
+          report["tests_run"] != 9999, report)
+    check("the recorded results path is the per-invocation one",
+          report["results_path"] == os.path.join(out, "TestResults-harness.xml"),
+          report["results_path"])
+    check("which is not the shared companyName/productName path",
+          "unity3d" not in report["results_path"]
+          and "LocalLow" not in report["results_path"], report["results_path"])
+    check("the failing test name survives into the evidence",
+          "FF.BeltTests.Merges" in (report["evidence"] or ""), report["evidence"])
+
+    calls = [json.loads(ln) for ln in open(argv_log, encoding="utf-8") if ln.strip()]
+    check("every Unity invocation names -testResults explicitly",
+          all("-testResults" in c for c in calls), calls)
+    check("and runs EditMode in batch",
+          all("-runTests" in c and c[c.index("-testPlatform") + 1] == "EditMode" for c in calls),
+          calls)
+
+    # A second invocation into the same directory, as an agent running ffverify itself would.
+    second = run_ffverify()
+    check("an untagged run gets its own results path, not the harness's",
+          second.returncode == 1, second.stdout + second.stderr)
+    paths = [c[c.index("-testResults") + 1] for c in
+             [json.loads(ln) for ln in open(argv_log, encoding="utf-8") if ln.strip()]]
+    check("so two invocations never share one results file",
+          len(paths) == 2 and paths[0] != paths[1], paths)
+    with open(shared, encoding="utf-8") as fh:
+        check("and the shared file is left exactly as it was", "9999" in fh.read())
+
+
+def test_destructive_docker_calls_name_the_container():
+    """Design section 14 rule 2, checked against the source because it is a rule about what
+    must NOT exist: there is deliberately no 'find stray Unity processes and work out which are
+    mine' path. A running editor is not proof of which project it serves, and on a shared box
+    guessing eventually kills a developer's own editor."""
+    print("named-container discipline")
+    sources = {name: open(os.path.join(HERE, name), encoding="utf-8").read()
+               for name in ("ffbox", "ffwatch.py", "discord-task.sh", "ffverify.sh")}
+    # Comment lines are dropped first: several of these files say "never `docker kill`" in
+    # prose, and a check that cannot tell that from a call would forbid explaining the rule.
+    code = {name: "\n".join(ln for ln in text.splitlines()
+                            if not ln.strip().startswith("#"))
+            for name, text in sources.items()}
+    for name, text in code.items():
+        # `docker kill` skips run-as-user.sh's SIGTERM trap, which is what returns the Unity
+        # activation seat. Stopping always goes through `docker stop --timeout`.
+        check(f"{name} never uses docker kill", "docker kill" not in text)
+        check(f"{name} never hunts for processes to kill",
+              not any(tok in text for tok in ("pkill", "killall", "ps aux", "ps -ef")))
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#") or "docker" not in stripped:
+                continue
+            if any(verb in stripped for verb in ("docker stop", "docker rm ")):
+                check(f"{name}: `{stripped[:60]}` addresses one exact name",
+                      "ffbox-${RUN_ID}" in stripped or "$name" in stripped
+                      or "container_name" in stripped, stripped)
+    check("ffwatch asks docker about one anchored name and nothing else",
+          'f"name=^{name}$"' in sources["ffwatch.py"])
+    check("the container ffbox stops is the one it named",
+          'docker stop --timeout 120 "ffbox-${RUN_ID}"' in sources["ffbox"])
+
+
+UNITY_STUB = r'''#!/usr/bin/env python3
+"""Stub unity-editor. Records its argv and writes an NUnit results file where it was told to.
+
+It writes ONLY to the -testResults path it was given: an editor that also scribbled on the
+shared file would be realistic, but the point of the test is that nothing ever reads that one.
+"""
+import json, sys
+
+argv_log = %s
+with open(argv_log, "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(sys.argv[1:]) + "\n")
+
+results = sys.argv[sys.argv.index("-testResults") + 1]
+with open(results, "w", encoding="utf-8") as fh:
+    fh.write('<test-run id="2" total="12" passed="11" failed="1" result="Failed">'
+             '<test-suite><test-case fullname="FF.BeltTests.Merges" result="Failed">'
+             '<failure><message>expected 3 got 2</message></failure>'
+             '</test-case></test-suite></test-run>')
+print("Batchmode run complete")
+sys.exit(2)
+'''
+
+
+def test_allow_list_is_scope_not_a_boundary():
+    """The allow list must never be leaned on as containment, and this records why.
+
+    Measured against the real CLI, not assumed: a command whose PREFIX matches no entry is
+    refused (`sh -c 'git push origin main'` was denied and recorded), but a trailing `*`
+    matches the whole command string including separators, so `git status --short && touch
+    marker` was PERMITTED under `Bash(git status*)`. The pattern does not decompose a chain.
+
+    This test does not re-run the model. It pins the two things that keep the mistake from
+    being made again in code: every write-lane entry is prefix-shaped, so nobody has quietly
+    added one believing it confines what follows; and the comment stating the limitation is
+    still there for the next reader."""
+    print("allow list: scope, not a boundary")
+    src = open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
+    check("the limitation is written down where the list is defined",
+          "NOT ONE" in src and "does not decompose the chain" in src)
+    check("and the real containment is named there instead",
+          "design section 7's list" in src and "host-owned publish" in src)
+
+    trailing = [p for p in ffwatch.WRITE_ALLOWED if p.endswith("*)")]
+    check("the entries that end in a wildcard are known and few",
+          sorted(trailing) == sorted([
+              "Bash(ffdiscord *)", "Bash(ffverify *)", "Bash(git status*)", "Bash(git diff*)",
+              "Bash(git log*)", "Bash(git show*)", "Bash(git rev-parse*)"]), trailing)
+    check("every write-lane entry only ever grants a command PREFIX",
+          all(p.startswith("Bash(") and p.endswith(")") for p in ffwatch.WRITE_ALLOWED),
+          ffwatch.WRITE_ALLOWED)
+    check("nothing in the write allow list can publish on its own",
+          not [p for p in ffwatch.WRITE_ALLOWED
+               if "push" in p or "gh " in p or "remote" in p], ffwatch.WRITE_ALLOWED)
+    # The read-only lanes are the ones fed untrusted player text directly, and they are not
+    # given Bash on the strength of a pattern that a chain rides through.
+    for lane in ("answer", "triage"):
+        cap = ffwatch.LANE_CAPABILITIES[lane]
+        check(f"the {lane} lane still has no Bash and no allow list at all",
+              "Bash" not in cap["tools"] and not cap["allowed"], cap)
+
+
 def main():
     tests = [
         test_schema_idempotent,
@@ -1733,11 +2416,12 @@ def main():
         test_transcript_index,
         test_outbound_is_recorded_before_it_is_sent,
         test_dry_run,
-        test_write_lane_is_blocked,
+        test_dev_lane_runs_a_directive,
         test_thread_triage_lane,
         test_second_turn_resumes,
         test_missing_transcript_falls_back,
         test_container_argv_is_valid,
+        test_allow_list_is_scope_not_a_boundary,
         test_failed_launch_frees_the_slot,
         test_transcript_reindex_is_stable,
         # phase 2
@@ -1757,6 +2441,18 @@ def main():
         test_schema_migrates_an_existing_database,
         test_sender_argv_is_accepted_by_the_real_cli,
         test_reply_head_reports_what_the_harness_knows,
+        # phase 3
+        test_autofix_enqueues_one_fix_job,
+        test_fix_lane_launches_with_write_capabilities,
+        test_unity_lane_is_capped_at_one,
+        test_fix_lane_rate_limit,
+        test_publish_opens_a_pull_request,
+        test_failed_verification_blocks_the_pull_request,
+        test_compile_failure_blocks_the_pull_request,
+        test_no_changed_files_means_no_branch_and_no_pr,
+        test_github_client_retries_and_cannot_merge,
+        test_verification_results_path_is_per_invocation,
+        test_destructive_docker_calls_name_the_container,
     ]
     for fn in tests:
         try:

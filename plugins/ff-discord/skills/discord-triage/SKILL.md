@@ -1,13 +1,32 @@
 ---
 name: discord-triage
-description: Triage new Final Factory bug reports from the Discord #bug-reports forum. Classifies each report, auto-fixes obvious low-risk bugs end-to-end through the speckit flow and merges them to develop, and files a GitHub issue + pings the team in #dev-chat for anything unclear or risky. Invoke when the user asks to check/triage Discord bug reports, or on a loop.
+description: Triage new Final Factory bug reports from the Discord #bug-reports forum. Classifies each report, auto-fixes obvious low-risk bugs end-to-end through the speckit flow, and files a GitHub issue + pings the team in #dev-chat for anything unclear or risky. Invoke when the user asks to check/triage Discord bug reports, to run a pass by hand, or to triage on a machine that has no ffbox.
 ---
 
 # Discord bug triage
 
 Process **new** bug reports from the Discord bug-reports forum. One pass per invocation:
-read what's new, classify each report, act, advance the cursor. Designed to be run on a
-`/loop` — it is idempotent (the cursor only advances after a report is fully handled).
+read what's new, classify each report, act, advance the cursor. Idempotent — the cursor only
+advances after a report is fully handled.
+
+## Who normally runs this
+
+On a machine with ffbox, **ffwatch does**, exactly as it does for `ask-claude`. A bug thread
+becomes one multi-turn conversation with a resumed session rather than a series of unrelated
+one-shots; the triage turn is launched read-only, with no write tools at all; and a verdict of
+AUTOFIX enqueues a separate `fix` turn, re-based onto `develop`, whose work the harness
+verifies, pushes and turns into a pull request. Nothing in this file changes for that —
+ffwatch loads these same skills and roles through `--plugin-dir`, so this is the policy its
+containers follow. What does change is who acts on the verdict: see "On the build server" in
+`reference.md` §AUTOFIX flow.
+
+Running a pass by hand is the fallback, for a machine with no ffbox (BEAST, Windows) or a box
+where ffwatch is stopped. `/loop 15m /discord-triage` still works and is the same thing on a
+timer, but it is a convenience rather than the design: it re-queries Discord on a fixed
+interval whether or not anything happened, and every pass starts cold. Check whether ffwatch
+is already running first — `python3 ffbox/ffwatch.py status`, or
+`systemctl --user status ffwatch` — because two things triaging the same forum will both
+triage every report.
 
 The CLI is `ffdiscord` (zero deps, Python 3 stdlib); its full command reference, the cursor
 rules, and setup live in the `discord-cli` skill beside this one. Discord-side configuration
@@ -53,7 +72,7 @@ Read the log for exceptions, and note the game version — a bug against an old 
 already be fixed on `develop`. Check that with `git log`, and path-trace the claim.
 
 If more than ~5 new reports are waiting, handle the oldest 5 this pass and say so; the next
-loop iteration picks up the rest. Never batch-skim a backlog into snap verdicts.
+pass picks up the rest. Never batch-skim a backlog into snap verdicts.
 
 ## 2. Classify
 

@@ -15,16 +15,22 @@ and records everything in SQLite.
   ffwatch approve   release held outbound rows (approve_before_send)
   ffwatch reject    drop held outbound rows, with a reason
 
-PHASE 2. The read-only lanes (answer, triage) run end to end AND their replies are sent: the
-container writes intents through the ffdiscord shim, ffwatch records them before anything
-reaches Discord, and send_pending() puts them on the wire with --silent, the 2000-character
-cap turned into an attachment, the kill switch, send-side rate limits, dry-run, optional
-approval, and nonce + enforce_nonce so a retry after a crash cannot double-post.
+PHASE 3. All four lanes run. The read-only ones (answer, triage) reply through the outbound
+queue: the container writes intents through the ffdiscord shim, ffwatch records them before
+anything reaches Discord, and send_pending() puts them on the wire with --silent, the
+2000-character cap turned into an attachment, the kill switch, send-side rate limits, dry-run,
+optional approval, and nonce + enforce_nonce so a retry after a crash cannot double-post.
 
-The write lanes (fix, dev) are still classified and recorded but deliberately not launched —
-see LANE_CAPABILITIES and PHASE1_LANES. Verification and publication are phase 3; their seams
-are compose_head's verification/publish arguments and Watcher.publish_facts, both deliberately
-empty rather than faked.
+The write lanes (fix, dev) additionally get Unity, one at a time, and the three things the
+harness — never the agent — owns: verification (`unity-editor -runTests` in the container after
+the agent exits, into the verification table it cannot write), publication (a git bundle
+harvested by ffbox, fetched and pushed here), and the pull request (opened through the ported
+GitHub client, whose number and url come from the API response). A triage verdict of AUTOFIX
+enqueues a fix turn, re-based onto develop and saying so in its prompt.
+
+Nothing merges. Not because the agent is told not to — design section 7 measures those deny
+patterns being walked through by `sh -c` — but because no GitHub credential or push right ever
+enters the container, and there is deliberately no merge method on the GitHub client here.
 
 Standard library only, by design — the whole Discord stack installs with a git clone.
 """
@@ -44,6 +50,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -62,7 +70,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a column added to
 # the schema file never reaches a database created before it. These are applied with ALTER on
@@ -79,6 +87,19 @@ ADDED_COLUMNS = [
     ("outbound", "last_error", "TEXT"),
     ("outbound", "local_id", "TEXT"),
     ("run", "allowed", "TEXT"),
+    # phase 3: publication and the autofix hand-off
+    ("run", "bundle_path", "TEXT"),
+    ("run", "changed_files", "INTEGER"),
+    ("run", "branch", "TEXT"),
+    ("run", "pushed", "INTEGER NOT NULL DEFAULT 0"),
+    ("run", "pr_number", "INTEGER"),
+    ("run", "pr_url", "TEXT"),
+    ("run", "no_branch_reason", "TEXT"),
+    ("run", "no_pr_reason", "TEXT"),
+    ("run", "verify_secs", "REAL"),
+    ("turn", "parent_turn_id", "INTEGER"),
+    ("turn", "rebased_from", "TEXT"),
+    ("turn", "note", "TEXT"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -114,9 +135,34 @@ DEFAULTS = {
     # what the container gets
     "task_script": os.path.join(HERE, "discord-task.sh"),
     "shim": os.path.join(HERE, "ffdiscord_shim.py"),
+    "ffverify": os.path.join(HERE, "ffverify.sh"),
     "plugins_dir": os.path.join(REPO_ROOT, "plugins"),
     "plugin": "ff-discord",
     "base_ref": "develop",
+    "branch_prefix": "ffbox/",
+
+    # -- verification (design section 14) --------------------------------------------------
+    # The fast EditMode suite by default, matching the game repo's "run FFEditorTests unless
+    # asked for everything" rule. Empty runs every EditMode assembly, which is the slow suite.
+    "verify_assemblies": "FFEditorTests",
+    "verify_secs": 1800,
+
+    # -- publication (design section 17) ---------------------------------------------------
+    # git_dir is a host checkout with the real remote. Publication only ever writes refs under
+    # refs/ffbox/ there and pushes them: no local branch, no checkout, no working-tree change,
+    # so this can safely be the golden checkout that every ffbox clone is made from.
+    "git_dir": os.environ.get("FFBOX_GOLDEN_MNT", "/opt/FinalFactory"),
+    "push_remote": "origin",
+    "github": {
+        "api_base": "https://api.github.com",
+        "repo": "Final-Factory/FinalFactory",
+        # PRs target develop, the integration branch. master is release-controlled.
+        "base": "develop",
+        # Host-side only, and never passed into a container. This absence, not the deny list,
+        # is what makes "nothing merges" true (design section 17).
+        "token_env": "GH_TOKEN",
+        "token": None,
+    },
 
     # ceilings (design section 8). Three separate clocks; conflating them makes a slow Unity
     # import look like a hung agent.
@@ -185,6 +231,9 @@ ENV_OVERRIDES = {
     "FFWATCH_KILL_GRACE": ("kill_grace_secs", int),
     "FFWATCH_MAX_RUNS": ("max_concurrent_runs", int),
     "FFWATCH_CATCHUP_SECS": ("catchup_secs", int),
+    "FFWATCH_VERIFY": ("ffverify", str),
+    "FFWATCH_VERIFY_SECS": ("verify_secs", int),
+    "FFWATCH_GIT_DIR": ("git_dir", str),
 }
 
 
@@ -223,6 +272,14 @@ def load_config():
     cfg["state_dir"] = os.path.expanduser(cfg["state_dir"])
     cfg["kill_switch"] = os.path.expanduser(cfg["kill_switch"])
     cfg["events_path"] = os.path.expanduser(cfg["events_path"])
+    # The GitHub token is read from the ENVIRONMENT, not from the config file, so it is never
+    # written to disk beside channel ids and never lands in a config a container could see. A
+    # token that IS in the config file still works, because a machine without a systemd
+    # EnvironmentFile has to put it somewhere.
+    gh = dict(cfg.get("github") or {})
+    if not gh.get("token"):
+        gh["token"] = os.environ.get(gh.get("token_env") or "GH_TOKEN") or None
+    cfg["github"] = gh
     # The Discord-side config (channel aliases, guild) is read-only context for us; ffdiscord
     # itself resolves aliases, so we never duplicate the id table here.
     cfg["_discord"] = {k: raw.get(k) for k in ("guild_id", "channels", "mentions")}
@@ -250,19 +307,51 @@ READ_TOOLS = "Read,Grep,Glob"
 WRITE_TOOLS = "Read,Grep,Glob,Edit,Write,Bash"
 WRITE_DISALLOWED = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)"]
 
-# An ALLOW list, which is a different kind of control from the deny list above and much
-# stronger. Measured on this host: with `--tools Read,Grep,Glob,Bash` plus
-# `--allowedTools "Bash(<prog> *)"`, the named program RAN and `sh -c 'git push origin main'`
-# was DENIED and recorded in permission_denials. That is the exact wrapper trick design
-# section 7 shows walking straight through `Bash(git push*)` — against an allow list it fails
-# closed instead, because it simply does not match.
+# An ALLOW list. It exists for a mechanical reason, measured on this host: `--permission-mode
+# acceptEdits` auto-approves EDITS, not Bash. A non-interactive run has nobody to ask, so
+# without this every single Bash command in a write lane is denied — the fix lane could not
+# run one shell command, and the shim of design section 11 was unreachable from every lane.
+# Naming what Bash may run is what makes the write lanes work at all.
 #
-# It exists because of a second measurement: `--permission-mode acceptEdits` auto-approves
-# EDITS, not Bash. A non-interactive run has nobody to ask, so every single Bash command in a
-# write lane was denied — the fix lane could not run one shell command, and the shim of design
-# section 11 was unreachable from every lane. Naming what Bash may run is what makes the write
-# lanes work at all.
-WRITE_ALLOWED = ["Bash(ffdiscord *)"]
+# READ THIS BEFORE TREATING IT AS A SECURITY BOUNDARY. IT IS NOT ONE. Measured, both ways:
+#
+#   * A command whose PREFIX matches nothing here is refused. `sh -c 'git push origin main'`
+#     was denied and recorded in permission_denials, which is the wrapper trick design
+#     section 7 shows walking straight through the deny pattern `Bash(git push*)`.
+#   * But a trailing `*` swallows an appended chain. `git status --short && touch marker` was
+#     PERMITTED under `Bash(git status*)`, and `<prog> doctor && touch marker` under
+#     `Bash(<prog> *)`. The glob matches the whole command string, separators included; it
+#     does not decompose the chain and check each part.
+#
+# So this reduces scope and catches accidents. It does not stop a determined agent, and the
+# read-only lanes are deliberately not given Bash on the strength of it. What actually
+# contains the write lanes is unchanged and is design section 7's list: no credential of any
+# kind in the container, host-owned publish, and a clone that is destroyed at the end of the
+# run. Do not add an entry here on the theory that the pattern confines what follows it.
+#
+# Every entry is here because the lane cannot do its job without it, and each one is a whole
+# program rather than a prefix of one, because `Bash(git *)` would allow `git push` straight
+# back in through the front door:
+#
+#   ffdiscord   the section-11 shim. Reads come out of job.json, writes land in the outbox. It
+#               holds no credential; without it the lane cannot say anything to a thread.
+#   ffverify    the ONLY Unity entry point (ffbox/ffverify.sh). Deliberately not
+#               `Bash(unity-editor *)`: with the raw editor allowed, a lane could pass its own
+#               -testResults — the shared companyName/productName path design section 14 exists
+#               to keep us away from — or -executeMethod anything at all.
+#   git status/diff/log/show/rev-parse
+#               read-only orientation. "What have I actually changed" is the question a fix lane
+#               asks most, and answering it any other way means reading the whole tree.
+#
+# NOT here, on purpose: git add, git commit, git push, git remote, gh, and any shell that could
+# wrap them. ffbox makes the single commit itself during harvest, after the container is gone,
+# so the lane never needs write-side git and the commit stays a harness fact.
+WRITE_ALLOWED = [
+    "Bash(ffdiscord *)",
+    "Bash(ffverify)", "Bash(ffverify *)",
+    "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)",
+    "Bash(git rev-parse*)",
+]
 
 LANE_CAPABILITIES = {
     # The read-only lanes keep NO Bash — this is the design's strongest containment claim
@@ -283,13 +372,9 @@ LANE_CAPABILITIES = {
                "agent": "discord-dev-agent", "verdict": "change"},
 }
 
-# Phase 1 ships the read-only lanes only. A write lane is still classified and recorded — the
-# record is the point — but the turn is parked instead of launched.
-PHASE1_LANES = ("answer", "triage")
-WRITE_LANE_BLOCK_REASON = (
-    "write lane not enabled in phase 1: fix/dev need Unity batchmode verification, git bundle "
-    "harvest and host-side PR creation (design section 22, phase 3)"
-)
+# All four lanes launch. What used to hold the write lanes back was a phase gate; what holds
+# them now is real and stays: max_unity_runs=1 for the activation seat, rate_limits["fix"]=3 a
+# day, and the fail-closed classification that never widens capability on a failure to decide.
 
 # The doorbell kind decides the conversation kind; the conversation kind decides the lane
 # (design section 13). Anything that falls through goes to the classifier, which fails closed.
@@ -627,6 +712,92 @@ def sha256_file(path):
 def safe_name(name):
     keep = "".join(c if (c.isalnum() or c in "._-") else "_" for c in (name or "file"))
     return keep[:120] or "file"
+
+
+# ------------------------------------------------------------------------------------------
+# GitHub  (ported from 059 github_api.py)
+# ------------------------------------------------------------------------------------------
+# Deliberately not `gh`: the ffbox image does not have it (design section 2c) and the daemon
+# must not depend on a binary that may be absent. urllib keeps the whole stack dependency-free,
+# and the retry/rate-limit shape mirrors ffdiscord.py's.
+#
+# The HARNESS calls this, so the harness holds the API response — which is the entire reason
+# the recorded PR number and url are facts rather than something scraped out of the agent's
+# prose (design section 17).
+
+GITHUB_UA = "ffwatch (Final Factory)"
+
+
+class GitHubError(RuntimeError):
+    def __init__(self, status, body):
+        self.status = status
+        self.body = body
+        super().__init__(f"GitHub HTTP {status}: {str(body)[:300]}")
+
+
+class GitHub:
+    """A pull-request client with NO MERGE METHOD.
+
+    That absence is load-bearing and is not an oversight to be tidied up later: "nothing
+    merges, ever" is held by the capability not existing anywhere in this codebase, so no
+    future edit can reach for it by accident. Adding one would be a design change, not a
+    feature.
+    """
+
+    def __init__(self, cfg):
+        gh = cfg.get("github") or {}
+        self.api_base = (gh.get("api_base") or "https://api.github.com").rstrip("/")
+        self.repo = gh.get("repo") or ""
+        self.token = gh.get("token") or ""
+        self.base = gh.get("base") or "develop"
+
+    def _request(self, method, path, body=None, retries=4, sleep=time.sleep):
+        url = f"{self.api_base}{path}"
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        for attempt in range(retries):
+            req = urllib.request.Request(url, data=data, method=method, headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.github+json",
+                "User-Agent": GITHUB_UA,
+                "Content-Type": "application/json",
+            })
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    payload = resp.read()
+                    return json.loads(payload) if payload else {}
+            except urllib.error.HTTPError as exc:
+                text = exc.read().decode("utf-8", "replace")
+                # 403 and 429 are both how GitHub reports the SECONDARY rate limit, which is
+                # transient and unrelated to the token being wrong. Retrying a genuine
+                # permission failure costs four sleeps and still reports the same error.
+                if exc.code in (403, 429) and attempt < retries - 1:
+                    sleep(2 * (attempt + 1))
+                    continue
+                if exc.code >= 500 and attempt < retries - 1:
+                    sleep(1.5 * (attempt + 1))
+                    continue
+                raise GitHubError(exc.code, text) from exc
+            except urllib.error.URLError as exc:
+                if attempt < retries - 1:
+                    sleep(1.5 * (attempt + 1))
+                    continue
+                raise GitHubError(0, str(exc)) from exc
+        raise GitHubError(0, "retries exhausted")
+
+    def create_pull_request(self, head, title, body):
+        """Open a PR against the integration branch. Never merges it."""
+        created = self._request("POST", f"/repos/{self.repo}/pulls", {
+            "title": title, "head": head, "base": self.base, "body": body, "draft": False,
+        })
+        return {"number": created.get("number"), "url": created.get("html_url")}
+
+    def find_pull_request(self, head):
+        """An existing open PR for this branch, so a retried publish does not open a second."""
+        owner = self.repo.split("/")[0]
+        found = self._request("GET", f"/repos/{self.repo}/pulls?head={owner}:{head}&state=open")
+        if isinstance(found, list) and found:
+            return {"number": found[0].get("number"), "url": found[0].get("html_url")}
+        return None
 
 
 class ConversationLock:
@@ -1035,35 +1206,74 @@ class Watcher:
                 f"{classification.get('reason')}")
         seq = int(self.db.scalar("SELECT COALESCE(MAX(seq),0) FROM turn WHERE conversation_id=?",
                                  (conv["id"],), 0)) + 1
-        status = "queued"
-        error = None
-        if lane not in PHASE1_LANES:
-            status, error = "blocked", WRITE_LANE_BLOCK_REASON
         cur = self.db.execute(
             "INSERT INTO turn(conversation_id, seq, trigger, lane, status, classification_json,"
-            " failed_closed, failed_closed_reason, queued_at, error) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (conv["id"], seq, TRIGGER_BY_KIND.get(conv["kind"], "message"), lane, status,
+            " failed_closed, failed_closed_reason, queued_at) VALUES(?,?,?,?,'queued',?,?,?,?)",
+            (conv["id"], seq, TRIGGER_BY_KIND.get(conv["kind"], "message"), lane,
              json.dumps(classification), 1 if fc else 0,
-             classification.get("reason") if fc else None, now_iso(), error))
+             classification.get("reason") if fc else None, now_iso()))
         turn_id = cur.lastrowid
         ids = ",".join(str(m["id"]) for m in msgs)
         self.db.execute(f"UPDATE message SET turn_id=? WHERE id IN ({ids})", (turn_id,))
-        if status == "blocked":
-            # 'blocked' is a display state, not a latch: the next message still creates a turn,
-            # and phase 3 turns these into real runs without a migration.
-            self.db.execute("UPDATE conversation SET state='blocked', lane=? WHERE id=?",
-                            (lane, conv["id"]))
-            self.record_outbound(None, conv["id"], "post", {
-                "channel": conv["thread_id"], "silent": True,
-                "text": f"🚧 queued for the {lane} lane, which is not enabled yet "
-                        f"({WRITE_LANE_BLOCK_REASON}).",
-            })
-            log(f"turn {turn_id} blocked: lane={lane} conversation={conv['id']}")
-        else:
-            self.db.execute("UPDATE conversation SET state='queued', lane=? WHERE id=?",
-                            (lane, conv["id"]))
-            log(f"turn {turn_id} queued: lane={lane} conversation={conv['id']} "
-                f"messages={len(msgs)}")
+        self.db.execute("UPDATE conversation SET state='queued', lane=? WHERE id=?",
+                        (lane, conv["id"]))
+        log(f"turn {turn_id} queued: lane={lane} conversation={conv['id']} "
+            f"messages={len(msgs)}")
+        return turn_id
+
+    # -- triage -> fix (design section 13) --------------------------------------------------
+
+    def enqueue_autofix(self, turn, conv, verdict):
+        """A triage verdict of AUTOFIX enqueues a SEPARATE fix job. Returns the new turn id.
+
+        Separate, not an escalation of the same turn, because the two runs want different
+        capability sets, a different base and a different Unity answer — and because the triage
+        record has to stay readable as what it was: a read-only investigation that recommended
+        a change, next to a write run that attempted one.
+
+        Only the structured `verdict` field triggers this. Prose that says "I'll fix it" does
+        nothing, which is the harness-is-the-system-of-record rule applied to the one place
+        where a read-only lane can cause a write to happen.
+        """
+        if (turn["lane"] or "") != "triage":
+            return None
+        if str((verdict or {}).get("verdict") or "").strip().upper() != "AUTOFIX":
+            return None
+        existing = self.db.one("SELECT id FROM turn WHERE parent_turn_id=?", (turn["id"],))
+        if existing:
+            # Exactly one fix job per triage verdict, however many times this is reached — a
+            # requeued turn or a re-read outbox must not fan out into a second attempt.
+            log(f"turn {turn['id']}: autofix already enqueued as turn {existing['id']}")
+            return None
+
+        # BASE PINNING, deliberately broken here and nowhere else (design section 6). A
+        # conversation stays on the sha it was first cloned from so turn 5 does not resume a
+        # transcript full of file.cs:214 evidence gathered against a tree that has since moved.
+        # Escalating to the fix lane is the one moment where reasoning against a stale tree is
+        # worse than losing the pin: the change has to land on today's develop. Clearing
+        # base_sha makes the next launch resolve base_ref fresh, and rebased_from records what
+        # we moved off so the prompt can say so.
+        old_base = conv["base_sha"]
+        outline = (verdict.get("change_outline") or verdict.get("summary") or "").strip()
+        note = ("Your own triage of this thread returned AUTOFIX. Implement that fix now, "
+                "including a regression test where one is possible.\n\n"
+                f"Triage outline:\n{outline[:4000]}")
+        seq = int(self.db.scalar("SELECT COALESCE(MAX(seq),0) FROM turn WHERE conversation_id=?",
+                                 (conv["id"],), 0)) + 1
+        classification = {"type": "change", "needs_unity": True,
+                          "reason": f"triage turn {turn['seq']} returned AUTOFIX",
+                          "scope_note": outline[:500], "status": "ok", "source": "triage"}
+        cur = self.db.execute(
+            "INSERT INTO turn(conversation_id, seq, trigger, lane, status, classification_json,"
+            " failed_closed, queued_at, parent_turn_id, rebased_from, note)"
+            " VALUES(?,?,'autofix','fix','queued',?,0,?,?,?,?)",
+            (conv["id"], seq, json.dumps(classification), now_iso(), turn["id"], old_base, note))
+        turn_id = cur.lastrowid
+        self.db.execute(
+            "UPDATE conversation SET state='queued', lane='fix', base_sha=NULL, verdict='AUTOFIX'"
+            " WHERE id=?", (conv["id"],))
+        log(f"turn {turn_id} queued: autofix from triage turn {turn['id']} "
+            f"(re-basing off {old_base or 'unpinned'} onto {self.cfg['base_ref']})")
         return turn_id
 
     # ======================================================================================
@@ -1208,6 +1418,16 @@ class Watcher:
             "failed_closed": bool(turn["failed_closed"]),
             "failed_closed_reason": turn["failed_closed_reason"],
             "verdict_schema": cap["verdict"],
+            "note": turn["note"],
+            # A deliberate re-base is announced in the turn's own prompt (design section 6), not
+            # left for the model to notice that the line numbers moved.
+            "rebase": ({"from": turn["rebased_from"], "to": self.cfg["base_ref"]}
+                       if turn["rebased_from"] else None),
+            # Harness-owned verification, run by the container task AFTER the agent exits. The
+            # agent cannot turn this off: it is read from job.json, which is mounted read-only.
+            "verify": {"enabled": bool(cap["unity"]),
+                       "assemblies": self.cfg.get("verify_assemblies") or "",
+                       "out": "/ffbox/out/verification"},
             "messages": [self.job_message(m, att_dir) for m in msgs],
             "history": [self.job_message(m, att_dir) for m in reversed(history)],
             "resume_summary": summary,
@@ -1294,6 +1514,15 @@ class Watcher:
             for a in m["attachments"]:
                 parts.append(f"    attachment {a['kind']}: {a['path']} ({a['filename']})")
         parts.append("</discord>")
+        if job.get("rebase"):
+            r = job["rebase"]
+            parts += ["", f"NOTE: this turn was deliberately RE-BASED from "
+                          f"{(r['from'] or 'the unpinned base')} onto the current "
+                          f"{r['to']}. Earlier turns in this conversation cited file:line "
+                          "positions against the older tree. Re-read anything you intend to "
+                          "rely on before trusting a line number from the transcript."]
+        if job.get("note"):
+            parts += ["", "Harness instruction for this turn:", "", job["note"]]
         if job["resume_summary"]:
             parts += ["", "The prior session transcript was lost. Host-rendered summary:", "",
                       job["resume_summary"]]
@@ -1333,16 +1562,21 @@ class Watcher:
         with open(job_path, "w", encoding="utf-8") as fh:
             json.dump(job, fh, indent=2, ensure_ascii=False)
 
+        # A write lane commits its work on this branch, created at the pinned base sha. The name
+        # is derived from the run id, so it is unique, addressable and — like the container name
+        # — owned by the host rather than chosen by the agent.
+        branch = f"{self.cfg['branch_prefix']}{run_id}" if cap["verdict"] == "change" else None
+
         # The run row is written BEFORE the container starts. A run that crashes, hangs or is
         # killed is still identifiable, and recovery can find it by the container name it owns.
         cur = self.db.execute(
             "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, resumed,"
-            " base_sha, unity, tools, disallowed, allowed, stream_path)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            " base_sha, unity, tools, disallowed, allowed, stream_path, branch)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (turn["id"], run_id, f"ffbox-{run_id}", job["session"]["id"],
              1 if job["session"]["resume"] else 0, conv["base_sha"], 1 if cap["unity"] else 0,
              cap["tools"], ",".join(cap["disallowed"]),
-             ",".join(cap.get("allowed") or []), os.path.join(run_dir, "stream.jsonl")))
+             ",".join(cap.get("allowed") or []), os.path.join(run_dir, "stream.jsonl"), branch))
         run_row_id = cur.lastrowid
 
         cmd = self.ffbox_cmd() + [
@@ -1361,10 +1595,18 @@ class Watcher:
             "--mount", f"{self.cfg['shim']}:/usr/local/bin/ffdiscord:ro",
             "--agent-timeout", str(self.cfg["agent_secs"]),
             "--warmup-timeout", str(self.cfg["warmup_secs"]),
+            "--verify-timeout", str(self.cfg["verify_secs"]),
             "--kill-grace", str(self.cfg["kill_grace_secs"]),
         ]
         if not cap["unity"]:
             cmd.append("--no-unity")
+        else:
+            # ffverify is mounted onto PATH for the same reason the shim is: the container task
+            # and the lane's Bash allow list both name it, and neither knows a host path. It is
+            # the only Unity entry point either of them gets.
+            cmd += ["--mount", f"{self.cfg['ffverify']}:/usr/local/bin/ffverify:ro"]
+        if branch:
+            cmd += ["--branch", branch]
 
         env = dict(os.environ)
         env["FFBOX_RESULTS"] = runs_dir          # so ffbox's OUT is exactly our run_dir
@@ -1399,7 +1641,14 @@ class Watcher:
         timeout_kind = _read_text(os.path.join(run_dir, "ffbox-timeout"))
         base_sha = _read_text(os.path.join(run_dir, "base_sha.txt"))
 
-        if timeout_kind or rc in (123, 124):
+        if timeout_kind == "verify" or rc == 125:
+            # The VERIFY clock is the one timeout that is not the turn failing: the agent had
+            # already finished and its summary is worth posting. It lands as an unverified run,
+            # which the PR gate below treats exactly like a failed verification.
+            terminal = "failed" if (isinstance(result, dict) and result.get("is_error")) \
+                else "done"
+            timeout_kind = "verify"
+        elif timeout_kind or rc in (123, 124):
             # design section 8: exceeding the agent clock is TERMINAL. Never a retry — a retry
             # of a run that has already burned 15 minutes just burns 15 more.
             terminal = "timed_out"
@@ -1412,11 +1661,13 @@ class Watcher:
         self.db.execute(
             "UPDATE run SET exit_code=?, terminal_state=?, num_turns=?, cost_usd=?,"
             " input_tokens=?, output_tokens=?, cache_read_tokens=?, warmup_secs=?, agent_secs=?,"
-            " base_sha=COALESCE(?, base_sha) WHERE id=?",
+            " verify_secs=?, patch_path=?, base_sha=COALESCE(?, base_sha) WHERE id=?",
             (rc, terminal, result.get("num_turns"), result.get("total_cost_usd"),
              usage.get("input_tokens"), usage.get("output_tokens"),
              usage.get("cache_read_input_tokens"),
              task.get("warmup_secs"), task.get("agent_secs", round(wall, 1)),
+             task.get("verify_secs"),
+             _existing(os.path.join(run_dir, "changes.patch")),
              base_sha or None, run_row_id))
 
         if base_sha and not conv["base_sha"]:
@@ -1424,6 +1675,16 @@ class Watcher:
             # 5 does not resume a transcript full of file.cs:214 evidence from a moved tree.
             self.db.execute("UPDATE conversation SET base_sha=? WHERE id=?",
                             (base_sha, conv["id"]))
+            conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv["id"],))
+
+        verdict = _parse_verdict(result.get("result") if isinstance(result, dict) else None)
+
+        # ORDER MATTERS. Verification is the harness's own fact and the pull-request gate reads
+        # it, so it is recorded first; publication is next, because compose_head prints the
+        # branch and PR lines out of the run row; the reply is composed last, from what both of
+        # those actually wrote rather than from what the agent said they would.
+        self.record_verification(run_row_id, turn, run_dir, timeout_kind)
+        self.publish(run_row_id, turn, conv, run_dir, job, verdict)
 
         self.index_transcript(run_row_id, conv["id"], job["session"]["id"])
         self.record_reply(run_row_id, conv, turn, run_dir, terminal, result, timeout_kind, job)
@@ -1435,6 +1696,11 @@ class Watcher:
             error = (result.get("subtype") or f"ffbox exited {rc}") if result else \
                 f"ffbox exited {rc}"
         self.finish_turn(turn["id"], terminal, error=error)
+
+        # After finish_turn, which returns the conversation to 'idle' — enqueuing first would
+        # have that update stamp straight over the 'queued' the new fix turn needs.
+        if terminal == "done":
+            self.enqueue_autofix(turn, conv, verdict)
 
     def finish_turn(self, turn_id, status, error=None):
         self.db.execute("UPDATE turn SET status=?, ended_at=?, error=? WHERE id=?",
@@ -1601,15 +1867,220 @@ class Watcher:
                                  self.conv_dir(conv["id"]), "failed",
                                  {"subtype": error}, None, job)
 
-    def publish_facts(self, run_row_id):
-        """Branch and pull request, from git and the GitHub API — never from the agent's prose.
+    # ======================================================================================
+    # verification  (design section 14 — harness-owned, which is why it is its own table)
+    # ======================================================================================
 
-        PHASE 3 SEAM. Publication is not implemented yet, so this is empty and compose_head
-        prints no branch line at all. It deliberately does not fall back to anything the agent
-        said: a summary that claims a PR that does not exist is exactly the failure the
+    def record_verification(self, run_row_id, turn, run_dir, timeout_kind=None):
+        """Copy the container task's verification report into the verification table.
+
+        Only the container task writes that report, and only after the agent process has
+        exited; the task deletes anything already sitting at the path first, so an agent that
+        wrote a flattering verification.json mid-turn cannot have it believed. Everything here
+        is therefore a harness fact, and a lane that should have been verified but produced no
+        report gets a row saying exactly that rather than no row at all — an absent row would
+        read downstream as "not a lane that needs verifying".
+        """
+        cap = LANE_CAPABILITIES.get(turn["lane"]) or LANE_CAPABILITIES["answer"]
+        if not cap["unity"]:
+            return None
+        report = _read_json(os.path.join(run_dir, "verification.json"))
+        if not isinstance(report, dict):
+            reason = ("verification hit its own ceiling and was stopped"
+                      if timeout_kind == "verify"
+                      else "the container produced no verification report")
+            report = {"ran": False, "compiled": None, "evidence": reason}
+        cur = self.db.execute(
+            "INSERT INTO verification(run_id, ran, compiled, compile_errors, tests_run,"
+            " tests_passed, tests_failed, results_path, evidence) VALUES(?,?,?,?,?,?,?,?,?)",
+            (run_row_id, 1 if report.get("ran") else 0,
+             None if report.get("compiled") is None else (1 if report["compiled"] else 0),
+             report.get("compile_errors"), report.get("tests_run"), report.get("tests_passed"),
+             report.get("tests_failed"), report.get("results_path"), report.get("evidence")))
+        log(f"run {run_row_id}: verification ran={bool(report.get('ran'))} "
+            f"compiled={report.get('compiled')} failed={report.get('tests_failed')}")
+        return cur.lastrowid
+
+    def verification_gate(self, run_row_id):
+        """(ok, reason). The PR gate of design section 14, and it is not negotiable by the
+        agent: no pull request opens for a game-code change without compiled=true and zero test
+        failures, whatever the verdict claims about its own confidence."""
+        row = self.db.one("SELECT * FROM verification WHERE run_id=? ORDER BY id DESC LIMIT 1",
+                          (run_row_id,))
+        if row is None or not row["ran"]:
+            return False, "the harness could not verify this change"
+        if not row["compiled"]:
+            return False, "the change did not compile"
+        if (row["tests_failed"] or 0) > 0:
+            return False, f"{row['tests_failed']} test(s) failed"
+        if not row["tests_run"]:
+            return False, "no tests ran"
+        return True, None
+
+    # ======================================================================================
+    # publication  (design section 17)
+    # ======================================================================================
+
+    def publish(self, run_row_id, turn, conv, run_dir, job, verdict):
+        """Push the run's work and, if it earns one, open the pull request.
+
+        CONFIDENCE GATES THE PULL REQUEST, NOT THE BRANCH. The work is published either way so
+        it cannot be lost with the ZFS clone; only the proposal to merge is withheld. No changed
+        files means no branch and no PR at all.
+
+        Nothing here ever reads the agent's summary for a branch name, a PR number or a url.
+        Those come from ffbox's harvest and from the GitHub API response, and stay correct when
+        the summary omits them or contradicts them.
+        """
+        cap = LANE_CAPABILITIES.get(turn["lane"]) or LANE_CAPABILITIES["answer"]
+        if cap["verdict"] != "change":
+            return {}
+
+        bundle = os.path.join(run_dir, "work.bundle")
+        branch = _read_text(os.path.join(run_dir, "branch.txt"))
+        changed = [ln for ln in (_read_text(os.path.join(run_dir, "changed_files.txt")) or "")
+                   .splitlines() if ln.strip()]
+        if not branch:
+            return self._no_branch(run_row_id, "the run changed no files")
+        if not os.path.exists(bundle):
+            # ffbox names a branch only when it has already committed something, so a missing
+            # bundle next to a branch means the harvest itself broke — a different problem from
+            # "nothing to publish", and one a human has to look at.
+            return self._no_branch(run_row_id, f"the work on {branch} could not be bundled")
+
+        self.db.execute("UPDATE run SET bundle_path=?, changed_files=?, branch=? WHERE id=?",
+                        (bundle, len(changed), branch, run_row_id))
+
+        ok, err = self.push_bundle(bundle, branch)
+        if not ok:
+            return self._no_branch(run_row_id, err)
+        self.db.execute("UPDATE run SET pushed=1 WHERE id=?", (run_row_id,))
+        log(f"run {run_row_id}: pushed {branch} ({len(changed)} file(s))")
+
+        gate_ok, gate_reason = self.verification_gate(run_row_id)
+        if not gate_ok:
+            return self._no_pr(run_row_id, conv, branch, gate_reason)
+        if not verdict.get("confident"):
+            reason = (verdict.get("confidence_reason")
+                      or "the agent was not confident in the change")
+            return self._no_pr(run_row_id, conv, branch, reason[:200])
+
+        gh = GitHub(self.cfg)
+        if not gh.token or not gh.repo:
+            return self._no_pr(run_row_id, conv, branch,
+                               "no GitHub token on the host, so no PR could be opened")
+        title = (verdict.get("pr_title")
+                 or f"{conv['title'] or conv['kind']}"[:72] or f"ffbox {job['run_id']}")
+        try:
+            existing = gh.find_pull_request(branch)
+            pr = existing or gh.create_pull_request(branch, title[:72],
+                                                    self.pr_body(run_row_id, conv, job, verdict))
+        except GitHubError as exc:
+            log(f"ERROR: run {run_row_id}: could not open a PR for {branch}: {exc}")
+            return self._no_pr(run_row_id, conv, branch, f"GitHub refused the PR: {exc}"[:200])
+
+        self.db.execute("UPDATE run SET pr_number=?, pr_url=? WHERE id=?",
+                        (pr.get("number"), pr.get("url"), run_row_id))
+        self.db.execute("UPDATE conversation SET github_pr=? WHERE id=?",
+                        (str(pr.get("url") or pr.get("number") or ""), conv["id"]))
+        log(f"run {run_row_id}: PR #{pr.get('number')} {pr.get('url')}")
+        return {"branch": branch, "pr_number": pr.get("number"), "pr_url": pr.get("url")}
+
+    def _no_branch(self, run_row_id, reason):
+        self.db.execute("UPDATE run SET no_branch_reason=? WHERE id=?", (reason, run_row_id))
+        log(f"run {run_row_id}: no branch — {reason}")
+        return {"no_branch_reason": reason}
+
+    def _no_pr(self, run_row_id, conv, branch, reason):
+        self.db.execute("UPDATE run SET no_pr_reason=? WHERE id=?", (reason, run_row_id))
+        log(f"run {run_row_id}: {branch} pushed but no PR — {reason}")
+        return {"branch": branch, "no_pr_reason": reason}
+
+    def push_bundle(self, bundle, branch):
+        """(ok, error). Fetch the run's commits out of the bundle and push them to the remote.
+
+        The bundle carries only base_sha..branch, so the host has to already have base_sha —
+        `git bundle verify` is exactly that check, and running it first turns "the host is
+        behind origin" into a clear message instead of a cryptic fetch failure.
+
+        Everything lands under refs/ffbox/, never under refs/heads/, and no checkout happens:
+        git_dir is allowed to be the golden checkout that every ffbox clone is made from, and a
+        publish must not be able to move its branches or dirty its working tree.
+
+        The GitHub token is deliberately NOT spliced into a push url. argv is world-readable
+        through /proc, which is the same reason ffbox reads its secrets from an env file rather
+        than the command line; the push uses whatever credential the host checkout already has.
+        """
+        git_dir = self.cfg["git_dir"]
+        remote = self.cfg["push_remote"]
+        ref = f"refs/ffbox/{branch}"
+        if not os.path.isdir(os.path.join(git_dir, ".git")) and not os.path.isdir(
+                os.path.join(git_dir, "objects")):
+            return False, f"{git_dir} is not a git checkout, so nothing could be pushed"
+
+        def git(*args, timeout=600):
+            try:
+                return subprocess.run(["git", "-C", git_dir, *args], capture_output=True,
+                                      text=True, encoding="utf-8", errors="replace",
+                                      timeout=timeout)
+            except (OSError, subprocess.SubprocessError) as exc:
+                return subprocess.CompletedProcess(args, 1, "", f"{type(exc).__name__}: {exc}")
+
+        fetched = git("fetch", "--quiet", remote)
+        if fetched.returncode != 0:
+            log(f"WARNING: could not refresh {remote} before publishing: "
+                f"{(fetched.stderr or '').strip()[:200]}")
+        verified = git("bundle", "verify", bundle)
+        if verified.returncode != 0:
+            return False, ("the work bundle's base commit is missing from the host checkout: "
+                           + (verified.stderr or verified.stdout or "").strip()[:200])
+        got = git("fetch", bundle, f"{branch}:{ref}")
+        if got.returncode != 0:
+            return False, "could not read the work bundle: " + \
+                (got.stderr or "").strip()[:200]
+        pushed = git("push", remote, f"{ref}:refs/heads/{branch}")
+        if pushed.returncode != 0:
+            return False, f"push to {remote} failed: " + (pushed.stderr or "").strip()[:200]
+        return True, None
+
+    def pr_body(self, run_row_id, conv, job, verdict):
+        """The PR description. The agent writes the explanation; the harness writes the facts."""
+        ver = self.db.one("SELECT * FROM verification WHERE run_id=? ORDER BY id DESC LIMIT 1",
+                          (run_row_id,))
+        run = self.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
+        lines = [(verdict.get("pr_body") or verdict.get("summary") or "").strip(), "", "---", ""]
+        lines.append(f"Opened by ffwatch from Discord {conv['kind']} "
+                     f"`{conv['thread_id']}` ({conv['title'] or 'untitled'}).")
+        lines.append(f"Run `{job['run_id']}`, base `{(run['base_sha'] or '?')[:12]}`, "
+                     f"{run['changed_files']} file(s) changed.")
+        if ver:
+            lines.append(f"Harness verification: compiled={bool(ver['compiled'])}, "
+                         f"tests {ver['tests_passed']}/{ver['tests_run']}, "
+                         f"failed={ver['tests_failed']}.")
+        lines.append("")
+        lines.append("Nothing merges automatically. The container that produced this held no "
+                     "GitHub credential and no push rights; review it as you would any other "
+                     "pull request.")
+        return "\n".join(lines)
+
+    def publish_facts(self, run_row_id):
+        """Branch and pull request as the run row recorded them — read back, never re-derived.
+
+        compose_head calls this while building the reply, so what a player is told matches what
+        the database says happened. It deliberately does not fall back to anything the agent
+        said: a summary claiming a PR that does not exist is exactly the failure the
         harness-is-the-system-of-record rule exists to prevent.
         """
-        return {}
+        if run_row_id is None:
+            return {}
+        row = self.db.one("SELECT branch, pushed, pr_number, pr_url, no_branch_reason,"
+                          " no_pr_reason FROM run WHERE id=?", (run_row_id,))
+        if row is None:
+            return {}
+        return {"branch": row["branch"] if row["pushed"] else None,
+                "pr_number": row["pr_number"], "pr_url": row["pr_url"],
+                "no_branch_reason": row["no_branch_reason"],
+                "no_pr_reason": row["no_pr_reason"]}
 
     # -- the sender (design section 11: the sender enforces, the skills only advise) ---------
 
@@ -2083,6 +2554,25 @@ class Watcher:
             " ORDER BY id DESC LIMIT 5")
         for r in rejected:
             out.append(f"  rejected {r['id']:>5} {r['action']:<13} {(r['reject_reason'] or '')[:80]}")
+        # The write lanes' output, which is the part a human most wants to glance at: what got
+        # published, what did not, and why not. Both columns come from the run row, so this is
+        # the same fact the Discord reply carried.
+        published = self.db.query(
+            "SELECT ffbox_run_id, branch, pushed, pr_number, pr_url, no_branch_reason,"
+            " no_pr_reason FROM run WHERE branch IS NOT NULL OR no_branch_reason IS NOT NULL"
+            " ORDER BY id DESC LIMIT 5")
+        if published:
+            out.append(f"recent write runs: {len(published)}")
+            for p in published:
+                if p["pr_url"]:
+                    out.append(f"  {p['ffbox_run_id']}  {p['branch']}  PR #{p['pr_number']} "
+                               f"{p['pr_url']}")
+                elif p["pushed"]:
+                    out.append(f"  {p['ffbox_run_id']}  {p['branch']}  no PR: "
+                               f"{(p['no_pr_reason'] or '?')[:70]}")
+                else:
+                    out.append(f"  {p['ffbox_run_id']}  no branch: "
+                               f"{(p['no_branch_reason'] or '?')[:70]}")
         blocked = self.db.query(
             "SELECT id, lane, error FROM turn WHERE status='blocked' ORDER BY id DESC LIMIT 10")
         if blocked:
@@ -2133,16 +2623,23 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
     if timeout_kind:
         lines.append(f"stopped on the {timeout_kind} clock")
 
-    if verification and verification["ran"]:
-        # PHASE 3 fills the verification table; until then there is no row and no line. The
-        # agent cannot write this — that is why it is its own table (design section 10).
-        compiled = "compiled ✓" if verification["compiled"] else "COMPILE FAILED ✗"
-        tests = ""
-        if verification["tests_run"]:
-            ok = (verification["tests_failed"] or 0) == 0
-            tests = (f" · tests {verification['tests_passed'] or 0}/{verification['tests_run']}"
-                     f" {'✓' if ok else '✗'}")
-        lines.append(compiled + tests)
+    if verification is not None:
+        # The harness's own batchmode run, not the agent's claim about it. There is a row here
+        # only for a lane that was supposed to be verified, and a row that did not run says so
+        # out loud rather than being quietly omitted — "we could not check" and "we did not
+        # need to check" must not look the same to whoever reads the reply.
+        if not verification["ran"]:
+            lines.append("⚠️ NOT VERIFIED: " +
+                         (verification["evidence"] or "the harness could not run the tests")
+                         .splitlines()[0][:180])
+        else:
+            compiled = "compiled ✓" if verification["compiled"] else "COMPILE FAILED ✗"
+            tests = ""
+            if verification["tests_run"]:
+                ok = (verification["tests_failed"] or 0) == 0
+                tests = (f" · tests {verification['tests_passed'] or 0}/"
+                         f"{verification['tests_run']} {'✓' if ok else '✗'}")
+            lines.append(compiled + tests)
 
     if publish.get("branch"):
         line = f"branch `{publish['branch']}`"
@@ -2253,6 +2750,10 @@ def _read_text(path):
             return fh.read().strip()
     except OSError:
         return None
+
+
+def _existing(path):
+    return path if os.path.exists(path) else None
 
 
 # ------------------------------------------------------------------------------------------
