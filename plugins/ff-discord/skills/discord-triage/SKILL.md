@@ -9,20 +9,19 @@ Process **new** bug reports from the Discord bug-reports forum. One pass per inv
 read what's new, classify each report, act, advance the cursor. Designed to be run on a
 `/loop` — it is idempotent (the cursor only advances after a report is fully handled).
 
-The CLI is `scripts/discord/ffdiscord.py` (zero deps, Python 3 stdlib). Setup and the
-Discord-side configuration live in `Documentation/Discord-Agent-Integration.md`. If the CLI
+The CLI is `ffdiscord` (zero deps, Python 3 stdlib); its full command reference, the cursor
+rules, and setup live in the `discord-cli` skill beside this one. Discord-side configuration
+(the bot, intents, channel permissions) is the game repo's
+`Documentation/Discord-Agent-Integration.md`. If the CLI
 reports no token or `doctor` fails, STOP and tell the user — do not improvise another channel.
 
 **Templates, the full AUTOFIX gate list, and the forbidden zones live in `reference.md` next
 to this file** — read the relevant section before acting on a verdict; this file is the flow.
 
-Command examples here and in `reference.md` say `python3`; on Windows there is no `python3`
-on PATH — run the same commands with `python`.
-
 ## 0. Preflight (every run)
 
 ```bash
-python3 scripts/discord/ffdiscord.py doctor
+ffdiscord doctor
 ```
 
 If it exits non-zero, report the problem to the user and stop. A half-configured bot that
@@ -37,15 +36,15 @@ the same thread.
 ## 1. Pull what's new
 
 ```bash
-python3 scripts/discord/ffdiscord.py unseen bug_reports --key bugs --limit 10
+ffdiscord unseen bug_reports --key bugs --limit 10
 ```
 
 Do **not** pass `--mark` yet. For each thread listed, read it end to end and pull the
 attachments (the log usually contains the stack trace that decides the whole triage):
 
 ```bash
-python3 scripts/discord/ffdiscord.py thread <thread_id>
-python3 scripts/discord/ffdiscord.py download <thread_id> <message_id> --dir <scratch>/ffbug-<thread_id>
+ffdiscord thread <thread_id>
+ffdiscord download <thread_id> <message_id> --dir <scratch>/ffbug-<thread_id>
 ```
 
 `<scratch>` is any writable temp dir — `$TMPDIR` on macOS/Linux, `%TEMP%` on Windows.
@@ -94,7 +93,7 @@ If the agent's verification fails, or it discovers the fix is larger than believ
 STOP and hand back — the verdict silently becomes ESCALATE, and you file the issue in §4
 including what was attempted and why it was abandoned.
 
-**Voice for all posts: read `Documentation/Max-Voice.md` first.** Both the player-facing
+**Voice for all posts: read [the `max-voice` skill](../max-voice/SKILL.md) first.** Both the player-facing
 thread reply (plain language, warm, dry but never at the reporter's expense) and the
 `#dev-chat` note (dev register: terse, technical) post as Max. No em dashes, none of the LLM
 house phrases that file bans.
@@ -107,7 +106,7 @@ reporter (commands + templates: `reference.md` §Escalation messages).
 
 ## 5. Reply-only verdicts
 
-No issue, no code. Reply in the thread as Max, per `Documentation/Max-Voice.md`. Keep it brief
+No issue, no code. Reply in the thread as Max, per [the `max-voice` skill](../max-voice/SKILL.md). Keep it brief
 and warm; these are players, and the reply is the entire experience they get from reporting.
 Per-verdict content guidance + the react commands: `reference.md` §Reply-only verdicts. Add a
 👀 reaction when you start on a report and ✅ when it's resolved.
@@ -117,7 +116,7 @@ Per-verdict content guidance + the react commands: `reference.md` §Reply-only v
 Only after every report in the batch has been acted on:
 
 ```bash
-python3 scripts/discord/ffdiscord.py mark-seen bugs <high_water_id>
+ffdiscord mark-seen bugs <high_water_id>
 ```
 
 Use the **`batch high-water` id printed by the listing call in §1** — not a second

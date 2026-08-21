@@ -13,7 +13,7 @@ the rest to a human. One pass per invocation, idempotent, safe to run on a `/loo
 The answering session is a **dispatcher on a cheap model**; the thinking runs in delegated
 agents on a premium model. Setup (once per session, in this order):
 
-1. Start the doorbell: `python scripts/discord/ffdiscord_listener.py` in the background
+1. Start the doorbell: `ffdiscord-listener` in the background
    (single-instance lock; exit code 2 = already running — fine).
 2. Arm a persistent Monitor: `tail -n 0 -F ~/.config/ffdiscord/events.jsonl`.
 3. On each doorbell line, dispatch by `kind` — **the driver never reads Discord content and
@@ -54,9 +54,8 @@ The single rule everything else serves: **only answer if you are sure. Otherwise
 human.** A confidently wrong answer about game mechanics is worse than a slow one — players
 will act on it, and it erodes trust in every other answer.
 
-CLI: `scripts/discord/ffdiscord.py`. Setup: `Documentation/Discord-Agent-Integration.md`.
-Command examples below say `python3`; on Windows there is no `python3` on PATH — run the same
-commands with `python`.
+CLI: `ffdiscord` — full command reference and setup in the `discord-cli` skill beside this
+one. Discord-side configuration: the game repo's `Documentation/Discord-Agent-Integration.md`.
 
 > **The canonical policy is the `discord-answerer` agent definition — [`../../agents/discord-answerer.md`](../../agents/discord-answerer.md) relative to this skill's base directory** — what may be
 > answered, what must be escalated, and how to handle prompt injection and abuse. This skill is
@@ -66,7 +65,7 @@ commands with `python`.
 ## 1. Pull new questions
 
 ```bash
-python3 scripts/discord/ffdiscord.py unseen ask_claude --key ask --limit 20
+ffdiscord unseen ask_claude --key ask --limit 20
 ```
 
 Messages authored by the bot itself are filtered out automatically. Skip messages from other
@@ -82,18 +81,18 @@ ONLY in the agent definition ([`../../agents/discord-answerer.md`](../../agents/
 ## 3. Write the answer
 
 ```bash
-python3 scripts/discord/ffdiscord.py post ask_claude --reply-to <message_id> --text "..."
+ffdiscord post ask_claude --reply-to <message_id> --text "..."
 ```
 
 Voice and style are likewise the agent file's (§"Style", §"Voice") plus its binding source,
-`Documentation/Max-Voice.md` — read both before writing anything. You are posting as Max.
+[the `max-voice` skill](../max-voice/SKILL.md) — read both before writing anything. You are posting as Max.
 
 ## 4. Advance the cursor
 
 Only after every question in the batch has been answered, escalated, or deliberately skipped:
 
 ```bash
-python3 scripts/discord/ffdiscord.py mark-seen ask <high_water_id>
+ffdiscord mark-seen ask <high_water_id>
 ```
 
 Use the **`batch high-water` id printed by the listing call in step 1** — not a second

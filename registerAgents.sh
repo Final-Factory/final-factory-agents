@@ -33,7 +33,8 @@ on this machine (Claude Code, Codex) and installs its plugins at user scope.
 Idempotent — re-run any time to update.
 
 Default plugins: ${DEFAULT_PLUGINS}
-Optional extras: ff-discord (needs the ffdiscord bot token in ~/.config/ffdiscord/)
+Optional extras: ff-discord (needs the ffdiscord bot token in ~/.config/ffdiscord/;
+                 installs an 'ffdiscord' launcher into ~/.local/bin)
 
 Options (alphabetical):
   (none)         Register if needed, otherwise refresh the marketplace and update
@@ -178,8 +179,9 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # that path lets the publish-skills skill find the checkout on ANY machine, wherever it was
 # cloned, without hardcoded paths or environment variables. The marker lives under ~/.claude but
 # is tool-agnostic — the skill body is shared, so Codex sessions read the same file.
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
 record_checkout() {
-  SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
   if [ -f "$SCRIPT_DIR/.claude-plugin/marketplace.json" ]; then
     # Prefer a native path (git-bash `pwd -W` yields D:/... which both shell and file tools accept)
     NATIVE_DIR=$(cd "$SCRIPT_DIR" && { pwd -W 2>/dev/null || pwd; })
@@ -203,6 +205,46 @@ purge_cache() {  # $1 = tool root (~/.claude, ~/.codex), $2 = plugin name
     rm -rf "$_dir"
     echo "  deleted cached copy: $_dir"
   fi
+}
+
+# --- ff-discord launcher -----------------------------------------------------------------------
+# The ffdiscord CLI ships inside the ff-discord plugin, at a path that carries the plugin's
+# version. Skills are told their base directory at invocation and could compute that path;
+# subagent roles are not, and neither is a human at a prompt. So install a launcher on PATH and
+# let every caller just say `ffdiscord`. The launcher resolves the newest installed copy at run
+# time, so a version bump needs no reinstall.
+LAUNCHER_BIN="$HOME/.local/bin"
+
+install_ffdiscord_launcher() {
+  _src="$SCRIPT_DIR/plugins/ff-discord/skills/discord-cli/bin"
+  if [ ! -r "$_src/ffdiscord" ]; then
+    echo "  note: launcher source missing at $_src — skipping" >&2
+    return 0
+  fi
+  mkdir -p "$LAUNCHER_BIN"
+  for _n in ffdiscord ffdiscord-listener; do
+    cp "$_src/ffdiscord" "$LAUNCHER_BIN/$_n"
+    chmod +x "$LAUNCHER_BIN/$_n"
+    # The POSIX launcher picks its script from argv[0]; the .cmd twin does the same, so the
+    # Windows copies need the matching basenames too.
+    [ -r "$_src/ffdiscord.cmd" ] && cp "$_src/ffdiscord.cmd" "$LAUNCHER_BIN/$_n.cmd"
+  done
+  echo "  installed ffdiscord + ffdiscord-listener into $LAUNCHER_BIN"
+  case ":$PATH:" in
+    *":$LAUNCHER_BIN:"*) ;;
+    *) echo "  WARNING: $LAUNCHER_BIN is not on your PATH — add it, or skills will not find ffdiscord" >&2 ;;
+  esac
+}
+
+remove_ffdiscord_launcher() {
+  _removed=0
+  for _n in ffdiscord ffdiscord-listener; do
+    for _f in "$LAUNCHER_BIN/$_n" "$LAUNCHER_BIN/$_n.cmd"; do
+      if [ -f "$_f" ]; then rm -f "$_f"; _removed=1; fi
+    done
+  done
+  [ "$_removed" = 1 ] && echo "  removed the ffdiscord launcher from $LAUNCHER_BIN"
+  return 0
 }
 
 # --- Claude Code -------------------------------------------------------------------------------
@@ -387,6 +429,14 @@ fi
 if [ "$RAN" -eq 0 ]; then
   echo "ERROR: no supported agent CLI found on PATH (looked for: claude, codex)" >&2
   exit 1
+fi
+
+# The launcher tracks the plugin: installed when ff-discord is in the set, removed when it
+# leaves (explicitly, or with the whole marketplace).
+if [ "$MODE" = "remove" ] || list_has "$REMOVE_TARGETS" ff-discord; then
+  remove_ffdiscord_launcher
+elif list_has "$PLUGINS" ff-discord; then
+  install_ffdiscord_launcher
 fi
 
 # A full marketplace removal takes the remembered set with it — the next plain run starts from
