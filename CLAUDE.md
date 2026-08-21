@@ -13,6 +13,12 @@ plugins/<name>/
   .claude-plugin/plugin.json        Claude plugin manifest — name + version
   .codex-plugin/plugin.json         Codex plugin manifest — name + version + skills globs
   skills/<skill>/SKILL.md           SHARED by both tools. YAML frontmatter: name + description
+                                    Supporting files sit beside it, executables included:
+                                    ff-discord/skills/discord-cli/ holds the ffdiscord CLI,
+                                    the Gateway listener, their offline tests, and bin/ (the
+                                    PATH launcher registerAgents.sh installs). Keep runnable
+                                    tooling UNDER skills/ — the Codex manifest globs ./skills/
+                                    and would not package a sibling directory.
   agents/<role>.md                  Claude Code ONLY — Codex plugins cannot carry subagent roles
 bumpVersion.sh                      the ONLY sanctioned way to change a version — updates all
                                     three manifests at once; --check audits for drift
@@ -34,7 +40,9 @@ registerAgents.sh                   idempotent per-machine bootstrap for BOTH Cl
 ```
 
 Plugins: `ff-agents` (core roles + skills, incl. `project-memory`), `ff-speckit`
-(speckit-* skills), `ff-discord` (Discord roles + skills).
+(speckit-* skills), `ff-discord` (Discord roles + skills, plus the `ffdiscord` CLI itself in
+the `discord-cli` skill; installing the plugin puts an `ffdiscord` launcher in `~/.local/bin`,
+so skills and roles invoke it by name rather than by a versioned cache path).
 
 ## Updating skills — the publish workflow
 

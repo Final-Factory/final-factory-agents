@@ -1,8 +1,6 @@
 # Discord triage reference — gates, zones, templates
 
 Companion to `SKILL.md` (the flow). Consult the section the flow points you at.
-Command examples say `python3`; on Windows substitute `python` (no `python3` on PATH).
-
 ## TOC
 
 - [AUTOFIX gates](#autofix-gates)
@@ -69,11 +67,11 @@ Give the agent the complete report text, the log excerpt, your root-cause analys
 6. Merge the PR to `develop` once tests are green.
 
 Then close the loop with the reporter and the team. The templates below are *content*
-checklists, not wording to copy — the voice is `Documentation/Max-Voice.md`:
+checklists, not wording to copy — the voice is [the `max-voice` skill](../max-voice/SKILL.md):
 
 ```bash
-python3 scripts/discord/ffdiscord.py post <thread_id> --text "Fixed and merged to develop, so this one's done. <what was wrong, in one plain sentence>. It'll be in the next build. (PR #123)"
-python3 scripts/discord/ffdiscord.py post dev_chat --text "🤖 Auto-fixed a bug report: <title> → PR #123 merged to develop. Root cause: <one line>. Thread: <link>"
+ffdiscord post <thread_id> --text "Fixed and merged to develop, so this one's done. <what was wrong, in one plain sentence>. It'll be in the next build. (PR #123)"
+ffdiscord post dev_chat --text "🤖 Auto-fixed a bug report: <title> → PR #123 merged to develop. Root cause: <one line>. Thread: <link>"
 ```
 
 Post the dev-chat note **without** a ping for autofixes — it is an FYI, not an escalation.
@@ -113,8 +111,8 @@ otherwise note where it is in the thread.
 Alert both humans in #dev-chat, and acknowledge the reporter:
 
 ```bash
-python3 scripts/discord/ffdiscord.py post dev_chat --text "🐛 @ben @lothsahn new bug needs a look: <title>. <one-line why it's risky/unclear>. Issue #<n>: <url> | Thread: <link>"
-python3 scripts/discord/ffdiscord.py post <thread_id> --text "Logged this as issue #<n> and flagged it to the devs. Thanks for writing it up."
+ffdiscord post dev_chat --text "🐛 @ben @lothsahn new bug needs a look: <title>. <one-line why it's risky/unclear>. Issue #<n>: <url> | Thread: <link>"
+ffdiscord post <thread_id> --text "Logged this as issue #<n> and flagged it to the devs. Thanks for writing it up."
 ```
 
 `@ben` and `@lothsahn` in the message body expand to real pings automatically.
@@ -135,5 +133,5 @@ weirdness, never at the person who misread it.
 React so players can see a report was picked up (👀 on start, ✅ on resolve):
 
 ```bash
-python3 scripts/discord/ffdiscord.py react <thread_id> <thread_id> 👀
+ffdiscord react <thread_id> <thread_id> 👀
 ```

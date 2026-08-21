@@ -8,7 +8,7 @@ development task, keep Lothsahn in the loop with an **extremely brief** Discord 
 - After implementation and verification are successfully complete, post one single-sentence FYI
   in Discord `#dev-chat` and include `@lothsahn` so it expands to a real ping.
 - Use the authenticated repository CLI from the FinalFactory checkout:
-  `python3 scripts/discord/ffdiscord.py post dev_chat --text "@lothsahn <very brief description>"`.
+  `ffdiscord post dev_chat --text "@lothsahn <very brief description>"`.
 - If commit, push, PR, merge, or deployment is part of the task's requested completion state, post
   only after that publication step succeeds. Otherwise post after the verified local result.
 - Batch related implementation/test/documentation substeps into one task-completion note. Do not

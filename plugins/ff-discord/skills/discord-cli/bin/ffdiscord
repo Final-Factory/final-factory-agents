@@ -1,0 +1,63 @@
+#!/bin/sh
+# ffdiscord — launcher for the Final Factory Discord CLI.
+#
+# registerAgents.sh copies this onto PATH so that every skill, subagent role, and human
+# shell can say `ffdiscord post ...` instead of carrying a path to a versioned plugin
+# cache. Skills get their base directory injected at invocation and could compute the
+# path themselves; subagent roles do not, so a launcher is the only form that works
+# everywhere. Keep it POSIX sh: it runs under whatever /bin/sh the machine has.
+#
+# Resolution order, first hit wins:
+#   1. $FFDISCORD_CLI          explicit override (tests, ffbox containers, a dev copy)
+#   2. the newest installed plugin copy, Claude Code then Codex
+#   3. the checkout recorded by registerAgents.sh
+#
+# 2 before 3 on purpose: the cache copy is what live sessions read, so the CLI a skill
+# invokes matches the skill text that invoked it. The checkout is the fallback for a
+# machine that has the repo but has not installed the plugin.
+set -u
+
+SELF=$(basename "$0")
+case "$SELF" in
+    *-listener) SCRIPT=ffdiscord_listener.py ;;
+    *)          SCRIPT=ffdiscord.py ;;
+esac
+
+newest() {
+    # $1 = plugins root. Version dirs sort with -V so 1.10.0 beats 1.9.0.
+    [ -d "$1" ] || return 1
+    ls -d "$1"/cache/*/ff-discord/*/skills/discord-cli/"$SCRIPT" 2>/dev/null \
+        | sort -V | tail -1
+}
+
+CLI=
+if [ -n "${FFDISCORD_CLI:-}" ]; then
+    # An override naming the other script still resolves to the right one.
+    CLI=$(dirname "$FFDISCORD_CLI")/$SCRIPT
+else
+    for root in "$HOME/.claude/plugins" "$HOME/.codex/plugins"; do
+        CLI=$(newest "$root") || CLI=
+        [ -n "$CLI" ] && break
+    done
+    if [ -z "$CLI" ] && [ -r "$HOME/.claude/final-factory-agents-checkout" ]; then
+        checkout=$(cat "$HOME/.claude/final-factory-agents-checkout")
+        candidate="$checkout/plugins/ff-discord/skills/discord-cli/$SCRIPT"
+        [ -r "$candidate" ] && CLI="$candidate"
+    fi
+fi
+
+if [ -z "$CLI" ] || [ ! -r "$CLI" ]; then
+    echo "$SELF: cannot locate $SCRIPT." >&2
+    echo "  Install the plugin on this machine:  sh registerAgents.sh --plugin ff-discord" >&2
+    echo "  Or point FFDISCORD_CLI at a copy of ffdiscord.py." >&2
+    exit 69
+fi
+
+# Windows git-bash has `python` but usually not `python3`; Linux and macOS are the reverse.
+for py in python3 python; do
+    if command -v "$py" >/dev/null 2>&1; then
+        exec "$py" "$CLI" "$@"
+    fi
+done
+echo "$SELF: no python3 or python on PATH" >&2
+exit 127

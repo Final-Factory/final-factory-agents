@@ -19,12 +19,9 @@ decides whether to escalate, file, or close.
 
 ## Gather
 
-Command examples say `python3`; on Windows there is no `python3` on PATH — run the same
-commands with `python`.
-
 ```bash
-python3 scripts/discord/ffdiscord.py thread <thread_id>
-python3 scripts/discord/ffdiscord.py download <thread_id> <message_id> --dir <scratch>/ffbug-<thread_id>
+ffdiscord thread <thread_id>
+ffdiscord download <thread_id> <message_id> --dir <scratch>/ffbug-<thread_id>
 ```
 
 `<scratch>` is any writable temp dir — `$TMPDIR` on macOS/Linux, `%TEMP%` on Windows.

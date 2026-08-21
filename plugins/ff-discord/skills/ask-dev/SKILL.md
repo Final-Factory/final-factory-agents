@@ -9,11 +9,8 @@ Ben and Lothsahn each drive their own Claude Code session against this repo. Thi
 one session put a question to the other developer in Discord `#dev-chat`, so the user doesn't
 have to context-switch to write it themselves.
 
-Command examples say `python3`; on Windows there is no `python3` on PATH — run the same
-commands with `python`.
-
 ```bash
-python3 scripts/discord/ffdiscord.py ask lothsahn \
+ffdiscord ask lothsahn \
   --context "<what you're working on, one line>" \
   --text "<the question>"
 ```
@@ -22,11 +19,11 @@ Targets are `ben`, `lothsahn`, or both (`lothsahn,ben`). The message is posted b
 bot but **attributed to this machine's operator** — "from **Ben's Claude**" — because both
 developers share one bot identity and the recipient must know who's asking. That attribution
 comes from `me` in `~/.config/ffdiscord/config.json`; if it's unset the CLI refuses to post
-rather than send an anonymous message. Fix with `ffdiscord.py set me ben`.
+rather than send an anonymous message. Fix with `ffdiscord set me ben`.
 
 ## Write a question that can be answered without context
 
-**Voice: `Documentation/Max-Voice.md` applies here too.** This posts through the same bot, so
+**Voice: [the `max-voice` skill](../max-voice/SKILL.md) applies here too.** This posts through the same bot, so
 it is Max talking. Use its dev register: terse, real technical vocabulary and `file.cs:line`
 welcome, no softening. The bans still hold everywhere, no em dashes and none of the LLM house
 phrases.
@@ -58,7 +55,7 @@ with everything that doesn't depend on the answer, and fold their reply in when 
 The `ask` command prints the message id and the exact command to poll:
 
 ```bash
-python3 scripts/discord/ffdiscord.py read dev_chat --after <message_id>
+ffdiscord read dev_chat --after <message_id>
 ```
 
 Check it when the user asks, or when you reach the point that's actually blocked. Don't poll
