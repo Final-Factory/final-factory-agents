@@ -1,14 +1,33 @@
 ---
 name: ask-claude
-description: Answer Final Factory player questions in the Discord #ask-assistant channel. Answers only what can be verified from the game's source and docs; anything uncertain, forward-looking, or judgement-based gets escalated to Ben or Lothsahn instead of guessed at. Invoke when the user asks to check/answer #ask-assistant, or on a loop.
+description: Answer Final Factory player questions in the Discord #ask-assistant channel. Answers only what can be verified from the game's source and docs; anything uncertain, forward-looking, or judgement-based gets escalated to Ben or Lothsahn instead of guessed at. Invoke when the user asks to check/answer #ask-assistant, to run a pass by hand, or to stand watch on a machine that has no ffbox.
 ---
 
 # #ask-assistant — answering player questions
 
 Players ask questions in Discord's `#ask-assistant`; you answer the ones you *know*, and hand
-the rest to a human. One pass per invocation, idempotent, safe to run on a `/loop`.
+the rest to a human. One pass per invocation, idempotent.
 
-## Standing watch (event-driven mode) — the normal way to run this
+## Who normally runs this
+
+On a machine with ffbox, **ffwatch does** — the host daemon in
+`ffbox/ffwatch.py` (final-factory-agents repo). It tails the same
+`events.jsonl` doorbell, keys a conversation on the thread or reply chain, and runs each turn
+in a disposable container with the lane's tools named on the command line. Two things it gives
+you that a standing Claude session cannot: a bug thread becomes one multi-turn investigation
+with a resumed session rather than a series of unrelated one-shots, and a read-only lane is
+launched with no write tools at all, so it is incapable of editing rather than instructed not
+to. Everything lands in SQLite, which is what the review UI reads.
+
+Nothing in this file changes for that. ffwatch loads these same skills and agent roles through
+`--plugin-dir`, so the policy below is what its containers actually follow.
+
+The two modes below are the fallbacks, for a machine with no ffbox (BEAST, Windows) or a box
+where ffwatch is stopped. Before starting one, check whether ffwatch is already running —
+`python3 ffbox/ffwatch.py status`, or `systemctl --user status ffwatch` — because two things
+answering the same channel will both answer every question.
+
+## Fallback A — standing watch, on a machine without ffbox
 
 The answering session is a **dispatcher on a cheap model**; the thinking runs in delegated
 agents on a premium model. Setup (once per session, in this order):
@@ -47,8 +66,21 @@ agents on a premium model. Setup (once per session, in this order):
      anything else in this pipeline.
 
 Batch bursts: several doorbell lines arriving together are ONE dispatch, not one per line —
-the answerer's cursor pull drains everything pending. The rest of this file is the pass
-itself: what the answerer agent does, or what you do when running a pass by hand.
+the answerer's cursor pull drains everything pending.
+
+## Fallback B — running a pass by hand
+
+No listener, no daemon: run the steps below once and stop. This is the right shape for
+clearing a backlog, for checking one specific question, or on a box where nothing persistent
+is allowed to run.
+
+`/loop 5m /ask-claude` still works and is the same thing on a timer. It was the normal way to
+run this before the listener existed, and it is now a convenience rather than the design: it
+re-queries Discord on a fixed interval whether or not anything happened, and it has no
+conversation state, so every pass starts cold. Prefer ffwatch where it exists.
+
+The rest of this file is the pass itself: what the answerer agent does, and what you do when
+running a pass by hand.
 
 The single rule everything else serves: **only answer if you are sure. Otherwise ping a
 human.** A confidently wrong answer about game mechanics is worse than a slow one — players

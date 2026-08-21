@@ -1,0 +1,34 @@
+[Unit]
+# The conversation manager. Tails the doorbell, pulls message text and attachments through the
+# ffdiscord CLI, classifies, and launches one ffbox container per turn.
+#
+# @FFWATCH@ is substituted with the absolute path to ffbox/ffwatch.py by discord-setup.sh —
+# this repo can be cloned anywhere, so the unit cannot carry a fixed path. Re-run
+# `sh ffbox/discord-setup.sh` after moving the checkout.
+#
+# ffwatch is the SOLE writer to ffwatch.db. Do not run a second copy; `ffwatch once` by hand
+# while this unit is active is safe only because each conversation is flock'd, and even then it
+# will contend. Stop the unit first.
+Description=ffwatch (Discord conversation manager for ffbox)
+After=network-online.target ffdiscord-listener.service docker.service
+Wants=network-online.target ffdiscord-listener.service
+
+# A launch failure that repeats is a configuration problem; back off rather than spinning up
+# containers in a loop. These two live in [Unit] — systemd moved them there in v229 and
+# silently IGNORES them under [Service], which is the same as having no limit at all.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 @FFWATCH@ run
+EnvironmentFile=-%h/.config/ffbox/secrets.env
+Restart=always
+RestartSec=10
+# SIGTERM lets the current pass finish its database writes. Any run still in flight is
+# terminal-failed and requeued by the recovery pass on the next start.
+KillSignal=SIGTERM
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target

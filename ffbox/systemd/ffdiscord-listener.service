@@ -1,0 +1,30 @@
+[Unit]
+# The Discord Gateway doorbell. Holds one websocket open and appends a line to
+# ~/.config/ffdiscord/events.jsonl whenever something happens that a lane cares about.
+#
+# EXACTLY ONE LISTENER PER BOT, ON ONE MACHINE (design section 18). The mention kinds —
+# player_mention and lothsahn_directive — fire from every listener that can see the message,
+# regardless of how the watched-channel lists are split, so a second listener anywhere means
+# every mention is handled twice. If BEAST owns #ask-assistant, this box must not also run the
+# answer lane. The listener's own listener.lock only enforces one instance per MACHINE; the
+# one-per-bot part is an operational rule nothing can check for you.
+Description=ffdiscord Gateway listener (Discord doorbell for ffwatch)
+After=network-online.target
+Wants=network-online.target
+
+# A crash loop against a revoked token would otherwise hammer Discord's gateway endpoint.
+# These belong in [Unit]: systemd ignores them under [Service], with only a log line to say so.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/ffdiscord-listener --channels ask_claude,bug_reports
+# The bot token normally comes from ~/.config/ffdiscord/config.json; this is here so a machine
+# that prefers FFDISCORD_TOKEN in the ffbox secrets file works without a second copy.
+EnvironmentFile=-%h/.config/ffbox/secrets.env
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
