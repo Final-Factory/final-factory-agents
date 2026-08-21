@@ -90,6 +90,11 @@ for key, value in (
     ("max_unity_runs", 1),
     ("catchup_secs", 900),
     ("rate_limits", {"answer": 200, "triage": 100, "fix": 3, "dev": 25}),
+    # The sender. approve_before_send holds every reply at 'pending' until
+    # `ffwatch approve <id>` releases it — turn it on for the first days on a live server.
+    ("approve_before_send", False),
+    ("send_limits", {"per_hour": 60, "per_conversation_hour": 12}),
+    ("max_send_attempts", 5),
     ("watch", {
         "ask_claude": {"kind": "ask", "forum": False},
         "bug_reports": {"kind": "bug_report", "forum": True},

@@ -45,6 +45,9 @@ THREAD_NEW = "900000000000002000"
 
 POSTED = []  # captured outbound messages
 RATE_LIMIT_ONCE = {"tripped": False}
+# nonce -> the id of the message it created, so the mock can behave the way Discord does with
+# enforce_nonce: a repeat inside the dedupe window returns the ORIGINAL message, not a new one.
+NONCED = {}
 
 
 def snowflake(n):
@@ -190,6 +193,13 @@ class MockDiscord(BaseHTTPRequestHandler):
         else:
             body = json.loads(raw)
         POSTED.append({"path": self.path, "body": body})
+        nonce = body.get("nonce") if isinstance(body, dict) else None
+        if nonce and body.get("enforce_nonce"):
+            if nonce in NONCED:
+                return self._send(200, {"id": NONCED[nonce],
+                                        "content": body.get("content", ""), "deduped": True})
+            NONCED[nonce] = "90000000000000%04d" % (len(NONCED) + 1)
+            return self._send(200, {"id": NONCED[nonce], "content": body.get("content", "")})
         return self._send(200, {"id": "900000000000009999", "content":
                                 body.get("content", "")})
 
@@ -325,6 +335,35 @@ def main():
     p = run(tmp, "post", "dev_chat", "--text", "-", stdin_text="café — em dash and café")
     check("piped stdin text is decoded as UTF-8, not cp1252 mojibake",
           POSTED[-1]["body"]["content"] == "café — em dash and café", POSTED[-1]["body"]["content"])
+
+    print("nonce (idempotent posting)")
+    # Posting is not idempotent, so an unattended sender that dies between "Discord accepted
+    # it" and "the row says sent" double-posts on restart. enforce_nonce is what makes retrying
+    # a pending row safe — ffwatch derives the nonce from the outbound row's uuid.
+    POSTED.clear()
+    p = run(tmp, "post", "dev_chat", "--text", "retryable reply", "--silent",
+            "--nonce", "0f1e2d3c4b5a69788796a5b4c", "--json")
+    body = POSTED[-1]["body"]
+    check("the nonce reaches the create-message body",
+          body.get("nonce") == "0f1e2d3c4b5a69788796a5b4c", body)
+    check("and asks Discord to enforce it", body.get("enforce_nonce") is True, body)
+    first_id = json.loads(p.stdout)["id"]
+    p = run(tmp, "post", "dev_chat", "--text", "retryable reply", "--silent",
+            "--nonce", "0f1e2d3c4b5a69788796a5b4c", "--json")
+    again = json.loads(p.stdout)
+    check("a retry with the same nonce returns the ORIGINAL message, not a second one",
+          again["id"] == first_id and again.get("deduped") is True, again)
+
+    p = run(tmp, "post", "dev_chat", "--text", "no nonce here")
+    check("a post without --nonce is unchanged for every existing caller",
+          "nonce" not in POSTED[-1]["body"] and "enforce_nonce" not in POSTED[-1]["body"],
+          POSTED[-1]["body"])
+
+    n_before = len(POSTED)
+    p = run(tmp, "post", "dev_chat", "--text", "too long a nonce", "--nonce", "z" * 26,
+            expect_code=1)
+    check("refuses a nonce over Discord's 25-character limit instead of eating a 400",
+          len(POSTED) == n_before and "25" in p.stderr, p.stderr)
 
     print("ask (dev-chat peer messaging)")
     # No `me` configured yet -> must refuse rather than post an unattributed message.

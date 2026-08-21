@@ -8,14 +8,23 @@ per conversation, launches ffbox with capability flags that make the lane struct
 and records everything in SQLite.
 
   ffwatch init      create ~/ffbox-state and apply the schema (idempotent)
-  ffwatch once      one ingest + classify + schedule pass, then exit
+  ffwatch once      one ingest + classify + schedule + send pass, then exit
   ffwatch run       the daemon: tail events.jsonl, plus a 15-minute catchup sweep
-  ffwatch status    conversations, in-flight runs, pending outbound
+  ffwatch status    conversations, in-flight runs, the outbound queue
+  ffwatch send      flush the outbound queue once and exit
+  ffwatch approve   release held outbound rows (approve_before_send)
+  ffwatch reject    drop held outbound rows, with a reason
 
-PHASE 1. The read-only lanes (answer, triage) run end to end. The write lanes (fix, dev) are
-classified and recorded but deliberately not launched — see LANE_CAPABILITIES and
-_block_write_lane. Nothing is posted to Discord: outbound intents land as `pending` rows with
-a nonce, and send_pending() is a stub. Phase 2 owns the sender, phase 3 the write lanes.
+PHASE 2. The read-only lanes (answer, triage) run end to end AND their replies are sent: the
+container writes intents through the ffdiscord shim, ffwatch records them before anything
+reaches Discord, and send_pending() puts them on the wire with --silent, the 2000-character
+cap turned into an attachment, the kill switch, send-side rate limits, dry-run, optional
+approval, and nonce + enforce_nonce so a retry after a crash cannot double-post.
+
+The write lanes (fix, dev) are still classified and recorded but deliberately not launched —
+see LANE_CAPABILITIES and PHASE1_LANES. Verification and publication are phase 3; their seams
+are compose_head's verification/publish arguments and Watcher.publish_facts, both deliberately
+empty rather than faked.
 
 Standard library only, by design — the whole Discord stack installs with a git clone.
 """
@@ -27,6 +36,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -52,7 +62,24 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
+
+# CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a column added to
+# the schema file never reaches a database created before it. These are applied with ALTER on
+# every start, guarded by PRAGMA table_info, which is idempotent and needs no dump-and-reload.
+# Adding a column is the only migration shape this list supports on purpose — anything that
+# needs data rewritten should be a deliberate, reviewed script instead. One ordering trap: the
+# schema script runs FIRST, so an index over a column added here would fail on an old database
+# before the ALTER could add it. If a new column ever needs an index, create the index in code
+# after this loop rather than in the .sql.
+ADDED_COLUMNS = [
+    ("conversation", "is_thread", "INTEGER NOT NULL DEFAULT 0"),
+    ("outbound", "attempts", "INTEGER NOT NULL DEFAULT 0"),
+    ("outbound", "last_attempt_at", "TEXT"),
+    ("outbound", "last_error", "TEXT"),
+    ("outbound", "local_id", "TEXT"),
+    ("run", "allowed", "TEXT"),
+]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
 FFDISCORD_PY = os.path.join(DISCORD_CLI_DIR, "ffdiscord.py")
@@ -86,6 +113,7 @@ DEFAULTS = {
 
     # what the container gets
     "task_script": os.path.join(HERE, "discord-task.sh"),
+    "shim": os.path.join(HERE, "ffdiscord_shim.py"),
     "plugins_dir": os.path.join(REPO_ROOT, "plugins"),
     "plugin": "ff-discord",
     "base_ref": "develop",
@@ -124,6 +152,20 @@ DEFAULTS = {
     "history_messages": 40,       # how much prior conversation goes into job.json
     "attachment_max_bytes": 32 * 1024 * 1024,
     "dry_run": False,
+
+    # -- the sender (design section 11) ----------------------------------------------------
+    # Approval before send is a FLAG, not a redesign: every outbound message already exists in
+    # the database before it exists in Discord, so holding it is one status check. With this
+    # on, rows sit at 'pending' until `ffwatch approve <id>` (or the phase-4 UI) flips them.
+    "approve_before_send": False,
+    # A runaway loop must not be able to spray a thread. These are send-side ceilings, separate
+    # from rate_limits above, which caps how many TURNS a lane may run.
+    "send_limits": {"per_hour": 60, "per_conversation_hour": 12},
+    # A transient Discord failure stays retryable, with exponential backoff, until this many
+    # attempts have failed; then the row is rejected so it stops consuming send slots forever
+    # and shows up as a problem a human can see.
+    "max_send_attempts": 5,
+    "send_backoff_secs": 60,
 }
 
 ENV_OVERRIDES = {
@@ -134,6 +176,7 @@ ENV_OVERRIDES = {
     "FFWATCH_DOCKER": ("docker", str),
     "FFWATCH_CLAUDE": ("claude_bin", str),
     "FFWATCH_TASK": ("task_script", str),
+    "FFWATCH_SHIM": ("shim", str),
     "FFWATCH_PLUGINS_DIR": ("plugins_dir", str),
     "FFWATCH_KILL_SWITCH": ("kill_switch", str),
     "FFWATCH_BASE_REF": ("base_ref", str),
@@ -175,6 +218,8 @@ def load_config():
             cfg[key] = caster(val)
     if os.environ.get("FFWATCH_DRY_RUN"):
         cfg["dry_run"] = os.environ["FFWATCH_DRY_RUN"] not in ("", "0", "false")
+    if os.environ.get("FFWATCH_APPROVE"):
+        cfg["approve_before_send"] = os.environ["FFWATCH_APPROVE"] not in ("", "0", "false")
     cfg["state_dir"] = os.path.expanduser(cfg["state_dir"])
     cfg["kill_switch"] = os.path.expanduser(cfg["kill_switch"])
     cfg["events_path"] = os.path.expanduser(cfg["events_path"])
@@ -205,14 +250,36 @@ READ_TOOLS = "Read,Grep,Glob"
 WRITE_TOOLS = "Read,Grep,Glob,Edit,Write,Bash"
 WRITE_DISALLOWED = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)"]
 
+# An ALLOW list, which is a different kind of control from the deny list above and much
+# stronger. Measured on this host: with `--tools Read,Grep,Glob,Bash` plus
+# `--allowedTools "Bash(<prog> *)"`, the named program RAN and `sh -c 'git push origin main'`
+# was DENIED and recorded in permission_denials. That is the exact wrapper trick design
+# section 7 shows walking straight through `Bash(git push*)` — against an allow list it fails
+# closed instead, because it simply does not match.
+#
+# It exists because of a second measurement: `--permission-mode acceptEdits` auto-approves
+# EDITS, not Bash. A non-interactive run has nobody to ask, so every single Bash command in a
+# write lane was denied — the fix lane could not run one shell command, and the shim of design
+# section 11 was unreachable from every lane. Naming what Bash may run is what makes the write
+# lanes work at all.
+WRITE_ALLOWED = ["Bash(ffdiscord *)"]
+
 LANE_CAPABILITIES = {
-    "answer": {"tools": READ_TOOLS, "disallowed": [], "unity": False,
+    # The read-only lanes keep NO Bash — this is the design's strongest containment claim
+    # (section 7: the lanes fed untrusted player text directly are genuinely contained by the
+    # tool list being structural) and it is not weakened to reach the shim. They do not need
+    # it: the host composes the reply from the run's structured verdict, which is strictly
+    # less capability for the same outcome. Their preamble says so, so a lane does not burn
+    # turns trying to post and then report its own failure as the answer.
+    "answer": {"tools": READ_TOOLS, "disallowed": [], "allowed": [], "unity": False,
                "agent": "discord-answerer", "verdict": "question"},
-    "triage": {"tools": READ_TOOLS, "disallowed": [], "unity": False,
+    "triage": {"tools": READ_TOOLS, "disallowed": [], "allowed": [], "unity": False,
                "agent": "discord-triager", "verdict": "question"},
-    "fix":    {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED), "unity": True,
+    "fix":    {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
+               "allowed": list(WRITE_ALLOWED), "unity": True,
                "agent": "discord-dev-agent", "verdict": "change"},
-    "dev":    {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED), "unity": True,
+    "dev":    {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
+               "allowed": list(WRITE_ALLOWED), "unity": True,
                "agent": "discord-dev-agent", "verdict": "change"},
 }
 
@@ -243,6 +310,52 @@ TRIGGER_BY_KIND = {
 }
 
 TERMINAL_TURN_STATES = ("done", "failed", "timed_out", "blocked")
+
+# What the sender knows how to put on the wire. Anything else on an outbox line is rejected
+# rather than guessed at: the file is written by a process running on player-authored text.
+SENDABLE_ACTIONS = ("post", "react", "edit", "ask", "thread-create")
+
+# Actions that must never be retried after an ambiguous failure. `post` is protected by
+# nonce + enforce_nonce, `react` (a PUT) and `edit` (a PATCH to fixed content) are naturally
+# idempotent — these two are neither. A retried thread-create makes a second thread; a retried
+# ask pings a human twice. One attempt, then rejected with the error kept for a human to read.
+NON_RETRYABLE_ACTIONS = ("ask", "thread-create")
+
+
+class SendRejected(ValueError):
+    """An intent that can never be sent as written — rejected, not retried."""
+
+
+def discord_nonce(row_nonce):
+    """Derive Discord's `nonce` field from the outbound row's uuid.
+
+    Discord validates nonce as a string of at most 25 characters (or an integer), and the row's
+    nonce is a 36-character uuid, so it cannot go on the wire as-is. Dropping the dashes leaves
+    32 hex digits and the first 25 of those keep ~100 bits — far more than enough to be unique
+    across every message this bot will ever send.
+
+    Determinism is the entire point: the same row retried after a crash must present the SAME
+    nonce, or enforce_nonce cannot recognise the retry and Discord creates a second message.
+    Nothing here reads the clock, a counter, or any process state.
+    """
+    hexed = "".join(c for c in str(row_nonce) if c in "0123456789abcdefABCDEF").lower()
+    if len(hexed) < 25:
+        hexed = hashlib.sha256(str(row_nonce).encode("utf-8")).hexdigest()
+    return hexed[:25]
+
+
+def reply_channel(conv):
+    """The channel id a reply for this conversation goes to.
+
+    A thread IS a channel everywhere in Discord's API, so a bug-report conversation replies
+    straight to thread_id. A reply chain in a text channel is not: there, thread_id is the ROOT
+    MESSAGE id, and posting to it would 404 — that reply goes to channel_id and threads onto
+    the message with --reply-to. is_thread records which shape this is, because the ids alone
+    do not say.
+    """
+    if conv["is_thread"]:
+        return str(conv["thread_id"])
+    return str(conv["channel_id"] or conv["thread_id"])
 
 
 # ------------------------------------------------------------------------------------------
@@ -381,8 +494,13 @@ class Db:
             script = fh.read()
         with self.conn:
             self.conn.executescript(script)
-            have = self.conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
-            if not have:
+            for table, column, decl in ADDED_COLUMNS:
+                cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+                if column not in cols:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            have = self.conn.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
+            if have < SCHEMA_VERSION:
                 self.conn.execute("INSERT INTO schema_version(version, applied_at) VALUES (?,?)",
                                   (SCHEMA_VERSION, now_iso()))
 
@@ -601,7 +719,7 @@ class Watcher:
     # ======================================================================================
 
     def upsert_conversation(self, thread_id, *, kind, channel_id, guild_id=None, title=None,
-                            root_message_id=None, opener=None):
+                            root_message_id=None, opener=None, is_thread=False):
         thread_id = str(thread_id)
         row = self.db.one("SELECT * FROM conversation WHERE thread_id=?", (thread_id,))
         if row:
@@ -611,12 +729,13 @@ class Watcher:
             return row["id"]
         cur = self.db.execute(
             "INSERT INTO conversation(guild_id, channel_id, thread_id, root_message_id, kind,"
-            " title, opener_discord_id, state, session_id, session_generation, created_at,"
-            " last_activity_at)"
-            " VALUES(?,?,?,?,?,?,?,'idle',?,1,?,?)",
+            " title, opener_discord_id, state, is_thread, session_id, session_generation,"
+            " created_at, last_activity_at)"
+            " VALUES(?,?,?,?,?,?,?,'idle',?,?,1,?,?)",
             (guild_id, str(channel_id) if channel_id else None, thread_id,
              str(root_message_id) if root_message_id else None, kind, title,
-             str(opener) if opener else None, session_id_for(thread_id), now_iso(), now_iso()))
+             str(opener) if opener else None, 1 if is_thread else 0,
+             session_id_for(thread_id), now_iso(), now_iso()))
         log(f"conversation {cur.lastrowid} kind={kind} thread={thread_id} {title or ''}".strip())
         return cur.lastrowid
 
@@ -721,7 +840,8 @@ class Watcher:
             guild_id=meta.get("guild_id"),
             title=meta.get("name"),
             root_message_id=thread_id,
-            opener=meta.get("owner_id"))
+            opener=meta.get("owner_id"),
+            is_thread=True)
         for m in msgs:
             m.setdefault("channel_id", str(thread_id))
             self.insert_message(conv_id, m)
@@ -751,7 +871,8 @@ class Watcher:
             guild_id=msg.get("guild_id"),
             title=(title[0][:100] if title else None),
             root_message_id=root.get("id"),
-            opener=(root.get("author") or {}).get("id"))
+            opener=(root.get("author") or {}).get("id"),
+            is_thread=False)
         for m in chain:
             m.setdefault("channel_id", channel_id)
             self.insert_message(conv_id, m)
@@ -1024,6 +1145,12 @@ class Watcher:
             self.db.execute(
                 "UPDATE run SET terminal_state='failed', exit_code=COALESCE(exit_code,-1)"
                 " WHERE turn_id=? AND terminal_state IS NULL", (turn_id,))
+            # Silence is not a permitted outcome: a terminal state writes a durable record AND
+            # a Discord reply, including this one, where the container never even started.
+            try:
+                self.record_launch_failure(turn_id, f"{type(exc).__name__}: {exc}")
+            except Exception as inner:  # noqa: BLE001 - reporting must never mask the failure
+                log(f"ERROR: could not record a reply for turn {turn_id}: {inner}")
             self.finish_turn(turn_id, "failed", error=f"{type(exc).__name__}: {exc}")
         finally:
             lock.release()
@@ -1075,6 +1202,7 @@ class Watcher:
             "agent": cap["agent"],
             "session": {"id": session_id, "resume": bool(resume)},
             "capabilities": {"tools": cap["tools"], "disallowed": list(cap["disallowed"]),
+                             "allowed": list(cap.get("allowed") or []),
                              "permission_mode": "acceptEdits", "unity": cap["unity"]},
             "classification": json.loads(turn["classification_json"] or "{}"),
             "failed_closed": bool(turn["failed_closed"]),
@@ -1209,11 +1337,12 @@ class Watcher:
         # killed is still identifiable, and recovery can find it by the container name it owns.
         cur = self.db.execute(
             "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, resumed,"
-            " base_sha, unity, tools, disallowed, stream_path)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            " base_sha, unity, tools, disallowed, allowed, stream_path)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (turn["id"], run_id, f"ffbox-{run_id}", job["session"]["id"],
              1 if job["session"]["resume"] else 0, conv["base_sha"], 1 if cap["unity"] else 0,
-             cap["tools"], ",".join(cap["disallowed"]), os.path.join(run_dir, "stream.jsonl")))
+             cap["tools"], ",".join(cap["disallowed"]),
+             ",".join(cap.get("allowed") or []), os.path.join(run_dir, "stream.jsonl")))
         run_row_id = cur.lastrowid
 
         cmd = self.ffbox_cmd() + [
@@ -1225,6 +1354,11 @@ class Watcher:
             "--mount", f"{os.path.join(self.cfg['plugins_dir'], self.cfg['plugin'])}:"
                        f"/ffbox/plugins/{self.cfg['plugin']}:ro",
             "--mount", f"{att_dir}:/ffbox/attachments:ro",
+            # The container's `ffdiscord` (design section 11). It is mounted onto PATH rather
+            # than dropped somewhere in the workspace because the ff-discord skills invoke the
+            # CLI BY NAME — a shim at a repo-relative path would simply never be called. It
+            # holds no token: reads come out of job.json and writes land in /ffbox/out/outbox.
+            "--mount", f"{self.cfg['shim']}:/usr/local/bin/ffdiscord:ro",
             "--agent-timeout", str(self.cfg["agent_secs"]),
             "--warmup-timeout", str(self.cfg["warmup_secs"]),
             "--kill-grace", str(self.cfg["kill_grace_secs"]),
@@ -1378,19 +1512,23 @@ class Watcher:
         nonce = str(uuid.uuid4())
         self.db.execute(
             "INSERT INTO outbound(run_id, conversation_id, action, payload_json, nonce, status,"
-            " created_at) VALUES(?,?,?,?,?,?,?)",
+            " created_at, local_id) VALUES(?,?,?,?,?,?,?,?)",
             (run_row_id, conv_id, action, json.dumps(payload, ensure_ascii=False), nonce,
-             "dry" if self.dry_run else "pending", now_iso()))
+             "dry" if self.dry_run else "pending", now_iso(), payload.get("local_id")))
         return nonce
 
     def record_reply(self, run_row_id, conv, turn, run_dir, terminal, result, timeout_kind, job):
-        """Turn the run's outcome into outbound rows. Nothing is sent — see send_pending."""
+        """Turn the run's outcome into outbound rows. Nothing is sent here — see send_pending.
+
+        The container's own intents win: if the agent wrote to the outbox through the shim, the
+        host does not also compose a summary reply on top of it, or every answer would arrive
+        twice. The ✅/❌ reaction on the triggering message is added either way, because it is
+        the harness's verdict on the run, not the agent's.
+        """
         recorded = 0
         outbox = os.path.join(run_dir, "outbox.jsonl")
         if os.path.exists(outbox):
-            # PHASE 2: the container-side ffdiscord shim appends its post/react intents here.
-            # Phase 1 has no shim, so this normally does not exist; honouring it now means the
-            # shim needs no host change when it lands.
+            # The container-side ffdiscord shim appends one post/react/edit intent per line.
             with open(outbox, "r", encoding="utf-8", errors="replace") as fh:
                 for line in fh:
                     line = line.strip()
@@ -1399,47 +1537,429 @@ class Watcher:
                     try:
                         intent = json.loads(line)
                     except json.JSONDecodeError:
+                        log(f"WARNING: unparseable outbox line in {run_dir}")
                         continue
                     self.record_outbound(run_row_id, conv["id"],
                                          intent.get("action") or "post", intent)
                     recorded += 1
-        if recorded:
-            return recorded
 
-        verdict = _parse_verdict(result.get("result") if isinstance(result, dict) else None)
-        head = compose_head(conv, turn, terminal, result, verdict, timeout_kind, job)
-        payload = {"channel": conv["thread_id"], "text": head, "silent": True,
-                   "reply_to": job["messages"][-1]["discord_id"] if job["messages"] else None}
-        summary = (verdict.get("summary") or "").strip()
-        if len(summary) > HEAD_CAP:
-            # check_length DIES above 2000 characters rather than truncating, so the overflow
-            # is attached as a file instead of being allowed to fail the post.
-            spath = os.path.join(run_dir, "summary.md")
-            try:
-                with open(spath, "w", encoding="utf-8") as fh:
-                    fh.write(f"# {job['run_id']}\n\n{summary}\n")
-                payload["files"] = [spath]
-            except OSError:
-                pass
-        self.record_outbound(run_row_id, conv["id"], "post", payload)
-        return 1
+        if not recorded:
+            verdict = _parse_verdict(result.get("result") if isinstance(result, dict) else None)
+            verification = self.db.one("SELECT * FROM verification WHERE run_id=?",
+                                       (run_row_id,))
+            head = compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
+                                verification=verification, publish=self.publish_facts(run_row_id))
+            payload = {"channel": reply_channel(conv), "text": head, "silent": True,
+                       "reply_to": job["messages"][-1]["discord_id"] if job["messages"] else None}
+            summary = (verdict.get("summary") or "").strip()
+            if len(summary) > HEAD_CAP:
+                # check_length DIES above 2000 characters rather than truncating, so the
+                # overflow is attached as a file instead of being allowed to fail the post.
+                spath = os.path.join(run_dir, "summary.md")
+                try:
+                    with open(spath, "w", encoding="utf-8") as fh:
+                        fh.write(f"# {job['run_id']}\n\n{summary}\n")
+                    payload["files"] = [spath]
+                except OSError:
+                    pass
+            self.record_outbound(run_row_id, conv["id"], "post", payload)
+            recorded += 1
 
-    def send_pending(self):
-        """PHASE 2 SEAM — deliberately a no-op.
+        trigger = job["messages"][-1]["discord_id"] if job["messages"] else None
+        if trigger:
+            # 059's report.reply did this and it earns its keep: a player watching the thread
+            # sees the run land without reading the reply, and a ❌ is visible at a glance in a
+            # channel full of green ticks.
+            self.record_outbound(run_row_id, conv["id"], "react", {
+                "channel": reply_channel(conv), "message": trigger,
+                "emoji": "✅" if terminal == "done" else "❌"})
+            recorded += 1
+        return recorded
 
-        Sending belongs to the host-side sender of design section 11, which owns --silent on
-        every reply, check_length's 2000-character hard stop with file overflow, the kill
-        switch, per-lane rate limits, --dry-run, and the nonce + enforce_nonce dedupe that
-        makes retrying a `pending` row after a crash safe. None of that exists yet, and a
-        half-sender that posts without it is worse than no sender: it would ping real people
-        out of quoted code comments and fail hard on any reply over the cap.
+    def record_launch_failure(self, turn_id, error):
+        """A reply for a turn whose container never ran, so there is no job and no result.
 
-        TODO(phase 2): implement per design section 11 and flip these rows to sent/rejected.
+        The same composer as every other reply, fed the little the harness does know: without
+        this, the one failure mode a player is most likely to hit — the launcher itself broken
+        — is the one that answers with silence.
         """
-        pending = self.db.scalar("SELECT COUNT(*) FROM outbound WHERE status='pending'", (), 0)
-        if pending:
-            log(f"{pending} outbound row(s) pending — sending lands in phase 2 (design §11)")
-        return 0
+        turn = self.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
+        if turn is None:
+            return 0
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (turn["conversation_id"],))
+        run = self.db.one("SELECT * FROM run WHERE turn_id=? ORDER BY id DESC LIMIT 1",
+                          (turn_id,))
+        last = self.db.one("SELECT * FROM message WHERE turn_id=?"
+                           " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT 1", (turn_id,))
+        job = {
+            "run_id": (run["ffbox_run_id"] if run else f"turn{turn_id}"),
+            "session": {"id": (run["session_id"] if run else conv["session_id"])},
+            "classification": json.loads(turn["classification_json"] or "{}"),
+            "messages": [{"discord_id": last["discord_id"]}] if last else [],
+        }
+        return self.record_reply(run["id"] if run else None, conv, turn,
+                                 self.conv_dir(conv["id"]), "failed",
+                                 {"subtype": error}, None, job)
+
+    def publish_facts(self, run_row_id):
+        """Branch and pull request, from git and the GitHub API — never from the agent's prose.
+
+        PHASE 3 SEAM. Publication is not implemented yet, so this is empty and compose_head
+        prints no branch line at all. It deliberately does not fall back to anything the agent
+        said: a summary that claims a PR that does not exist is exactly the failure the
+        harness-is-the-system-of-record rule exists to prevent.
+        """
+        return {}
+
+    # -- the sender (design section 11: the sender enforces, the skills only advise) ---------
+
+    def send_pending(self, limit=200):
+        """Send what may be sent. Returns the number of rows that reached Discord.
+
+        Everything the design puts in one place lives here: --silent on every reply, the
+        2000-character cap turned into a head plus an attachment instead of a failed post, the
+        kill switch, send-side rate limits, dry-run, approval-before-send, and the nonce that
+        makes retrying a `pending` row after a crash safe.
+
+        A send failure is logged and swallowed — the row stays retryable and the caller carries
+        on. Only a DATABASE failure is allowed to propagate, because losing the record is the
+        one thing that cannot be recovered from.
+        """
+        if self.killed():
+            held = self.db.scalar(
+                "SELECT COUNT(*) FROM outbound WHERE status IN ('pending','approved')", (), 0)
+            if held and not self._kill_switch_logged:
+                log(f"kill switch present ({self.cfg['kill_switch']}) — holding {held} "
+                    f"outbound row(s)")
+                self._kill_switch_logged = True
+            return 0
+
+        rows = self.db.query(
+            "SELECT * FROM outbound WHERE status IN ('pending','approved')"
+            " ORDER BY id LIMIT ?", (limit,))
+        approve = bool(self.cfg.get("approve_before_send"))
+        sent = held = 0
+        for row in rows:
+            if self.dry_run:
+                # design section 18: --dry-run marks every outbound row dry instead of sending.
+                self.db.execute("UPDATE outbound SET status='dry', sent_at=? WHERE id=?",
+                                (now_iso(), row["id"]))
+                continue
+            if approve and row["status"] != "approved":
+                held += 1
+                continue
+            if not self._send_due(row):
+                continue
+            reason = self._send_limited(row)
+            if reason:
+                log(f"outbound {row['id']} held: {reason}")
+                continue
+            if self.send_one(row):
+                sent += 1
+        if held:
+            log(f"{held} outbound row(s) awaiting approval — release with: ffwatch approve <id>")
+        return sent
+
+    def _send_due(self, row):
+        """Backoff between attempts, so a Discord outage is not hammered once per poll."""
+        attempts = int(row["attempts"] or 0)
+        if attempts == 0 or not row["last_attempt_at"]:
+            return True
+        wait = int(self.cfg["send_backoff_secs"]) * (2 ** (attempts - 1))
+        try:
+            last = datetime.strptime(row["last_attempt_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            return True
+        return datetime.now(timezone.utc) >= last + timedelta(seconds=min(wait, 3600))
+
+    def _send_limited(self, row):
+        """Send-side ceilings. Separate from the per-lane turn limits: a single run that loops
+        writing intents would otherwise spray a thread no matter how few turns it ran."""
+        limits = self.cfg.get("send_limits") or {}
+        since = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        per_hour = int(limits.get("per_hour") or 0)
+        if per_hour:
+            used = self.db.scalar("SELECT COUNT(*) FROM outbound WHERE status='sent'"
+                                  " AND sent_at>=?", (since,), 0)
+            if used >= per_hour:
+                return f"{used} sends in the last hour reaches the per_hour limit {per_hour}"
+        per_conv = int(limits.get("per_conversation_hour") or 0)
+        if per_conv and row["conversation_id"]:
+            used = self.db.scalar(
+                "SELECT COUNT(*) FROM outbound WHERE status='sent' AND conversation_id=?"
+                " AND sent_at>=?", (row["conversation_id"], since), 0)
+            if used >= per_conv:
+                return (f"conversation {row['conversation_id']} has {used} sends in the last "
+                        f"hour, the per_conversation_hour limit")
+        return None
+
+    def send_one(self, row):
+        """Build the CLI call for one outbound row, run it, and record the outcome."""
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except json.JSONDecodeError:
+            self._reject(row, "payload_json is not valid JSON")
+            return False
+        if not isinstance(payload, dict):
+            self._reject(row, "payload_json is not an object")
+            return False
+
+        try:
+            args, wants_id = self.sender_args(row, payload)
+        except SendRejected as exc:
+            self._reject(row, str(exc))
+            return False
+
+        cmd = ffdiscord_cmd(self.cfg) + args
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=180)
+            rc, out, err = proc.returncode, proc.stdout, proc.stderr
+        except (OSError, subprocess.SubprocessError) as exc:
+            rc, out, err = 1, "", f"{type(exc).__name__}: {exc}"
+
+        if rc != 0:
+            return self._send_failed(row, (err or out or f"exit {rc}").strip()[:500])
+
+        discord_id = None
+        if wants_id:
+            try:
+                discord_id = str((json.loads(out or "null") or {}).get("id") or "") or None
+            except (json.JSONDecodeError, AttributeError):
+                # The message went out; we just could not read its id back. That is worth a
+                # warning, not a retry — retrying would post it a second time.
+                log(f"WARNING: outbound {row['id']} sent but the id could not be parsed")
+        self.db.execute(
+            "UPDATE outbound SET status='sent', discord_id=?, sent_at=?, attempts=attempts+1,"
+            " last_attempt_at=?, last_error=NULL WHERE id=?",
+            (discord_id, now_iso(), now_iso(), row["id"]))
+        if discord_id and row["conversation_id"]:
+            self.db.execute(
+                "UPDATE conversation SET out_watermark_id=? WHERE id=?",
+                (discord_id, row["conversation_id"]))
+        log(f"outbound {row['id']} {row['action']} sent"
+            + (f" as {discord_id}" if discord_id else ""))
+        return True
+
+    def sender_args(self, row, payload):
+        """(argv for ffdiscord, whether stdout carries a message id we should record).
+
+        This is where the posting discipline is applied, not in the skill that asked for the
+        post: the intent is advice, and it arrives from a process that ran on player-authored
+        text.
+        """
+        action = row["action"]
+        channel = str(payload.get("channel") or "").strip()
+        if action not in SENDABLE_ACTIONS:
+            raise SendRejected(f"unknown outbound action {action!r}")
+        if not channel:
+            raise SendRejected("no channel on the intent")
+
+        if action == "react":
+            if not payload.get("message") or not payload.get("emoji"):
+                raise SendRejected("react needs both a message id and an emoji")
+            return ["react", channel, str(payload["message"]), str(payload["emoji"])], False
+
+        if action == "thread-create":
+            name = (payload.get("name") or "").strip()
+            if not payload.get("message") or not name:
+                raise SendRejected("thread-create needs a message id and a name")
+            return ["thread-create", channel, str(payload["message"]), "--name", name[:100],
+                    "--auto-archive", str(payload.get("auto_archive") or 1440), "--json"], True
+
+        head, overflow = self.split_for_discord(row["id"], payload.get("text") or "")
+        files = [f for f in (payload.get("files") or []) if f and os.path.exists(str(f))]
+        if overflow:
+            files.append(overflow)
+
+        if action == "ask":
+            who = payload.get("who") or []
+            who = ",".join(who) if isinstance(who, list) else str(who)
+            if not who or not head:
+                raise SendRejected("ask needs a teammate and a question")
+            args = ["ask", who, "--text", head, "--channel", channel, "--json"]
+            if payload.get("context"):
+                args += ["--context", str(payload["context"])]
+            if payload.get("label"):
+                args += ["--label", str(payload["label"])]
+            return args, True
+
+        if action == "edit":
+            if not payload.get("message"):
+                raise SendRejected("edit needs a message id")
+            if not head:
+                raise SendRejected("edit needs replacement text")
+            return ["edit", channel, str(payload["message"]), "--text", head, "--json"], True
+
+        # post
+        if not head and not files:
+            raise SendRejected("nothing to post: no text and no files")
+        args = ["post", channel, "--text", head]
+        if not self.ping_allowed(payload, channel):
+            # --silent ALWAYS, unless this is the one lane permitted to ping. `ffdiscord post`
+            # expands @name into a real ping on a whole-word match, so an agent quoting "@ben"
+            # out of a code comment would ping a person. The agent asking for a ping is not
+            # enough; the destination has to be the escalation channel.
+            args.append("--silent")
+        if payload.get("reply_to"):
+            args += ["--reply-to", str(payload["reply_to"])]
+        for f in files:
+            args += ["--file", str(f)]
+        if self.nonce_supported():
+            args += ["--nonce", discord_nonce(row["nonce"])]
+        args.append("--json")
+        return args, True
+
+    def ping_allowed(self, payload, channel):
+        """Only dev-chat escalation may ping a human (design section 11)."""
+        if not payload.get("ping"):
+            return False
+        dev_chat = ((self.cfg.get("_discord") or {}).get("channels") or {}).get("dev_chat")
+        return channel == "dev_chat" or (dev_chat and str(dev_chat) == channel)
+
+    def expanded_len(self, text):
+        """How long this text will be WHEN THE CLI CHECKS IT, not as we hold it.
+
+        cmd_post runs expand_mentions BEFORE check_length, and "@ben" becomes "<@226...>" —
+        about fifteen characters longer each time, whether or not --silent is passed (silent
+        suppresses the ping, not the substitution). Measuring the raw string therefore lets a
+        reply that is legal here die in the CLI, which is precisely the failed post this
+        method exists to prevent. Mirrors expand_mentions' whole-word lookahead exactly, so
+        the two cannot disagree about what counts as a mention.
+        """
+        mentions = (self.cfg.get("_discord") or {}).get("mentions") or {}
+        grown = 0
+        for name, uid in mentions.items():
+            hits = len(re.findall(rf"@{re.escape(name)}(?![\w.-])", text))
+            grown += hits * (len(f"<@{uid}>") - len(f"@{name}"))
+        return len(text) + grown
+
+    def split_for_discord(self, row_id, text):
+        """(head, path-to-attachment-or-None).
+
+        check_length exits rather than truncating above 2000 characters, so an over-long reply
+        would otherwise be a FAILED post — the worst of the three outcomes. The head goes out
+        under HEAD_CAP and the whole text is attached, so nothing is lost and nothing is
+        halved.
+        """
+        text = text or ""
+        if self.expanded_len(text) <= 2000:
+            return text, None
+        overflow_dir = os.path.join(self.state_dir, "outbound")
+        os.makedirs(overflow_dir, exist_ok=True)
+        path = os.path.join(overflow_dir, f"{row_id}.md")
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text if text.endswith("\n") else text + "\n")
+        except OSError as exc:
+            # Losing the attachment is bad; failing the post is worse. Send the head alone.
+            log(f"WARNING: could not write the overflow for outbound {row_id}: {exc}")
+            return self._head(text, "\n…(truncated; the overflow could not be saved)"), None
+        return self._head(text, "\n…(full message attached)"), path
+
+    def _head(self, text, footer):
+        """HEAD_CAP characters of `text`, shrunk until the EXPANDED head plus footer fits.
+
+        HEAD_CAP leaves 500 characters of headroom under the 2000 limit, which is ample for the
+        framing lines but not for a head that is mostly @-mentions — a bug report quoting a
+        name fifty times expands by more than that on its own. Shrinking here is the difference
+        between a short reply and no reply."""
+        cut = HEAD_CAP
+        while cut > 0:
+            head = text[:cut].rstrip() + footer
+            if self.expanded_len(head) <= 2000:
+                return head
+            cut -= 200
+        return footer.strip()
+
+    def nonce_supported(self):
+        """Does the ffdiscord on this machine understand --nonce?
+
+        The CLI ships inside the ff-discord plugin and live sessions read a CACHED copy that
+        only refreshes on a version bump, so a machine that has not run registerAgents.sh since
+        this landed still has the old cmd_post — and every send would die on 'unrecognized
+        arguments'. Probing once and saying so loudly beats failing every reply silently.
+        """
+        cached = getattr(self, "_nonce_ok", None)
+        if cached is not None:
+            return cached
+        ok = False
+        try:
+            proc = subprocess.run(ffdiscord_cmd(self.cfg) + ["post", "--help"],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=60)
+            ok = "--nonce" in (proc.stdout or "")
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        if not ok:
+            log("WARNING: this ffdiscord has no --nonce, so a retried post could double-post. "
+                "Update the plugin: sh registerAgents.sh")
+        self._nonce_ok = ok
+        return ok
+
+    def _send_failed(self, row, error):
+        attempts = int(row["attempts"] or 0) + 1
+        limit = int(self.cfg["max_send_attempts"])
+        terminal = attempts >= limit or row["action"] in NON_RETRYABLE_ACTIONS
+        if terminal:
+            self.db.execute(
+                "UPDATE outbound SET status='rejected', reject_reason=?, attempts=?,"
+                " last_attempt_at=?, last_error=? WHERE id=?",
+                (f"send failed after {attempts} attempt(s): {error}", attempts, now_iso(),
+                 error, row["id"]))
+            log(f"ERROR: outbound {row['id']} {row['action']} rejected after {attempts} "
+                f"attempt(s): {error}")
+        else:
+            self.db.execute(
+                "UPDATE outbound SET attempts=?, last_attempt_at=?, last_error=? WHERE id=?",
+                (attempts, now_iso(), error, row["id"]))
+            log(f"WARNING: outbound {row['id']} {row['action']} failed (attempt {attempts}/"
+                f"{limit}, will retry): {error}")
+        return False
+
+    def _reject(self, row, reason):
+        self.db.execute(
+            "UPDATE outbound SET status='rejected', reject_reason=?, last_attempt_at=?"
+            " WHERE id=?", (reason, now_iso(), row["id"]))
+        log(f"outbound {row['id']} rejected: {reason}")
+
+    # -- the approval affordance -------------------------------------------------------------
+
+    def approve(self, ids):
+        """Move rows out of 'pending' so the sender will send them.
+
+        Minimal on purpose: the phase-4 UI renders `outbound WHERE status='pending'` and will
+        call the same transition. Until it exists, this is what makes approve_before_send a
+        usable setting rather than a queue nothing can drain.
+        """
+        done = []
+        for oid in ids:
+            row = self.db.one("SELECT * FROM outbound WHERE id=?", (oid,))
+            if row is None:
+                log(f"outbound {oid}: no such row")
+                continue
+            if row["status"] != "pending":
+                log(f"outbound {oid}: already {row['status']}, not approving")
+                continue
+            self.db.execute("UPDATE outbound SET status='approved' WHERE id=?", (oid,))
+            done.append(oid)
+            log(f"outbound {oid} approved")
+        return done
+
+    def reject(self, ids, reason=None):
+        done = []
+        for oid in ids:
+            row = self.db.one("SELECT * FROM outbound WHERE id=?", (oid,))
+            if row is None or row["status"] in ("sent", "rejected"):
+                log(f"outbound {oid}: {'no such row' if row is None else row['status']}")
+                continue
+            self.db.execute(
+                "UPDATE outbound SET status='rejected', reject_reason=? WHERE id=?",
+                (reason or "rejected by hand", oid))
+            done.append(oid)
+            log(f"outbound {oid} rejected: {reason or 'rejected by hand'}")
+        return done
 
     # ======================================================================================
     # recovery
@@ -1541,9 +2061,28 @@ class Watcher:
         out.append(f"in-flight runs: {len(inflight)}")
         for r in inflight:
             out.append(f"  {r['container_name']}  lane={r['lane']}  session={r['session_id']}")
-        pending = self.db.query(
+        counts = self.db.query(
             "SELECT status, COUNT(*) AS n FROM outbound GROUP BY status ORDER BY status")
-        out.append("outbound: " + (", ".join(f"{r['status']}={r['n']}" for r in pending) or "none"))
+        out.append("outbound: " + (", ".join(f"{r['status']}={r['n']}" for r in counts) or "none"))
+        if self.cfg.get("approve_before_send"):
+            out.append("approval before send is ON — pending rows wait for `ffwatch approve`")
+        queued = self.db.query(
+            "SELECT id, action, status, attempts, last_error, payload_json FROM outbound"
+            " WHERE status IN ('pending','approved') ORDER BY id LIMIT 10")
+        for q in queued:
+            try:
+                first = (json.loads(q["payload_json"] or "{}").get("text") or "").strip()
+            except json.JSONDecodeError:
+                first = ""
+            out.append(f"  outbound {q['id']:>5} {q['action']:<13} {q['status']:<8}"
+                       f" tries={q['attempts']}  {first.splitlines()[0][:60] if first else ''}")
+            if q["last_error"]:
+                out.append(f"        last error: {q['last_error'][:120]}")
+        rejected = self.db.query(
+            "SELECT id, action, reject_reason FROM outbound WHERE status='rejected'"
+            " ORDER BY id DESC LIMIT 5")
+        for r in rejected:
+            out.append(f"  rejected {r['id']:>5} {r['action']:<13} {(r['reject_reason'] or '')[:80]}")
         blocked = self.db.query(
             "SELECT id, lane, error FROM turn WHERE status='blocked' ORDER BY id DESC LIMIT 10")
         if blocked:
@@ -1565,7 +2104,17 @@ STATE_EMOJI = {"done": "✅", "failed": "❌", "timed_out": "⏱️", "crashed":
                "blocked": "🚧"}
 
 
-def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job):
+def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
+                 verification=None, publish=None):
+    """The reply body, ported from 059's report.compose_head.
+
+    Every line here comes from the HARNESS, not from the agent's prose: the state and the
+    clocks from ffbox, the classification from the record ffwatch wrote before launching, the
+    verification from the harness's own test run, the branch and PR from git and the GitHub API
+    response. Only `summary` is the agent's, and it is the one thing a human reads with that in
+    mind.
+    """
+    publish = publish or {}
     bits = [f"{STATE_EMOJI.get(terminal, '•')} {terminal} · `{job['run_id']}`",
             f"lane {turn['lane']}"]
     if isinstance(result, dict) and result.get("total_cost_usd") is not None:
@@ -1574,15 +2123,48 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job):
         bits.append(f"{result['num_turns']} turns")
     lines = [" · ".join(bits)]
 
+    classification = job.get("classification") or {}
     if turn["failed_closed"]:
+        # Visible, not buried: the run was given the least privilege because the harness could
+        # not decide, and whoever reads the answer should know it was answered blind.
         lines.append(f"⚠️ classification failed, ran read-only: {turn['failed_closed_reason']}"[:200])
+    elif classification.get("type"):
+        lines.append(f"type: {classification['type']}")
     if timeout_kind:
         lines.append(f"stopped on the {timeout_kind} clock")
+
+    if verification and verification["ran"]:
+        # PHASE 3 fills the verification table; until then there is no row and no line. The
+        # agent cannot write this — that is why it is its own table (design section 10).
+        compiled = "compiled ✓" if verification["compiled"] else "COMPILE FAILED ✗"
+        tests = ""
+        if verification["tests_run"]:
+            ok = (verification["tests_failed"] or 0) == 0
+            tests = (f" · tests {verification['tests_passed'] or 0}/{verification['tests_run']}"
+                     f" {'✓' if ok else '✗'}")
+        lines.append(compiled + tests)
+
+    if publish.get("branch"):
+        line = f"branch `{publish['branch']}`"
+        if publish.get("pr_url"):
+            line += f" · PR #{publish.get('pr_number')} {publish['pr_url']}"
+        elif publish.get("no_pr_reason"):
+            line += f" · no PR: {publish['no_pr_reason']}"
+        lines.append(line)
+    elif publish.get("no_branch_reason"):
+        lines.append(f"no branch: {publish['no_branch_reason']}")
+
+    if terminal in ("failed", "crashed") and isinstance(result, dict):
+        detail = result.get("subtype") or result.get("error") or ""
+        if detail:
+            lines.append(f"error: {detail}"[:300])
 
     summary = (verdict.get("summary") or "").strip()
     if summary:
         lines += ["", summary[:HEAD_CAP] +
                   ("\n…(full summary attached)" if len(summary) > HEAD_CAP else "")]
+    # So a human can pull the whole conversation onto a desktop and keep going interactively —
+    # the session id is the same one the container ran under.
     lines += ["", f"resume:  ffresume {job['session']['id']}"]
     return "\n".join(lines)
 
@@ -1683,11 +2265,19 @@ def build_parser():
     p.add_argument("--dry-run", action="store_true",
                    help="record every outbound row as 'dry' instead of sending it")
     p.add_argument("--state-dir", help="override ~/ffbox-state")
+    p.add_argument("--approve-before-send", action="store_true",
+                   help="hold every outbound row at 'pending' until it is approved")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init", help="create the state directory and apply the schema (idempotent)")
-    sub.add_parser("once", help="one ingest + classify + schedule pass, then exit")
+    sub.add_parser("once", help="one ingest + classify + schedule + send pass, then exit")
     sub.add_parser("run", help="the daemon: tail events.jsonl and schedule turns")
-    sub.add_parser("status", help="conversations, in-flight runs, pending outbound")
+    sub.add_parser("status", help="conversations, in-flight runs, the outbound queue")
+    sub.add_parser("send", help="flush the outbound queue once, then exit")
+    sp = sub.add_parser("approve", help="release outbound rows held for approval")
+    sp.add_argument("id", nargs="+", type=int, help="outbound row id(s) from `ffwatch status`")
+    sp = sub.add_parser("reject", help="drop outbound rows instead of sending them")
+    sp.add_argument("id", nargs="+", type=int)
+    sp.add_argument("--reason", help="recorded on the row so the UI can show why")
     return p
 
 
@@ -1696,6 +2286,8 @@ def main(argv=None):
     cfg = load_config()
     if args.state_dir:
         cfg["state_dir"] = os.path.expanduser(args.state_dir)
+    if args.approve_before_send:
+        cfg["approve_before_send"] = True
     watcher = Watcher(cfg, dry_run=args.dry_run)
     watcher.init()                      # every subcommand needs the schema present
     if args.cmd == "init":
@@ -1707,6 +2299,19 @@ def main(argv=None):
     if args.cmd == "status":
         print(watcher.status())
         return 0
+    if args.cmd == "send":
+        print(f"sent {watcher.send_pending()} outbound row(s)")
+        return 0
+    if args.cmd == "approve":
+        done = watcher.approve(args.id)
+        # Approving and then waiting up to poll_secs for the daemon to notice is fine, but a
+        # hand-run approve with no daemon up would otherwise appear to do nothing.
+        print(f"approved {len(done)} row(s); sent {watcher.send_pending()}")
+        return 0 if done else 1
+    if args.cmd == "reject":
+        done = watcher.reject(args.id, args.reason)
+        print(f"rejected {len(done)} row(s)")
+        return 0 if done else 1
     return watcher.run()
 
 

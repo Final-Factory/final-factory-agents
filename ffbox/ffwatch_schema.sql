@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS conversation (
     title               TEXT,
     opener_discord_id   TEXT,
     state               TEXT    NOT NULL DEFAULT 'idle',  -- idle | queued | running | blocked | closed
+    -- 1 when the conversation IS a Discord thread, so thread_id is a channel id and a reply
+    -- can be posted straight to it. 0 for a reply chain in a text channel, where thread_id is
+    -- the ROOT MESSAGE id and posting there would 404 — that reply goes to channel_id with
+    -- --reply-to. The sender cannot tell these apart from the ids alone.
+    is_thread           INTEGER NOT NULL DEFAULT 0,
     session_id          TEXT,
     session_generation  INTEGER NOT NULL DEFAULT 1,
     base_sha            TEXT,
@@ -181,18 +186,30 @@ CREATE INDEX IF NOT EXISTS idx_transcript_parent ON transcript_event(parent_uuid
 -- Discord outage cannot lose one and the web UI gets a moderation queue for free by rendering
 -- status='pending'. nonce is the outbound row's uuid, sent to Discord with enforce_nonce so a
 -- retry after a crash cannot double-post.
+--
+-- 'approved' is the approval-before-send state (config approve_before_send). With that flag
+-- on, the sender only sends rows a human — `ffwatch approve <id>`, later the web UI — has
+-- moved out of 'pending'; with it off, 'pending' is sent directly and 'approved' never occurs.
 CREATE TABLE IF NOT EXISTS outbound (
     id              INTEGER PRIMARY KEY,
     run_id          INTEGER REFERENCES run(id) ON DELETE SET NULL,
     conversation_id INTEGER REFERENCES conversation(id) ON DELETE CASCADE,
-    action          TEXT NOT NULL,               -- post | react | edit
+    action          TEXT NOT NULL,               -- post | react | edit | ask | thread-create
     payload_json    TEXT,
     nonce           TEXT NOT NULL UNIQUE,
-    status          TEXT NOT NULL DEFAULT 'pending',  -- pending | sent | rejected | dry
+    status          TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | sent | rejected | dry
     discord_id      TEXT,
     reject_reason   TEXT,
     created_at      TEXT,
-    sent_at         TEXT
+    sent_at         TEXT,
+    -- Retry bookkeeping. A transient failure leaves the row retryable with backoff computed
+    -- from last_attempt_at; after max_send_attempts it is rejected rather than retried forever.
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    last_error      TEXT,
+    -- The placeholder id the container's shim printed for this intent, so a run's own log and
+    -- the real Discord id can be lined up afterwards.
+    local_id        TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_outbound_status ON outbound(status);
