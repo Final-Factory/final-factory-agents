@@ -5,6 +5,7 @@
 #   ffbox "make the belt merger respect item priority"
 #   ffbox --no-unity "summarise how the save migration system works"
 #   ffbox --keep --prompt-file ./task.md
+#   ffbox --task ffbox/discord-task.sh --job-file job.json --run-id d7t2-1a2b   (ffwatch)
 #
 # Each run gets its own ZFS clone of the golden checkout, bind-mounted into a container built on
 # the same Unity image CI uses. The clone is instant and costs ~0 bytes no matter how large the
@@ -26,9 +27,22 @@ UNITY=1
 OUTPUT_FORMAT=text
 PROMPT=
 PROMPT_FILE=
+REF=
+TASK=
+JOB_FILE=
+RUN_ID_OVERRIDE=
+MOUNTS=()
+
+# The three clocks of the Discord design, section 8. They are ENFORCED only when this run is a
+# task run (or when one of the flags is given explicitly): a plain interactive one-shot was
+# always unbounded and quietly acquiring a one-hour ceiling would be a surprise.
+AGENT_TIMEOUT=900        # agent working time, measured from the task's own start marker
+WARMUP_TIMEOUT=3600      # clone, container start, Unity activation, Library delta
+KILL_GRACE=10            # after SIGTERM is ignored, force
+CLOCKS=0
 
 usage() {
-    sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'
     cat <<'EOF'
 
 Options:
@@ -39,7 +53,26 @@ Options:
                        Destroy it yourself with: sudo zfs destroy <dataset>
   --json               Emit Claude's stream-json output instead of plain text.
   --image NAME         Container image to run (default: ffbox:latest).
+  --ref REF            Check the workspace out at REF after cloning (a branch, tag or sha;
+                       "develop" resolves to origin/develop when no local branch matches).
+                       The resolved sha is written to <results>/base_sha.txt.
+  --task PATH          Container task to run instead of the default one-shot. A host path is
+                       mounted read-only at /ffbox/task.sh; anything else is taken as a path
+                       already inside the image. Sets FFBOX_ENTRY.
+  --job-file FILE      Mount FILE read-only at /ffbox/job.json for the task to read.
+  --mount SPEC         Extra bind mount, HOST:CONTAINER[:ro]. Repeatable. Nested paths under
+                       /workspace work; Docker creates the intermediate directories.
+  --run-id ID          Use ID for the run instead of a timestamp, so the caller owns the
+                       ffbox-<ID> container name and can address exactly it later.
+  --agent-timeout N    Seconds of AGENT working time (default 900). The clock starts when the
+                       task creates <out>/.agent-started, not when ffbox does.
+  --warmup-timeout N   Seconds for everything before that marker (default 3600).
+  --kill-grace N       Seconds between SIGTERM and force (default 10). With Unity on, the stop
+                       always allows 120s regardless, so the activation seat comes back.
   -h, --help           Show this help.
+
+Timeout exit codes: 123 = warm-up ceiling exceeded, 124 = agent ceiling exceeded. Both also
+write the word "warmup" or "agent" to <results>/ffbox-timeout.
 
 Secrets are read from an env file, never from the command line — anything in argv is visible
 in /proc/<pid>/cmdline and lands in shell history. Default location:
@@ -50,28 +83,55 @@ EOF
 # --- argument parsing --------------------------------------------------------------------------
 while [ $# -gt 0 ]; do
     case "$1" in
-        --prompt-file) PROMPT_FILE=${2:?--prompt-file needs a path}; shift 2 ;;
-        --no-unity)    UNITY=0; shift ;;
-        --keep)        KEEP=1; shift ;;
-        --json)        OUTPUT_FORMAT=stream-json; shift ;;
-        --image)       IMAGE=${2:?--image needs a name}; shift 2 ;;
-        -h|--help)     usage; exit 0 ;;
-        --)            shift; break ;;
-        -*)            echo "ffbox: unknown option $1" >&2; usage >&2; exit 2 ;;
-        *)             break ;;
+        --prompt-file)    PROMPT_FILE=${2:?--prompt-file needs a path}; shift 2 ;;
+        --no-unity)       UNITY=0; shift ;;
+        --keep)           KEEP=1; shift ;;
+        --json)           OUTPUT_FORMAT=stream-json; shift ;;
+        --image)          IMAGE=${2:?--image needs a name}; shift 2 ;;
+        --ref)            REF=${2:?--ref needs a git ref}; shift 2 ;;
+        --task)           TASK=${2:?--task needs a path}; CLOCKS=1; shift 2 ;;
+        --job-file)       JOB_FILE=${2:?--job-file needs a path}; CLOCKS=1; shift 2 ;;
+        --mount)          MOUNTS+=("${2:?--mount needs HOST:CONTAINER[:ro]}"); shift 2 ;;
+        --run-id)         RUN_ID_OVERRIDE=${2:?--run-id needs an id}; shift 2 ;;
+        --agent-timeout)  AGENT_TIMEOUT=${2:?--agent-timeout needs seconds}; CLOCKS=1; shift 2 ;;
+        --warmup-timeout) WARMUP_TIMEOUT=${2:?--warmup-timeout needs seconds}; CLOCKS=1; shift 2 ;;
+        --kill-grace)     KILL_GRACE=${2:?--kill-grace needs seconds}; CLOCKS=1; shift 2 ;;
+        -h|--help)        usage; exit 0 ;;
+        --)               shift; break ;;
+        -*)               echo "ffbox: unknown option $1" >&2; usage >&2; exit 2 ;;
+        *)                break ;;
     esac
 done
+
+for spec in "${MOUNTS[@]}"; do
+    case "$spec" in
+        /*:/*) ;;
+        *) echo "ffbox: --mount needs HOST:CONTAINER[:ro] with absolute paths, got '$spec'" >&2
+           exit 2 ;;
+    esac
+done
+
+if [ -n "$RUN_ID_OVERRIDE" ]; then
+    # This becomes a container name, and it is the ONLY handle anything gets for destroying
+    # this run's container later. Anything that would need quoting is rejected here rather
+    # than producing a container nobody can address.
+    case "$RUN_ID_OVERRIDE" in
+        *[!A-Za-z0-9._-]*|"") echo "ffbox: --run-id must match [A-Za-z0-9._-]+" >&2; exit 2 ;;
+    esac
+fi
 
 if [ -n "$PROMPT_FILE" ]; then
     [ -r "$PROMPT_FILE" ] || { echo "ffbox: cannot read $PROMPT_FILE" >&2; exit 2; }
     PROMPT=$(cat "$PROMPT_FILE")
 elif [ $# -gt 0 ]; then
     PROMPT="$*"
-elif [ ! -t 0 ]; then
+elif [ -z "$TASK" ] && [ ! -t 0 ]; then
     PROMPT=$(cat)
 fi
 
-if [ -z "${PROMPT// }" ]; then
+# A task run carries its instructions in its own mounted files (job.json for the Discord lanes),
+# so a prompt is required only for the default one-shot task.
+if [ -z "$TASK" ] && [ -z "${PROMPT// }" ]; then
     echo "ffbox: no prompt given" >&2
     usage >&2
     exit 2
@@ -125,14 +185,46 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 || {
 }
 [ -d "$GOLDEN_MNT" ] || { echo "ffbox: golden checkout missing at $GOLDEN_MNT" >&2; exit 69; }
 
-RUN_ID=$(date +%Y%m%d-%H%M%S)-$$
+RUN_ID=${RUN_ID_OVERRIDE:-$(date +%Y%m%d-%H%M%S)-$$}
 SNAP="${GOLDEN_DS}@ffbox-${RUN_ID}"
 CLONE="${RUNS_DS}/run-${RUN_ID}"
 MNT="${RUNS_MNT}/run-${RUN_ID}"
 OUT="${RESULTS}/${RUN_ID}"
 
 mkdir -p "$OUT"
-printf '%s' "$PROMPT" > "$OUT/prompt.txt"
+if [ -n "${PROMPT// }" ]; then
+    printf '%s' "$PROMPT" > "$OUT/prompt.txt"
+fi
+
+# --- extra mounts --------------------------------------------------------------------------------
+DOCKER_MOUNTS=()
+for spec in "${MOUNTS[@]}"; do
+    host=${spec%%:*}
+    if [ ! -e "$host" ]; then
+        # Docker would create a missing host path as a ROOT-owned directory, which the
+        # host-side caller then cannot write or clean up. Create it as ourselves instead.
+        mkdir -p "$host"
+    fi
+    DOCKER_MOUNTS+=(-v "$spec")
+done
+
+ENTRY_ENV=()
+if [ -n "$TASK" ]; then
+    if [ -r "$TASK" ]; then
+        TASK_ABS=$(cd "$(dirname "$TASK")" && pwd)/$(basename "$TASK")
+        DOCKER_MOUNTS+=(-v "$TASK_ABS:/ffbox/task.sh:ro")
+        ENTRY_ENV+=(-e "FFBOX_ENTRY=/ffbox/task.sh")
+    else
+        # Not a host file: assume it is a path that already exists inside the image.
+        ENTRY_ENV+=(-e "FFBOX_ENTRY=$TASK")
+    fi
+fi
+if [ -n "$JOB_FILE" ]; then
+    [ -r "$JOB_FILE" ] || { echo "ffbox: cannot read $JOB_FILE" >&2; exit 2; }
+    JOB_ABS=$(cd "$(dirname "$JOB_FILE")" && pwd)/$(basename "$JOB_FILE")
+    DOCKER_MOUNTS+=(-v "$JOB_ABS:/ffbox/job.json:ro")
+    ENTRY_ENV+=(-e "FFBOX_JOB_FILE=/ffbox/job.json")
+fi
 
 # --- lifecycle ---------------------------------------------------------------------------------
 cleanup() {
@@ -167,23 +259,95 @@ sudo zfs clone -o mountpoint="$MNT" "$SNAP" "$CLONE"
 CLONE_MADE=1
 echo "[ffbox] workspace: $MNT (clone of $SNAP)"
 
+# --- base ref ------------------------------------------------------------------------------------
+# Golden tracks master; the Discord lanes want develop. Checking out in the clone costs a ref
+# move plus a working-tree update, and Library/ stays warm because the import cache is keyed on
+# content, not on which branch produced it.
+if [ -d "$MNT/.git" ]; then
+    if [ -n "$REF" ]; then
+        TARGET=
+        if git -C "$MNT" rev-parse --verify --quiet "${REF}^{commit}" >/dev/null 2>&1; then
+            TARGET=$REF
+        elif git -C "$MNT" rev-parse --verify --quiet "origin/${REF}^{commit}" >/dev/null 2>&1; then
+            TARGET=origin/$REF
+        fi
+        if [ -z "$TARGET" ]; then
+            echo "ffbox: --ref '$REF' resolves to nothing in the clone" >&2
+            exit 69
+        fi
+        echo "[ffbox] checking out $TARGET"
+        git -C "$MNT" checkout --detach --quiet "$TARGET" || {
+            echo "ffbox: checkout of $TARGET failed" >&2; exit 69; }
+    fi
+    # Recorded whether or not --ref was given: the harvest step and ffwatch's base pinning both
+    # need to know exactly which commit this run reasoned against.
+    git -C "$MNT" rev-parse HEAD > "$OUT/base_sha.txt" 2>/dev/null || rm -f "$OUT/base_sha.txt"
+fi
+
 # --- run -----------------------------------------------------------------------------------------
 # Secrets go in as environment variables read from the host-side env file. They are never baked
 # into the image and never appear in argv.
+PROMPT_MOUNT=()
+if [ -f "$OUT/prompt.txt" ]; then
+    PROMPT_MOUNT=(-v "$OUT/prompt.txt:/ffbox/prompt.txt:ro")
+fi
+
 set +e
 docker run --rm \
     --name "ffbox-${RUN_ID}" \
     --hostname ffbox \
     -v "$MNT:/workspace" \
     -v "$OUT:/ffbox/out" \
-    -v "$OUT/prompt.txt:/ffbox/prompt.txt:ro" \
+    "${PROMPT_MOUNT[@]}" \
+    "${DOCKER_MOUNTS[@]}" \
+    "${ENTRY_ENV[@]}" \
     -e CLAUDE_CODE_OAUTH_TOKEN \
     -e UNITY_SERIAL -e UNITY_EMAIL -e UNITY_PASSWORD \
     -e FFBOX_UNITY="$UNITY" \
     -e FFBOX_OUTPUT_FORMAT="$OUTPUT_FORMAT" \
-    "$IMAGE"
+    "$IMAGE" &
+DOCKER_PID=$!
+
+TIMEOUT_KIND=
+if [ "$CLOCKS" = 1 ]; then
+    # Two clocks, watched from out here because only the host can tell the difference between
+    # "Unity is still importing" and "the agent has hung". The task marks the handover by
+    # creating .agent-started in the shared out directory.
+    STARTED_AT=$(date +%s)
+    while kill -0 "$DOCKER_PID" 2>/dev/null; do
+        sleep 2
+        NOW=$(date +%s)
+        if [ -f "$OUT/.agent-started" ]; then
+            MARK=$(stat -c %Y "$OUT/.agent-started" 2>/dev/null || echo "$NOW")
+            if [ "$AGENT_TIMEOUT" -gt 0 ] && [ $((NOW - MARK)) -gt "$AGENT_TIMEOUT" ]; then
+                TIMEOUT_KIND=agent
+                break
+            fi
+        elif [ "$WARMUP_TIMEOUT" -gt 0 ] && [ $((NOW - STARTED_AT)) -gt "$WARMUP_TIMEOUT" ]; then
+            TIMEOUT_KIND=warmup
+            break
+        fi
+    done
+    if [ -n "$TIMEOUT_KIND" ]; then
+        # Never `docker kill`: the task is PID 1 and its trap is what returns the Unity seat.
+        # With Unity on, the grace has to be long enough for that return call to complete —
+        # kill_grace is about an agent ignoring SIGTERM, not about the licence round trip.
+        STOP_TIMEOUT=$KILL_GRACE
+        if [ "$UNITY" = 1 ]; then STOP_TIMEOUT=120; fi
+        echo "[ffbox] $TIMEOUT_KIND ceiling exceeded — stopping ffbox-${RUN_ID}" >&2
+        printf '%s\n' "$TIMEOUT_KIND" > "$OUT/ffbox-timeout"
+        docker stop --timeout "$STOP_TIMEOUT" "ffbox-${RUN_ID}" >/dev/null 2>&1
+    fi
+fi
+
+wait "$DOCKER_PID"
 RUN_RC=$?
 set -e
+
+case "$TIMEOUT_KIND" in
+    warmup) RUN_RC=123 ;;
+    agent)  RUN_RC=124 ;;
+esac
 
 # --- harvest ---------------------------------------------------------------------------------------
 # Do this before cleanup destroys the clone, or the work evaporates with it.
@@ -200,6 +364,9 @@ if [ -d "$MNT/.git" ]; then
     else
         echo "[ffbox] no file changes in this run"
         rm -f "$OUT/changes.patch"
+    fi
+    if [ -f "$OUT/base_sha.txt" ]; then
+        echo "[ffbox] base sha: $(cat "$OUT/base_sha.txt")"
     fi
 fi
 

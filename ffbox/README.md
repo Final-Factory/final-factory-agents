@@ -225,12 +225,94 @@ Each run writes to `~/ffbox-runs/<run-id>/`:
 | `changes.patch` | every file change, as a binary-safe patch |
 | `status.txt` | `git status --porcelain` from the clone |
 | `unity-license.log` | activation and return output |
+| `base_sha.txt` | the commit the workspace actually ran against |
 
 Apply the work to your real checkout with:
 
 ```bash
 git -C /opt/FinalFactory apply ~/ffbox-runs/<run-id>/changes.patch
 ```
+
+## Running something other than a prompt
+
+`FFBOX_ENTRY` has always let a caller swap the container task — that is how `warmLibrary.sh`
+does its Unity import. The flags below make it usable from outside this directory, and are what
+`ffwatch` (below) drives.
+
+| flag | what it does |
+|---|---|
+| `--task PATH` | The container task to run. A host path is mounted read-only at `/ffbox/task.sh`; anything else is taken as a path already in the image. |
+| `--job-file FILE` | Mounted read-only at `/ffbox/job.json`. The task reads it; nothing is passed in argv. |
+| `--mount HOST:CONTAINER[:ro]` | An extra bind mount, repeatable. Nested paths under `/workspace` work — Docker creates the intermediates. |
+| `--run-id ID` | Caller-supplied run id, so the caller owns the `ffbox-<ID>` container name and can address exactly that container later. |
+| `--ref REF` | Check the clone out at `REF` after cloning. `develop` falls back to `origin/develop`. The resolved sha lands in `base_sha.txt`. |
+| `--agent-timeout N` | Agent working time, default 900s. |
+| `--warmup-timeout N` | Everything before the agent starts, default 3600s. |
+| `--kill-grace N` | Seconds between SIGTERM and force, default 10. |
+
+### The three clocks
+
+A slow Unity import and a hung agent look identical from the outside if you only have one
+timer, so there are two. The task creates `<out>/.agent-started` when it launches Claude;
+before that marker the warm-up ceiling applies, after it the agent ceiling does. Exceeding
+either stops the container and exits **123** (warm-up) or **124** (agent), and writes the word
+`warmup` or `agent` to `<out>/ffbox-timeout`.
+
+Stopping always goes through `docker stop`, never `docker kill`, because the task is PID 1 and
+its trap is what returns the Unity seat. With Unity on, the stop allows 120 seconds regardless
+of `--kill-grace` — that flag is about an agent ignoring SIGTERM, not about the licence round
+trip.
+
+The clocks are enforced only when the run is a task run, or when you pass one of the three
+flags explicitly. A plain interactive one-shot stays unbounded, as it always was.
+
+## Discord conversations (ffwatch)
+
+`ffwatch.py` is a host daemon that turns Discord threads into multi-turn conversations, each
+turn running as one ffbox container. The full design is `discord_persistent_design.txt` at the
+repo root; the short version:
+
+```
+ffdiscord-listener  ──►  ~/.config/ffdiscord/events.jsonl   (ids only, never message text)
+        │ tail -F
+     ffwatch   ingest → classify → schedule → launch
+        │
+   ~/ffbox-state/ffwatch.db  (SQLite, WAL)     ffbox --task discord-task.sh (one per turn)
+```
+
+The host does every Discord read and write. The container gets `job.json` with the new
+messages, their authors and local paths to already-downloaded attachments — so the agent, which
+is reading text written by strangers, holds no credential that can speak as the bot.
+
+Every lane names its tools on the command line. The answer and triage lanes get
+`Read,Grep,Glob` and no Bash at all, which makes a read-only run *incapable* of writing rather
+than asked not to. If classification cannot complete, the turn runs read-only anyway and the
+record says why — a failure to decide never widens capability.
+
+Set it up with:
+
+```bash
+sh ffbox/discord-setup.sh          # state dir, schema, config block, systemd user units
+sh ffbox/discord-setup.sh --check  # report, change nothing
+python3 ffbox/ffwatch.py status
+```
+
+| path | contents |
+|---|---|
+| `~/ffbox-state/ffwatch.db` | conversations, messages, turns, runs, transcript index, outbound queue |
+| `~/ffbox-state/blobs/<sha[0:2]>/<sha>` | attachments, content-addressed and shared across conversations |
+| `~/ffbox-state/conversations/<id>/claude/` | `CLAUDE_CONFIG_DIR` for that conversation — the session transcript lives here |
+| `~/ffbox-state/conversations/<id>/runs/<run>/` | `job.json`, `stream.jsonl`, `result.json`, `summary.md` |
+| `~/.config/ffbox/discord.disabled` | kill switch. While it exists, ffwatch refuses to launch anything. Ingest keeps running, so nothing is lost. |
+
+Phase 1 is what is implemented: ingest, classification with fail-closed, the ceilings, and the
+read-only lanes. **Nothing is posted to Discord yet.** Replies are recorded as `outbound` rows
+with `status='pending'` and a nonce; the sender is phase 2. The write lanes (`fix`, `dev`) are
+classified and recorded, then parked — they need Unity batchmode verification, git bundle
+harvest and host-side PR creation, which is phase 3.
+
+Offline tests: `python3 ffbox/test_ffwatch.py`. They stub `ffdiscord`, `ffbox` and `docker`, so
+they need no network, no token, no Docker and no ZFS.
 
 ## Known gaps
 
