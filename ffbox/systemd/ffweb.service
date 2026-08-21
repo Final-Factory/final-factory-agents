@@ -1,0 +1,36 @@
+[Unit]
+# The read-only web UI over ffwatch.db (design section 19).
+#
+# @FFWEB@ is substituted with the absolute path to ffbox/ffweb.py by discord-setup.sh — this
+# repo can be cloned anywhere, so the unit cannot carry a fixed path. Re-run
+# `sh ffbox/discord-setup.sh` after moving the checkout.
+#
+# BOUND TO 127.0.0.1 ON PURPOSE. The page renders transcript_event, which holds repo internals,
+# file contents the agent read and raw model thinking, alongside Discord message text. It is
+# internal-only and none of its text is ever reused in a Discord post. Reach it over an SSH
+# tunnel — `ssh -N -L 8787:127.0.0.1:8787 thisbox` — rather than by widening --host.
+#
+# It never writes: the database is opened file:...?mode=ro and ffwatch stays the sole writer.
+# --enable-actions (approve/reject on the outbound queue) is deliberately NOT set here; it
+# shells out to `ffwatch approve`, and a unit that carries it would mean anything that can
+# reach the port can release a reply into a public thread. Add it by hand, on this box, when
+# approve_before_send is on and someone is actually moderating.
+Description=ffweb (read-only web UI for ffwatch)
+After=network.target
+Wants=ffwatch.service
+
+# A UI that cannot bind its port is a configuration problem, not a transient one; back off
+# rather than respawning forever. These belong in [Unit] — systemd ignores them under
+# [Service], with only a log line to say so, which is the same as having no limit at all.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 @FFWEB@ --host 127.0.0.1 --port 8787 --quiet
+EnvironmentFile=-%h/.config/ffbox/secrets.env
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

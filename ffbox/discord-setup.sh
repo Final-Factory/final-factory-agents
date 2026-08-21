@@ -42,7 +42,7 @@ if [ "$CHECK" = 1 ]; then
     say "config         : $FFDISCORD_HOME/config.json $([ -f "$FFDISCORD_HOME/config.json" ] && echo present || echo MISSING)"
     say "kill switch    : $KILL_SWITCH $([ -f "$KILL_SWITCH" ] && echo ACTIVE || echo 'not set (lanes may run)')"
     say "units          : $UNIT_DIR"
-    for u in ffdiscord-listener.service ffwatch.service; do
+    for u in ffdiscord-listener.service ffwatch.service ffweb.service; do
         say "  $u $([ -f "$UNIT_DIR/$u" ] && echo installed || echo 'not installed')"
     done
     exit 0
@@ -149,9 +149,10 @@ say "units"
 if [ "$UNITS" = 0 ]; then
     did "skipped (--no-units)"
 elif ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user show-environment >/dev/null 2>&1; then
-    did "systemctl --user is unavailable here; run the two daemons yourself:"
+    did "systemctl --user is unavailable here; run the daemons yourself:"
     did "  ffdiscord-listener --channels ask_claude,bug_reports"
     did "  python3 $HERE/ffwatch.py run"
+    did "  python3 $HERE/ffweb.py            (optional, read-only UI on 127.0.0.1:8787)"
 else
     mkdir -p "$UNIT_DIR"
     install -m 0644 "$HERE/systemd/ffdiscord-listener.service" \
@@ -161,13 +162,23 @@ else
     sed "s|@FFWATCH@|$HERE/ffwatch.py|g" "$HERE/systemd/ffwatch.service" \
         > "$UNIT_DIR/ffwatch.service"
     chmod 0644 "$UNIT_DIR/ffwatch.service"
+    # The web UI, same rendering trick and the same reason. It is a separate unit rather than a
+    # thread inside ffwatch so that restarting the page cannot interrupt a run in flight, and so
+    # a machine that does not want the UI simply does not enable it.
+    sed "s|@FFWEB@|$HERE/ffweb.py|g" "$HERE/systemd/ffweb.service" \
+        > "$UNIT_DIR/ffweb.service"
+    chmod 0644 "$UNIT_DIR/ffweb.service"
     systemctl --user daemon-reload
     did "installed into $UNIT_DIR"
     did "enable with:  systemctl --user enable --now ffdiscord-listener ffwatch"
+    did "web UI:       systemctl --user enable --now ffweb   (127.0.0.1:8787, read-only)"
+    did "              reach it with: ssh -N -L 8787:127.0.0.1:8787 $(hostname 2>/dev/null || echo thisbox)"
     did "logs:         journalctl --user -u ffwatch -f"
     did "REMINDER: exactly one ffdiscord-listener per bot, across all machines."
 fi
 
 say "done"
 say "status:  python3 $HERE/ffwatch.py status"
+say "web UI:  python3 $HERE/ffweb.py            (read-only, http://127.0.0.1:8787)"
+say "         INTERNAL ONLY — it renders repo internals and raw model thinking."
 say "one pass by hand (stop the unit first):  python3 $HERE/ffwatch.py --dry-run once"

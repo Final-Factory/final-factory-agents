@@ -355,9 +355,9 @@ python3 ffbox/ffwatch.py reject 14 --reason "wrong"    # drop, with a reason on 
 python3 ffbox/ffwatch.py send                          # flush the queue once
 ```
 
-Phase 3 is what is implemented, which is all four lanes. On top of phase 2's ingest,
-fail-closed classification, ceilings, container shim and sender, the write lanes (`fix`, `dev`)
-add the three things the harness owns and the agent cannot touch:
+Phase 4 is what is implemented: all four lanes, plus the read-only web UI below. On top of
+phase 2's ingest, fail-closed classification, ceilings, container shim and sender, the write
+lanes (`fix`, `dev`) add the three things the harness owns and the agent cannot touch:
 
 - **Verification.** After the agent process exits, the container task runs `ffverify` —
   `unity-editor -runTests -testPlatform EditMode` on the same GameCI image CI uses, a cold
@@ -387,6 +387,57 @@ Offline tests: `python3 ffbox/test_ffwatch.py`. They stub `ffdiscord`, `ffbox` a
 they need no network, no token, no Docker and no ZFS. The end-to-end case runs the real shim
 inside the stub container, and a parity test asserts the shim's subcommands and flags still
 match `ffdiscord`'s — the two cannot drift apart without a test failing.
+
+### The web UI (`ffweb`)
+
+```bash
+python3 ffbox/ffweb.py                       # http://127.0.0.1:8787
+python3 ffbox/ffweb.py --port 9000 --quiet
+systemctl --user enable --now ffweb          # installed by discord-setup.sh
+```
+
+A page over the same database, and nothing else: no build step, no package manager, no CDN,
+no web font. It is `http.server` plus `sqlite3`, the CSS is inline, and it renders correctly
+with the machine unplugged.
+
+| route | what it is |
+|---|---|
+| `/` | conversations, filterable by kind, state, verdict and lane, with cost, tokens and the average warm-up and agent time per conversation |
+| `/conversation/<id>` | one thread: `message`, `turn`, `run` and `verification` rows interleaved in time, with attachments rendered in place |
+| `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
+| `/lanes` | cost, tokens and durations per lane |
+| `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
+| `/blob/<sha256>` | one content-addressed attachment |
+
+**It is read-only, and ffwatch stays the sole writer.** The connection is opened
+`file:…?mode=ro` through a URI with `PRAGMA query_only` on top, so a write is refused by SQLite
+rather than caught in review — the test suite asserts both that the connection rejects an
+`INSERT` and that the database file's mtime is unchanged after a crawl of every route. The one
+thing the UI can change is the outbound queue, and it does not change it: `--enable-actions`
+(**off by default**) turns on an approve/reject form that shells out to `ffwatch approve` /
+`ffwatch reject`. That keeps the transition where the kill switch, the send-side rate limits
+and the retry bookkeeping already live, and it is what lets the page move off this box later
+without the database moving with it.
+
+**It is internal-only, and none of its text is ever reused in a Discord post.**
+`transcript_event` holds repo internals, the contents of files the agent read, and raw model
+thinking. That is why `--host` defaults to `127.0.0.1` and why the systemd unit hard-codes it;
+reach the page over an SSH tunnel — `ssh -N -L 8787:127.0.0.1:8787 <box>` — rather than
+widening the bind. Combining `--enable-actions` with a non-loopback `--host` is refused
+outright unless `--allow-remote-actions` is also given, because the action surface can release
+a reply into a public thread.
+
+Everything on the page was written by a stranger — player bug reports, Discord display names,
+attachment filenames, raw model output — so every value goes through one escape function and
+the blob route never trusts the URL: the digest must match `[0-9a-f]{64}`, it is resolved
+through an `attachment` row, and the file must land inside the blob directory. Uploads are
+served with a content type we chose rather than the one the upload claimed, so a player's
+`evil.html` comes back as `text/plain` and cannot execute against this origin.
+
+Offline tests: `python3 ffbox/test_ffweb.py`. They start the real server on an ephemeral
+loopback port and fetch over a real socket — the read-only enforcement, the traversal
+refusals, the content types and the mtime only exist on the wire — and build their fixture by
+calling ffwatch's own schema, so the two cannot drift.
 
 ## Known gaps
 
