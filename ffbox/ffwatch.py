@@ -15,9 +15,9 @@ and records everything in SQLite.
   ffwatch approve   release held outbound rows (approve_before_send)
   ffwatch reject    drop held outbound rows, with a reason
 
-PHASE 3. All four lanes run. The read-only ones (answer, triage) reply through the outbound
-queue: the container writes intents through the ffdiscord shim, ffwatch records them before
-anything reaches Discord, and send_pending() puts them on the wire with --silent, the
+PHASE 3. All four lanes run, and NONE of them talks to Discord. A turn says what it wants said
+in the `summary` of its structured verdict; ffwatch composes the reply from that and records it
+before anything reaches Discord, and send_pending() puts it on the wire with --silent, the
 2000-character cap turned into an attachment, the kill switch, send-side rate limits, dry-run,
 optional approval, and nonce + enforce_nonce so a retry after a crash cannot double-post.
 
@@ -134,7 +134,6 @@ DEFAULTS = {
 
     # what the container gets
     "task_script": os.path.join(HERE, "discord-task.sh"),
-    "shim": os.path.join(HERE, "ffdiscord_shim.py"),
     "ffverify": os.path.join(HERE, "ffverify.sh"),
     "plugins_dir": os.path.join(REPO_ROOT, "plugins"),
     "plugin": "ff-discord",
@@ -222,7 +221,6 @@ ENV_OVERRIDES = {
     "FFWATCH_DOCKER": ("docker", str),
     "FFWATCH_CLAUDE": ("claude_bin", str),
     "FFWATCH_TASK": ("task_script", str),
-    "FFWATCH_SHIM": ("shim", str),
     "FFWATCH_PLUGINS_DIR": ("plugins_dir", str),
     "FFWATCH_KILL_SWITCH": ("kill_switch", str),
     "FFWATCH_BASE_REF": ("base_ref", str),
@@ -309,9 +307,8 @@ WRITE_DISALLOWED = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)"]
 
 # An ALLOW list. It exists for a mechanical reason, measured on this host: `--permission-mode
 # acceptEdits` auto-approves EDITS, not Bash. A non-interactive run has nobody to ask, so
-# without this every single Bash command in a write lane is denied — the fix lane could not
-# run one shell command, and the shim of design section 11 was unreachable from every lane.
-# Naming what Bash may run is what makes the write lanes work at all.
+# without this every single Bash command in a write lane is denied and the fix lane could not
+# run one shell command. Naming what Bash may run is what makes the write lanes work at all.
 #
 # READ THIS BEFORE TREATING IT AS A SECURITY BOUNDARY. IT IS NOT ONE. Measured, both ways:
 #
@@ -319,22 +316,25 @@ WRITE_DISALLOWED = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)"]
 #     was denied and recorded in permission_denials, which is the wrapper trick design
 #     section 7 shows walking straight through the deny pattern `Bash(git push*)`.
 #   * But a trailing `*` swallows an appended chain. `git status --short && touch marker` was
-#     PERMITTED under `Bash(git status*)`, and `<prog> doctor && touch marker` under
-#     `Bash(<prog> *)`. The glob matches the whole command string, separators included; it
-#     does not decompose the chain and check each part.
+#     PERMITTED under `Bash(git status*)`. The glob matches the whole command string,
+#     separators included; it does not decompose the chain and check each part.
 #
-# So this reduces scope and catches accidents. It does not stop a determined agent, and the
-# read-only lanes are deliberately not given Bash on the strength of it. What actually
-# contains the write lanes is unchanged and is design section 7's list: no credential of any
+# So this reduces scope and catches accidents. It does not stop a determined agent. What
+# actually contains a lane is unchanged and is design section 7's list: no credential of any
 # kind in the container, host-owned publish, and a clone that is destroyed at the end of the
 # run. Do not add an entry here on the theory that the pattern confines what follows it.
 #
-# Every entry is here because the lane cannot do its job without it, and each one is a whole
-# program rather than a prefix of one, because `Bash(git *)` would allow `git push` straight
-# back in through the front door:
+# THERE IS DELIBERATELY NO `Bash(ffdiscord *)`. Decided 2026-08-21, one revision after phase 2
+# shipped the shim: no lane, read or write, gets any path to Discord from inside the container
+# — not even the credential-free outbox shim, which is why that shim is gone. Everything a turn
+# wants said comes back to the host as DATA in its structured verdict, and the host composes
+# and sends the reply. Content that arrives as data can be held, reviewed and edited before it
+# is uploaded; an intent queued by the container is already a message. See record_reply().
 #
-#   ffdiscord   the section-11 shim. Reads come out of job.json, writes land in the outbox. It
-#               holds no credential; without it the lane cannot say anything to a thread.
+# Every remaining entry is here because the lane cannot do its job without it, and each one is a
+# whole program rather than a prefix of one, because `Bash(git *)` would allow `git push`
+# straight back in through the front door:
+#
 #   ffverify    the ONLY Unity entry point (ffbox/ffverify.sh). Deliberately not
 #               `Bash(unity-editor *)`: with the raw editor allowed, a lane could pass its own
 #               -testResults — the shared companyName/productName path design section 14 exists
@@ -347,7 +347,6 @@ WRITE_DISALLOWED = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)"]
 # wrap them. ffbox makes the single commit itself during harvest, after the container is gone,
 # so the lane never needs write-side git and the commit stays a harness fact.
 WRITE_ALLOWED = [
-    "Bash(ffdiscord *)",
     "Bash(ffverify)", "Bash(ffverify *)",
     "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)",
     "Bash(git rev-parse*)",
@@ -356,10 +355,12 @@ WRITE_ALLOWED = [
 LANE_CAPABILITIES = {
     # The read-only lanes keep NO Bash — this is the design's strongest containment claim
     # (section 7: the lanes fed untrusted player text directly are genuinely contained by the
-    # tool list being structural) and it is not weakened to reach the shim. They do not need
-    # it: the host composes the reply from the run's structured verdict, which is strictly
-    # less capability for the same outcome. Their preamble says so, so a lane does not burn
-    # turns trying to post and then report its own failure as the answer.
+    # tool list being structural). Since 2026-08-21 the write lanes reach the same place from
+    # the other direction: they have Bash, but nothing the allow list names can reach Discord.
+    # NO LANE POSTS. Every reply is composed on the host out of the run's structured verdict —
+    # strictly less capability for the same outcome, and the only arrangement in which the
+    # content can be reviewed before it is uploaded. Both preambles say so, so a lane does not
+    # burn turns trying to post and then report its own failure as the answer.
     "answer": {"tools": READ_TOOLS, "disallowed": [], "allowed": [], "unity": False,
                "agent": "discord-answerer", "verdict": "question"},
     "triage": {"tools": READ_TOOLS, "disallowed": [], "allowed": [], "unity": False,
@@ -396,8 +397,8 @@ TRIGGER_BY_KIND = {
 
 TERMINAL_TURN_STATES = ("done", "failed", "timed_out", "blocked")
 
-# What the sender knows how to put on the wire. Anything else on an outbox line is rejected
-# rather than guessed at: the file is written by a process running on player-authored text.
+# What the sender knows how to put on the wire. Every row is composed by the host, but the
+# check stays: an unknown action is rejected rather than guessed at.
 SENDABLE_ACTIONS = ("post", "react", "edit", "ask", "thread-create")
 
 # Actions that must never be retried after an ambiguous failure. `post` is protected by
@@ -1242,7 +1243,7 @@ class Watcher:
         existing = self.db.one("SELECT id FROM turn WHERE parent_turn_id=?", (turn["id"],))
         if existing:
             # Exactly one fix job per triage verdict, however many times this is reached — a
-            # requeued turn or a re-read outbox must not fan out into a second attempt.
+            # requeued turn or a re-read result must not fan out into a second attempt.
             log(f"turn {turn['id']}: autofix already enqueued as turn {existing['id']}")
             return None
 
@@ -1588,11 +1589,11 @@ class Watcher:
             "--mount", f"{os.path.join(self.cfg['plugins_dir'], self.cfg['plugin'])}:"
                        f"/ffbox/plugins/{self.cfg['plugin']}:ro",
             "--mount", f"{att_dir}:/ffbox/attachments:ro",
-            # The container's `ffdiscord` (design section 11). It is mounted onto PATH rather
-            # than dropped somewhere in the workspace because the ff-discord skills invoke the
-            # CLI BY NAME — a shim at a repo-relative path would simply never be called. It
-            # holds no token: reads come out of job.json and writes land in /ffbox/out/outbox.
-            "--mount", f"{self.cfg['shim']}:/usr/local/bin/ffdiscord:ro",
+            # Nothing is mounted at /usr/local/bin/ffdiscord, on purpose. The container has
+            # no ffdiscord of any kind — not the real CLI (it would need a token) and not the
+            # phase-2 outbox shim (it would let the container author a message). The ff-discord
+            # skills invoke the CLI by name, so leaving PATH empty of it is exactly what makes
+            # that skill text inert in here; both preambles tell the lane so up front.
             "--agent-timeout", str(self.cfg["agent_secs"]),
             "--warmup-timeout", str(self.cfg["warmup_secs"]),
             "--verify-timeout", str(self.cfg["verify_secs"]),
@@ -1601,9 +1602,9 @@ class Watcher:
         if not cap["unity"]:
             cmd.append("--no-unity")
         else:
-            # ffverify is mounted onto PATH for the same reason the shim is: the container task
-            # and the lane's Bash allow list both name it, and neither knows a host path. It is
-            # the only Unity entry point either of them gets.
+            # ffverify is mounted onto PATH because the container task and the lane's Bash
+            # allow list both name it, and neither knows a host path. It is the only Unity
+            # entry point either of them gets, and the only thing on that PATH we put there.
             cmd += ["--mount", f"{self.cfg['ffverify']}:/usr/local/bin/ffverify:ro"]
         if branch:
             cmd += ["--branch", branch]
@@ -1786,50 +1787,47 @@ class Watcher:
     def record_reply(self, run_row_id, conv, turn, run_dir, terminal, result, timeout_kind, job):
         """Turn the run's outcome into outbound rows. Nothing is sent here — see send_pending.
 
-        The container's own intents win: if the agent wrote to the outbox through the shim, the
-        host does not also compose a summary reply on top of it, or every answer would arrive
-        twice. The ✅/❌ reaction on the triggering message is added either way, because it is
-        the harness's verdict on the run, not the agent's.
+        THE HOST IS THE ONLY COMPOSER. A turn says what it wants said by putting it in the
+        `summary` of its structured verdict, and this method renders that through compose_head.
+        No text the container produced is ever forwarded as a message the container authored,
+        which is the point of taking ffdiscord away from both lane families (2026-08-21):
+        content that arrives as data can be held, reviewed and edited on the host before it is
+        uploaded, and approve_before_send already gives that queue a gate. An intent queued by
+        the container would arrive as a message that had already been decided.
+
+        The ✅/❌ reaction on the triggering message is the harness's verdict on the run rather
+        than the agent's, so it is recorded no matter what the turn said.
         """
         recorded = 0
+        # A write lane still has Write and can create this file; phase 2's host used to read it
+        # and post whatever it found. It does not any more. The file is not deleted and not
+        # parsed — just called out, because a lane reaching for the retired outbox path is worth
+        # seeing in the run log rather than silently swallowing.
         outbox = os.path.join(run_dir, "outbox.jsonl")
         if os.path.exists(outbox):
-            # The container-side ffdiscord shim appends one post/react/edit intent per line.
-            with open(outbox, "r", encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        intent = json.loads(line)
-                    except json.JSONDecodeError:
-                        log(f"WARNING: unparseable outbox line in {run_dir}")
-                        continue
-                    self.record_outbound(run_row_id, conv["id"],
-                                         intent.get("action") or "post", intent)
-                    recorded += 1
+            log(f"WARNING: ignoring container-written {outbox} — containers do not compose "
+                f"replies; the reply comes from the structured verdict")
 
-        if not recorded:
-            verdict = _parse_verdict(result.get("result") if isinstance(result, dict) else None)
-            verification = self.db.one("SELECT * FROM verification WHERE run_id=?",
-                                       (run_row_id,))
-            head = compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
-                                verification=verification, publish=self.publish_facts(run_row_id))
-            payload = {"channel": reply_channel(conv), "text": head, "silent": True,
-                       "reply_to": job["messages"][-1]["discord_id"] if job["messages"] else None}
-            summary = (verdict.get("summary") or "").strip()
-            if len(summary) > HEAD_CAP:
-                # check_length DIES above 2000 characters rather than truncating, so the
-                # overflow is attached as a file instead of being allowed to fail the post.
-                spath = os.path.join(run_dir, "summary.md")
-                try:
-                    with open(spath, "w", encoding="utf-8") as fh:
-                        fh.write(f"# {job['run_id']}\n\n{summary}\n")
-                    payload["files"] = [spath]
-                except OSError:
-                    pass
-            self.record_outbound(run_row_id, conv["id"], "post", payload)
-            recorded += 1
+        verdict = _parse_verdict(result.get("result") if isinstance(result, dict) else None)
+        verification = self.db.one("SELECT * FROM verification WHERE run_id=?",
+                                   (run_row_id,))
+        head = compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
+                            verification=verification, publish=self.publish_facts(run_row_id))
+        payload = {"channel": reply_channel(conv), "text": head, "silent": True,
+                   "reply_to": job["messages"][-1]["discord_id"] if job["messages"] else None}
+        summary = (verdict.get("summary") or "").strip()
+        if len(summary) > HEAD_CAP:
+            # check_length DIES above 2000 characters rather than truncating, so the overflow
+            # is attached as a file instead of being allowed to fail the post.
+            spath = os.path.join(run_dir, "summary.md")
+            try:
+                with open(spath, "w", encoding="utf-8") as fh:
+                    fh.write(f"# {job['run_id']}\n\n{summary}\n")
+                payload["files"] = [spath]
+            except OSError:
+                pass
+        self.record_outbound(run_row_id, conv["id"], "post", payload)
+        recorded += 1
 
         trigger = job["messages"][-1]["discord_id"] if job["messages"] else None
         if trigger:
