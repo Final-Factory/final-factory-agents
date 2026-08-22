@@ -1198,12 +1198,24 @@ def configured_bind():
     lands on the same address as the service. A missing or unreadable config is not an error —
     it means loopback, which is the answer that cannot leak anything.
     """
-    path = os.path.expanduser(os.environ.get("FFDISCORD_HOME", "~/.config/ffdiscord"))
-    try:
-        with open(os.path.join(path, "config.json"), encoding="utf-8") as fh:
-            block = (json.load(fh).get("ffwatch") or {})
-    except (OSError, json.JSONDecodeError, AttributeError):
-        block = {}
+    def read(path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            return loaded if isinstance(loaded, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    # ~/.config/ffbox/config.json is where these live; the "ffwatch" block of the Discord CLI's
+    # config is where they used to, and a machine that has not been migrated still reads right.
+    ffbox_dir = os.path.expanduser(os.environ.get("FFBOX_CONFIG_DIR", "~/.config/ffbox"))
+    block = dict((read(os.path.join(ffbox_dir, "discord", "config.json"))
+                  or read(os.path.expanduser("~/.config/ffdiscord/config.json"))
+                  ).get("ffwatch") or {})
+    ffbox_raw = read(os.path.join(ffbox_dir, "config.json"))
+    block.update(ffbox_raw)
+    block.update(ffbox_raw.get("ffwatch") or {})
+
     host = os.environ.get("FFWATCH_WEB_HOST") or block.get("web_host") or "127.0.0.1"
     try:
         port = int(os.environ.get("FFWATCH_WEB_PORT") or block.get("web_port") or DEFAULT_PORT)

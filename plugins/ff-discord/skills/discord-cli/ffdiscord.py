@@ -74,7 +74,26 @@ for _stream in (sys.stdout, sys.stderr, sys.stdin):
 # FFDISCORD_API exists so the test harness can point the client at a local mock.
 API = os.environ.get("FFDISCORD_API", "https://discord.com/api/v10")
 UA = "DiscordBot (https://github.com/bryding/FinalFactory, 1.0) ffdiscord"
-CONFIG_DIR = os.path.expanduser(os.environ.get("FFDISCORD_HOME", "~/.config/ffdiscord"))
+def _ffdiscord_home():
+    """Where the Discord CLI keeps its config, cursors, doorbell and locks.
+
+    ~/.config/ffbox/discord since 2026-08-22: everything ffbox owns on a machine lives under
+    ~/.config/ffbox, and the Discord CLI is one part of ffbox rather than a separate product.
+    The pre-move ~/.config/ffdiscord is still honoured when it exists and the new location does
+    not, so a machine that has not been migrated keeps working untouched. FFDISCORD_HOME beats
+    both.
+    """
+    env = os.environ.get("FFDISCORD_HOME")
+    if env:
+        return os.path.expanduser(env)
+    new = os.path.expanduser("~/.config/ffbox/discord")
+    legacy = os.path.expanduser("~/.config/ffdiscord")
+    if not os.path.exists(new) and os.path.exists(legacy):
+        return legacy
+    return new
+
+
+CONFIG_DIR = _ffdiscord_home()
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "state.json")
 

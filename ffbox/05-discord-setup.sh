@@ -31,8 +31,20 @@ if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; th
     exit 2
 fi
 STATE_DIR=${FFWATCH_STATE_DIR:-$HOME/ffbox-state}
-FFDISCORD_HOME=${FFDISCORD_HOME:-$HOME/.config/ffdiscord}
+# EVERYTHING ffbox owns on this machine lives under one directory (moved 2026-08-22):
+#
+#   ~/.config/ffbox/secrets.env        tokens and the Unity account
+#   ~/.config/ffbox/config.json        ffwatch and ffweb settings
+#   ~/.config/ffbox/discord/           the Discord CLI's own home: config.json (token, guild,
+#                                      channels), cursors, the doorbell, the listener lock
+#   ~/.config/ffbox/discord.disabled   the kill switch
+#
+# The pre-move ~/.config/ffdiscord is migrated below rather than left to rot: two config files
+# where one is read and the other is edited is the worst outcome available.
 FFBOX_CONFIG=$HOME/.config/ffbox
+FFDISCORD_HOME=${FFDISCORD_HOME:-$FFBOX_CONFIG/discord}
+FFBOX_CONFIG_JSON=$FFBOX_CONFIG/config.json
+LEGACY_FFDISCORD_HOME=$HOME/.config/ffdiscord
 KILL_SWITCH=$FFBOX_CONFIG/discord.disabled
 
 CHECK=0
@@ -70,26 +82,71 @@ did "$STATE_DIR"
 # pattern: one machine-local file, 0600, outside the repo. Seeding it must not disturb the token
 # or the channel ids that are already there, so the merge is key-by-key rather than a rewrite.
 say "config"
+mkdir -p "$FFBOX_CONFIG"
+chmod 700 "$FFBOX_CONFIG" 2>/dev/null || true
+
+# --- migration: ~/.config/ffdiscord -> ~/.config/ffbox/discord ------------------------------
+# Moved whole, cursors and doorbell included, because the listener's read cursors are state a
+# reinstall must not lose. Only when the destination does not exist: a half-merge of two live
+# config directories is not something a setup script should attempt.
+if [ -d "$LEGACY_FFDISCORD_HOME" ] && [ ! -e "$FFDISCORD_HOME" ]; then
+    mv "$LEGACY_FFDISCORD_HOME" "$FFDISCORD_HOME"
+    did "migrated $LEGACY_FFDISCORD_HOME -> $FFDISCORD_HOME"
+elif [ -d "$LEGACY_FFDISCORD_HOME" ]; then
+    did "NOTE: $LEGACY_FFDISCORD_HOME still exists and $FFDISCORD_HOME does too."
+    did "      Nothing was moved. Merge them by hand, then delete the old one."
+fi
 mkdir -p "$FFDISCORD_HOME"
 chmod 700 "$FFDISCORD_HOME" 2>/dev/null || true
-CONFIG_PATH="$FFDISCORD_HOME/config.json" python3 - <<'PY'
+CONFIG_PATH="$FFDISCORD_HOME/config.json" FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" python3 - <<'PY'
 import json
 import os
 
-path = os.environ["CONFIG_PATH"]
-cfg = {}
-if os.path.exists(path):
+# TWO FILES, EACH OWNING WHAT IT IS FOR.
+#   ~/.config/ffbox/config.json     ffwatch and ffweb: lanes, ceilings, the page's bind address
+#   ~/.config/ffbox/discord/config.json   the Discord CLI's own: token, guild, channels, mentions
+#
+# They used to be one file, with the ffwatch settings in a block inside the Discord CLI's
+# config, which meant a root-run installer had to read a user's Discord directory to find out
+# where the WEB PAGE should listen. Anything still in that block is moved here, once.
+
+
+def read(path):
+    if not os.path.exists(path):
+        return {}
     with open(path, "r", encoding="utf-8") as fh:
         try:
-            cfg = json.load(fh)
+            loaded = json.load(fh)
         except json.JSONDecodeError:
             raise SystemExit(f"{path} is not valid JSON; fix it before re-running")
+    return loaded if isinstance(loaded, dict) else {}
 
-block = cfg.setdefault("ffwatch", {})
+
+def write(path, data):
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+discord_path = os.environ["CONFIG_PATH"]
+ffbox_path = os.environ["FFBOX_CONFIG_JSON"]
+discord = read(discord_path)
+ffbox = read(ffbox_path)
+
+moved = sorted(k for k in (discord.get("ffwatch") or {}) if k not in ffbox)
+for key, value in (discord.get("ffwatch") or {}).items():
+    ffbox.setdefault(key, value)
+if "ffwatch" in discord:
+    del discord["ffwatch"]
+
 seeded = []
 for key, value in (
-    # Left as "~/ffbox-state" unless overridden, so the config file stays portable between
-    # machines with different home paths.
+    # Left as "~/ffbox-state" unless overridden, so the file stays portable between machines
+    # with different home paths.
     ("state_dir", os.environ.get("FFWATCH_STATE_DIR", "~/ffbox-state")),
     ("base_ref", "develop"),
     ("agent_secs", 900),
@@ -99,8 +156,12 @@ for key, value in (
     ("max_unity_runs", 1),
     ("catchup_secs", 900),
     ("rate_limits", {"answer": 200, "triage": 100, "fix": 3, "dev": 25}),
-    # The sender. approve_before_send holds every reply at 'pending' until
-    # `ffwatch approve <id>` releases it — turn it on for the first days on a live server.
+    # The page. 127.0.0.1 is the only safe default: ffweb has no authentication and renders raw
+    # model thinking, so widening it is a deliberate edit, made here where it is reviewable.
+    ("web_host", "127.0.0.1"),
+    ("web_port", 8787),
+    # approve_before_send holds every reply at 'pending' until `ffwatch approve <id>` releases
+    # it — turn it on for the first days on a live server.
     ("approve_before_send", False),
     ("send_limits", {"per_hour": 60, "per_conversation_hour": 12}),
     ("max_send_attempts", 5),
@@ -110,21 +171,20 @@ for key, value in (
         "suggestions": {"kind": "suggestion", "forum": True},
     }),
 ):
-    if key not in block:
-        block[key] = value
+    if key not in ffbox:
+        ffbox[key] = value
         seeded.append(key)
 
-cfg.setdefault("channels", {})
-cfg.setdefault("mentions", {})
+discord.setdefault("channels", {})
+discord.setdefault("mentions", {})
 
-tmp = f"{path}.{os.getpid()}.tmp"
-with open(tmp, "w", encoding="utf-8") as fh:
-    json.dump(cfg, fh, indent=2, sort_keys=True)
-    fh.write("\n")
-os.chmod(tmp, 0o600)
-os.replace(tmp, path)
+write(ffbox_path, ffbox)
+write(discord_path, discord)
+if moved:
+    print("[discord-setup]   moved out of the Discord config: " + ", ".join(moved))
 print("[discord-setup]   seeded ffwatch keys: " + (", ".join(seeded) or "(nothing new)"))
 PY
+did "$FFBOX_CONFIG_JSON        (ffwatch + ffweb settings)"
 did "$FFDISCORD_HOME/config.json"
 if ! python3 -c "
 import json,sys

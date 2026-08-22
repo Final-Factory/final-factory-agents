@@ -691,7 +691,8 @@ is internal-only, and none of its text is ever reused in a Discord post.
     ffwatch.py            new: host daemon, ingest/classify/schedule/verify/publish/send
     ffwatch_schema.sql    new
     discord-task.sh       new: container task selected by FFBOX_ENTRY
-    05-discord-setup.sh      new: provision ~/.config/ffdiscord and ~/ffbox-state, systemd units
+    05-discord-setup.sh      new: provision ~/.config/ffbox (config, discord/, state)
+    06-services.sh           new: render + install the systemd units, start ffbox.target
     systemd/              new: ffbox.target + ffdiscord-listener, ffwatch, ffweb services
     ffbox                 edit: --ref, --task, --job-file, extra mounts, lane locking, ceilings
     secrets.env.example   edit: FFDISCORD_TOKEN, GH_TOKEN (host-side only)

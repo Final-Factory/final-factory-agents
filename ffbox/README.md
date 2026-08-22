@@ -51,6 +51,19 @@ slow one, 30-60 minutes, and it happens once.
 | `05-discord-setup.sh` | 5 — state dir, database, config block for the Discord lanes | no (refuses sudo) |
 | `06-services.sh` | 6 — renders the units from `systemd/`, installs and starts `ffbox.target` | yes |
 
+Everything ffbox owns on a machine lives in one directory:
+
+```
+~/.config/ffbox/secrets.env        tokens, the Unity account
+~/.config/ffbox/config.json        ffwatch + ffweb settings (lanes, ceilings, web_host/web_port)
+~/.config/ffbox/discord/           the Discord CLI's home: config.json, cursors, doorbell, lock
+~/.config/ffbox/discord.disabled   the kill switch
+~/ffbox-state/                     the database, blobs and per-conversation run directories
+```
+
+A pre-2026-08-22 machine keeps `~/.config/ffdiscord`; stage 5 moves it whole, cursors included,
+and every reader falls back to the old path until it does.
+
 ## The services
 
 Three daemons — the gateway listener, the conversation manager, the web page — under one target,
@@ -70,7 +83,7 @@ The two are separate because the units are ffbox's, not Discord's: `ffwatch` is 
 manager and `ffweb` is the page over the whole database. Only the listener is Discord-specific.
 
 Nothing is read from Discord until a bot token exists, so starting the daemons first is safe.
-Put the token, guild id and channels in `~/.config/ffdiscord/config.json` (or `FFDISCORD_TOKEN`
+Put the token, guild id and channels in `~/.config/ffbox/discord/config.json` (or `FFDISCORD_TOKEN`
 in `~/.config/ffbox/secrets.env`), add each watched channel to the `ffwatch` → `watch` block,
 then re-run `sudo sh ffbox/06-services.sh --install` so the listener picks up the new
 watch list.
@@ -379,7 +392,7 @@ turn running as one ffbox container. The full design is `discord_persistent_desi
 repo root; the short version:
 
 ```
-ffdiscord-listener  ──►  ~/.config/ffdiscord/events.jsonl   (ids only, never message text)
+ffdiscord-listener  ──►  ~/.config/ffbox/discord/events.jsonl  (ids only, never message text)
         │ tail -F
      ffwatch   ingest → classify → schedule → launch
         │
