@@ -9,6 +9,52 @@ ffbox/ffbox --no-unity "summarise how the save migration system works"
 ffbox/ffbox --keep --prompt-file ./task.md
 ```
 
+## Install
+
+One command does every stage, and each one is skipped when it is already satisfied:
+
+```bash
+sh ffbox/setup.sh              # docker, ZFS layout, image, warm Unity Library, Discord config
+sh ffbox/setup.sh --help       # per-stage --skip-* flags
+```
+
+It stops to have you fill in `~/.config/ffbox/secrets.env` (Unity account, licence, Claude
+token) and offers to mint the Claude token for you. Stage 4 — the cold Unity import — is the
+slow one, 30-60 minutes, and it happens once.
+
+| script | stage | needs root |
+|---|---|---|
+| `setup.sh` | runs all five in order; the only one you normally call | no (sudo per stage) |
+| `dockerSetup.sh` | 1 — installs Docker onto its own ZFS dataset with overlay2 | yes |
+| `zfsSetup.sh` | 2 — `<pool>/ff` datasets, the golden checkout, the ffbox sudoers rule | yes |
+| `build.sh` | 3 — builds `ffbox:latest` from the GameCI image CI uses | no |
+| `warmLibrary.sh` | 4 — updates golden and builds its Unity `Library/` cache | no |
+| `discord-setup.sh` | 5 — state dir, database, config block, systemd units | only `--install-units` |
+
+## Start the Discord service
+
+Three daemons — the gateway listener, the conversation manager, the web UI — under one target.
+The unit files live in `ffbox/systemd/` in git; nothing is rendered anywhere else.
+
+```bash
+sh ffbox/discord-setup.sh                             # state dir, db, config skeleton
+$EDITOR ~/.config/ffdiscord/config.json               # bot token, guild id, channels
+sudo sh ffbox/discord-setup.sh --install-units        # renders from git into /etc/systemd/system
+sudo systemctl enable --now ffbox.target              # all three, now and on every boot
+```
+
+```bash
+sudo systemctl stop ffbox.target      # stop all three  (the .target suffix is required)
+journalctl -u ffwatch -f              # or -u ffdiscord-listener, -u ffweb
+sh ffbox/discord-setup.sh --check     # what is installed, enabled, running, or stale
+touch ~/.config/ffbox/discord.disabled   # kill switch: ffwatch launches nothing
+```
+
+Re-run `--install-units` and `systemctl restart ffbox.target` after changing the watch list or
+the units; `--check` tells you when what is installed no longer matches this checkout. The web
+UI is on `127.0.0.1:8787` and is internal-only — reach it with
+`ssh -N -L 8787:127.0.0.1:8787 <box>`.
+
 ## How it fits together
 
 ```

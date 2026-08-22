@@ -2166,10 +2166,24 @@ def test_systemd_units_hang_off_one_target():
     check("ffweb is part of the pipeline rather than an extra someone remembers to enable",
           "ffweb.service" in target)
     setup = open(os.path.join(HERE, "discord-setup.sh"), encoding="utf-8").read()
-    check("setup renders the units without needing root",
-          "NOT INSTALLED" in setup and "sudo install -m 0644" in setup, )
     for token in ("@USER@", "@GROUP@", "@HOME@", "@FFWATCH@", "@FFWEB@", "@CHANNELS@"):
         check(f"setup substitutes {token}", f"s|{token}|" in setup, )
+    # git is the only source. A rendered copy kept beside the config was the previous design and
+    # it meant two files on disk that could disagree — with systemd reading the stale one.
+    check("there is an --install-units mode that installs straight from the checkout",
+          "--install-units" in setup and 'install -m 0644 "$TMP/$u"' in setup, )
+    check("nothing rendered is kept outside a temp dir — one source, no copy to go stale",
+          'STAGE=$FFBOX_CONFIG' not in setup and 'render_units "$TMP"' in setup, )
+    check("the install mode recovers the real user from SUDO_USER, since $HOME is root's "
+          "under sudo", "SUDO_USER" in setup and "getent passwd" in setup, )
+    check("and refuses to run the rest of provisioning as root",
+          "would leave a root-owned state directory" in setup, )
+    # setup.sh is the one command a new machine runs; a stage that is not wired in is a stage
+    # somebody has to remember.
+    top = open(os.path.join(HERE, "setup.sh"), encoding="utf-8").read()
+    for script in ("dockerSetup.sh", "zfsSetup.sh", "build.sh", "warmLibrary.sh",
+                   "discord-setup.sh"):
+        check(f"setup.sh runs {script}", f'"$ROOT/{script}"' in top, )
 
 
 def test_allow_list_is_scope_not_a_boundary():
