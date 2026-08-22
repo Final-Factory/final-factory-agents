@@ -145,10 +145,19 @@ if [ "$OLD_SHA" = "$NEW_SHA" ]; then
     log "already current at $(printf %.12s "$OLD_SHA") — nothing to do"
     exit 0
 fi
-if [ "$(git_ merge-base "$OLD_SHA" "$NEW_SHA")" != "$OLD_SHA" ]; then
-    # A diverged local branch is a human problem, and this is the one place where being clever
-    # would mean auto-executing code nobody reviewed.
-    die "origin/$BRANCH is not a fast-forward from HEAD — refusing to merge. Fix by hand."
+BASE=$(git_ merge-base "$OLD_SHA" "$NEW_SHA")
+if [ "$BASE" = "$NEW_SHA" ]; then
+    # HEAD contains the remote: someone committed here and has not pushed yet. That is not a
+    # divergence and not an error — there is simply nothing upstream to take. Found by running
+    # this on a box with an unpushed commit, where the divergence branch below fired instead
+    # and reported a failed unit every fifteen minutes.
+    log "local is ahead of origin/$BRANCH by $(git_ rev-list --count "$NEW_SHA..$OLD_SHA") commit(s) — nothing to take"
+    exit 0
+fi
+if [ "$BASE" != "$OLD_SHA" ]; then
+    # Genuinely diverged: both sides have commits the other lacks. A human problem, and this is
+    # the one place where being clever would mean auto-executing code nobody reviewed.
+    die "origin/$BRANCH has diverged from HEAD — refusing to merge. Fix by hand."
 fi
 log "update available: $(printf %.12s "$OLD_SHA") -> $(printf %.12s "$NEW_SHA")"
 git_ log --oneline "$OLD_SHA..$NEW_SHA" | sed 's/^/    /'
