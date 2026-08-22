@@ -3,7 +3,7 @@
 #
 #   sh ffbox/discord-setup.sh            provision (idempotent; safe to re-run)
 #   sh ffbox/discord-setup.sh --check    report what is and is not in place, change nothing
-#   sh ffbox/discord-setup.sh --no-units skip the systemd user units
+#   sh ffbox/discord-setup.sh --no-units skip the systemd units
 #
 # Everything here is re-runnable. It never overwrites a secrets file, never replaces an
 # existing config value, and never starts a unit that is already running. Re-run it after
@@ -15,11 +15,21 @@ set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+# A trailing slash on $HOME turns every path below into //-doubled noise, and those paths get
+# baked into unit files a human has to read.
+HOME=${HOME%/}
+
 STATE_DIR=${FFWATCH_STATE_DIR:-$HOME/ffbox-state}
 FFDISCORD_HOME=${FFDISCORD_HOME:-$HOME/.config/ffdiscord}
 FFBOX_CONFIG=$HOME/.config/ffbox
 KILL_SWITCH=$FFBOX_CONFIG/discord.disabled
-UNIT_DIR=$HOME/.config/systemd/user
+# SYSTEM units, not user units. A build server reboots with nobody logged in, and a user unit
+# only runs while its user has a session unless `loginctl enable-linger` was remembered. These
+# run as $RUN_USER instead, which is the same identity that owns the docker group membership,
+# the NOPASSWD zfs rules and the Claude credential.
+UNIT_DIR=/etc/systemd/system
+RUN_USER=$(id -un)
+RUN_GROUP=$(id -gn)
 
 CHECK=0
 UNITS=1
@@ -42,8 +52,13 @@ if [ "$CHECK" = 1 ]; then
     say "config         : $FFDISCORD_HOME/config.json $([ -f "$FFDISCORD_HOME/config.json" ] && echo present || echo MISSING)"
     say "kill switch    : $KILL_SWITCH $([ -f "$KILL_SWITCH" ] && echo ACTIVE || echo 'not set (lanes may run)')"
     say "units          : $UNIT_DIR"
-    for u in ffdiscord-listener.service ffwatch.service ffweb.service; do
-        say "  $u $([ -f "$UNIT_DIR/$u" ] && echo installed || echo 'not installed')"
+    for u in ffbox.target ffdiscord-listener.service ffwatch.service ffweb.service; do
+        st=$([ -f "$UNIT_DIR/$u" ] && echo installed || echo 'not installed')
+        if command -v systemctl >/dev/null 2>&1 && [ -f "$UNIT_DIR/$u" ]; then
+            st="$st, $(systemctl is-enabled "$u" 2>/dev/null || echo unknown)"
+            st="$st, $(systemctl is-active "$u" 2>/dev/null || echo inactive)"
+        fi
+        say "  $u $st"
     done
     exit 0
 fi
@@ -144,41 +159,85 @@ else
     did "no secrets file yet — run 'sh ffbox/setup.sh' to install the template"
 fi
 
-# --- systemd user units --------------------------------------------------------------------------
+# --- systemd units -------------------------------------------------------------------------------
+# One handle for the operator: `sudo systemctl enable --now ffbox.target` brings up the doorbell
+# listener, the conversation manager and the web UI, now and on every boot. The services carry
+# PartOf=ffbox.target, so stopping the target stops all three.
 say "units"
+
+# The listener watches whatever the config says to watch. Reading it back from the ffwatch block
+# means adding a channel there and re-running this script is enough — no second place to edit,
+# and no unit quietly watching a channel the classifier no longer knows about.
+CHANNELS=$(CONFIG_PATH="$FFDISCORD_HOME/config.json" python3 - <<'PY'
+import json, os
+try:
+    cfg = json.load(open(os.environ["CONFIG_PATH"], encoding="utf-8"))
+except Exception:
+    cfg = {}
+watch = ((cfg.get("ffwatch") or {}).get("watch") or {})
+print(",".join(sorted(watch)) or "ask_claude,bug_reports")
+PY
+)
+did "listener will watch: $CHANNELS"
+
 if [ "$UNITS" = 0 ]; then
     did "skipped (--no-units)"
-elif ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user show-environment >/dev/null 2>&1; then
-    did "systemctl --user is unavailable here; run the daemons yourself:"
-    did "  ffdiscord-listener --channels ask_claude,bug_reports"
+elif ! command -v systemctl >/dev/null 2>&1; then
+    did "no systemctl here; run the daemons yourself:"
+    did "  ffdiscord-listener --channels $CHANNELS"
     did "  python3 $HERE/ffwatch.py run"
-    did "  python3 $HERE/ffweb.py            (optional, read-only UI on 127.0.0.1:8787)"
+    did "  python3 $HERE/ffweb.py"
 else
-    mkdir -p "$UNIT_DIR"
-    install -m 0644 "$HERE/systemd/ffdiscord-listener.service" \
-        "$UNIT_DIR/ffdiscord-listener.service"
-    # @FFWATCH@ is rendered rather than shipped resolved, because this repo can be cloned
-    # anywhere and a wrong ExecStart fails at unit start with a message nobody reads.
-    sed "s|@FFWATCH@|$HERE/ffwatch.py|g" "$HERE/systemd/ffwatch.service" \
-        > "$UNIT_DIR/ffwatch.service"
-    chmod 0644 "$UNIT_DIR/ffwatch.service"
-    # The web UI, same rendering trick and the same reason. It is a separate unit rather than a
-    # thread inside ffwatch so that restarting the page cannot interrupt a run in flight, and so
-    # a machine that does not want the UI simply does not enable it.
-    sed "s|@FFWEB@|$HERE/ffweb.py|g" "$HERE/systemd/ffweb.service" \
-        > "$UNIT_DIR/ffweb.service"
-    chmod 0644 "$UNIT_DIR/ffweb.service"
-    systemctl --user daemon-reload
-    did "installed into $UNIT_DIR"
-    did "enable with:  systemctl --user enable --now ffdiscord-listener ffwatch"
-    did "web UI:       systemctl --user enable --now ffweb   (127.0.0.1:8787, read-only)"
-    did "              reach it with: ssh -N -L 8787:127.0.0.1:8787 $(hostname 2>/dev/null || echo thisbox)"
-    did "logs:         journalctl --user -u ffwatch -f"
+    # The templates in ffbox/systemd/ are what git carries; the rendered copies land HERE, in a
+    # stable place the operator can install from. @PLACEHOLDERS@ are rendered rather than
+    # shipped resolved because this repo can be cloned anywhere and a wrong ExecStart fails at
+    # unit start with a message nobody reads. Rendering never needs root — only installing does.
+    STAGE=$FFBOX_CONFIG/systemd
+    mkdir -p "$STAGE"
+    for u in ffbox.target ffdiscord-listener.service ffwatch.service ffweb.service; do
+        sed -e "s|@FFWATCH@|$HERE/ffwatch.py|g" \
+            -e "s|@FFWEB@|$HERE/ffweb.py|g" \
+            -e "s|@USER@|$RUN_USER|g" \
+            -e "s|@GROUP@|$RUN_GROUP|g" \
+            -e "s|@HOME@|$HOME|g" \
+            -e "s|@CHANNELS@|$CHANNELS|g" \
+            "$HERE/systemd/$u" > "$STAGE/$u"
+    done
+    # Installing into /etc needs root. Try without a password first so an automated re-run is
+    # quiet; fall back to printing the two commands rather than blocking on a prompt nobody is
+    # watching. Nothing here starts or enables anything — that stays an operator decision.
+    did "rendered into $STAGE"
+    if command -v systemd-analyze >/dev/null 2>&1; then
+        # Catches the classic silent mistake: a directive in the wrong section is IGNORED with
+        # nothing but a log line, which is the same as not writing it at all.
+        # Filtered to OUR unit names: verify pulls in every dependency it can resolve, so on a
+        # box with other services in /etc/systemd/system the useful line is buried in warnings
+        # about somebody's Minecraft unit.
+        (cd "$STAGE" && systemd-analyze verify ./ffbox.target ./*.service 2>&1 \
+            | grep -E 'ffbox|ffwatch|ffweb|ffdiscord' \
+            | sed 's/^/[discord-setup]   verify: /') || true
+    fi
+    if sudo -n true 2>/dev/null; then
+        sudo install -m 0644 "$STAGE"/ffbox.target "$STAGE"/*.service "$UNIT_DIR/"
+        sudo systemctl daemon-reload
+        did "installed into $UNIT_DIR"
+    else
+        did "NOT INSTALLED — that needs root. Run these two, or hand them to whoever has sudo:"
+        did "  sudo install -m 0644 $STAGE/ffbox.target $STAGE/*.service $UNIT_DIR/"
+        did "  sudo systemctl daemon-reload"
+    fi
+    did "start everything:  sudo systemctl enable --now ffbox.target"
+    did "stop everything:   sudo systemctl stop ffbox.target"
+    did "  (the .target suffix is required — a bare 'ffbox' means ffbox.service, which is"
+    did "   not a unit we ship)"
+    did "web UI:       http://127.0.0.1:8787 — reach it with:"
+    did "              ssh -N -L 8787:127.0.0.1:8787 $(hostname 2>/dev/null || echo thisbox)"
+    did "logs:         journalctl -u ffwatch -f       (or -u ffdiscord-listener, -u ffweb)"
     did "REMINDER: exactly one ffdiscord-listener per bot, across all machines."
 fi
 
 say "done"
 say "status:  python3 $HERE/ffwatch.py status"
-say "web UI:  python3 $HERE/ffweb.py            (read-only, http://127.0.0.1:8787)"
+say "web UI:  http://127.0.0.1:8787            (read-only; runs as part of ffbox.target)"
 say "         INTERNAL ONLY — it renders repo internals and raw model thinking."
 say "one pass by hand (stop the unit first):  python3 $HERE/ffwatch.py --dry-run once"

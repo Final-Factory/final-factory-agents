@@ -15,8 +15,13 @@
 # shells out to `ffwatch approve`, and a unit that carries it would mean anything that can
 # reach the port can release a reply into a public thread. Add it by hand, on this box, when
 # approve_before_send is on and someone is actually moderating.
+#
+# NOT OPTIONAL. It is part of ffbox.target and comes up with the pipeline: the outbound queue,
+# the run transcripts and the verification rows are only legible through this page, and a
+# moderation queue nobody can see is not a moderation queue.
 Description=ffweb (read-only web UI for ffwatch)
-After=network.target
+PartOf=ffbox.target
+After=network.target ffwatch.service
 Wants=ffwatch.service
 
 # A UI that cannot bind its port is a configuration problem, not a transient one; back off
@@ -27,10 +32,13 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+User=@USER@
+Group=@GROUP@
+Environment=HOME=@HOME@
 ExecStart=/usr/bin/env python3 @FFWEB@ --host 127.0.0.1 --port 8787 --quiet
-EnvironmentFile=-%h/.config/ffbox/secrets.env
+EnvironmentFile=-@HOME@/.config/ffbox/secrets.env
 Restart=always
 RestartSec=10
 
 [Install]
-WantedBy=default.target
+WantedBy=ffbox.target

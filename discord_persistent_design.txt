@@ -644,7 +644,10 @@ Every skill ends by reporting to the user, and unattended there is no user.
   - A sweep every fifteen minutes that enqueues a catchup turn with no doorbell.
     player_mention and lothsahn_directive have no cursor, so a mention arriving during genuine
     listener downtime is otherwise lost.
-  - systemd user units with Restart=always for the listener and ffwatch.
+  - systemd units with Restart=always for the listener, ffwatch and ffweb, all three hanging
+    off one ffbox.target so an operator has a single start/stop/enable handle. SYSTEM units
+    running as the ffbox user, not user units: a build server reboots with nobody logged in
+    (revision 3, 2026-08-22).
   - --dry-run marks every outbound row dry instead of sending.
 
 Exactly one listener per bot, on one machine. If BEAST owns #ask-assistant, this box must not
@@ -678,7 +681,7 @@ is internal-only, and none of its text is ever reused in a Discord post.
     ffwatch_schema.sql    new
     discord-task.sh       new: container task selected by FFBOX_ENTRY
     discord-setup.sh      new: provision ~/.config/ffdiscord and ~/ffbox-state, systemd units
-    systemd/              new: ffdiscord-listener.service, ffwatch.service (user units)
+    systemd/              new: ffbox.target + ffdiscord-listener, ffwatch, ffweb services
     ffbox                 edit: --ref, --task, --job-file, extra mounts, lane locking, ceilings
     secrets.env.example   edit: FFDISCORD_TOKEN, GH_TOKEN (host-side only)
     README.md             edit: a Discord section

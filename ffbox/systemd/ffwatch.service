@@ -9,7 +9,13 @@
 # ffwatch is the SOLE writer to ffwatch.db. Do not run a second copy; `ffwatch once` by hand
 # while this unit is active is safe only because each conversation is flock'd, and even then it
 # will contend. Stop the unit first.
+#
+# A SYSTEM unit running as @USER@, not a user unit: a build server reboots with nobody logged
+# in, and user units need `loginctl enable-linger` to survive that. Running as @USER@ keeps the
+# identity everything else already depends on — the docker group, the NOPASSWD zfs rules ffbox
+# needs for its clones, and the Claude credential in that user's home.
 Description=ffwatch (Discord conversation manager for ffbox)
+PartOf=ffbox.target
 After=network-online.target ffdiscord-listener.service docker.service
 Wants=network-online.target ffdiscord-listener.service
 
@@ -21,8 +27,13 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+User=@USER@
+Group=@GROUP@
+# ffbox shells out to docker and to sudo zfs; both are granted to this user, not to root.
+SupplementaryGroups=docker
+Environment=HOME=@HOME@
 ExecStart=/usr/bin/env python3 @FFWATCH@ run
-EnvironmentFile=-%h/.config/ffbox/secrets.env
+EnvironmentFile=-@HOME@/.config/ffbox/secrets.env
 Restart=always
 RestartSec=10
 # SIGTERM lets the current pass finish its database writes. Any run still in flight is
@@ -31,4 +42,4 @@ KillSignal=SIGTERM
 TimeoutStopSec=120
 
 [Install]
-WantedBy=default.target
+WantedBy=ffbox.target
