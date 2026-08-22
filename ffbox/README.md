@@ -611,13 +611,25 @@ without the database moving with it.
 
 **Nothing is served until someone signs in, and the wire is TLS.** Every route except the
 login form goes through the session check, so an unauthenticated request is a `303` to
-`/login` and never a partial page. The credential is one hardcoded pair compared with
-`hmac.compare_digest`; `FFWEB_USER` and `FFWEB_PASSWORD` override both halves without a patch,
-which is what `secrets.env` is for. A success mints a random token held **in memory only**, so
+`/login` and never a partial page. The credentials are a small hardcoded table — `Ben` and `Lothsahn` — compared with
+`hmac.compare_digest`. Names are keyed lowercase and matched case-insensitively with
+surrounding whitespace dropped, because how someone capitalises their own name in a login form
+is not the secret; the password is, and it is matched exactly. An unknown name is still
+compared, against a decoy, so it costs the same as a wrong password. `FFWEB_PASSWORD` sets the
+password for every account and `FFWEB_USER` narrows the table to one named account, which is
+what `secrets.env` is for. A success mints a random token held **in memory only**, so
 `systemctl restart ffweb` also means "sign everyone out" — deliberate, on a process whose whole
 design says it writes nothing to disk. The session cookie is `HttpOnly`, `SameSite=Lax` and
-`Secure` when TLS is on, and every POST — the actions, the sign-in and the sign-out alike —
-refuses a mismatched `Origin`.
+`Secure` when TLS is on.
+
+A mismatched `Origin` is refused on the **actions**, which release a reply into a public
+thread. It is logged and allowed on `/login` and `/logout`. What the check buys on a login form
+is protection from login-CSRF, an attacker signing you into *their* account so your work lands
+there; there is one account and forging the POST still needs the password, so there is no such
+account to land in. The cost of refusing was real and immediate: a reverse proxy that rewrites
+`Host`, or a browser sending `Origin: null` from an opaque origin, locked the operator out of
+the form with nothing to act on. The refusal now names the origin it saw and the origins it
+wanted, and it is logged even under `--quiet`.
 
 The certificate is self-signed, generated into `<state-dir>/tls` on first start with a SAN
 covering loopback, this machine's name and whatever `--host` was given. `--tls-cert` /
