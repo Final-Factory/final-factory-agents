@@ -156,8 +156,9 @@ for key, value in (
     ("max_unity_runs", 1),
     ("catchup_secs", 900),
     ("rate_limits", {"answer": 200, "triage": 100, "fix": 3, "dev": 25}),
-    # The page. 127.0.0.1 is the only safe default: ffweb has no authentication and renders raw
-    # model thinking, so widening it is a deliberate edit, made here where it is reviewable.
+    # The page. It is behind a login and served over TLS, but 127.0.0.1 is still the default:
+    # it renders raw model thinking, and one hardcoded password is a thin thing to hold a LAN
+    # off with. Widening it stays a deliberate edit, made here where it is reviewable.
     ("web_host", "127.0.0.1"),
     ("web_port", 8787),
     # approve_before_send holds every reply at 'pending' until `ffwatch approve <id>` releases

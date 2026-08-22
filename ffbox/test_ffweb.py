@@ -25,6 +25,8 @@ import os
 import re
 import socket
 import sqlite3
+import ssl
+import subprocess
 import sys
 import tempfile
 import threading
@@ -231,24 +233,60 @@ def build_fixture(root):
 # ------------------------------------------------------------------------------------------
 
 class Server:
-    """The real FFWebServer on an ephemeral loopback port."""
+    """The real FFWebServer on an ephemeral loopback port.
 
-    def __init__(self, state, db_path, blobs, ffwatch_py, enable_actions=False):
+    Every case now starts behind a login, so the harness signs in once in the constructor and
+    carries the session cookie on every later request — the same thing a browser does. Passing
+    login=False gets a client that has never authenticated, which is what the gate tests want.
+    """
+
+    def __init__(self, state, db_path, blobs, ffwatch_py, enable_actions=False, tls=False,
+                 login=True):
         origins = set()
+        scheme = "https" if tls else "http"
         self.app = ffweb.App(db_path, blobs, state, ffwatch_py,
-                             enable_actions=enable_actions, quiet=True, origins=origins)
-        self.httpd = ffweb.FFWebServer(("127.0.0.1", 0), self.app)
+                             enable_actions=enable_actions, quiet=True, origins=origins,
+                             scheme=scheme)
+        ctx = None
+        self.client_ctx = None
+        if tls:
+            cert, key = ffweb.tls_paths(state)
+            ffweb.ensure_certificate(cert, key, "127.0.0.1")
+            ctx = ffweb.make_ssl_context(cert, key)
+            # The certificate is self-signed by design, so the client is the one place in this
+            # file that says so out loud rather than pretending a CA exists.
+            self.client_ctx = ssl._create_unverified_context()
+        self.httpd = ffweb.FFWebServer(("127.0.0.1", 0), self.app, ssl_context=ctx)
         self.port = self.httpd.server_address[1]
-        self.base = f"http://127.0.0.1:{self.port}"
+        self.base = f"{scheme}://127.0.0.1:{self.port}"
         # The origin allowlist is built from the bound port, exactly as main() does it.
-        origins.update({self.base, f"http://localhost:{self.port}"})
+        origins.update({self.base, f"{scheme}://localhost:{self.port}"})
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
+        self.cookie = ""
+        if login:
+            code, _hdr = self.login()
+            assert code == 303, f"harness could not sign in: {code}"
+
+    def _with_cookie(self, headers):
+        hdrs = dict(headers or {})
+        if self.cookie and not any(k.lower() == "cookie" for k in hdrs):
+            hdrs["Cookie"] = self.cookie
+        return hdrs
+
+    def login(self, user=ffweb.AUTH_USER, password=ffweb.AUTH_PASSWORD):
+        """POST the form and keep the cookie, exactly as a browser would."""
+        code, hdr, _body = self.post("/login", {"user": user, "password": password,
+                                                "next": "/"})
+        raw = hdr.get("Set-Cookie", "")
+        if code == 303 and raw:
+            self.cookie = raw.split(";", 1)[0]
+        return code, raw
 
     def get(self, path, headers=None):
-        req = urllib.request.Request(self.base + path, headers=headers or {})
+        req = urllib.request.Request(self.base + path, headers=self._with_cookie(headers))
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
+            with self._open(req) as resp:
                 return resp.status, dict(resp.headers), resp.read()
         except urllib.error.HTTPError as exc:
             return exc.code, dict(exc.headers), exc.read()
@@ -256,18 +294,26 @@ class Server:
     def post(self, path, fields, headers=None):
         body = urllib.parse.urlencode(fields, doseq=True).encode()
         hdrs = {"Content-Type": "application/x-www-form-urlencoded"}
-        hdrs.update(headers or {})
+        hdrs.update(self._with_cookie(headers))
         req = urllib.request.Request(self.base + path, data=body, headers=hdrs)
-        # A 303 would be followed by urllib and turned into a GET; we want the redirect itself.
-        opener = urllib.request.build_opener(NoRedirect)
         try:
-            with opener.open(req, timeout=30) as resp:
+            with self._open(req, timeout=30) as resp:
                 return resp.status, dict(resp.headers), resp.read()
         except urllib.error.HTTPError as exc:
             return exc.code, dict(exc.headers), exc.read()
 
+    def _open(self, req, timeout=20):
+        # A 303 would be followed by urllib and turned into a GET; we want the redirect itself,
+        # because "which page did the gate send me to" is most of what these tests assert.
+        handlers = [NoRedirect]
+        if self.client_ctx is not None:
+            handlers.append(urllib.request.HTTPSHandler(context=self.client_ctx))
+        return urllib.request.build_opener(*handlers).open(req, timeout=timeout)
+
     def raw(self, request_line, extra=""):
         """A hand-built request, for paths urllib would normalise before they reach us."""
+        if self.cookie:
+            extra = f"Cookie: {self.cookie}\r\n" + extra
         sock = socket.create_connection(("127.0.0.1", self.port), timeout=20)
         try:
             sock.sendall((f"{request_line} HTTP/1.1\r\nHost: 127.0.0.1\r\n"
@@ -896,6 +942,232 @@ def test_headers_and_content_types():
         srv.stop()
 
 
+def test_nothing_is_served_without_a_login():
+    """The gate, on every route, before a single row is read.
+
+    The point of checking all of ROUTES rather than one page is that the gate lives in one
+    place on purpose: a route added later is covered by the same check, and this test is what
+    notices if someone adds one that dispatches before it.
+    """
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
+    try:
+        leaked = []
+        for path in ROUTES:
+            code, hdr, body = srv.get(path)
+            if code != 303 or hdr.get("Location", "").split("?")[0] != "/login" or body:
+                leaked.append((path, code, hdr.get("Location"), body[:80]))
+        check("every route redirects a signed-out browser to /login", not leaked, leaked)
+
+        # The fixture text that would prove a leak: a bug report body and a transcript line.
+        joined = b"".join(srv.get(p)[2] for p in ROUTES)
+        check("a signed-out browser gets no database content at all",
+              b"NullReferenceException" not in joined and b"conversation" not in joined,
+              joined[:200])
+
+        code, _hdr, body = srv.get("/login")
+        check("the login form itself is served", code == 200 and b"name=\"password\"" in body,
+              code)
+        check("the login form reads nothing from the database", b"lanes" not in body)
+
+        # a deep link survives the sign-in
+        code, hdr, _b = srv.get("/conversation/1")
+        check("the wanted path is carried into the login redirect",
+              hdr.get("Location") == "/login?next=/conversation/1", hdr.get("Location"))
+
+        # POST is gated the same way, and does not fall through to the action handler
+        code, hdr, _b = srv.post("/actions/approve", {"id": "1"})
+        check("a signed-out POST to an action is redirected, not executed",
+              code == 303 and hdr.get("Location") == "/login", (code, hdr.get("Location")))
+    finally:
+        srv.stop()
+
+
+def test_the_password_is_the_only_way_in():
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
+    try:
+        for user, password, label in [
+            ("Ben", "wrong", "wrong password"),
+            ("ben", ffweb.AUTH_PASSWORD, "wrong case in the user"),
+            ("Ben", ffweb.AUTH_PASSWORD + " ", "a trailing space on the password"),
+            ("", "", "an empty form"),
+        ]:
+            code, hdr, body = srv.post("/login", {"user": user, "password": password})
+            ok = code == 401 and "Set-Cookie" not in hdr and b"wrong user or password" in body
+            check(f"{label} is refused", ok, (code, hdr.get("Set-Cookie")))
+
+        code, hdr, _b = srv.post("/login", {"user": ffweb.AUTH_USER,
+                                            "password": ffweb.AUTH_PASSWORD,
+                                            "next": "/lanes"})
+        cookie = hdr.get("Set-Cookie", "")
+        check("the right credentials are accepted", code == 303, code)
+        check("the sign-in lands on the page that was asked for",
+              hdr.get("Location") == "/lanes", hdr.get("Location"))
+        check("the session cookie is HttpOnly and SameSite",
+              "HttpOnly" in cookie and "SameSite=Lax" in cookie and
+              cookie.startswith(ffweb.SESSION_COOKIE + "="), cookie)
+        check("the plaintext server does NOT mark the cookie Secure",
+              "Secure" not in cookie, cookie)
+
+        srv.cookie = cookie.split(";", 1)[0]
+        code, _hdr, body = srv.get("/")
+        check("the session cookie opens the page",
+              code == 200 and b"conversations" in body, code)
+
+        # a token this process never issued is not a session
+        srv.cookie = f"{ffweb.SESSION_COOKIE}=" + "z" * 43
+        code, hdr, _b = srv.get("/")
+        check("an invented session token is not accepted", code == 303, code)
+    finally:
+        srv.stop()
+
+
+def test_next_cannot_leave_this_origin():
+    """An open redirect on a login form is how a phishing page borrows a real hostname."""
+    bad = [n for n in ("https://evil.example/", "//evil.example/", "/\\evil.example",
+                       "http:/evil", "javascript:alert(1)", "")
+           if ffweb.safe_next(n) != "/"]
+    check("safe_next refuses anything that is not a local path", not bad, bad)
+    check("safe_next keeps a real local path",
+          ffweb.safe_next("/conversation/3?x=1") == "/conversation/3?x=1")
+
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
+    try:
+        code, hdr, _b = srv.post("/login", {"user": ffweb.AUTH_USER,
+                                            "password": ffweb.AUTH_PASSWORD,
+                                            "next": "https://evil.example/"})
+        check("a hostile next is flattened to /",
+              code == 303 and hdr.get("Location") == "/", hdr.get("Location"))
+    finally:
+        srv.stop()
+
+
+def test_signing_out_ends_the_session():
+    srv = serve()
+    try:
+        stolen = srv.cookie
+        code, hdr, _b = srv.post("/logout", {})
+        check("sign out redirects to the login form",
+              code == 303 and hdr.get("Location") == "/login", (code, hdr.get("Location")))
+        check("sign out clears the cookie in the browser too",
+              "Max-Age=0" in hdr.get("Set-Cookie", ""), hdr.get("Set-Cookie"))
+
+        # The server-side half is the one that matters: a copy of the cookie taken before the
+        # sign-out must not still work, or "sign out" only meant "forget it locally".
+        srv.cookie = stolen
+        code, _hdr, _b = srv.get("/")
+        check("the old token is dead server-side, not just cleared client-side",
+              code == 303, code)
+    finally:
+        srv.stop()
+
+
+def test_login_and_logout_refuse_a_cross_origin_post():
+    """The CSRF check covers the session verbs, not just approve/reject."""
+    srv = serve()
+    try:
+        evil = {"Origin": "https://evil.example"}
+        code, _hdr, _b = srv.post("/logout", {}, headers=evil)
+        check("a cross-origin sign-out is refused", code == 403, code)
+        code, _hdr, _b = srv.post("/login", {"user": ffweb.AUTH_USER,
+                                             "password": ffweb.AUTH_PASSWORD}, headers=evil)
+        check("a cross-origin sign-in is refused", code == 403, code)
+
+        # ... and the Host-header form of same-origin is accepted, which is what keeps a box
+        # reachable under a name nobody put in the config.
+        good = {"Origin": f"http://127.0.0.1:{srv.port}"}
+        code, _hdr, _b = srv.post("/login", {"user": ffweb.AUTH_USER,
+                                             "password": ffweb.AUTH_PASSWORD}, headers=good)
+        check("a same-origin sign-in is accepted", code == 303, code)
+    finally:
+        srv.stop()
+
+
+def test_a_self_signed_certificate_is_generated():
+    state = os.path.join(TMPROOT, "certgen")
+    os.makedirs(state, exist_ok=True)
+    cert, key = ffweb.tls_paths(state)
+    created, _why = ffweb.ensure_certificate(cert, key, "127.0.0.1")
+    check("a certificate is minted when there is none",
+          created and os.path.isfile(cert) and os.path.isfile(key), (created, cert))
+    mode = os.stat(key).st_mode & 0o777
+    check("the private key is not world-readable", mode == 0o600, oct(mode))
+
+    stamp = os.path.getmtime(cert)
+    again, why = ffweb.ensure_certificate(cert, key, "127.0.0.1")
+    check("an existing pair is left alone",
+          not again and why == "existing" and os.path.getmtime(cert) == stamp, why)
+
+    # Half a pair is a configuration mistake worth naming, not something to silently repair.
+    os.remove(key)
+    try:
+        ffweb.ensure_certificate(cert, key, "127.0.0.1")
+        check("half a TLS pair is refused", False, "no error raised")
+    except RuntimeError as exc:
+        check("half a TLS pair is refused with a message naming the fix",
+              "half" in str(exc) and "--tls-cert" in str(exc), str(exc))
+
+    names = ffweb.cert_hostnames("192.168.51.10")
+    check("the SAN covers loopback, the bind address and this machine's name",
+          "IP:127.0.0.1" in names and "DNS:localhost" in names and
+          "IP:192.168.51.10" in names, names)
+
+
+def test_https_is_what_is_actually_on_the_wire():
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, tls=True)
+    try:
+        code, hdr, body = srv.get("/")
+        check("the page is served over TLS", code == 200 and b"conversations" in body, code)
+        check("no HSTS is sent on a self-signed certificate",
+              "Strict-Transport-Security" not in hdr, hdr.get("Strict-Transport-Security"))
+        check("pages behind the login are not cacheable",
+              hdr.get("Cache-Control") == "no-store", hdr.get("Cache-Control"))
+
+        # The certificate really does carry an IP SAN: verifying against the cert file itself,
+        # with hostname checking ON, fails if the SAN is missing or wrong.
+        cert, _key = ffweb.tls_paths(STATE)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.load_verify_locations(cert)
+        with socket.create_connection(("127.0.0.1", srv.port), timeout=20) as raw:
+            with ctx.wrap_socket(raw, server_hostname="127.0.0.1") as tls:
+                check("the certificate validates for the address it is served on",
+                      tls.version().startswith("TLS"), tls.version())
+                check("TLS 1.2 is the floor", tls.version() not in ("TLSv1", "TLSv1.1"),
+                      tls.version())
+
+        # The Secure attribute rides on the scheme, so it is set here and not on --no-tls.
+        fresh = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, tls=True, login=False)
+        try:
+            _code, cookie = fresh.login()
+            check("the session cookie is Secure over https", "Secure" in cookie, cookie)
+        finally:
+            fresh.stop()
+
+        # A stale http:// bookmark gets a sentence back rather than a dropped connection.
+        with socket.create_connection(("127.0.0.1", srv.port), timeout=20) as plain:
+            plain.sendall(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            reply = plain.recv(4096)
+        check("a plaintext request on the TLS port is answered, not dropped",
+              b"400" in reply and b"HTTPS" in reply, reply[:120])
+
+        # ... and that plaintext connection did not take the listener down with it.
+        code, _hdr, _b = srv.get("/lanes")
+        check("the server survives a plaintext probe", code == 200, code)
+    finally:
+        srv.stop()
+
+
+def test_openssl_is_present():
+    """Everything above assumes it; say so plainly if it is not."""
+    try:
+        proc = subprocess.run(["openssl", "version"], capture_output=True, text=True,
+                              timeout=30)
+        ok = proc.returncode == 0
+        detail = (proc.stdout or proc.stderr).strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        ok, detail = False, str(exc)
+    check("openssl is on PATH (ffweb needs it to mint the certificate)", ok, detail)
+
+
 def main():
     print("ffweb — read-only web UI")
     tests = [
@@ -913,6 +1185,14 @@ def main():
         test_a_stale_schema_is_refused_with_a_fixable_message,
         test_aggregates_match_hand_computed_values,
         test_headers_and_content_types,
+        test_nothing_is_served_without_a_login,
+        test_the_password_is_the_only_way_in,
+        test_next_cannot_leave_this_origin,
+        test_signing_out_ends_the_session,
+        test_login_and_logout_refuse_a_cross_origin_post,
+        test_openssl_is_present,
+        test_a_self_signed_certificate_is_generated,
+        test_https_is_what_is_actually_on_the_wire,
     ]
     for fn in tests:
         try:

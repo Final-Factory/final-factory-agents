@@ -17,6 +17,12 @@ channel does not burn a run on "thanks".
 Revision 5, 2026-08-22: the gate runs on every message in all three watched channels,
 including the first message of a new thread, and its bias toward answering is written as
 rules rather than as an adjective (section 5).
+Revision 6, 2026-08-22: a review pass for ambiguity and for claims about the code. Corrects
+how a DM is actually detected on the gateway (section 11), says which lane an operator message
+gets rather than leaving the matrix and the watch kind to contradict each other (section 8),
+separates the undeliverable private half from the approval queue's pending state (section 7),
+names the two ffweb guards that do not cover a new flag for free (section 12), and replaces
+file:line citations with symbol names, since the tree they pointed at is mid-change.
 
 Design only. Nothing here is implemented.
 
@@ -43,32 +49,32 @@ doorbell kind at all.
 Trust is decided in three places and they do not agree with each other.
 
 The listener decides it once, from Discord's authenticated author.id
-(ffdiscord_listener.py:332). One account is known: mentions.lothsahn. Everything else that
+(ffdiscord_listener.py, handle_dispatch). One account is known: mentions.lothsahn. Everything else that
 addresses the bot is player_mention. Ben is in the config as a ping target
-(ffdiscord.py:16) and nowhere as an authority.
+(ffdiscord.py, the config docstring) and nowhere as an authority.
 
-ffwatch decides it again, by kind. LANE_BY_KIND (ffwatch.py:481) sends ask and mention to
+ffwatch decides it again, by kind. LANE_BY_KIND (ffwatch.py) sends ask and mention to
 the answer lane and the answerer role, and lothsahn_directive to the dev lane and the
-dev-agent role. lane_for (ffwatch.py:795) exempts shell from classification entirely,
+dev-agent role. lane_for (ffwatch.py) exempts shell from classification entirely,
 because a prompt typed at this machine's shell has already answered the question
 classification exists to ask.
 
 The shell lane then decides it a third time, by subtraction. It gets no role and no plugin
-directory (ffwatch.py:1562), and render_prompt gives it no untrusted-input fence
-(ffwatch.py:1625). The comment there records why: with the Discord framing in place,
+directory (ffwatch.py, build_job), and render_prompt gives it no untrusted-input fence.
+The comment there records why: with the Discord framing in place,
 `ffbox "what file defines the belt merger?"` came back as a policy refusal addressed to a
 player. Unmounting the plugin fixed that case and cost the shell lane max-voice and the rest
 of the ff-discord skills as collateral.
 
 Direct messages do not arrive at all. The gateway asks for GUILDS and GUILD_MESSAGES only
-(ffdiscord_listener.py:83), so a DM never rings the doorbell. ffdiscord.py knows channel type
+(ffdiscord_listener.py, INTENTS), so a DM never rings the doorbell. ffdiscord.py knows channel type
 1 is a DM and has no command that opens or reads one.
 
 Web prompts do not exist. ffweb is read-only over a query_only connection and its whole
 action surface is approve/reject on the outbound queue, shelled out to ffwatch so that
-ffwatch stays the sole writer (ffweb.py:12, :598, :614).
+ffwatch stays the sole writer (ffweb.py, the module docstring and FfwatchActions).
 
-The watch table (ffwatch.py:235) says which channels are watched and what kind of conversation
+The watch table (ffwatch.py, DEFAULTS) says which channels are watched and what kind of conversation
 they hold. It says nothing about who may read them and nothing about when the bot should
 speak. Both belong there. Section 5.
 
@@ -120,7 +126,10 @@ Two tiers. Resist a third until something actually needs it.
              do not change.
 
 The set is config, in ~/.config/ffbox/discord/config.json alongside the channel and mention
-tables the CLI already reads:
+tables the CLI already reads. That file rather than ~/.config/ffbox/config.json, because the
+LISTENER needs it and the listener only reads the Discord one. ffwatch already loads that file
+too and keeps the parts it needs under cfg["_discord"], so reaching the operator set from the
+harness side is one more key in that tuple, next to guild_id, channels and mentions:
 
     "trust": {
       "operators": {
@@ -132,6 +141,11 @@ tables the CLI already reads:
 Keyed by name so the config reads as a list of people rather than a list of numbers, and so
 the same two ids can seed mentions.ben and mentions.lothsahn, which are empty on this machine
 today and are what "@ben" expands to in a post.
+
+The split is worth stating once: WHO is an operator lives with the Discord identity data,
+because the listener has to answer that question and the listener reads no other file. WHAT a
+channel is (venue, engage, kind) lives in the ffwatch watch table in ~/.config/ffbox/config.json,
+because it is harness policy and only ffwatch acts on it.
 
 The ids are snowflakes, resolved once. `.slims` and `lothsahn` are usernames, they are
 changeable, and a trust key somebody else can claim by renaming is not a trust key. Nothing in
@@ -200,7 +214,14 @@ engage is when the bot wakes at all.
 A missing engage is mention and a missing venue is public, both with a startup warning naming
 the channel. The three entries above ship in DEFAULTS with their values spelled out, so an
 existing config that names them without the new keys keeps behaving the way it does today; a
-channel nobody has classified is quiet and public until somebody says otherwise.
+channel nobody has classified is quiet and public until somebody says otherwise. That last part
+is not an assumption: ffwatch's _deep_merge recurses, so a config entry of
+{"kind": "ask", "forum": false} merges over the default entry key by key rather than replacing
+it, and the venue and engage defaults survive.
+
+`ffdiscord doctor` should list every watched channel with its venue and engage, and report who
+can actually read each declared-private one. The permission drift the previous paragraph is
+worried about is invisible until something asks the question out loud.
 
 THE ENGAGEMENT GATE. engage: all is what makes a channel expensive, and it is the answer to
 the main design's open "who keeps a thread alive" question. Every human message in a watched
@@ -216,7 +237,9 @@ It is deliberately biased toward yes. Bug reports, suggestions and #ask-assistan
 bot to answer, and a missed answer is worse than a wasted run. "Almost always" is not something
 a model can act on, so the bias is written as rules instead.
 
-ALWAYS a turn, decided by the harness without asking the model:
+ALWAYS a turn, decided by the harness without asking the model. All three rules are about
+engage: all channels; in a mention channel the mention IS the trigger and there is no gate to
+override:
 
   - the first message of a new thread in bug_reports or suggestions. A new thread there is a
     report by construction.
@@ -242,13 +265,16 @@ cheap and bounded. Text dressed up to look like a report costs one run, capped b
 Text dressed down to look like chatter suppresses a reply to the person who wrote it, which
 harms only them. Neither can widen what may be said or what may be touched.
 
-Structurally it is one call and two fields, because it is one read of the same text:
+Structurally it is one call and two fields, because it is one read of the same text. This
+extends classify_text's existing contract rather than adding a second model call in front of
+it:
 
     {"engage": true|false, "type": "question"|"change", ...}
 
-engage answers "is there a turn". type answers "which lane", and for a channel whose kind
-already decides the lane (ask, bug_report, suggestion) it is ignored, exactly as today. Lane
-selection is unchanged: the gate runs before it, the kind-to-lane map runs after.
+engage answers "is there a turn". type answers "which lane", and for a player-authored message
+in a channel whose kind already decides the lane (ask, bug_report, suggestion) it is ignored,
+exactly as today. The gate runs first, lane selection after. The one change to lane selection is
+section 8's rule for operator-authored messages, where type is what decides and kind does not.
 
 Both fields fail closed, in their own directions. An error, a timeout, an unparseable answer or
 genuine uncertainty gives engage true and type question: a gate that cannot decide answers, and
@@ -286,6 +312,11 @@ parent alias.
 The bottom-right cell is what a contractor or a guest in #dev-chat gets. They see internals,
 because that is what putting them in the channel said. They cannot start work, because that is
 a different decision and nobody made it.
+
+One rule this does not touch, in case the two are read as being in tension: discord-answerer.md
+forbids anything read in #dev-chat from crossing into a public reply, quoted or paraphrased.
+That still holds exactly as written. A private venue governs what may be said INTO that channel.
+It does not make the channel a source a public answer may be grounded in.
 
 
 7. The split reply
@@ -325,6 +356,11 @@ Rules that make this safe rather than a leak with extra steps:
      the public half still posts and the private half is HELD in the outbound queue with the
      error recorded. It is never downgraded into the public message, never appended, never
      retried into the channel. A failed private delivery is a queue row a human clears.
+
+     Held here must be its OWN state, not the queue's existing approval-pending. Those rows
+     mean "waiting for a human to say yes" and `ffwatch approve` releases them; an undeliverable
+     private half released by that command would try the same dead channel again. Call it
+     undeliverable, make it terminal, and let a human requeue it by hand after fixing the cause.
 
   f. If the whole answer is public-safe, there is no private half and nothing is sent. The
      split is a response to the content, not a habit.
@@ -367,6 +403,20 @@ the DM case. It moves earlier in the order of work.
   everything    player / public. Untouched.
   else
 
+LANE, FOR AN OPERATOR MESSAGE. Today lothsahn_directive goes to the dev lane unconditionally,
+so "which file defines belt merging" from Lothsahn takes a Unity-enabled write lane and the
+machine's one Unity slot to answer a question. That is worth fixing here rather than
+leaving as an inconsistency, because section 6 promises operators can work in a private channel
+whose watch kind (ask) would otherwise pin every message there to the read-only answer lane.
+
+The rule: for an operator-authored message, the channel's kind does NOT decide the lane. The
+type classifier does, exactly as it does for an unclassified channel: question goes to the
+answer lane, change goes to the dev lane. Tier and venue are still not the classifier's
+business (section 9); it is only choosing between read-only and write for somebody already
+entitled to both.
+
+For a player-authored message nothing changes: kind decides the lane as it does today.
+
 
 9. Who decides, and what the container is told
 ----------------------------------------------
@@ -395,7 +445,7 @@ every reply from the structured verdict it returns.
 What the container is told, and where each layer comes from:
 
   the prompt        `claude -p <job.prompt>`. Written by the host, per turn, in
-                    ffwatch.py render_prompt (:1625). Today: which lane and role, the
+                    ffwatch.py render_prompt. Today: which lane and role, the
                     untrusted-input fence, the <discord> block of message text, harness notes,
                     the rebase note. This design adds two lines to it, stated as harness facts:
 
@@ -473,13 +523,23 @@ and needs no Discord approval. MESSAGE_CONTENT is still not requested and still 
 the listener carries ids, and ffdiscord pulls the text over REST with the bot token, which
 intents do not gate.
 
-A DM dispatch has no guild_id and its channel is not in watch_ids, so it falls through to
-_bot_is_addressed today. In a DM every message is addressed to the bot, so the rule is simply
-"channel type 1 and author in trust.operators emits operator_dm; channel type 1 and anyone
-else emits nothing at all."
+Detecting one takes care, because MESSAGE_CREATE does not carry the channel's type. What it
+carries is guild_id, and only for guild messages, so ABSENCE OF guild_id is the DM signal at
+the listener. Group DMs are absent it too and cannot be told apart from a one-to-one DM on the
+dispatch alone; that distinction is made on the ffwatch side, which can fetch
+`GET /channels/{id}` and read `type` and `recipients`.
 
-A DM is not a watch entry and has no declared venue. Its venue is derived: an operator DM is
-private, and there is no other kind, because a non-operator DM never becomes a turn.
+The new branch has to come BEFORE the _bot_is_addressed fall-through, not after it. That
+function looks for the bot in `mentions` or as the author of `referenced_message`, and a plain
+DM has neither, so a DM reaching it today is silently dropped. The rule is:
+
+    no guild_id, and author.id in trust.operators   -> emit operator_dm
+    no guild_id, anyone else                        -> emit nothing
+
+A DM is not a watch entry and has no declared venue or engage. Both are derived. Venue is
+private, and there is no other value, because a non-operator DM never becomes a turn. Engage is
+always true: a message sent to the bot in a DM is addressed to it by construction, so the
+section 5 gate does not run.
 
 Ignoring non-operator DMs is a deliberate choice rather than an oversight. Any user who shares
 a guild with the bot can open a DM with it. A DM has no moderator watching, no other players
@@ -488,8 +548,11 @@ work on a jailbreak in private. #ask-assistant is the supported surface, and it 
 supported surface.
 
 On the ffwatch side, a DM conversation has no alias, so conversation_kind must handle it
-explicitly rather than falling through to "unknown" and the classifier. Kind operator_dm maps
-to a lane directly, the way shell does.
+explicitly rather than falling through to "unknown". Kind operator_dm is classified for TYPE
+and routed by section 8's rule for operator messages: a question gets the read-only answer
+lane, a change gets the dev lane. It is NOT pinned to one lane the way shell is, because an
+operator DM is as likely to be "which file does X" as "go fix X". Then ffwatch fetches the
+channel: type 3 (group DM) is dropped here, per section 15.
 
 Sending needs `ffdiscord dm open <user_id>` (POST /users/@me/channels) and the ability to post
 to a raw channel id rather than a configured alias. reply_channel needs the same. Cache the DM
@@ -518,8 +581,14 @@ approve/reject already does: shell out to ffwatch, which owns the database.
     POST /prompt  ->  ffwatch submit "<text>"  ->  the same rows a shell prompt makes
 
 Its own flag, --enable-prompts, separate from --enable-actions. Submitting work is a larger
-grant than approving a queued reply, and the two should not ride on one switch. The existing
-non-loopback refusal applies to it unchanged.
+grant than approving a queued reply, and the two should not ride on one switch.
+
+Two existing guards have to LEARN about the new flag rather than covering it for free. The
+startup refusal is written against --enable-actions specifically, so it needs the same test for
+--enable-prompts: no prompt box on a non-loopback bind without --allow-remote-actions said out
+loud. And do_POST's Origin check, which is what stops a page in another tab posting here on the
+operator's behalf, has to run on the prompt route too. A CSRF hole into `ffwatch submit` is a
+stranger running work on this box.
 
 Reply venue is private, and the reply is the run record itself: the timeline row, the
 transcript index, the result text. The same thing a waiting terminal reads.
@@ -541,9 +610,10 @@ Disclosure and capability are set independently, per section 2's second rule.
   channel        lane. A stolen phone gets someone the answers and a pull request somebody
                  has to merge. It does not get them a shell.
 
-  operator       Unchanged from the dev lane today, plus the split reply from section 7.
-  mention in
-  public
+  operator       Whichever lane section 8's rule picks. A question takes the read-only answer
+  mention in     lane, which is a change from today, where every lothsahn_directive takes the
+  public         dev lane whether or not there is anything to build. A change takes the dev
+                 lane, unchanged. Both produce the split reply from section 7.
 
   player in a    Read-only. Full disclosure to that channel, no work, and the text is still
   private        untrusted input.
@@ -574,8 +644,9 @@ sets up:
      A request that argues for more capability is untrusted text arguing, which is the case
      fail-closed classification was built for.
 
-  c. Scope is decided by the harness, not by the asker. The classifier decides question,
-     change or none, and a failure to decide stays read-only.
+  c. Scope is decided by the harness, not by the asker. The gate decides whether anything runs
+     and the classifier decides question or change, and a failure to decide either stays
+     read-only.
 
 
 15. Fail-closed rules
@@ -588,12 +659,15 @@ sets up:
   - A watch entry with no engage: mention, with the same warning.
   - A channel with no watch entry at all: public, and mention-only by construction, since
     nothing else there produces a doorbell.
-  - A DM channel with more than one recipient (group DM): not private, and not operator.
+  - A DM channel with more than one recipient (group DM): not private, and not operator. The
+    listener cannot see this — the dispatch carries no channel type — so ffwatch checks it with
+    `GET /channels/{id}` before the conversation is created, and drops it there.
   - Gate or classifier error, timeout, unparseable answer, or uncertainty: engage true, type
     question, read-only. Never none.
   - A message that addresses the bot directly, carries an attachment, or opens a new thread in
     bug_reports or suggestions: always a turn, and the gate is not consulted.
-  - Private half cannot be delivered: held, not downgraded (section 7e).
+  - Private half cannot be delivered: parked in its own undeliverable state, terminal, never
+    downgraded into the public message and never released by `ffwatch approve` (section 7e).
 
 
 16. Decisions and open questions
@@ -656,4 +730,7 @@ Still open:
      downgraded failure path, and the answerer's rules about what the public half may imply.
   7. The web prompt box, which reuses step 3 whole.
   8. Extend operator authority from the single lothsahn key to the whole set, in both the
-     listener and discord-dev-agent.md.
+     listener and discord-dev-agent.md, and with it section 8's lane rule: an operator message
+     is routed by type rather than pinned to the dev lane. These two belong together, because
+     widening the operator set without the lane rule would put both accounts on the Unity write
+     lane for every question they ask.
