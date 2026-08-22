@@ -32,6 +32,7 @@ import os
 import re
 import sqlite3
 import shutil
+import time
 import subprocess
 import sys
 import tempfile
@@ -2267,6 +2268,131 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
           not case.rows("SELECT * FROM outbound"), case.rows("SELECT * FROM outbound"))
 
 
+def test_drain_pauses_launches_without_holding_replies():
+    """A drain is a pause, not a stop: nothing new launches, everything else keeps working.
+
+    The distinction is the whole reason it is not the kill switch. `discord.disabled` also
+    holds every outbound row, which would strand the replies of the very runs the updater is
+    waiting on.
+    """
+    print("drain: launches pause, replies do not")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(9300, "does the merger round-robin?"),
+                                        message(9301, "and what about the splitter?")]
+    case = Case("drainpause", fixture)
+
+    # A run that finished before the drain leaves an outbound row waiting to be sent.
+    case.events(ask_event(9300))
+    case.watcher.once()
+    check("a normal turn runs and queues its reply",
+          [r["status"] for r in case.rows("SELECT status FROM outbound")] == ["sent", "sent"],
+          case.rows("SELECT action, status FROM outbound"))
+
+    left = case.watcher.drain()
+    check("drain writes the flag", os.path.exists(case.watcher.cfg["drain_switch"]))
+    check("and reports nothing in flight on a quiet machine", left == 0, left)
+
+    case.events(ask_event(9301))
+    case.watcher.once()
+    check("the second turn is still claimed and queued",
+          [t["status"] for t in case.rows("SELECT status FROM turn ORDER BY id")]
+          == ["done", "queued"], case.rows("SELECT id, status FROM turn"))
+    check("but nothing launched for it",
+          len(case.rows("SELECT * FROM run")) == 1, case.rows("SELECT ffbox_run_id FROM run"))
+    check("the drain switch is not the kill switch: sending still works",
+          not case.rows("SELECT * FROM outbound WHERE status NOT IN ('sent','dry')"),
+          case.rows("SELECT action, status FROM outbound"))
+
+    check("resume lifts it", case.watcher.resume() is True)
+    check("and is idempotent", case.watcher.resume() is False)
+    case.watcher.once()
+    check("the queued turn then runs, with nothing lost",
+          [t["status"] for t in case.rows("SELECT status FROM turn ORDER BY id")]
+          == ["done", "done"], case.rows("SELECT id, status FROM turn"))
+
+
+def test_drain_never_blocks_on_a_dead_daemon():
+    """`drain --wait` returns at once when no daemon holds the lock.
+
+    This is the case the updater exists for. A hard-killed ffwatch leaves run rows with
+    terminal_state NULL that nothing will ever settle; waiting the full ceiling for containers
+    that died hours ago would stall the update meant to repair the machine. Nobody is
+    launching, so there is nothing to wait for.
+    """
+    print("drain: a dead daemon is not something to wait for")
+    case = Case("draindead")
+    conv_id = case.watcher.upsert_conversation("7100", kind="ask", channel_id=ASK_CHANNEL,
+                                               title="a run that never finished")
+    cur = case.watcher.db.execute(
+        "INSERT INTO turn(conversation_id, seq, trigger, lane, status, queued_at)"
+        " VALUES(?,1,'message','answer','running',?)", (conv_id, ffwatch.now_iso()))
+    case.watcher.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name) VALUES(?,'ghost','ffbox-ghost')",
+        (cur.lastrowid,))
+    check("the ghost run looks exactly like work in flight",
+          case.watcher.running_counts()[0] == 1, case.watcher.running_counts())
+
+    started = time.monotonic()
+    left = case.watcher.drain(wait=True, timeout=30)
+    elapsed = time.monotonic() - started
+    check("drain --wait returns immediately rather than waiting out the ceiling",
+          left == 0 and elapsed < 5, (left, round(elapsed, 1)))
+    check("and the flag is still down, so the update stops a machine that launches nothing",
+          os.path.exists(case.watcher.cfg["drain_switch"]))
+    case.watcher.resume()
+
+
+def test_a_local_conversation_never_reaches_discord():
+    """A shell conversation cannot be swept into a turn, and cannot queue an outbound row.
+
+    Both halves are guards against the same real incident (2026-08-22): five imported shell
+    runs were sitting in the database with their prompt recorded as an unclaimed message. The
+    sweep read them as players waiting for an answer, classified them, burned five containers
+    re-answering questions that already had answers, and queued ten replies addressed to a
+    channel id of `imported-20260820-025120-418020`. Nothing was sent, and only because the
+    machine had no bot token.
+    """
+    print("shell: a local conversation has no Discord side")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(9100, "does the merger round-robin?")]
+    case = Case("localnodiscord", fixture)
+
+    # Exactly the row the incident turned on: a message that never got linked to its turn,
+    # which is what a crash between insert_message and the turn INSERT leaves behind.
+    conv_id = case.watcher.upsert_conversation(
+        "imported-20260820-025120-418020", kind="shell", channel_id=None,
+        title="Reply with exactly: hello world", root_message_id="imported-1",
+        opener="tester", is_thread=False)
+    case.watcher.insert_message(conv_id, {
+        "id": "imported-1", "content": "Reply with exactly: hello world",
+        "timestamp": "2026-08-20T06:51:28Z",
+        "author": {"id": "1000", "username": "tester", "bot": False},
+    })
+    check("the unclaimed message is really there to be found",
+          case.rows("SELECT * FROM message WHERE turn_id IS NULL AND conversation_id=?",
+                    (conv_id,)))
+    check("but the sweep does not claim it", case.watcher.claim_turns() == [],
+          case.rows("SELECT * FROM turn WHERE conversation_id=?", (conv_id,)))
+    case.watcher.once()
+    check("so no turn, no container and no run come of it",
+          not case.rows("SELECT * FROM run"), case.rows("SELECT * FROM run"))
+
+    # The second guard, at the single point where anything enters the queue. A caller that
+    # asks for it anyway is refused rather than obeyed.
+    nonce = case.watcher.record_outbound(None, conv_id, "post", {"channel": "x", "text": "hi"})
+    check("record_outbound refuses a conversation with nowhere to post", nonce is None, nonce)
+    check("and nothing lands in the queue", not case.rows("SELECT * FROM outbound"),
+          case.rows("SELECT * FROM outbound"))
+
+    # The guard must not over-reach: a real thread still gets its reply.
+    case.events(ask_event(9100))
+    case.watcher.drain_events()
+    case.watcher.once()
+    check("a Discord conversation is still claimed, run and answered",
+          [r["action"] for r in case.rows("SELECT action FROM outbound ORDER BY id")]
+          == ["post", "react"], case.rows("SELECT * FROM outbound"))
+
+
 def test_past_standalone_runs_import():
     """The runs from before the shell was an ingress are folded in, once, idempotently."""
     print("shell: importing older standalone runs")
@@ -2521,6 +2647,9 @@ def main():
         test_container_argv_is_valid,
         test_allow_list_is_scope_not_a_boundary,
         test_shell_is_an_ingress_not_a_second_pipeline,
+        test_drain_pauses_launches_without_holding_replies,
+        test_drain_never_blocks_on_a_dead_daemon,
+        test_a_local_conversation_never_reaches_discord,
         test_past_standalone_runs_import,
         test_config_lives_under_ffbox,
         test_systemd_units_hang_off_one_target,

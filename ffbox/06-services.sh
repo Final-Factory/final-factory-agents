@@ -54,6 +54,10 @@ say()  { printf '[services] %s\n' "$*"; }
 did()  { printf '[services]   %s\n' "$*"; }
 
 UNIT_NAMES="ffbox.target ffdiscord-listener.service ffwatch.service ffweb.service"
+# The updater is rendered and installed with the rest, but it is NOT part of ffbox.target
+# and is enabled separately — it has to survive a broken ffbox to be able to fix one.
+# See design/self_update_design.txt section 3.
+UPDATE_UNITS="ffbox-update.service ffbox-update.timer"
 
 # The listener watches whatever the config says to watch. Reading it back from the ffwatch block
 # means adding a channel there and re-installing is enough — no second place to edit, and no
@@ -115,8 +119,10 @@ render_units() {
     _webhost=$(web_bind | cut -d' ' -f1)
     _webport=$(web_bind | cut -d' ' -f2)
     mkdir -p "$_dest"
-    for u in $UNIT_NAMES; do
+    for u in $UNIT_NAMES $UPDATE_UNITS; do
         sed -e "s|@FFWATCH@|$HERE/ffwatch.py|g" \
+            -e "s|@UPDATE@|$HERE/update_ffbox.sh|g" \
+            -e "s|@REPO@|$(CDPATH= cd -- "$HERE/.." && pwd)|g" \
             -e "s|@FFWEB@|$HERE/ffweb.py|g" \
             -e "s|@USER@|$RUN_USER|g" \
             -e "s|@GROUP@|$RUN_GROUP|g" \
@@ -144,7 +150,7 @@ if [ "$INSTALL" = 1 ]; then
         # nothing but a log line. Filtered to OUR unit names, because verify pulls in every
         # dependency it can resolve and would otherwise bury the answer in warnings about
         # somebody else's service.
-        (cd "$TMP" && systemd-analyze verify ./ffbox.target ./*.service 2>&1 \
+        (cd "$TMP" && systemd-analyze verify ./ffbox.target ./*.service ./*.timer 2>&1 \
             | grep -E 'ffbox|ffwatch|ffweb|ffdiscord' \
             | sed 's/^/[discord-setup]   verify: /') || true
     fi
@@ -154,7 +160,7 @@ if [ "$INSTALL" = 1 ]; then
     # command line — which is exactly how ffweb stayed on 127.0.0.1 through two correct installs.
     CHANGED=""
     WAS_ACTIVE=""
-    for u in $UNIT_NAMES; do
+    for u in $UNIT_NAMES $UPDATE_UNITS; do
         cmp -s "$TMP/$u" "$UNIT_DIR/$u" 2>/dev/null || CHANGED="$CHANGED $u"
         case "$u" in
             *.target) continue ;;
@@ -162,7 +168,7 @@ if [ "$INSTALL" = 1 ]; then
         systemctl is-active --quiet "$u" 2>/dev/null && WAS_ACTIVE="$WAS_ACTIVE $u"
     done
 
-    for u in $UNIT_NAMES; do
+    for u in $UNIT_NAMES $UPDATE_UNITS; do
         install -m 0644 "$TMP/$u" "$UNIT_DIR/$u"
         did "$UNIT_DIR/$u"
     done
@@ -178,6 +184,12 @@ if [ "$INSTALL" = 1 ]; then
     else
         systemctl enable --now ffbox.target
         did "enabled and started ffbox.target (listener + ffwatch + ffweb)"
+        # SEPARATELY, and on purpose: enabling the timer through ffbox.target would tie the
+        # updater's lifetime to the thing it updates. A stop of the target must leave this
+        # firing, because a bad commit that stops ffwatch is exactly when the next one matters.
+        systemctl enable --now ffbox-update.timer
+        did "enabled ffbox-update.timer (fetch + fast-forward + restart, every 15min)"
+        did "  next update check: $(systemctl show ffbox-update.timer -p NextElapseUSecRealtime --value 2>/dev/null)"
         # Restart only what changed AND was already up: a unit just started by enable --now is
         # already running the new file, and ffwatch in particular should not be interrupted for
         # nothing — a restart terminal-fails any run in flight, which the recovery pass then
@@ -213,7 +225,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 render_units "$TMP"
 STALE=0
-for u in $UNIT_NAMES; do
+for u in $UNIT_NAMES $UPDATE_UNITS; do
     st=$([ -f "$UNIT_DIR/$u" ] && echo installed || echo 'NOT INSTALLED')
     if [ -f "$UNIT_DIR/$u" ]; then
         st="$st, $(systemctl is-enabled "$u" 2>/dev/null | head -1 || echo unknown)"
@@ -238,6 +250,8 @@ elif [ "$STALE" = 1 ]; then
 else
     did "web UI: https://$(web_bind | cut -d' ' -f1):$(web_bind | cut -d' ' -f2)  (sign in as Ben)"
     did "logs:   journalctl -u ffwatch -f   (or -u ffdiscord-listener, -u ffweb)"
+    did "update: $(systemctl is-active ffbox-update.timer 2>/dev/null || echo inactive), next $(systemctl show ffbox-update.timer -p NextElapseUSecRealtime --value 2>/dev/null || echo '?')"
+    did "        sudo systemctl start ffbox-update.service   (update now)"
 fi
 
 # A unit file newer than the process running under it means somebody installed and did not

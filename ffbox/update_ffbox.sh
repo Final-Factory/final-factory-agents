@@ -1,0 +1,230 @@
+#!/bin/sh
+# update_ffbox.sh — fetch, fast-forward and restart ffbox into the new code.
+#
+#   sudo systemctl start ffbox-update.service    the trigger (what the timer also does)
+#   sudo sh ffbox/update_ffbox.sh                the same thing, by hand
+#   sudo sh ffbox/update_ffbox.sh --dry-run      say what would happen; change nothing
+#
+# Design: design/self_update_design.txt. The parts that are not obvious from the code:
+#
+# WHY THIS EXISTS. The units run this checkout directly, so new code on disk is live at the
+# next process start and NOT before. On 2026-08-22 the build server was found running ffwatch
+# from a checkout twelve hours older than HEAD, and a guard committed at 16:46 was not live at
+# 20:41. Editing a file is not deploying it.
+#
+# WHY IT IS NOT PART OF ffbox.target. A bad commit that stops ffwatch from starting is exactly
+# when an update matters. Nothing here may depend on ffbox being healthy: the drain is an
+# optimisation over a hard stop, and every way it can fail — timeout, crash, a broken
+# ffwatch.py that cannot even parse — falls through to stop-update-start.
+#
+# WHY IT DRAINS FIRST. ffbox bind-mounts the container's task script and ffverify from this
+# checkout, read-only but LIVE, for the whole run. A merge while a container is running really
+# does change the script underneath it.
+#
+# NO ROLLBACK, by the owner's call. A commit that breaks ffbox takes the box down until the
+# next good commit lands, and the independence above is what makes that recoverable without
+# touching the machine.
+#
+# POSIX sh, like its siblings.
+set -eu
+
+# ------------------------------------------------------------------------------------------
+# re-exec from a copy of ourselves
+# ------------------------------------------------------------------------------------------
+# `sh` reads a script incrementally, by byte offset. The merge below rewrites this file, and a
+# shell that then reads the next line out of different text does something nobody wrote. The
+# copy is what survives; the checkout is free to change underneath it.
+if [ "${FFBOX_UPDATE_REEXEC:-0}" != 1 ]; then
+    # The checkout has to be resolved HERE, while $0 is still this file. After the re-exec $0
+    # is the temp copy in /tmp, and deriving the repo from it would silently walk to / —
+    # found by running it.
+    _here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    FFBOX_UPDATE_REPO=${FFBOX_UPDATE_REPO:-$(CDPATH= cd -- "$_here/.." && pwd)}
+    _self=$(mktemp) || { echo "update_ffbox: cannot make a temp copy" >&2; exit 1; }
+    cat "$0" > "$_self"
+    FFBOX_UPDATE_REEXEC=1
+    export FFBOX_UPDATE_REEXEC FFBOX_UPDATE_REPO
+    sh "$_self" "$@"
+    _rc=$?
+    rm -f "$_self"
+    exit "$_rc"
+fi
+
+REPO=${FFBOX_UPDATE_REPO:?the re-exec must pass the checkout path}
+BRANCH=${FFBOX_UPDATE_BRANCH:-master}
+DRAIN_TIMEOUT=${FFBOX_DRAIN_TIMEOUT:-7200}
+DRY_RUN=0
+[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+
+[ -d "$REPO/.git" ] || { echo "update_ffbox: $REPO is not a git checkout" >&2; exit 1; }
+# The owner of the CHECKOUT, never SUDO_USER or the caller: those answer "who ran this", and
+# what matters is whose credentials the fetch needs and whose ownership the new objects get.
+# Root running git here would leave root-owned objects in .git and break every later pull.
+OWNER=$(stat -c %U "$REPO/.git")
+OWNER_HOME=$(getent passwd "$OWNER" | cut -d: -f6)
+OWNER_HOME=${OWNER_HOME%/}
+CONFIG_DIR=${FFBOX_CONFIG_DIR:-$OWNER_HOME/.config/ffbox}
+KILL_SWITCH=$CONFIG_DIR/update.disabled
+DRAIN_SWITCH=$CONFIG_DIR/draining
+LOCK=$CONFIG_DIR/update.lock
+
+log() { printf '[ffbox-update] %s\n' "$*"; }
+die() { log "ERROR: $*"; exit 1; }
+
+# Every git call runs as the owner, with the owner's HOME. runuser does NOT reset HOME, and
+# without it git reads root's config and misses the owner's ~/.git-credentials — which is the
+# only reason the fetch works unattended at all.
+as_owner() {
+    if [ "$(id -un)" = "$OWNER" ]; then
+        env HOME="$OWNER_HOME" "$@"
+    else
+        runuser -u "$OWNER" -- env HOME="$OWNER_HOME" "$@"
+    fi
+}
+git_() { as_owner git -C "$REPO" "$@"; }
+
+# ------------------------------------------------------------------------------------------
+# one at a time
+# ------------------------------------------------------------------------------------------
+# A drain can take an hour. A trigger arriving during one exits rather than queueing behind it:
+# two updaters would fight over the same checkout, and the second's `resume` would land inside
+# the first's drain.
+mkdir -p "$CONFIG_DIR"
+if command -v flock >/dev/null 2>&1; then
+    if [ "${FFBOX_UPDATE_LOCKED:-0}" != 1 ]; then
+        FFBOX_UPDATE_LOCKED=1; export FFBOX_UPDATE_LOCKED
+        exec flock -n "$LOCK" sh "$0" "$@" || {
+            log "another update is already running — nothing to do"
+            exit 0
+        }
+    fi
+fi
+
+FFWATCH=$REPO/ffbox/ffwatch.py
+FLAG_LIFTED=0
+lift_drain() {
+    [ "$FLAG_LIFTED" = 1 ] && return 0
+    FLAG_LIFTED=1
+    [ "$DRY_RUN" = 1 ] && return 0
+    # By hand rather than through ffwatch: this also has to work when the commit we just
+    # installed is the reason ffwatch.py will not run.
+    rm -f "$DRAIN_SWITCH" 2>/dev/null || :
+}
+# A crash, or systemd's TimeoutStartSec, must not leave the machine drained and silent.
+trap 'lift_drain' EXIT HUP INT TERM
+
+# ------------------------------------------------------------------------------------------
+# 1. lift a flag stranded by a previous run
+# ------------------------------------------------------------------------------------------
+# Unconditional, and safe only because of the flock above.
+if [ -e "$DRAIN_SWITCH" ] && [ "$DRY_RUN" = 0 ]; then
+    log "clearing a drain flag left by an earlier run: $DRAIN_SWITCH"
+    rm -f "$DRAIN_SWITCH"
+fi
+
+# ------------------------------------------------------------------------------------------
+# 2. the three reasons to do nothing
+# ------------------------------------------------------------------------------------------
+if [ -e "$KILL_SWITCH" ]; then
+    log "kill switch present ($KILL_SWITCH) — not updating"
+    exit 0
+fi
+if [ -n "$(git_ status --porcelain 2>/dev/null)" ]; then
+    # Never stashed, never reset. The working copy is someone's workspace, and the updater has
+    # no business deciding that uncommitted work is expendable.
+    log "working tree is dirty — not updating. Commit or stash it:"
+    git_ status --short | sed 's/^/    /'
+    exit 0
+fi
+
+log "fetching origin/$BRANCH"
+git_ fetch --prune --quiet origin "$BRANCH" || die "fetch failed"
+OLD_SHA=$(git_ rev-parse HEAD)
+NEW_SHA=$(git_ rev-parse FETCH_HEAD)
+if [ "$OLD_SHA" = "$NEW_SHA" ]; then
+    log "already current at $(printf %.12s "$OLD_SHA") — nothing to do"
+    exit 0
+fi
+if [ "$(git_ merge-base "$OLD_SHA" "$NEW_SHA")" != "$OLD_SHA" ]; then
+    # A diverged local branch is a human problem, and this is the one place where being clever
+    # would mean auto-executing code nobody reviewed.
+    die "origin/$BRANCH is not a fast-forward from HEAD — refusing to merge. Fix by hand."
+fi
+log "update available: $(printf %.12s "$OLD_SHA") -> $(printf %.12s "$NEW_SHA")"
+git_ log --oneline "$OLD_SHA..$NEW_SHA" | sed 's/^/    /'
+
+if [ "$DRY_RUN" = 1 ]; then
+    log "--dry-run: stopping here. Would drain, stop, merge, act on the diff and restart."
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------------------
+# 3. drain, then stop
+# ------------------------------------------------------------------------------------------
+# Never fatal. A commit that breaks ffwatch.py also breaks `ffwatch drain`, and an updater that
+# treats that as fatal can never install the fix.
+if [ -r "$FFWATCH" ]; then
+    log "draining (up to ${DRAIN_TIMEOUT}s) — no new containers, finishing what is running"
+    if as_owner python3 "$FFWATCH" drain --wait --timeout "$DRAIN_TIMEOUT"; then
+        log "drained: nothing in flight"
+    else
+        log "WARNING: drain did not finish cleanly — stopping anyway (runs are requeued)"
+    fi
+else
+    log "WARNING: no readable $FFWATCH — skipping the drain"
+fi
+
+log "stopping ffbox.target"
+systemctl stop ffbox.target || log "WARNING: stop reported a failure; continuing"
+
+# ------------------------------------------------------------------------------------------
+# 4. the merge
+# ------------------------------------------------------------------------------------------
+git_ merge --ff-only --quiet "$NEW_SHA" || die "fast-forward merge failed"
+log "checkout is now at $(printf %.12s "$(git_ rev-parse HEAD)")"
+
+# ------------------------------------------------------------------------------------------
+# 5. what the diff decides
+# ------------------------------------------------------------------------------------------
+# A restart is only right for a pure Python or shell change. The three other cases are real
+# paths in this repository, and each is silent when skipped: the units keep their old text, the
+# containers keep running last week's image, live sessions keep serving the cached plugin.
+CHANGED=$(git_ diff --name-only "$OLD_SHA" "$NEW_SHA")
+changed_match() { printf '%s\n' "$CHANGED" | grep -Eq "$1"; }
+
+if changed_match '^ffbox/systemd/'; then
+    log "unit templates changed — reinstalling them"
+    sh "$REPO/ffbox/06-services.sh" --install --no-enable \
+        || log "WARNING: unit install failed; the old units are still in place"
+fi
+if changed_match '^ffbox/(Dockerfile|entrypoint\.sh|run-as-user\.sh|import-project\.sh|unity-license\.sh|install-claude\.sh)$'; then
+    log "the image's own files changed — rebuilding ffbox:latest"
+    as_owner sh "$REPO/ffbox/03-build.sh" \
+        || log "WARNING: image build failed; containers will run the previous image"
+fi
+if changed_match '^(plugins/|\.claude-plugin/|\.agents/)'; then
+    log "plugins changed — refreshing the marketplace copies"
+    as_owner sh "$REPO/registerAgents.sh" \
+        || log "WARNING: registerAgents.sh failed; live sessions keep the cached plugin"
+fi
+
+# ------------------------------------------------------------------------------------------
+# 6. resume
+# ------------------------------------------------------------------------------------------
+# Before the start, not after: ffbox is stopped at this moment, so nothing can observe the
+# window, and a start that fails still leaves the machine ready to run.
+lift_drain
+log "starting ffbox.target"
+systemctl start ffbox.target || log "WARNING: start reported a failure"
+
+# What is ACTUALLY running, not what we asked for: `start` exits 0 for a Wants= member that
+# died, and the listener is expected to fail on a machine with no bot token.
+rc=0
+for u in ffdiscord-listener.service ffwatch.service ffweb.service; do
+    state=$(systemctl is-active "$u" 2>/dev/null || echo inactive)
+    printf '  %-28s %s\n' "$u" "$state"
+    [ "$u" = "ffwatch.service" ] && [ "$state" != active ] && rc=1
+done
+log "updated $(printf %.12s "$OLD_SHA") -> $(printf %.12s "$NEW_SHA")"
+[ "$rc" = 0 ] || log "ERROR: ffwatch did not come back. The timer keeps running: the next good commit will land on its own."
+exit "$rc"

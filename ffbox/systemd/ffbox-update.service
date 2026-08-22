@@ -1,0 +1,36 @@
+[Unit]
+# THE UPDATER. Fetches origin, fast-forwards this checkout and restarts ffbox into the new
+# code. Design: design/self_update_design.txt.
+#
+# @UPDATE@ is substituted with the absolute path to ffbox/update_ffbox.sh by 06-services.sh —
+# this repo can be cloned anywhere, so the unit cannot carry a fixed path.
+#
+# DELIBERATELY NOT PART OF ffbox.target. No PartOf=, no Requires=, no BindsTo=, no After= on
+# any ffbox unit, and no WantedBy=ffbox.target. A bad commit that stops ffwatch from coming up
+# is exactly when an update matters, so the thing that installs the fix must not be able to go
+# down with the thing it fixes. `systemctl stop ffbox.target` leaves this and its timer alone.
+#
+# This unit IS the trigger. The timer starts it; a human runs
+# `sudo systemctl start ffbox-update.service`. One code path, so the rare one is not the
+# untested one.
+Description=ffbox self-update (fetch, fast-forward, restart)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Root, and the script drops to the checkout's owner for every git call (see as_owner in it).
+# The alternative — running as the owner with a NOPASSWD sudoers entry for systemctl — is a
+# permission file to maintain for nothing gained.
+Environment=FFBOX_UPDATE_REPO=@REPO@
+ExecStart=/bin/sh @UPDATE@
+
+# THE DRAIN CAN TAKE AN HOUR. DefaultTimeoutStartSec is 90 seconds, which would kill the
+# updater mid-drain on any busy machine and leave the drain flag behind (the script's EXIT trap
+# lifts it, but the update would never land). 8100 = the 7200s drain ceiling plus fifteen
+# minutes for the stop, merge, rebuild and restart. NOT `infinity`: a wedged updater holding
+# the flock forever is worse than one that gets killed and retried on the next tick.
+TimeoutStartSec=8100
+
+[Install]
+WantedBy=multi-user.target

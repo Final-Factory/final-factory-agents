@@ -53,7 +53,7 @@ slow one, 30-60 minutes, and it happens once.
 | `03-build.sh` | 3 — builds `ffbox:latest` from the GameCI image CI uses | no |
 | `04-warmLibrary.sh` | 4 — updates golden and builds its Unity `Library/` cache | no |
 | `05-discord-setup.sh` | 5 — state dir, database, config block for the Discord lanes | no (refuses sudo) |
-| `06-services.sh` | 6 — renders the units from `systemd/`, installs and starts `ffbox.target` | yes |
+| `06-services.sh` | 6 — renders the units from `systemd/`, installs and starts `ffbox.target`, enables `ffbox-update.timer` | yes |
 
 Everything ffbox owns on a machine lives in one directory:
 
@@ -62,6 +62,7 @@ Everything ffbox owns on a machine lives in one directory:
 ~/.config/ffbox/config.json        ffwatch + ffweb settings (lanes, ceilings, web_host/web_port)
 ~/.config/ffbox/discord/           the Discord CLI's home: config.json, cursors, doorbell, lock
 ~/.config/ffbox/discord.disabled   the kill switch
+~/.config/ffbox/update.disabled    pauses the self-update timer (see "Staying current")
 ~/ffbox-state/                     the database, blobs and per-conversation run directories
 ```
 
@@ -96,6 +97,7 @@ watch list.
 sudo systemctl stop ffbox.target      # stop all three  (the .target suffix is required)
 journalctl -u ffwatch -f              # or -u ffdiscord-listener, -u ffweb
 sh ffbox/06-services.sh                  # what is installed, enabled, running, or stale
+sh ffbox/restart_ffbox.sh                # restart all three, then report what came back
 touch ~/.config/ffbox/discord.disabled   # kill switch: ffwatch launches nothing
 ```
 
@@ -121,6 +123,42 @@ player messages, repo internals, the contents of files agents read, and raw mode
 Widen the bind only to a network you would hand all of that to, change the password when you
 do, and leave actions off (ffweb refuses `--enable-actions` on a non-loopback host unless
 `--allow-remote-actions` is given too).
+
+## Staying current
+
+The units run this checkout directly — `ExecStart` is `python3 <checkout>/ffbox/ffwatch.py run`
+— so **new code on disk is live at the next process start and not before**. Editing a file
+deploys nothing. This is not hypothetical: on 2026-08-22 the build server was found running
+ffwatch from a checkout twelve hours older than HEAD, and a guard committed at 16:46 was still
+not live at 20:41.
+
+`ffbox-update.timer` closes that gap. Every fifteen minutes it fetches `origin/master`, and if
+there is anything new it drains the pipeline, fast-forwards, acts on what the diff touched and
+restarts:
+
+```bash
+sudo systemctl start ffbox-update.service   # update now (the timer does exactly this)
+sudo sh ffbox/update_ffbox.sh --dry-run     # what would happen; changes nothing
+journalctl -u ffbox-update -f               # what it did
+touch ~/.config/ffbox/update.disabled       # pause updates while you work on the box
+```
+
+Four things worth knowing:
+
+- **It drains before it stops.** No new containers, then it waits (up to two hours) for the
+  ones already running to finish on their own. This matters because ffbox bind-mounts the
+  container's task script and `ffverify` from this checkout, live, for the whole run — a merge
+  mid-run really would change them underneath a container.
+- **It refuses a dirty working tree** and says so, rather than stashing or resetting. On a
+  machine where you are editing, updates stop until you commit.
+- **The diff decides the action.** A unit change re-runs `06-services.sh --install`; a change to
+  the image's own files re-runs `03-build.sh`; a plugin change re-runs `registerAgents.sh`.
+  A restart alone is only right for pure Python or shell changes.
+- **It is deliberately not part of `ffbox.target`.** `systemctl stop ffbox.target` leaves the
+  timer firing, so a commit that breaks ffwatch can be repaired by the next commit without
+  anyone touching the machine. There is no rollback, and that independence is why.
+
+Design and rationale: `design/self_update_design.txt`.
 
 ## How it fits together
 
@@ -466,6 +504,8 @@ because a moderation queue nobody can see is not a moderation queue.
 | `~/ffbox-state/conversations/<id>/runs/<run>/` | `job.json`, `stream.jsonl`, `result.json`, `verification.json`, `summary.md` |
 | `~/ffbox-state/outbound/<row>.md` | the overflow of a reply too long for one Discord message, attached to it |
 | `~/.config/ffbox/discord.disabled` | kill switch. While it exists, ffwatch neither launches a run nor sends a reply. Ingest keeps running, so nothing is lost. |
+| `~/.config/ffbox/draining` | drain flag. Launches pause; replies still go out. Written by the updater, lifted when it finishes. See "Staying current". |
+| `~/.config/ffbox/update.disabled` | pauses the self-update timer. Separate from the kill switch: pausing replies and pausing code updates are different intents. |
 
 ### Sending
 

@@ -159,6 +159,11 @@ DEFAULTS = {
     "state_dir": "~/ffbox-state",
     "events_path": os.path.join(FFDISCORD_HOME, "events.jsonl"),
     "kill_switch": "~/.config/ffbox/discord.disabled",
+    # The DRAIN switch, which is not the kill switch. kill_switch stops launches AND holds
+    # every outbound row; draining wants only the first, because the replies an in-flight run
+    # is still producing should reach Discord while the updater waits for it to end. Lives
+    # outside the checkout so a `git merge` cannot touch it. See design/self_update_design.txt.
+    "drain_switch": "~/.config/ffbox/draining",
 
     # external commands; None means "resolve at call time" (see ffdiscord_cmd / ffbox_cmd)
     "ffdiscord": None,
@@ -278,6 +283,7 @@ ENV_OVERRIDES = {
     "FFWATCH_TASK": ("task_script", str),
     "FFWATCH_PLUGINS_DIR": ("plugins_dir", str),
     "FFWATCH_KILL_SWITCH": ("kill_switch", str),
+    "FFWATCH_DRAIN_SWITCH": ("drain_switch", str),
     "FFWATCH_BASE_REF": ("base_ref", str),
     "FFWATCH_AGENT_SECS": ("agent_secs", int),
     "FFWATCH_WARMUP_SECS": ("warmup_secs", int),
@@ -345,6 +351,7 @@ def load_config():
         cfg["approve_before_send"] = os.environ["FFWATCH_APPROVE"] not in ("", "0", "false")
     cfg["state_dir"] = os.path.expanduser(cfg["state_dir"])
     cfg["kill_switch"] = os.path.expanduser(cfg["kill_switch"])
+    cfg["drain_switch"] = os.path.expanduser(cfg["drain_switch"])
     cfg["events_path"] = os.path.expanduser(cfg["events_path"])
     # The GitHub token is read from the ENVIRONMENT, not from the config file, so it is never
     # written to disk beside channel ids and never lands in a config a container could see. A
@@ -485,6 +492,28 @@ LANE_BY_KIND = {
     "suggestion": "triage",
     "directive": "dev",
 }
+
+# Kinds with NO Discord side. A prompt typed at this machine's shell has no thread and no
+# channel to answer — the record is the reply (see record_reply) — so nothing about it may
+# enter the Discord pipeline. Naming that once, here, is what lets the two places that have to
+# know agree without either re-deriving it: claim_turns, so the sweep never invents a turn for
+# a local conversation, and record_outbound, so nothing can queue a message for one.
+#
+# The test is NOT-IN this list rather than IN a list of Discord kinds, deliberately. A kind
+# added tomorrow is a Discord kind by default: guessing wrong that way queues a reply the
+# outbound guard then refuses, which is loud. Guessing wrong the other way would leave a lane
+# silently unclaimed, and a conversation that never gets a turn looks exactly like one nobody
+# has posted in.
+LOCAL_KINDS = ("shell",)
+
+
+def is_local_conversation(conv):
+    """True when this conversation has nowhere to post. Takes a row, a dict, or a bare kind."""
+    if conv is None:
+        return False
+    kind = conv if isinstance(conv, str) else conv["kind"]
+    return kind in LOCAL_KINDS
+
 
 TRIGGER_BY_KIND = {
     "shell": "shell_prompt",
@@ -976,6 +1005,7 @@ class Watcher:
         self._launches = []
         self._launch_lock = threading.Lock()
         self._kill_switch_logged = False
+        self._drain_logged = False
 
     # -- setup -----------------------------------------------------------------------------
 
@@ -994,6 +1024,17 @@ class Watcher:
         """design section 18: refuse to LAUNCH while the file exists. Ingest keeps running, so
         nothing is lost — the queue simply drains once the switch is removed."""
         return os.path.exists(self.cfg["kill_switch"])
+
+    def draining(self):
+        """Refuse to LAUNCH while the file exists, but keep sending. The updater writes it,
+        waits for the containers already running to finish on their own, and only then stops
+        the target — a container's task script and ffverify are bind-mounted from the checkout
+        and live for the whole run, so a merge underneath one really does change it mid-flight.
+
+        Narrower than killed() on purpose: a drain is a pause, not a stop. Turns keep being
+        claimed and queued, and the queue moves the moment the new code is up.
+        """
+        return os.path.exists(self.cfg["drain_switch"])
 
     def rate_limited(self, lane):
         limit = (self.cfg.get("rate_limits") or {}).get(lane)
@@ -1295,11 +1336,22 @@ class Watcher:
         A burst of three follow-ups posted while Claude is thinking becomes ONE turn, because
         the claim is a single UPDATE over every unclaimed message in the conversation. Nothing
         is dropped and nothing runs twice.
+
+        LOCAL CONVERSATIONS ARE NOT SWEPT. A shell prompt gets its turn from submit(), and an
+        imported run gets one from import_run_dir; both create it explicitly, alongside the
+        message row. This sweep exists for the opposite case — a message that arrived with no
+        turn attached, which for a Discord thread means a player is waiting. Reading a shell
+        prompt that way costs a container and a Claude run to answer a question already
+        answered, and used to end with a reply addressed at a channel id that does not exist.
+        Left to the writers to always link the message, this is one crash between two INSERTs
+        away from coming back, so the sweep refuses the whole kind rather than trusting them.
         """
         created = []
         rows = self.db.query(
             "SELECT DISTINCT m.conversation_id AS cid FROM message m"
-            " WHERE m.turn_id IS NULL AND m.direction='in' AND m.is_bot=0")
+            " JOIN conversation c ON c.id = m.conversation_id"
+            " WHERE m.turn_id IS NULL AND m.direction='in' AND m.is_bot=0"
+            f" AND c.kind NOT IN ({','.join('?' * len(LOCAL_KINDS))})", LOCAL_KINDS)
         for row in rows:
             conv = self.db.one("SELECT * FROM conversation WHERE id=?", (row["cid"],))
             if conv is None or conv["state"] in ("running", "queued", "closed"):
@@ -1413,6 +1465,14 @@ class Watcher:
                 self._kill_switch_logged = True
             return []
         self._kill_switch_logged = False
+        if self.draining():
+            if not self._drain_logged:
+                total, _ = self.running_counts()
+                log(f"draining ({self.cfg['drain_switch']}) — launching nothing; "
+                    f"{total} run(s) still in flight")
+                self._drain_logged = True
+            return []
+        self._drain_logged = False
         started = []
         queued = self.db.query(
             "SELECT t.*, c.state AS conv_state FROM turn t"
@@ -1924,7 +1984,20 @@ class Watcher:
 
     def record_outbound(self, run_row_id, conv_id, action, payload):
         """Persist before post. The row exists before anything reaches Discord, so a Discord
-        outage cannot lose a reply and the UI gets a moderation queue for free."""
+        outage cannot lose a reply and the UI gets a moderation queue for free.
+
+        A conversation with no Discord side is refused HERE, at the single point where anything
+        enters the queue, rather than at each caller. record_reply already returns early for
+        one, and that guard stays because it also skips the work of composing; this one is what
+        makes the invariant true for callers that do not exist yet. It returns None instead of
+        raising: the daemon reaches this from finish_run's bookkeeping, and a run whose work is
+        already done must not be lost to an exception over a message that should not be sent.
+        """
+        if is_local_conversation(self.db.one("SELECT kind FROM conversation WHERE id=?",
+                                             (conv_id,))):
+            log(f"WARNING: refusing to queue {action} for conversation {conv_id} — it has no "
+                f"Discord side. This is a bug in the caller; the record is the reply.")
+            return None
         nonce = str(uuid.uuid4())
         self.db.execute(
             "INSERT INTO outbound(run_id, conversation_id, action, payload_json, nonce, status,"
@@ -1947,7 +2020,7 @@ class Watcher:
         The ✅/❌ reaction on the triggering message is the harness's verdict on the run rather
         than the agent's, so it is recorded no matter what the turn said.
         """
-        if conv["kind"] == "shell":
+        if is_local_conversation(conv):
             # No Discord side to answer. The record IS the reply: the run row, the transcript
             # index and the result text are what the web page and the waiting terminal read.
             return 0
@@ -1979,18 +2052,18 @@ class Watcher:
                 payload["files"] = [spath]
             except OSError:
                 pass
-        self.record_outbound(run_row_id, conv["id"], "post", payload)
-        recorded += 1
+        if self.record_outbound(run_row_id, conv["id"], "post", payload):
+            recorded += 1
 
         trigger = job["messages"][-1]["discord_id"] if job["messages"] else None
         if trigger:
             # 059's report.reply did this and it earns its keep: a player watching the thread
             # sees the run land without reading the reply, and a ❌ is visible at a glance in a
             # channel full of green ticks.
-            self.record_outbound(run_row_id, conv["id"], "react", {
-                "channel": reply_channel(conv), "message": trigger,
-                "emoji": "✅" if terminal == "done" else "❌"})
-            recorded += 1
+            if self.record_outbound(run_row_id, conv["id"], "react", {
+                    "channel": reply_channel(conv), "message": trigger,
+                    "emoji": "✅" if terminal == "done" else "❌"}):
+                recorded += 1
         return recorded
 
 
@@ -2879,6 +2952,71 @@ class Watcher:
                 log(f"ERROR in pass: {type(exc).__name__}: {exc}")
             time.sleep(int(self.cfg["poll_secs"]))
 
+    # ======================================================================================
+    # drain and resume  (design/self_update_design.txt section 4)
+    # ======================================================================================
+
+    def drain(self, wait=False, timeout=None, on_wait=None):
+        """Stop launching, optionally wait for the containers already running to finish.
+
+        Returns the number of runs still in flight — 0 means the machine is quiet and safe to
+        stop. The updater calls this before it touches the checkout.
+
+        THREE WAYS THIS ENDS, and only one of them is the timeout:
+
+          * quiet — no run row has terminal_state NULL, which is exactly "no container this
+            machine still owns" (the predicate running_counts() already uses);
+          * NO DAEMON, NO DRAIN — nobody is launching, so there is nothing to wait for. Decided
+            with the same lock probe daemon_alive() uses for `ffbox "prompt"`, not by reading a
+            pid. This is the case that matters when ffwatch is the thing that is broken: a
+            daemon killed hard leaves non-terminal rows that nothing will ever settle, and
+            waiting the full ceiling for containers that died hours ago would stall the very
+            update meant to fix it;
+          * the ceiling — computed, not guessed. launch() gives its subprocess
+            warmup_secs + agent_secs + 300, so no run outlives that; the caller's default adds
+            slack on top. A run still alive past it is one ffwatch itself is already killing.
+
+        The flag goes down FIRST, before any waiting, so nothing new starts while we wait.
+        """
+        path = self.cfg["drain_switch"]
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(f"{now_iso()} pid {os.getpid()}\n")
+        total, _ = self.running_counts()
+        log(f"draining: {path} written; {total} run(s) in flight")
+        if not wait:
+            return total
+        if not self.daemon_alive():
+            log("draining: no ffwatch daemon holds the lock — nothing is launching; not waiting")
+            return 0
+        deadline = time.monotonic() + float(timeout) if timeout else None
+        while True:
+            total, _ = self.running_counts()
+            if total == 0:
+                log("draining: quiet")
+                return 0
+            if deadline is not None and time.monotonic() >= deadline:
+                log(f"draining: TIMED OUT with {total} run(s) still in flight")
+                return total
+            if on_wait:
+                on_wait(total)
+            time.sleep(min(10, int(self.cfg["poll_secs"]) or 1))
+
+    def resume(self):
+        """Remove the drain flag. Idempotent, and safe to call when no drain is in progress —
+        the updater calls it unconditionally at the top of every run precisely so a flag
+        stranded by a crash cannot leave this machine silently idle."""
+        path = self.cfg["drain_switch"]
+        if not os.path.exists(path):
+            return False
+        try:
+            os.remove(path)
+        except OSError as exc:
+            log(f"WARNING: could not remove {path}: {exc}")
+            return False
+        log(f"resumed: {path} removed")
+        return True
+
     def status(self):
         out = []
         convs = self.db.query(
@@ -2945,6 +3083,8 @@ class Watcher:
                 out.append(f"  turn {b['id']} lane={b['lane']}: {b['error']}")
         if self.killed():
             out.append(f"KILL SWITCH ACTIVE: {self.cfg['kill_switch']}")
+        if self.draining():
+            out.append(f"DRAINING (launching nothing): {self.cfg['drain_switch']}")
         return "\n".join(out)
 
 
@@ -3138,6 +3278,12 @@ def build_parser():
     sub.add_parser("run", help="the daemon: tail events.jsonl and schedule turns")
     sub.add_parser("status", help="conversations, in-flight runs, the outbound queue")
     sub.add_parser("send", help="flush the outbound queue once, then exit")
+    sp = sub.add_parser("drain", help="stop launching; --wait until the running containers end")
+    sp.add_argument("--wait", action="store_true",
+                    help="block until nothing is in flight (or --timeout expires)")
+    sp.add_argument("--timeout", type=int, default=7200,
+                    help="seconds to wait before giving up (default 7200)")
+    sub.add_parser("resume", help="remove the drain flag and start launching again")
     sp = sub.add_parser("approve", help="release outbound rows held for approval")
     sp.add_argument("id", nargs="+", type=int, help="outbound row id(s) from `ffwatch status`")
     sp = sub.add_parser("submit", help="run a prompt through the pipeline (the shell ingress)")
@@ -3179,6 +3325,16 @@ def main(argv=None):
         return 0
     if args.cmd == "send":
         print(f"sent {watcher.send_pending()} outbound row(s)")
+        return 0
+    if args.cmd == "drain":
+        # Exit 1 on a timeout so the updater can SAY it stopped a busy machine. It stops the
+        # target either way — see design/self_update_design.txt section 3, choice 3: the drain
+        # is an optimisation over a hard stop and is never allowed to block the update.
+        left = watcher.drain(wait=args.wait, timeout=args.timeout)
+        print(f"{left} run(s) in flight")
+        return 1 if left else 0
+    if args.cmd == "resume":
+        print("drain flag removed" if watcher.resume() else "no drain flag was set")
         return 0
     if args.cmd == "approve":
         done = watcher.approve(args.id)
