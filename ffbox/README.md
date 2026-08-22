@@ -36,12 +36,18 @@ slow one, 30-60 minutes, and it happens once.
 Three daemons — the gateway listener, the conversation manager, the web UI — under one target.
 The unit files live in `ffbox/systemd/` in git; nothing is rendered anywhere else.
 
+`sh ffbox/setup.sh` already did this as its last stage — installed the units and started the
+target, or printed the one command to finish it if it could not get root. By hand:
+
 ```bash
-sh ffbox/discord-setup.sh                             # state dir, db, config skeleton
-$EDITOR ~/.config/ffdiscord/config.json               # bot token, guild id, channels
-sudo sh ffbox/discord-setup.sh --install-units        # renders from git into /etc/systemd/system
-sudo systemctl enable --now ffbox.target              # all three, now and on every boot
+sh ffbox/discord-setup.sh                        # state dir, db, config skeleton, then:
+sudo sh ffbox/discord-setup.sh --install-units   # install from git, enable and start ffbox.target
 ```
+
+Nothing is read from Discord until a bot token exists, so starting the daemons first is safe.
+Put the token, guild id and channels in `~/.config/ffdiscord/config.json` (or `FFDISCORD_TOKEN`
+in `~/.config/ffbox/secrets.env`), add each watched channel to the `ffwatch` → `watch` block,
+then re-run `--install-units` so the listener picks up the new watch list.
 
 ```bash
 sudo systemctl stop ffbox.target      # stop all three  (the .target suffix is required)

@@ -4,8 +4,10 @@
 #   sh ffbox/discord-setup.sh                  provision (idempotent; safe to re-run)
 #   sh ffbox/discord-setup.sh --check          report what is and is not in place, change nothing
 #   sudo sh ffbox/discord-setup.sh --install-units
-#                                              install the systemd units into /etc/systemd/system
-#                                              straight from this checkout, and nothing else
+#                                              install the units into /etc/systemd/system from
+#                                              this checkout and start them; nothing else
+#   sudo sh ffbox/discord-setup.sh --install-units --no-enable
+#                                              install them but leave them stopped
 #   sh ffbox/discord-setup.sh --no-units       skip the systemd unit stage
 #
 # Everything here is re-runnable. It never overwrites a secrets file, never replaces an
@@ -49,11 +51,13 @@ STATE_DIR=${FFWATCH_STATE_DIR:-$HOME/ffbox-state}
 CHECK=0
 UNITS=1
 INSTALL_UNITS=0
+NO_ENABLE=0
 for arg in "$@"; do
     case "$arg" in
         --check)         CHECK=1 ;;
         --no-units)      UNITS=0 ;;
         --install-units) INSTALL_UNITS=1 ;;
+        --no-enable)     NO_ENABLE=1 ;;
         -h|--help)       sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)               echo "discord-setup.sh: unknown option $arg" >&2; exit 2 ;;
     esac
@@ -127,8 +131,22 @@ if [ "$INSTALL_UNITS" = 1 ]; then
     done
     systemctl daemon-reload
     did "daemon-reload done"
-    did "start everything:  sudo systemctl enable --now ffbox.target"
-    did "stop everything:   sudo systemctl stop ffbox.target"
+
+    # Installing a unit and then leaving it stopped is a half-finished job: nobody runs a setup
+    # script hoping to be handed one more command. Enabling is safe even before the bot token
+    # exists — with no token the listener exits and ffwatch has nothing to read — and the kill
+    # switch remains the way to stop the lanes without stopping the daemons.
+    if [ "$NO_ENABLE" = 1 ]; then
+        did "not enabled (--no-enable). Start it with: sudo systemctl enable --now ffbox.target"
+    else
+        systemctl enable --now ffbox.target
+        did "enabled and started ffbox.target (listener + ffwatch + ffweb)"
+        for u in ffdiscord-listener.service ffwatch.service ffweb.service; do
+            did "  $u: $(systemctl is-active "$u" 2>/dev/null | head -1)"
+        done
+        did "stop everything:  sudo systemctl stop ffbox.target"
+        did "logs:             journalctl -u ffwatch -f"
+    fi
     exit 0
 fi
 
@@ -291,30 +309,54 @@ else
         rmdir "$FFBOX_CONFIG/systemd" 2>/dev/null || true
         did "removed the old rendered copies under $FFBOX_CONFIG/systemd (git is the source now)"
     fi
-    INSTALLED=1
-    for u in $UNIT_NAMES; do
-        [ -f "$UNIT_DIR/$u" ] || INSTALLED=0
-    done
-    if [ "$INSTALLED" = 1 ]; then
-        did "units present in $UNIT_DIR — 'sh $0 --check' reports whether they match this checkout"
+    # Install and start it here rather than printing homework. Writing to /etc needs root, so
+    # this re-invokes itself through sudo — the ONE thing this script cannot do as your user.
+    # Everything above already ran, and --install-units deliberately does only the unit work,
+    # so nothing under $HOME ends up root-owned.
+    if [ "$(id -u)" = 0 ]; then
+        sh "$HERE/discord-setup.sh" --install-units
+    elif sudo -n true 2>/dev/null || [ -t 0 ]; then
+        did "installing and starting the units (needs root; sudo may prompt)"
+        if ! sudo sh "$HERE/discord-setup.sh" --install-units; then
+            did "that failed — run it yourself:"
+            did "  sudo sh $HERE/discord-setup.sh --install-units"
+        fi
     else
-        did "NOT INSTALLED. Install them straight from this checkout with:"
+        did "NOT INSTALLED — that needs root, and there is no terminal here to ask on. Run:"
         did "  sudo sh $HERE/discord-setup.sh --install-units"
     fi
-    did "start everything:  sudo systemctl enable --now ffbox.target"
-    did "stop everything:   sudo systemctl stop ffbox.target"
-    did "  (the .target suffix is required — a bare 'ffbox' means ffbox.service, which is"
-    did "   not a unit we ship)"
-    did "after ANY change here or in the watch block: re-run --install-units, then"
-    did "  sudo systemctl restart ffbox.target"
-    did "web UI:       http://127.0.0.1:8787 — reach it with:"
-    did "              ssh -N -L 8787:127.0.0.1:8787 $(hostname 2>/dev/null || echo thisbox)"
-    did "logs:         journalctl -u ffwatch -f       (or -u ffdiscord-listener, -u ffweb)"
+    did "after ANY change to the units or the watch block, re-run:"
+    did "  sudo sh $HERE/discord-setup.sh --install-units"
+    did "  ('$0 --check' flags an installed unit that no longer matches this checkout)"
+    did "web UI:  http://127.0.0.1:8787 — reach it with:"
+    did "         ssh -N -L 8787:127.0.0.1:8787 $(hostname 2>/dev/null || echo thisbox)"
     did "REMINDER: exactly one ffdiscord-listener per bot, across all machines."
 fi
 
 say "done"
+
+# What is actually left, and nothing that is not. The old closing block told everyone to install
+# units "once the bot token is in config.json", which conflated two unrelated things: the units
+# do not need a token, and a token does not need units.
+if ! python3 -c "
+import json,sys
+cfg=json.load(open(sys.argv[1]))
+sys.exit(0 if (cfg.get('token') or '').strip() else 1)" "$FFDISCORD_HOME/config.json" 2>/dev/null \
+   && [ -z "${FFDISCORD_TOKEN:-}" ]; then
+    say "NEXT: there is no bot token yet, so nothing will be read from Discord."
+    say "  1. put the bot token in $FFDISCORD_HOME/config.json (or FFDISCORD_TOKEN in"
+    say "     $FFBOX_CONFIG/secrets.env), plus guild_id and the channels to watch"
+    say "  2. add each watched channel to the ffwatch \"watch\" block in the same file"
+    say "  3. sudo sh $HERE/discord-setup.sh --install-units   # picks up the new watch list"
+    say "  4. ffdiscord doctor      # verifies the token, guild and channel permissions"
+else
+    say "NEXT: a token is configured. Check the bot can see what you expect:"
+    say "  ffdiscord doctor"
+    say "  sh $HERE/discord-setup.sh --check"
+fi
+say ""
 say "status:  python3 $HERE/ffwatch.py status"
-say "web UI:  http://127.0.0.1:8787            (read-only; runs as part of ffbox.target)"
+say "web UI:  http://127.0.0.1:8787            (read-only; part of ffbox.target)"
 say "         INTERNAL ONLY — it renders repo internals and raw model thinking."
-say "one pass by hand (stop the unit first):  python3 $HERE/ffwatch.py --dry-run once"
+say "kill switch: touch $KILL_SWITCH   (ffwatch keeps running, launches nothing)"
+say "one pass by hand (stop ffwatch first):  python3 $HERE/ffwatch.py --dry-run once"

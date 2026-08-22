@@ -2172,6 +2172,10 @@ def test_systemd_units_hang_off_one_target():
     # it meant two files on disk that could disagree — with systemd reading the stale one.
     check("there is an --install-units mode that installs straight from the checkout",
           "--install-units" in setup and 'install -m 0644 "$TMP/$u"' in setup, )
+    # Installing a unit and leaving it stopped is a half-finished job — the setup path enables
+    # and starts the target itself, and --no-enable is the opt-out.
+    check("installing also enables and starts the target",
+          "systemctl enable --now ffbox.target" in setup and "--no-enable" in setup, )
     check("nothing rendered is kept outside a temp dir — one source, no copy to go stale",
           'STAGE=$FFBOX_CONFIG' not in setup and 'render_units "$TMP"' in setup, )
     check("the install mode recovers the real user from SUDO_USER, since $HOME is root's "
