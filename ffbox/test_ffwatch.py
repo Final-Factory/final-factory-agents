@@ -30,6 +30,7 @@ import json
 import os
 import re
 import sqlite3
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -2122,6 +2123,100 @@ sys.exit(2)
 '''
 
 
+def test_harvest_excludes_what_was_already_dirty():
+    """A run clone inherits golden's working tree, dirt included, and harvest does `git add -A`.
+
+    Without a baseline, anything golden was already carrying is committed onto the work branch
+    as if the agent had done it, and "no changed files means no branch and no PR" can never
+    fire. This is live on this machine: .gitattributes marks LFS patterns in lowercase
+    (`*.png`), git matches attribute patterns case-sensitively on Linux and case-insensitively
+    on Windows, so 247 uppercase-extension assets (~52MB) read as modified here and as clean
+    there.
+
+    The parser is not re-implemented here — it is extracted from ffbox and run — because the
+    subtle case is a rename, whose `--porcelain -z` entry carries a SECOND NUL-terminated field
+    that must be consumed or every later entry is read one field out of step.
+    """
+    print("harvest: baseline dirt is excluded")
+    src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    check("ffbox records the baseline before the container starts",
+          'status --porcelain -z > "$OUT/base_dirty.z"' in src)
+    check("and unstages it again at harvest, tracked and untracked separately",
+          "restore --staged --source=HEAD" in src and "rm --cached --quiet --ignore-unmatch"
+          in src, )
+    parser = src.split("<<'PYBASE'")[1].split("PYBASE")[0]
+    check("the harvest carries a baseline parser to extract", "tracked, untracked" in parser)
+
+    root = os.path.join(TMPROOT, "harvest")
+    repo = os.path.join(root, "repo")
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(os.path.join(repo, "Assets", "Hovl Studio"))
+
+    def g(*args, **kw):
+        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, **kw)
+
+    subprocess.run(["git", "init", "-q", repo], check=True)
+    g("config", "user.email", "t@t"); g("config", "user.name", "t")
+    # A path with a space in it, because Final Factory has plenty and they are what breaks a
+    # naive newline-separated path list.
+    for path, body in ((os.path.join("Assets", "Hovl Studio", "Splash.PNG"), "real"),
+                       (os.path.join("Assets", "Belt.cs"), "code"),
+                       (os.path.join("Assets", "Renamed.txt"), "old")):
+        with open(os.path.join(repo, path), "w", encoding="utf-8") as fh:
+            fh.write(body)
+    g("add", "-A"); g("commit", "-qm", "base")
+
+    # Golden-style dirt: a staged binary, an untracked file, and a rename.
+    with open(os.path.join(repo, "Assets", "Hovl Studio", "Splash.PNG"), "w") as fh:
+        fh.write("CHANGED")
+    g("add", os.path.join("Assets", "Hovl Studio", "Splash.PNG"))
+    with open(os.path.join(repo, "Assets", "Stray.tmp"), "w") as fh:
+        fh.write("untracked")
+    g("mv", os.path.join("Assets", "Renamed.txt"), os.path.join("Assets", "RenamedNew.txt"))
+
+    base = os.path.join(root, "base_dirty.z")
+    with open(base, "wb") as fh:
+        fh.write(subprocess.run(["git", "-C", repo, "status", "--porcelain", "-z"],
+                                capture_output=True).stdout)
+
+    # The agent's one real edit.
+    with open(os.path.join(repo, "Assets", "Belt.cs"), "a", encoding="utf-8") as fh:
+        fh.write("\nagent edit\n")
+
+    tracked_z, untracked_z = os.path.join(root, "t.z"), os.path.join(root, "u.z")
+    g("add", "-A", "--", ".")
+    subprocess.run([sys.executable, "-c", parser, base, tracked_z, untracked_z], check=True)
+    for flag, path in (("tracked", tracked_z), ("untracked", untracked_z)):
+        if os.path.getsize(path) == 0:
+            continue
+        if flag == "tracked":
+            g("restore", "--staged", "--source=HEAD", f"--pathspec-from-file={path}",
+              "--pathspec-file-nul")
+        else:
+            g("rm", "--cached", "--quiet", "--ignore-unmatch", f"--pathspec-from-file={path}",
+              "--pathspec-file-nul")
+
+    staged = [ln for ln in g("diff", "--cached", "--name-only").stdout.splitlines() if ln]
+    check("only the agent's edit is committed", staged == ["Assets/Belt.cs"], staged)
+
+    # And the run that changes nothing must leave the index empty, or every idle turn opens a
+    # branch full of somebody else's textures.
+    g("reset", "-q")
+    g("checkout", "-q", "--", os.path.join("Assets", "Belt.cs"))
+    g("add", "-A", "--", ".")
+    for flag, path in (("tracked", tracked_z), ("untracked", untracked_z)):
+        if os.path.getsize(path) == 0:
+            continue
+        if flag == "tracked":
+            g("restore", "--staged", "--source=HEAD", f"--pathspec-from-file={path}",
+              "--pathspec-file-nul")
+        else:
+            g("rm", "--cached", "--quiet", "--ignore-unmatch", f"--pathspec-from-file={path}",
+              "--pathspec-file-nul")
+    idle = [ln for ln in g("diff", "--cached", "--name-only").stdout.splitlines() if ln]
+    check("an agent that changed nothing stages nothing, so no branch and no PR", not idle, idle)
+
+
 def test_systemd_units_hang_off_one_target():
     """One handle: `systemctl enable --now ffbox.target` runs the whole pipeline, and stopping
     the target stops all of it.
@@ -2257,6 +2352,7 @@ def main():
         test_container_argv_is_valid,
         test_allow_list_is_scope_not_a_boundary,
         test_systemd_units_hang_off_one_target,
+        test_harvest_excludes_what_was_already_dirty,
         test_failed_launch_frees_the_slot,
         test_transcript_reindex_is_stable,
         # phase 2
