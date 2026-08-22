@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """ffweb — the read-only web UI over ffwatch.db and the blob store (design section 19).
 
-  ffweb                       serve on http://127.0.0.1:8787 over ~/ffbox-state
+  ffweb                       serve on https://127.0.0.1:8787 over ~/ffbox-state
   ffweb --port 9000           somewhere else
   ffweb --enable-actions      also allow approve/reject on the outbound queue
+  ffweb --no-tls              plaintext, for a debugging session already inside a tunnel
 
-THREE THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the page is.
+FOUR THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the page is.
 
 1. ffwatch is the SOLE WRITER. Every connection opened here is `file:...?mode=ro` through a
    URI, so a stray UPDATE is refused by SQLite rather than caught by review, and
@@ -28,24 +29,41 @@ THREE THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the pa
    `attachment` row, and the resulting path is checked to be inside the blob directory before
    a byte is read.
 
-Standard library only — http.server and sqlite3, no Flask, no CDN, no fonts, no network. The
-CSS is inline and the page works with the machine unplugged.
+4. NOTHING IS SERVED UNTIL SOMEONE LOGS IN, AND THE WIRE IS TLS. Every route except the login
+   form goes through the session check, so an unauthenticated request is a 303 to /login and
+   never a partial page. The credential is one hardcoded pair (FFWEB_USER / FFWEB_PASSWORD
+   override it without a patch) compared with hmac.compare_digest, and a success mints a
+   random token held in memory only — restarting ffweb signs everyone out, which is the right
+   default on a box whose whole state is one database it can re-read. The certificate is
+   self-signed and generated into <state-dir>/tls on first start; the browser warning that
+   produces is ACCURATE, because nothing signed it. HSTS is deliberately not sent: it would
+   make that warning unbypassable on a certificate we already know is untrusted.
+
+Standard library only — http.server, sqlite3 and ssl, no Flask, no CDN, no fonts, no network.
+The one external program is `openssl`, run once to mint the self-signed certificate, because
+the standard library can serve TLS but cannot create an X.509 certificate. The CSS is inline
+and the page works with the machine unplugged.
 """
 
 from __future__ import annotations
 
 import argparse
+import hmac
 import html
+import http.cookies
 import ipaddress
 import json
 import mimetypes
 import os
 import re
+import secrets
 import socket
 import sqlite3
+import ssl
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -73,6 +91,26 @@ TEXTISH_TYPES = {"application/json", "application/xml", "application/x-ndjson"}
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
 
+# ---- the credential -----------------------------------------------------------------------
+# One hardcoded pair, on purpose and for now. There is exactly one operator, the page is
+# internal, and a user table would be a database this UI has spent its whole design NOT
+# writing to. The environment overrides both halves so a machine can change the password
+# without a patch, and secrets.env is already the file the units read for that sort of thing.
+# When a second person needs an account, this constant is the thing to replace — not to grow.
+AUTH_USER = os.environ.get("FFWEB_USER") or "Ben"
+AUTH_PASSWORD = os.environ.get("FFWEB_PASSWORD") or "FF is better than W0rkf0rce or mittens"
+
+SESSION_COOKIE = "ffweb_session"
+SESSION_TTL_SECS = 12 * 3600      # a working day; a restart ends every session anyway
+# A wrong password costs this much wall clock. Not a rate limiter — it is one constant-time
+# comparison against one password, so the only thing worth blunting is how fast a script on
+# the LAN can walk a dictionary through the form.
+LOGIN_FAILURE_DELAY_SECS = 0.5
+
+# Where the self-signed certificate lives, under the state directory, and how long it lasts.
+TLS_SUBDIR = "tls"
+TLS_DAYS = 3650
+
 # Rendered on every page. There is no external resource to allow, so the policy is simply
 # "nothing but this document", which also neuters any escaping bug that does slip through.
 CSP = ("default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
@@ -83,6 +121,170 @@ CSP = ("default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
 # ran more than a few dozen tool calls, which is most of them. This bounds the page instead.
 MAX_TREE_NODES = 20000
 TEXT_PREVIEW = 4000          # per transcript block; payload_json keeps the full fidelity
+
+
+# ------------------------------------------------------------------------------------------
+# sessions
+# ------------------------------------------------------------------------------------------
+
+class Sessions:
+    """Signed-in browsers, by opaque token, in memory.
+
+    In memory is the whole point. ffweb owns no writable state — the database is opened
+    read-only and ffwatch is the sole writer — so a session table on disk would be the first
+    thing this process ever wrote, and it would outlive the reason it existed. Losing every
+    session on restart is a feature: `systemctl restart ffweb` is also "sign everyone out".
+
+    ThreadingHTTPServer hands each request to its own thread, so the dict is under a lock.
+    Tokens are 32 bytes from secrets; expiry is monotonic, so a clock jump cannot extend one.
+    """
+
+    __slots__ = ("ttl", "_lock", "_tokens")
+
+    def __init__(self, ttl=SESSION_TTL_SECS):
+        self.ttl = ttl
+        self._lock = threading.Lock()
+        self._tokens = {}
+
+    def issue(self):
+        token = secrets.token_urlsafe(32)
+        with self._lock:
+            self._expire()
+            self._tokens[token] = time.monotonic() + self.ttl
+        return token
+
+    def valid(self, token):
+        if not token:
+            return False
+        with self._lock:
+            self._expire()
+            return token in self._tokens
+
+    def drop(self, token):
+        with self._lock:
+            self._tokens.pop(token, None)
+
+    def _expire(self):
+        now = time.monotonic()
+        for token in [t for t, exp in self._tokens.items() if exp <= now]:
+            del self._tokens[token]
+
+
+def credentials_ok(user, password):
+    """Constant-time check of both halves.
+
+    compare_digest on each rather than `==` on a tuple: the username is as much a secret as
+    anything else here, and an early-out on the first wrong character is the one bug this
+    function exists to not have.
+    """
+    user_ok = hmac.compare_digest((user or "").encode("utf-8"), AUTH_USER.encode("utf-8"))
+    pass_ok = hmac.compare_digest((password or "").encode("utf-8"),
+                                  AUTH_PASSWORD.encode("utf-8"))
+    return user_ok and pass_ok
+
+
+def safe_next(path):
+    """A post-login redirect target that cannot leave this origin.
+
+    `next` arrives in a query string, so it is a stranger's string in the same sense every
+    other value on this page is. Anything that is not a single-slash-rooted local path — a
+    scheme, a `//host` protocol-relative URL, a backslash Windows browsers fold to a slash —
+    becomes "/", because an open redirect on a login form is how a phishing page borrows a
+    real hostname.
+    """
+    if not path or not path.startswith("/") or path.startswith("//"):
+        return "/"
+    if "\\" in path or "\r" in path or "\n" in path:
+        return "/"
+    return path
+
+
+# ------------------------------------------------------------------------------------------
+# tls
+# ------------------------------------------------------------------------------------------
+
+def tls_paths(state_dir):
+    directory = os.path.join(os.path.expanduser(state_dir), TLS_SUBDIR)
+    return os.path.join(directory, "cert.pem"), os.path.join(directory, "key.pem")
+
+
+def cert_hostnames(host):
+    """The names to put in the certificate's SAN.
+
+    A browser has ignored CN since 2017, so a certificate with no subjectAltName is rejected
+    outright rather than merely warned about — which would look like "self-signed certificates
+    do not work" instead of "this one was minted wrong". Loopback, this machine's name and
+    whatever --host was given all go in, so the same file works for a tunnel and for the LAN
+    address the config asks to bind.
+    """
+    dns, ips = ["localhost"], ["127.0.0.1", "::1"]
+    for name in (host, socket.gethostname()):
+        if not name or name in ("0.0.0.0", "::"):
+            continue
+        try:
+            ipaddress.ip_address(name)
+        except ValueError:
+            if name not in dns:
+                dns.append(name)
+        else:
+            if name not in ips:
+                ips.append(name)
+    return ["DNS:" + d for d in dns] + ["IP:" + i for i in ips]
+
+
+def ensure_certificate(cert_path, key_path, host, log=None):
+    """Mint a self-signed certificate if one is not already there. Returns (created, note).
+
+    Shelling out to openssl is the concession this file makes to its standard-library rule:
+    ssl can SERVE a certificate but nothing in the standard library can CREATE one, and the
+    alternative is a cryptography dependency on a box whose whole point is that it installs
+    from a shell script. An existing pair is never touched — replacing an operator's real
+    certificate with a self-signed one because a flag defaulted is not a thing this should be
+    able to do — so pointing --tls-cert at a Let's Encrypt file just works.
+    """
+    if os.path.isfile(cert_path) and os.path.isfile(key_path):
+        return False, "existing"
+    if os.path.isfile(cert_path) != os.path.isfile(key_path):
+        raise RuntimeError(
+            f"only half a TLS pair exists ({cert_path} / {key_path}); remove the leftover "
+            "file, or pass --tls-cert/--tls-key at the real pair")
+    directory = os.path.dirname(cert_path) or "."
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    san = "subjectAltName=" + ",".join(cert_hostnames(host))
+    base = ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256",
+            "-days", str(TLS_DAYS), "-nodes", "-keyout", key_path, "-out", cert_path,
+            "-subj", "/CN=ffweb"]
+    attempts = [base + ["-addext", san], base]   # -addext wants openssl 1.1.1; then no SAN
+    last = ""
+    for cmd in attempts:
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=120)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(
+                f"cannot run openssl to mint a certificate ({type(exc).__name__}: {exc}). "
+                "Install openssl, point --tls-cert/--tls-key at a pair you already have, or "
+                "run with --no-tls behind an SSH tunnel.")
+        if proc.returncode == 0:
+            break
+        last = ((proc.stderr or "") + (proc.stdout or "")).strip()
+    else:
+        raise RuntimeError("openssl could not mint a certificate: " + short(last, 400))
+    try:
+        os.chmod(key_path, 0o600)
+    except OSError:  # pragma: no cover - a filesystem without modes
+        pass
+    if log:
+        log(f"ffweb: minted a self-signed certificate for {san.split('=', 1)[1]}\n"
+            f"       {cert_path}\n       {key_path}\n")
+    return True, "created"
+
+
+def make_ssl_context(cert_path, key_path):
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(cert_path, key_path)
+    return ctx
 
 
 # ------------------------------------------------------------------------------------------
@@ -410,6 +612,13 @@ details.sidechain > summary { cursor: pointer; color: #b9a; font-size: 12px; }
 img.blob { max-width: 100%; max-height: 480px; border: 1px solid #2b313b; border-radius: 3px; }
 .empty { color: #8f98a6; font-style: italic; }
 .note { color: #8f98a6; font-size: 12px; margin: 10px 0 18px; }
+form.logout { margin: 0 0 0 auto; }
+form.logout button { font-size: 12px; color: #8f98a6; }
+main.login { max-width: 420px; margin: 12vh auto 0; }
+form.login label { display: block; margin: 0 0 12px; font-size: 12px; color: #8f98a6; }
+form.login input { display: block; width: 100%; margin-top: 4px; padding: 6px 8px; }
+form.login button { width: 100%; margin-top: 6px; padding: 7px; }
+.badpass { color: #e99; margin: 0 0 12px; }
 """
 
 
@@ -422,9 +631,41 @@ def page(title, body_parts, banner=""):
         "<a href=\"/\">conversations</a><a href=\"/lanes\">lanes</a>"
         "<a href=\"/outbound\">outbound</a>"
         "<span class=\"warn\">internal only — repo internals and raw model thinking; "
-        "never quote this into Discord</span>" + banner + "</header><main>"
+        "never quote this into Discord</span>" + banner +
+        # POST, not a link: a GET that ends a session is a logout any page on the internet can
+        # trigger with an <img>. The same Origin check the action routes use covers this one.
+        "<form class=\"logout\" method=\"post\" action=\"/logout\">"
+        "<button type=\"submit\">sign out</button></form>"
+        "</header><main>"
         + "".join(body_parts) + "</main></body></html>"
     )
+
+
+def login_page(next_path="/", error=""):
+    """The one page served to a browser with no session.
+
+    It carries no navigation and reads nothing from the database — the whole point is that
+    nothing in ffwatch.db is on the wire before a password was right. `next` is round-tripped
+    through a hidden field so a deep link survives the sign-in, and it went through
+    safe_next() before it got here.
+    """
+    banner = ("<p class=\"badpass\">" + esc(error) + "</p>") if error else ""
+    return (
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>sign in — ffweb</title><style>" + STYLE + "</style></head><body>"
+        "<header><span class=\"brand\">ffweb</span>"
+        "<span class=\"warn\">internal only — sign in to continue</span></header>"
+        "<main class=\"login\"><h1>sign in</h1>" + banner +
+        "<form class=\"login\" method=\"post\" action=\"/login\">"
+        "<input type=\"hidden\" name=\"next\" value=" + attr(next_path) + ">"
+        "<label>user<input name=\"user\" autocomplete=\"username\" autofocus></label>"
+        "<label>password<input name=\"password\" type=\"password\" "
+        "autocomplete=\"current-password\"></label>"
+        "<button type=\"submit\">sign in</button></form>"
+        "<p class=\"note\">This page shows repo internals and raw model thinking. "
+        "Sessions end when ffweb restarts.</p>"
+        "</main></body></html>")
 
 
 def table(headers, rows):
@@ -547,11 +788,75 @@ class FFWebHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", CSP)
         self.send_header("Referrer-Policy", "no-referrer")
+        # Nothing here is cacheable once it is behind a login: a page held in the browser
+        # cache is a page the next person at this keyboard reads with the back button after
+        # someone signed out. There is no static asset to lose by saying this everywhere.
+        self.send_header("Cache-Control", "no-store")
+        # NOT Strict-Transport-Security. The certificate is self-signed, and HSTS is exactly
+        # the header that turns the browser's "proceed anyway" into a dead end.
         for key, value in extra:
             self.send_header(key, value)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    # -- sessions ------------------------------------------------------------------------
+
+    def _session_token(self):
+        raw = self.headers.get("Cookie")
+        if not raw:
+            return ""
+        try:
+            jar = http.cookies.SimpleCookie()
+            jar.load(raw)
+        except http.cookies.CookieError:
+            return ""
+        morsel = jar.get(SESSION_COOKIE)
+        return morsel.value if morsel else ""
+
+    def _authenticated(self):
+        return self.app.sessions.valid(self._session_token())
+
+    def _cookie_header(self, value, max_age):
+        """One Set-Cookie, built by hand because SimpleCookie predates SameSite.
+
+        HttpOnly keeps the token away from any script that ever does get onto the page;
+        SameSite=Lax is what stops another site's form POST arriving already signed in, and
+        still lets a link from a chat window land on a page rather than the login form.
+        Secure rides on whether we are actually on TLS — set unconditionally it would make
+        --no-tls silently unable to log in, which reads as "the login is broken".
+        """
+        parts = [f"{SESSION_COOKIE}={value}", "Path=/", "HttpOnly", "SameSite=Lax",
+                 f"Max-Age={max_age}"]
+        if self.app.secure_cookies:
+            parts.append("Secure")
+        return "; ".join(parts)
+
+    def _require_login(self, wanted):
+        """303 to the form, remembering where they were going."""
+        target = "/login"
+        wanted = safe_next(wanted)
+        if wanted not in ("/", "/login"):
+            target += "?next=" + urllib.parse.quote(wanted, safe="/?=&")
+        return self._redirect(target)
+
+    def _origin_ok(self):
+        """Refuse a POST that a page on another origin submitted to us.
+
+        Browsers send Origin on every cross-site form POST, so a mismatch is the signal.
+        Two things are accepted: an origin on the list main() built from the bind address,
+        and one that matches the Host header this very request carried — the second is what
+        keeps a machine reachable under a name the operator never put in the config, without
+        which signing in over a LAN DNS name would 403 on the login form itself.
+        """
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        origin = origin.rstrip("/")
+        if origin in self.app.self_origins:
+            return True
+        host = self.headers.get("Host")
+        return bool(host) and origin == f"{self.app.scheme}://{host}"
 
     def _error(self, code, message):
         self._send(code, page(f"{code}", [f"<h1>{esc(code)}</h1><p>{esc(message)}</p>"]))
@@ -576,6 +881,18 @@ class FFWebHandler(BaseHTTPRequestHandler):
         path = urllib.parse.unquote(parsed.path)
         query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
         app = self.app
+
+        # The login form is the only thing served without a session, and it reads nothing from
+        # the database. Everything past this point renders transcript_event, so the gate is
+        # here — one place, before the route table — rather than per handler.
+        wanted = safe_next((query.get("next") or ["/"])[0])
+        if path == "/login":
+            if self._authenticated():
+                return self._redirect(wanted)
+            return self._send(200, login_page(wanted))
+        if not self._authenticated():
+            full = parsed.path + (("?" + parsed.query) if parsed.query else "")
+            return self._require_login(full)
 
         if path == "/":
             return self._send(200, app.page_conversations(query))
@@ -606,6 +923,30 @@ class FFWebHandler(BaseHTTPRequestHandler):
     def _route_post(self):
         app = self.app
         path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+
+        # The body is read FIRST, whatever the verdict turns out to be. This is HTTP/1.1 with
+        # keep-alive: bytes left unread in the socket are the front of the next request.
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > 64 * 1024:
+            return self._error(413, "action body too large")
+        raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        form = urllib.parse.parse_qs(raw, keep_blank_values=True)
+
+        # A page on another origin can submit a form to 127.0.0.1 from a browser running on
+        # this box. Refusing a mismatched Origin is what stops a random tab approving a reply
+        # into Discord, or signing this browser out, or replaying a stolen password guess.
+        if not self._origin_ok():
+            return self._error(403, "cross-origin action refused")
+
+        if path == "/login":
+            return self._do_login(form)
+        if path == "/logout":
+            return self._do_logout()
+        if not self._authenticated():
+            # No `next`: a POST target is not somewhere a browser can be sent back to after
+            # the form, so the redirect goes to the login page plain and the operator resubmits.
+            return self._require_login("/")
+
         if path not in ("/actions/approve", "/actions/reject"):
             return self._error(404, "no such action")
         if not app.actions.enabled:
@@ -613,19 +954,6 @@ class FFWebHandler(BaseHTTPRequestHandler):
             # it needs to know the flag exists and that the page is otherwise read-only.
             return self._error(403, "actions are disabled; restart ffweb with --enable-actions "
                                     "(this page is read-only by default)")
-        # A page on another origin can submit a form to 127.0.0.1 from a browser running on
-        # this box. Browsers send Origin on cross-site form POSTs, so refusing a mismatched one
-        # is what stops a random tab approving a reply into Discord. Same-origin posts from our
-        # own form either match or, on old browsers, omit it.
-        origin = self.headers.get("Origin")
-        if origin and origin.rstrip("/") not in app.self_origins:
-            return self._error(403, "cross-origin action refused")
-
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > 64 * 1024:
-            return self._error(413, "action body too large")
-        raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
-        form = urllib.parse.parse_qs(raw, keep_blank_values=True)
         ids = []
         for value in form.get("id", []):
             if value.strip().isdigit():
@@ -640,6 +968,31 @@ class FFWebHandler(BaseHTTPRequestHandler):
             ok, out = app.actions.reject(ids, reason or None)
         note = ("ok" if ok else "failed") + ": " + short(out, 300)
         return self._redirect("/outbound?msg=" + urllib.parse.quote(note))
+
+    # -- login ---------------------------------------------------------------------------
+
+    def _do_login(self, form):
+        wanted = safe_next((form.get("next") or ["/"])[0])
+        user = (form.get("user") or [""])[0]
+        password = (form.get("password") or [""])[0]
+        if not credentials_ok(user, password):
+            # One message for both halves. "no such user" would turn the form into an oracle
+            # for which usernames exist, and there is nothing to gain by being helpful about a
+            # password on a page that says internal-only across the top of it.
+            time.sleep(LOGIN_FAILURE_DELAY_SECS)
+            self.log_message("failed login from %s", self.client_address[0])
+            return self._send(401, login_page(wanted, "wrong user or password"))
+        token = self.app.sessions.issue()
+        return self._send(303, b"", extra=[("Location", wanted),
+                                           ("Set-Cookie", self._cookie_header(
+                                               token, SESSION_TTL_SECS))])
+
+    def _do_logout(self):
+        self.app.sessions.drop(self._session_token())
+        # Max-Age=0 with the same attributes is what actually removes it; a bare name=value
+        # expiry sets a SECOND cookie on a different path and leaves the first one in place.
+        return self._send(303, b"", extra=[("Location", "/login"),
+                                           ("Set-Cookie", self._cookie_header("", 0))])
 
     # -- blobs ---------------------------------------------------------------------------
 
@@ -704,13 +1057,19 @@ def blob_content_type(filename, declared):
 
 class App:
     def __init__(self, db_path, blobs_dir, state_dir, ffwatch_py, enable_actions=False,
-                 quiet=False, origins=()):
+                 quiet=False, origins=(), scheme="https", sessions=None):
         self.db = ReadOnlyDb(db_path)
         self.blobs_dir = os.path.realpath(blobs_dir)
         self.state_dir = state_dir
         self.actions = FfwatchActions(ffwatch_py, state_dir, enabled=enable_actions)
         self.quiet = quiet
         self.self_origins = set(origins)
+        # The scheme this process is actually serving. It decides two things and only two:
+        # whether the session cookie carries Secure, and what a same-origin check compares
+        # the Host header against.
+        self.scheme = scheme
+        self.secure_cookies = scheme == "https"
+        self.sessions = sessions if sessions is not None else Sessions()
 
     # -- blobs ---------------------------------------------------------------------------
 
@@ -1225,15 +1584,62 @@ def pretty_json(raw):
 # server
 # ------------------------------------------------------------------------------------------
 
+# A browser that still has http:// bookmarked would otherwise get a dropped connection and a
+# message about the site not sending data, which reads as "the server is down" rather than
+# "the scheme changed". One plaintext line back is worth the twenty of code.
+_PLAINTEXT_BODY = b"ffweb speaks HTTPS on this port. Use https:// for this address.\n"
+PLAINTEXT_REPLY = (b"HTTP/1.1 400 Bad Request\r\n"
+                   b"Content-Type: text/plain; charset=utf-8\r\n"
+                   b"Content-Length: " + str(len(_PLAINTEXT_BODY)).encode() + b"\r\n"
+                   b"Connection: close\r\n\r\n" + _PLAINTEXT_BODY)
+
+
 class FFWebServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, addr, app):
+    # How long a client gets to finish a TLS handshake. The accept loop is single-threaded —
+    # requests fan out to threads only after get_request returns — so a client that opens a
+    # socket and says nothing would otherwise stall every other connection.
+    handshake_timeout = 15
+
+    def __init__(self, addr, app, ssl_context=None):
         if ":" in addr[0]:
             self.address_family = socket.AF_INET6
         self.app = app
+        self.ssl_context = ssl_context
         super().__init__(addr, FFWebHandler)
+
+    def get_request(self):
+        """Accept, then wrap in TLS.
+
+        Wrapping here rather than wrapping the listening socket once is what makes a failed
+        handshake survivable: socketserver catches OSError out of get_request and moves on,
+        and ssl.SSLError is an OSError, so a probe or a stale http:// tab drops that one
+        connection instead of taking down the accept loop.
+        """
+        sock, addr = super().get_request()
+        if self.ssl_context is None:
+            return sock, addr
+        sock.settimeout(self.handshake_timeout)
+        try:
+            if sock.recv(1, socket.MSG_PEEK) != b"\x16":   # not a TLS ClientHello
+                try:
+                    sock.sendall(PLAINTEXT_REPLY)
+                finally:
+                    sock.close()
+                raise ssl.SSLError("plaintext request on the TLS port")
+            wrapped = self.ssl_context.wrap_socket(sock, server_side=True)
+        except OSError:
+            try:
+                sock.close()
+            except OSError:
+                pass
+            raise
+        # Back to blocking for the request itself: a timeout left on here would cut off a
+        # keep-alive connection that is merely idle between page loads.
+        wrapped.settimeout(None)
+        return wrapped, addr
 
 
 def is_loopback(host):
@@ -1330,6 +1736,13 @@ def build_parser():
                         "is otherwise read-only)")
     p.add_argument("--allow-remote-actions", action="store_true",
                    help="required to combine --enable-actions with a non-loopback --host")
+    p.add_argument("--no-tls", dest="tls", action="store_false", default=True,
+                   help="serve plaintext http instead of https (only reasonable inside an "
+                        "SSH tunnel; the login password crosses the wire in the clear)")
+    p.add_argument("--tls-cert", help="certificate to serve (default <state-dir>/tls/cert.pem, "
+                                      "self-signed and generated on first start)")
+    p.add_argument("--tls-key", help="private key for --tls-cert "
+                                     "(default <state-dir>/tls/key.pem)")
     p.add_argument("--quiet", action="store_true", help="do not log every request")
     return p
 
@@ -1354,10 +1767,12 @@ def main(argv=None):
             "       have read that sentence and meant it anyway.\n")
         return 2
 
-    origins = {f"http://{args.host}:{args.port}", f"http://localhost:{args.port}",
-               f"http://127.0.0.1:{args.port}"}
+    scheme = "https" if args.tls else "http"
+    origins = {f"{scheme}://{args.host}:{args.port}", f"{scheme}://localhost:{args.port}",
+               f"{scheme}://127.0.0.1:{args.port}"}
     app = App(db_path, blobs, state_dir, os.path.abspath(args.ffwatch),
-              enable_actions=args.enable_actions, quiet=args.quiet, origins=origins)
+              enable_actions=args.enable_actions, quiet=args.quiet, origins=origins,
+              scheme=scheme)
     gaps = missing_columns(app.db)
     if gaps:
         sys.stderr.write(
@@ -1368,10 +1783,30 @@ def main(argv=None):
             " init` to apply them.\n")
         app.db.close()
         return 2
-    httpd = FFWebServer((args.host, args.port), app)
+
+    # Last thing before the socket, and deliberately after the schema check: a database that
+    # cannot be served should say so without leaving a fresh private key behind on disk.
+    ssl_context = None
+    if args.tls:
+        default_cert, default_key = tls_paths(state_dir)
+        cert = os.path.expanduser(args.tls_cert or default_cert)
+        key = os.path.expanduser(args.tls_key or default_key)
+        try:
+            ensure_certificate(cert, key, args.host, log=sys.stderr.write)
+            ssl_context = make_ssl_context(cert, key)
+        except (RuntimeError, OSError, ssl.SSLError) as exc:
+            sys.stderr.write(f"ffweb: cannot serve TLS: {exc}\n")
+            app.db.close()
+            return 2
+
+    httpd = FFWebServer((args.host, args.port), app, ssl_context=ssl_context)
     sys.stderr.write(
-        f"ffweb: http://{args.host}:{httpd.server_address[1]}/  db={db_path} (read-only)\n"
-        f"       blobs={blobs}  actions={'ON' if args.enable_actions else 'off'}\n"
+        f"ffweb: {scheme}://{args.host}:{httpd.server_address[1]}/  db={db_path} (read-only)\n"
+        f"       blobs={blobs}  actions={'ON' if args.enable_actions else 'off'}"
+        f"  login={AUTH_USER}\n" +
+        ("       the certificate is self-signed, so the browser warns once; that warning is\n"
+         "       correct — nothing signed it.\n" if args.tls else
+         "       --no-tls: the password and every page cross the wire in the clear.\n") +
         "       INTERNAL ONLY: this page shows repo internals and raw model thinking.\n")
     try:
         httpd.serve_forever()

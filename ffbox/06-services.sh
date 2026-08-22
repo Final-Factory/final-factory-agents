@@ -236,7 +236,7 @@ elif [ "$STALE" = 1 ]; then
     say "NEXT: the installed units no longer match this checkout. Re-install with"
     did "sudo sh $HERE/06-services.sh --install"
 else
-    did "web UI: http://$(web_bind | cut -d' ' -f1):$(web_bind | cut -d' ' -f2)"
+    did "web UI: https://$(web_bind | cut -d' ' -f1):$(web_bind | cut -d' ' -f2)  (sign in as Ben)"
     did "logs:   journalctl -u ffwatch -f   (or -u ffdiscord-listener, -u ffweb)"
 fi
 

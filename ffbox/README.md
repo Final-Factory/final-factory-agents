@@ -103,18 +103,24 @@ Re-run `06-services.sh --install` and `systemctl restart ffbox.target` after cha
 the bind address or the units; `--check` tells you when what is installed no longer matches
 this checkout.
 
-The page binds `127.0.0.1:8787` by default. To reach it from another machine, either tunnel
-(`ssh -N -L 8787:127.0.0.1:8787 <box>`) or bind it to an address on your network:
+The page binds `https://127.0.0.1:8787` by default. To reach it from another machine, either
+tunnel (`ssh -N -L 8787:127.0.0.1:8787 <box>`) or bind it to an address on your network:
 
 ```json
 "ffwatch": { "web_host": "192.168.51.10", "web_port": 8787 }
 ```
 
-then re-run `sudo sh ffbox/06-services.sh --install` and restart. **The page has no authentication** — whoever reaches
-the port reads player messages, repo internals, the contents of files agents read, and raw
-model thinking. Widen it only to a network you would hand all of that to, and leave actions off
-(ffweb refuses `--enable-actions` on a non-loopback host unless `--allow-remote-actions` is
-given too).
+then re-run `sudo sh ffbox/06-services.sh --install` and restart. **The page is behind a
+login** — one hardcoded account, `Ben`, overridable per machine with `FFWEB_USER` /
+`FFWEB_PASSWORD` in `secrets.env` — **and it is served over TLS** with a self-signed
+certificate minted into `~/ffbox-state/tls` on first start. Your browser will warn about that
+certificate once, and the warning is accurate: nothing signed it.
+
+One password is still a thin thing to hold a network off with, and whoever gets past it reads
+player messages, repo internals, the contents of files agents read, and raw model thinking.
+Widen the bind only to a network you would hand all of that to, change the password when you
+do, and leave actions off (ffweb refuses `--enable-actions` on a non-loopback host unless
+`--allow-remote-actions` is given too).
 
 ## How it fits together
 
@@ -532,14 +538,16 @@ is the host's, composed from the structured verdict.
 ### The web UI (`ffweb`)
 
 ```bash
-python3 ffbox/ffweb.py                       # http://127.0.0.1:8787
+python3 ffbox/ffweb.py                       # https://127.0.0.1:8787
 python3 ffbox/ffweb.py --port 9000 --quiet
+python3 ffbox/ffweb.py --no-tls              # plaintext, only sane inside an SSH tunnel
 sudo systemctl enable --now ffbox.target     # normally: it comes up with the pipeline
 ```
 
 A page over the same database, and nothing else: no build step, no package manager, no CDN,
-no web font. It is `http.server` plus `sqlite3`, the CSS is inline, and it renders correctly
-with the machine unplugged.
+no web font. It is `http.server` plus `sqlite3` plus `ssl`, the CSS is inline, and it renders
+correctly with the machine unplugged. The one external program is `openssl`, run once to mint
+the certificate, because the standard library can serve TLS but cannot create an X.509.
 
 | route | what it is |
 |---|---|
@@ -549,6 +557,7 @@ with the machine unplugged.
 | `/lanes` | cost, tokens and durations per lane |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
 | `/blob/<sha256>` | one content-addressed attachment |
+| `/login` | the only route served without a session; `POST /logout` ends one |
 
 **It is read-only, and ffwatch stays the sole writer.** The connection is opened
 `file:…?mode=ro` through a URI with `PRAGMA query_only` on top, so a write is refused by SQLite
@@ -560,8 +569,25 @@ thing the UI can change is the outbound queue, and it does not change it: `--ena
 and the retry bookkeeping already live, and it is what lets the page move off this box later
 without the database moving with it.
 
-**It is internal-only, has no authentication, and none of its text is ever reused in a Discord
-post.** `transcript_event` holds repo internals, the contents of files the agent read, and raw
+**Nothing is served until someone signs in, and the wire is TLS.** Every route except the
+login form goes through the session check, so an unauthenticated request is a `303` to
+`/login` and never a partial page. The credential is one hardcoded pair compared with
+`hmac.compare_digest`; `FFWEB_USER` and `FFWEB_PASSWORD` override both halves without a patch,
+which is what `secrets.env` is for. A success mints a random token held **in memory only**, so
+`systemctl restart ffweb` also means "sign everyone out" — deliberate, on a process whose whole
+design says it writes nothing to disk. The session cookie is `HttpOnly`, `SameSite=Lax` and
+`Secure` when TLS is on, and every POST — the actions, the sign-in and the sign-out alike —
+refuses a mismatched `Origin`.
+
+The certificate is self-signed, generated into `<state-dir>/tls` on first start with a SAN
+covering loopback, this machine's name and whatever `--host` was given. `--tls-cert` /
+`--tls-key` point at a real pair instead, and an existing pair is never overwritten. HSTS is
+deliberately **not** sent: on a certificate we know is untrusted, it would turn the browser's
+"proceed anyway" into a dead end. A stale `http://` bookmark gets one plaintext line back
+saying so rather than a dropped connection.
+
+**It is internal-only, and none of its text is ever reused in a Discord post.**
+`transcript_event` holds repo internals, the contents of files the agent read, and raw
 model thinking. That is why the bind address defaults to `127.0.0.1` everywhere it is decided —
 the CLI flag, the `ffwatch.web_host` config key, and the fallback ffweb uses when there is no
 config to read. An SSH tunnel (`ssh -N -L 8787:127.0.0.1:8787 <box>`) leaks nothing; a LAN
@@ -579,8 +605,10 @@ served with a content type we chose rather than the one the upload claimed, so a
 
 Offline tests: `python3 ffbox/test_ffweb.py`. They start the real server on an ephemeral
 loopback port and fetch over a real socket — the read-only enforcement, the traversal
-refusals, the content types and the mtime only exist on the wire — and build their fixture by
-calling ffwatch's own schema, so the two cannot drift.
+refusals, the content types, the session cookie and the mtime only exist on the wire — and
+build their fixture by calling ffwatch's own schema, so the two cannot drift. The TLS cases
+mint a real certificate and verify it against its own file with hostname checking on, which is
+what would fail if the SAN were ever dropped.
 
 ## Known gaps
 
