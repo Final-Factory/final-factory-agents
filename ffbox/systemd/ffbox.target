@@ -1,0 +1,24 @@
+[Unit]
+# ONE HANDLE FOR THE WHOLE PIPELINE.
+#
+#   sudo systemctl enable --now ffbox.target     start now, and on every boot
+#   sudo systemctl stop ffbox.target             stop all three
+#   sudo systemctl restart ffbox.target          after a config change
+#   systemctl status 'ff*'                       what is actually running
+#
+# Note the `.target` suffix: a bare `systemctl start ffbox` looks for ffbox.SERVICE, which does
+# not exist. That is systemd's default, not something this file can change.
+#
+# The three services are pulled in by Wants= here rather than by their own [Install] sections,
+# so starting this target starts all of them whether or not they were individually enabled.
+# Each one carries PartOf=ffbox.target, which is what makes a stop or restart of the target
+# propagate down to them.
+#
+# Wants= and not Requires=: a failed web UI must never take the conversation pipeline with it.
+# The pipeline is the product; the page is a window onto it.
+Description=ffbox Discord pipeline (listener + conversation manager + web UI)
+Wants=ffdiscord-listener.service ffwatch.service ffweb.service
+After=ffdiscord-listener.service ffwatch.service ffweb.service
+
+[Install]
+WantedBy=multi-user.target

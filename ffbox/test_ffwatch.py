@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -2121,6 +2122,56 @@ sys.exit(2)
 '''
 
 
+def test_systemd_units_hang_off_one_target():
+    """One handle: `systemctl enable --now ffbox.target` runs the whole pipeline, and stopping
+    the target stops all of it.
+
+    Three mistakes are cheap to make here and silent when made, so they are pinned:
+      * a service that the target does not Want never starts with it;
+      * a service without PartOf=ffbox.target is not stopped when the target stops;
+      * StartLimit* under [Service] is IGNORED by systemd with only a log line — the same as
+        having no restart ceiling at all, which is how a revoked token turns into a crash loop
+        against Discord's gateway.
+    """
+    print("systemd: one target, three services")
+    unit_dir = os.path.join(HERE, "systemd")
+    services = ["ffdiscord-listener.service", "ffwatch.service", "ffweb.service"]
+    target = open(os.path.join(unit_dir, "ffbox.target"), encoding="utf-8").read()
+
+    for name in services:
+        check(f"{name} is Wanted by the target, so it starts with it", name in target, target)
+    check("the target installs into multi-user.target, so it survives a reboot with nobody "
+          "logged in", "WantedBy=multi-user.target" in target, target)
+
+    for name in services:
+        body = open(os.path.join(unit_dir, name), encoding="utf-8").read()
+        # Split on the SECTION HEADER, not the first occurrence of the string: these units
+        # discuss "[Service]" in their own comments, and splitting on that lands mid-comment.
+        unit_section = re.split(r"^\[Service\]$", body, flags=re.M)[0]
+        check(f"{name} is PartOf the target, so a stop propagates to it",
+              "PartOf=ffbox.target" in unit_section, unit_section)
+        check(f"{name} installs under the target, not default.target",
+              "WantedBy=ffbox.target" in body and "WantedBy=default.target" not in body, body)
+        check(f"{name} runs as a named user rather than root",
+              "User=@USER@" in body and "Group=@GROUP@" in body, body)
+        check(f"{name} has no %h, which does NOT mean the user's home in a system unit",
+              "%h" not in body, body)
+        for key in ("StartLimitIntervalSec", "StartLimitBurst"):
+            check(f"{name} keeps {key} in [Unit], where systemd actually reads it",
+                  key in unit_section, unit_section)
+        check(f"{name} restarts on its own", "Restart=always" in body, body)
+
+    # The web UI is not optional any more (2026-08-22): the outbound queue, the run transcripts
+    # and the verification rows are only legible through it.
+    check("ffweb is part of the pipeline rather than an extra someone remembers to enable",
+          "ffweb.service" in target)
+    setup = open(os.path.join(HERE, "discord-setup.sh"), encoding="utf-8").read()
+    check("setup renders the units without needing root",
+          "NOT INSTALLED" in setup and "sudo install -m 0644" in setup, )
+    for token in ("@USER@", "@GROUP@", "@HOME@", "@FFWATCH@", "@FFWEB@", "@CHANNELS@"):
+        check(f"setup substitutes {token}", f"s|{token}|" in setup, )
+
+
 def test_allow_list_is_scope_not_a_boundary():
     """The allow list must never be leaned on as containment, and this records why.
 
@@ -2187,6 +2238,7 @@ def main():
         test_missing_transcript_falls_back,
         test_container_argv_is_valid,
         test_allow_list_is_scope_not_a_boundary,
+        test_systemd_units_hang_off_one_target,
         test_failed_launch_frees_the_slot,
         test_transcript_reindex_is_stable,
         # phase 2

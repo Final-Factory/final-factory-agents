@@ -321,10 +321,29 @@ record says why — a failure to decide never widens capability.
 Set it up with:
 
 ```bash
-sh ffbox/discord-setup.sh          # state dir, schema, config block, systemd user units
+sh ffbox/discord-setup.sh          # state dir, schema, config block, renders the systemd units
 sh ffbox/discord-setup.sh --check  # report, change nothing
 python3 ffbox/ffwatch.py status
 ```
+
+The units are **system** units, not user units — a build server reboots with nobody logged in,
+and a user unit needs `loginctl enable-linger` to survive that. `discord-setup.sh` renders them
+from the templates in `ffbox/systemd/` into `~/.config/ffbox/systemd/` (no root needed) and
+prints the two commands that install them. All three hang off one target, so there is one handle:
+
+```bash
+sudo install -m 0644 ~/.config/ffbox/systemd/ffbox.target ~/.config/ffbox/systemd/*.service \
+     /etc/systemd/system/ && sudo systemctl daemon-reload
+sudo systemctl enable --now ffbox.target   # listener + ffwatch + ffweb, now and on every boot
+sudo systemctl stop ffbox.target           # all three
+journalctl -u ffwatch -f
+```
+
+The `.target` suffix is required: a bare `systemctl start ffbox` looks for `ffbox.service`,
+which is not a unit we ship. They run as the invoking user rather than root, which is the
+identity that already holds the docker group, the NOPASSWD `zfs` rules ffbox needs for its
+clones, and the Claude credential. `ffweb` is **not optional** — it comes up with the pipeline,
+because a moderation queue nobody can see is not a moderation queue.
 
 | path | contents |
 |---|---|
@@ -408,7 +427,7 @@ is the host's, composed from the structured verdict.
 ```bash
 python3 ffbox/ffweb.py                       # http://127.0.0.1:8787
 python3 ffbox/ffweb.py --port 9000 --quiet
-systemctl --user enable --now ffweb          # installed by discord-setup.sh
+sudo systemctl enable --now ffbox.target     # normally: it comes up with the pipeline
 ```
 
 A page over the same database, and nothing else: no build step, no package manager, no CDN,
