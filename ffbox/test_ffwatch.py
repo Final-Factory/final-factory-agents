@@ -2218,6 +2218,81 @@ def test_harvest_excludes_what_was_already_dirty():
     check("an agent that changed nothing stages nothing, so no branch and no PR", not idle, idle)
 
 
+def test_shell_is_an_ingress_not_a_second_pipeline():
+    """`ffbox "prompt"` produces the SAME rows a Discord message does.
+
+    It used to clone a workspace and run a container on its own, touching none of the database —
+    which is why a shell run was invisible on the web page. The point of routing it here is that
+    there is one path by which Claude is invoked; the front door only decides what goes in.
+    """
+    print("shell: one pipeline, several front doors")
+    case = Case("shellingress")
+    turn_id = case.watcher.submit("what does the merger do when both inputs saturate?",
+                                  unity=False)
+    turn = case.watcher.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
+    conv = case.watcher.db.one("SELECT * FROM conversation WHERE id=?",
+                               (turn["conversation_id"],))
+    check("a shell prompt becomes a conversation, a message and a queued turn",
+          conv["kind"] == "shell" and turn["status"] == "queued" and turn["lane"] == "shell",
+          (conv["kind"], turn["status"], turn["lane"]))
+    check("it is not classified — the person typing already has a login here",
+          json.loads(turn["classification_json"])["source"] == "shell",
+          turn["classification_json"])
+    check("--no-unity survives to the turn as an option",
+          json.loads(turn["options_json"])["unity"] is False, turn["options_json"])
+
+    case.watcher.once()
+    turn = case.watcher.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
+    run = case.watcher.db.one("SELECT * FROM run WHERE turn_id=?", (turn_id,))
+    check("the ordinary scheduler runs it", turn["status"] == "done", turn["status"])
+    check("and it lands in the run table like any other run",
+          run is not None and run["terminal_state"] == "done", run)
+    check("with no Unity, because the submission said so", not run["unity"], run["unity"])
+
+    job = json.load(open(os.path.join(os.path.dirname(run["stream_path"]), "job.json"),
+                         encoding="utf-8"))
+    check("the shell lane gets Bash outright, not a list of program prefixes",
+          "Bash" in job["capabilities"]["allowed"], job["capabilities"]["allowed"])
+    check("no JSON schema is forced: a person is reading this in a terminal",
+          job["verdict_schema"] is None, job["verdict_schema"])
+    # Measured, not assumed: with the Discord framing in place, a shell prompt asking which file
+    # defines something came back as a POLICY REFUSAL addressed to a player, because the
+    # answerer role forbids naming repo internals to Discord users.
+    check("the prompt carries no Discord framing and no answerer role",
+          "<discord>" not in job["prompt"] and "ff-discord" not in (job["prompt"] or ""),
+          job["prompt"][:200])
+    check("and the ff-discord plugin is not mounted for it",
+          job["plugin_dir"] is None, job["plugin_dir"])
+    check("nothing is queued for Discord, because there is no thread to answer",
+          not case.rows("SELECT * FROM outbound"), case.rows("SELECT * FROM outbound"))
+
+
+def test_past_standalone_runs_import():
+    """The runs from before the shell was an ingress are folded in, once, idempotently."""
+    print("shell: importing older standalone runs")
+    case = Case("shellimport")
+    root = os.path.join(TMPROOT, "oldruns", "20260820-035053-432324")
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, "prompt.txt"), "w", encoding="utf-8") as fh:
+        fh.write("Reply with exactly: hello world")
+    with open(os.path.join(root, "claude.log"), "w", encoding="utf-8") as fh:
+        fh.write("hello world")
+
+    turn_id = case.watcher.import_run_dir(root)
+    check("the run becomes a conversation with a completed turn", turn_id is not None)
+    run = case.watcher.db.one("SELECT * FROM run WHERE turn_id=?", (turn_id,))
+    events = case.rows("SELECT * FROM transcript_event WHERE run_id=? ORDER BY seq",
+                       (run["id"],))
+    check("the prompt and the answer become transcript rows the page already knows how to draw",
+          [e["type"] for e in events] == ["user", "assistant"], [e["type"] for e in events])
+    check("the answer is the one the run actually produced",
+          events[1]["text"] == "hello world", events[1]["text"])
+    check("re-importing the same directory does nothing",
+          case.watcher.import_run_dir(root) is None)
+    check("a directory with no prompt is skipped rather than half-imported",
+          case.watcher.import_run_dir(os.path.join(TMPROOT, "oldruns")) is None)
+
+
 def test_config_lives_under_ffbox():
     """One directory owns this machine's ffbox state, and the pre-move layout still reads.
 
@@ -2445,6 +2520,8 @@ def main():
         test_missing_transcript_falls_back,
         test_container_argv_is_valid,
         test_allow_list_is_scope_not_a_boundary,
+        test_shell_is_an_ingress_not_a_second_pipeline,
+        test_past_standalone_runs_import,
         test_config_lives_under_ffbox,
         test_systemd_units_hang_off_one_target,
         test_harvest_excludes_what_was_already_dirty,

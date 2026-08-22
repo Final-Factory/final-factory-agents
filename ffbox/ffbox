@@ -2,6 +2,11 @@
 #
 # ffbox — hand a prompt to Claude, running one-shot inside a disposable Final Factory container.
 #
+# A plain prompt is an INGRESS: it is submitted to ffwatch as a turn, the same as a Discord
+# message, and ffwatch launches this script again in executor mode to do the work. One pipeline,
+# several front doors — so a shell run gets the same ceilings, kill switch, transcript index and
+# web page as everything else. --direct opts out; --task/--job-file IS executor mode.
+#
 #   ffbox "make the belt merger respect item priority"
 #   ffbox --no-unity "summarise how the save migration system works"
 #   ffbox --keep --prompt-file ./task.md
@@ -26,6 +31,7 @@ KEEP=0
 UNITY=1
 OUTPUT_FORMAT=text
 PROMPT=
+DIRECT=0
 PROMPT_FILE=
 REF=
 BRANCH=
@@ -53,6 +59,9 @@ usage() {
 
 Options:
   --prompt-file FILE   Read the prompt from FILE instead of the command line.
+  --direct             Do not route the prompt through ffwatch; clone and run right here.
+                       Skips the database, the ceilings and the web page. For bootstrapping a
+                       machine and for debugging the container itself.
   --no-unity           Skip Unity activation. Use for read-only or code-only prompts; it
                        consumes no activation seat and starts much faster.
   --keep               Leave the ZFS clone and its mountpoint in place for inspection.
@@ -100,6 +109,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --prompt-file)    PROMPT_FILE=${2:?--prompt-file needs a path}; shift 2 ;;
         --no-unity)       UNITY=0; shift ;;
+        --direct)         DIRECT=1; shift ;;
         --keep)           KEEP=1; shift ;;
         --json)           OUTPUT_FORMAT=stream-json; shift ;;
         --image)          IMAGE=${2:?--image needs a name}; shift 2 ;;
@@ -163,6 +173,26 @@ if [ -z "$TASK" ] && [ -z "${PROMPT// }" ]; then
     echo "ffbox: no prompt given" >&2
     usage >&2
     exit 2
+fi
+
+# --- one pipeline, several front doors ------------------------------------------------------------
+# A plain prompt is an INGRESS, not an execution: it goes to ffwatch as a turn, exactly as a
+# Discord message does, and ffwatch launches this same script in executor mode (--task/--job-file)
+# to do the work. That is what puts a shell run on the web page, under the same ceilings, kill
+# switch, transcript index and recovery as everything else — one path by which Claude is invoked.
+#
+# Executor mode (--task or --job-file present) never routes: that IS the run ffwatch asked for,
+# and routing it would recurse. --direct forces the old behaviour for bootstrapping and for
+# debugging the container itself, and is what warmLibrary.sh and import-project.sh use.
+FFBOX_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+FFWATCH_PY=${FFWATCH_PY:-$FFBOX_DIR/ffwatch.py}
+if [ "$DIRECT" = 0 ] && [ -z "$TASK" ] && [ -z "$JOB_FILE" ] && [ -r "$FFWATCH_PY" ]; then
+    ROUTE=("python3" "$FFWATCH_PY" "submit" "--wait")
+    [ "$UNITY" = 1 ] || ROUTE+=("--no-unity")
+    [ -z "$REF" ] || ROUTE+=("--ref" "$REF")
+    [ -z "$BRANCH" ] || ROUTE+=("--branch" "$BRANCH")
+    ROUTE+=("$PROMPT")
+    exec "${ROUTE[@]}"
 fi
 
 # --- secrets ------------------------------------------------------------------------------------
