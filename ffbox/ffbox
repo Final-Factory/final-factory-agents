@@ -208,7 +208,7 @@ fi
 # --- preflight ------------------------------------------------------------------------------------
 command -v docker >/dev/null || { echo "ffbox: docker not found" >&2; exit 127; }
 docker image inspect "$IMAGE" >/dev/null 2>&1 || {
-    echo "ffbox: image '$IMAGE' not built. Run: ffbox/build.sh" >&2
+    echo "ffbox: image '$IMAGE' not built. Run: ffbox/03-build.sh" >&2
     exit 69
 }
 [ -d "$GOLDEN_MNT" ] || { echo "ffbox: golden checkout missing at $GOLDEN_MNT" >&2; exit 69; }
@@ -328,7 +328,7 @@ if [ -d "$MNT/.git" ]; then
     # .gitattributes marks LFS patterns in lowercase (`*.png`), git matches attribute patterns
     # case-sensitively on Linux and case-insensitively on Windows, so every `.PNG`/`.JPG`/`.TGA`/
     # `.PSD`/`.OBJ` is an LFS file on the Windows machines that committed it and a plain binary
-    # here. `git lfs pull` in warmLibrary.sh then writes real content over the pointers.
+    # here. `git lfs pull` in 04-warmLibrary.sh then writes real content over the pointers.
     #
     # Recording the baseline costs one `git status` (measured at 0.09s on golden, whose stat
     # cache is warm) and makes the harvest immune to ANY pre-dirty golden, not just this one.

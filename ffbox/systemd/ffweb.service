@@ -1,12 +1,12 @@
 [Unit]
 # The read-only web UI over ffwatch.db (design section 19).
 #
-# @FFWEB@ is substituted with the absolute path to ffbox/ffweb.py by discord-setup.sh — this
+# @FFWEB@ is substituted with the absolute path to ffbox/ffweb.py by 06-services.sh — this
 # repo can be cloned anywhere, so the unit cannot carry a fixed path. Re-run
-# `sh ffbox/discord-setup.sh` after moving the checkout.
+# `sudo sh ffbox/06-services.sh --install` after moving the checkout.
 #
 # THE BIND ADDRESS COMES FROM THE CONFIG (ffwatch.web_host, default 127.0.0.1) and is rendered
-# in here by discord-setup.sh. The page renders transcript_event, which holds repo internals,
+# in here by 06-services.sh. The page renders transcript_event, which holds repo internals,
 # file contents the agent read and raw model thinking, alongside Discord message text, and it
 # HAS NO AUTHENTICATION: whoever reaches the port reads all of it. On a laptop leave it on
 # loopback and use `ssh -N -L 8787:127.0.0.1:8787 thisbox`. On a build server people work

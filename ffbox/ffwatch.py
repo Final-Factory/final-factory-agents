@@ -205,7 +205,7 @@ DEFAULTS = {
     },
 
     # The web page's bind address, read by ffweb and rendered into ffweb.service by
-    # discord-setup.sh so both agree. 127.0.0.1 is the safe default and the right answer on a
+    # 06-services.sh so both agree. 127.0.0.1 is the safe default and the right answer on a
     # laptop; a build server that people reach over the LAN sets its own address here. THE PAGE
     # HAS NO AUTHENTICATION — anyone who can reach the port reads player messages, repo
     # internals, the contents of files agents read, and raw model thinking. Widen this only to

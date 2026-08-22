@@ -2260,7 +2260,7 @@ def test_systemd_units_hang_off_one_target():
     # and the verification rows are only legible through it.
     check("ffweb is part of the pipeline rather than an extra someone remembers to enable",
           "ffweb.service" in target)
-    setup = open(os.path.join(HERE, "discord-setup.sh"), encoding="utf-8").read()
+    setup = open(os.path.join(HERE, "06-services.sh"), encoding="utf-8").read()
     for token in ("@USER@", "@GROUP@", "@HOME@", "@FFWATCH@", "@FFWEB@", "@CHANNELS@",
                   "@WEBHOST@", "@WEBPORT@"):
         check(f"setup substitutes {token}", f"s|{token}|" in setup, )
@@ -2277,8 +2277,8 @@ def test_systemd_units_hang_off_one_target():
                                      encoding="utf-8").read(), )
     # git is the only source. A rendered copy kept beside the config was the previous design and
     # it meant two files on disk that could disagree — with systemd reading the stale one.
-    check("there is an --install-units mode that installs straight from the checkout",
-          "--install-units" in setup and 'install -m 0644 "$TMP/$u"' in setup, )
+    check("there is an --install mode that installs straight from the checkout",
+          "--install" in setup and 'install -m 0644 "$TMP/$u"' in setup, )
     # Installing a unit and leaving it stopped is a half-finished job — the setup path enables
     # and starts the target itself, and --no-enable is the opt-out.
     check("installing also enables and starts the target",
@@ -2287,13 +2287,19 @@ def test_systemd_units_hang_off_one_target():
           'STAGE=$FFBOX_CONFIG' not in setup and 'render_units "$TMP"' in setup, )
     check("the install mode recovers the real user from SUDO_USER, since $HOME is root's "
           "under sudo", "SUDO_USER" in setup and "getent passwd" in setup, )
-    check("and refuses to run the rest of provisioning as root",
-          "would leave a root-owned state directory" in setup, )
+    # The two stages are split so neither can do the other's damage: 06-services.sh needs root
+    # and touches only /etc, 05-discord-setup.sh touches only $HOME and refuses to run as root
+    # (a root-owned state directory is one the service user cannot write).
+    discord = open(os.path.join(HERE, "05-discord-setup.sh"), encoding="utf-8").read()
+    check("the Discord stage owns no units at all",
+          "systemctl" not in discord and "UNIT_DIR" not in discord, )
+    check("and refuses to run under sudo, which would root-own the state directory",
+          "run this WITHOUT sudo" in discord, )
     # setup.sh is the one command a new machine runs; a stage that is not wired in is a stage
     # somebody has to remember.
     top = open(os.path.join(HERE, "setup.sh"), encoding="utf-8").read()
-    for script in ("dockerSetup.sh", "zfsSetup.sh", "build.sh", "warmLibrary.sh",
-                   "discord-setup.sh"):
+    for script in ("01-dockerSetup.sh", "02-zfsSetup.sh", "03-build.sh",
+                   "04-warmLibrary.sh", "05-discord-setup.sh", "06-services.sh"):
         check(f"setup.sh runs {script}", f'"$ROOT/{script}"' in top, )
 
 

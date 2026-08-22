@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ffbox container task: open the project once in batch mode so Unity builds its Library/ import
-# cache, then quit. Invoked by entrypoint.sh when FFBOX_ENTRY points here — see warmLibrary.sh.
+# cache, then quit. Invoked by entrypoint.sh when FFBOX_ENTRY points here — see 04-warmLibrary.sh.
 #
 # This is the slow one (a cold import on Final Factory is plausibly 30-60 minutes). It is worth
 # paying exactly once, in golden: every per-run ZFS clone then inherits the finished Library/ for
