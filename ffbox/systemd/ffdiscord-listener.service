@@ -11,7 +11,7 @@
 #
 # A SYSTEM unit running as @USER@, not a user unit: a build server reboots with nobody logged
 # in, and user units need `loginctl enable-linger` to survive that. @USER@, @HOME@ and the
-# ExecStart path are substituted by discord-setup.sh — this repo can be cloned anywhere.
+# ExecStart path are substituted by 06-services.sh — this repo can be cloned anywhere.
 Description=ffdiscord Gateway listener (Discord doorbell for ffwatch)
 PartOf=ffbox.target
 After=network-online.target

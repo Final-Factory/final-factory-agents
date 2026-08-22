@@ -9,11 +9,15 @@
 # Runs every stage in order, each of which is independently re-runnable and each of which
 # no-ops when it is already satisfied:
 #
-#   1. dockerSetup.sh   Docker on its own ZFS dataset, overlay2 driver
-#   2. zfsSetup.sh      ZFS datasets, the golden checkout, the runs mountpoint, sudoers
-#   3. build.sh         the container image (Unity + Claude Code)
-#   4. warmLibrary.sh   update golden from git, then build its Unity Library/ cache
-#   5. discord-setup.sh state dir, schema, config block, systemd units (Discord lanes only)
+#   01-dockerSetup.sh   Docker on its own ZFS dataset, overlay2 driver
+#   02-zfsSetup.sh      ZFS datasets, the golden checkout, the runs mountpoint, sudoers
+#   03-build.sh         the container image (Unity + Claude Code)
+#   04-warmLibrary.sh   update golden from git, then build its Unity Library/ cache
+#   05-discord-setup.sh state dir, schema, config block for the Discord lanes
+#   06-services.sh      the systemd units, installed and started (needs root)
+#
+# The numbers are the running order, and they are in the filenames so that order is visible in
+# an `ls` rather than only in here.
 #
 # Stage 4 is the slow one — a cold Unity import on Final Factory is plausibly 30-60 minutes — and
 # it is the reason the whole layout exists: it happens once in golden, and every later ffbox run
@@ -34,6 +38,7 @@ DO_ZFS=1
 DO_BUILD=1
 DO_LIBRARY=1
 DO_DISCORD=1
+DO_SERVICES=1
 DO_TOKEN=1
 ZFS_ARGS=""
 
@@ -57,15 +62,17 @@ Options (alphabetical):
   --skip-docker    Do not touch Docker; assume it is installed and configured.
   --skip-library   Do not update golden or run the Unity import. Use when you only want the
                    datasets and image in place.
+  --skip-services  Do not install or start the systemd units.
   --skip-token     Do not offer to run 'claude setup-token'.
   --skip-zfs       Do not touch ZFS; assume the layout already exists.
 
 For finer control over any single stage, run it directly:
-  sh ffbox/dockerSetup.sh --help
-  sh ffbox/zfsSetup.sh --help
-  sh ffbox/build.sh
-  sh ffbox/warmLibrary.sh --help
-  sh ffbox/discord-setup.sh --help
+  sh ffbox/01-dockerSetup.sh --help
+  sh ffbox/02-zfsSetup.sh --help
+  sh ffbox/03-build.sh
+  sh ffbox/04-warmLibrary.sh --help
+  sh ffbox/05-discord-setup.sh --help
+  sh ffbox/06-services.sh --help
 EOF
 }
 
@@ -78,6 +85,7 @@ while [ $# -gt 0 ]; do
     --skip-discord) DO_DISCORD=0; shift ;;
     --skip-docker)  DO_DOCKER=0; shift ;;
     --skip-library) DO_LIBRARY=0; shift ;;
+    --skip-services) DO_SERVICES=0; shift ;;
     --skip-token)   DO_TOKEN=0; shift ;;
     --skip-zfs)     DO_ZFS=0; shift ;;
     *)              echo "setup.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
@@ -105,7 +113,7 @@ secrets_ready() {
   ) 2>/dev/null
 }
 
-stage "0/5  secrets"
+stage "0/6  secrets"
 
 if [ -e "$SECRETS" ]; then
   skip_msg="$SECRETS already exists — leaving it alone"
@@ -227,7 +235,7 @@ setup.sh: $SECRETS is not filled in yet, so stage 3 (the Unity import) will be s
      - UNITY_EMAIL / UNITY_PASSWORD    (required even for a Personal license)
      - UNITY_SERIAL, or UNITY_LICENSE_FILE pointing at a .ulf
      - CLAUDE_CODE_OAUTH_TOKEN         (setup.sh offers to mint this for you)
-  2. sh $ROOT/warmLibrary.sh
+  2. sh $ROOT/04-warmLibrary.sh
 
 EOF
   DO_LIBRARY=0
@@ -236,54 +244,100 @@ fi
 # Docker first: stage 3 cannot build an image without it, and dockerSetup.sh is the one that
 # keeps the layers OFF the boot environment — the zsys trap its own header documents at length.
 if [ "$DO_DOCKER" -eq 1 ]; then
-  stage "1/5  Docker on its own ZFS dataset"
-  sh "$ROOT/dockerSetup.sh"
+  stage "1/6  Docker on its own ZFS dataset"
+  sh "$ROOT/01-dockerSetup.sh"
 else
-  stage "1/5  Docker — skipped (--skip-docker)"
+  stage "1/6  Docker — skipped (--skip-docker)"
 fi
 
 if [ "$DO_ZFS" -eq 1 ]; then
-  stage "2/5  ZFS layout and golden checkout"
+  stage "2/6  ZFS layout and golden checkout"
   # shellcheck disable=SC2086  # ZFS_ARGS is a deliberately word-split option list
-  sh "$ROOT/zfsSetup.sh" $ZFS_ARGS
+  sh "$ROOT/02-zfsSetup.sh" $ZFS_ARGS
 else
-  stage "2/5  ZFS layout — skipped (--skip-zfs)"
+  stage "2/6  ZFS layout — skipped (--skip-zfs)"
 fi
 
 if [ "$DO_BUILD" -eq 1 ]; then
-  stage "3/5  container image"
-  sh "$ROOT/build.sh"
+  stage "3/6  container image"
+  sh "$ROOT/03-build.sh"
 else
-  stage "3/5  container image — skipped (--skip-build)"
+  stage "3/6  container image — skipped (--skip-build)"
 fi
 
 if [ "$DO_LIBRARY" -eq 1 ]; then
-  stage "4/5  update golden and warm its Unity Library (slow)"
-  sh "$ROOT/warmLibrary.sh"
+  stage "4/6  update golden and warm its Unity Library (slow)"
+  sh "$ROOT/04-warmLibrary.sh"
 else
-  stage "4/5  Unity Library — skipped"
+  stage "4/6  Unity Library — skipped"
 fi
 
 # Last, and deliberately not fatal: a machine that only ever runs ffbox by hand still wants
 # stages 1-4, and this stage is the only one that can fail purely because Discord is not
-# configured yet. It provisions and reports; it starts nothing and installs no unit, because
-# both of those are operator decisions (and the unit install needs root).
+# configured yet. It writes only under $HOME and starts nothing; the services are stage 6.
 if [ "$DO_DISCORD" -eq 1 ]; then
-  stage "5/5  Discord lanes (state dir, schema, config, systemd units)"
-  sh "$ROOT/discord-setup.sh" || printf 'setup.sh: discord-setup.sh exited non-zero; run it by hand\n' >&2
+  stage "5/6  Discord lanes (state dir, schema, config)"
+  sh "$ROOT/05-discord-setup.sh" || printf 'setup.sh: 05-discord-setup.sh exited non-zero; run it by hand\n' >&2
 else
-  stage "5/5  Discord lanes — skipped (--skip-discord)"
+  stage "5/6  Discord lanes — skipped (--skip-discord)"
+fi
+
+# The services, last, because they are what runs everything the stages above put in place.
+# Installing into /etc needs root: this re-invokes through sudo, which may prompt. With no
+# terminal and no passwordless sudo it prints the one command instead of hanging on a prompt.
+if [ "$DO_SERVICES" -eq 1 ]; then
+  stage "6/6  systemd services (ffbox.target: listener + ffwatch + ffweb)"
+  if [ "$(id -u)" = 0 ]; then
+    sh "$ROOT/06-services.sh" --install || true
+  elif sudo -n true 2>/dev/null || [ -t 0 ]; then
+    sudo sh "$ROOT/06-services.sh" --install \
+      || printf 'setup.sh: run it yourself: sudo sh %s/06-services.sh --install\n' "$ROOT" >&2
+  else
+    printf 'setup.sh: the units need root and there is no terminal to ask on. Run:\n' >&2
+    printf '  sudo sh %s/06-services.sh --install\n' "$ROOT" >&2
+  fi
+else
+  stage "6/6  services — skipped (--skip-services)"
 fi
 
 stage "setup complete"
 cat <<EOF
 Try it:
   $ROOT/ffbox --no-unity 'summarise how the save migration system works'
+EOF
 
-Discord lanes: stage 5 above installed and started ffbox.target, or printed the one command
-to finish it. It does not read anything from Discord until a bot token is configured —
-  sh $ROOT/discord-setup.sh --check     what is in place, what is stale
-  ffdiscord doctor                      whether the bot can see the channels
+# EVERY REMAINING MANUAL STEP, IN ONE PLACE. Stage 5 prints the same list in Discord terms;
+# this is the whole-machine view, so somebody who ran one command and walked away can come back
+# to exactly what is left rather than scrolling for it.
+printf '\n'
+sh "$ROOT/05-discord-setup.sh" --check 2>/dev/null | sed 's/^/  /' || true
+printf '\n'
+if ! python3 -c "
+import json,sys
+cfg=json.load(open(sys.argv[1]))
+sys.exit(0 if (cfg.get('token') or '').strip() else 1)" \
+     "${FFDISCORD_HOME:-$HOME/.config/ffdiscord}/config.json" 2>/dev/null \
+   && [ -z "${FFDISCORD_TOKEN:-}" ]; then
+  cat <<EOF
+MANUAL STEPS REMAINING
+  The Discord lanes need a bot before they can read anything:
+    sh $ROOT/05-discord-setup.sh        prints the full step-by-step (bot, token, channels)
+  Then, to pick the new watch list up:
+    sudo sh $ROOT/06-services.sh --install
+    ffdiscord doctor
+
+  The shell and the web page work now, with or without Discord.
+EOF
+else
+  cat <<EOF
+MANUAL STEPS REMAINING
+  None known. Verify with:
+    ffdiscord doctor                    the bot can see its channels
+    sh $ROOT/06-services.sh             units installed, enabled, running, not stale
+    python3 $ROOT/ffwatch.py status     the pipeline's own view
+EOF
+fi
+cat <<EOF
 
 Full usage: $ROOT/README.md
 EOF

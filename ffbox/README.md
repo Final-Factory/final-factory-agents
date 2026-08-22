@@ -44,11 +44,12 @@ slow one, 30-60 minutes, and it happens once.
 | script | stage | needs root |
 |---|---|---|
 | `setup.sh` | runs all five in order; the only one you normally call | no (sudo per stage) |
-| `dockerSetup.sh` | 1 — installs Docker onto its own ZFS dataset with overlay2 | yes |
-| `zfsSetup.sh` | 2 — `<pool>/ff` datasets, the golden checkout, the ffbox sudoers rule | yes |
-| `build.sh` | 3 — builds `ffbox:latest` from the GameCI image CI uses | no |
-| `warmLibrary.sh` | 4 — updates golden and builds its Unity `Library/` cache | no |
-| `discord-setup.sh` | 5 — state dir, database, config block, systemd units | only `--install-units` |
+| `01-dockerSetup.sh` | 1 — installs Docker onto its own ZFS dataset with overlay2 | yes |
+| `02-zfsSetup.sh` | 2 — `<pool>/ff` datasets, the golden checkout, the ffbox sudoers rule | yes |
+| `03-build.sh` | 3 — builds `ffbox:latest` from the GameCI image CI uses | no |
+| `04-warmLibrary.sh` | 4 — updates golden and builds its Unity `Library/` cache | no |
+| `05-discord-setup.sh` | 5 — state dir, database, config block for the Discord lanes | no (refuses sudo) |
+| `06-services.sh` | 6 — renders the units from `systemd/`, installs and starts `ffbox.target` | yes |
 
 ## The services
 
@@ -56,27 +57,32 @@ Three daemons — the gateway listener, the conversation manager, the web page �
 installed and started by `setup.sh`. The unit files live in `ffbox/systemd/` in git; nothing is
 rendered anywhere else.
 
-`sh ffbox/setup.sh` already did this as its last stage — installed the units and started the
-target, or printed the one command to finish it if it could not get root. By hand:
+`sh ffbox/setup.sh` already did this as stage 6 — installed the units and started the target,
+or printed the one command to finish it if it could not get root. By hand:
 
 ```bash
-sh ffbox/discord-setup.sh                        # state dir, db, config skeleton, then:
-sudo sh ffbox/discord-setup.sh --install-units   # install from git, enable and start ffbox.target
+sh ffbox/05-discord-setup.sh          # state dir, db, config skeleton (no root, refuses sudo)
+sudo sh ffbox/06-services.sh --install   # render from git, install into /etc, enable and start
+sh ffbox/06-services.sh               # what is installed, enabled, running, or stale
 ```
+
+The two are separate because the units are ffbox's, not Discord's: `ffwatch` is the conversation
+manager and `ffweb` is the page over the whole database. Only the listener is Discord-specific.
 
 Nothing is read from Discord until a bot token exists, so starting the daemons first is safe.
 Put the token, guild id and channels in `~/.config/ffdiscord/config.json` (or `FFDISCORD_TOKEN`
 in `~/.config/ffbox/secrets.env`), add each watched channel to the `ffwatch` → `watch` block,
-then re-run `--install-units` so the listener picks up the new watch list.
+then re-run `sudo sh ffbox/06-services.sh --install` so the listener picks up the new
+watch list.
 
 ```bash
 sudo systemctl stop ffbox.target      # stop all three  (the .target suffix is required)
 journalctl -u ffwatch -f              # or -u ffdiscord-listener, -u ffweb
-sh ffbox/discord-setup.sh --check     # what is installed, enabled, running, or stale
+sh ffbox/06-services.sh                  # what is installed, enabled, running, or stale
 touch ~/.config/ffbox/discord.disabled   # kill switch: ffwatch launches nothing
 ```
 
-Re-run `--install-units` and `systemctl restart ffbox.target` after changing the watch list,
+Re-run `06-services.sh --install` and `systemctl restart ffbox.target` after changing the watch list,
 the bind address or the units; `--check` tells you when what is installed no longer matches
 this checkout.
 
@@ -87,7 +93,7 @@ The page binds `127.0.0.1:8787` by default. To reach it from another machine, ei
 "ffwatch": { "web_host": "192.168.51.10", "web_port": 8787 }
 ```
 
-then re-run `--install-units` and restart. **The page has no authentication** — whoever reaches
+then re-run `sudo sh ffbox/06-services.sh --install` and restart. **The page has no authentication** — whoever reaches
 the port reads player messages, repo internals, the contents of files agents read, and raw
 model thinking. Widen it only to a network you would hand all of that to, and leave actions off
 (ffweb refuses `--enable-actions` on a non-loopback host unless `--allow-remote-actions` is
@@ -190,15 +196,15 @@ sh ffbox/setup.sh
 That runs the three stages below in order. Each is independently re-runnable, and `setup.sh`
 itself is safe to re-run — stages 1 and 2 no-op once satisfied.
 
-### Stage 1 — `zfsSetup.sh`
+### Stage 1 — `02-zfsSetup.sh`
 
 Creates `<pool>/ff` (mountpoint=none), `<pool>/ff/golden` mounted at `/opt/FinalFactory`, the
 `/opt/ffruns` mountpoint, clones the repo, and installs the sudoers rule. The pool is detected
 from whatever dataset holds `/`, so nothing is hardcoded to `rpool`.
 
 ```bash
-sh ffbox/zfsSetup.sh --check      # report state, change nothing
-sh ffbox/zfsSetup.sh --help       # --migrate, --owner, --pool, --no-clone, --no-sudoers, ...
+sh ffbox/02-zfsSetup.sh --check      # report state, change nothing
+sh ffbox/02-zfsSetup.sh --help       # --migrate, --owner, --pool, --no-clone, --no-sudoers, ...
 ```
 
 Use `--migrate PATH` on a machine that already has a checkout: it moves it into the dataset
@@ -215,20 +221,20 @@ Cmnd_Alias FFBOX_ZFS = /usr/sbin/zfs snapshot <pool>/ff/golden@ffbox-*, \
                        /usr/sbin/zfs destroy <pool>/ff/golden@ffbox-*
 ```
 
-### Stage 2 — `build.sh`
+### Stage 2 — `03-build.sh`
 
 Builds `ffbox:latest`. Uses `--pull=false` because the ~11GB base is already local; pull
 explicitly when moving to a new Unity version.
 
-### Stage 3 — `warmLibrary.sh`
+### Stage 3 — `04-warmLibrary.sh`
 
 Updates golden and builds its Unity `Library/`. This is the slow step — 30–60 minutes cold — and
 it is the reason the whole layout exists: pay it once in golden, and every later run clones the
 warm cache for free.
 
 ```bash
-sh ffbox/warmLibrary.sh                 # fetch, pull --ff-only, git lfs pull, then import
-sh ffbox/warmLibrary.sh --skip-update   # import what is already checked out
+sh ffbox/04-warmLibrary.sh                 # fetch, pull --ff-only, git lfs pull, then import
+sh ffbox/04-warmLibrary.sh --skip-update   # import what is already checked out
 ```
 
 It refuses to run if golden has local changes. Golden must stay pristine — every run clones it,
@@ -237,7 +243,7 @@ after pulling, for the reason `main.yml` documents at length: a file left as a p
 smudge is considered *unmodified* by git, so nothing ever rewrites it, and Unity then skips the
 affected DLLs and fails with a confusing `CS0246`.
 
-### Optional — `dockerSetup.sh`
+### Optional — `01-dockerSetup.sh`
 
 Not part of `setup.sh`. Provisions Docker on a **fresh** ZFS-on-root machine: installs it, puts
 its storage on a dedicated dataset, selects overlay2, and removes zsys.
@@ -255,8 +261,8 @@ Same reasoning as `<pool>/ff` in stage 1, applied to Docker: a `<pool>/docker` d
 `ROOT` and `USERDATA`, plus the overlay2 driver so layers are directories rather than datasets.
 
 ```bash
-sh ffbox/dockerSetup.sh --check   # report state, change nothing
-sh ffbox/dockerSetup.sh           # provision
+sh ffbox/01-dockerSetup.sh --check   # report state, change nothing
+sh ffbox/01-dockerSetup.sh           # provision
 ```
 
 **Order is the whole point.** The dataset and `daemon.json` are put in place *before* the Docker
@@ -328,7 +334,7 @@ git -C /opt/FinalFactory apply ~/ffbox-runs/<run-id>/changes.patch
 
 ## Running something other than a prompt
 
-`FFBOX_ENTRY` has always let a caller swap the container task — that is how `warmLibrary.sh`
+`FFBOX_ENTRY` has always let a caller swap the container task — that is how `04-warmLibrary.sh`
 does its Unity import. The flags below make it usable from outside this directory, and are what
 `ffwatch` (below) drives.
 
@@ -405,13 +411,13 @@ record says why — a failure to decide never widens capability.
 Set it up with:
 
 ```bash
-sh ffbox/discord-setup.sh          # state dir, schema, config block, renders the systemd units
-sh ffbox/discord-setup.sh --check  # report, change nothing
+sh ffbox/05-discord-setup.sh          # state dir, schema, config block, renders the systemd units
+sh ffbox/05-discord-setup.sh --check  # report, change nothing
 python3 ffbox/ffwatch.py status
 ```
 
 The units are **system** units, not user units — a build server reboots with nobody logged in,
-and a user unit needs `loginctl enable-linger` to survive that. `discord-setup.sh` renders them
+and a user unit needs `loginctl enable-linger` to survive that. `05-discord-setup.sh` renders them
 from the templates in `ffbox/systemd/` into `~/.config/ffbox/systemd/` (no root needed) and
 prints the two commands that install them. All three hang off one target, so there is one handle:
 
@@ -561,7 +567,7 @@ calling ffwatch's own schema, so the two cannot drift.
 
 ## Known gaps
 
-- **Golden's `Library/` goes stale.** `warmLibrary.sh` refreshes it, but nothing schedules that.
+- **Golden's `Library/` goes stale.** `04-warmLibrary.sh` refreshes it, but nothing schedules that.
   A run whose clone is far behind golden's last import pays for the delta. Running it from cron,
   or after a significant merge, is the obvious fix.
 - **`ff-agents` plugins are not installed in the image.** Claude runs without the Final Factory

@@ -2,9 +2,9 @@
 # The conversation manager. Tails the doorbell, pulls message text and attachments through the
 # ffdiscord CLI, classifies, and launches one ffbox container per turn.
 #
-# @FFWATCH@ is substituted with the absolute path to ffbox/ffwatch.py by discord-setup.sh —
+# @FFWATCH@ is substituted with the absolute path to ffbox/ffwatch.py by 06-services.sh —
 # this repo can be cloned anywhere, so the unit cannot carry a fixed path. Re-run
-# `sh ffbox/discord-setup.sh` after moving the checkout.
+# `sudo sh ffbox/06-services.sh --install` after moving the checkout.
 #
 # ffwatch is the SOLE writer to ffwatch.db. Do not run a second copy; `ffwatch once` by hand
 # while this unit is active is safe only because each conversation is flock'd, and even then it
