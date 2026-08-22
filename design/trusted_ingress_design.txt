@@ -1,0 +1,659 @@
+Trusted ingress: who may be told what, and who may be obeyed
+============================================================
+Draft for review. Proposed as section 23 of discord_persistent_design.txt.
+
+Revision 1, 2026-08-22.
+Revision 2, 2026-08-22: split replies (section 7), the web page trusted as an operator
+surface rather than as a loopback accident (section 12), operator DMs may start work
+(section 13), player-triggered work sketched (section 14).
+Revision 3, 2026-08-22: the two operator ids are settled and written down (section 3); venue
+becomes a declared property of a channel rather than an inference about who can read it, so
+#dev-chat is private; section 9 now says which process decides tier and venue and what the
+container is actually told.
+Revision 4, 2026-08-22: venue and engagement are declared together on the watch entry
+(section 5). Most channels wake only on a direct mention; bug_reports and suggestions run the
+classifier on every message, and the classifier gains a no-action outcome so an all-engage
+channel does not burn a run on "thanks".
+Revision 5, 2026-08-22: the gate runs on every message in all three watched channels,
+including the first message of a new thread, and its bias toward answering is written as
+rules rather than as an adjective (section 5).
+
+Design only. Nothing here is implemented.
+
+
+0. The ask
+----------
+
+Shell prompts, web prompts, and direct messages from Ben (.slims) or Lothsahn (lothsahn)
+should get a real answer instead of the player-facing refusal. The refusal that started this
+was correct for the surface it was written for:
+
+    "I don't share anything about the codebase, but if the real question is how merging
+     belts behaves in game, ask me that one and I'll answer it."
+
+That is discord-answerer.md doing exactly what it says, to somebody it had no reason to
+trust. The problem is not the policy. The problem is that the policy is attached to a role,
+the role is picked from a doorbell kind, and two of the three surfaces named above have no
+doorbell kind at all.
+
+
+1. What is there today
+----------------------
+
+Trust is decided in three places and they do not agree with each other.
+
+The listener decides it once, from Discord's authenticated author.id
+(ffdiscord_listener.py:332). One account is known: mentions.lothsahn. Everything else that
+addresses the bot is player_mention. Ben is in the config as a ping target
+(ffdiscord.py:16) and nowhere as an authority.
+
+ffwatch decides it again, by kind. LANE_BY_KIND (ffwatch.py:481) sends ask and mention to
+the answer lane and the answerer role, and lothsahn_directive to the dev lane and the
+dev-agent role. lane_for (ffwatch.py:795) exempts shell from classification entirely,
+because a prompt typed at this machine's shell has already answered the question
+classification exists to ask.
+
+The shell lane then decides it a third time, by subtraction. It gets no role and no plugin
+directory (ffwatch.py:1562), and render_prompt gives it no untrusted-input fence
+(ffwatch.py:1625). The comment there records why: with the Discord framing in place,
+`ffbox "what file defines the belt merger?"` came back as a policy refusal addressed to a
+player. Unmounting the plugin fixed that case and cost the shell lane max-voice and the rest
+of the ff-discord skills as collateral.
+
+Direct messages do not arrive at all. The gateway asks for GUILDS and GUILD_MESSAGES only
+(ffdiscord_listener.py:83), so a DM never rings the doorbell. ffdiscord.py knows channel type
+1 is a DM and has no command that opens or reads one.
+
+Web prompts do not exist. ffweb is read-only over a query_only connection and its whole
+action surface is approve/reject on the outbound queue, shelled out to ffwatch so that
+ffwatch stays the sole writer (ffweb.py:12, :598, :614).
+
+The watch table (ffwatch.py:235) says which channels are watched and what kind of conversation
+they hold. It says nothing about who may read them and nothing about when the bot should
+speak. Both belong there. Section 5.
+
+
+2. One dial where there are two
+-------------------------------
+
+The tempting fix is a trusted flag that turns the disclosure rules off. It is wrong, and the
+reason is worth stating before any of the mechanism.
+
+Trust answers "may this person be told repo internals, and may this person give me work."
+It is a fact about the authenticated author.
+
+Venue answers "who else reads the reply." It is a fact about the channel the answer lands in.
+
+They come apart in the case that matters. Lothsahn @-mentions the bot in a public channel and
+asks which file defines belt merging. He is entitled to the answer. The reply is a public
+Discord post that players read. Answering with `Connectors/PerpendicularConnectorTransferSystem.cs`
+discloses repo internals to a hundred strangers, and the fact that the asker was trusted
+changes nothing about that.
+
+So: trust gates what may be acted on and what may be said to the asker. Venue gates what may
+be said at all. Full disclosure needs both. Section 7 is how the asker still gets the whole
+answer without the venue getting it.
+
+A second rule falls out of the same reasoning, and it is the one that keeps a stolen Discord
+account from becoming a login on this box:
+
+    An ingress may never grant more capability than the asker already holds by other means.
+
+The person at the shell has a Unix account here and can run any command they like without
+asking. Giving the shell lane unrestricted Bash adds nothing. The person in a DM has a Discord
+account and nothing else. Their trust is real, but it is trust in a credential that lives on
+somebody's phone, so it buys disclosure and a work request, and it does not buy a shell.
+
+
+3. Trust tiers, and who is one
+------------------------------
+
+Two tiers. Resist a third until something actually needs it.
+
+  operator   The people who own this machine and this game. Established only by an
+             authenticated ingress fact: a Unix login on the box, an operator-only web
+             session, or a Discord author.id in the configured operator set. Never by message
+             content, display name, or claim.
+
+  player     Everybody else, including any Discord account not in the set, and including a
+             message that says it is from Ben. This is today's untrusted tier and its rules
+             do not change.
+
+The set is config, in ~/.config/ffbox/discord/config.json alongside the channel and mention
+tables the CLI already reads:
+
+    "trust": {
+      "operators": {
+        "ben":      "226422780445458432",
+        "lothsahn": "193210319093497857"
+      }
+    }
+
+Keyed by name so the config reads as a list of people rather than a list of numbers, and so
+the same two ids can seed mentions.ben and mentions.lothsahn, which are empty on this machine
+today and are what "@ben" expands to in a post.
+
+The ids are snowflakes, resolved once. `.slims` and `lothsahn` are usernames, they are
+changeable, and a trust key somebody else can claim by renaming is not a trust key. Nothing in
+this design ever compares a username.
+
+An empty or missing trust.operators means nobody is an operator. It never means everybody, and
+it never means "well, it arrived as a DM, so."
+
+Tier is a property of a TURN, not of a conversation. It is computed from the author of the
+message that raised the turn, every time. A thread where Lothsahn asked something and three
+players then reply produces one operator turn and three player turns, and the player turns get
+player disclosure even though the conversation row is the same. Storing tier on the
+conversation would let a player inherit an operator's clearance by replying underneath it.
+
+
+4. Venues
+---------
+
+Two, and no more.
+
+  private    A channel where internals may be said out loud. Four shapes: a watch entry that
+             declares itself private, a DM with an operator, a terminal waiting on `ffbox`,
+             and the operator-only web page.
+
+  public     Everything else.
+
+Venue is a property of where the reply goes, not of where the question came from. A question
+asked in a DM is answered in that DM, so it is private. A question asked in #general is
+answered in #general, so it is public no matter who asked it.
+
+Private venue and operator tier are independent. A private channel says internals may be said
+there. It says nothing about who may give the bot work, which is section 3's business.
+
+
+5. What a watch entry declares
+------------------------------
+
+Watching a channel is currently one line saying what kind of conversation it holds. It becomes
+the place where both of this design's per-channel decisions are written down, explicitly, at
+the moment somebody says "watch this":
+
+    "watch": {
+      "ask_claude":  {"kind": "ask",        "forum": false, "venue": "public",  "engage": "all"},
+      "bug_reports": {"kind": "bug_report", "forum": true,  "venue": "public",  "engage": "all"},
+      "suggestions": {"kind": "suggestion", "forum": true,  "venue": "public",  "engage": "all"},
+      "dev_chat":    {"kind": "ask",        "forum": false, "venue": "private", "engage": "mention"}
+    }
+
+venue is public or private. Never inferred from Discord's permission bits, for two reasons.
+Permissions change without anyone thinking about the bot, and a role edit that widened
+#dev-chat would silently reclassify it, with the first sign being a file path posted where it
+should not be. And private is a decision rather than an observation: it says "everyone who can
+read this channel may see internals", which is a thing to decide on purpose and review on
+purpose. Adding a person to a private channel grants them disclosure, and that is the same
+weight as adding an operator id.
+
+engage is when the bot wakes at all.
+
+  mention   Only when the bot is @-mentioned or replied to. The default for anything new, and
+            the right answer for a channel where people are talking to each other.
+
+  all       Every human message is considered. Set on bug_reports and suggestions, where a
+            report is addressed to the project rather than to the bot, and on ask_claude,
+            which exists for exactly this.
+
+A missing engage is mention and a missing venue is public, both with a startup warning naming
+the channel. The three entries above ship in DEFAULTS with their values spelled out, so an
+existing config that names them without the new keys keeps behaving the way it does today; a
+channel nobody has classified is quiet and public until somebody says otherwise.
+
+THE ENGAGEMENT GATE. engage: all is what makes a channel expensive, and it is the answer to
+the main design's open "who keeps a thread alive" question. Every human message in a watched
+thread wakes a turn today, so three players chatting under a bug report produce three runs that
+say nothing. So every message in an engage: all channel goes through a gate first, the first
+message of a new thread included. The gate is one cheap model call answering one question: is
+a turn worth spending here.
+
+    none        nothing here needs the bot. No turn is created, the message is recorded, and
+                the conversation is left alone.
+
+It is deliberately biased toward yes. Bug reports, suggestions and #ask-assistant exist for the
+bot to answer, and a missed answer is worse than a wasted run. "Almost always" is not something
+a model can act on, so the bias is written as rules instead.
+
+ALWAYS a turn, decided by the harness without asking the model:
+
+  - the first message of a new thread in bug_reports or suggestions. A new thread there is a
+    report by construction.
+  - any message that @-mentions the bot or replies to one of its messages.
+  - any message carrying an attachment. A log or a save is new evidence by definition.
+
+NEVER a turn. This is the closed list the gate may return `none` for:
+
+  - social acknowledgement and nothing else: thanks, a +1, an emoji, "nice".
+  - two humans talking to each other with nothing asked of the project, typically after a
+    thread is already resolved.
+  - a restatement of the message immediately before it, by the same author.
+
+Everything else is a turn. The gate is not a spam filter and it is not judging whether a
+question deserves an answer; it catches the small set of messages that ask nothing at all. A
+reply carrying repro steps, a version number, "still happening", or a question mark is a turn,
+which is the case the gate exists to preserve: a player clarifying a bug, or asking for more
+information, still gets an answer.
+
+WHY A MODEL MAY DECIDE THIS AT ALL, when section 9 is emphatic that no model decides tier or
+venue: the gate spends money, it does not disclose anything, and both failure directions are
+cheap and bounded. Text dressed up to look like a report costs one run, capped by rate_limits.
+Text dressed down to look like chatter suppresses a reply to the person who wrote it, which
+harms only them. Neither can widen what may be said or what may be touched.
+
+Structurally it is one call and two fields, because it is one read of the same text:
+
+    {"engage": true|false, "type": "question"|"change", ...}
+
+engage answers "is there a turn". type answers "which lane", and for a channel whose kind
+already decides the lane (ask, bug_report, suggestion) it is ignored, exactly as today. Lane
+selection is unchanged: the gate runs before it, the kind-to-lane map runs after.
+
+Both fields fail closed, in their own directions. An error, a timeout, an unparseable answer or
+genuine uncertainty gives engage true and type question: a gate that cannot decide answers, and
+answers read-only.
+
+A `none` is recorded rather than silent. The message row and the gate's reason go in the
+database, so "why did the bot not answer this?" is a question the web page can answer. Nothing
+is posted and no reaction is added.
+
+Where the decision lives: the listener stays dumb. It carries ids only, as it does today, and
+keeps emitting a doorbell for every message in a watched channel; ffwatch applies engage when
+it ingests, because it fetches the full message anyway and can see `mentions` and
+`referenced_message` there. One place owns the policy, and a dropped message costs a skipped
+ingest rather than a wasted run. The 15-minute catchup sweep applies the same rule, or a
+mention-only channel would wake for everything every quarter hour.
+
+Forum threads inherit their parent's venue and engage, since thread events already report the
+parent alias.
+
+
+6. The matrix
+-------------
+
+                        venue: public                    venue: private
+                        ------------------------------   -----------------------------
+  tier: operator        Public-safe answer in the         Answer fully. file:line,
+                        channel, and the internals        internals, unreleased work,
+                        delivered to the asker's DM.      whatever the question wants.
+                        Section 7. Work allowed.          Work allowed.
+
+  tier: player          Today's behaviour, unchanged.     In a declared private channel:
+                        discord-answerer as written.      answer fully, no work. In a DM:
+                        No work.                          ignore, see section 11.
+
+The bottom-right cell is what a contractor or a guest in #dev-chat gets. They see internals,
+because that is what putting them in the channel said. They cannot start work, because that is
+a different decision and nobody made it.
+
+
+7. The split reply
+------------------
+
+The top-right cell of the matrix is the interesting one, and it is a genuinely new outbound
+shape: one turn, two destinations.
+
+An operator asks in a public channel. The run produces both halves:
+
+  public half    Written for the channel, under player rules. No file paths, no internals,
+                 no unreleased content. It answers the part of the question that can be
+                 answered in public, and says the rest went to DM.
+
+  private half   Written for the asker. Everything the question actually wanted.
+
+Rules that make this safe rather than a leak with extra steps:
+
+  a. The public half is composed to STAND ALONE, then the private half is written. It is
+     never a redaction of the private half. A redaction leaks its own shape: "the merge
+     behaviour lives in the [REDACTED] system" tells a reader there is a system with a name,
+     and often which one. Write the public answer as though the private one does not exist.
+
+  b. The public half may say that detail went to DM. It may not summarise what the detail
+     was. "Sent you the specifics" is fine. "Sent you the file, it's in the connector code"
+     is not.
+
+  c. Only tier operator produces a private half. A player asking the same question gets
+     today's behaviour: a public-safe answer, or an escalation. There is no DM path for a
+     player, so there is nothing for a jailbreak to aim at.
+
+  d. The private half goes to the ASKER, and only the asker. Not to every operator, not to a
+     shared internal channel. If Ben asks, Ben gets the DM. Lothsahn finds out by reading the
+     web page, which has the whole run in it anyway.
+
+  e. If the DM cannot be delivered (DMs closed, bot blocked, no shared guild, Discord error),
+     the public half still posts and the private half is HELD in the outbound queue with the
+     error recorded. It is never downgraded into the public message, never appended, never
+     retried into the channel. A failed private delivery is a queue row a human clears.
+
+  f. If the whole answer is public-safe, there is no private half and nothing is sent. The
+     split is a response to the content, not a habit.
+
+  g. There is no split in a private venue. An operator asking in #dev-chat or in a DM gets one
+     reply, in place, with everything in it.
+
+Mechanically this is one more field on the structured verdict. The verdict already carries the
+summary the host composes a reply from; it grows a second, optional field for the private half.
+The host sends both, from the host, composed on the host, exactly as section 11 of the main
+design requires. No container reaches Discord and that does not change.
+
+This makes the DM plumbing in section 11 a dependency of the public operator case, not just of
+the DM case. It moves earlier in the order of work.
+
+
+8. Where each ingress lands
+---------------------------
+
+  shell         operator / private. Unchanged from what ships today except that it stops
+                achieving its policy by unmounting the plugin. See section 10.
+
+  web prompt    operator / private. Section 12.
+
+  DM from an    operator / private. New. Section 11.
+  operator
+
+  DM from       player / private, and the answer is to not answer. Section 11.
+  anyone else
+
+  message in a  Venue and wake policy from the watch entry. Tier from the author, as
+  watched       everywhere else. #dev-chat is a new entry: private, mention-only.
+  channel
+
+  operator      operator / public, with a split reply. Already half-exists as
+  mention in    lothsahn_directive, extended to cover every id in trust.operators rather than
+  a public      the single lothsahn key.
+  channel
+
+  everything    player / public. Untouched.
+  else
+
+
+9. Who decides, and what the container is told
+----------------------------------------------
+
+Worth being exact about, because there are three models in this pipeline and only one of them
+is the bot that writes the reply.
+
+TIER AND VENUE ARE DECIDED BY THE HOST, IN PLAIN CODE, WITH NO MODEL INVOLVED. ffwatch runs on
+the box, reads Discord's authenticated author.id off the dispatch, looks it up in
+trust.operators, reads venue off the watch entry, and writes the answer into job.json before
+the container is started. It is a dictionary lookup. That is deliberate and it is the single
+most important property in this design: disclosure must never depend on a model reading text
+that a stranger wrote.
+
+The classifier is the second model. It decides question, change or none over untrusted text,
+chooses a lane, and fails closed (ffwatch.py, classify_text and lane_for). It decides
+CAPABILITY and, with section 5's gate, WHETHER TO RUN AT ALL. It never touches tier or venue,
+and this design does not give it a way to. That is the line: a model may decide what a message
+costs, never what may be said about it. Section 5 has the reasoning.
+
+The container's Claude is the third. It receives tier and venue as facts and writes prose that
+respects them, including both halves of a split reply. It cannot see the bot token, cannot
+reach Discord at all, cannot change its own tier, and cannot post. The host composes and sends
+every reply from the structured verdict it returns.
+
+What the container is told, and where each layer comes from:
+
+  the prompt        `claude -p <job.prompt>`. Written by the host, per turn, in
+                    ffwatch.py render_prompt (:1625). Today: which lane and role, the
+                    untrusted-input fence, the <discord> block of message text, harness notes,
+                    the rebase note. This design adds two lines to it, stated as harness facts:
+
+                        This turn was raised by an OPERATOR (Discord id 193210319093497857,
+                        in the configured operator set). Your public reply goes to a channel
+                        players read. Write it under the player rules. If the real answer
+                        needs file paths, source citations or unreleased work, put that in the
+                        private half of your verdict; the harness DMs it to the asker.
+
+  the system        `--append-system-prompt`, built in ffbox/discord-task.sh as
+  preamble          PREAMBLE_QUESTION / PREAMBLE_CHANGE / PREAMBLE_SHELL. This is the layer
+                    that already tells a lane it cannot commit, cannot push, and cannot post,
+                    and that whatever it puts in `summary` IS the reply. The split reply needs
+                    one paragraph here explaining the second verdict field, because that is
+                    mechanical rather than editorial.
+
+  the plugin        `--plugin-dir /ffbox/plugins/ff-discord`, mounted read-only. The role
+                    files (discord-answerer.md and the rest) and the skills (max-voice) live
+                    here. This is where the standing disclosure policy actually is, and
+                    section 10 is the edit it needs.
+
+  the verdict       `--json-schema`. The shape of what comes back. Grows the private-half
+  schema            field.
+
+  the tool list     `--tools`, `--allowedTools`, `--disallowed-tools`, all from job.json.
+                    Structural: an excluded tool is never offered to the model.
+
+The two new job fields:
+
+    "trust":  {"tier": "operator", "actor": "193210319093497857", "why": "trust.operators.lothsahn"}
+    "venue":  {"kind": "public", "reply_to": "channel:<id>", "private_to": "dm:<user_id>"}
+
+Anything inside <discord> that argues about tier is untrusted text making a claim, exactly like
+a message that says it is from Ben, and it is handled the same way: ignored, and reported.
+
+Record both fields on the turn row so the web page can show why a run got what it got. An
+unexpected elevation should be visible afterwards without reading a transcript.
+
+
+10. What the roles become
+-------------------------
+
+discord-answerer.md keeps its untrusted-input section verbatim. What changes is that its
+disclosure rules become conditional on the declared venue rather than on the role being loaded
+at all:
+
+  - The "never reveal file paths, config, repo internals" rule is scoped to the public half of
+    a reply. It binds every public post regardless of who asked.
+  - The escalate-don't-answer rules for roadmap, pricing and unreleased content stay as they
+    are for the public half, and drop for tier operator in a private venue. Escalating a
+    roadmap question to Ben when Ben is the one asking is a bug.
+  - Voice, the abuse rules, and the identify-as-an-AI rule bind everywhere and are not
+    conditional on anything.
+  - The role gains section 7's split-reply discipline, written as rules about what the public
+    half may imply, because that is where the leak would actually happen.
+
+The plugin_dir = None special case for the shell lane goes away. Mount the plugin on every
+lane, mount no role on shell, and let the venue declaration carry the policy. The shell lane
+gets max-voice and the ff-discord skills back, and a fourth ingress arriving next year needs a
+venue value rather than a fourth special case in build_job.
+
+discord-dev-agent.md gets one edit: its authorization paragraph currently names the Lothsahn
+account specifically. It becomes "an id in the configured operator set", which is what the
+harness will actually be checking.
+
+
+11. Direct messages: what has to exist first
+--------------------------------------------
+
+DMs are the only genuinely new plumbing in this design, and section 7 makes them a dependency
+of the public operator case too.
+
+The doorbell needs the DIRECT_MESSAGES intent (1 << 12) added to INTENTS. It is not privileged
+and needs no Discord approval. MESSAGE_CONTENT is still not requested and still not needed:
+the listener carries ids, and ffdiscord pulls the text over REST with the bot token, which
+intents do not gate.
+
+A DM dispatch has no guild_id and its channel is not in watch_ids, so it falls through to
+_bot_is_addressed today. In a DM every message is addressed to the bot, so the rule is simply
+"channel type 1 and author in trust.operators emits operator_dm; channel type 1 and anyone
+else emits nothing at all."
+
+A DM is not a watch entry and has no declared venue. Its venue is derived: an operator DM is
+private, and there is no other kind, because a non-operator DM never becomes a turn.
+
+Ignoring non-operator DMs is a deliberate choice rather than an oversight. Any user who shares
+a guild with the bot can open a DM with it. A DM has no moderator watching, no other players
+to correct a wrong answer, and no public record, which makes it the best possible place to
+work on a jailbreak in private. #ask-assistant is the supported surface, and it stays the
+supported surface.
+
+On the ffwatch side, a DM conversation has no alias, so conversation_kind must handle it
+explicitly rather than falling through to "unknown" and the classifier. Kind operator_dm maps
+to a lane directly, the way shell does.
+
+Sending needs `ffdiscord dm open <user_id>` (POST /users/@me/channels) and the ability to post
+to a raw channel id rather than a configured alias. reply_channel needs the same. Cache the DM
+channel id on the operator's row so a reply does not re-open the channel every turn, and treat
+a stale cached id as a re-open rather than a failure.
+
+
+12. The web front door
+----------------------
+
+The page is an operator surface. Only operators can reach it, and everything in this design
+that says "operator" applies to whoever is typing into it: same tier as the shell, same
+private venue, same capability.
+
+That is a claim about deployment, and it is the load-bearing part. The page has no login of
+its own. What actually keeps players off it today is that it binds to 127.0.0.1 and lives on a
+box they have no account on. So the rule is:
+
+    Shell-equivalent capability for the web ingress is conditional on the page being reachable
+    only by operators. Loopback satisfies that. A reverse proxy on the LAN does not, unless it
+    authenticates, and until it does the web ingress drops to the DM capability set.
+
+ffweb currently writes nothing, and that property is worth keeping, so a prompt box does what
+approve/reject already does: shell out to ffwatch, which owns the database.
+
+    POST /prompt  ->  ffwatch submit "<text>"  ->  the same rows a shell prompt makes
+
+Its own flag, --enable-prompts, separate from --enable-actions. Submitting work is a larger
+grant than approving a queued reply, and the two should not ride on one switch. The existing
+non-loopback refusal applies to it unchanged.
+
+Reply venue is private, and the reply is the run record itself: the timeline row, the
+transcript index, the result text. The same thing a waiting terminal reads.
+
+
+13. Capability, separately from disclosure
+------------------------------------------
+
+Disclosure and capability are set independently, per section 2's second rule.
+
+  shell          Bash unrestricted, as it ships today. The person could open a terminal.
+
+  web (operator- Same as shell. Same person, same box, different window.
+  only)
+
+  operator DM,   Full disclosure, and work is allowed: branch, verify, commit, PR, with the
+  operator in a  WRITE_ALLOWED tool set the Discord write lanes already use. No unrestricted
+  private        Bash, no git push, no gh. The harness publishes, as it does for every write
+  channel        lane. A stolen phone gets someone the answers and a pull request somebody
+                 has to merge. It does not get them a shell.
+
+  operator       Unchanged from the dev lane today, plus the split reply from section 7.
+  mention in
+  public
+
+  player in a    Read-only. Full disclosure to that channel, no work, and the text is still
+  private        untrusted input.
+  channel
+
+Everything that actually contains a lane is untouched: no credential in the container, a clone
+destroyed at the end of the run, no path from any container to Discord, every reply composed
+on the host from the structured verdict.
+
+
+14. Player-triggered work, later
+--------------------------------
+
+Not in this change, but the design should not close the door on it, because the seam already
+exists: the triage lane's AUTOFIX verdict enqueues a fix job today (main design, section 13).
+A player who files a good bug report can already cause work to happen. What a later change
+adds is the direct path, for a straightforward question or a small clear bug.
+
+Three constraints that should hold whenever that is built, all of which this design already
+sets up:
+
+  a. A player-triggered run is still tier player. Its reply is public-safe, its transcript is
+     internal, and it never gets a private half. Triggering work is not clearance.
+
+  b. Capability comes from the LANE, never from the request. A player's bug report routes to
+     the fix lane with the fix lane's tool set and the fix lane's ceilings
+     (rate_limits["fix"], max_unity_runs=1), and the output is a pull request a human merges.
+     A request that argues for more capability is untrusted text arguing, which is the case
+     fail-closed classification was built for.
+
+  c. Scope is decided by the harness, not by the asker. The classifier decides question,
+     change or none, and a failure to decide stays read-only.
+
+
+15. Fail-closed rules
+---------------------
+
+  - Unknown or unresolvable author id: player.
+  - trust.operators missing, empty, or unparseable: nobody is an operator, and log it loudly
+    at startup the way the listener already warns about a missing mentions.lothsahn.
+  - A watch entry with no venue: public, with a startup warning naming the channel.
+  - A watch entry with no engage: mention, with the same warning.
+  - A channel with no watch entry at all: public, and mention-only by construction, since
+    nothing else there produces a doorbell.
+  - A DM channel with more than one recipient (group DM): not private, and not operator.
+  - Gate or classifier error, timeout, unparseable answer, or uncertainty: engage true, type
+    question, read-only. Never none.
+  - A message that addresses the bot directly, carries an attachment, or opens a new thread in
+    bug_reports or suggestions: always a turn, and the gate is not consulted.
+  - Private half cannot be delivered: held, not downgraded (section 7e).
+
+
+16. Decisions and open questions
+--------------------------------
+
+Settled:
+
+  a. A public answer to an operator is held to the player register, and the internals go to
+     the asker's DM. Section 7.
+  b. Operators may start work from a DM, with the constrained write tool set. Section 13.
+  c. The web page is an operator surface with shell capability, conditional on staying
+     operator-only. Section 12.
+  d. Two venues, not three. Declared on the watch entry, never inferred. Section 5.
+  e. Ben is 226422780445458432, Lothsahn is 193210319093497857. Section 3.
+  f. Mention-only by default. ask_claude, bug_reports and suggestions consider every message,
+     behind the engagement gate. Section 5.
+  g. The gate runs on new threads as well as replies, and is biased toward answering by an
+     explicit always-turn list rather than by an instruction to be generous. Section 5.
+
+Still open:
+
+  h. Does approve_before_send gate a private reply? The outbound approval gate exists to stop
+     a bad public post. I would gate the public half and let the private half go straight out,
+     since its only reader is the person who asked. That does mean the two halves of one turn
+     can arrive minutes apart when the queue is gated.
+
+  i. Should the private half ever be a LINK instead of content? The whole run is already on the
+     web page, in more detail than a DM can hold. A link is cheaper, leaks nothing to Discord,
+     and is useless off the box while the page is loopback-only. Content now, link later if the
+     page ever gets an operator-reachable address?
+
+  j. Operator DMs are a conversation with no channel to scope them. Two unrelated questions
+     DM'd an hour apart: same conversation and one growing session, or a new conversation per
+     top-level message? Threads and reply chains give the guild ingresses a natural boundary
+     and a DM has none. My inclination is a new conversation per message unless it is a reply,
+     with the session-retirement machinery unchanged.
+
+  k. The gate's `none` list is a closed list in section 5, which means widening it is a config
+     or a policy change rather than a prompt tweak. Is that the right rigidity? The looser
+     alternative is a described posture the model applies, which drifts, and drifts quietly.
+
+
+17. Order of work
+-----------------
+
+  1. trust.operators, the two resolved ids, venue and engage on every watch entry, the setup
+     script that seeds them and mentions.{ben,lothsahn}, and the fail-closed startup warnings.
+     Nothing behaves differently yet.
+  2. engage, applied in ingest and in the catchup sweep, plus the gate: the none outcome, the
+     always-turn list, and the recorded reason behind a none. This is the piece that changes
+     cost, and it is worth landing before anything wakes more often.
+  3. trust and venue on the job and the turn row, computed for the lanes that already exist.
+     Shell becomes operator/private explicitly instead of by unmounting the plugin. The
+     answerer's disclosure rules become venue-conditional, and the preamble in discord-task.sh
+     learns the venue vocabulary. Player behaviour is unchanged and the belt-merger case is
+     fixed at its root.
+  4. #dev-chat as a watched private mention-only channel.
+  5. DM plumbing: intent, listener rule, conversation kind, `dm open`, raw-channel posting.
+  6. The split reply: the second verdict field, the two-destination sender, the held-not-
+     downgraded failure path, and the answerer's rules about what the public half may imply.
+  7. The web prompt box, which reuses step 3 whole.
+  8. Extend operator authority from the single lothsahn key to the whole set, in both the
+     listener and discord-dev-agent.md.
