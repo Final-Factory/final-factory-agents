@@ -2261,8 +2261,20 @@ def test_systemd_units_hang_off_one_target():
     check("ffweb is part of the pipeline rather than an extra someone remembers to enable",
           "ffweb.service" in target)
     setup = open(os.path.join(HERE, "discord-setup.sh"), encoding="utf-8").read()
-    for token in ("@USER@", "@GROUP@", "@HOME@", "@FFWATCH@", "@FFWEB@", "@CHANNELS@"):
+    for token in ("@USER@", "@GROUP@", "@HOME@", "@FFWATCH@", "@FFWEB@", "@CHANNELS@",
+                  "@WEBHOST@", "@WEBPORT@"):
         check(f"setup substitutes {token}", f"s|{token}|" in setup, )
+    # The page's bind address is config, not a constant in the unit — but it must DEFAULT to
+    # loopback in every path, because the page has no authentication and shows raw model
+    # thinking. A default that leaked would leak silently.
+    check("ffwatch's config defaults the page to loopback",
+          ffwatch.DEFAULTS["web_host"] == "127.0.0.1", ffwatch.DEFAULTS.get("web_host"))
+    ffweb_src = open(os.path.join(HERE, "ffweb.py"), encoding="utf-8").read()
+    check("and ffweb falls back to loopback when there is no config to read",
+          'or "127.0.0.1"' in ffweb_src, )
+    check("the unit carries no hard-coded address any more",
+          "--host @WEBHOST@" in open(os.path.join(unit_dir, "ffweb.service"),
+                                     encoding="utf-8").read(), )
     # git is the only source. A rendered copy kept beside the config was the previous design and
     # it meant two files on disk that could disagree — with systemd reading the stale one.
     check("there is an --install-units mode that installs straight from the checkout",
