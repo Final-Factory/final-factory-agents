@@ -5,10 +5,12 @@
 # repo can be cloned anywhere, so the unit cannot carry a fixed path. Re-run
 # `sh ffbox/discord-setup.sh` after moving the checkout.
 #
-# BOUND TO 127.0.0.1 ON PURPOSE. The page renders transcript_event, which holds repo internals,
-# file contents the agent read and raw model thinking, alongside Discord message text. It is
-# internal-only and none of its text is ever reused in a Discord post. Reach it over an SSH
-# tunnel — `ssh -N -L 8787:127.0.0.1:8787 thisbox` — rather than by widening --host.
+# THE BIND ADDRESS COMES FROM THE CONFIG (ffwatch.web_host, default 127.0.0.1) and is rendered
+# in here by discord-setup.sh. The page renders transcript_event, which holds repo internals,
+# file contents the agent read and raw model thinking, alongside Discord message text, and it
+# HAS NO AUTHENTICATION: whoever reaches the port reads all of it. On a laptop leave it on
+# loopback and use `ssh -N -L 8787:127.0.0.1:8787 thisbox`. On a build server people work
+# against, a LAN address is a reasonable trade — but it is a trade, so make it deliberately.
 #
 # It never writes: the database is opened file:...?mode=ro and ffwatch stays the sole writer.
 # --enable-actions (approve/reject on the outbound queue) is deliberately NOT set here; it
@@ -35,7 +37,7 @@ Type=simple
 User=@USER@
 Group=@GROUP@
 Environment=HOME=@HOME@
-ExecStart=/usr/bin/env python3 @FFWEB@ --host 127.0.0.1 --port 8787 --quiet
+ExecStart=/usr/bin/env python3 @FFWEB@ --host @WEBHOST@ --port @WEBPORT@ --quiet
 EnvironmentFile=-@HOME@/.config/ffbox/secrets.env
 Restart=always
 RestartSec=10

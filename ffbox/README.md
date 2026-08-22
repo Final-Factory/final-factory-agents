@@ -76,10 +76,22 @@ sh ffbox/discord-setup.sh --check     # what is installed, enabled, running, or 
 touch ~/.config/ffbox/discord.disabled   # kill switch: ffwatch launches nothing
 ```
 
-Re-run `--install-units` and `systemctl restart ffbox.target` after changing the watch list or
-the units; `--check` tells you when what is installed no longer matches this checkout. The web
-UI is on `127.0.0.1:8787` and is internal-only — reach it with
-`ssh -N -L 8787:127.0.0.1:8787 <box>`.
+Re-run `--install-units` and `systemctl restart ffbox.target` after changing the watch list,
+the bind address or the units; `--check` tells you when what is installed no longer matches
+this checkout.
+
+The page binds `127.0.0.1:8787` by default. To reach it from another machine, either tunnel
+(`ssh -N -L 8787:127.0.0.1:8787 <box>`) or bind it to an address on your network:
+
+```json
+"ffwatch": { "web_host": "192.168.51.10", "web_port": 8787 }
+```
+
+then re-run `--install-units` and restart. **The page has no authentication** — whoever reaches
+the port reads player messages, repo internals, the contents of files agents read, and raw
+model thinking. Widen it only to a network you would hand all of that to, and leave actions off
+(ffweb refuses `--enable-actions` on a non-loopback host unless `--allow-remote-actions` is
+given too).
 
 ## How it fits together
 
@@ -525,11 +537,13 @@ thing the UI can change is the outbound queue, and it does not change it: `--ena
 and the retry bookkeeping already live, and it is what lets the page move off this box later
 without the database moving with it.
 
-**It is internal-only, and none of its text is ever reused in a Discord post.**
-`transcript_event` holds repo internals, the contents of files the agent read, and raw model
-thinking. That is why `--host` defaults to `127.0.0.1` and why the systemd unit hard-codes it;
-reach the page over an SSH tunnel — `ssh -N -L 8787:127.0.0.1:8787 <box>` — rather than
-widening the bind. Combining `--enable-actions` with a non-loopback `--host` is refused
+**It is internal-only, has no authentication, and none of its text is ever reused in a Discord
+post.** `transcript_event` holds repo internals, the contents of files the agent read, and raw
+model thinking. That is why the bind address defaults to `127.0.0.1` everywhere it is decided —
+the CLI flag, the `ffwatch.web_host` config key, and the fallback ffweb uses when there is no
+config to read. An SSH tunnel (`ssh -N -L 8787:127.0.0.1:8787 <box>`) leaks nothing; a LAN
+address is a deliberate trade, made in the config so it is visible and reviewable rather than
+buried in a unit file. Combining `--enable-actions` with a non-loopback host is refused
 outright unless `--allow-remote-actions` is also given, because the action surface can release
 a reply into a public thread.
 

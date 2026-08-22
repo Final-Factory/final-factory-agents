@@ -204,6 +204,16 @@ DEFAULTS = {
         "suggestions": {"kind": "suggestion", "forum": True},
     },
 
+    # The web page's bind address, read by ffweb and rendered into ffweb.service by
+    # discord-setup.sh so both agree. 127.0.0.1 is the safe default and the right answer on a
+    # laptop; a build server that people reach over the LAN sets its own address here. THE PAGE
+    # HAS NO AUTHENTICATION — anyone who can reach the port reads player messages, repo
+    # internals, the contents of files agents read, and raw model thinking. Widen this only to
+    # a network you would hand those to, and leave actions off (ffweb refuses to combine
+    # --enable-actions with a non-loopback host unless --allow-remote-actions is also given).
+    "web_host": "127.0.0.1",
+    "web_port": 8787,
+
     "sweep_limit": 25,
     "history_messages": 40,       # how much prior conversation goes into job.json
     "attachment_max_bytes": 32 * 1024 * 1024,
@@ -239,6 +249,8 @@ ENV_OVERRIDES = {
     "FFWATCH_WARMUP_SECS": ("warmup_secs", int),
     "FFWATCH_KILL_GRACE": ("kill_grace_secs", int),
     "FFWATCH_MAX_RUNS": ("max_concurrent_runs", int),
+    "FFWATCH_WEB_HOST": ("web_host", str),
+    "FFWATCH_WEB_PORT": ("web_port", int),
     "FFWATCH_CATCHUP_SECS": ("catchup_secs", int),
     "FFWATCH_VERIFY": ("ffverify", str),
     "FFWATCH_VERIFY_SECS": ("verify_secs", int),

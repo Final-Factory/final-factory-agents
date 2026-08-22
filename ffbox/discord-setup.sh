@@ -77,6 +77,18 @@ UNIT_NAMES="ffbox.target ffdiscord-listener.service ffwatch.service ffweb.servic
 # The listener watches whatever the config says to watch. Reading it back from the ffwatch block
 # means adding a channel there and re-installing is enough — no second place to edit, and no
 # unit quietly watching a channel the classifier no longer knows about.
+# The page's bind address, from the same config block, so the unit and a by-hand run agree.
+web_bind() {
+    CONFIG_PATH="$FFDISCORD_HOME/config.json" python3 - <<'PY'
+import json, os
+try:
+    block = (json.load(open(os.environ["CONFIG_PATH"], encoding="utf-8")).get("ffwatch") or {})
+except Exception:
+    block = {}
+print("%s %s" % (block.get("web_host") or "127.0.0.1", block.get("web_port") or 8787))
+PY
+}
+
 watched_channels() {
     CONFIG_PATH="$FFDISCORD_HOME/config.json" python3 - <<'PY'
 import json, os
@@ -97,6 +109,8 @@ PY
 render_units() {
     _dest=$1
     _channels=$(watched_channels)
+    _webhost=$(web_bind | cut -d' ' -f1)
+    _webport=$(web_bind | cut -d' ' -f2)
     mkdir -p "$_dest"
     for u in $UNIT_NAMES; do
         sed -e "s|@FFWATCH@|$HERE/ffwatch.py|g" \
@@ -105,6 +119,8 @@ render_units() {
             -e "s|@GROUP@|$RUN_GROUP|g" \
             -e "s|@HOME@|$HOME|g" \
             -e "s|@CHANNELS@|$_channels|g" \
+            -e "s|@WEBHOST@|$_webhost|g" \
+            -e "s|@WEBPORT@|$_webport|g" \
             "$HERE/systemd/$u" > "$_dest/$u"
     done
 }

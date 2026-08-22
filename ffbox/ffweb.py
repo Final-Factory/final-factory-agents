@@ -1191,11 +1191,34 @@ def missing_columns(db):
     return missing
 
 
+def configured_bind():
+    """(host, port) from the ffwatch block of the ffdiscord config, else the safe default.
+
+    Read here rather than only rendered into the unit so that `python3 ffbox/ffweb.py` by hand
+    lands on the same address as the service. A missing or unreadable config is not an error —
+    it means loopback, which is the answer that cannot leak anything.
+    """
+    path = os.path.expanduser(os.environ.get("FFDISCORD_HOME", "~/.config/ffdiscord"))
+    try:
+        with open(os.path.join(path, "config.json"), encoding="utf-8") as fh:
+            block = (json.load(fh).get("ffwatch") or {})
+    except (OSError, json.JSONDecodeError, AttributeError):
+        block = {}
+    host = os.environ.get("FFWATCH_WEB_HOST") or block.get("web_host") or "127.0.0.1"
+    try:
+        port = int(os.environ.get("FFWATCH_WEB_PORT") or block.get("web_port") or DEFAULT_PORT)
+    except (TypeError, ValueError):
+        port = DEFAULT_PORT
+    return str(host), port
+
+
 def build_parser():
+    host, port = configured_bind()
     p = argparse.ArgumentParser(prog="ffweb", description=__doc__.split("\n")[0])
-    p.add_argument("--host", default="127.0.0.1",
-                   help="bind address (default 127.0.0.1 — this UI is internal-only)")
-    p.add_argument("--port", type=int, default=DEFAULT_PORT)
+    p.add_argument("--host", default=host,
+                   help=f"bind address (default {host} — from the ffwatch config block; this "
+                        "page has no authentication, so widen it only to a trusted network)")
+    p.add_argument("--port", type=int, default=port)
     p.add_argument("--state-dir", default=DEFAULT_STATE_DIR,
                    help="ffwatch state directory (default ~/ffbox-state)")
     p.add_argument("--db", help="ffwatch.db (default <state-dir>/ffwatch.db)")
