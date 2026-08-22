@@ -271,9 +271,10 @@ cat <<EOF
 Try it:
   $ROOT/ffbox --no-unity 'summarise how the save migration system works'
 
-Discord lanes, once the bot token is in ~/.config/ffdiscord/config.json:
-  sudo sh $ROOT/discord-setup.sh --install-units
-  sudo systemctl enable --now ffbox.target
+Discord lanes: stage 5 above installed and started ffbox.target, or printed the one command
+to finish it. It does not read anything from Discord until a bot token is configured —
+  sh $ROOT/discord-setup.sh --check     what is in place, what is stale
+  ffdiscord doctor                      whether the bot can see the channels
 
 Full usage: $ROOT/README.md
 EOF
