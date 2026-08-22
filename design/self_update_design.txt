@@ -1,0 +1,394 @@
+ffbox self-update design
+========================
+
+Revision 1, 2026-08-22.
+
+Scope: a daemon that keeps this checkout current — `git fetch` plus a fast-forward, on a
+schedule and on demand — and that restarts ffbox into the new code without killing work that
+is already in flight.
+
+Why this exists: on 2026-08-22 the ffwatch daemon on the build server was found running code
+from a checkout twelve hours older than HEAD. Nothing was wrong with the code on disk; nothing
+had restarted the process. A guard committed at 16:46 was not live at 20:41, and the pipeline
+spent five containers and roughly a dollar re-answering questions that already had answers.
+Editing a file is not deploying it. That gap is what this closes.
+
+
+0. What this must do
+--------------------
+
+Four requirements, in the order they constrain the design.
+
+  1. UPDATE ON A SCHEDULE AND ON DEMAND. One mechanism for both. A human triggering an update
+     must not take a different code path from the timer, or the rare path is the broken one.
+
+  2. SURVIVE A BROKEN FFBOX. If a bad commit stops ffwatch from starting, the updater must
+     still be running fifteen minutes later to take the commit that fixes it. This is the
+     requirement that decides the process boundary: an updater that is part of ffbox goes
+     down with ffbox, exactly when it is needed.
+
+  3. STOP GRACEFULLY BEFORE UPDATING. No new containers while an update is pending; existing
+     containers get their working time to finish and exit on their own; only then does the
+     code on disk move. A container reading a shell script that changes underneath it is the
+     race this avoids.
+
+  4. RESUME AFTERWARDS. Queued work runs, and nothing needs a human to un-stick it. A drain
+     that outlives the updater must lift itself.
+
+Explicitly NOT a requirement: rolling back a bad update. The owner's call, 2026-08-22 — a
+commit that breaks ffbox takes the box down until the next good commit lands, and requirement
+2 is what makes that recoverable without touching the machine. No test gate, no reset --hard,
+no held-back "known good" revision. This keeps the updater small enough to trust.
+
+
+1. Verified facts
+-----------------
+
+Everything below is read out of this repository as it stands, not assumed.
+
+  a. THE UNITS RUN THIS CHECKOUT DIRECTLY. ffwatch.service is
+     `ExecStart=/usr/bin/env python3 @FFWATCH@ run`, with @FFWATCH@ substituted by
+     06-services.sh at install time. There is no installed copy and no build step for the
+     Python. New code on disk is live at the next process start and NOT before.
+
+  b. ONE TARGET OWNS THE THREE SERVICES. ffbox.target carries
+     `Wants=ffdiscord-listener.service ffwatch.service ffweb.service`, and each of the three
+     carries `PartOf=ffbox.target`, which is what makes a stop or restart of the target
+     propagate down. Wants= and not Requires=: a failed web UI must not take the pipeline
+     with it.
+
+  c. LAUNCHES ARE THREADS, NOT THE MAIN LOOP. Watcher.schedule() starts each turn on its own
+     daemon thread and returns immediately; the loop keeps polling. In-flight work is
+     therefore invisible to a process-level check and must be counted in the database.
+
+  d. IN-FLIGHT IS ONE PREDICATE. Watcher.running_counts() reads
+     `SELECT ... FROM run WHERE terminal_state IS NULL`. A run row is written before the
+     container starts and given its terminal_state by finish_run when the container is gone,
+     so that predicate is exactly "containers this machine still owns".
+
+  e. A RUN CANNOT RUN FOREVER. Watcher.launch() calls subprocess.run() with
+     `timeout = warmup_secs + agent_secs + 300` — 4800 seconds on the defaults (3600 + 900 +
+     300). ffbox enforces its own three clocks inside that (WARMUP_TIMEOUT=3600,
+     AGENT_TIMEOUT=900, VERIFY_TIMEOUT=1800, KILL_GRACE=10), and whichever fires first,
+     finish_run still writes a terminal_state. The drain therefore has a computable ceiling
+     rather than an open-ended wait.
+
+  f. THE EXISTING KILL SWITCH IS TOO BROAD FOR THIS. `~/.config/ffbox/discord.disabled` gates
+     BOTH Watcher.schedule() (launches nothing) and Watcher.send_pending() (holds every
+     outbound row); a third reference, in Watcher.status(), only reports it. Draining wants
+     the first and not the second: replies that in-flight runs produce should still reach
+     Discord while we wait for those runs to end.
+
+  g. TWO OF THE CONTAINER'S SCRIPTS ARE READ FROM THIS CHECKOUT AT RUN TIME. ffbox bind-mounts
+     the --task script at /ffbox/task.sh:ro, and Watcher.launch() mounts ffverify.sh at
+     /usr/local/bin/ffverify:ro. Neither is baked into the image; both are the working copy,
+     live, for the whole life of the container. A merge while a container is running really
+     does change the script under it. This is requirement 3's race, stated concretely.
+
+  h. A STOP IS NOT FREE TODAY. ffwatch.service sets KillSignal=SIGTERM and
+     TimeoutStopSec=120, and its own comment says an in-flight run is terminal-failed and
+     requeued by the recovery pass on the next start. The container belongs to dockerd, not
+     to the unit's cgroup, so it survives on the strength of ffbox's `docker stop` trap
+     winning a race against that 120-second kill. Correct, but it costs a container.
+
+  i. NON-INTERACTIVE FETCH ALREADY WORKS. origin is
+     https://github.com/Final-Factory/final-factory-agents.git, credential.helper is `store`,
+     and the owner's ~/.git-credentials exists. `git ls-remote origin` succeeds with no
+     prompt. No new credential is needed; the updater must simply run as the owner.
+
+  j. SYSTEMD'S DEFAULT START TIMEOUT IS 90 SECONDS. DefaultTimeoutStartUSec on this machine
+     is 1min 30s. A Type=oneshot updater that drains for an hour is killed at 90 seconds
+     unless TimeoutStartSec says otherwise. See section 7.
+
+
+2. Architecture
+---------------
+
+Three new files, one new flag, two new subcommands. Nothing else moves.
+
+  ffbox/update_ffbox.sh              all of the logic. POSIX sh, sibling to restart_ffbox.sh.
+  ffbox/systemd/ffbox-update.service Type=oneshot, runs the script. THIS IS THE TRIGGER.
+  ffbox/systemd/ffbox-update.timer   the schedule. Nothing else.
+
+  ~/.config/ffbox/draining           the drain flag. Honored by ffwatch, written and removed
+                                     by the updater. Outside the checkout, so a merge cannot
+                                     touch it and a git-clean cannot delete it.
+
+  ffwatch drain [--wait] [--timeout N]   write the flag; optionally block until quiet.
+  ffwatch resume                         remove the flag.
+
+One mechanism for both triggers (requirement 1): the timer's only job is to start
+ffbox-update.service, and a human runs `sudo systemctl start ffbox-update.service`. Same unit,
+same script, same environment, same log destination. There is no second path to test.
+
+
+3. Independence
+---------------
+
+Requirement 2 is not satisfied by being a separate file; it is satisfied by four specific
+choices, each of which is a way the updater could have been coupled and is not.
+
+  1. THE TIMER IS ENABLED ON ITS OWN. `WantedBy=timers.target`, never ffbox.target.
+     `systemctl stop ffbox.target` leaves it firing. This is the whole point: the update
+     mechanism must outlive the thing it updates.
+
+  2. NO Requires=, BindsTo=, PartOf= OR After= ON ANY FFBOX UNIT. Only
+     `Wants=network-online.target`. A Requires= on a failed unit would refuse to start the
+     one thing that can repair it, and PartOf= would let a target restart kill an update
+     mid-merge.
+
+  3. THE DRAIN CAN NEVER BLOCK THE UPDATE. Timeout, non-zero exit, Python traceback, ffwatch
+     not running at all — every one of those logs and falls through to stop-update-start.
+     Without this the failure mode is circular: a commit that breaks ffwatch.py on import
+     also breaks `ffwatch drain`, and an updater that treats that as fatal can never install
+     the fix. The drain is an optimisation over a hard stop, and is treated as one.
+
+  4. THE UPDATER'S DEPENDENCIES ARE git, systemctl AND THE CHECKOUT. It imports nothing from
+     ffbox, reads no ffbox configuration it cannot default, and needs no database. The one
+     ffbox thing it calls — `ffwatch drain` — is covered by choice 3.
+
+Consequence worth stating: the updater is trusted code that runs whatever the remote branch
+says. `--ff-only` on a pinned branch is the containment, and section 8 covers the loop risk.
+
+
+4. The drain protocol
+---------------------
+
+A NEW FLAG, NOT THE KILL SWITCH, for the reason in fact (f): draining must stop launches
+without holding replies. ffwatch grows one check in schedule(), beside the existing kill-switch
+check and with the same shape — log once on entry, clear the log latch on exit, return [].
+Turns are still claimed and still queued while draining; they simply do not launch. Nothing is
+lost, and the queue drives the work forward the moment the new code is up.
+
+`ffwatch drain --wait --timeout N` writes the flag and then polls the predicate from fact (d)
+until it reads zero. It writes only the flag file, never the database, so it does not violate
+"ffwatch is the SOLE writer to ffwatch.db" — the daemon keeps writing, and this reads.
+
+TWO THINGS THAT BOUND THE WAIT:
+
+  * NO DAEMON, NO DRAIN. If ffwatch is not running, `drain --wait` returns at once. It decides
+    that with the same flock probe Watcher.daemon_alive() already uses for `ffbox "prompt"` —
+    trying to take the daemon's pid lock, not reading a pid. This matters because a daemon
+    that was hard-killed leaves run rows with terminal_state NULL that nothing will ever
+    settle; without this check the updater would wait the full ceiling for containers that
+    died hours ago. That is precisely the broken-ffbox case requirement 2 exists for.
+
+  * THE CEILING IS COMPUTED, NOT GUESSED. From fact (e), no run outlives
+    warmup_secs + agent_secs + 300. The default timeout is that sum plus slack, rounded to
+    7200 seconds. A run still alive past it is one ffwatch itself is already killing, and the
+    updater is right to stop waiting and stop the target.
+
+WHO REMOVES THE FLAG. Three places, deliberately overlapping, because a stranded flag means a
+silently idle build server:
+
+  * the updater, immediately before `systemctl start` — ffbox is stopped at that moment, so
+    there is no window in which anything observes the removal;
+  * the updater's EXIT trap, so a crash or a systemd timeout still lifts it;
+  * the NEXT updater run, unconditionally, before it does anything else. The flock in section
+    6 is what makes that safe: a resume can never land inside another updater's drain.
+
+
+5. What the diff decides
+------------------------
+
+A restart is only the right action for a pure Python or shell change. The three actions that
+are NOT a restart are what makes "pull and restart" wrong as a general rule, and each is a real
+path in this repository. After the merge, the updater inspects
+`git diff --name-only OLD_SHA..HEAD`:
+
+  ffbox/systemd/**            sudo sh ffbox/06-services.sh --install  (the unit TEMPLATES are
+                              the source; an edited template is inert until rendered)
+  Dockerfile, entrypoint.sh,  sh ffbox/03-build.sh                    (baked into ffbox:latest
+  run-as-user.sh,                                                      by the Dockerfile's two
+  import-project.sh,                                                   COPY lines — a restart
+  unity-license.sh,                                                    does nothing for these)
+  install-claude.sh
+  plugins/**, *.claude-plugin/** sh registerAgents.sh                 (live sessions read
+                              ~/.claude/plugins/cache/, not this tree, and only a version bump
+                              refreshes it — see CLAUDE.md)
+  anything else               restart alone
+
+  discord-task.sh, ffverify.sh   restart alone, but see fact (g): these two are MOUNTED from
+                              the checkout, not baked, so the new copy is in effect for the
+                              next container with no rebuild — and would have been in effect
+                              mid-run without the drain.
+
+These run from the NEW tree, after the merge, which is what makes step 0 of section 6
+necessary.
+
+The Dockerfile row is the one most likely to be skipped by hand and least likely to be
+noticed: nothing fails, the containers simply keep running last week's image.
+
+
+6. Sequence
+-----------
+
+  0. re-exec from a temp copy of self
+  1. flock, or exit 0                      (a trigger during a running update exits, section 7)
+  2. ffwatch resume                        (lift a flag stranded by a previous run)
+  3. git fetch --prune origin; exit 0 if:
+       kill switch present | working tree dirty | HEAD == origin/BRANCH
+  4. ffwatch drain --wait --timeout 7200   (failure logged, never fatal)
+  5. systemctl stop ffbox.target
+  6. OLD_SHA=$(git rev-parse HEAD); git merge --ff-only origin/BRANCH
+  7. act on the diff (section 5)
+  8. rm the drain flag
+  9. systemctl start ffbox.target
+ 10. report each unit's state and OLD_SHA -> HEAD
+
+STEP 0 IS NOT OPTIONAL. `sh` reads a script incrementally, by byte offset. Step 6 rewrites
+update_ffbox.sh underneath the running shell, which can resume in the middle of different
+text. Copy self to a temp file and `exec` it with a marker variable set; the copy is what
+survives the merge. This also gives steps 7 and 9 clean access to the new tree.
+
+STEP 3 COMES BEFORE STEP 4 for cost: the common case is "nothing new", and that case must not
+drain the pipeline. It is a fetch and a rev-parse, nothing more.
+
+A DIRTY TREE IS REFUSED, NEVER STASHED OR RESET. The working copy is someone's workspace; the
+updater has no business deciding that uncommitted work is expendable. Consequence to accept
+rather than design around: on a machine where someone is actively editing, auto-update stops
+until that work is committed, and says so once per tick.
+
+
+7. Failure modes
+----------------
+
+  ffwatch is dead                  drain returns immediately (section 4); update proceeds.
+  ffwatch.py is broken by a commit drain fails or crashes; logged; update proceeds. The next
+                                   good commit lands on the next tick. This is requirement 2.
+  drain times out                  logged with the number of runs still live; stop proceeds,
+                                   and those runs are terminal-failed and requeued by
+                                   recovery on the next start — the pre-existing behaviour,
+                                   not a new loss.
+  the merge is not a fast-forward  logged; nothing stops, nothing restarts, no services are
+                                   touched. A diverged local branch is a human problem.
+  06-services.sh / 03-build.sh
+    fails                          logged; the restart still happens, so the box comes back on
+                                   the new Python even if the image or the units did not move.
+                                   Half-updated and running beats consistent and down.
+  a unit fails to come back        reported per unit. `systemctl restart` exits 0 for a Wants=
+                                   member that died (fact b), so the script asks each unit
+                                   what it is rather than trusting the restart's exit code.
+  the updater is killed mid-drain  the EXIT trap lifts the flag; if even that is missed, the
+                                   next tick's step 2 does.
+  two updaters at once             the flock serialises them; the second exits rather than
+                                   queueing behind a possibly hour-long drain.
+  a container outlives the stop    the one case the drain does not fully close, and it is
+                                   pre-existing. Watcher.recover() skips a non-terminal run
+                                   whose container is still live, so an orphan left by fact
+                                   (h)'s race keeps its run row at terminal_state NULL — and
+                                   recover() runs once at daemon start, not per pass, so
+                                   nothing settles the row when that container later exits.
+                                   The row then counts as in-flight forever: it eats a slot
+                                   against max_concurrent_runs, and the NEXT drain waits the
+                                   full ceiling for a container that is already gone. The
+                                   drain makes this rarer by emptying the machine first; it
+                                   does not fix it. See open question 5.
+
+SYSTEMD'S 90-SECOND DEFAULT (fact j) would turn a normal drain into the "killed mid-drain" row
+above, every time, on a busy machine. TimeoutStartSec on ffbox-update.service is therefore set
+explicitly to the drain ceiling plus fifteen minutes of slack: 8100 seconds. Not `infinity` —
+a wedged updater holding the flock forever is worse than one that gets killed and retried,
+because the flock is what keeps the next tick from starting.
+
+
+8. Configuration and privilege
+------------------------------
+
+  branch                pinned in the script, default `master`, overridable by
+                        FFBOX_UPDATE_BRANCH. Not "whatever is checked out": the updater
+                        auto-executes what it pulls, and the branch is part of that trust.
+  merge                 `--ff-only`, always. Never rebase, never a merge commit, never a
+                        `reset --hard` onto the remote.
+  kill switch           ~/.config/ffbox/update.disabled. Its own file, not discord.disabled:
+                        pausing replies and pausing code updates are different intents, and
+                        the second is what a human debugging on the box wants.
+  cadence               OnBootSec=5min, OnUnitActiveSec=15min, RandomizedDelaySec=5min,
+                        Persistent=true so a machine that was off catches up.
+  drain timeout         FFBOX_DRAIN_TIMEOUT, default 7200 (section 4).
+
+PRIVILEGE. The unit runs as root, and every command that touches the owner's files runs
+through `runuser -u @USER@`. The alternative — running as the owner with a NOPASSWD sudoers
+entry for systemctl — adds a permission file to maintain and gains nothing.
+
+Two things that break if this is done carelessly, both worth naming because both are silent:
+
+  * ROOT-OWNED OBJECTS IN .git. If root runs the fetch and merge, new objects land root-owned
+    and every later `git pull` by the owner fails on permissions. Hence runuser for all git.
+  * HOME. `runuser -u USER --` does NOT reset HOME, so git would read root's configuration and
+    miss the owner's ~/.git-credentials — and fact (i) is the only reason the fetch works
+    unattended. HOME is set explicitly, the same way ffwatch.service already does it with
+    `Environment=HOME=@HOME@`.
+
+registerAgents.sh writes into the owner's ~/.claude and must run under the same runuser.
+03-build.sh needs docker, which root has.
+
+THE LOOP RISK. This repository is also where the Discord dev lane's work lands. That is safe
+today because discord-dev-agent opens pull requests and never merges, so nothing reaches
+`master` without a human. If anything ever auto-pushes to the pinned branch, an auto-pulling
+build server turns that into a code-execution loop. `--ff-only` on a pinned branch is the
+containment, and this paragraph is the reason not to relax it.
+
+
+9. Files this touches
+---------------------
+
+  NEW  ffbox/update_ffbox.sh                the script
+  NEW  ffbox/systemd/ffbox-update.service   Type=oneshot, TimeoutStartSec=8100, User=root
+  NEW  ffbox/systemd/ffbox-update.timer     WantedBy=timers.target
+  EDIT ffbox/ffwatch.py                     drain flag honored in schedule(); `drain` and
+                                            `resume` subcommands; drain_switch in the config
+                                            defaults and the env-override table
+  EDIT ffbox/06-services.sh                 render and install the two new units; enable the
+                                            timer SEPARATELY from ffbox.target, and report it
+                                            in the status output
+  EDIT ffbox/test_ffwatch.py                the drain gate, and the drain-failure-does-not-
+                                            block-the-update path
+  EDIT ffbox/README.md                      how to trigger, pause and observe an update
+
+06-services.sh is the only place that learns about the new units, and it must not add them to
+ffbox.target — see section 3, choice 1.
+
+
+10. Open questions
+------------------
+
+  1. SHOULD AN UPDATE BE VISIBLE IN ffweb? The journal has it, but the page is where a human
+     looks. A single row — last check, last update, old sha, new sha, outcome — would answer
+     "is this box current?" without ssh. Not in phase 1; it wants a table and a schema
+     migration for something the journal already records.
+
+  2. SHOULD THE UPDATER ANNOUNCE ITSELF IN DISCORD? Tempting and cheap, and wrong by the rule
+     the pipeline already holds: the host composes, and an update is not a reply to anyone. If
+     it happens it belongs to a future dev-chat escalation path, not to this script.
+
+  3. IS 15 MINUTES RIGHT? Chosen to be small against a drain that can take an hour and large
+     against a fetch that costs nothing. If updates start landing in bursts, OnUnitActiveSec
+     is the only knob that needs to move.
+
+  4. WHAT ABOUT THE GAME REPO? ffbox clones it per run at a pinned ref; nothing here updates
+     it, and nothing should. Named so it is not mistaken for an omission.
+
+  5. SHOULD recover() RUN EVERY PASS? Found while writing this document, and not caused by it:
+     a run row whose container outlived a stop is skipped by recover() and then never revisited
+     because run() calls recover() once, before the loop. once() does call it every pass, which
+     is why the offline suite never sees this. A per-pass sweep would settle those rows and
+     make the drain's predicate honest, at the cost of a `docker ps` per pass. It belongs to
+     ffwatch, not to the updater, and should be decided on its own rather than smuggled in
+     with this.
+
+
+11. Phasing
+-----------
+
+  PHASE 1  the drain: the flag, schedule()'s check, `ffwatch drain` and `ffwatch resume`,
+           with tests. Useful on its own — it is the graceful stop that restart_ffbox.sh
+           does not have.
+  PHASE 2  update_ffbox.sh and the two units, installed by 06-services.sh, timer left
+           disabled. Every path exercised by hand: nothing-new, dirty-tree, kill-switch,
+           not-a-fast-forward, drain-times-out, ffwatch-already-dead.
+  PHASE 3  enable the timer. Watch one real update land, then one deliberately broken commit,
+           and confirm the next good commit recovers the box without anyone touching it.
+
+Phase 3 is the only one that proves requirement 2, and it is the reason to do the broken
+commit on purpose rather than waiting to meet it by accident.
