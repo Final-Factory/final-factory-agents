@@ -384,11 +384,17 @@ ffbox.target — see section 3, choice 1.
   PHASE 1  the drain: the flag, schedule()'s check, `ffwatch drain` and `ffwatch resume`,
            with tests. Useful on its own — it is the graceful stop that restart_ffbox.sh
            does not have.
-  PHASE 2  update_ffbox.sh and the two units, installed by 06-services.sh, timer left
-           disabled. Every path exercised by hand: nothing-new, dirty-tree, kill-switch,
-           not-a-fast-forward, drain-times-out, ffwatch-already-dead.
-  PHASE 3  enable the timer. Watch one real update land, then one deliberately broken commit,
-           and confirm the next good commit recovers the box without anyone touching it.
+  PHASE 2  update_ffbox.sh and the two units, installed AND enabled by 06-services.sh.
+           Revised during implementation: the script's own rule is that installing a unit and
+           leaving it stopped is a half-finished job, and carving out an exception for this one
+           would mean the enable step is the one nobody tests. `--dry-run` and
+           ~/.config/ffbox/update.disabled are how you hold it off instead, and both are
+           cheaper than a flag that exists for one afternoon. Paths to exercise by hand:
+           nothing-new, dirty-tree, kill-switch, not-a-fast-forward, drain-times-out,
+           ffwatch-already-dead.
+  PHASE 3  watch one real update land, then one deliberately broken commit, and confirm the
+           next good commit recovers the box without anyone touching it.
 
 Phase 3 is the only one that proves requirement 2, and it is the reason to do the broken
-commit on purpose rather than waiting to meet it by accident.
+commit on purpose rather than waiting to meet it by accident. Until it has been done, the
+recovery story is a design claim and not a tested one.

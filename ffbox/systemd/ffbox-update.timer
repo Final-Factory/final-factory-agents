@@ -1,0 +1,22 @@
+[Unit]
+# The schedule for ffbox-update.service. Nothing else.
+#
+# WantedBy=timers.target, never ffbox.target — see the service for why. This is what keeps
+# firing when ffbox is down, and is therefore the whole recovery story for a bad commit.
+Description=ffbox self-update schedule
+Wants=network-online.target
+
+[Timer]
+Unit=ffbox-update.service
+# Not at boot exactly: docker, the network and ffbox itself want the machine first.
+OnBootSec=5min
+OnUnitActiveSec=15min
+# Nothing here is synchronised across machines, but a spread keeps two build servers from
+# hitting GitHub in the same second, and costs nothing.
+RandomizedDelaySec=5min
+# A machine that was off through a scheduled run catches up once, rather than waiting a full
+# interval to discover it is a week behind.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
