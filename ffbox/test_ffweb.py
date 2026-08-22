@@ -242,8 +242,15 @@ class Server:
 
     def __init__(self, state, db_path, blobs, ffwatch_py, enable_actions=False, tls=False,
                  login=True):
-        origins = set()
         scheme = "https" if tls else "http"
+        # The port has to be known BEFORE App is built: App copies the set it is given, so an
+        # allowlist filled in afterwards would silently stay empty and every case here would
+        # pass through the Host-header fallback instead. Bind a socket, take its port, close it.
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        origins = {f"{scheme}://127.0.0.1:{port}", f"{scheme}://localhost:{port}"}
         self.app = ffweb.App(db_path, blobs, state, ffwatch_py,
                              enable_actions=enable_actions, quiet=True, origins=origins,
                              scheme=scheme)
@@ -256,11 +263,9 @@ class Server:
             # The certificate is self-signed by design, so the client is the one place in this
             # file that says so out loud rather than pretending a CA exists.
             self.client_ctx = ssl._create_unverified_context()
-        self.httpd = ffweb.FFWebServer(("127.0.0.1", 0), self.app, ssl_context=ctx)
+        self.httpd = ffweb.FFWebServer(("127.0.0.1", port), self.app, ssl_context=ctx)
         self.port = self.httpd.server_address[1]
         self.base = f"{scheme}://127.0.0.1:{self.port}"
-        # The origin allowlist is built from the bound port, exactly as main() does it.
-        origins.update({self.base, f"{scheme}://localhost:{self.port}"})
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
         self.cookie = ""
@@ -274,7 +279,7 @@ class Server:
             hdrs["Cookie"] = self.cookie
         return hdrs
 
-    def login(self, user=ffweb.AUTH_USER, password=ffweb.AUTH_PASSWORD):
+    def login(self, user="Ben", password=ffweb.DEFAULT_PASSWORD):
         """POST the form and keep the cookie, exactly as a browser would."""
         code, hdr, _body = self.post("/login", {"user": user, "password": password,
                                                 "next": "/"})
@@ -987,16 +992,28 @@ def test_the_password_is_the_only_way_in():
     try:
         for user, password, label in [
             ("Ben", "wrong", "wrong password"),
-            ("ben", ffweb.AUTH_PASSWORD, "wrong case in the user"),
-            ("Ben", ffweb.AUTH_PASSWORD + " ", "a trailing space on the password"),
+            ("nobody", ffweb.DEFAULT_PASSWORD, "a user we do not have"),
+            ("Ben", ffweb.DEFAULT_PASSWORD + " ", "a trailing space on the password"),
+            ("Ben", ffweb.DEFAULT_PASSWORD.lower(), "the password in the wrong case"),
             ("", "", "an empty form"),
         ]:
             code, hdr, body = srv.post("/login", {"user": user, "password": password})
             ok = code == 401 and "Set-Cookie" not in hdr and b"wrong user or password" in body
             check(f"{label} is refused", ok, (code, hdr.get("Set-Cookie")))
 
-        code, hdr, _b = srv.post("/login", {"user": ffweb.AUTH_USER,
-                                            "password": ffweb.AUTH_PASSWORD,
+        # Both accounts exist, and the NAME is the forgiving half: case and stray whitespace
+        # are how people and autofill actually type their own name into a form.
+        for name in ("Ben", "ben", "BEN", "  Ben  ", "Lothsahn", "lothsahn", "LOTHSAHN"):
+            code, hdr, _b = srv.post("/login", {"user": name,
+                                                "password": ffweb.DEFAULT_PASSWORD})
+            check(f"{name!r} signs in", code == 303 and "Set-Cookie" in hdr, code)
+        check("both accounts are configured",
+              set(ffweb.AUTH_USERS) == {"ben", "lothsahn"}, sorted(ffweb.AUTH_USERS))
+        check("the names are stored lowercase",
+              all(n == n.lower() for n in ffweb.AUTH_USERS), sorted(ffweb.AUTH_USERS))
+
+        code, hdr, _b = srv.post("/login", {"user": "Ben",
+                                            "password": ffweb.DEFAULT_PASSWORD,
                                             "next": "/lanes"})
         cookie = hdr.get("Set-Cookie", "")
         check("the right credentials are accepted", code == 303, code)
@@ -1032,8 +1049,8 @@ def test_next_cannot_leave_this_origin():
 
     srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
     try:
-        code, hdr, _b = srv.post("/login", {"user": ffweb.AUTH_USER,
-                                            "password": ffweb.AUTH_PASSWORD,
+        code, hdr, _b = srv.post("/login", {"user": "Ben",
+                                            "password": ffweb.DEFAULT_PASSWORD,
                                             "next": "https://evil.example/"})
         check("a hostile next is flattened to /",
               code == 303 and hdr.get("Location") == "/", hdr.get("Location"))
@@ -1066,17 +1083,38 @@ def test_login_and_logout_refuse_a_cross_origin_post():
     srv = serve()
     try:
         evil = {"Origin": "https://evil.example"}
-        code, _hdr, _b = srv.post("/logout", {}, headers=evil)
-        check("a cross-origin sign-out is refused", code == 403, code)
-        code, _hdr, _b = srv.post("/login", {"user": ffweb.AUTH_USER,
-                                             "password": ffweb.AUTH_PASSWORD}, headers=evil)
-        check("a cross-origin sign-in is refused", code == 403, code)
+
+        # The ACTIONS are what the check is for: they release a reply into a public thread.
+        code, _hdr, body = srv.post("/actions/approve", {"id": "1"}, headers=evil)
+        check("a cross-origin action is refused", code == 403, code)
+        # The refusal has to say what it saw, or an operator locked out by a proxy that
+        # rewrites Host has nothing to act on.
+        check("the refusal names the origin it saw and what it wanted",
+              b"evil.example" in body and b"127.0.0.1" in body, body[-300:])
+        check("the echoed origin is escaped, not injected",
+              b"<script" not in srv.post("/actions/approve", {"id": "1"},
+                                         headers={"Origin": "https://x/" + XSS})[2])
+
+        # The SESSION VERBS are not. Forging them needs the password (login) or achieves a
+        # nuisance sign-out (logout), and refusing here locked the operator out of the form
+        # behind a proxy that rewrites Host, or a browser sending "null" from an opaque origin.
+        for origin, label in [("https://evil.example", "a mismatched origin"),
+                              ("null", "Origin: null")]:
+            code, hdr, _b = srv.post("/login", {"user": "Ben",
+                                                "password": ffweb.DEFAULT_PASSWORD},
+                                     headers={"Origin": origin})
+            check(f"{label} still reaches the login form", code == 303, code)
+            check(f"{label} that signs in still gets a session",
+                  "Set-Cookie" in hdr, hdr.get("Set-Cookie"))
+        code, _hdr, _b = srv.post("/login", {"user": "Ben", "password": "wrong"},
+                                  headers={"Origin": "null"})
+        check("and the password is still the thing that decides", code == 401, code)
 
         # ... and the Host-header form of same-origin is accepted, which is what keeps a box
         # reachable under a name nobody put in the config.
         good = {"Origin": f"http://127.0.0.1:{srv.port}"}
-        code, _hdr, _b = srv.post("/login", {"user": ffweb.AUTH_USER,
-                                             "password": ffweb.AUTH_PASSWORD}, headers=good)
+        code, _hdr, _b = srv.post("/login", {"user": "Ben",
+                                             "password": ffweb.DEFAULT_PASSWORD}, headers=good)
         check("a same-origin sign-in is accepted", code == 303, code)
     finally:
         srv.stop()

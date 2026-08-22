@@ -8,8 +8,9 @@
 # THE BIND ADDRESS COMES FROM THE CONFIG (ffwatch.web_host, default 127.0.0.1) and is rendered
 # in here by 06-services.sh. The page renders transcript_event, which holds repo internals,
 # file contents the agent read and raw model thinking, alongside Discord message text. It is
-# behind a login (one hardcoded account; FFWEB_USER / FFWEB_PASSWORD in secrets.env override
-# it) and served over TLS with a self-signed certificate minted into <state-dir>/tls on first
+# behind a login (hardcoded accounts for Ben and Lothsahn; FFWEB_PASSWORD / FFWEB_USER in
+# secrets.env override them) and served over TLS with a self-signed certificate minted into
+# <state-dir>/tls on first
 # start. That is one password against whoever can reach the port, so the default stays
 # loopback: on a laptop use `ssh -N -L 8787:127.0.0.1:8787 thisbox`. On a build server people
 # work against, a LAN address is a reasonable trade — but it is a trade, so make it

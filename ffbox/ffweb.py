@@ -31,13 +31,16 @@ FOUR THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the pag
 
 4. NOTHING IS SERVED UNTIL SOMEONE LOGS IN, AND THE WIRE IS TLS. Every route except the login
    form goes through the session check, so an unauthenticated request is a 303 to /login and
-   never a partial page. The credential is one hardcoded pair (FFWEB_USER / FFWEB_PASSWORD
-   override it without a patch) compared with hmac.compare_digest, and a success mints a
-   random token held in memory only — restarting ffweb signs everyone out, which is the right
-   default on a box whose whole state is one database it can re-read. The certificate is
-   self-signed and generated into <state-dir>/tls on first start; the browser warning that
-   produces is ACCURATE, because nothing signed it. HSTS is deliberately not sent: it would
-   make that warning unbypassable on a certificate we already know is untrusted.
+   never a partial page. The credentials are a small hardcoded table keyed by lowercase name
+   (FFWEB_PASSWORD and FFWEB_USER override it without a patch): the name is matched
+   case-insensitively because it is not the secret, the password is compared exactly with
+   hmac.compare_digest because it is. A success mints a random token held in memory only, so
+   restarting ffweb signs everyone out — the right default on a box whose whole state is one
+   database it can re-read. A mismatched Origin is refused on the actions and merely logged on
+   the session verbs; see _route_post for why. The certificate is self-signed and generated
+   into <state-dir>/tls on first start; the browser warning that produces is ACCURATE, because
+   nothing signed it. HSTS is deliberately not sent: it would make that warning unbypassable
+   on a certificate we already know is untrusted.
 
 Standard library only — http.server, sqlite3 and ssl, no Flask, no CDN, no fonts, no network.
 The one external program is `openssl`, run once to mint the self-signed certificate, because
@@ -91,14 +94,28 @@ TEXTISH_TYPES = {"application/json", "application/xml", "application/x-ndjson"}
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
 
-# ---- the credential -----------------------------------------------------------------------
-# One hardcoded pair, on purpose and for now. There is exactly one operator, the page is
-# internal, and a user table would be a database this UI has spent its whole design NOT
-# writing to. The environment overrides both halves so a machine can change the password
-# without a patch, and secrets.env is already the file the units read for that sort of thing.
-# When a second person needs an account, this constant is the thing to replace — not to grow.
-AUTH_USER = os.environ.get("FFWEB_USER") or "Ben"
-AUTH_PASSWORD = os.environ.get("FFWEB_PASSWORD") or "FF is better than W0rkf0rce or mittens"
+# ---- the credentials ----------------------------------------------------------------------
+# Hardcoded, on purpose and for now. The page is internal and a user table would be a database
+# this UI has spent its whole design NOT writing to.
+#
+# Names are the KEY and are stored lowercase, because a person typing their own name into a
+# login form capitalises it however they capitalise it that day, and "Ben" vs "ben" is not a
+# distinction worth locking someone out over. The password is what is secret, and that stays
+# exactly as typed.
+#
+# The environment overrides, so a machine can change this without a patch and secrets.env is
+# already the file the units read: FFWEB_PASSWORD sets the password for every account below,
+# and FFWEB_USER narrows the whole thing to one named account with that password.
+DEFAULT_PASSWORD = "FF is better than W0rkf0rce"
+
+_env_password = os.environ.get("FFWEB_PASSWORD") or DEFAULT_PASSWORD
+AUTH_USERS = {name: _env_password for name in ("ben", "lothsahn")}
+if os.environ.get("FFWEB_USER"):
+    AUTH_USERS = {os.environ["FFWEB_USER"].strip().lower(): _env_password}
+
+# Compared against when the name is not one we know, so an unknown user and a wrong password
+# take the same path through compare_digest rather than the miss returning early.
+_DECOY = "\x00" * 32
 
 SESSION_COOKIE = "ffweb_session"
 SESSION_TTL_SECS = 12 * 3600      # a working day; a restart ends every session anyway
@@ -171,16 +188,20 @@ class Sessions:
 
 
 def credentials_ok(user, password):
-    """Constant-time check of both halves.
+    """True when this name is one of ours and the password matches it.
 
-    compare_digest on each rather than `==` on a tuple: the username is as much a secret as
-    anything else here, and an early-out on the first wrong character is the one bug this
-    function exists to not have.
+    The name is matched case-insensitively and with surrounding whitespace dropped; a login
+    form gets both from autofill and from people, and neither is the secret. The password is
+    compared with compare_digest and NOT normalised, so an early-out on the first wrong
+    character is the bug this function exists to not have. An unknown name still runs the
+    comparison, against a decoy, so a miss on the name and a miss on the password cost the
+    same.
     """
-    user_ok = hmac.compare_digest((user or "").encode("utf-8"), AUTH_USER.encode("utf-8"))
-    pass_ok = hmac.compare_digest((password or "").encode("utf-8"),
-                                  AUTH_PASSWORD.encode("utf-8"))
-    return user_ok and pass_ok
+    name = (user or "").strip().lower()
+    reference = AUTH_USERS.get(name, _DECOY)
+    matched = hmac.compare_digest((password or "").encode("utf-8"),
+                                  reference.encode("utf-8"))
+    return matched and name in AUTH_USERS
 
 
 def safe_next(path):
@@ -851,12 +872,19 @@ class FFWebHandler(BaseHTTPRequestHandler):
         """
         origin = self.headers.get("Origin")
         if not origin:
-            return True
+            return True, ""
         origin = origin.rstrip("/")
         if origin in self.app.self_origins:
-            return True
+            return True, ""
         host = self.headers.get("Host")
-        return bool(host) and origin == f"{self.app.scheme}://{host}"
+        if host and origin == f"{self.app.scheme}://{host}":
+            return True, ""
+        # Refused. Hand back what was actually seen: an operator locked out of the login form
+        # by a proxy that rewrites Host, or by a browser sending "null", cannot fix that from
+        # the words "cross-origin action refused". Both values are echoed through esc().
+        expected = f"{self.app.scheme}://{host}" if host else "(no Host header)"
+        return False, f"Origin {origin} does not match {expected} or any of " + \
+                      ", ".join(sorted(self.app.self_origins))
 
     def _error(self, code, message):
         self._send(code, page(f"{code}", [f"<h1>{esc(code)}</h1><p>{esc(message)}</p>"]))
@@ -935,8 +963,24 @@ class FFWebHandler(BaseHTTPRequestHandler):
         # A page on another origin can submit a form to 127.0.0.1 from a browser running on
         # this box. Refusing a mismatched Origin is what stops a random tab approving a reply
         # into Discord, or signing this browser out, or replaying a stolen password guess.
-        if not self._origin_ok():
-            return self._error(403, "cross-origin action refused")
+        ok, why = self._origin_ok()
+        if not ok:
+            # Logged even under --quiet. A refusal that leaves no trace is the one thing an
+            # operator cannot debug, and this is not "every request" — it is a rejected write.
+            sys.stderr.write("%s [ffweb] odd origin on %s from %s: %s\n" % (
+                self.log_date_time_string(), path, self.client_address[0], why))
+            # Refusing is right for the ACTIONS, which release a reply into a public Discord
+            # thread. It is wrong for the session verbs, and locking the operator out of the
+            # login form is the failure this caused in practice: a reverse proxy that rewrites
+            # Host, or a browser that sends "null" from an opaque origin, both land here.
+            #
+            # What the check is worth on /login is protection from login-CSRF — an attacker
+            # signing you into THEIR account so your work lands there. There is one account,
+            # and forging the POST still needs the password, so there is no such account to
+            # land in. On /logout the worst case is a nuisance sign-out. Neither is worth being
+            # unable to reach the page, so both log and continue while the actions still stop.
+            if path not in ("/login", "/logout"):
+                return self._error(403, "cross-origin action refused. " + why)
 
         if path == "/login":
             return self._do_login(form)
@@ -1803,7 +1847,7 @@ def main(argv=None):
     sys.stderr.write(
         f"ffweb: {scheme}://{args.host}:{httpd.server_address[1]}/  db={db_path} (read-only)\n"
         f"       blobs={blobs}  actions={'ON' if args.enable_actions else 'off'}"
-        f"  login={AUTH_USER}\n" +
+        f"  logins={'/'.join(sorted(AUTH_USERS))}\n" +
         ("       the certificate is self-signed, so the browser warns once; that warning is\n"
          "       correct — nothing signed it.\n" if args.tls else
          "       --no-tls: the password and every page cross the wire in the clear.\n") +
