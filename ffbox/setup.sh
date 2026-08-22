@@ -1,13 +1,16 @@
 #!/bin/sh
 # setup.sh — bring a machine from nothing to a working ffbox in one command.
 #
-# Runs the three stages in order, each of which is independently re-runnable:
+# Runs every stage in order, each of which is independently re-runnable and each of which
+# no-ops when it is already satisfied:
 #
-#   1. zfsSetup.sh     ZFS datasets, the golden checkout, the runs mountpoint, sudoers
-#   2. build.sh        the container image (Unity + Claude Code)
-#   3. warmLibrary.sh  update golden from git, then build its Unity Library/ cache
+#   1. dockerSetup.sh   Docker on its own ZFS dataset, overlay2 driver
+#   2. zfsSetup.sh      ZFS datasets, the golden checkout, the runs mountpoint, sudoers
+#   3. build.sh         the container image (Unity + Claude Code)
+#   4. warmLibrary.sh   update golden from git, then build its Unity Library/ cache
+#   5. discord-setup.sh state dir, schema, config block, systemd units (Discord lanes only)
 #
-# Stage 3 is the slow one — a cold Unity import on Final Factory is plausibly 30-60 minutes — and
+# Stage 4 is the slow one — a cold Unity import on Final Factory is plausibly 30-60 minutes — and
 # it is the reason the whole layout exists: it happens once in golden, and every later ffbox run
 # clones that warm Library/ for free.
 #
@@ -21,9 +24,11 @@ cd "$ROOT"
 
 SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 
+DO_DOCKER=1
 DO_ZFS=1
 DO_BUILD=1
 DO_LIBRARY=1
+DO_DISCORD=1
 DO_TOKEN=1
 ZFS_ARGS=""
 
@@ -31,23 +36,27 @@ usage() {
   cat <<EOF
 Usage: sh setup.sh [options]
 
-Bootstraps this machine for ffbox: ZFS layout, container image, and a warm Unity Library.
-Idempotent — re-run any time.
+Bootstraps this machine for ffbox: Docker, ZFS layout, container image, a warm Unity Library,
+and the Discord lanes. Idempotent — re-run any time.
 
 Options (alphabetical):
   --help           Show this message.
   --owner USER     Passed through to zfsSetup.sh (default: the invoking user).
   --pool NAME      Passed through to zfsSetup.sh (default: the pool holding /).
   --skip-build     Do not rebuild the container image.
+  --skip-discord   Do not provision the Discord lanes (state dir, config, systemd units).
+  --skip-docker    Do not touch Docker; assume it is installed and configured.
   --skip-library   Do not update golden or run the Unity import. Use when you only want the
                    datasets and image in place.
   --skip-token     Do not offer to run 'claude setup-token'.
   --skip-zfs       Do not touch ZFS; assume the layout already exists.
 
 For finer control over any single stage, run it directly:
+  sh ffbox/dockerSetup.sh --help
   sh ffbox/zfsSetup.sh --help
   sh ffbox/build.sh
   sh ffbox/warmLibrary.sh --help
+  sh ffbox/discord-setup.sh --help
 EOF
 }
 
@@ -57,6 +66,8 @@ while [ $# -gt 0 ]; do
     --owner)        ZFS_ARGS="$ZFS_ARGS --owner ${2:?--owner needs a user}"; shift 2 ;;
     --pool)         ZFS_ARGS="$ZFS_ARGS --pool ${2:?--pool needs a name}"; shift 2 ;;
     --skip-build)   DO_BUILD=0; shift ;;
+    --skip-discord) DO_DISCORD=0; shift ;;
+    --skip-docker)  DO_DOCKER=0; shift ;;
     --skip-library) DO_LIBRARY=0; shift ;;
     --skip-token)   DO_TOKEN=0; shift ;;
     --skip-zfs)     DO_ZFS=0; shift ;;
@@ -85,7 +96,7 @@ secrets_ready() {
   ) 2>/dev/null
 }
 
-stage "0/3  secrets"
+stage "0/5  secrets"
 
 if [ -e "$SECRETS" ]; then
   skip_msg="$SECRETS already exists — leaving it alone"
@@ -213,32 +224,56 @@ EOF
   DO_LIBRARY=0
 fi
 
+# Docker first: stage 3 cannot build an image without it, and dockerSetup.sh is the one that
+# keeps the layers OFF the boot environment — the zsys trap its own header documents at length.
+if [ "$DO_DOCKER" -eq 1 ]; then
+  stage "1/5  Docker on its own ZFS dataset"
+  sh "$ROOT/dockerSetup.sh"
+else
+  stage "1/5  Docker — skipped (--skip-docker)"
+fi
+
 if [ "$DO_ZFS" -eq 1 ]; then
-  stage "1/3  ZFS layout and golden checkout"
+  stage "2/5  ZFS layout and golden checkout"
   # shellcheck disable=SC2086  # ZFS_ARGS is a deliberately word-split option list
   sh "$ROOT/zfsSetup.sh" $ZFS_ARGS
 else
-  stage "1/3  ZFS layout — skipped (--skip-zfs)"
+  stage "2/5  ZFS layout — skipped (--skip-zfs)"
 fi
 
 if [ "$DO_BUILD" -eq 1 ]; then
-  stage "2/3  container image"
+  stage "3/5  container image"
   sh "$ROOT/build.sh"
 else
-  stage "2/3  container image — skipped (--skip-build)"
+  stage "3/5  container image — skipped (--skip-build)"
 fi
 
 if [ "$DO_LIBRARY" -eq 1 ]; then
-  stage "3/3  update golden and warm its Unity Library (slow)"
+  stage "4/5  update golden and warm its Unity Library (slow)"
   sh "$ROOT/warmLibrary.sh"
 else
-  stage "3/3  Unity Library — skipped"
+  stage "4/5  Unity Library — skipped"
+fi
+
+# Last, and deliberately not fatal: a machine that only ever runs ffbox by hand still wants
+# stages 1-4, and this stage is the only one that can fail purely because Discord is not
+# configured yet. It provisions and reports; it starts nothing and installs no unit, because
+# both of those are operator decisions (and the unit install needs root).
+if [ "$DO_DISCORD" -eq 1 ]; then
+  stage "5/5  Discord lanes (state dir, schema, config, systemd units)"
+  sh "$ROOT/discord-setup.sh" || printf 'setup.sh: discord-setup.sh exited non-zero; run it by hand\n' >&2
+else
+  stage "5/5  Discord lanes — skipped (--skip-discord)"
 fi
 
 stage "setup complete"
 cat <<EOF
 Try it:
   $ROOT/ffbox --no-unity 'summarise how the save migration system works'
+
+Discord lanes, once the bot token is in ~/.config/ffdiscord/config.json:
+  sudo sh $ROOT/discord-setup.sh --install-units
+  sudo systemctl enable --now ffbox.target
 
 Full usage: $ROOT/README.md
 EOF

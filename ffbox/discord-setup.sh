@@ -1,9 +1,12 @@
 #!/bin/sh
 # discord-setup.sh — provision this machine for the ffbox Discord lanes.
 #
-#   sh ffbox/discord-setup.sh            provision (idempotent; safe to re-run)
-#   sh ffbox/discord-setup.sh --check    report what is and is not in place, change nothing
-#   sh ffbox/discord-setup.sh --no-units skip the systemd units
+#   sh ffbox/discord-setup.sh                  provision (idempotent; safe to re-run)
+#   sh ffbox/discord-setup.sh --check          report what is and is not in place, change nothing
+#   sudo sh ffbox/discord-setup.sh --install-units
+#                                              install the systemd units into /etc/systemd/system
+#                                              straight from this checkout, and nothing else
+#   sh ffbox/discord-setup.sh --no-units       skip the systemd unit stage
 #
 # Everything here is re-runnable. It never overwrites a secrets file, never replaces an
 # existing config value, and never starts a unit that is already running. Re-run it after
@@ -28,22 +31,106 @@ KILL_SWITCH=$FFBOX_CONFIG/discord.disabled
 # run as $RUN_USER instead, which is the same identity that owns the docker group membership,
 # the NOPASSWD zfs rules and the Claude credential.
 UNIT_DIR=/etc/systemd/system
+# --install-units is meant to be run under sudo, and under sudo $HOME and `id -un` are root's.
+# The units have to describe the user who actually owns the checkout, the docker group and the
+# Claude credential, so recover that identity from SUDO_USER — the same trick zfsSetup.sh uses.
 RUN_USER=$(id -un)
-RUN_GROUP=$(id -gn)
+if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+    RUN_USER=$SUDO_USER
+    HOME=$(getent passwd "$RUN_USER" | cut -d: -f6)
+    HOME=${HOME%/}
+fi
+RUN_GROUP=$(id -gn "$RUN_USER")
+FFDISCORD_HOME=${FFDISCORD_HOME:-$HOME/.config/ffdiscord}
+FFBOX_CONFIG=$HOME/.config/ffbox
+KILL_SWITCH=$FFBOX_CONFIG/discord.disabled
+STATE_DIR=${FFWATCH_STATE_DIR:-$HOME/ffbox-state}
 
 CHECK=0
 UNITS=1
+INSTALL_UNITS=0
 for arg in "$@"; do
     case "$arg" in
-        --check)    CHECK=1 ;;
-        --no-units) UNITS=0 ;;
-        -h|--help)  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *)          echo "discord-setup.sh: unknown option $arg" >&2; exit 2 ;;
+        --check)         CHECK=1 ;;
+        --no-units)      UNITS=0 ;;
+        --install-units) INSTALL_UNITS=1 ;;
+        -h|--help)       sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *)               echo "discord-setup.sh: unknown option $arg" >&2; exit 2 ;;
     esac
 done
 
 say()  { printf '[discord-setup] %s\n' "$*"; }
 did()  { printf '[discord-setup]   %s\n' "$*"; }
+
+UNIT_NAMES="ffbox.target ffdiscord-listener.service ffwatch.service ffweb.service"
+
+# The listener watches whatever the config says to watch. Reading it back from the ffwatch block
+# means adding a channel there and re-installing is enough — no second place to edit, and no
+# unit quietly watching a channel the classifier no longer knows about.
+watched_channels() {
+    CONFIG_PATH="$FFDISCORD_HOME/config.json" python3 - <<'PY'
+import json, os
+try:
+    cfg = json.load(open(os.environ["CONFIG_PATH"], encoding="utf-8"))
+except Exception:
+    cfg = {}
+watch = ((cfg.get("ffwatch") or {}).get("watch") or {})
+print(",".join(sorted(watch)) or "ask_claude,bug_reports")
+PY
+}
+
+# THE TEMPLATES IN ffbox/systemd/ ARE THE ONLY SOURCE. They are rendered into a throwaway
+# directory and installed from there; nothing rendered is ever kept beside the config, because a
+# second copy on disk is a second thing that can disagree with git. @PLACEHOLDERS@ exist because
+# this repo can be cloned anywhere and a wrong ExecStart fails at unit start with a message
+# nobody reads. Rendering never needs root — only installing does.
+render_units() {
+    _dest=$1
+    _channels=$(watched_channels)
+    mkdir -p "$_dest"
+    for u in $UNIT_NAMES; do
+        sed -e "s|@FFWATCH@|$HERE/ffwatch.py|g" \
+            -e "s|@FFWEB@|$HERE/ffweb.py|g" \
+            -e "s|@USER@|$RUN_USER|g" \
+            -e "s|@GROUP@|$RUN_GROUP|g" \
+            -e "s|@HOME@|$HOME|g" \
+            -e "s|@CHANNELS@|$_channels|g" \
+            "$HERE/systemd/$u" > "$_dest/$u"
+    done
+}
+
+if [ "$INSTALL_UNITS" = 1 ]; then
+    # Deliberately the ONLY thing this mode does. Running the whole provisioning pass as root
+    # would leave a root-owned state directory and a root-owned config that the service user
+    # then cannot write.
+    if [ "$(id -u)" != 0 ]; then
+        say "--install-units writes to $UNIT_DIR and needs root. Run:"
+        say "  sudo sh $HERE/discord-setup.sh --install-units"
+        exit 1
+    fi
+    say "installing units for $RUN_USER (home $HOME) from $HERE/systemd"
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
+    render_units "$TMP"
+    if command -v systemd-analyze >/dev/null 2>&1; then
+        # Catches the classic silent mistake: a directive in the wrong section is IGNORED with
+        # nothing but a log line. Filtered to OUR unit names, because verify pulls in every
+        # dependency it can resolve and would otherwise bury the answer in warnings about
+        # somebody else's service.
+        (cd "$TMP" && systemd-analyze verify ./ffbox.target ./*.service 2>&1 \
+            | grep -E 'ffbox|ffwatch|ffweb|ffdiscord' \
+            | sed 's/^/[discord-setup]   verify: /') || true
+    fi
+    for u in $UNIT_NAMES; do
+        install -m 0644 "$TMP/$u" "$UNIT_DIR/$u"
+        did "$UNIT_DIR/$u"
+    done
+    systemctl daemon-reload
+    did "daemon-reload done"
+    did "start everything:  sudo systemctl enable --now ffbox.target"
+    did "stop everything:   sudo systemctl stop ffbox.target"
+    exit 0
+fi
 
 if [ "$CHECK" = 1 ]; then
     say "state dir      : $STATE_DIR $([ -d "$STATE_DIR" ] && echo present || echo MISSING)"
@@ -51,9 +138,13 @@ if [ "$CHECK" = 1 ]; then
     say "ffdiscord home : $FFDISCORD_HOME $([ -d "$FFDISCORD_HOME" ] && echo present || echo MISSING)"
     say "config         : $FFDISCORD_HOME/config.json $([ -f "$FFDISCORD_HOME/config.json" ] && echo present || echo MISSING)"
     say "kill switch    : $KILL_SWITCH $([ -f "$KILL_SWITCH" ] && echo ACTIVE || echo 'not set (lanes may run)')"
-    say "units          : $UNIT_DIR  (rendered copies in $FFBOX_CONFIG/systemd)"
+    say "units          : $UNIT_DIR  (source: $HERE/systemd)"
+    # Rendered fresh from git into a temp dir purely to compare. Nothing is kept.
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
+    render_units "$TMP"
     STALE=0
-    for u in ffbox.target ffdiscord-listener.service ffwatch.service ffweb.service; do
+    for u in $UNIT_NAMES; do
         st=$([ -f "$UNIT_DIR/$u" ] && echo installed || echo 'NOT INSTALLED')
         if command -v systemctl >/dev/null 2>&1 && [ -f "$UNIT_DIR/$u" ]; then
             # head -1: is-enabled can print a hint line under its verdict, and a newline in
@@ -64,17 +155,15 @@ if [ "$CHECK" = 1 ]; then
         # Re-running this script re-renders the staging copies but cannot write /etc, so an
         # installed unit can silently lag behind a config change. Say so rather than leaving a
         # trap: the symptom otherwise is a listener that keeps watching yesterday's channels.
-        if [ -f "$UNIT_DIR/$u" ] && [ -f "$FFBOX_CONFIG/systemd/$u" ] \
-           && ! cmp -s "$UNIT_DIR/$u" "$FFBOX_CONFIG/systemd/$u"; then
-            st="$st, STALE (differs from the rendered copy)"
+        if [ -f "$UNIT_DIR/$u" ] && ! cmp -s "$UNIT_DIR/$u" "$TMP/$u"; then
+            st="$st, STALE (differs from what this checkout renders)"
             STALE=1
         fi
         say "  $u $st"
     done
     if [ "$STALE" = 1 ]; then
         say "re-install the stale units with:"
-        say "  sudo install -m 0644 $FFBOX_CONFIG/systemd/ffbox.target \
-$FFBOX_CONFIG/systemd/*.service $UNIT_DIR/ && sudo systemctl daemon-reload"
+        say "  sudo sh $HERE/discord-setup.sh --install-units"
         say "  sudo systemctl restart ffbox.target"
     fi
     exit 0
@@ -180,75 +269,44 @@ fi
 # One handle for the operator: `sudo systemctl enable --now ffbox.target` brings up the doorbell
 # listener, the conversation manager and the web UI, now and on every boot. The services carry
 # PartOf=ffbox.target, so stopping the target stops all three.
+#
+# This stage never writes a rendered unit anywhere but /etc/systemd/system, and it only gets
+# there through --install-units. git is the source; there is no staging copy to drift.
 say "units"
-
-# The listener watches whatever the config says to watch. Reading it back from the ffwatch block
-# means adding a channel there and re-running this script is enough — no second place to edit,
-# and no unit quietly watching a channel the classifier no longer knows about.
-CHANNELS=$(CONFIG_PATH="$FFDISCORD_HOME/config.json" python3 - <<'PY'
-import json, os
-try:
-    cfg = json.load(open(os.environ["CONFIG_PATH"], encoding="utf-8"))
-except Exception:
-    cfg = {}
-watch = ((cfg.get("ffwatch") or {}).get("watch") or {})
-print(",".join(sorted(watch)) or "ask_claude,bug_reports")
-PY
-)
-did "listener will watch: $CHANNELS"
+did "listener will watch: $(watched_channels)"
 
 if [ "$UNITS" = 0 ]; then
     did "skipped (--no-units)"
 elif ! command -v systemctl >/dev/null 2>&1; then
     did "no systemctl here; run the daemons yourself:"
-    did "  ffdiscord-listener --channels $CHANNELS"
+    did "  ffdiscord-listener --channels $(watched_channels)"
     did "  python3 $HERE/ffwatch.py run"
     did "  python3 $HERE/ffweb.py"
 else
-    # The templates in ffbox/systemd/ are what git carries; the rendered copies land HERE, in a
-    # stable place the operator can install from. @PLACEHOLDERS@ are rendered rather than
-    # shipped resolved because this repo can be cloned anywhere and a wrong ExecStart fails at
-    # unit start with a message nobody reads. Rendering never needs root — only installing does.
-    STAGE=$FFBOX_CONFIG/systemd
-    mkdir -p "$STAGE"
-    for u in ffbox.target ffdiscord-listener.service ffwatch.service ffweb.service; do
-        sed -e "s|@FFWATCH@|$HERE/ffwatch.py|g" \
-            -e "s|@FFWEB@|$HERE/ffweb.py|g" \
-            -e "s|@USER@|$RUN_USER|g" \
-            -e "s|@GROUP@|$RUN_GROUP|g" \
-            -e "s|@HOME@|$HOME|g" \
-            -e "s|@CHANNELS@|$CHANNELS|g" \
-            "$HERE/systemd/$u" > "$STAGE/$u"
+    # A retired staging directory from an earlier version of this script. Left behind it would
+    # be the one stale copy of these files on the box, which is exactly what moving the source
+    # into git was meant to prevent.
+    if [ -d "$FFBOX_CONFIG/systemd" ]; then
+        rm -f "$FFBOX_CONFIG"/systemd/ffbox.target "$FFBOX_CONFIG"/systemd/*.service
+        rmdir "$FFBOX_CONFIG/systemd" 2>/dev/null || true
+        did "removed the old rendered copies under $FFBOX_CONFIG/systemd (git is the source now)"
+    fi
+    INSTALLED=1
+    for u in $UNIT_NAMES; do
+        [ -f "$UNIT_DIR/$u" ] || INSTALLED=0
     done
-    # Installing into /etc needs root. Try without a password first so an automated re-run is
-    # quiet; fall back to printing the two commands rather than blocking on a prompt nobody is
-    # watching. Nothing here starts or enables anything — that stays an operator decision.
-    did "rendered into $STAGE"
-    if command -v systemd-analyze >/dev/null 2>&1; then
-        # Catches the classic silent mistake: a directive in the wrong section is IGNORED with
-        # nothing but a log line, which is the same as not writing it at all.
-        # Filtered to OUR unit names: verify pulls in every dependency it can resolve, so on a
-        # box with other services in /etc/systemd/system the useful line is buried in warnings
-        # about somebody's Minecraft unit.
-        (cd "$STAGE" && systemd-analyze verify ./ffbox.target ./*.service 2>&1 \
-            | grep -E 'ffbox|ffwatch|ffweb|ffdiscord' \
-            | sed 's/^/[discord-setup]   verify: /') || true
-    fi
-    if sudo -n true 2>/dev/null; then
-        sudo install -m 0644 "$STAGE"/ffbox.target "$STAGE"/*.service "$UNIT_DIR/"
-        sudo systemctl daemon-reload
-        did "installed into $UNIT_DIR"
+    if [ "$INSTALLED" = 1 ]; then
+        did "units present in $UNIT_DIR — 'sh $0 --check' reports whether they match this checkout"
     else
-        did "NOT INSTALLED — that needs root. Run these two, or hand them to whoever has sudo:"
-        did "  sudo install -m 0644 $STAGE/ffbox.target $STAGE/*.service $UNIT_DIR/"
-        did "  sudo systemctl daemon-reload"
+        did "NOT INSTALLED. Install them straight from this checkout with:"
+        did "  sudo sh $HERE/discord-setup.sh --install-units"
     fi
-    did "systemd reads units from $UNIT_DIR; the copies above are only a staging area, so"
-    did "re-run those two commands after every change here — \`--check\` flags the drift."
     did "start everything:  sudo systemctl enable --now ffbox.target"
     did "stop everything:   sudo systemctl stop ffbox.target"
     did "  (the .target suffix is required — a bare 'ffbox' means ffbox.service, which is"
     did "   not a unit we ship)"
+    did "after ANY change here or in the watch block: re-run --install-units, then"
+    did "  sudo systemctl restart ffbox.target"
     did "web UI:       http://127.0.0.1:8787 — reach it with:"
     did "              ssh -N -L 8787:127.0.0.1:8787 $(hostname 2>/dev/null || echo thisbox)"
     did "logs:         journalctl -u ffwatch -f       (or -u ffdiscord-listener, -u ffweb)"
