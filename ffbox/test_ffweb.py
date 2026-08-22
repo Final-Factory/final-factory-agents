@@ -385,9 +385,9 @@ def test_every_route_serves():
               page[:400])
         code, _h, body = srv.get("/conversation/1")
         conv = text_of(body)
-        check("conversation view interleaves message, turn, run and verification",
+        check("conversation view carries the machinery, folded into the message it belongs to",
               all(s in conv for s in ("item message", "item turn", "item run",
-                                      "item verification")))
+                                      "item verification", "<details")))
         check("conversation view shows the verification result",
               "COMPILE FAILED" in conv and "results-run-b.xml" in conv)
         code, _h, body = srv.get("/run/1")
@@ -402,6 +402,36 @@ def test_every_route_serves():
         check("an unknown path is 404", code == 404)
         code, _h, body = srv.get("/conversation/999")
         check("an unknown conversation is 404", code == 404)
+    finally:
+        srv.stop()
+
+
+def test_timeline_reads_as_a_conversation():
+    """Top level is what was said; the machinery is one click down.
+
+    Before this, every prompt was followed by turn/run/verification rows carrying lane, exit
+    code, token counts and results paths — and the one line anybody opened the page to read was
+    buried under them. The reply itself was not shown at ALL: it lived in the transcript, so a
+    conversation page showed a question and no answer.
+    """
+    print("timeline: conversation first, machinery folded")
+    srv = serve()
+    try:
+        _c, _h, body = srv.get("/conversation/1")
+        page = text_of(body)
+        timeline = page.split("timeline", 1)[1]
+        # Everything inside a <details> is the folded part; what is left is the conversation.
+        top = re.sub(r"<details.*?</details>", "[FOLDED]", timeline, flags=re.S)
+        check("the agent's reply is on the timeline itself, not only inside a run",
+              "item message out" in top, top[:400])
+        for noise in ("item turn", "item run", "item verification"):
+            check(f"{noise} is not at the top level any more", noise not in top,
+                  top[:400])
+        check("but it is all still there, one click down",
+              all(s in timeline for s in ("item turn", "item run", "item verification")))
+        check("the fold is labelled with the turn, its lane and its state",
+              re.search(r"<summary>[^<]*turn 1[^<]*triage", timeline) is not None,
+              timeline[:600])
     finally:
         srv.stop()
 
@@ -870,6 +900,7 @@ def main():
     print("ffweb — read-only web UI")
     tests = [
         test_every_route_serves,
+        test_timeline_reads_as_a_conversation,
         test_filters_actually_filter,
         test_the_ui_cannot_write,
         test_xss_is_escaped,

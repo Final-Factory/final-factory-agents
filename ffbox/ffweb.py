@@ -819,47 +819,135 @@ class App:
         return page(conv["title"] or f"conversation {conv_id}", head + body)
 
     def _timeline(self, conv_id):
-        """message, turn, run and verification rows in one interleaved list.
+        """THE CONVERSATION, not the machinery that carried it.
 
-        Only `message` and `turn` carry their own timestamps; a run borrows its turn's clock
-        and a verification borrows its run's turn. Rows with no usable timestamp at all sort by
-        their table's rank and id, so an unfinished turn still lands next to its own messages
-        instead of at one end of the page.
+        Top level is what a person said and what came back: inbound messages, the agent's
+        answer, and anything the harness posted. The turn, run and verification rows are the
+        HOW — they hang off the message that triggered them, folded shut, one click away. A
+        timeline where every shell prompt was followed by three rows of lane/exit/token
+        bookkeeping buried the one line anybody came to read.
+
+        Only `message` and `turn` carry their own timestamps; a run borrows its turn's clock.
+        Rows with no usable timestamp sort by rank and id, so an unfinished turn still lands
+        beside its own messages instead of at one end of the page.
         """
+        turns = self.db.query(
+            "SELECT * FROM turn WHERE conversation_id = ? ORDER BY seq, id", (conv_id,))
+        details_by_message = {}
+        answers = []
+        for turn in turns:
+            runs = self.db.query("SELECT * FROM run WHERE turn_id = ? ORDER BY id",
+                                 (turn["id"],))
+            detail = self._render_turn_details(turn, runs)
+            anchor = self.db.one(
+                "SELECT id FROM message WHERE turn_id = ? AND direction = 'in'"
+                " ORDER BY id DESC LIMIT 1", (turn["id"],))
+            if anchor is not None:
+                details_by_message[anchor["id"]] = detail
+                detail = None
+            answer = self._answer_for(turn, runs)
+            if answer or detail:
+                stamp = turn["ended_at"] or turn["started_at"] or turn["queued_at"] or ""
+                answers.append((stamp, 1, turn["id"],
+                                self._render_answer(turn, answer, detail)))
+
+        kind = self.db.one("SELECT kind FROM conversation WHERE id = ?", (conv_id,))
+        kind = kind["kind"] if kind else None
         entries = []
         for row in self.db.query(
                 "SELECT * FROM message WHERE conversation_id = ? ORDER BY id", (conv_id,)):
-            entries.append((row["created_at"] or "", 0, row["id"], self._render_message(row)))
-        turns = self.db.query(
-            "SELECT * FROM turn WHERE conversation_id = ? ORDER BY seq, id", (conv_id,))
-        for turn in turns:
-            stamp = turn["queued_at"] or turn["started_at"] or ""
-            entries.append((stamp, 1, turn["id"], self._render_turn(turn)))
-            for run in self.db.query("SELECT * FROM run WHERE turn_id = ? ORDER BY id",
-                                     (turn["id"],)):
-                rstamp = turn["started_at"] or stamp
-                entries.append((rstamp, 2, run["id"], self._render_run(run)))
-                for ver in self.db.query(
-                        "SELECT * FROM verification WHERE run_id = ? ORDER BY id", (run["id"],)):
-                    vstamp = turn["ended_at"] or rstamp
-                    entries.append((vstamp, 3, ver["id"], self._render_verification(ver)))
+            entries.append((row["created_at"] or "", 0, row["id"],
+                            self._render_message(row, details_by_message.get(row["id"]),
+                                                 kind=kind)))
+        entries.extend(answers)
         # An empty timestamp sorts first under a plain string compare, which would float
         # unfinished rows to the top; ISO strings otherwise compare correctly as text.
         entries.sort(key=lambda e: (e[0] or "9999", e[1], e[2]))
         return [e[3] for e in entries] or ["<p class=\"empty\">nothing recorded yet</p>"]
 
-    def _render_message(self, row):
+    def _answer_for(self, turn, runs):
+        """What the agent actually said, or "" — the last thing it wrote on its own transcript.
+
+        The last non-sidechain assistant event, because that is the reply: a subagent's text is
+        working-out, and an earlier assistant turn is a step on the way. An outbound row is used
+        in preference when there is one, since for a Discord conversation THAT is what the
+        thread saw, framing and all.
+        """
+        for run in reversed(runs):
+            row = self.db.one(
+                "SELECT payload_json FROM outbound WHERE run_id = ? AND action = 'post'"
+                " ORDER BY id DESC LIMIT 1", (run["id"],))
+            if row is not None:
+                try:
+                    text = (json.loads(row["payload_json"] or "{}") or {}).get("text") or ""
+                except (TypeError, ValueError):
+                    text = ""
+                if text.strip():
+                    return text
+            row = self.db.one(
+                "SELECT text FROM transcript_event WHERE run_id = ? AND type = 'assistant'"
+                " AND is_sidechain = 0 AND text IS NOT NULL AND TRIM(text) <> ''"
+                " ORDER BY seq DESC, id DESC LIMIT 1", (run["id"],))
+            if row is not None and (row["text"] or "").strip():
+                return row["text"]
+        return ""
+
+    def _render_answer(self, turn, text, detail):
+        """The agent's reply as a conversation entry. Failures still say so at top level."""
+        state = turn["status"] or "?"
+        out = ["<div class=\"item message out\"><div class=\"meta\">",
+               esc(f"agent · turn {turn['seq']} · "), pill(state).markup,
+               esc(f" · {turn['ended_at'] or turn['started_at'] or ''}"), "</div>"]
+        if text.strip():
+            out.append("<pre>" + esc(text) + "</pre>")
+        elif state in ("failed", "timed_out", "blocked"):
+            out.append("<pre>" + esc(turn["error"] or f"the turn ended {state} with no reply")
+                       + "</pre>")
+        else:
+            out.append("<div class=\"meta\">no reply recorded</div>")
+        if detail:
+            out.append(detail)
+        out.append("</div>")
+        return "".join(out)
+
+    def _render_turn_details(self, turn, runs):
+        """Everything the run machinery knows, folded shut under one line."""
+        bits = [f"turn {turn['seq']}", turn["lane"] or "—", turn["status"] or "—"]
+        for run in runs:
+            if run["cost_usd"]:
+                bits.append(fmt_usd(run["cost_usd"]))
+            events = self.db.one("SELECT COUNT(*) AS n FROM transcript_event WHERE run_id = ?",
+                                 (run["id"],))
+            if events and events["n"]:
+                bits.append(f"{events['n']} events")
+        body = [self._render_turn(turn)]
+        for run in runs:
+            body.append(self._render_run(run))
+            for ver in self.db.query("SELECT * FROM verification WHERE run_id = ? ORDER BY id",
+                                     (run["id"],)):
+                body.append(self._render_verification(ver))
+        return ("<details class=\"sidechain\"><summary>" + esc(" · ".join(bits)) +
+                "</summary>" + "".join(body) + "</details>")
+
+    def _render_message(self, row, detail=None, kind=None):
         cls = "message out" if row["direction"] == "out" else "message"
         who = row["author_name"] or row["author_id"] or "?"
         bot = " (bot)" if row["is_bot"] else ""
+        # A shell prompt has a synthetic id that exists only to keep message ordering working.
+        # Printing it as "discord <id>" is worse than printing nothing: it is not a Discord id
+        # and there is nothing to look it up in.
+        origin = "" if kind == "shell" else f" · discord {row['discord_id']}"
         out = ["<div class=\"item ", cls, "\"><div class=\"meta\">",
-               esc(f"{row['direction']} · {who}{bot} · {row['created_at'] or ''} · "
-                   f"discord {row['discord_id']}"), "</div>"]
+               esc(f"{row['direction']} · {who}{bot} · {row['created_at'] or ''}{origin}"),
+               "</div>"]
         if row["content"]:
             out.append("<pre>" + esc(row["content"]) + "</pre>")
         for att in self.db.query(
                 "SELECT * FROM attachment WHERE message_id = ? ORDER BY id", (row["id"],)):
             out.append(self._render_attachment(att))
+        if detail:
+            # The turn this message triggered, folded shut: lane, run, cost, verification.
+            out.append(detail)
         out.append("</div>")
         return "".join(out)
 
