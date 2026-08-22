@@ -90,14 +90,21 @@ git_() { as_owner git -C "$REPO" "$@"; }
 # two updaters would fight over the same checkout, and the second's `resume` would land inside
 # the first's drain.
 mkdir -p "$CONFIG_DIR"
-if command -v flock >/dev/null 2>&1; then
-    if [ "${FFBOX_UPDATE_LOCKED:-0}" != 1 ]; then
-        FFBOX_UPDATE_LOCKED=1; export FFBOX_UPDATE_LOCKED
-        exec flock -n "$LOCK" sh "$0" "$@" || {
-            log "another update is already running — nothing to do"
-            exit 0
-        }
+if command -v flock >/dev/null 2>&1 && [ "${FFBOX_UPDATE_LOCKED:-0}" != 1 ]; then
+    FFBOX_UPDATE_LOCKED=1; export FFBOX_UPDATE_LOCKED
+    # NOT `exec flock ... || fallback`: exec REPLACES this shell, so the fallback never runs and
+    # a trigger arriving during a drain exits with flock's 1 — a unit systemd reports as failed
+    # every fifteen minutes for doing exactly the right thing. Found by running it. -E gives the
+    # could-not-acquire case its own status so it can be told apart from the script failing.
+    set +e
+    flock -n -E 199 "$LOCK" sh "$0" "$@"
+    rc=$?
+    set -e
+    if [ "$rc" = 199 ]; then
+        log "another update is already running — nothing to do"
+        exit 0
     fi
+    exit "$rc"
 fi
 
 FFWATCH=$REPO/ffbox/ffwatch.py
