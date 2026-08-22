@@ -938,8 +938,8 @@ def test_headers_and_content_types():
               hdr.get("Content-Security-Policy"))
         check("pages are text/html; charset=utf-8",
               hdr.get("Content-Type") == "text/html; charset=utf-8", hdr.get("Content-Type"))
-        check("the page says out loud that it is internal only",
-              "internal only" in text_of(srv.get("/")[2]).lower())
+        check("the header no longer carries the internal-only warning",
+              "never quote this into Discord" not in text_of(srv.get("/")[2]))
         check("the CSS is inline, with no external reference",
               "<style>" in text_of(srv.get("/")[2]) and
               not re.search(r'<(link|script)\b', text_of(srv.get("/")[2])))

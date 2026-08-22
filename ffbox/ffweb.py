@@ -650,9 +650,7 @@ def page(title, body_parts, banner=""):
         "<title>" + esc(title) + " — ffweb</title><style>" + STYLE + "</style></head><body>"
         "<header><span class=\"brand\">ffweb</span>"
         "<a href=\"/\">conversations</a><a href=\"/lanes\">lanes</a>"
-        "<a href=\"/outbound\">outbound</a>"
-        "<span class=\"warn\">internal only — repo internals and raw model thinking; "
-        "never quote this into Discord</span>" + banner +
+        "<a href=\"/outbound\">outbound</a>" + banner +
         # POST, not a link: a GET that ends a session is a logout any page on the internet can
         # trigger with an <img>. The same Origin check the action routes use covers this one.
         "<form class=\"logout\" method=\"post\" action=\"/logout\">"
