@@ -631,8 +631,19 @@ is what makes "nothing merges" true: section 7's measurements show the deny patt
 tripwire rather than a boundary, so credential absence is carrying the weight here.
 
 
-18. Supervision
----------------
+18. Supervision and deployment
+------------------------------
+
+ONE SERVICE, THREE FRONT DOORS (stated 2026-08-22, revision 3). ffbox is a single product that
+can be reached from the shell (`ffbox "<prompt>"`, `ffwatch status`), from Discord, and from the
+web page — not a kit of parts a machine takes some of. `sh ffbox/setup.sh` runs every stage and
+finishes by installing the systemd units and starting ffbox.target, which carries all three
+daemons: the gateway listener, ffwatch, and ffweb. The `--skip-*` flags are re-run controls for
+a stage already satisfied, never a menu. There is deliberately no supported arrangement where
+the lanes run without the page that makes their queue legible, or the listener runs without the
+manager that answers it: a half-installed machine is the failure mode this rule prevents, and
+it is why the setup path installs and STARTS rather than printing a command for an operator to
+finish.
 
 Every skill ends by reporting to the user, and unattended there is no user.
 

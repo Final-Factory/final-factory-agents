@@ -3,6 +3,20 @@
 Give Claude a prompt; it runs one-shot inside a disposable container that has Unity, Final
 Factory, and Claude Code in it, and acts on the prompt there rather than on your working copy.
 
+**ffbox is one service with three front doors, not a kit of parts.** A machine that has ffbox
+has all of it: the container harness, the Discord conversation pipeline, and the web page. One
+command installs and starts the lot.
+
+| you can reach it from | what that looks like |
+|---|---|
+| **the shell** | `ffbox/ffbox "<prompt>"` for a one-shot run; `ffwatch.py status\|once\|approve` for the pipeline |
+| **Discord** | a thread or a mention becomes a turn; the harness replies in the thread |
+| **the web page** | `ffweb` on `127.0.0.1:8787` — conversations, runs, transcripts, the outbound queue |
+
+Under the hood that is three systemd services, but they install, enable, start and stop
+together as `ffbox.target`. There is deliberately no supported way to run the lanes without the
+page that makes them legible, or the listener without the manager that answers it.
+
 ```bash
 ffbox/ffbox "make the belt merger respect item priority"
 ffbox/ffbox --no-unity "summarise how the save migration system works"
@@ -11,12 +25,17 @@ ffbox/ffbox --keep --prompt-file ./task.md
 
 ## Install
 
-One command does every stage, and each one is skipped when it is already satisfied:
+One command does every stage, and each one no-ops when it is already satisfied. It ends by
+installing the systemd units and starting `ffbox.target`:
 
 ```bash
-sh ffbox/setup.sh              # docker, ZFS layout, image, warm Unity Library, Discord config
-sh ffbox/setup.sh --help       # per-stage --skip-* flags
+sh ffbox/setup.sh              # docker, ZFS, image, warm Unity Library, Discord lanes, services up
+sh ffbox/setup.sh --help
 ```
+
+The `--skip-*` flags exist for **re-runs**, not for choosing which parts of ffbox you want —
+`--skip-library` when the Unity import is already warm, `--skip-docker` on a box where Docker is
+managed elsewhere. A machine is either an ffbox machine or it is not.
 
 It stops to have you fill in `~/.config/ffbox/secrets.env` (Unity account, licence, Claude
 token) and offers to mint the Claude token for you. Stage 4 — the cold Unity import — is the
@@ -31,10 +50,11 @@ slow one, 30-60 minutes, and it happens once.
 | `warmLibrary.sh` | 4 — updates golden and builds its Unity `Library/` cache | no |
 | `discord-setup.sh` | 5 — state dir, database, config block, systemd units | only `--install-units` |
 
-## Start the Discord service
+## The services
 
-Three daemons — the gateway listener, the conversation manager, the web UI — under one target.
-The unit files live in `ffbox/systemd/` in git; nothing is rendered anywhere else.
+Three daemons — the gateway listener, the conversation manager, the web page — under one target,
+installed and started by `setup.sh`. The unit files live in `ffbox/systemd/` in git; nothing is
+rendered anywhere else.
 
 `sh ffbox/setup.sh` already did this as its last stage — installed the units and started the
 target, or printed the one command to finish it if it could not get root. By hand:

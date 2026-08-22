@@ -1,6 +1,10 @@
 #!/bin/sh
 # discord-setup.sh — provision this machine for the ffbox Discord lanes.
 #
+# Normally you do not run this: `sh ffbox/setup.sh` runs it as its last stage. ffbox installs as
+# ONE service (harness + Discord pipeline + web page), so this ends by installing the systemd
+# units and starting ffbox.target rather than leaving an operator a command to finish.
+#
 #   sh ffbox/discord-setup.sh                  provision (idempotent; safe to re-run)
 #   sh ffbox/discord-setup.sh --check          report what is and is not in place, change nothing
 #   sudo sh ffbox/discord-setup.sh --install-units
@@ -8,7 +12,9 @@
 #                                              this checkout and start them; nothing else
 #   sudo sh ffbox/discord-setup.sh --install-units --no-enable
 #                                              install them but leave them stopped
-#   sh ffbox/discord-setup.sh --no-units       skip the systemd unit stage
+#   sh ffbox/discord-setup.sh --no-units       provision everything EXCEPT the units. For a
+#                                              re-run or a test box only — ffbox is meant to be
+#                                              installed whole, services and all.
 #
 # Everything here is re-runnable. It never overwrites a secrets file, never replaces an
 # existing config value, and never starts a unit that is already running. Re-run it after
