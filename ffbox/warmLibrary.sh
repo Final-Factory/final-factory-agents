@@ -83,10 +83,26 @@ else
     if command -v git-lfs >/dev/null 2>&1; then
         log "materializing LFS content"
         git -C "$GOLDEN_MNT" lfs pull
-        pointers=$(cd "$GOLDEN_MNT" && git lfs ls-files -n | while IFS= read -r f; do
-            [ -f "$f" ] || continue
-            head -c 42 "$f" | grep -qa '^version https://git-lfs' && printf '%s\n' "$f"
-        done || true)
+        # Scan every TRACKED file, not `git lfs ls-files`. That command resolves through
+        # .gitattributes, and attribute patterns are matched CASE-SENSITIVELY on Linux while
+        # Windows (core.ignoreCase=true on a case-insensitive filesystem) matches them either
+        # way. The repo's patterns are lowercase — `*.png` — so on this machine the 236 `.PNG`
+        # files, plus .JPG/.TGA/.PSD/.OBJ, are not LFS files at all: `git lfs ls-files` cannot
+        # see them, and this check was blind exactly where the problem lives. `*.FBX` already
+        # carries an uppercase twin in .gitattributes, which is why FBX is the one type that
+        # behaves. Reading the first bytes of each file needs no attributes and cannot be fooled.
+        pointers=$(cd "$GOLDEN_MNT" && git ls-files -z | python3 -c "
+import sys
+for path in sys.stdin.buffer.read().split(b'\0'):
+    if not path:
+        continue
+    try:
+        with open(path, 'rb') as fh:
+            if fh.read(42).startswith(b'version https://git-lfs'):
+                sys.stdout.write(path.decode('utf-8', 'replace') + '\n')
+    except OSError:
+        pass
+" || true)
         if [ -n "$pointers" ]; then
             printf '%s\n' "$pointers" | head -20 >&2
             die "LFS content did not materialize; the files above are still pointers"

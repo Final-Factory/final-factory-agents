@@ -319,6 +319,24 @@ if [ -d "$MNT/.git" ]; then
         git -C "$MNT" checkout -B "$BRANCH" --quiet || {
             echo "ffbox: could not create branch $BRANCH" >&2; exit 69; }
     fi
+
+    # WHAT WAS ALREADY DIRTY BEFORE THE AGENT RAN. The harvest below does `git add -A`, so
+    # anything the clone inherited from golden would be committed onto the work branch as if the
+    # agent had done it — and "no changed files means no branch and no PR" would never fire.
+    #
+    # This is not hypothetical. golden currently carries 247 staged files, ~52MB of textures:
+    # .gitattributes marks LFS patterns in lowercase (`*.png`), git matches attribute patterns
+    # case-sensitively on Linux and case-insensitively on Windows, so every `.PNG`/`.JPG`/`.TGA`/
+    # `.PSD`/`.OBJ` is an LFS file on the Windows machines that committed it and a plain binary
+    # here. `git lfs pull` in warmLibrary.sh then writes real content over the pointers.
+    #
+    # Recording the baseline costs one `git status` (measured at 0.09s on golden, whose stat
+    # cache is warm) and makes the harvest immune to ANY pre-dirty golden, not just this one.
+    git -C "$MNT" status --porcelain -z > "$OUT/base_dirty.z" 2>/dev/null || : > "$OUT/base_dirty.z"
+    if [ -s "$OUT/base_dirty.z" ]; then
+        echo "[ffbox] baseline: $(tr -d -c '\0' < "$OUT/base_dirty.z" | wc -c) path(s) already" \
+             "dirty before the run; they will be excluded from the harvest"
+    fi
 fi
 
 # --- run -----------------------------------------------------------------------------------------
@@ -408,6 +426,47 @@ if [ -d "$MNT/.git" ]; then
         # contents are facts the harness owns. A lane that "forgot to commit" cannot exist.
         BASE_SHA=$(cat "$OUT/base_sha.txt" 2>/dev/null || echo "")
         git -C "$MNT" add -A -- . 2>/dev/null || true
+        # Put back everything that was already dirty when the run started, so the commit holds
+        # the AGENT's work and nothing else. Tracked paths go back to their HEAD state; paths
+        # that were untracked at baseline leave the index entirely. Both are pathspec-driven and
+        # NUL-separated, because Final Factory has asset paths with spaces in them.
+        if [ -s "$OUT/base_dirty.z" ]; then
+            python3 - "$OUT/base_dirty.z" "$OUT/base_tracked.z" "$OUT/base_untracked.z" <<'PYBASE'
+import sys
+
+# `git status --porcelain -z` is XY, a space, then the path, NUL-terminated. A rename carries a
+# SECOND NUL-terminated field (the original path) which must be consumed or every later entry
+# is misread by one field.
+fields = open(sys.argv[1], "rb").read().split(b"\0")
+tracked, untracked = [], []
+i = 0
+while i < len(fields):
+    entry = fields[i]
+    i += 1
+    if len(entry) < 4:
+        continue
+    code, path = entry[:2], entry[3:]
+    if b"R" in code or b"C" in code:
+        # The original path of a rename/copy. It is tracked in HEAD, and it has to be consumed
+        # here or every following entry is read one field out of step.
+        if i < len(fields):
+            tracked.append(fields[i])
+            i += 1
+    (untracked if code == b"??" else tracked).append(path)
+open(sys.argv[2], "wb").write(b"\0".join(tracked) + (b"\0" if tracked else b""))
+open(sys.argv[3], "wb").write(b"\0".join(untracked) + (b"\0" if untracked else b""))
+PYBASE
+            if [ -s "$OUT/base_tracked.z" ]; then
+                git -C "$MNT" restore --staged --source=HEAD \
+                    --pathspec-from-file="$OUT/base_tracked.z" --pathspec-file-nul \
+                    2>/dev/null || true
+            fi
+            if [ -s "$OUT/base_untracked.z" ]; then
+                git -C "$MNT" rm --cached --quiet --ignore-unmatch \
+                    --pathspec-from-file="$OUT/base_untracked.z" --pathspec-file-nul \
+                    2>/dev/null || true
+            fi
+        fi
         if ! git -C "$MNT" diff --cached --quiet 2>/dev/null; then
             git -C "$MNT" \
                 -c user.name="ffbox" -c user.email="ffbox@final-factory.invalid" \
