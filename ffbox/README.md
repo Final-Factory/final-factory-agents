@@ -291,12 +291,18 @@ The host does every Discord read and write. The container gets `job.json` with t
 messages, their authors and local paths to already-downloaded attachments — so the agent, which
 is reading text written by strangers, holds no credential that can speak as the bot.
 
-Inside the container, `ffdiscord` is `ffdiscord_shim.py`, bind-mounted at
-`/usr/local/bin/ffdiscord`. The skills invoke the CLI by name, so they cannot tell: `thread`,
-`read` and `download` answer out of the mounted job bundle and the attachment mount, and
-`post`, `react`, `edit`, `ask` and `thread-create` append one JSON intent per line to
-`/ffbox/out/outbox.jsonl`. It imports no HTTP client and holds no token — this container cannot
-reach Discord at all.
+Inside the container there is **no `ffdiscord` at all** — not the real CLI, and since
+2026-08-21 not the credential-free outbox shim phase 2 shipped either. No lane, read-only or
+write, is given any path to Discord.
+
+What a turn wants said comes back to the host as data: it goes in the `summary` of the run's
+structured verdict, and the host composes the reply from that. That is what makes the content
+reviewable — an outbound row can be read, edited or dropped before it is uploaded, and
+`approve_before_send` already holds the queue for a human. A container-queued intent, by
+contrast, arrives already decided. The ff-discord skills still say `ffdiscord post`, so both
+lane preambles state plainly that the command does not exist here and the harness posts the
+summary for them; a file left at the old `/ffbox/out/outbox.jsonl` path is logged and ignored,
+because a write lane holds `Write` and can forge one.
 
 Every lane names its tools on the command line. The answer and triage lanes get
 `Read,Grep,Glob` and no Bash at all, which makes a read-only run *incapable* of writing rather
@@ -316,7 +322,7 @@ python3 ffbox/ffwatch.py status
 | `~/ffbox-state/ffwatch.db` | conversations, messages, turns, runs, transcript index, outbound queue |
 | `~/ffbox-state/blobs/<sha[0:2]>/<sha>` | attachments, content-addressed and shared across conversations |
 | `~/ffbox-state/conversations/<id>/claude/` | `CLAUDE_CONFIG_DIR` for that conversation — the session transcript lives here |
-| `~/ffbox-state/conversations/<id>/runs/<run>/` | `job.json`, `stream.jsonl`, `result.json`, `outbox.jsonl`, `summary.md` |
+| `~/ffbox-state/conversations/<id>/runs/<run>/` | `job.json`, `stream.jsonl`, `result.json`, `verification.json`, `summary.md` |
 | `~/ffbox-state/outbound/<row>.md` | the overflow of a reply too long for one Discord message, attached to it |
 | `~/.config/ffbox/discord.disabled` | kill switch. While it exists, ffwatch neither launches a run nor sends a reply. Ingest keeps running, so nothing is lost. |
 
@@ -356,7 +362,7 @@ python3 ffbox/ffwatch.py send                          # flush the queue once
 ```
 
 Phase 4 is what is implemented: all four lanes, plus the read-only web UI below. On top of
-phase 2's ingest, fail-closed classification, ceilings, container shim and sender, the write
+phase 2's ingest, fail-closed classification, ceilings and host-side sender, the write
 lanes (`fix`, `dev`) add the three things the harness owns and the agent cannot touch:
 
 - **Verification.** After the agent process exits, the container task runs `ffverify` —
@@ -384,9 +390,9 @@ push credential. That, not the deny list, is what makes "nothing merges" true �
 deliberately no merge method on the GitHub client.
 
 Offline tests: `python3 ffbox/test_ffwatch.py`. They stub `ffdiscord`, `ffbox` and `docker`, so
-they need no network, no token, no Docker and no ZFS. The end-to-end case runs the real shim
-inside the stub container, and a parity test asserts the shim's subcommands and flags still
-match `ffdiscord`'s — the two cannot drift apart without a test failing.
+they need no network, no token, no Docker and no ZFS. The end-to-end case has the stub container
+forge an `outbox.jsonl` and asserts that none of it reaches the wire — the reply that goes out
+is the host's, composed from the structured verdict.
 
 ### The web UI (`ffweb`)
 

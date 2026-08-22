@@ -260,8 +260,8 @@ container thinks; the host remembers, decides what the container may do, and own
       |   /ffbox/plugins       ro, passed to --plugin-dir
       |   /ffbox/attachments   ro, downloaded blobs for this conversation
       |   /ffbox/job.json      ro, this turn
-      |   /usr/local/bin/ffdiscord  ro, the outbox shim, resolved by name
-      +-- /ffbox/out           rw, outbox.jsonl, stream.jsonl, result.json
+      |   (no ffdiscord of any kind — revision 3, section 11)
+      +-- /ffbox/out           rw, stream.jsonl, result.json, verification.json
 
 The listener stays on the host: it is a long-lived socket with a single-instance lock, and
 containers are disposable.
@@ -446,8 +446,8 @@ subagent text and thinking into that stream, and index the session transcript af
 the parentUuid DAG that stream-json does not carry.
 
 
-11. Who talks to Discord  [correction 4]
-----------------------------------------
+11. Who talks to Discord  [correction 4; revised in revision 3 — see the end of this section]
+-----------------------------------------------------------------------------------------
 
 The host does all reads: fetch new messages, download attachments, resolve replies, advance
 watermarks. The container gets job.json with the new messages, their authors, thread metadata,
@@ -485,9 +485,30 @@ classification (including a visible warning when failed_closed), the verificatio
 branch and PR or the reason there is none, the summary, and an `ffresume <session_id>` footer
 so a human can pull the whole conversation onto a desktop.
 
-Fallback if the shim is not worth its maintenance: put the bot token in the container and let
-the real CLI run, with the host mirroring the outbox log afterwards. Less safe, less capable,
-about a day less work.
+REVISION 3 (2026-08-21), decided after phase 2 shipped the shim and phase 3 put the write lanes
+on: THERE IS NO SHIM, AND NO CONTAINER TALKS TO DISCORD AT ALL. ffdiscord_shim.py is deleted,
+nothing is mounted at /usr/local/bin/ffdiscord, no lane's Bash allow list names it, and the host
+no longer reads /ffbox/out/outbox.jsonl — a file at that path is logged and ignored, because a
+write lane holds Write and can forge one.
+
+What a turn wants said comes back to the host as DATA, in the `summary` of its structured
+verdict, and the host composes and sends the reply through compose_head exactly as it already
+did for the read-only lanes. The reason is reviewability, not tidiness: content that arrives as
+data can be held, read, edited or dropped on the host before it is uploaded, and outbound rows
+already give that a queue and approve_before_send already gives it a gate. An intent queued by
+the container arrives as a message that has already been decided, and the only thing left to do
+with it is send it. A future iteration puts the review step on that queue.
+
+Both preambles now say so in the same words — "you do not post to Discord and there is no
+ffdiscord command in this container: whatever you put in `summary` IS the reply" — because the
+ff-discord skill bodies still tell an agent to run `ffdiscord post`, and a lane that follows
+them, fails, and reports the failure as its finding is a real observed failure mode, not a
+theoretical one. Live-checked on 2026-08-21 with a prompt that ordered a write lane to post its
+findings with ffdiscord: it read the preamble, did not attempt the command, wrote no outbox, and
+returned its answer in the summary with permission_denials empty.
+
+The revision-1/2 fallback — put the bot token in the container and let the real CLI run — is
+now doubly rejected: it fails the reviewability requirement as well as the credential one.
 
 
 12. Ordering, batching, crash recovery
@@ -655,7 +676,6 @@ is internal-only, and none of its text is ever reused in a Discord post.
   ffbox/ (this repo)
     ffwatch.py            new: host daemon, ingest/classify/schedule/verify/publish/send
     ffwatch_schema.sql    new
-    ffdiscord_shim.py     new: container-side CLI shim
     discord-task.sh       new: container task selected by FFBOX_ENTRY
     discord-setup.sh      new: provision ~/.config/ffdiscord and ~/ffbox-state, systemd units
     systemd/              new: ffdiscord-listener.service, ffwatch.service (user units)
@@ -702,8 +722,10 @@ is internal-only, and none of its text is ever reused in a Discord post.
   Retention. Keep database rows forever, expire blobs after a window. Affects whether the UI
   can replay old threads with attachments intact.
 
-  The shim (section 11). The one place proposing meaningful extra work for a security and
-  reviewability gain. Confirm before phase 2.
+  The shim (section 11). SETTLED 2026-08-21, against the shim: built in phase 2, removed in
+  revision 3. No container reaches Discord, and every reply is composed on the host from the
+  structured verdict so it can be reviewed before upload. Open follow-on: putting an actual
+  review step on the outbound queue rather than leaving approve_before_send as the only gate.
 
 
 22. Phasing
@@ -720,6 +742,7 @@ is internal-only, and none of its text is ever reused in a Discord post.
 
   Phase 2   The shim and host-side sending, with the posting discipline of section 11 enforced
             in the sender. Makes the outbound queue, dry-run, and optional approval real.
+            (Revision 3 kept the sender and removed the shim: see section 11.)
 
   Phase 3   Fix and dev lanes: the batchmode verification profile with its own results path and
             named-container discipline, --ref develop, git bundle harvest, PR creation through
