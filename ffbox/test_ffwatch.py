@@ -26,6 +26,7 @@ path gets exercised without a model call.
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import re
@@ -2217,6 +2218,74 @@ def test_harvest_excludes_what_was_already_dirty():
     check("an agent that changed nothing stages nothing, so no branch and no PR", not idle, idle)
 
 
+def test_config_lives_under_ffbox():
+    """One directory owns this machine's ffbox state, and the pre-move layout still reads.
+
+    The settings for ffwatch and ffweb used to sit in a block inside the Discord CLI's config,
+    which meant a ROOT-run installer had to read a user's Discord directory to learn where the
+    WEB PAGE should listen — and that is exactly how the sudo/$HOME bug shipped. They now live
+    in ~/.config/ffbox/config.json, beside secrets.env and the kill switch.
+    """
+    print("config: one home under ~/.config/ffbox")
+    root = os.path.join(TMPROOT, "confmove")
+    shutil.rmtree(root, ignore_errors=True)
+    legacy = os.path.join(root, ".config", "ffdiscord")
+    ffbox_dir = os.path.join(root, ".config", "ffbox")
+    # Deliberately NOT creating ffbox/discord yet: the resolver prefers the new home only when
+    # it exists, which is what lets an unmigrated machine keep working untouched.
+    os.makedirs(legacy); os.makedirs(ffbox_dir)
+
+    # A machine that predates the move: everything in the Discord file's ffwatch block.
+    with open(os.path.join(legacy, "config.json"), "w", encoding="utf-8") as fh:
+        json.dump({"token": "t", "ffwatch": {"web_host": "10.0.0.9", "max_unity_runs": 4}}, fh)
+
+    saved = dict(os.environ)
+    try:
+        os.environ.pop("FFDISCORD_HOME", None)
+        os.environ["HOME"] = root
+        os.environ["FFBOX_CONFIG_DIR"] = ffbox_dir
+        importlib.reload(ffwatch)
+        check("with no new home yet, the legacy directory is still used",
+              ffwatch.FFDISCORD_HOME == legacy, ffwatch.FFDISCORD_HOME)
+        cfg = ffwatch.load_config()
+        check("and its settings are still read", cfg["web_host"] == "10.0.0.9"
+              and cfg["max_unity_runs"] == 4, (cfg["web_host"], cfg["max_unity_runs"]))
+
+        # After the move, ~/.config/ffbox/config.json wins over anything left behind.
+        with open(os.path.join(ffbox_dir, "config.json"), "w", encoding="utf-8") as fh:
+            json.dump({"web_host": "192.168.1.5"}, fh)
+        importlib.reload(ffwatch)
+        cfg = ffwatch.load_config()
+        check("the ffbox file wins where the two disagree", cfg["web_host"] == "192.168.1.5",
+              cfg["web_host"])
+        check("and a setting only the old file has still comes through",
+              cfg["max_unity_runs"] == 4, cfg["max_unity_runs"])
+        check("a key that is not a known setting is ignored rather than injected",
+              "token" not in cfg, sorted(cfg)[:5])
+
+        # Once the Discord home has moved, the legacy path is no longer consulted.
+        os.makedirs(os.path.join(ffbox_dir, "discord"))
+        shutil.rmtree(legacy)
+        importlib.reload(ffwatch)
+        check("with the new home present, that is the one used",
+              ffwatch.FFDISCORD_HOME == os.path.join(ffbox_dir, "discord"),
+              ffwatch.FFDISCORD_HOME)
+    finally:
+        os.environ.clear(); os.environ.update(saved)
+        importlib.reload(ffwatch)
+
+    setup = open(os.path.join(HERE, "05-discord-setup.sh"), encoding="utf-8").read()
+    check("the setup stage migrates the old directory rather than leaving it to rot",
+          "migrated $LEGACY_FFDISCORD_HOME" in setup, )
+    check("and refuses to guess when both exist",
+          "Nothing was moved. Merge them by hand" in setup, )
+    services = open(os.path.join(HERE, "06-services.sh"), encoding="utf-8").read()
+    check("the listener unit is told its home explicitly, since the launcher may be older",
+          "@FFDHOME@" in services and "@FFDHOME@" in open(
+              os.path.join(HERE, "systemd", "ffdiscord-listener.service"),
+              encoding="utf-8").read(), )
+
+
 def test_systemd_units_hang_off_one_target():
     """One handle: `systemctl enable --now ffbox.target` runs the whole pipeline, and stopping
     the target stops all of it.
@@ -2369,6 +2438,7 @@ def main():
         test_missing_transcript_falls_back,
         test_container_argv_is_valid,
         test_allow_list_is_scope_not_a_boundary,
+        test_config_lives_under_ffbox,
         test_systemd_units_hang_off_one_target,
         test_harvest_excludes_what_was_already_dirty,
         test_failed_launch_frees_the_slot,

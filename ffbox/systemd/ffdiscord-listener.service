@@ -27,6 +27,10 @@ Type=simple
 User=@USER@
 Group=@GROUP@
 Environment=HOME=@HOME@
+# Named explicitly rather than left to the CLI's own default: the launcher in ~/.local/bin comes
+# from the installed plugin, which may be an older build that still looks in ~/.config/ffdiscord.
+# The unit knows where this machine actually keeps it.
+Environment=FFDISCORD_HOME=@FFDHOME@
 ExecStart=@HOME@/.local/bin/ffdiscord-listener --channels @CHANNELS@
 # The bot token normally comes from ~/.config/ffdiscord/config.json; this is here so a machine
 # that prefers FFDISCORD_TOKEN in the ffbox secrets file works without a second copy.

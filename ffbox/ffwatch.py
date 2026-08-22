@@ -105,8 +105,34 @@ ADDED_COLUMNS = [
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
 FFDISCORD_PY = os.path.join(DISCORD_CLI_DIR, "ffdiscord.py")
 
-FFDISCORD_HOME = os.path.expanduser(os.environ.get("FFDISCORD_HOME", "~/.config/ffdiscord"))
+def _ffdiscord_home():
+    """Where the Discord CLI keeps its config, cursors, doorbell and locks.
+
+    ~/.config/ffbox/discord since 2026-08-22: everything ffbox owns on a machine lives under
+    ~/.config/ffbox, and the Discord CLI is one part of ffbox rather than a separate product.
+    The pre-move ~/.config/ffdiscord is still honoured when it exists and the new location does
+    not, so a machine that has not been migrated keeps working untouched. FFDISCORD_HOME beats
+    both.
+    """
+    env = os.environ.get("FFDISCORD_HOME")
+    if env:
+        return os.path.expanduser(env)
+    new = os.path.expanduser("~/.config/ffbox/discord")
+    legacy = os.path.expanduser("~/.config/ffdiscord")
+    if not os.path.exists(new) and os.path.exists(legacy):
+        return legacy
+    return new
+
+
+FFDISCORD_HOME = _ffdiscord_home()
 FFDISCORD_CONFIG = os.path.join(FFDISCORD_HOME, "config.json")
+
+# ffbox's own machine config: everything ffwatch and ffweb need, in the directory that already
+# holds secrets.env and the kill switch. The Discord file next door keeps what is genuinely
+# Discord's — token, guild, channels, mentions — because the ffdiscord CLI reads that file on
+# its own account.
+FFBOX_CONFIG_DIR = os.path.expanduser(os.environ.get("FFBOX_CONFIG_DIR", "~/.config/ffbox"))
+FFBOX_CONFIG = os.path.join(FFBOX_CONFIG_DIR, "config.json")
 
 # Fixed namespace so session_id = uuid5(FFBOX_NS, "discord:" + thread_id) is reproducible on
 # any machine, from nothing but the thread id. It must never change: a new namespace silently
@@ -117,9 +143,11 @@ FFBOX_NS = uuid.UUID("2f0d4ec6-0e2a-5b8c-9a71-6d3f4c8b1e05")
 # ------------------------------------------------------------------------------------------
 # configuration
 # ------------------------------------------------------------------------------------------
-# Same pattern as 059's pipeline_config: defaults in code, overlaid with a single block inside
-# the machine-local ~/.config/ffdiscord/config.json (key "ffwatch"), then env overrides. One
-# place to look, and the offline suite can point every external edge at a stub.
+# Defaults in code, overlaid with ~/.config/ffbox/config.json, then env overrides. The file may
+# put the keys at the top level or under an "ffwatch" key; both read the same, because the
+# settings used to live in a block of that name inside the Discord CLI's config and a machine
+# that predates the move must not need an edit. That legacy block is still read FIRST, so the
+# ffbox file wins wherever the two disagree.
 
 DEFAULTS = {
     "state_dir": "~/ffbox-state",
@@ -268,20 +296,39 @@ def _deep_merge(base, over):
     return out
 
 
+def _read_config_json(path):
+    """A config file that is missing, unreadable or malformed is {} — never an exception.
+
+    Named apart from the _read_json further down, which returns None for a missing file: that
+    one reads a run's result.json, where "absent" and "empty" are different outcomes.
+
+    ffwatch runs unattended under systemd. Refusing to start because somebody left a trailing
+    comma in a config file is a worse outcome than running on the defaults and saying so.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+        return loaded if isinstance(loaded, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def load_config():
-    """DEFAULTS, overlaid with the `ffwatch` block of the ffdiscord config, then env.
+    """DEFAULTS, then the legacy Discord-file block, then ~/.config/ffbox/config.json, then env.
 
     A missing config file is not an error — `ffwatch init` seeds one, and the offline suite
     runs with nothing installed at all.
     """
-    raw = {}
-    if os.path.exists(FFDISCORD_CONFIG):
-        try:
-            with open(FFDISCORD_CONFIG, "r", encoding="utf-8") as fh:
-                raw = json.load(fh)
-        except (OSError, json.JSONDecodeError):
-            raw = {}
+    raw = _read_config_json(FFDISCORD_CONFIG)
+    ffbox_raw = _read_config_json(FFBOX_CONFIG)
+    # Keys may sit at the top level of the ffbox file or under "ffwatch". Both spellings are
+    # accepted so a file moved verbatim out of the Discord config still reads, and so a hand
+    # edit does not have to guess. Anything that is not a setting we know is ignored.
+    ffbox_block = dict(ffbox_raw)
+    ffbox_block.update(ffbox_raw.get("ffwatch") or {})
+    ffbox_block = {k: v for k, v in ffbox_block.items() if k in DEFAULTS}
     cfg = _deep_merge(DEFAULTS, raw.get("ffwatch", {}))
+    cfg = _deep_merge(cfg, ffbox_block)
     for env_name, (key, caster) in ENV_OVERRIDES.items():
         val = os.environ.get(env_name)
         if val:
