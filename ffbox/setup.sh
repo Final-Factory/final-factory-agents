@@ -1,6 +1,11 @@
 #!/bin/sh
 # setup.sh — bring a machine from nothing to a working ffbox in one command.
 #
+# ONE SERVICE, NOT A KIT OF PARTS. Whatever machine this runs on gets all of ffbox: the
+# container harness, the Discord conversation pipeline, and the web page. The last stage
+# installs the systemd units and starts ffbox.target; the --skip-* flags exist so a re-run can
+# pass over a stage that is already satisfied, not so a machine can have half of it.
+#
 # Runs every stage in order, each of which is independently re-runnable and each of which
 # no-ops when it is already satisfied:
 #
@@ -37,7 +42,11 @@ usage() {
 Usage: sh setup.sh [options]
 
 Bootstraps this machine for ffbox: Docker, ZFS layout, container image, a warm Unity Library,
-and the Discord lanes. Idempotent — re-run any time.
+and the Discord lanes — then installs and starts the services. Idempotent — re-run any time.
+
+ffbox installs as ONE service. The --skip-* flags below are for re-runs (skip a stage that is
+already satisfied, or one this machine manages elsewhere), NOT a way to choose which parts of
+ffbox to have. A machine is either an ffbox machine or it is not.
 
 Options (alphabetical):
   --help           Show this message.
