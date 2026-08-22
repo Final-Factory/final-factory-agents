@@ -51,15 +51,32 @@ if [ "$CHECK" = 1 ]; then
     say "ffdiscord home : $FFDISCORD_HOME $([ -d "$FFDISCORD_HOME" ] && echo present || echo MISSING)"
     say "config         : $FFDISCORD_HOME/config.json $([ -f "$FFDISCORD_HOME/config.json" ] && echo present || echo MISSING)"
     say "kill switch    : $KILL_SWITCH $([ -f "$KILL_SWITCH" ] && echo ACTIVE || echo 'not set (lanes may run)')"
-    say "units          : $UNIT_DIR"
+    say "units          : $UNIT_DIR  (rendered copies in $FFBOX_CONFIG/systemd)"
+    STALE=0
     for u in ffbox.target ffdiscord-listener.service ffwatch.service ffweb.service; do
-        st=$([ -f "$UNIT_DIR/$u" ] && echo installed || echo 'not installed')
+        st=$([ -f "$UNIT_DIR/$u" ] && echo installed || echo 'NOT INSTALLED')
         if command -v systemctl >/dev/null 2>&1 && [ -f "$UNIT_DIR/$u" ]; then
-            st="$st, $(systemctl is-enabled "$u" 2>/dev/null || echo unknown)"
-            st="$st, $(systemctl is-active "$u" 2>/dev/null || echo inactive)"
+            # head -1: is-enabled can print a hint line under its verdict, and a newline in
+            # the middle of a status line makes the report unreadable.
+            st="$st, $(systemctl is-enabled "$u" 2>/dev/null | head -1 || echo unknown)"
+            st="$st, $(systemctl is-active "$u" 2>/dev/null | head -1 || echo inactive)"
+        fi
+        # Re-running this script re-renders the staging copies but cannot write /etc, so an
+        # installed unit can silently lag behind a config change. Say so rather than leaving a
+        # trap: the symptom otherwise is a listener that keeps watching yesterday's channels.
+        if [ -f "$UNIT_DIR/$u" ] && [ -f "$FFBOX_CONFIG/systemd/$u" ] \
+           && ! cmp -s "$UNIT_DIR/$u" "$FFBOX_CONFIG/systemd/$u"; then
+            st="$st, STALE (differs from the rendered copy)"
+            STALE=1
         fi
         say "  $u $st"
     done
+    if [ "$STALE" = 1 ]; then
+        say "re-install the stale units with:"
+        say "  sudo install -m 0644 $FFBOX_CONFIG/systemd/ffbox.target \
+$FFBOX_CONFIG/systemd/*.service $UNIT_DIR/ && sudo systemctl daemon-reload"
+        say "  sudo systemctl restart ffbox.target"
+    fi
     exit 0
 fi
 
@@ -226,6 +243,8 @@ else
         did "  sudo install -m 0644 $STAGE/ffbox.target $STAGE/*.service $UNIT_DIR/"
         did "  sudo systemctl daemon-reload"
     fi
+    did "systemd reads units from $UNIT_DIR; the copies above are only a staging area, so"
+    did "re-run those two commands after every change here — \`--check\` flags the drift."
     did "start everything:  sudo systemctl enable --now ffbox.target"
     did "stop everything:   sudo systemctl stop ffbox.target"
     did "  (the .target suffix is required — a bare 'ffbox' means ffbox.service, which is"
