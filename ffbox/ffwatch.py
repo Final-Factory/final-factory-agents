@@ -39,6 +39,8 @@ from __future__ import annotations
 
 import argparse
 import errno
+import fcntl
+import getpass
 import hashlib
 import json
 import os
@@ -100,6 +102,10 @@ ADDED_COLUMNS = [
     ("turn", "parent_turn_id", "INTEGER"),
     ("turn", "rebased_from", "TEXT"),
     ("turn", "note", "TEXT"),
+    # Per-submission overrides for a shell turn: unity on/off, a base ref, a branch to harvest
+    # onto. The Discord lanes take these from the lane table; the shell ingress takes them from
+    # the command line, and they have to survive until launch.
+    ("turn", "options_json", "TEXT"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -441,6 +447,24 @@ LANE_CAPABILITIES = {
     "dev":    {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
                "allowed": list(WRITE_ALLOWED), "unity": True,
                "agent": "discord-dev-agent", "verdict": "change"},
+
+    # THE SHELL LANE. `ffbox "<prompt>"` used to clone, run a container and exit, touching none
+    # of this — which is why a shell run was invisible on the web page. It now enters here, so
+    # one pipeline serves every ingress: same scheduler, same ceilings, same kill switch, same
+    # transcript index, same rows the UI reads.
+    #
+    # Its capabilities are NOT the Discord lanes'. The prompt was typed by someone with a login
+    # on this box, so the reasons the answer and fix lanes are narrow do not apply: Bash is
+    # allowed outright rather than by a list of program prefixes. What is unchanged is what
+    # actually contains any lane — the container holds no credential, and the clone is
+    # destroyed at the end of the run.
+    #
+    # verdict None means NO --json-schema: a shell prompt gets prose back, the way it always
+    # has. The structured verdict exists so the HARNESS can act on an answer (open a PR, queue
+    # an autofix); nobody is acting on this one but the person reading the terminal.
+    "shell":  {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
+               "allowed": list(WRITE_ALLOWED) + ["Bash"], "unity": True,
+               "agent": None, "verdict": None},
 }
 
 # All four lanes launch. What used to hold the write lanes back was a phase gate; what holds
@@ -451,6 +475,10 @@ LANE_CAPABILITIES = {
 # The doorbell kind decides the conversation kind; the conversation kind decides the lane
 # (design section 13). Anything that falls through goes to the classifier, which fails closed.
 LANE_BY_KIND = {
+    # A prompt typed at this machine's shell. It is not untrusted player text — the person who
+    # typed it already has a login here — so it is not classified and never fails closed; it
+    # goes straight to its own lane.
+    "shell": "shell",
     "ask": "answer",
     "mention": "answer",
     "bug_report": "triage",
@@ -459,6 +487,7 @@ LANE_BY_KIND = {
 }
 
 TRIGGER_BY_KIND = {
+    "shell": "shell_prompt",
     "ask": "message",
     "mention": "player_mention",
     "bug_report": "thread_message",
@@ -499,6 +528,19 @@ def discord_nonce(row_nonce):
     if len(hexed) < 25:
         hexed = hashlib.sha256(str(row_nonce).encode("utf-8")).hexdigest()
     return hexed[:25]
+
+
+def turn_options(turn):
+    """A turn's per-submission overrides, or {} — never an exception.
+
+    Only the shell ingress writes these today. A row from before the column existed reads as {},
+    which is exactly "use the lane's defaults".
+    """
+    try:
+        loaded = json.loads(turn["options_json"] or "{}")
+        return loaded if isinstance(loaded, dict) else {}
+    except (TypeError, ValueError, IndexError, KeyError):
+        return {}
 
 
 def reply_channel(conv):
@@ -750,6 +792,12 @@ def failed_closed(reason):
 
 def lane_for(cfg, conv_kind, text):
     """(lane, classification). The doorbell kind decides most of it; the rest goes to a model."""
+    if conv_kind == "shell":
+        # Not classified at all. Classification exists to decide how much capability untrusted
+        # text may have; a prompt typed at this machine's own shell has already answered that.
+        return "shell", {"type": "change", "needs_unity": True, "status": "ok",
+                         "source": "shell", "reason": "typed at this machine's shell",
+                         "scope_note": ""}
     lane = LANE_BY_KIND.get(conv_kind)
     if lane:
         return lane, {"type": "change" if lane in ("fix", "dev") else "question",
@@ -1443,6 +1491,7 @@ class Watcher:
 
     def build_job(self, turn, conv, run_id, att_dir):
         cap = LANE_CAPABILITIES.get(turn["lane"]) or LANE_CAPABILITIES["answer"]
+        options = turn_options(turn)
         msgs = self.db.query(
             "SELECT * FROM message WHERE turn_id=? ORDER BY CAST(discord_id AS INTEGER)",
             (turn["id"],))
@@ -1485,11 +1534,12 @@ class Watcher:
             "session": {"id": session_id, "resume": bool(resume)},
             "capabilities": {"tools": cap["tools"], "disallowed": list(cap["disallowed"]),
                              "allowed": list(cap.get("allowed") or []),
-                             "permission_mode": "acceptEdits", "unity": cap["unity"]},
+                             "permission_mode": "acceptEdits",
+                             "unity": bool(options.get("unity", cap["unity"]))},
             "classification": json.loads(turn["classification_json"] or "{}"),
             "failed_closed": bool(turn["failed_closed"]),
             "failed_closed_reason": turn["failed_closed_reason"],
-            "verdict_schema": cap["verdict"],
+            "verdict_schema": cap["verdict"],       # None on the shell lane: prose, no schema
             "note": turn["note"],
             # A deliberate re-base is announced in the turn's own prompt (design section 6), not
             # left for the model to notice that the line numbers moved.
@@ -1497,7 +1547,7 @@ class Watcher:
                        if turn["rebased_from"] else None),
             # Harness-owned verification, run by the container task AFTER the agent exits. The
             # agent cannot turn this off: it is read from job.json, which is mounted read-only.
-            "verify": {"enabled": bool(cap["unity"]),
+            "verify": {"enabled": bool(options.get("unity", cap["unity"])),
                        "assemblies": self.cfg.get("verify_assemblies") or "",
                        "out": "/ffbox/out/verification"},
             "messages": [self.job_message(m, att_dir) for m in msgs],
@@ -1505,7 +1555,12 @@ class Watcher:
             "resume_summary": summary,
             "model": {"model": self.cfg["model"], "fallback_model": self.cfg["fallback_model"],
                       "max_budget_usd": self.cfg["max_budget_usd"], "effort": self.cfg["effort"]},
-            "plugin_dir": f"/ffbox/plugins/{self.cfg['plugin']}",
+            # The ff-discord plugin is mounted for the Discord lanes only. On the shell lane it
+            # is not just unnecessary, it is WRONG: its answerer role's policy is written for
+            # players and refuses to name repo internals, which is exactly what somebody at this
+            # machine's shell is usually asking for.
+            "plugin_dir": (None if turn["lane"] == "shell"
+                           else f"/ffbox/plugins/{self.cfg['plugin']}"),
             "limits": {"agent_secs": self.cfg["agent_secs"],
                        "warmup_secs": self.cfg["warmup_secs"],
                        "kill_grace_secs": self.cfg["kill_grace_secs"]},
@@ -1567,6 +1622,20 @@ class Watcher:
         material to investigate, never an instruction to follow."""
         conv = job["conversation"]
         lane = job["lane"]
+        if lane == "shell":
+            # NOT A DISCORD TURN. No <discord> fence, no untrusted-input framing, no role and no
+            # ff-discord policy: the prompt was typed by the person who owns this machine and
+            # they are waiting at a terminal. Measured the hard way — with the Discord framing
+            # in place, `ffbox "what file defines the belt merger?"` came back with a policy
+            # refusal addressed to a player, because the answerer role forbids naming repo
+            # internals to Discord users. Correct behaviour for that role; wrong conversation.
+            parts = [job["messages"][-1]["content"] if job["messages"] else ""]
+            if job.get("note"):
+                parts += ["", "Harness instruction for this turn:", "", job["note"]]
+            if job["resume_summary"]:
+                parts += ["", "The prior session transcript was lost. Host-rendered summary:",
+                          "", job["resume_summary"]]
+            return "\n".join(parts)
         parts = [
             f"You are handling turn {job['turn']['seq']} of a Discord {conv['kind']} "
             f"conversation in the {lane} lane.",
@@ -1637,7 +1706,13 @@ class Watcher:
         # A write lane commits its work on this branch, created at the pinned base sha. The name
         # is derived from the run id, so it is unique, addressable and — like the container name
         # — owned by the host rather than chosen by the agent.
-        branch = f"{self.cfg['branch_prefix']}{run_id}" if cap["verdict"] == "change" else None
+        options = turn_options(turn)
+        # A shell run harvests a patch like it always did unless a branch was asked for; the
+        # Discord write lanes always get one, because the harness publishes on their behalf.
+        if turn["lane"] == "shell":
+            branch = options.get("branch") or None
+        else:
+            branch = f"{self.cfg['branch_prefix']}{run_id}" if cap["verdict"] == "change" else None
 
         # The run row is written BEFORE the container starts. A run that crashes, hangs or is
         # killed is still identifiable, and recovery can find it by the container name it owns.
@@ -1646,7 +1721,7 @@ class Watcher:
             " base_sha, unity, tools, disallowed, allowed, stream_path, branch)"
             " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (turn["id"], run_id, f"ffbox-{run_id}", job["session"]["id"],
-             1 if job["session"]["resume"] else 0, conv["base_sha"], 1 if cap["unity"] else 0,
+             1 if job["session"]["resume"] else 0, conv["base_sha"], 1 if options.get("unity", cap["unity"]) else 0,
              cap["tools"], ",".join(cap["disallowed"]),
              ",".join(cap.get("allowed") or []), os.path.join(run_dir, "stream.jsonl"), branch))
         run_row_id = cur.lastrowid
@@ -1655,10 +1730,9 @@ class Watcher:
             "--run-id", run_id,
             "--task", self.cfg["task_script"],
             "--job-file", job_path,
-            "--ref", conv["base_sha"] or self.cfg["base_ref"],
+            "--ref", options.get("ref") or conv["base_sha"] or self.cfg["base_ref"],
             "--mount", f"{claude_dir}:/ffbox/claude",
-            "--mount", f"{os.path.join(self.cfg['plugins_dir'], self.cfg['plugin'])}:"
-                       f"/ffbox/plugins/{self.cfg['plugin']}:ro",
+
             "--mount", f"{att_dir}:/ffbox/attachments:ro",
             # Nothing is mounted at /usr/local/bin/ffdiscord, on purpose. The container has
             # no ffdiscord of any kind — not the real CLI (it would need a token) and not the
@@ -1670,7 +1744,11 @@ class Watcher:
             "--verify-timeout", str(self.cfg["verify_secs"]),
             "--kill-grace", str(self.cfg["kill_grace_secs"]),
         ]
-        if not cap["unity"]:
+        if job.get("plugin_dir"):
+            cmd += ["--mount",
+                    f"{os.path.join(self.cfg['plugins_dir'], self.cfg['plugin'])}:"
+                    f"{job['plugin_dir']}:ro"]
+        if not options.get("unity", cap["unity"]):
             cmd.append("--no-unity")
         else:
             # ffverify is mounted onto PATH because the container task and the lane's Bash
@@ -1869,6 +1947,10 @@ class Watcher:
         The ✅/❌ reaction on the triggering message is the harness's verdict on the run rather
         than the agent's, so it is recorded no matter what the turn said.
         """
+        if conv["kind"] == "shell":
+            # No Discord side to answer. The record IS the reply: the run row, the transcript
+            # index and the result text are what the web page and the waiting terminal read.
+            return 0
         recorded = 0
         # A write lane still has Write and can create this file; phase 2's host used to read it
         # and post whatever it found. It does not any more. The file is not deleted and not
@@ -1911,6 +1993,205 @@ class Watcher:
             recorded += 1
         return recorded
 
+
+    # ======================================================================================
+    # the shell ingress  (one pipeline, several front doors)
+    # ======================================================================================
+
+    def daemon_pidfile(self):
+        return os.path.join(self.state_dir, "ffwatch.pid")
+
+    def daemon_alive(self):
+        """Is a daemon already scheduling for this state directory?
+
+        Decided by trying to take its lock, not by reading a pid: a stale pid file after a hard
+        kill would otherwise make every shell submission sit waiting for a daemon that is not
+        coming. If the lock is free, nobody is running.
+        """
+        path = self.daemon_pidfile()
+        if not os.path.exists(path):
+            return False
+        try:
+            fh = open(path, "a+")
+        except OSError:
+            return False
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fh, fcntl.LOCK_UN)
+            return False
+        except OSError:
+            return True
+        finally:
+            fh.close()
+
+    def submit(self, prompt, *, unity=True, ref=None, branch=None, title=None):
+        """A shell prompt becomes a conversation, a message and a queued turn. Returns turn id.
+
+        The SAME rows a Discord message produces, so everything downstream — scheduler,
+        ceilings, kill switch, container launch, verification, transcript index, the web page —
+        works without knowing where the prompt came from. That is the whole point of routing
+        the shell through here rather than letting `ffbox` clone a workspace on its own.
+        """
+        prompt = (prompt or "").strip()
+        if not prompt:
+            raise ValueError("empty prompt")
+        # A numeric key, because message ordering everywhere casts discord_id to an integer.
+        # Milliseconds plus the pid keeps two shells on one machine from colliding.
+        key = f"{int(time.time() * 1000)}{os.getpid() % 1000:03d}"
+        first_line = prompt.splitlines()[0][:100]
+        conv_id = self.upsert_conversation(
+            key, kind="shell", channel_id=None, title=first_line,
+            root_message_id=key, opener=getpass.getuser(), is_thread=False)
+        self.insert_message(conv_id, {
+            "id": key,
+            "author": {"id": str(os.getuid()), "username": getpass.getuser(), "bot": False},
+            "content": prompt,
+            "timestamp": now_iso(),
+        })
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+        turn_id = self.create_turn(conv)
+        if turn_id is None:
+            raise RuntimeError("the prompt did not produce a turn")
+        self.db.execute("UPDATE turn SET options_json=? WHERE id=?",
+                        (json.dumps({"unity": bool(unity), "ref": ref, "branch": branch}),
+                         turn_id))
+        return turn_id
+
+    def wait_for_turn(self, turn_id, *, timeout=None, drive=None, on_log=None):
+        """Block until the turn reaches a terminal state. Returns the turn row.
+
+        `drive` decides who does the work: with no daemon running, this process runs the
+        pipeline itself, so `ffbox "prompt"` still works on a machine where nothing is
+        installed. With a daemon up, it only watches — two schedulers would fight over the same
+        conversation lock and one of them would lose for no reason.
+        """
+        if drive is None:
+            drive = not self.daemon_alive()
+        started = time.monotonic()
+        seen = 0
+        while True:
+            if drive:
+                self.once()
+            turn = self.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
+            if turn is None:
+                return None
+            if on_log:
+                run = self.db.one("SELECT * FROM run WHERE turn_id=? ORDER BY id DESC LIMIT 1",
+                                  (turn_id,))
+                if run and run["stream_path"] and os.path.exists(run["stream_path"]):
+                    seen = on_log(run["stream_path"], seen)
+            if turn["status"] in TERMINAL_TURN_STATES:
+                return turn
+            if timeout is not None and time.monotonic() - started > timeout:
+                return turn
+            time.sleep(1 if drive else float(self.cfg["poll_secs"]))
+
+    def result_text(self, turn_id):
+        """What the person who typed the prompt is waiting to read."""
+        run = self.db.one("SELECT * FROM run WHERE turn_id=? ORDER BY id DESC LIMIT 1",
+                          (turn_id,))
+        if run is None:
+            return ""
+        result = _read_json(os.path.join(os.path.dirname(run["stream_path"] or ""),
+                                         "result.json")) or {}
+        text = result.get("result")
+        if isinstance(text, str):
+            return text
+        if isinstance(text, dict):
+            return text.get("summary") or json.dumps(text, indent=2)
+        return ""
+
+    # ======================================================================================
+    # importing runs that happened before any of this existed
+    # ======================================================================================
+
+    def import_run_dir(self, run_dir):
+        """Fold a standalone `ffbox` run directory into the database. Returns a turn id or None.
+
+        These are the runs from before the shell became an ingress: `ffbox "prompt"` cloned,
+        ran and wrote here, and nothing ever recorded it. Everything the directory knows is
+        recovered — prompt, answer, base sha, timings — and everything it does not (a session
+        transcript, a verification report) is simply absent rather than guessed.
+        """
+        run_dir = os.path.abspath(run_dir)
+        prompt = _read_text(os.path.join(run_dir, "prompt.txt")) or ""
+        if not prompt.strip():
+            return None
+        name = os.path.basename(run_dir)
+        key = "imported-" + name
+        if self.db.one("SELECT id FROM conversation WHERE thread_id=?", (key,)):
+            return None                                     # already imported; idempotent
+        result = _read_json(os.path.join(run_dir, "result.json")) or {}
+        answer = result.get("result")
+        if not isinstance(answer, str):
+            answer = _read_text(os.path.join(run_dir, "claude.log")) or ""
+        try:
+            stamp = datetime.fromtimestamp(os.path.getmtime(run_dir),
+                                           tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except OSError:
+            stamp = now_iso()
+
+        conv_id = self.upsert_conversation(
+            key, kind="shell", channel_id=None, title=prompt.splitlines()[0][:100],
+            root_message_id=key, opener=getpass.getuser(), is_thread=False)
+        self.db.execute("UPDATE conversation SET created_at=?, last_activity_at=?, state='idle'"
+                        " WHERE id=?", (stamp, stamp, conv_id))
+        # An import that died partway through leaves a conversation with no turn, and the
+        # thread_id check above would then skip it forever. Clear whatever it left instead.
+        self.db.execute("DELETE FROM turn WHERE conversation_id=?", (conv_id,))
+        self.insert_message(conv_id, {
+            "id": key, "content": prompt, "timestamp": stamp,
+            "author": {"id": str(os.getuid()), "username": getpass.getuser(), "bot": False},
+        })
+        cur = self.db.execute(
+            "INSERT INTO turn(conversation_id, seq, trigger, lane, status, classification_json,"
+            " failed_closed, queued_at, started_at, ended_at, note, options_json)"
+            " VALUES(?,1,'shell_prompt','shell','done',?,0,?,?,?,?,?)",
+            (conv_id, json.dumps({"type": "change", "source": "imported", "status": "ok",
+                                  "reason": "imported from a standalone ffbox run"}),
+             stamp, stamp, stamp, f"imported from {run_dir}",
+             json.dumps({"unity": os.path.exists(os.path.join(run_dir, "unity-license.log"))})))
+        turn_id = cur.lastrowid
+        self.db.execute("UPDATE message SET turn_id=? WHERE conversation_id=?",
+                        (turn_id, conv_id))
+        cur = self.db.execute(
+            "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, resumed,"
+            " base_sha, unity, tools, stream_path, terminal_state, exit_code)"
+            " VALUES(?,?,?,?,0,?,?,?,?,'done',0)",
+            (turn_id, name, f"ffbox-{name}", None,
+             (_read_text(os.path.join(run_dir, "base_sha.txt")) or "").strip() or None,
+             1 if os.path.exists(os.path.join(run_dir, "unity-license.log")) else 0,
+             WRITE_TOOLS, os.path.join(run_dir, "stream.jsonl")))
+        run_row_id = cur.lastrowid
+        # The prompt and the answer as transcript rows, which is where the web page reads a
+        # run's content from. An imported run therefore renders through exactly the same path as
+        # a live one — there is no import-only display code to keep working.
+        for seq, (kind, text) in enumerate(
+                (("user", prompt), ("assistant", answer.strip())), start=1):
+            if not text:
+                continue
+            self.db.execute(
+                "INSERT INTO transcript_event(run_id, seq, uuid, parent_uuid, is_sidechain,"
+                " agent, type, tool_name, text, payload_json, ts)"
+                " VALUES(?,?,?,?,0,'main',?,NULL,?,?,?)",
+                (run_row_id, seq, f"imported-{name}-{seq}",
+                 f"imported-{name}-{seq - 1}" if seq > 1 else None,
+                 kind, text, json.dumps({"imported": True}), stamp))
+        log(f"imported {run_dir} as conversation {conv_id}")
+        return turn_id
+
+    def import_runs(self, dirs):
+        done = []
+        for d in dirs:
+            try:
+                turn_id = self.import_run_dir(d)
+            except (OSError, sqlite3.Error) as exc:      # noqa: BLE001 - one bad dir, not all
+                log(f"WARNING: could not import {d}: {type(exc).__name__}: {exc}")
+                continue
+            if turn_id:
+                done.append(d)
+        return done
+
     def record_launch_failure(self, turn_id, error):
         """A reply for a turn whose container never ran, so there is no job and no result.
 
@@ -1951,7 +2232,9 @@ class Watcher:
         read downstream as "not a lane that needs verifying".
         """
         cap = LANE_CAPABILITIES.get(turn["lane"]) or LANE_CAPABILITIES["answer"]
-        if not cap["unity"]:
+        if not turn_options(turn).get("unity", cap["unity"]):
+            # `ffbox --no-unity` is a promise that this run never touched the editor, so there
+            # is nothing to verify and no missing report to complain about.
             return None
         report = _read_json(os.path.join(run_dir, "verification.json"))
         if not isinstance(report, dict):
@@ -2563,6 +2846,18 @@ class Watcher:
     def run(self):
         log(f"ffwatch starting (pid {os.getpid()}) state={self.state_dir} "
             f"dry_run={self.dry_run}")
+        # Held for the life of the daemon. `ffbox "prompt"` probes this to decide whether to
+        # drive the pipeline itself or just watch: two schedulers on one state directory would
+        # contend for every conversation lock, and the loser would look hung.
+        self._pidlock = open(self.daemon_pidfile(), "a+")
+        try:
+            fcntl.flock(self._pidlock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._pidlock.seek(0)
+            self._pidlock.truncate()
+            self._pidlock.write(f"{os.getpid()}\n")
+            self._pidlock.flush()
+        except OSError:
+            log("WARNING: another ffwatch holds the daemon lock; this one only follows along")
         self.recover()
         last_sweep = 0.0
         while True:
@@ -2845,6 +3140,19 @@ def build_parser():
     sub.add_parser("send", help="flush the outbound queue once, then exit")
     sp = sub.add_parser("approve", help="release outbound rows held for approval")
     sp.add_argument("id", nargs="+", type=int, help="outbound row id(s) from `ffwatch status`")
+    sp = sub.add_parser("submit", help="run a prompt through the pipeline (the shell ingress)")
+    sp.add_argument("prompt", nargs="*", help="the prompt; '-' or empty reads stdin")
+    sp.add_argument("--no-unity", action="store_true", help="skip Unity: faster, no seat used")
+    sp.add_argument("--ref", help="check the workspace out at this ref (default: base_ref)")
+    sp.add_argument("--branch", help="harvest the work onto this branch as a git bundle")
+    sp.add_argument("--wait", action="store_true", help="block until the run finishes")
+    sp.add_argument("--json", action="store_true", help="print the run's result as JSON")
+
+    sp = sub.add_parser("import", help="fold standalone ffbox run directories into the database")
+    sp.add_argument("dirs", nargs="*", help="run directories (default: --all)")
+    sp.add_argument("--all", action="store_true",
+                    help="every run directory under ~/ffbox-runs (or $FFBOX_RESULTS)")
+
     sp = sub.add_parser("reject", help="drop outbound rows instead of sending them")
     sp.add_argument("id", nargs="+", type=int)
     sp.add_argument("--reason", help="recorded on the row so the UI can show why")
@@ -2882,6 +3190,36 @@ def main(argv=None):
         done = watcher.reject(args.id, args.reason)
         print(f"rejected {len(done)} row(s)")
         return 0 if done else 1
+    if args.cmd == "submit":
+        prompt = " ".join(args.prompt).strip()
+        if not prompt or prompt == "-":
+            prompt = sys.stdin.read()
+        turn_id = watcher.submit(prompt, unity=not args.no_unity, ref=args.ref,
+                                 branch=args.branch)
+        if not args.wait:
+            print(f"queued turn {turn_id}")
+            return 0
+        turn = watcher.wait_for_turn(turn_id)
+        text = watcher.result_text(turn_id)
+        if args.json:
+            print(json.dumps({"turn": turn_id, "status": turn["status"] if turn else None,
+                              "result": text}, indent=2))
+        elif text:
+            print(text)
+        if turn is None or turn["status"] != "done":
+            print(f"ffwatch: turn {turn_id} ended {turn['status'] if turn else 'missing'}"
+                  f"{': ' + turn['error'] if turn and turn['error'] else ''}", file=sys.stderr)
+            return 1
+        return 0
+    if args.cmd == "import":
+        dirs = list(args.dirs)
+        if args.all or not dirs:
+            root = os.path.expanduser(os.environ.get("FFBOX_RESULTS", "~/ffbox-runs"))
+            dirs = sorted(os.path.join(root, d) for d in os.listdir(root)) \
+                if os.path.isdir(root) else []
+        done = watcher.import_runs([d for d in dirs if os.path.isdir(d)])
+        print(f"imported {len(done)} run(s)")
+        return 0
     return watcher.run()
 
 

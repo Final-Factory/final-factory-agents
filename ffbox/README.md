@@ -3,19 +3,23 @@
 Give Claude a prompt; it runs one-shot inside a disposable container that has Unity, Final
 Factory, and Claude Code in it, and acts on the prompt there rather than on your working copy.
 
-**ffbox is one service with three front doors, not a kit of parts.** A machine that has ffbox
-has all of it: the container harness, the Discord conversation pipeline, and the web page. One
-command installs and starts the lot.
+**ffbox is one pipeline with several front doors.** A prompt from the shell and a message in
+Discord are the same thing once they are inside: `ffwatch` keys a conversation, queues a turn,
+launches one container under the same ceilings, records the run, indexes the transcript. The
+front door decides only what goes in and where the answer is read.
 
-| you can reach it from | what that looks like |
+| ingress | what it does |
 |---|---|
-| **the shell** | `ffbox/ffbox "<prompt>"` for a one-shot run; `ffwatch.py status\|once\|approve` for the pipeline |
-| **Discord** | a thread or a mention becomes a turn; the harness replies in the thread |
-| **the web page** | `ffweb` on `127.0.0.1:8787` — conversations, runs, transcripts, the outbound queue |
+| **the shell** | `ffbox "<prompt>"` submits a turn and waits; the answer prints, and the run is on the page |
+| **Discord** | a thread or a mention becomes a turn; the harness composes and posts the reply |
+| **the web page** | `ffweb` — every conversation, run, transcript and queued reply, whatever it came from |
 
-Under the hood that is three systemd services, but they install, enable, start and stop
-together as `ffbox.target`. There is deliberately no supported way to run the lanes without the
-page that makes them legible, or the listener without the manager that answers it.
+`ffbox --direct` is the exception: it clones and runs right here, skipping the database, the
+ceilings and the page. It exists for bootstrapping a machine and for debugging the container.
+
+A machine that has ffbox has all of it — harness, Discord pipeline and page — installed and
+started together as `ffbox.target`. There is deliberately no supported way to run the lanes
+without the page that makes them legible, or the listener without the manager that answers it.
 
 ```bash
 ffbox/ffbox "make the belt merger respect item priority"

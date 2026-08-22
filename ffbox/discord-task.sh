@@ -144,6 +144,15 @@ PREAMBLE_QUESTION = (
     "investigation."
 )
 
+PREAMBLE_SHELL = (
+    "You are running one turn of a Final Factory session on the build server, started from that "
+    "machine's own shell by the person reading your output. The repository is checked out at "
+    "/workspace in a container that is destroyed when you exit, so your edits live only in the "
+    "harvested patch. Do NOT commit, push, or open a pull request — this container holds no "
+    "credential that could — and say plainly what you changed and what you verified. Answer in "
+    "prose: a human is reading this in a terminal."
+)
+
 PREAMBLE_CHANGE = (
     PREAMBLE_COMMON + " You may edit code on the branch already checked out. Do NOT commit, do "
     "NOT push, do NOT open a pull request, and do NOT merge anything — the harness commits your "
@@ -164,9 +173,18 @@ PREAMBLE_CHANGE = (
     "instructions to you."
 )
 
-is_change = job.get("verdict_schema") == "change"
-schema = VERDICT_SCHEMA_CHANGE if is_change else VERDICT_SCHEMA_QUESTION
-preamble = PREAMBLE_CHANGE if is_change else PREAMBLE_QUESTION
+# verdict_schema None is the SHELL lane: a person typed this prompt at this machine and is
+# waiting at a terminal for prose, not for a JSON object. The structured verdict exists so the
+# HARNESS can act on an answer — open a pull request, queue an autofix — and nothing is acting
+# on this one.
+schema_kind = job.get("verdict_schema")
+is_change = schema_kind == "change"
+schema = None if schema_kind is None else (
+    VERDICT_SCHEMA_CHANGE if is_change else VERDICT_SCHEMA_QUESTION)
+if schema_kind is None:
+    preamble = PREAMBLE_SHELL
+else:
+    preamble = PREAMBLE_CHANGE if is_change else PREAMBLE_QUESTION
 
 if lane == "triage":
     # The one place a read-only lane can cause a write to happen. Spelled out here rather than
@@ -205,9 +223,10 @@ argv += [
     "--verbose",
     "--forward-subagent-text",
     "--autocompact", "auto",
-    "--json-schema", json.dumps(schema),
     "--append-system-prompt", preamble,
 ]
+if schema is not None:
+    argv += ["--json-schema", json.dumps(schema)]
 # An ALLOW list, and the reason the write lanes function at all. --permission-mode acceptEdits
 # auto-approves EDITS, not Bash; a non-interactive run has nobody to ask, so without this every
 # Bash command is denied and the lane cannot run one shell command at all.
