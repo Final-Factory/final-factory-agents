@@ -2352,6 +2352,13 @@ def test_systemd_units_hang_off_one_target():
     # and starts the target itself, and --no-enable is the opt-out.
     check("installing also enables and starts the target",
           "systemctl enable --now ffbox.target" in setup and "--no-enable" in setup, )
+    # `enable --now` starts what is STOPPED and leaves what is running alone, so a re-install
+    # without this leaves the old process serving the old command line while systemd cheerfully
+    # reports "active". ffweb stayed bound to 127.0.0.1 through two correct installs that way.
+    check("and restarts the units whose file it just changed",
+          "WAS_ACTIVE" in setup and "systemctl restart \"$u\"" in setup, )
+    check("the report also catches a process older than its unit file",
+          "ActiveEnterTimestamp" in setup and "running with an OLDER unit" in setup, )
     check("nothing rendered is kept outside a temp dir — one source, no copy to go stale",
           'STAGE=$FFBOX_CONFIG' not in setup and 'render_units "$TMP"' in setup, )
     check("the install mode recovers the real user from SUDO_USER, since $HOME is root's "

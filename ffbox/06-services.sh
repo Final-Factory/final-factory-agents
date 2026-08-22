@@ -148,6 +148,20 @@ if [ "$INSTALL" = 1 ]; then
             | grep -E 'ffbox|ffwatch|ffweb|ffdiscord' \
             | sed 's/^/[discord-setup]   verify: /') || true
     fi
+    # WHICH UNITS ACTUALLY CHANGED, and which were already running, decided BEFORE the files
+    # are overwritten. `systemctl enable --now` starts what is stopped; it does NOT restart what
+    # is already running, so without this a re-install leaves the old process alive with the old
+    # command line — which is exactly how ffweb stayed on 127.0.0.1 through two correct installs.
+    CHANGED=""
+    WAS_ACTIVE=""
+    for u in $UNIT_NAMES; do
+        cmp -s "$TMP/$u" "$UNIT_DIR/$u" 2>/dev/null || CHANGED="$CHANGED $u"
+        case "$u" in
+            *.target) continue ;;
+        esac
+        systemctl is-active --quiet "$u" 2>/dev/null && WAS_ACTIVE="$WAS_ACTIVE $u"
+    done
+
     for u in $UNIT_NAMES; do
         install -m 0644 "$TMP/$u" "$UNIT_DIR/$u"
         did "$UNIT_DIR/$u"
@@ -164,6 +178,18 @@ if [ "$INSTALL" = 1 ]; then
     else
         systemctl enable --now ffbox.target
         did "enabled and started ffbox.target (listener + ffwatch + ffweb)"
+        # Restart only what changed AND was already up: a unit just started by enable --now is
+        # already running the new file, and ffwatch in particular should not be interrupted for
+        # nothing — a restart terminal-fails any run in flight, which the recovery pass then
+        # requeues.
+        for u in $CHANGED; do
+            case " $WAS_ACTIVE " in
+                *" $u "*)
+                    systemctl restart "$u"
+                    did "restarted $u — its unit changed while it was running"
+                    ;;
+            esac
+        done
         for u in ffdiscord-listener.service ffwatch.service ffweb.service; do
             did "  $u: $(systemctl is-active "$u" 2>/dev/null | head -1)"
         done
@@ -209,8 +235,25 @@ if [ ! -f "$UNIT_DIR/ffbox.target" ]; then
 elif [ "$STALE" = 1 ]; then
     say "NEXT: the installed units no longer match this checkout. Re-install with"
     did "sudo sh $HERE/06-services.sh --install"
-    did "sudo systemctl restart ffbox.target"
 else
     did "web UI: http://$(web_bind | cut -d' ' -f1):$(web_bind | cut -d' ' -f2)"
     did "logs:   journalctl -u ffwatch -f   (or -u ffdiscord-listener, -u ffweb)"
 fi
+
+# A unit file newer than the process running under it means somebody installed and did not
+# restart. systemd reports that as "active" and nothing else complains, so the daemon serves the
+# OLD configuration indefinitely — which is how ffweb stayed on 127.0.0.1 through two correct
+# installs. --install restarts what it changes now; this catches the hand-edited case.
+for u in ffdiscord-listener.service ffwatch.service ffweb.service; do
+    [ -f "$UNIT_DIR/$u" ] || continue
+    systemctl is-active --quiet "$u" 2>/dev/null || continue
+    started=$(systemctl show "$u" -p ActiveEnterTimestamp --value 2>/dev/null)
+    [ -n "$started" ] || continue
+    started_epoch=$(date -d "$started" +%s 2>/dev/null || echo 0)
+    unit_epoch=$(stat -c %Y "$UNIT_DIR/$u" 2>/dev/null || echo 0)
+    if [ "$unit_epoch" -gt "$started_epoch" ] 2>/dev/null; then
+        say "WARNING: $u is running with an OLDER unit than the one installed."
+        did "it started $started; the unit file is newer. Restart it with"
+        did "  sudo systemctl restart $u"
+    fi
+done
