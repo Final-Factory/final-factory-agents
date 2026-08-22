@@ -170,7 +170,18 @@ DEFAULTS = {
     "kill_grace_secs": 10,
 
     "max_concurrent_runs": 2,
-    "max_unity_runs": 1,          # the Unity activation seat is singular
+    # NOT a seat count. ffbox deliberately does not copy game-ci's `dbus-uuidgen >
+    # /etc/machine-id`, so every container inherits the machine id baked into the GameCI base
+    # image and they ALL look like one machine to Unity's licensing service. That is what stops
+    # an agent loop burning a fresh activation every run — and it is also why two Unity runs at
+    # once on one host are a race rather than two independent seats: activation state is
+    # machine-level, and the FIRST container to exit fires `-returnlicense` for that identity,
+    # which can pull the licence out from under the one still running its tests (see
+    # ffbox/unity-license.sh — the trap fires on every exit path, which is the point of it).
+    # Whether concurrent activation under a shared identity works at all is UNTESTED here.
+    # Raise this only with a Unity Licensing Server or a floating licence, where the question
+    # does not arise. Read-only lanes run --no-unity and never touch this limit.
+    "max_unity_runs": 1,
     "catchup_secs": 900,
     "poll_secs": 2,
 
@@ -374,8 +385,9 @@ LANE_CAPABILITIES = {
 }
 
 # All four lanes launch. What used to hold the write lanes back was a phase gate; what holds
-# them now is real and stays: max_unity_runs=1 for the activation seat, rate_limits["fix"]=3 a
-# day, and the fail-closed classification that never widens capability on a failure to decide.
+# them now is real and stays: max_unity_runs=1 (the shared-machine-identity race above, not a
+# seat count), rate_limits["fix"]=3 a day, and the fail-closed classification that never widens
+# capability on a failure to decide.
 
 # The doorbell kind decides the conversation kind; the conversation kind decides the lane
 # (design section 13). Anything that falls through goes to the classifier, which fails closed.

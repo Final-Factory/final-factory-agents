@@ -79,7 +79,16 @@ Consequences:
   `docker stop` (SIGTERM, 120s grace) rather than `docker kill`.
 - We deliberately **do not** copy game-ci's `dbus-uuidgen > /etc/machine-id` step. That makes every
   container look like a brand-new machine to Unity's licensing service — fine for a few CI runs a
-  day, ruinous for an agent loop, which would burn a fresh seat every single run.
+  day, ruinous for an agent loop, which would burn a fresh seat every single run. So every ffbox
+  container inherits the machine id baked into the GameCI base image
+  (`576562626572264761624c65526f7578`, which decodes to `Webber&GabLeRoux`) and they all look
+  like **one machine**.
+- **That is why two Unity runs at once on one host are a race, not two seats.** Activation state
+  is machine-level, and the first container to exit fires `-returnlicense` for that shared
+  identity — which can pull the licence out from under a container still running its tests.
+  Whether concurrent activation under one identity works at all is untested here. `ffwatch`
+  therefore ships `max_unity_runs: 1`; raising it is a licensing-server question, not a config
+  question.
 
 Use `--no-unity` for read-only or code-only prompts: no seat consumed, much faster startup.
 
@@ -453,6 +462,8 @@ calling ffwatch's own schema, so the two cannot drift.
 - **`ff-agents` plugins are not installed in the image.** Claude runs without the Final Factory
   skills and roles. Adding `registerAgents.sh` to the Dockerfile (or bind-mounting the plugin
   cache) is the obvious next step.
-- **No concurrency guard.** Nothing stops two runs sharing one Unity seat or one golden snapshot
-  name; the `$$`-suffixed run IDs make collisions unlikely but not impossible.
+- **No concurrency guard in `ffbox` itself.** Nothing at this level stops two runs sharing one
+  Unity activation or one golden snapshot name; the `$$`-suffixed run IDs make collisions
+  unlikely but not impossible. `ffwatch` serialises Unity above it (`max_unity_runs`), but a
+  hand-run `ffbox` alongside a live daemon is outside that.
 - **`docker kill -9` still leaks a seat.** No in-process trap can catch SIGKILL.
