@@ -71,6 +71,10 @@ worktrees and apply to ALL branches.
 - [ModLoader metadata inspection](memories/modloader-metadata-inspection.md) — mods inspected reflection-only (MetadataLoadContext) before Assembly.Load; which 3 plugin DLLs, the 4 polyfills to skip, and the FFCore.Unity namespace-shadowing gotcha (use global::Unity.Entities)
 - [Mod template breaks on new global-namespace game types](memories/mod-template-global-debug-autoreference.md) — FFCore's global `Debug` class produced ~260 CS0576 errors in the template's Unity packages via DLL auto-reference; fixed with tracked Auto-Reference-off metas + explicit precompiledReferences; check the template after shipping global types
 
+## ffbox pipeline & ffweb
+
+- [`Referrer-Policy: no-referrer` nulls your own Origin](memories/referrer-policy-nulls-your-own-origin.md) — a page that sets no-referrer AND checks `Origin` for CSRF refuses its own forms (Fetch serialises the origin as `null` on a non-GET, non-CORS request); use `same-origin`, accept `Sec-Fetch-Site: same-origin`, and note that a suite posting with no Origin header never catches it
+
 ## Maintaining this skill
 
 New durable lessons go here (one file in `memories/`, one index line above), committed to the

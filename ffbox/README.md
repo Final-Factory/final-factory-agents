@@ -631,7 +631,19 @@ the grant. The account table is people who could open a terminal on this box, so
 front of it only ever meant one of them finding a dead page and a note naming a flag. Every
 prompt starts a *new* conversation, the way a shell prompt does — there is no reply-into-this-
 thread box on `/conversation/<id>`. There is nothing to configure beside the text: every run
-gets an editor, so the box is one field and one button.
+gets an editor, so the box is one field and one button. A queued prompt gets a **"Message
+sent"** toast that fades on its own — ffwatch's stdout (config warnings, the conversation it
+opened, the turn id) is in the journal and not pinned to the top of the page. A submission
+that *fails* still prints everything it knows, and that notice stays until it is read.
+
+**The live pages reload themselves once a minute.** The conversation list, a single
+conversation and the outbound queue carry a small inline script that reloads them, because
+their rows go stale on their own: a turn queued a moment ago is running now. It defers while a
+form control has focus or the prompt box has text in it, so a reload cannot eat a half-typed
+prompt; it strips the acknowledgement from the URL, so a toast does not come back every minute;
+and it gives up after half an hour, so an abandoned tab cannot hold a signed-in session open
+forever by poking the server. A run transcript and the lanes table do not reload — they do not
+move once written, and losing your place in one is a cost with no benefit.
 
 **Approve/reject** on the outbound queue is the one that stays behind a flag. `--enable-actions`
 is **off by default**, and the systemd unit does not carry it. The difference is disclosure, not
