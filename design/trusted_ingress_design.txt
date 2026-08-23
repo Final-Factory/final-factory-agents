@@ -17,6 +17,9 @@ channel does not burn a run on "thanks".
 Revision 5, 2026-08-22: the gate runs on every message in all three watched channels,
 including the first message of a new thread, and its bias toward answering is written as
 rules rather than as an adjective (section 5).
+Revision 7, 2026-08-22: every container is Unity-capable, read lanes included. Activation stops
+being a launch-time decision and becomes a lazy, locked one, and the read lanes trade their
+no-Bash property for exactly one command (section 13).
 Revision 6, 2026-08-22: a review pass for ambiguity and for claims about the code. Corrects
 how a DM is actually detected on the gateway (section 11), says which lane an operator message
 gets rather than leaving the matrix and the watch kind to contradict each other (section 8),
@@ -623,6 +626,73 @@ Everything that actually contains a lane is untouched: no credential in the cont
 destroyed at the end of the run, no path from any container to Discord, every reply composed
 on the host from the structured verdict.
 
+UNITY ON EVERY LANE. The --no-unity launch goes away for the Discord lanes. Every container,
+read or write, gets a working editor, because a worker answering "what is the actual power draw
+of X" should be able to go and look rather than infer from source and hedge.
+
+Three things the current `unity` flag conflates, which have to come apart before that is safe:
+
+  capability     Is there an editor and a warm Library in this container. Now: always.
+
+  the seat       Activation is an online call consuming a seat under a machine identity that
+                 every container shares, and the FIRST container to exit returns it for
+                 everyone. Today ensure_unity_license runs eagerly at container start
+                 (discord-task.sh) and the host gates launch on max_unity_runs=1.
+
+  verification   The post-exit ffverify run whose result the agent cannot write. Stays on the
+                 write lanes only: a read-only lane changed nothing, so there is nothing to
+                 verify, and the harness should not spend a Unity run proving that.
+
+Eager activation on every lane would turn max_unity_runs=1 into a global serializer. The answer
+lane is capped at 200 turns a day and would queue behind one seat, so a busy afternoon of player
+questions would run one at a time behind whatever dev run got there first.
+
+So ACTIVATION BECOMES LAZY. The container holds the editor from the start and takes the seat
+only when something actually invokes it. Serializing that needs a lock the host owns, because
+the host can no longer tell who holds the seat by looking at run rows: a flock on a host path
+bind-mounted into every container, taken by ffverify before activate_unity and held through
+-returnlicense. The kernel releases a flock when the holder dies, which is the property that
+matters when a container is killed rather than exiting. max_unity_runs stops gating launch and
+becomes the size of that lock, still 1.
+
+The wait is bounded rather than indefinite. A read lane queued behind a twenty-minute dev run
+would otherwise burn its whole agent_secs doing nothing, so ffverify waits a set time for the
+seat and then fails with "Unity busy". A timeout the agent can report beats a hang the harness
+has to kill.
+
+THE TRADE, SAID OUT LOUD. The read-only lanes have no Bash at all today: READ_TOOLS is
+"Read,Grep,Glob", and the main design calls that its strongest containment claim, because the
+lanes fed untrusted player text are contained structurally by the tool list rather than by a
+policy the model is asked to follow. Unity means Bash, because ffverify is a command.
+
+The allow list is documented as scope reduction and explicitly not a boundary: a trailing `*`
+matches the whole command string, so `Bash(ffverify *)` also permits `ffverify && anything`.
+Measured, in ffwatch.py's WRITE_ALLOWED note. So the read lanes get EXACT patterns and no glob,
+enumerating the legal invocations rather than opening the argument space:
+
+    Bash(ffverify)
+    Bash(ffverify --assemblies FFEditorTests)
+
+The write lanes keep `Bash(ffverify *)`, which they already have and which changes nothing about
+their position.
+
+What is actually traded: the answer lane stops being incapable of running a command and becomes
+allowed to run one. What still contains it is unchanged, and is what the main design says
+contains a lane in the first place: no credential of any kind in the container, a clone
+destroyed at the end of the run, and no path from any container to Discord.
+
+The cost is warmup. Every answer run now pays for a Unity-capable container, and the warm
+Library mount (04-warmLibrary.sh) is the thing standing between that and a cold import per
+question. If warmup turns out to dominate answer latency, the lazy seat is what makes a
+"start without the editor, add it on demand" variant possible later.
+
+STILL OPEN: is ffverify the whole surface? It runs EditMode tests and nothing else, with no
+-executeMethod, deliberately: with the raw editor allowed a lane could run arbitrary editor
+code. "Go and look with Unity" through the test suite is a narrower thing than driving the
+editor, and a broader entry point would put arbitrary editor code execution within reach of
+untrusted player text. Worth deciding on purpose rather than discovering when somebody asks for
+it.
+
 
 14. Player-triggered work, later
 --------------------------------
@@ -639,8 +709,8 @@ sets up:
      internal, and it never gets a private half. Triggering work is not clearance.
 
   b. Capability comes from the LANE, never from the request. A player's bug report routes to
-     the fix lane with the fix lane's tool set and the fix lane's ceilings
-     (rate_limits["fix"], max_unity_runs=1), and the output is a pull request a human merges.
+     the fix lane with the fix lane's tool set and the fix lane's ceilings (rate_limits["fix"],
+     and the Unity seat lock of section 13), and the output is a pull request a human merges.
      A request that argues for more capability is untrusted text arguing, which is the case
      fail-closed classification was built for.
 
@@ -729,7 +799,10 @@ Still open:
   6. The split reply: the second verdict field, the two-destination sender, the held-not-
      downgraded failure path, and the answerer's rules about what the public half may imply.
   7. The web prompt box, which reuses step 3 whole.
-  8. Extend operator authority from the single lothsahn key to the whole set, in both the
+  8. Unity on every lane: unity true across LANE_CAPABILITIES, lazy activation behind the
+     host-owned seat lock, exact-match ffverify on the read lanes, and post-exit verification
+     left on the write lanes only.
+  9. Extend operator authority from the single lothsahn key to the whole set, in both the
      listener and discord-dev-agent.md, and with it section 8's lane rule: an operator message
      is routed by type rather than pinned to the dev lane. These two belong together, because
      widening the operator set without the lane rule would put both accounts on the Unity write
