@@ -115,7 +115,10 @@ def all_messages():
 
 
 cmd = argv[0]
-if cmd == "read":
+if cmd == "whoami":
+    print(json.dumps({"id": os.environ.get("FFD_BOT_ID", "999000999"),
+                      "username": "max", "global_name": "Max"}))
+elif cmd == "read":
     channel = resolve(argv[1])
     msgs = fixture.get("messages", {}).get(channel, [])
     after = opt("--after")
@@ -346,6 +349,14 @@ exit 1
 """
 
 
+# A classifier that ANSWERS, so the engagement gate can be exercised rather than only its
+# fail-closed path. The verdict is whatever $FFWATCH_CLASSIFIER_JSON holds, wrapped in the
+# envelope `claude -p --output-format json` produces.
+CLAUDE_ANSWER_STUB = """#!/bin/sh
+printf '{"result": %s}\n' "$FFWATCH_CLASSIFIER_JSON"
+"""
+
+
 def write_stub(path, body, executable=True):
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(body)
@@ -394,7 +405,8 @@ def base_fixture():
 class Case:
     """One isolated ffwatch installation: its own state dir, fixture, events file and stubs."""
 
-    def __init__(self, name, fixture=None, mode="ok", classifier_ok=False, approve=False):
+    def __init__(self, name, fixture=None, mode="ok", classifier_ok=False, approve=False,
+                 verdict=None):
         self.root = os.path.join(TMPROOT, name)
         os.makedirs(self.root, exist_ok=True)
         self.fixture_path = os.path.join(self.root, "fixture.json")
@@ -413,21 +425,28 @@ class Case:
                                             FFDISCORD_STUB),
             "FFWATCH_FFBOX": write_stub(os.path.join(self.root, "ffbox_stub.py"), FFBOX_STUB),
             "FFWATCH_DOCKER": write_stub(os.path.join(self.root, "docker_stub.sh"), DOCKER_STUB),
-            "FFWATCH_CLAUDE": write_stub(os.path.join(self.root, "claude_stub.sh"),
-                                         CLAUDE_FAIL_STUB),
+            "FFWATCH_CLAUDE": write_stub(
+                os.path.join(self.root, "claude_stub.sh"),
+                CLAUDE_ANSWER_STUB if verdict is not None else CLAUDE_FAIL_STUB),
             "FFWATCH_STATE_DIR": self.state_dir,
             "FFWATCH_EVENTS": self.events_path,
             "FFWATCH_KILL_SWITCH": self.kill_switch,
             "FFBOX_STUB_MODE": mode,
         })
+        if verdict is not None:
+            os.environ["FFWATCH_CLASSIFIER_JSON"] = json.dumps(verdict)
+        else:
+            os.environ.pop("FFWATCH_CLASSIFIER_JSON", None)
         for key in ("FFBOX_STUB_EVENTS", "FFBOX_STUB_FIXTURE_ADD", "FFBOX_STUB_SHIM_POSTS",
                     "FFD_FAIL_SEND", "FFBOX_STUB_GIT_ORIGIN", "FFBOX_STUB_CHANGED",
                     "FFBOX_STUB_VERIFY", "FFBOX_STUB_VERDICT"):
             os.environ.pop(key, None)
 
         cfg = ffwatch.load_config()
-        cfg["watch"] = {"ask_claude": {"kind": "ask", "forum": False},
-                        "bug_reports": {"kind": "bug_report", "forum": True}}
+        cfg["watch"] = {"ask_claude": {"kind": "ask", "forum": False,
+                                       "venue": "public", "engage": "all"},
+                        "bug_reports": {"kind": "bug_report", "forum": True,
+                                        "venue": "public", "engage": "all"}}
         cfg["plugins_dir"] = os.path.join(self.root, "plugins")
         os.makedirs(os.path.join(cfg["plugins_dir"], "ff-discord"), exist_ok=True)
         cfg["approve_before_send"] = approve
@@ -565,6 +584,106 @@ def test_config_warnings_name_every_silent_default():
     check("a table of usernames warns that it holds no ids",
           "no numeric ids" in " ".join(ffwatch.config_warnings(usernames)),
           ffwatch.config_warnings(usernames))
+
+
+BOT = "999000999"
+
+
+def test_a_mention_only_channel_stays_quiet():
+    print("engage: mention")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [
+        message(4101, "anyone else seeing this on develop?"),
+        message(4102, "hey @max what does the splitter do?",
+                attachments=None),
+    ]
+    fixture["messages"][ASK_CHANNEL][1]["mentions"] = [{"id": BOT}]
+    case = Case("engage-mention", fixture)
+    case.cfg["watch"]["ask_claude"]["engage"] = "mention"
+    case.events(ask_event(4101), ask_event(4102))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    turns = case.rows("SELECT * FROM turn")
+    check("only the message that addressed the bot made a turn", len(turns) == 1, turns)
+    claimed = case.rows("SELECT * FROM message WHERE turn_id IS NOT NULL")
+    check("and it is the one with the mention",
+          len(claimed) == 1 and claimed[0]["discord_id"] == "4102", claimed)
+    quiet = case.rows("SELECT * FROM message WHERE discord_id='4101'")[0]
+    check("the ordinary message is recorded, not dropped", quiet["content"], quiet["content"])
+    check("and marked so the scheduler stops reconsidering it", quiet["gate"] == "none", quiet)
+    check("with a reason a human can read", "mention-only" in (quiet["gate_reason"] or ""),
+          quiet["gate_reason"])
+    case.watcher.claim_turns()
+    check("a second pass does not resurrect it",
+          len(case.rows("SELECT * FROM turn")) == 1)
+
+
+def test_the_gate_declines_a_message_that_asks_nothing():
+    print("engage: all, gate says no")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(4201, "thanks, that fixed it")]
+    case = Case("gate-none", fixture,
+                verdict={"engage": False, "type": "question", "needs_unity": False,
+                         "reason": "social acknowledgement, nothing asked"})
+    case.events(ask_event(4201))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    check("no turn is created", case.rows("SELECT * FROM turn") == [])
+    row = case.rows("SELECT * FROM message")[0]
+    check("the message is still recorded", row["content"] == "thanks, that fixed it", row)
+    check("the gate decision is recorded", row["gate"] == "none", row)
+    check("along with the model's reason",
+          "social acknowledgement" in (row["gate_reason"] or ""), row["gate_reason"])
+    check("nothing was posted", not any("post" in c for c in case.calls()))
+
+
+def test_the_gate_answers_when_it_is_unsure():
+    print("engage: all, gate cannot decide")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(4301, "belt merger drops items sometimes")]
+    case = Case("gate-failclosed", fixture)          # the classifier stub exits non-zero
+    case.events(ask_event(4301))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    turns = case.rows("SELECT * FROM turn")
+    check("a gate that cannot decide still answers", len(turns) == 1, turns)
+    check("and answers read-only", turns[0]["lane"] == "answer", turns[0])
+    check("the message is claimed, not declined",
+          case.rows("SELECT * FROM message")[0]["gate"] is None)
+
+
+def test_evidence_and_thread_openings_never_reach_the_gate():
+    print("the always-turn list")
+    att = {"id": "9", "filename": "player.log", "size": 11, "content_type": "text/plain",
+           "url": "https://cdn.example/player.log?ex=signed"}
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(4401, "log attached", attachments=[att])]
+    case = Case("always-turn", fixture,
+                verdict={"engage": False, "type": "question", "needs_unity": False,
+                         "reason": "the model would have declined this"})
+    case.events(ask_event(4401))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    check("an attachment makes a turn even when the gate would decline",
+          len(case.rows("SELECT * FROM turn")) == 1,
+          case.rows("SELECT gate, gate_reason FROM message"))
+
+    thread = base_fixture()
+    thread["threads"]["30000"] = {
+        "thread": {"id": "30000", "name": "belt merger drops items",
+                   "parent_id": BUG_FORUM, "owner_id": PLAYER},
+        "messages": [message(30001, "it drops one item in eight", channel="30000")]}
+    opener = Case("always-turn-thread", thread,
+                  verdict={"engage": False, "type": "question", "needs_unity": False,
+                           "reason": "the model would have declined this too"})
+    opener.events(thread_event("30000", kind="thread"))
+    opener.watcher.drain_events()
+    opener.watcher.claim_turns()
+    turns = opener.rows("SELECT * FROM turn")
+    check("a thread opening makes a turn even when the gate would decline",
+          len(turns) == 1, turns)
+    check("and it is triage, not the answer lane the gate would have implied",
+          turns[0]["lane"] == "triage", turns[0])
 
 
 def test_schema_idempotent():
@@ -2700,6 +2819,10 @@ def test_allow_list_is_scope_not_a_boundary():
 
 def main():
     tests = [
+        test_a_mention_only_channel_stays_quiet,
+        test_the_gate_declines_a_message_that_asks_nothing,
+        test_the_gate_answers_when_it_is_unsure,
+        test_evidence_and_thread_openings_never_reach_the_gate,
         test_operator_table_holds_ids_only,
         test_venue_and_engage_come_from_the_watch_entry,
         test_config_warnings_name_every_silent_default,

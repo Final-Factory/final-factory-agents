@@ -473,6 +473,22 @@ def message_summary(msg, body_chars=0):
 # --------------------------------------------------------------------------------------
 
 
+def cmd_whoami(client, args):
+    """The bot's own identity. Small on purpose: `doctor` answers this too, but it also walks
+    every guild, role and channel, and a caller that only needs the id should not pay for that.
+
+    ffwatch needs the id to answer "was the bot addressed in this message", which is what
+    decides whether a mention-only channel wakes at all.
+    """
+    me = client.get("/users/@me")
+    out = {"id": me.get("id"), "username": me.get("username"),
+           "global_name": me.get("global_name")}
+    if args.json:
+        print(json.dumps(out))
+        return
+    print(f"{out['username']} (id {out['id']})")
+
+
 def cmd_doctor(client, args):
     problems, notes = [], []
     me = client.get("/users/@me")
@@ -1065,6 +1081,7 @@ def build_parser():
         sp.add_argument("--json", action="store_true", help="machine-readable output")
         return sp
 
+    add("whoami", cmd_whoami, "print the bot's own user id")
     add("doctor", cmd_doctor, "verify token, guild, channel permissions and intents")
     add("channels", cmd_channels, "list guild channels with ids")
 
