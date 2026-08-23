@@ -3196,11 +3196,39 @@ class Watcher:
             if reason:
                 log(f"outbound {row['id']} held: {reason}")
                 continue
+            if not self._claim_for_send(row):
+                continue
             if self.send_one(row):
                 sent += 1
         if held:
             log(f"{held} outbound row(s) awaiting approval — release with: ffwatch approve <id>")
         return sent
+
+    def _claim_for_send(self, row):
+        """Take this row for THIS process, or leave it to whoever already has it.
+
+        There is more than one ffwatch at a time and always has been: the daemon polls
+        send_pending() every poll_secs while `ffwatch approve` and `ffwatch send` call it
+        inline from a second process, so both can hold the same 'pending' row from the same
+        SELECT. Without this they both reach send_one and both post. What kept that from being
+        visible is the nonce — the same row derives the same nonce, so Discord collapses the
+        pair — but leaning on a remote service's dedupe window for local mutual exclusion is
+        not the same as having mutual exclusion.
+
+        The claim is the attempt counter, used as a compare-and-swap: the UPDATE only matches
+        while attempts is still what this process read, so exactly one of two racers moves it
+        and the other sees rowcount 0 and walks away. SQLite serialises the two writes for us
+        (WAL, one writer at a time), which is what makes the check and the act one act.
+
+        This deliberately counts the attempt BEFORE the send rather than after. A crash between
+        here and the reply is then indistinguishable from a failed send — a retryable row with
+        the attempt recorded, backing off, presenting the same nonce — which is the case the
+        nonce was built for, rather than a row that quietly retried forever without counting.
+        """
+        cur = self.db.execute(
+            "UPDATE outbound SET attempts=?, last_attempt_at=? WHERE id=? AND attempts=?",
+            (int(row["attempts"] or 0) + 1, now_iso(), row["id"], int(row["attempts"] or 0)))
+        return cur.rowcount == 1
 
     def _send_due(self, row):
         """Backoff between attempts, so a Discord outage is not hammered once per poll."""
@@ -3287,8 +3315,10 @@ class Watcher:
                 # The message went out; we just could not read its id back. That is worth a
                 # warning, not a retry — retrying would post it a second time.
                 log(f"WARNING: outbound {row['id']} sent but the id could not be parsed")
+        # No attempts+1 here: _claim_for_send counted this attempt on the way in, and counting
+        # it twice would put every sent row one ahead of the number of times it was tried.
         self.db.execute(
-            "UPDATE outbound SET status='sent', discord_id=?, sent_at=?, attempts=attempts+1,"
+            "UPDATE outbound SET status='sent', discord_id=?, sent_at=?,"
             " last_attempt_at=?, last_error=NULL WHERE id=?",
             (discord_id, now_iso(), now_iso(), row["id"]))
         if discord_id and row["conversation_id"]:
@@ -3456,6 +3486,9 @@ class Watcher:
         return ok
 
     def _send_failed(self, row, error):
+        # The same N+1 _claim_for_send just wrote, recomputed from the row this call was handed.
+        # Writing it again is a no-op that keeps this correct if it is ever reached by a path
+        # that did not claim; what it must NOT do is add a second increment.
         attempts = int(row["attempts"] or 0) + 1
         limit = int(self.cfg["max_send_attempts"])
         terminal = attempts >= limit or row["action"] in NON_RETRYABLE_ACTIONS
@@ -3490,8 +3523,9 @@ class Watcher:
         clears this row after fixing the cause, which is usually the recipient's privacy
         settings rather than anything here.
         """
+        # As in send_one: the attempt is already counted by _claim_for_send.
         self.db.execute(
-            "UPDATE outbound SET status='undeliverable', reject_reason=?, attempts=attempts+1,"
+            "UPDATE outbound SET status='undeliverable', reject_reason=?,"
             " last_attempt_at=?, last_error=? WHERE id=?",
             (reason, now_iso(), reason[:500], row["id"]))
         log(f"outbound {row['id']} UNDELIVERABLE: {reason}. The public half was posted; this "
@@ -3509,14 +3543,17 @@ class Watcher:
         """
         done = []
         for oid in ids:
-            row = self.db.one("SELECT * FROM outbound WHERE id=?", (oid,))
-            if row is None:
-                log(f"outbound {oid}: no such row")
+            # The status test is IN the UPDATE, not ahead of it. Two operators on the queue —
+            # or one on the page and one at a terminal — would otherwise both read 'pending'
+            # and both approve, and the second would log a transition it did not make. The row
+            # is still read afterwards, but only to say WHY nothing happened.
+            cur = self.db.execute(
+                "UPDATE outbound SET status='approved' WHERE id=? AND status='pending'", (oid,))
+            if cur.rowcount != 1:
+                row = self.db.one("SELECT status FROM outbound WHERE id=?", (oid,))
+                log(f"outbound {oid}: no such row" if row is None
+                    else f"outbound {oid}: already {row['status']}, not approving")
                 continue
-            if row["status"] != "pending":
-                log(f"outbound {oid}: already {row['status']}, not approving")
-                continue
-            self.db.execute("UPDATE outbound SET status='approved' WHERE id=?", (oid,))
             done.append(oid)
             log(f"outbound {oid} approved")
         return done
@@ -3524,13 +3561,17 @@ class Watcher:
     def reject(self, ids, reason=None):
         done = []
         for oid in ids:
-            row = self.db.one("SELECT * FROM outbound WHERE id=?", (oid,))
-            if row is None or row["status"] in ("sent", "rejected"):
+            # Same shape as approve: the "not already gone" test rides along in the WHERE, so a
+            # row that reached 'sent' between the read and the write cannot be marked rejected
+            # after the fact.
+            cur = self.db.execute(
+                "UPDATE outbound SET status='rejected', reject_reason=?"
+                " WHERE id=? AND status NOT IN ('sent', 'rejected')",
+                (reason or "rejected by hand", oid))
+            if cur.rowcount != 1:
+                row = self.db.one("SELECT status FROM outbound WHERE id=?", (oid,))
                 log(f"outbound {oid}: {'no such row' if row is None else row['status']}")
                 continue
-            self.db.execute(
-                "UPDATE outbound SET status='rejected', reject_reason=? WHERE id=?",
-                (reason or "rejected by hand", oid))
             done.append(oid)
             log(f"outbound {oid} rejected: {reason or 'rejected by hand'}")
         return done
@@ -3560,19 +3601,28 @@ class Watcher:
         return self._set_read(ids, read=False)
 
     def _set_read(self, ids, read):
+        """ONE statement per id, and the stamp is computed inside it.
+
+        Reading the row and then writing a stamp taken from it would be a check-then-act across
+        two transactions, and the daemon is writing last_activity_at on these same rows: an
+        ingest landing between the SELECT and the UPDATE would have this store the older stamp.
+        Harmless in direction — the row stays unread, which is the safe way to be wrong — but
+        there is no reason to have the window when SQLite will do the COALESCE itself.
+
+        rowcount is then the whole answer: 1 means a conversation was there and is now marked,
+        0 means the id was not a conversation. No existence check to race against either.
+        """
         done = []
         for cid in ids:
-            row = self.db.one(
-                "SELECT id, last_activity_at, created_at FROM conversation WHERE id=?", (cid,))
-            if row is None:
+            cur = self.db.execute(
+                "UPDATE conversation SET read_through = "
+                + ("COALESCE(last_activity_at, created_at, '')" if read else "NULL")
+                + " WHERE id=?", (cid,))
+            if cur.rowcount != 1:
                 log(f"conversation {cid}: no such row")
                 continue
-            through = (row["last_activity_at"] or row["created_at"] or "") if read else None
-            self.db.execute("UPDATE conversation SET read_through=? WHERE id=?",
-                            (through, row["id"]))
-            done.append(row["id"])
-            log(f"conversation {row['id']} marked "
-                + (f"read through {through}" if read else "unread"))
+            done.append(cid)
+            log(f"conversation {cid} marked {'read' if read else 'unread'}")
         return done
 
     # ======================================================================================

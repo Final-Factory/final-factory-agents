@@ -618,7 +618,29 @@ the certificate, because the standard library can serve TLS but cannot create an
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 
-**ffwatch stays the sole writer.** The connection is opened `file:…?mode=ro` through a URI
+**ffwatch is the sole writer, but not a single process.** The claim is about which *code* does
+the writing, not how many copies of it are running — and there are routinely several. The daemon
+polls `send_pending()` every `poll_secs` (default 2) while `ffwatch approve` and `ffwatch send`
+call it inline from a second process, so two SELECTs can hand out the same `pending` row. Rows
+that more than one process can act on are therefore taken by **compare-and-swap**, not by
+check-then-act: the send claim moves `attempts` from the value it read (`_claim_for_send`), and
+approve/reject put their status test in the `WHERE`. Exactly one racer gets `rowcount == 1`; the
+other walks away. SQLite serialises the two writes (WAL, one writer at a time,
+`busy_timeout=30000`), which is what makes the check and the act one act.
+
+That matters most on the send path, where the loser used to go on and post: the duplicate was
+absorbed by the **nonce**, since the same row derives the same nonce and Discord collapses the
+pair. That dedupe is still there and still earns its keep after a crash — but a remote service's
+dedupe window is not mutual exclusion, and it is no longer what the queue depends on. Counting
+the attempt *before* the send is deliberate: a crash mid-send then looks exactly like a failed
+send — retryable, counted, backing off, same nonce — instead of a row that retries forever
+without counting.
+
+Launching a run has its own guard, and needs one: `conversation.state` alone is not enough,
+since two processes would both read `idle` and both launch, and two runs resuming one session id
+fork the transcript irrecoverably. That one is a per-conversation `flock` (`ConversationLock`).
+
+**Everything the UI changes goes through ffwatch.** The connection is opened `file:…?mode=ro` through a URI
 with `PRAGMA query_only` on top, so a write is refused by SQLite rather than caught in review —
 the test suite asserts both that the connection rejects an `INSERT` and that the database
 file's mtime is unchanged after a crawl of every route. Where the page needs to change
