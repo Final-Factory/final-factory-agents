@@ -138,6 +138,15 @@ SESSION_FILE = "ffweb-sessions.json"
 # the LAN can walk a dictionary through the form.
 LOGIN_FAILURE_DELAY_SECS = 0.5
 
+# The login form's backdrop, shipped beside this script rather than in the state directory:
+# it is part of the program, not part of an installation, so it travels with the checkout the
+# systemd unit points at. Served from its own route instead of inlined as a data: URI so the
+# login HTML stays a few kilobytes rather than the base64 of half a megabyte of JPEG.
+LOGIN_BACKGROUND_FILE = "steam_background.jpg"
+LOGIN_BACKGROUND_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     LOGIN_BACKGROUND_FILE)
+LOGIN_BACKGROUND_URL = "/" + LOGIN_BACKGROUND_FILE
+
 # Where the self-signed certificate lives, under the state directory, and how long it lasts.
 TLS_SUBDIR = "tls"
 TLS_DAYS = 3650
@@ -752,7 +761,23 @@ form.login label { display: block; margin: 0 0 12px; font-size: 12px; color: #8f
 form.login input { display: block; width: 100%; margin-top: 4px; padding: 6px 8px; }
 form.login button { width: 100%; margin-top: 6px; padding: 7px; }
 .badpass { color: #e99; margin: 0 0 12px; }
+/* Sign-in only. The rest of the site is a wall of monospace tables and wants a flat
+   background behind them; the one page a person looks AT rather than reads gets the art.
+   The image is fixed and cover-cropped so it fills any window without tiling, and the flat
+   colour underneath is what shows if the file is missing. */
+body.signin { background: #14161a url(@LOGIN_BACKGROUND@) center / cover no-repeat fixed; }
+body.signin header { background: rgba(28, 32, 39, 0.82); backdrop-filter: blur(4px); }
+/* The panel exists for legibility: type over a photograph needs its own ground, and the
+   inputs already sit on #1c2027 so the card only has to darken what is behind them. */
+body.signin main.login { background: rgba(20, 22, 26, 0.88); border: 1px solid #2b313b;
+                         border-radius: 6px; padding: 20px 22px 16px;
+                         box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55); }
 """
+
+# STYLE is a plain literal (CSS is full of braces and percent signs, so neither f-string nor
+# %-formatting can live inside it). One substitution afterwards is what keeps the URL the CSS
+# asks for and the URL the route answers on from drifting apart.
+STYLE = STYLE.replace("@LOGIN_BACKGROUND@", LOGIN_BACKGROUND_URL)
 
 
 def page(title, body_parts, banner=""):
@@ -784,7 +809,8 @@ def login_page(next_path="/", error=""):
     return (
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        "<title>sign in — ffweb</title><style>" + STYLE + "</style></head><body>"
+        "<title>sign in — ffweb</title><style>" + STYLE + "</style></head>"
+        "<body class=\"signin\">"
         "<header><span class=\"brand\">ffweb</span></header>"
         "<main class=\"login\"><h1>sign in</h1>" + banner +
         "<form class=\"login\" method=\"post\" action=\"/login\">"
@@ -1040,6 +1066,12 @@ class FFWebHandler(BaseHTTPRequestHandler):
         # the database. Everything past this point renders transcript_event, so the gate is
         # here — one place, before the route table — rather than per handler.
         wanted = safe_next((query.get("next") or ["/"])[0])
+        # Ahead of the gate, because the browser asks for it while rendering the login form —
+        # i.e. always without a session. It is a file shipped in this directory, the same
+        # bytes for everyone, and it says nothing about ffwatch.db, so there is nothing here
+        # for the gate to protect.
+        if path == LOGIN_BACKGROUND_URL:
+            return self._serve_login_background()
         if path == "/login":
             if self._authenticated():
                 return self._redirect(wanted)
@@ -1165,6 +1197,24 @@ class FFWebHandler(BaseHTTPRequestHandler):
                                            ("Set-Cookie", self._cookie_header("", 0))])
 
     # -- blobs ---------------------------------------------------------------------------
+
+    def _serve_login_background(self):
+        """The sign-in backdrop, read from disk beside this script.
+
+        Read per request rather than held in memory: it is one file, served on the way to a
+        login form, and a background that can be swapped by replacing the file without
+        restarting the service is worth more here than the syscall it saves.
+        """
+        try:
+            with open(LOGIN_BACKGROUND_PATH, "rb") as fh:
+                data = fh.read()
+        except OSError as exc:
+            # A missing image is a cosmetic fault, not an outage: the CSS falls back to the
+            # flat colour and the form still works. 404 rather than 500 so it reads that way
+            # in the log too.
+            self.log_message("login background unavailable: %s", exc)
+            return self._error(404, "no login background")
+        return self._send(200, data, content_type="image/jpeg")
 
     def _serve_blob(self, raw_digest):
         """Serve one content-addressed attachment.
