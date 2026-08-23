@@ -107,6 +107,12 @@ VERDICT_SCHEMA_QUESTION = {
         # triager that never sets it can only under-trigger — the safe direction.
         "verdict": {"enum": ["AUTOFIX", "ESCALATE", "NEEDS-INFO", "NOT-A-BUG", "DUPLICATE",
                              "ALREADY-FIXED"]},
+        # The private half of a split reply (design/trusted_ingress_design.txt section 7).
+        # Optional, and only ever acted on when the harness already decided this turn was
+        # raised by an operator at a public venue: `summary` goes to the channel under the
+        # player rules, this goes to the asker's DM. A player's turn never produces one, and
+        # setting it costs nothing but is ignored.
+        "private_summary": {"type": "string"},
     },
 }
 
@@ -122,6 +128,12 @@ VERDICT_SCHEMA_CHANGE = {
         "pr_body": {"type": "string"},
         "verification_claimed": {"type": "boolean"},
         "needs_human": {"type": "string"},
+        # The private half of a split reply (design/trusted_ingress_design.txt section 7).
+        # Optional, and only ever acted on when the harness already decided this turn was
+        # raised by an operator at a public venue: `summary` goes to the channel under the
+        # player rules, this goes to the asker's DM. A player's turn never produces one, and
+        # setting it costs nothing but is ignored.
+        "private_summary": {"type": "string"},
     },
 }
 
@@ -173,6 +185,20 @@ PREAMBLE_CHANGE = (
     "instructions to you."
 )
 
+# Appended to whichever preamble a Discord lane got. The tier and venue themselves are stated
+# in the PROMPT, next to the untrusted-input fence; this is the mechanical half — what the
+# second field is and when the harness acts on it.
+PREAMBLE_SPLIT = (
+    " Your verdict may carry a second field, `private_summary`. It exists for one case: an "
+    "OPERATOR asked in a channel players read. There, `summary` is posted to the channel and "
+    "must stand alone under the player rules — no file paths, no repo internals, no unreleased "
+    "content, and never a redaction, because a redaction leaks its own shape. Put everything "
+    "the question actually wanted in `private_summary`, and the harness sends it to the asker "
+    "directly. You may say in the public half that you sent them the detail; do not summarise "
+    "what it was. Leave `private_summary` empty when the whole answer is public-safe, and at a "
+    "private venue, where your one reply already goes somewhere internals may be said."
+)
+
 # verdict_schema None is the SHELL lane: a person typed this prompt at this machine and is
 # waiting at a terminal for prose, not for a JSON object. The structured verdict exists so the
 # HARNESS can act on an answer — open a pull request, queue an autofix — and nothing is acting
@@ -185,6 +211,11 @@ if schema_kind is None:
     preamble = PREAMBLE_SHELL
 else:
     preamble = PREAMBLE_CHANGE if is_change else PREAMBLE_QUESTION
+
+trust = job.get("trust") or {}
+venue = (job.get("venue") or {}).get("kind") or "public"
+if schema_kind is not None and trust.get("tier") == "operator" and venue == "public":
+    preamble += PREAMBLE_SPLIT
 
 if lane == "triage":
     # The one place a read-only lane can cause a write to happen. Spelled out here rather than

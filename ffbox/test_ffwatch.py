@@ -119,7 +119,10 @@ if cmd == "channel":
     print(json.dumps(fixture.get("channel_objects", {}).get(resolve(argv[1]),
                                                             {"id": resolve(argv[1]), "type": 0})))
 elif cmd == "dm":
-    print(json.dumps({"id": fixture.get("dm_channels", {}).get(argv[1], "dm-" + argv[1]),
+    if os.environ.get("FFD_FAIL_DM"):
+        sys.stderr.write("403 Cannot send messages to this user\n")
+        sys.exit(1)
+    print(json.dumps({"id": fixture.get("dm_channels", {}).get(argv[1], "77" + argv[1][:8]),
                       "type": 1, "recipients": [argv[1]]}))
 elif cmd == "whoami":
     print(json.dumps({"id": os.environ.get("FFD_BOT_ID", "999000999"),
@@ -523,6 +526,95 @@ LOTHSAHN = "193210319093497857"
 
 
 DM_CHANNEL = "700000000000000009"
+
+
+def test_an_operator_in_public_gets_a_split_reply():
+    print("the split reply")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [
+        message(6001, "which file defines the belt merger?", author=LOTHSAHN, name="lothsahn")]
+    case = Case("split", fixture)
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    os.environ["FFBOX_STUB_VERDICT"] = json.dumps({
+        "summary": "Belts merge where two connectors meet. Sent you the specifics.",
+        "private_summary": "Connectors/PerpendicularConnectorTransferSystem.cs:88",
+        "change_required": False})
+    try:
+        case.events(ask_event(6001))
+        case.watcher.once()
+    finally:
+        os.environ.pop("FFBOX_STUB_VERDICT", None)
+
+    posts = [r for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+    check("two posts are queued, not one", len(posts) == 2, posts)
+    pub = json.loads(posts[0]["payload_json"])
+    priv = json.loads(posts[1]["payload_json"])
+    check("the public half goes to the channel", pub["channel"] == ASK_CHANNEL, pub)
+    check("and carries no file path",
+          "PerpendicularConnectorTransferSystem" not in pub["text"], pub["text"])
+    # dm_to is what it was composed with; `channel` is written back after the DM is opened, so
+    # a re-send does not re-resolve it. What matters is that it never went to the public one.
+    check("the private half is addressed to the asker, and not to the public channel",
+          priv["dm_to"] == LOTHSAHN and priv.get("channel") != ASK_CHANNEL, priv)
+    check("and carries what the question actually wanted",
+          "PerpendicularConnectorTransferSystem.cs:88" in priv["text"], priv["text"])
+    check("the private half was sent to a DM channel opened for that user",
+          any(c[:2] == ["dm", LOTHSAHN] for c in case.calls()), case.calls()[-4:])
+    check("both halves went out", all(p["status"] == "sent" for p in
+                                      case.rows("SELECT * FROM outbound WHERE action='post'")))
+
+
+def test_a_player_never_gets_a_private_half():
+    print("no private half for a player")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(6101, "which file defines the merger?")]
+    case = Case("no-split", fixture)
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    os.environ["FFBOX_STUB_VERDICT"] = json.dumps({
+        "summary": "Can't share repo internals, but ask me the gameplay question.",
+        "private_summary": "the model tried to send one anyway",
+        "change_required": False})
+    try:
+        case.events(ask_event(6101))
+        case.watcher.once()
+    finally:
+        os.environ.pop("FFBOX_STUB_VERDICT", None)
+    posts = case.rows("SELECT * FROM outbound WHERE action='post'")
+    check("a player's turn queues exactly one post, whatever the verdict carried",
+          len(posts) == 1, posts)
+    check("and nothing was DMed to anyone", not any(c[0] == "dm" for c in case.calls()))
+
+
+def test_an_undeliverable_private_half_never_becomes_public():
+    print("undeliverable")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [
+        message(6201, "which file defines the merger?", author=LOTHSAHN, name="lothsahn")]
+    case = Case("undeliverable", fixture)
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    os.environ["FFBOX_STUB_VERDICT"] = json.dumps({
+        "summary": "Sent you the specifics.",
+        "private_summary": "Connectors/PerpendicularConnectorTransferSystem.cs:88",
+        "change_required": False})
+    os.environ["FFD_FAIL_DM"] = "1"
+    try:
+        case.events(ask_event(6201))
+        case.watcher.once()
+    finally:
+        os.environ.pop("FFBOX_STUB_VERDICT", None)
+        os.environ.pop("FFD_FAIL_DM", None)
+    rows = case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")
+    check("the public half still posted", rows[0]["status"] == "sent", rows[0])
+    check("the private half is parked in its own terminal state",
+          rows[1]["status"] == "undeliverable", rows[1])
+    check("with the reason kept for a human", rows[1]["reject_reason"], rows[1])
+    case.watcher.approve([rows[1]["id"]])
+    check("and `ffwatch approve` will not release it into the same closed DM",
+          case.rows("SELECT * FROM outbound WHERE id=?",
+                    (rows[1]["id"],))[0]["status"] == "undeliverable")
+    check("the file path never reached the channel",
+          "PerpendicularConnectorTransferSystem" not in
+          json.loads(rows[0]["payload_json"])["text"])
 
 
 def test_an_operator_dm_is_a_private_venue():
@@ -3019,6 +3111,9 @@ def main():
         test_the_gate_declines_a_message_that_asks_nothing,
         test_the_gate_answers_when_it_is_unsure,
         test_evidence_and_thread_openings_never_reach_the_gate,
+        test_an_operator_in_public_gets_a_split_reply,
+        test_a_player_never_gets_a_private_half,
+        test_an_undeliverable_private_half_never_becomes_public,
         test_an_operator_dm_is_a_private_venue,
         test_a_dm_that_is_not_a_private_venue_is_dropped,
         test_tier_and_venue_reach_the_container,
