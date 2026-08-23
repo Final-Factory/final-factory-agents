@@ -525,6 +525,19 @@ def test_filters_actually_filter():
                     ok, detail = False, f"{path}: {needle!r} should have been filtered out"
         check("the list filters (kind, state, verdict, lane) filter", ok, detail)
 
+        # The id was the only way in for a long time, which meant aiming at a two-character
+        # target in a wide row. The title is the thing people actually read, so it is a way in
+        # too — the same href, not a second route to keep in step.
+        _c, _h, body = srv.get("/")
+        table = text_of(body).split("<tbody>", 1)[-1].split("</tbody>", 1)[0]
+        row = next(r for r in table.split("<tr>") if "Crash on load" in r)
+        hrefs = re.findall(r'<a href="([^"]+)"', row)
+        check("the title links to the conversation, not just the id",
+              hrefs.count(hrefs[0]) == 2 and re.fullmatch(r"/conversation/\d+", hrefs[0]),
+              hrefs)
+        check("and the title text is still the title",
+              re.search(r'<a href="/conversation/\d+">Crash on load', row) is not None, row)
+
         # The dropdowns apply themselves, so the button is gone except as a <noscript>
         # fallback, and the form the script hooks has to be the one carrying the selects.
         home = text_of(srv.get("/")[2])
@@ -837,8 +850,10 @@ def test_the_prompt_box_needs_no_flag():
               (hdr.get("Location") or "") == "/?sent=1", hdr.get("Location"))
         calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
         check("it shelled out to `ffwatch submit`, so ffwatch stays the sole writer",
-              calls and calls[0] == ["--state-dir", STATE, "submit", "--",
+              calls and calls[0] == ["--state-dir", STATE, "submit", "--source", "web", "--",
                                      "what does the splitter do?"], calls)
+        check("and said which front door it came through, so the record can tell",
+              calls[0][calls[0].index("--source") + 1] == "web", calls)
 
         # No shell is involved: subprocess.run takes a list, so this is one argv element and
         # the semicolons are text. The check is that it arrives INTACT rather than split.

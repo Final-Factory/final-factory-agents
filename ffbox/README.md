@@ -10,9 +10,9 @@ front door decides only what goes in and where the answer is read.
 
 | ingress | what it does |
 |---|---|
-| **the shell** | `ffbox "<prompt>"` submits a turn and waits; the answer prints, and the run is on the page |
+| **the shell** | `ffbox "<prompt>"` submits a turn and waits; the answer prints, and the run is on the page. Kind `shell` |
 | **Discord** | a thread or a mention becomes a turn; the harness composes and posts the reply |
-| **the web page** | `ffweb` — every conversation, run, transcript and queued reply, whatever it came from; its prompt box starts one too |
+| **the web page** | `ffweb` — every conversation, run, transcript and queued reply, whatever it came from; its prompt box starts one too, kind `web` |
 
 `ffbox --direct` is the exception: it clones and runs right here, skipping the database, the
 ceilings and the page. It exists for bootstrapping a machine and for debugging the container.
@@ -609,7 +609,7 @@ the certificate, because the standard library can serve TLS but cannot create an
 
 | route | what it is |
 |---|---|
-| `/` | conversations, filtered live by kind, state, verdict and lane as the dropdowns change, with cost, tokens and the average warm-up and agent time per conversation |
+| `/` | conversations, filtered live by kind, state, verdict and lane as the dropdowns change, with cost, tokens and the average warm-up and agent time per conversation. The id and the title both open the conversation |
 | `/conversation/<id>` | one thread: `message`, `turn`, `run` and `verification` rows interleaved in time, with attachments rendered in place |
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per lane |
@@ -625,8 +625,11 @@ something it shells out to ffwatch instead, which keeps the transition where the
 the send-side rate limits and the retry bookkeeping already live, and is what lets the page
 move off this box later without the database moving with it. Two surfaces do that:
 
-The **prompt box** at the top of `/` runs `ffwatch submit` and queues the same turn
-`ffbox "<prompt>"` does, in the same disposable container. It has **no flag**: signing in is
+The **prompt box** at the top of `/` runs `ffwatch submit --source web` and queues the same
+turn `ffbox "<prompt>"` does, in the same disposable container. The `--source` is recorded and
+not obeyed: the conversation's kind is `web` rather than `shell`, so the list can tell the page
+apart from a terminal, and everything else the kind decides — the lane, the capability set, the
+private venue, having no Discord side at all — is deliberately identical. It has **no flag**: signing in is
 the grant. The account table is people who could open a terminal on this box, so a switch in
 front of it only ever meant one of them finding a dead page and a note naming a flag. Every
 prompt starts a *new* conversation, the way a shell prompt does — there is no reply-into-this-

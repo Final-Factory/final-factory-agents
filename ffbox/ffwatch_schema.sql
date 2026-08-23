@@ -26,7 +26,11 @@ CREATE TABLE IF NOT EXISTS conversation (
     channel_id          TEXT,
     thread_id           TEXT    NOT NULL UNIQUE,
     root_message_id     TEXT,
-    kind                TEXT,                -- bug_report | suggestion | ask | mention | directive
+    kind                TEXT,                -- bug_report | suggestion | ask | mention
+                                             -- | directive | operator_dm | shell | web
+                                             -- shell and web are the LOCAL kinds: no Discord
+                                             -- side, and they share one lane. See LOCAL_KINDS
+                                             -- in ffwatch.py, which is what enforces that.
     -- Which watch entry this conversation belongs to, recorded at ingest from the doorbell
     -- rather than reverse-mapped from a channel id later. It is what venue and engage are
     -- looked up by (design/trusted_ingress_design.txt section 5). NULL for a conversation that

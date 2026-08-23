@@ -2757,6 +2757,55 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
           not case.rows("SELECT * FROM outbound"), case.rows("SELECT * FROM outbound"))
 
 
+def test_web_is_the_same_ingress_wearing_a_different_label():
+    """`--source web` changes the RECORD and nothing else.
+
+    The page needed to be distinguishable from a terminal on the conversation list — a question
+    people ask of the record, which it could not answer while both said "shell". So the kind is
+    new and everything the kind decides is deliberately not: same lane, same capabilities, same
+    private venue, same nothing-queued-for-Discord. A second ingress that behaved differently
+    would be a second pipeline, which is the thing this design keeps refusing to grow.
+    """
+    print("web: a front door, not a second pipeline")
+    case = Case("webingress")
+    turn_id = case.watcher.submit("what does the merger do when both inputs saturate?",
+                                  kind="web")
+    turn = case.watcher.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
+    conv = case.watcher.db.one("SELECT * FROM conversation WHERE id=?",
+                               (turn["conversation_id"],))
+    check("the conversation records the front door it came through",
+          conv["kind"] == "web", conv["kind"])
+    check("but it takes the shell lane, because there is one local lane",
+          turn["lane"] == "shell", turn["lane"])
+    check("the trigger says which door too",
+          turn["trigger"] == "web_prompt", turn["trigger"])
+    check("it is not classified either — the person typing signed in here",
+          json.loads(turn["classification_json"])["source"] == "web",
+          turn["classification_json"])
+
+    case.watcher.once()
+    turn = case.watcher.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
+    run = case.watcher.db.one("SELECT * FROM run WHERE turn_id=?", (turn_id,))
+    check("the ordinary scheduler runs it", turn["status"] == "done", turn["status"])
+    job = json.load(open(os.path.join(os.path.dirname(run["stream_path"]), "job.json"),
+                         encoding="utf-8"))
+    check("with the same operator tier and private venue a shell prompt gets",
+          (job["trust"]["tier"], job["venue"]["kind"]) == ("operator", "private"), job["trust"])
+    check("and the same Bash-outright capability set",
+          "Bash" in job["capabilities"]["allowed"], job["capabilities"]["allowed"])
+    check("no Discord framing, because there is still no Discord in this",
+          "<discord>" not in job["prompt"], job["prompt"][:200])
+    check("nothing is queued for Discord: a web conversation is local, like a shell one",
+          not case.rows("SELECT * FROM outbound"), case.rows("SELECT * FROM outbound"))
+
+    # The guard is a list, not a habit: an unknown source is refused rather than recorded.
+    try:
+        case.watcher.submit("who goes there?", kind="carrier_pigeon")
+        check("an unknown ingress is refused", False, "it was accepted")
+    except ValueError as exc:
+        check("an unknown ingress is refused", "not a local ingress" in str(exc), str(exc))
+
+
 def test_drain_pauses_launches_without_holding_replies():
     """A drain is a pause, not a stop: nothing new launches, everything else keeps working.
 
@@ -3156,6 +3205,7 @@ def main():
         test_container_argv_is_valid,
         test_allow_list_is_scope_not_a_boundary,
         test_shell_is_an_ingress_not_a_second_pipeline,
+        test_web_is_the_same_ingress_wearing_a_different_label,
         test_drain_pauses_launches_without_holding_replies,
         test_drain_never_blocks_on_a_dead_daemon,
         test_a_local_conversation_never_reaches_discord,
