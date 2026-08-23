@@ -1,0 +1,245 @@
+# The ffbox container security model
+
+What runs where, what is actually trusted, and which of the guarantees people repeat about this
+system are real. Written 2026-08-23, after an audit that found one live escalation path and two
+claims that were narrower than the shorthand for them.
+
+Read this before changing anything in `ffbox/ffbox`, `ffbox/ffwatch.py` or
+`ffbox/discord-task.sh` that touches capabilities, the harvest, or publication.
+
+## The shape
+
+Work arrives from Discord or from a person at this machine, and is turned into one `claude -p`
+invocation inside a throwaway container. Nothing that container produces reaches Discord or
+GitHub by its own hand. It writes files; the host reads them and decides what happens next.
+
+```
+Discord / web / shell  ->  ffwatch.py (host)  ->  ffbox (host)  ->  container
+                                  ^                                     |
+                                  |            files in /ffbox/out      |
+                                  +-------------------------------------+
+                                  |
+                                  +-> git push, GitHub API, Discord reply
+```
+
+The single most important property is that **no model runs on the host.** `ffwatch.py` is fixed
+Python. It does not decide whether to push; it executes a refspec it built itself from a name it
+generated before the container started. Everything the container influences is data that fixed
+code then acts on.
+
+## The container is assumed hostile
+
+Prompts on the Discord lanes are built from text written by strangers. Prompt injection is the
+expected case, not the unlucky one. So the design does not ask the agent to behave; it arranges
+for misbehaviour to be unable to reach anything.
+
+That assumption is why the read-only lanes (`answer`, `triage`) get no Bash at all, why no lane
+has any path to Discord, and why the reply a player sees is composed on the host out of the run's
+structured verdict rather than uploaded by the container.
+
+## What the container actually holds
+
+The shorthand "the container holds no credential" is wrong, and worth correcting because people
+reason from it. The accurate claim is that it holds **no git or GitHub credential.**
+
+`ffbox` passes these into `docker run`:
+
+| variable | what it is |
+|---|---|
+| `CLAUDE_CODE_OAUTH_TOKEN` | Anthropic API access |
+| `UNITY_SERIAL`, `UNITY_EMAIL`, `UNITY_PASSWORD` | the Unity account, including its password |
+
+The container also has network access, because the model is remote. An agent with shell can read
+its own environment and send it anywhere. Treat both of those secrets as exposed to any run, and
+scope them accordingly: the Unity password in particular is a real account password, and moving
+that lane to a license file rather than interactive credentials would be a genuine improvement.
+
+What is absent, and deliberately: `gh`, any git remote credential, and `ffdiscord`. The container
+task checks for a stray `ffdiscord` on PATH at startup and says so loudly if one resolves.
+
+## What contains it
+
+Four things, in descending order of how much weight they carry.
+
+**No push credential anywhere in the container.** `GH_TOKEN` is host-side only. There is no
+authenticated remote in the clone. This is what makes "nothing merges" true.
+
+**The host builds the refspec.** `push_bundle()` in `ffwatch.py` pushes
+`refs/ffbox/<branch>:refs/heads/<branch>`, where `<branch>` is `branch_prefix + run_id`, chosen
+by the host before the container starts and validated by `ffbox` against `[A-Za-z0-9._/-]` with
+no leading `-`, no `:` and no `..`. The container cannot name `master` or `develop` because it
+does not name the branch at all.
+
+**There is no merge method.** The `GitHub` class has `create_pull_request` and
+`find_pull_request` and nothing else. Its docstring says the absence is load-bearing. Adding one
+is a design change, not a feature.
+
+**The clone is destroyed.** Each run is a ZFS clone of golden, thrown away when the run ends.
+Whatever an agent leaves behind on disk goes with it.
+
+Two further host-side gates apply to the pull request specifically. `verification_gate()`
+requires `compiled=true`, at least one test run and zero failures, judged from a report the
+container task writes where the agent cannot reach it. On top of that the agent must have set
+`confident`. Confidence gates the pull request, not the branch: work is always published so it
+cannot be lost with the clone, and only the proposal to merge is withheld.
+
+## What is not a boundary
+
+**The Bash allow list is not one, and the code says so.** Measured both directions: a command
+whose prefix matches nothing is refused, but a trailing `*` matches the whole command string
+including separators, so `git status --short && touch marker` was permitted under
+`Bash(git status*)`. The list reduces scope and catches accidents. Assume a determined agent has
+arbitrary shell in the container and reason from there. Never add an entry believing the pattern
+confines what follows it.
+
+**`--disallowed-tools` is a tripwire.** `sh -c '...'` walks straight through it.
+
+**The preamble is advice.** Everything the container is told not to do must also be something it
+cannot do, or must be checked by the host afterwards.
+
+## The publish path
+
+1. `ffbox` clones golden, checks out the base ref, records `base_sha`, creates the work branch,
+   and cleans any inherited dirt so the agent starts on a clean tree.
+2. The agent works. It edits files and, since 2026-08-23, makes its own commits.
+3. The container task runs `ffverify` after the agent exits and writes the verification report
+   to a path it deletes first, so an agent-written report cannot be believed.
+4. `ffbox` harvests: commits anything left uncommitted, points the work branch at wherever HEAD
+   ended, runs the checks below, and writes a git bundle of `base_sha..branch`. A range bundle,
+   not a full one, so it carries this run's commits rather than the project's history.
+5. `ffwatch` runs `git bundle verify` (which is really "does the host have the base commit"),
+   fetches the bundle into `refs/ffbox/` in the host checkout without moving a branch or touching
+   a working tree, and pushes.
+6. If the verification gate and confidence both pass, it opens a pull request against
+   `github.base` (default `develop`) and records the number and url from the API response, never
+   from anything the agent said.
+
+## Local git, granted 2026-08-23
+
+The agent now has `add`, `commit`, `branch`, `checkout`, `switch`, `restore`, `reset` and
+`stash`, alongside the read-side commands it already had. The reasons are ordinary: commit
+messages that say why, a chain of commits a reviewer can read one at a time, and a way back from
+an approach that did not work.
+
+This is not a security change. Every command in that set operates on the clone. Nothing in it
+can reach a remote, and the agent could already run them through the allow-list gap. What
+changed is that the harness stopped pretending otherwise and adjusted the invariants it actually
+enforces.
+
+**Still absent, and for a specific reason:** `merge`, `rebase`, `cherry-pick` and `am`. All four
+import commits authored by other people, which would defeat the identity check below. If a lane
+ever needs to integrate another branch, change that check to "not reachable from `origin/*`"
+first, then add the command.
+
+### What the harness gave up
+
+The old guarantee was that there is exactly one commit on the branch and the harness authored it.
+That is gone. In its place the harness owns the **published range**, and checks it.
+
+### What the harness now checks
+
+`ffbox` refuses to harvest, writing a reason to `harvest_error.txt` that `publish()` reads back
+as the run's `no_branch_reason`, when:
+
+- **The range no longer descends from its base.** `git merge-base --is-ancestor` against
+  `base_sha`. An agent that reset or amended below its base produces a range that is either
+  empty or a rewrite of history the host already has.
+- **A commit claims an identity this run does not own.** Every author and committer address in
+  `base_sha..branch` must be `ffbox@final-factory.invalid`, which `ffbox` writes into the clone's
+  config before the agent starts. This is the one that matters: a commit wearing a person's name,
+  on a branch a reviewer reads by author, is how agent work would pass as human work.
+- **A ceiling is blown.** `FFBOX_MAX_CHANGED_FILES` (2000) and `FFBOX_MAX_BUNDLE_BYTES` (256 MiB).
+  Not security, just a runaway `git add -A` over a re-imported `Library/` caught before it becomes
+  a very large push.
+
+Two supporting changes came with it. The work branch now follows HEAD rather than the other way
+round, so a run that did its work on a side branch and never switched back still publishes it.
+And the baseline clean moved from harvest to before the run: subtracting inherited dirt at
+harvest only ever reached what was still uncommitted, and dirt the agent has already committed is
+past saving. Cleaning first also means the agent's `git status` shows its own work and nothing
+else.
+
+## Known gaps
+
+Ranked by what I would fix first.
+
+**1. A pushed branch is code execution on your own hardware.** `FinalFactory`'s
+`.github/workflows/main.yml` is `on: [push, pull_request]` and `runs-on: self-hosted`, with
+`UNITY_LICENSE`, `UNITY_PASSWORD` and `GITHUB_TOKEN` in scope. The agent controls file contents,
+`ffbox` harvests with `git add -A` and no path exclusions, and the host pushes the result. So an
+agent that writes `.github/workflows/*.yml` gets it executed with real secrets on the build
+machine. The container needed no credential; it wrote a file and the trusted host carried it
+somewhere that runs it.
+
+The cheapest fix is a credential change, not a code change: **take the `workflow` scope off the
+host push token.** GitHub rejects a push touching `.github/workflows/` from a token without it,
+so the whole chain fails closed at push time with a clear error. Behind that, exclude `.github/**`
+at harvest, and keep `ffbox/**` branches out of both CI triggers. Branch filtering on `push`
+alone is not enough, because a same-repo `pull_request` also gets secrets.
+
+**2. The host push credential is a plaintext file.** `/opt/FinalFactory` uses
+`credential.helper store`, so the token sits in `~/.git-credentials` (mode 0600) owned by the
+same user `ffwatch` runs as. Anything that gets execution as that user has it. "Nothing merges"
+rests on `ffwatch` having no merge method, which constrains `ffwatch` and not that token. Branch
+protection rulesets on `master` and `develop` would move the guarantee somewhere the code cannot
+undo.
+
+**3. Nothing checks whether a pull request can merge.** `mergeable` is never requested. The
+verification gate compiles and tests against `base_sha`, which is whatever `develop` was when the
+clone was taken, so a green, confident pull request can still be unmergeable. Nobody finds out
+until a human opens it.
+
+**4. Golden's fetch is unscheduled.** The clone resolves `develop` to `origin/develop` out of
+golden's snapshot, and `ffbox` never fetches. Only `04-warmLibrary.sh` refreshes golden, and
+nothing runs it on a timer. How stale the base is, and therefore how likely a conflict is,
+depends on when somebody last ran that by hand.
+
+**5. Follow-up turns lose the previous turn's work.** There is no `git apply` in `ffwatch.py`;
+`changes.patch` is recorded and never replayed. Turn 2 clones fresh at the pinned `base_sha`,
+gets a new branch, and resumes a transcript that remembers edits the files no longer have.
+Fetching the conversation's prior branch into the clone would fix it and needs no credential in
+the container.
+
+## Considered and rejected: a credential inside the container
+
+The proposal was to let the container push directly, bounded by GitHub permissions: create and
+push feature branches, never `master` or `develop`.
+
+GitHub can mostly express that. Rulesets on the protected branches block direct pushes for actors
+not on the bypass list, a ruleset targeting `ffbox/**` confines an identity to its own namespace,
+and the `workflow` scope controls workflow files per push. So the idea is not unworkable.
+
+It was rejected because it costs a lot and buys nothing that was actually wanted. Commit
+messages, commit chains, history lookups and branch switching are all local operations; none of
+them needs a push credential. Against that:
+
+- The container has network, so an injected agent exfiltrates the token and the attacker has
+  persistent repo write from outside this machine. Today the worst case is one bad branch, visible
+  in the run row.
+- The whole threat model assumes this container is hostile. Handing it a credential undoes the
+  premise.
+- The guarantee moves from code you can read into a web console setting that can drift or gain a
+  bypass entry, with nothing in `ffwatch` noticing.
+
+The one thing it would enable is pushing mid-run, to trigger CI or hand work to a person before
+the turn ends. If that is ever wanted, the agent should request a publish by writing a structured
+file to `/ffbox/out` and let the host keep the credential and the refspec.
+
+A related note on validation: if the host is ever asked to check that a change "looks safe", that
+must mean mechanical rules — path deny-lists, size caps, pointer sanity, identity checks — and
+never a model reviewing a model's diff. Judging intent is exactly what prompt injection defeats,
+and it would put a model back on the credentialed host, which is the one thing this design has
+kept clean.
+
+## Tests
+
+`python3 ffbox/test_ffwatch.py`. No network, no token, no Docker, no ZFS. The ones that pin this
+document:
+
+- `test_allow_list_is_scope_not_a_boundary`
+- `test_the_agent_commits_its_own_work`
+- `test_the_clone_is_clean_before_the_agent_runs`
+- `test_harvest_refuses_a_rewritten_or_forged_range`
+- `test_a_refused_harvest_is_reported`
+- `test_the_container_cannot_author_a_message`
+- `test_github_client_retries_and_cannot_merge`
