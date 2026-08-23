@@ -1550,7 +1550,7 @@ class App:
         the way a shell prompt does; this is not a reply into the thread below it.
         """
         return ("<form class=\"filters\" method=\"post\" action=\"/actions/prompt\">"
-                "<input name=\"prompt\" placeholder=\"ask for work, or a question\" "
+                "<input name=\"prompt\" placeholder=\"Start a new conversation...\" "
                 "size=\"70\" autocomplete=\"off\">"
                 "<button type=\"submit\">run</button></form>")
 
