@@ -914,6 +914,23 @@ class FfwatchActions:
             args += ["--reason", reason]
         return self._run(args)
 
+    def submit(self, prompt, unity=True):
+        """Queue a shell-style turn from the page (design/trusted_ingress_design.txt s12).
+
+        Same route as approve/reject and for the same reason: ffwatch owns the database and
+        knows the whole ingress — the scheduler, the ceilings, the kill switch, the transcript
+        index, the rows this page reads. An INSERT from here would make this process a second
+        writer to a database whose entire design says there is one.
+
+        The prompt is passed as an ARGV ELEMENT, never through a shell. There is no shell in
+        this path at all: subprocess.run takes a list, so quoting, backticks and semicolons in
+        the text are inert.
+        """
+        args = ["submit", "--", prompt]
+        if not unity:
+            args.insert(1, "--no-unity")
+        return self._run(args)
+
 
 # ------------------------------------------------------------------------------------------
 # request handling
@@ -1149,6 +1166,25 @@ class FFWebHandler(BaseHTTPRequestHandler):
             # the form, so the redirect goes to the login page plain and the operator resubmits.
             return self._require_login("/")
 
+        if path == "/actions/prompt":
+            # Its own flag, not --enable-actions. Submitting work is a larger grant than
+            # approving a reply somebody already wrote, and the two should not ride on one
+            # switch. The Origin check above covers this route in its REFUSING form, which
+            # matters more here than anywhere else on the page: a CSRF hole into
+            # `ffwatch submit` is a stranger running work on this box.
+            if not app.prompts_enabled:
+                return self._error(403, "the prompt box is disabled; restart ffweb with "
+                                        "--enable-prompts")
+            prompt = (form.get("prompt") or [""])[0].strip()
+            if not prompt:
+                return self._error(400, "an empty prompt is not a question")
+            if len(prompt) > 16000:
+                return self._error(413, "prompt too long")
+            unity = (form.get("unity") or ["1"])[0] not in ("0", "", "off", "no")
+            ok, out = app.actions.submit(prompt, unity=unity)
+            note = ("queued" if ok else "failed") + ": " + short(out, 300)
+            return self._redirect("/?msg=" + urllib.parse.quote(note))
+
         if path not in ("/actions/approve", "/actions/reject"):
             return self._error(404, "no such action")
         if not app.actions.enabled:
@@ -1277,11 +1313,14 @@ def blob_content_type(filename, declared):
 
 class App:
     def __init__(self, db_path, blobs_dir, state_dir, ffwatch_py, enable_actions=False,
-                 quiet=False, origins=(), scheme="https", sessions=None):
+                 quiet=False, origins=(), scheme="https", sessions=None,
+                 enable_prompts=False):
         self.db = ReadOnlyDb(db_path)
         self.blobs_dir = os.path.realpath(blobs_dir)
         self.state_dir = state_dir
         self.actions = FfwatchActions(ffwatch_py, state_dir, enabled=enable_actions)
+        # Separate from actions.enabled on purpose: see the /actions/prompt branch.
+        self.prompts_enabled = bool(enable_prompts)
         self.quiet = quiet
         self.self_origins = set(origins)
         # The scheme this process is actually serving. It decides two things and only two:
@@ -1351,7 +1390,26 @@ class App:
              + agg_cells(aggs.get(r["id"])) + [r["last_activity_at"] or "—"]
              for r in rows])]
         heading = f"<h1>conversations ({len(rows)})</h1>"
-        return page("conversations", [heading, "".join(form)] + body + [self._totals_note()])
+        msg = (query.get("msg") or [""])[0].strip()
+        note = ["<p class=\"note\">" + esc(msg) + "</p>"] if msg else []
+        return page("conversations",
+                    [heading] + note + [self._prompt_box(), "".join(form)] + body
+                    + [self._totals_note()])
+
+    def _prompt_box(self):
+        """Ask for work from the page. The same rows `ffbox "..."` makes, by the same route.
+
+        Only rendered when --enable-prompts is on; without it the page says the flag exists
+        rather than hiding the affordance, so the operator who wanted it knows where it went.
+        """
+        if not self.prompts_enabled:
+            return ("<p class=\"note\">The prompt box needs <code>--enable-prompts</code>. "
+                    "Without it this page cannot start work, which is the default.</p>")
+        return ("<form class=\"filters\" method=\"post\" action=\"/actions/prompt\">"
+                "<input name=\"prompt\" placeholder=\"ask for work, or a question\" "
+                "size=\"70\" autocomplete=\"off\">"
+                "<label><input type=\"checkbox\" name=\"unity\" value=\"1\" checked> unity</label>"
+                "<button type=\"submit\">run</button></form>")
 
     def _totals_note(self):
         row = self.db.one(
@@ -1956,8 +2014,13 @@ def build_parser():
     p.add_argument("--enable-actions", action="store_true",
                    help="allow approve/reject on the outbound queue (off by default; the page "
                         "is otherwise read-only)")
+    p.add_argument("--enable-prompts", action="store_true",
+                   help="allow submitting a prompt from the page, which queues a turn the way "
+                        "`ffbox \"...\"` does (off by default; separate from --enable-actions "
+                        "because submitting work is a larger grant than approving a reply)")
     p.add_argument("--allow-remote-actions", action="store_true",
-                   help="required to combine --enable-actions with a non-loopback --host")
+                   help="required to combine --enable-actions or --enable-prompts with a "
+                        "non-loopback --host")
     p.add_argument("--no-tls", dest="tls", action="store_false", default=True,
                    help="serve plaintext http instead of https (only reasonable inside an "
                         "SSH tunnel; the login password crosses the wire in the clear)")
@@ -1978,13 +2041,21 @@ def main(argv=None):
     if not os.path.isfile(db_path):
         sys.stderr.write(f"ffweb: no database at {db_path} — run `ffwatch init` first\n")
         return 2
-    if args.enable_actions and not is_loopback(args.host) and not args.allow_remote_actions:
-        # The page renders repo internals and raw model thinking, and the action surface can
-        # release a reply into a public Discord thread. Refusing here rather than warning is
-        # deliberate: the failure mode of getting this wrong is not recoverable.
+    writes = [f for f, on in (("--enable-actions", args.enable_actions),
+                              ("--enable-prompts", args.enable_prompts)) if on]
+    if writes and not is_loopback(args.host) and not args.allow_remote_actions:
+        # The page renders repo internals and raw model thinking, its action surface can
+        # release a reply into a public Discord thread, and its prompt box runs work on this
+        # box with shell capability. Refusing here rather than warning is deliberate: the
+        # failure mode of getting this wrong is not recoverable.
+        #
+        # --enable-prompts is named here explicitly rather than left to ride on the actions
+        # check. The two flags are independent, and a guard written against one of them covers
+        # the other only by accident.
         sys.stderr.write(
-            f"ffweb: refusing --enable-actions on non-loopback host {args.host}.\n"
-            "       This UI is internal-only and its action surface can post to Discord.\n"
+            f"ffweb: refusing {' and '.join(writes)} on non-loopback host {args.host}.\n"
+            "       This UI is internal-only, its action surface can post to Discord, and its\n"
+            "       prompt box runs work on this machine.\n"
             "       Put it behind an SSH tunnel, or pass --allow-remote-actions to say you\n"
             "       have read that sentence and meant it anyway.\n")
         return 2
@@ -1994,7 +2065,7 @@ def main(argv=None):
                f"{scheme}://127.0.0.1:{args.port}"}
     app = App(db_path, blobs, state_dir, os.path.abspath(args.ffwatch),
               enable_actions=args.enable_actions, quiet=args.quiet, origins=origins,
-              scheme=scheme)
+              scheme=scheme, enable_prompts=args.enable_prompts)
     gaps = missing_columns(app.db)
     if gaps:
         sys.stderr.write(
