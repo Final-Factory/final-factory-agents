@@ -234,12 +234,20 @@ Consequences:
   container inherits the machine id baked into the GameCI base image
   (`576562626572264761624c65526f7578`, which decodes to `Webber&GabLeRoux`) and they all look
   like **one machine**.
-- **That is why two Unity runs at once on one host are a race, not two seats.** Activation state
-  is machine-level, and the first container to exit fires `-returnlicense` for that shared
-  identity — which can pull the licence out from under a container still running its tests.
-  Whether concurrent activation under one identity works at all is untested here. `ffwatch`
-  therefore ships `max_unity_runs: 1`; raising it is a licensing-server question, not a config
-  question.
+- **Concurrent runs under that one identity work.** This section used to say the opposite: that
+  two Unity runs at once were a race rather than two seats, because activation state is
+  machine-level and the first container to exit fires `-returnlicense` for the shared identity.
+  It also said, honestly, that whether concurrent activation worked at all was untested here.
+  It has since been tested — four game-ci containers in parallel, no licensing trouble — so
+  `max_unity_runs` is a **resource** ceiling (four editors on one box is real CPU and memory),
+  not a licensing one, and raising it is an ordinary config question.
+
+  One edge is still worth knowing rather than fearing: the return-licence trap fires on exit for
+  an identity every container shares. The likely reason four in parallel is fine is that the
+  licence is checked when the editor **starts** rather than continuously, so if this ever bites
+  it will look like an activation failure in a container that was already alive, not a test
+  dying mid-run. `activate_unity` retries five times with backoff, so that failure is slow
+  rather than fatal.
 
 Use `--no-unity` for read-only or code-only prompts: no seat consumed, much faster startup.
 

@@ -17,6 +17,10 @@ channel does not burn a run on "thanks".
 Revision 5, 2026-08-22: the gate runs on every message in all three watched channels,
 including the first message of a new thread, and its bias toward answering is written as
 rules rather than as an adjective (section 5).
+Revision 9, 2026-08-22: the seat lock is gone. Revision 7 designed lazy activation and a
+cross-container flock around a constraint that turned out to be a hedge rather than a
+measurement; Lothsahn has run four game-ci containers in parallel with no licensing trouble, so
+every lane simply activates as it always has and max_unity_runs stops being a licensing answer.
 Revision 8, 2026-08-22: ffweb grew TLS and a login while this was being written, so section 12
 stops claiming the page has no authentication. Operator identity on the web ingress is the
 authenticated account name, not the fact that somebody reached the port.
@@ -654,40 +658,45 @@ UNITY ON EVERY LANE. The --no-unity launch goes away for the Discord lanes. Ever
 read or write, gets a working editor, because a worker answering "what is the actual power draw
 of X" should be able to go and look rather than infer from source and hedge.
 
-Three things the current `unity` flag conflates, which have to come apart before that is safe:
+Revision 7 made a meal of this. It assumed max_unity_runs=1 was a hard licensing constraint and
+designed around it: lazy activation, a flock on a host path shared by every container, a bounded
+wait, the seat held from activate_unity through -returnlicense. All of that existed to serialise
+something that does not need serialising.
 
-  capability     Is there an editor and a warm Library in this container. Now: always.
+The premise was wrong, and the README said as much about itself. ffbox does not copy game-ci's
+`dbus-uuidgen > /etc/machine-id`, so every container inherits the base image's machine id and
+they all look like one machine to Unity. From that the README reasoned that two runs at once are
+a race rather than two seats, and then wrote the honest part: "Whether concurrent activation
+under one identity works at all is untested here." Lothsahn has since run four game-ci containers
+in parallel with no licensing trouble. That is the test, and it passed.
 
-  the seat       Activation is an online call consuming a seat under a machine identity that
-                 every container shares, and the FIRST container to exit returns it for
-                 everyone. Today ensure_unity_license runs eagerly at container start
-                 (discord-task.sh) and the host gates launch on max_unity_runs=1.
+So the change is the small one it should have been:
 
-  verification   The post-exit ffverify run whose result the agent cannot write. Stays on the
-                 write lanes only: a read-only lane changed nothing, so there is nothing to
-                 verify, and the harness should not spend a Unity run proving that.
+  capability     Every lane gets unity true. The editor and a warm Library are in every
+                 container, and activation stays where it is, eager, at container start.
 
-Eager activation on every lane would turn max_unity_runs=1 into a global serializer. The answer
-lane is capped at 200 turns a day and would queue behind one seat, so a busy afternoon of player
-questions would run one at a time behind whatever dev run got there first.
+  the ceiling    max_unity_runs stops being a licensing answer. Keep the knob, because four
+                 editors on one box is a real CPU and memory ceiling worth having, but reframe
+                 it as a resource limit and default it to match max_concurrent_runs instead of
+                 pinning it at 1. The README paragraph that calls raising it "a licensing-server
+                 question, not a config question" is now wrong and gets corrected with it.
 
-So ACTIVATION BECOMES LAZY. The container holds the editor from the start and takes the seat
-only when something actually invokes it. Serializing that needs a lock the host owns, because
-the host can no longer tell who holds the seat by looking at run rows: a flock on a host path
-bind-mounted into every container, taken by ffverify before activate_unity and held through
--returnlicense. The kernel releases a flock when the holder dies, which is the property that
-matters when a container is killed rather than exiting. max_unity_runs stops gating launch and
-becomes the size of that lock, still 1.
+  verification   Unchanged, and still write-lanes only: a read-only lane changed nothing, so
+                 there is nothing to verify and no reason to spend a Unity run proving it.
 
-The wait is bounded rather than indefinite. A read lane queued behind a twenty-minute dev run
-would otherwise burn its whole agent_secs doing nothing, so ffverify waits a set time for the
-seat and then fails with "Unity busy". A timeout the agent can report beats a hang the harness
-has to kill.
+One sharp edge survives, worth knowing about rather than designing around: the return-licence
+trap fires when a container exits, for a machine identity every container shares. Four parallel
+runs almost certainly exited at different times while others were still working, so this is
+probably fine too, and the likely reason is that the licence is checked when the editor STARTS
+rather than continuously. If a problem ever shows up it will look like an activation failure in
+a container that was already alive, not a test that died mid-run. activate_unity already retries
+five times with backoff, so the failure mode is slow rather than broken.
 
-THE TRADE, SAID OUT LOUD. The read-only lanes have no Bash at all today: READ_TOOLS is
-"Read,Grep,Glob", and the main design calls that its strongest containment claim, because the
-lanes fed untrusted player text are contained structurally by the tool list rather than by a
-policy the model is asked to follow. Unity means Bash, because ffverify is a command.
+THE TRADE, SAID OUT LOUD, and this part is unchanged. The read-only lanes have no Bash at all
+today: READ_TOOLS is "Read,Grep,Glob", and the main design calls that its strongest containment
+claim, because the lanes fed untrusted player text are contained structurally by the tool list
+rather than by a policy the model is asked to follow. Unity means Bash, because ffverify is a
+command.
 
 The allow list is documented as scope reduction and explicitly not a boundary: a trailing `*`
 matches the whole command string, so `Bash(ffverify *)` also permits `ffverify && anything`.
@@ -707,8 +716,7 @@ destroyed at the end of the run, and no path from any container to Discord.
 
 The cost is warmup. Every answer run now pays for a Unity-capable container, and the warm
 Library mount (04-warmLibrary.sh) is the thing standing between that and a cold import per
-question. If warmup turns out to dominate answer latency, the lazy seat is what makes a
-"start without the editor, add it on demand" variant possible later.
+question.
 
 STILL OPEN: is ffverify the whole surface? It runs EditMode tests and nothing else, with no
 -executeMethod, deliberately: with the raw editor allowed a lane could run arbitrary editor
@@ -734,7 +742,7 @@ sets up:
 
   b. Capability comes from the LANE, never from the request. A player's bug report routes to
      the fix lane with the fix lane's tool set and the fix lane's ceilings (rate_limits["fix"],
-     and the Unity seat lock of section 13), and the output is a pull request a human merges.
+     and the Unity ceiling of section 13), and the output is a pull request a human merges.
      A request that argues for more capability is untrusted text arguing, which is the case
      fail-closed classification was built for.
 
@@ -823,9 +831,10 @@ Still open:
   6. The split reply: the second verdict field, the two-destination sender, the held-not-
      downgraded failure path, and the answerer's rules about what the public half may imply.
   7. The web prompt box, which reuses step 3 whole.
-  8. Unity on every lane: unity true across LANE_CAPABILITIES, lazy activation behind the
-     host-owned seat lock, exact-match ffverify on the read lanes, and post-exit verification
-     left on the write lanes only.
+  8. Unity on every lane: unity true across LANE_CAPABILITIES, max_unity_runs reframed as a
+     resource ceiling and raised to match max_concurrent_runs, exact-match ffverify on the read
+     lanes, post-exit verification left on the write lanes only, and the README's licensing
+     paragraph corrected where it calls concurrency untested.
   9. Extend operator authority from the single lothsahn key to the whole set, in both the
      listener and discord-dev-agent.md, and with it section 8's lane rule: an operator message
      is routed by type rather than pinned to the dev lane. These two belong together, because
