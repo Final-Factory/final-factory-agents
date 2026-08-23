@@ -1,0 +1,38 @@
+[Unit]
+# The egress filter: the internal network, the SNI proxy on it, and the host firewall rule that
+# stops a run reaching this machine at the bridge gateway.
+#
+# @EGRESS@ is substituted with the absolute path to ffbox/egress/ffbox-egress.sh by
+# 06-services.sh — this repo can be cloned anywhere. Re-run
+# `sudo sh ffbox/06-services.sh --install` after moving the checkout.
+#
+# NOT PartOf ffbox.target, and enabled separately from it. Two reasons, and both matter:
+# stopping the pipeline must not take the fence down with it, and the proxy has to be up before
+# ffwatch starts a container rather than alongside it. A run that finds no proxy fails in
+# ffbox's preflight, which is safe but is a waste of everybody's afternoon.
+#
+# The container itself carries --restart unless-stopped, so Docker is what keeps it alive minute
+# to minute. This unit exists for the two things Docker does not do: it re-applies the netfilter
+# rule, which no reboot preserves, and it is somewhere for `systemctl status` to answer the
+# question "is the fence up".
+Description=ffbox egress filter (internal network, SNI allowlist, host firewall rule)
+After=docker.service
+Requires=docker.service
+Before=ffwatch.service
+
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+# Root, unlike every other unit here: iptables is not something the ffbox user has, and giving it
+# passwordless iptables would hand a docker-group user a second route to the same place.
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh @EGRESS@ up
+# Deliberately no ExecStop. Taking the rule out when the unit stops would mean `systemctl stop`
+# on a fence quietly opens it; leaving it in place fails closed, and `ffbox-egress.sh down` is
+# there for somebody who means it.
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

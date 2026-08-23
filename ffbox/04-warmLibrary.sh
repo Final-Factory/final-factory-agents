@@ -18,6 +18,11 @@ CONFIG_DIR=${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}
 GOLDEN_LOCK=${FFBOX_GOLDEN_LOCK:-$CONFIG_DIR/golden.lock}
 DRAIN_SWITCH=$CONFIG_DIR/draining
 FFWATCH=$HERE/ffwatch.py
+# The same filtered network the runs use. This container is trusted — it runs import-project.sh,
+# not a model — but a cold import is exactly when Unity reaches for the package registry, so it is
+# also the run that proves the allowlist covers UPM. Putting it somewhere laxer would hide that.
+NETWORK=${FFBOX_NETWORK:-ffbox-net}
+DNS=${FFBOX_DNS:-10.80.0.2}
 SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
 
@@ -161,9 +166,19 @@ log "starting Unity import (logs: $OUT/import.log)"
 log "this is the slow step — a cold import can take 30-60 minutes"
 
 # No --rm: on failure the container is worth inspecting. It is removed on success below.
+NETWORK_ARGS="--network $NETWORK"
+case "$NETWORK" in
+    bridge|host|none) ;;
+    *) docker network inspect "$NETWORK" >/dev/null 2>&1 \
+           || die "network '$NETWORK' does not exist. Run: sh ffbox/egress/ffbox-egress.sh up"
+       NETWORK_ARGS="$NETWORK_ARGS --dns $DNS" ;;
+esac
+
+# shellcheck disable=SC2086  # NETWORK_ARGS is a deliberately word-split option list
 docker run \
     --name ffbox-warm \
     --hostname ffbox-warm \
+    $NETWORK_ARGS \
     -v "$GOLDEN_MNT:/workspace" \
     -v "$OUT:/ffbox/out" \
     -e FFBOX_ENTRY=/ffbox/import-project.sh \
