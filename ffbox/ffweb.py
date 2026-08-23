@@ -96,6 +96,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_STATE_DIR = os.path.expanduser(os.environ.get("FFWATCH_STATE_DIR", "~/ffbox-state"))
 DEFAULT_PORT = 8787
 
+# Shown in the header so a person reading a page knows which build wrote it. The HTTP
+# server_version below is the protocol banner and moves for its own reasons; this is the
+# one a human is meant to read.
+VERSION = "0.9"
+
 # A turn in one of these has stopped; anything else is still on its way. Kept in step with
 # ffwatch's own list by hand, because this process deliberately imports nothing from it — it
 # is a reader of the database, not a second copy of the daemon.
@@ -843,6 +848,9 @@ header { background: #1c2027; border-bottom: 1px solid #2b313b; padding: 10px 18
          display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; }
 header .brand { font-weight: 700; color: #f0f2f5; }
 header .warn { color: #d99; font-size: 12px; }
+/* margin-left:auto on the version pushes it and the sign-out button that follows it to
+   the right edge as a pair; the header's own gap keeps them apart. */
+header .version { margin-left: auto; font-size: 12px; color: #8f98a6; }
 main { padding: 18px; max-width: 1400px; }
 h1 { font-size: 18px; margin: 0 0 12px; }
 h2 { font-size: 15px; margin: 22px 0 8px; color: #f0f2f5; }
@@ -900,7 +908,7 @@ img.blob { max-width: 100%; max-height: 480px; border: 1px solid #2b313b; border
          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
          animation: toast-go 5s ease-in forwards; }
 @keyframes toast-go { 0%, 60% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
-form.logout { margin: 0 0 0 auto; }
+form.logout { margin: 0; }
 form.logout button { font-size: 12px; color: #8f98a6; }
 main.login { max-width: 420px; margin: 12vh auto 0; }
 form.login label { display: block; margin: 0 0 12px; font-size: 12px; color: #8f98a6; }
@@ -946,6 +954,7 @@ def page(title, body_parts, banner="", refresh=False):
         "<header><span class=\"brand\">ffweb</span>"
         "<a href=\"/\">conversations</a><a href=\"/lanes\">lanes</a>"
         "<a href=\"/outbound\">outbound</a>" + banner +
+        "<span class=\"version\">v" + VERSION + "</span>" +
         # POST, not a link: a GET that ends a session is a logout any page on the internet can
         # trigger with an <img>. The same Origin check the action routes use covers this one.
         "<form class=\"logout\" method=\"post\" action=\"/logout\">"
