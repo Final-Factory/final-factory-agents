@@ -177,6 +177,8 @@ for key, value in (
                         "venue": "public", "engage": "all"},
         "suggestions": {"kind": "suggestion", "forum": True,
                         "venue": "public", "engage": "all"},
+        "dev_chat": {"kind": "ask", "forum": False,
+                     "venue": "private", "engage": "mention"},
     }),
 ):
     if key not in ffbox:

@@ -134,7 +134,16 @@ CREATE TABLE IF NOT EXISTS turn (
     rebased_from            TEXT,
     -- Harness instruction for a turn nobody sent a message for — the autofix hand-off carries
     -- the triager's change outline here, since there is no new Discord message to carry it.
-    note                    TEXT
+    note                    TEXT,
+    -- WHO asked and WHERE the answer goes (design/trusted_ingress_design.txt sections 3 and 4).
+    -- Both are decided by the host from config and from Discord's authenticated author id, with
+    -- no model involved, and both are recorded so the web page can show why a run was allowed
+    -- to say what it said. tier is a property of the TURN, not of the conversation: a player
+    -- replying under an operator's message must not inherit their clearance.
+    trust_tier              TEXT,            -- operator | player
+    trust_actor             TEXT,            -- the snowflake, or the unix user for a shell turn
+    trust_reason            TEXT,
+    venue                   TEXT             -- public | private
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_turn_seq ON turn(conversation_id, seq);
