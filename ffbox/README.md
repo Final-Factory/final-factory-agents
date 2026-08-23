@@ -617,9 +617,15 @@ surrounding whitespace dropped, because how someone capitalises their own name i
 is not the secret; the password is, and it is matched exactly. An unknown name is still
 compared, against a decoy, so it costs the same as a wrong password. `FFWEB_PASSWORD` sets the
 password for every account and `FFWEB_USER` narrows the table to one named account, which is
-what `secrets.env` is for. A success mints a random token held **in memory only**, so
-`systemctl restart ffweb` also means "sign everyone out" — deliberate, on a process whose whole
-design says it writes nothing to disk. The session cookie is `HttpOnly`, `SameSite=Lax` and
+what `secrets.env` is for. A success mints a random token that **survives a restart**: its SHA-256 is mirrored to
+`<state-dir>/ffweb-sessions.json` at mode `0600`. The token itself is never written, so a copy
+of that file — and it sits in a directory that gets backed up like anything else — cannot be
+replayed as a session. ffwatch is still the sole writer of the *database*; this file is not it.
+
+Sessions time out after **an hour of inactivity**, not an hour from sign-in: reading a long
+transcript should not end at a login form, and a walked-away-from laptop should not stay open
+all afternoon. Every authenticated request slides the expiry forward and re-sends the cookie
+with a fresh `Max-Age`, so the browser's copy and the server's agree. The session cookie is `HttpOnly`, `SameSite=Lax` and
 `Secure` when TLS is on.
 
 A mismatched `Origin` is refused on the **actions**, which release a reply into a public

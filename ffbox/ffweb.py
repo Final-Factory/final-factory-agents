@@ -34,9 +34,13 @@ FOUR THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the pag
    never a partial page. The credentials are a small hardcoded table keyed by lowercase name
    (FFWEB_PASSWORD and FFWEB_USER override it without a patch): the name is matched
    case-insensitively because it is not the secret, the password is compared exactly with
-   hmac.compare_digest because it is. A success mints a random token held in memory only, so
-   restarting ffweb signs everyone out — the right default on a box whose whole state is one
-   database it can re-read. A mismatched Origin is refused on the actions and merely logged on
+   hmac.compare_digest because it is. A success mints a random token that SURVIVES A RESTART:
+   the hash of it is mirrored to <state-dir>/ffweb-sessions.json at 0600, because a deploy
+   restarts this unit and signing everyone out whenever the code moves is a tax on the people
+   the login exists to let in. ffwatch is still the sole writer of the DATABASE; this file is
+   not it. Sessions time out after an hour of INACTIVITY, sliding forward on every
+   authenticated request, and the cookie's Max-Age is re-sent so the browser slides with the
+   server. A mismatched Origin is refused on the actions and merely logged on
    the session verbs; see _route_post for why. The certificate is self-signed and generated
    into <state-dir>/tls on first start; the browser warning that produces is ACCURATE, because
    nothing signed it. HSTS is deliberately not sent: it would make that warning unbypassable
@@ -51,6 +55,7 @@ and the page works with the machine unplugged.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import hmac
 import html
 import http.cookies
@@ -118,7 +123,16 @@ if os.environ.get("FFWEB_USER"):
 _DECOY = "\x00" * 32
 
 SESSION_COOKIE = "ffweb_session"
-SESSION_TTL_SECS = 12 * 3600      # a working day; a restart ends every session anyway
+# An hour of INACTIVITY, not an hour from sign-in: reading a long run transcript should not end
+# with a login form, and walking away from an unlocked laptop should not leave a session open
+# all afternoon. Every authenticated request pushes the expiry out again.
+SESSION_TTL_SECS = 3600
+# How often a sliding expiry is allowed to reach the disk. Without this, persistence would mean
+# a file write on every page view to record that a session is still alive. The cost of the gap
+# is that a hard kill can lose up to this much of an extension, which expires a session early
+# and never late.
+SESSION_SAVE_INTERVAL_SECS = 60
+SESSION_FILE = "ffweb-sessions.json"
 # A wrong password costs this much wall clock. Not a rate limiter — it is one constant-time
 # comparison against one password, so the only thing worth blunting is how fast a script on
 # the LAN can walk a dictionary through the form.
@@ -145,46 +159,144 @@ TEXT_PREVIEW = 4000          # per transcript block; payload_json keeps the full
 # ------------------------------------------------------------------------------------------
 
 class Sessions:
-    """Signed-in browsers, by opaque token, in memory.
+    """Signed-in browsers, by opaque token, kept across restarts.
 
-    In memory is the whole point. ffweb owns no writable state — the database is opened
-    read-only and ffwatch is the sole writer — so a session table on disk would be the first
-    thing this process ever wrote, and it would outlive the reason it existed. Losing every
-    session on restart is a feature: `systemctl restart ffweb` is also "sign everyone out".
+    ffwatch is still the sole writer of the DATABASE — that invariant is untouched, and this
+    file is not it. What changed is the earlier claim that ffweb writes nothing at all: a
+    deploy restarts this unit, and signing everyone out every time the code moves is a tax on
+    the people the login exists to let in. So the table is mirrored to one JSON file beside the
+    database, mode 0600.
 
-    ThreadingHTTPServer hands each request to its own thread, so the dict is under a lock.
-    Tokens are 32 bytes from secrets; expiry is monotonic, so a clock jump cannot extend one.
+    What is stored is the SHA-256 of each token, never the token. The file is a bearer
+    credential store; hashing means a copy of it cannot be replayed as a session, which matters
+    because it sits in a state directory that gets backed up and rsynced like anything else.
+
+    Expiry is an hour of inactivity and slides forward on every authenticated request, so it is
+    wall-clock (time.time) rather than monotonic — monotonic does not survive the restart this
+    class now exists to survive. The cost is that moving the clock moves the expiry, which for
+    a session timeout is a shrug.
+
+    ThreadingHTTPServer hands each request to its own thread, so everything here is under one
+    lock. A file that cannot be read or written is not fatal: sessions fall back to memory and
+    the reason is reported once, because being unable to persist a session should not be the
+    same as being unable to log in.
     """
 
-    __slots__ = ("ttl", "_lock", "_tokens")
+    __slots__ = ("ttl", "path", "on_error", "_lock", "_tokens", "_dirty", "_last_save")
 
-    def __init__(self, ttl=SESSION_TTL_SECS):
+    def __init__(self, ttl=SESSION_TTL_SECS, path=None, on_error=None):
         self.ttl = ttl
+        self.path = path
+        self.on_error = on_error
         self._lock = threading.Lock()
         self._tokens = {}
+        self._dirty = False
+        self._last_save = 0.0
+        if path:
+            self._load()
+
+    # -- the API the handler uses --------------------------------------------------------
 
     def issue(self):
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._expire()
-            self._tokens[token] = time.monotonic() + self.ttl
+            self._tokens[self._key(token)] = time.time() + self.ttl
+            self._dirty = True
+            self._save_locked(force=True)
         return token
 
     def valid(self, token):
+        """True if this token is live, and pushes its expiry out if so."""
         if not token:
             return False
+        key = self._key(token)
         with self._lock:
             self._expire()
-            return token in self._tokens
+            if key not in self._tokens:
+                return False
+            self._tokens[key] = time.time() + self.ttl
+            self._dirty = True
+            self._save_locked()          # rate-limited; see SESSION_SAVE_INTERVAL_SECS
+            return True
 
     def drop(self, token):
+        if not token:
+            return
         with self._lock:
-            self._tokens.pop(token, None)
+            if self._tokens.pop(self._key(token), None) is not None:
+                self._dirty = True
+                # Forced: a sign-out that is still in the file after a crash is a session the
+                # operator believes they ended.
+                self._save_locked(force=True)
+
+    def close(self):
+        with self._lock:
+            self._save_locked(force=True)
+
+    # -- storage -------------------------------------------------------------------------
+
+    @staticmethod
+    def _key(token):
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     def _expire(self):
-        now = time.monotonic()
-        for token in [t for t, exp in self._tokens.items() if exp <= now]:
-            del self._tokens[token]
+        now = time.time()
+        stale = [k for k, exp in self._tokens.items() if exp <= now]
+        for key in stale:
+            del self._tokens[key]
+        if stale:
+            self._dirty = True
+
+    def _load(self):
+        try:
+            with open(self.path, encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            tokens = loaded.get("tokens") if isinstance(loaded, dict) else None
+            if not isinstance(tokens, dict):
+                return
+            now = time.time()
+            self._tokens = {k: float(v) for k, v in tokens.items()
+                            if isinstance(k, str) and isinstance(v, (int, float))
+                            and float(v) > now}
+        except FileNotFoundError:
+            pass                                    # first start; not a problem to report
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            # A corrupt or unreadable file means everyone signs in again, which is exactly
+            # what happened before this file existed. Say so; do not fail to start over it.
+            self._report(f"could not read {self.path} ({type(exc).__name__}: {exc}); "
+                         "sessions start empty")
+
+    def _save_locked(self, force=False):
+        """Caller holds the lock. Rate-limited unless forced."""
+        if not self.path or not self._dirty:
+            return
+        now = time.time()
+        if not force and now - self._last_save < SESSION_SAVE_INTERVAL_SECS:
+            return
+        tmp = f"{self.path}.{os.getpid()}.tmp"
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            # 0600 from the moment it exists, not after: opening then chmod leaves a window in
+            # which the token hashes are readable by anyone on the box.
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump({"version": 1, "tokens": self._tokens}, fh)
+            os.replace(tmp, self.path)              # atomic; no half-written file is ever read
+            self._dirty = False
+            self._last_save = now
+        except OSError as exc:
+            self._report(f"could not write {self.path} ({type(exc).__name__}: {exc}); "
+                         "sessions will not survive a restart")
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    def _report(self, message):
+        if self.on_error:
+            self.on_error("ffweb: " + message + "\n")
+            self.on_error = None                    # once, not on every request
 
 
 def credentials_ok(user, password):
@@ -673,8 +785,7 @@ def login_page(next_path="/", error=""):
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
         "<title>sign in — ffweb</title><style>" + STYLE + "</style></head><body>"
-        "<header><span class=\"brand\">ffweb</span>"
-        "<span class=\"warn\">internal only — sign in to continue</span></header>"
+        "<header><span class=\"brand\">ffweb</span></header>"
         "<main class=\"login\"><h1>sign in</h1>" + banner +
         "<form class=\"login\" method=\"post\" action=\"/login\">"
         "<input type=\"hidden\" name=\"next\" value=" + attr(next_path) + ">"
@@ -796,6 +907,9 @@ class FFWebHandler(BaseHTTPRequestHandler):
         if not self.app.quiet:
             sys.stderr.write("%s [ffweb] %s\n" % (self.log_date_time_string(), fmt % args))
 
+    # Set by _authenticated() when a live session was seen; consumed by _send().
+    _refresh_cookie = None
+
     def _send(self, code, body, content_type="text/html; charset=utf-8", extra=()):
         if isinstance(body, str):
             body = body.encode("utf-8")
@@ -813,8 +927,14 @@ class FFWebHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         # NOT Strict-Transport-Security. The certificate is self-signed, and HSTS is exactly
         # the header that turns the browser's "proceed anyway" into a dead end.
+        sets_cookie = any(k.lower() == "set-cookie" for k, _v in extra)
         for key, value in extra:
             self.send_header(key, value)
+        # Never alongside an explicit Set-Cookie: sign-in and sign-out are already saying
+        # exactly what the cookie should become, and a second one would race them.
+        if self._refresh_cookie and not sets_cookie:
+            self.send_header("Set-Cookie",
+                             self._cookie_header(self._refresh_cookie, SESSION_TTL_SECS))
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -834,7 +954,15 @@ class FFWebHandler(BaseHTTPRequestHandler):
         return morsel.value if morsel else ""
 
     def _authenticated(self):
-        return self.app.sessions.valid(self._session_token())
+        token = self._session_token()
+        if not self.app.sessions.valid(token):
+            return False
+        # The server-side expiry slid forward just now, so the cookie's Max-Age has to slide
+        # with it. Without this the browser would drop the cookie exactly one hour after
+        # SIGN-IN however much you were using the page, and the sliding timeout would be a
+        # server-side fiction. One extra header on an authenticated response is the price.
+        self._refresh_cookie = token
+        return True
 
     def _cookie_header(self, value, max_age):
         """One Set-Cookie, built by hand because SimpleCookie predates SameSite.
@@ -1111,7 +1239,9 @@ class App:
         # the Host header against.
         self.scheme = scheme
         self.secure_cookies = scheme == "https"
-        self.sessions = sessions if sessions is not None else Sessions()
+        self.sessions = sessions if sessions is not None else Sessions(
+            path=os.path.join(os.path.expanduser(state_dir), SESSION_FILE),
+            on_error=sys.stderr.write)
 
     # -- blobs ---------------------------------------------------------------------------
 
@@ -1856,6 +1986,7 @@ def main(argv=None):
         pass
     finally:
         httpd.server_close()
+        app.sessions.close()
         app.db.close()
     return 0
 
