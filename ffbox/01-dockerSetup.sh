@@ -61,6 +61,11 @@ DO_INSTALL=1
 DO_GROUP=1
 DO_SMOKE=1
 DO_ZSYS=1
+DO_EGRESS=1
+
+# This script's own directory, so the egress stage can find ffbox/egress/ wherever the checkout
+# lives — registerAgents.sh puts one on every machine at a different path.
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ASSUME_YES=0
 CHECK_ONLY=0
 FORCE_DAEMON=0
@@ -85,6 +90,9 @@ Options (alphabetical):
   --keep-zsys       Leave zsys installed and leave its autozsys_* snapshots alone.
   --no-group        Do not add anyone to the docker group.
   --no-install      Do not install Docker packages; only do the storage setup.
+  --no-egress       Do not build or start the egress filter. A machine without it cannot run
+                    ffbox at all until 'sh ffbox/egress/ffbox-egress.sh up' has been run, since
+                    ffbox refuses to fall back to unfiltered networking on its own.
   --no-smoke        Skip the hello-world smoke test at the end.
   --owner USER      User to add to the docker group (default: the invoking user).
   --pool NAME       ZFS pool to build in (default: the pool holding /).
@@ -107,6 +115,7 @@ while [ $# -gt 0 ]; do
     --force-daemon) FORCE_DAEMON=1; shift ;;
     --help|-h)      usage; exit 0 ;;
     --keep-zsys)    DO_ZSYS=0; shift ;;
+    --no-egress)    DO_EGRESS=0; shift ;;
     --no-group)     DO_GROUP=0; shift ;;
     --no-install)   DO_INSTALL=0; shift ;;
     --no-smoke)     DO_SMOKE=0; shift ;;
@@ -204,6 +213,11 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
     *)   stray=0 ;;
   esac
   printf 'stray layers:    %s under %s\n' "$stray" "$be"
+  # The run container's network, reported here because --check is where somebody looks to find
+  # out whether this machine is set up, and a missing fence is exactly as important as a missing
+  # dataset.
+  printf 'egress filter:\n'
+  sh "$HERE/egress/ffbox-egress.sh" status 2>/dev/null || printf '  (ffbox/egress not readable)\n'
   if [ "$stray" -gt 0 ]; then
     printf '\n                 ^ docker layer datasets inside the boot environment. zsys will\n'
     printf '                   snapshot these on every apt transaction. See README.md.\n'
@@ -507,6 +521,29 @@ else
   as_root usermod -aG docker "$OWNER"
   warn "docker group membership is root-equivalent — a member can mount / into a
          privileged container. $OWNER must log out and back in for it to take effect."
+fi
+
+# ---------------------------------------------------------------------------------------------
+# Egress filter
+#
+# Docker networking is this script's business, and the run container's network is the one piece of
+# it that is a security boundary rather than plumbing. A run joins an --internal bridge whose only
+# neighbour is a proxy that resolves and connects the names in ffbox/egress/allowlist.txt and
+# nothing else. Built and started here so that stage 4 (the Unity import, which is itself a
+# container) already has somewhere to activate a licence from.
+#
+# ffbox refuses to run without it, deliberately: the alternative to a filter that is not there is
+# the whole internet, and that is not a fallback to take quietly.
+# ---------------------------------------------------------------------------------------------
+if [ "$DO_EGRESS" -eq 0 ]; then
+  skip "egress filter skipped (--no-egress)"
+else
+  say "building the egress filter image"
+  as_root docker build -q -t ffbox-egress:latest "$HERE/egress" >/dev/null \
+    || die "could not build ffbox-egress:latest"
+  sh "$HERE/egress/ffbox-egress.sh" up \
+    || warn "the egress filter is not up. ffbox will refuse to start a run until it is:
+         sh $HERE/egress/ffbox-egress.sh up"
 fi
 
 # ---------------------------------------------------------------------------------------------

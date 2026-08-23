@@ -1,0 +1,47 @@
+# ffbox egress allowlist — the ONLY hostnames a run may reach.
+#
+# One name per line. A bare name matches exactly; a leading "*." matches any subdomain of it
+# (and not the bare domain — list that separately if it is needed). Blank lines and # comments
+# are ignored. Anything absent from this file is refused at the SNI, with the attempt logged.
+#
+# HOW TO ADD SOMETHING. Do not guess. Put the proxy in log mode for a few real runs —
+#     sudo systemctl stop ffbox-egress
+#     FFBOX_EGRESS_MODE=log ffbox/egress/ffbox-egress.sh up
+# — which permits everything and records every destination, then read the SNIs back out:
+#     ffbox/egress/ffbox-egress.sh log
+# Add what the runs actually asked for, restart in enforce mode, and confirm nothing new appears.
+#
+# The container runs `claude -p`, so the model's own endpoint has to be here. There is no
+# version of this file that is Unity alone and still does any work. See
+# docs/docker-security-model.md, "What the allowlist cannot do", for what remains reachable
+# through the entries below.
+
+# --- Anthropic ---------------------------------------------------------------------------------
+# api.anthropic.com carries the model traffic, feature flags and telemetry logging.
+# platform.claude.com is OAuth token exchange and refresh: CLAUDE_CODE_OAUTH_TOKEN is long-lived,
+# so this is here for the refresh path rather than for every run.
+api.anthropic.com
+platform.claude.com
+
+# Deliberately ABSENT, and the container's environment is what keeps them absent rather than
+# this file: the two Datadog intake hosts (CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1) and
+# downloads.claude.ai (DISABLE_AUTOUPDATER=1). A run that silently updated its own Claude Code
+# would also stop being the version this image was built and tested with.
+
+# --- Unity licensing ---------------------------------------------------------------------------
+# What unity-license.sh needs to activate a seat and hand it back. accounts/id/api are the login
+# leg of the -username/-password flow, which is how a Personal serial activates at all.
+license.unity3d.com
+activation.unity3d.com
+api.unity.com
+id.unity.com
+accounts.unity3d.com
+core.cloud.unity3d.com
+public-cdn.cloud.unity3d.com
+
+# --- Unity Package Manager ---------------------------------------------------------------------
+# A run inherits golden's warm Library/, so UPM should resolve from the on-disk cache and never
+# come here. It is listed because the cost of being wrong is a failed import 40 minutes in, and
+# because 04-warmLibrary.sh's cold import genuinely does need it.
+packages.unity.com
+cdn.packages.unity.com

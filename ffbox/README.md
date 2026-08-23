@@ -47,12 +47,12 @@ slow one, 30-60 minutes, and it happens once.
 | script | stage | needs root |
 |---|---|---|
 | `setup.sh` | runs all five in order; the only one you normally call | no (sudo per stage) |
-| `01-dockerSetup.sh` | 1 — installs Docker onto its own ZFS dataset with overlay2 | yes |
+| `01-dockerSetup.sh` | 1 — installs Docker onto its own ZFS dataset with overlay2, and builds the egress filter | yes |
 | `02-zfsSetup.sh` | 2 — `<pool>/ff` datasets, the golden checkout, the ffbox sudoers rule | yes |
 | `03-build.sh` | 3 — builds `ffbox:latest` from the GameCI image CI uses | no |
 | `04-warmLibrary.sh` | 4 — updates golden and builds its Unity `Library/` cache | no |
 | `05-discord-setup.sh` | 5 — state dir, database, config block for the Discord lanes | no (refuses sudo) |
-| `06-services.sh` | 6 — renders the units from `systemd/`, installs and starts `ffbox.target`, enables `ffbox-update.timer` | yes |
+| `06-services.sh` | 6 — renders the units from `systemd/`, installs and starts `ffbox.target`, enables `ffbox-update.timer` and `ffbox-egress.service` | yes |
 
 Everything ffbox owns on a machine lives in one directory:
 
@@ -388,10 +388,13 @@ after pulling, for the reason `main.yml` documents at length: a file left as a p
 smudge is considered *unmodified* by git, so nothing ever rewrites it, and Unity then skips the
 affected DLLs and fails with a confusing `CS0246`.
 
-### Optional — `01-dockerSetup.sh`
+### Stage 1 — `01-dockerSetup.sh`
 
-Not part of `setup.sh`. Provisions Docker on a **fresh** ZFS-on-root machine: installs it, puts
-its storage on a dedicated dataset, selects overlay2, and removes zsys.
+Provisions Docker on a **fresh** ZFS-on-root machine: installs it, puts its storage on a dedicated
+dataset, selects overlay2, and removes zsys. It also builds and starts the egress filter, because
+the run container's network is Docker configuration and stage 4 already needs somewhere to
+activate a Unity licence from. `--no-egress` skips that; `ffbox` then refuses to run until
+`ffbox/egress/ffbox-egress.sh up` has been.
 
 Docker's `zfs` storage driver creates one dataset per image layer, parented on whatever dataset
 encloses `/var/lib/docker` — normally `<pool>/ROOT/<be>/var/lib`, i.e. *inside the boot
@@ -672,8 +675,53 @@ re-based onto `develop` and told so in its prompt.
 push credential. That, not the deny list, is what makes "nothing merges" true — and there is
 deliberately no merge method on the GitHub client. Note the scope of that claim: the container
 holds no *git* credential, but it does hold `CLAUDE_CODE_OAUTH_TOKEN` and the Unity account
-secrets, and it has network. `docs/docker-security-model.md` is the full account, including the
-gaps this README does not cover.
+secrets, and it can still reach the two vendors those belong to.
+`docs/docker-security-model.md` is the full account, including the gaps this README does not
+cover.
+
+### The egress filter
+
+A run gets no internet. It joins `ffbox-net`, a Docker `--internal` bridge with no default route,
+whose only other occupant is `ffbox-egress` — a proxy that resolves and connects the names in
+`ffbox/egress/allowlist.txt` and refuses everything else at the TLS SNI. That list is Anthropic
+(the model has to be reachable or nothing runs) and Unity licensing and packages. No GitHub, no
+package registries, no LAN, and not this host either: `--internal` leaves the bridge gateway
+reachable, so the filter also installs an INPUT rule dropping traffic from `ffbox0` to the
+machine. Without it a run can open this box's SSH and SMB ports.
+
+```bash
+sh ffbox/egress/ffbox-egress.sh up        # networks, proxy, firewall rule (needs sudo once)
+sh ffbox/egress/ffbox-egress.sh status    # what is up, and whether the rule is really there
+sh ffbox/egress/ffbox-egress.sh log       # every destination asked for, allowed and DENIED
+```
+
+`01-dockerSetup.sh` builds and starts it; `ffbox-egress.service` re-applies the firewall rule at
+boot, enabled outside `ffbox.target` so stopping the pipeline does not take the fence down.
+
+Two different edits, two different restarts. `allowlist.txt` is bind-mounted and both configs are
+regenerated at container start, so changing what is permitted is `docker restart ffbox-egress`.
+Changing `entrypoint.sh` or the `Dockerfile` needs the image rebuilt and the container **recreated**
+— `docker restart` reuses the image the container was created from, and will quietly go on running
+the old one. `sudo systemctl restart ffbox-egress` does the recreate. `up` needs root either way,
+because it cannot tell whether the firewall rule is in place without reading the rule.
+
+`ffbox` refuses to start a run when the network or the proxy is missing rather than falling back
+to the default bridge — the alternative to a filter that is not there is the whole internet.
+`--network bridge` is the deliberate opt-out and warns on the way past.
+
+**Adding a host.** Do not guess. Run the proxy in log mode for a few real runs, read back what
+they actually asked for, and add that:
+
+```bash
+sudo systemctl stop ffbox-egress
+FFBOX_EGRESS_MODE=log sh ffbox/egress/ffbox-egress.sh up
+# ... a few runs later ...
+sh ffbox/egress/ffbox-egress.sh log
+sudo systemctl start ffbox-egress          # back to enforce
+```
+
+Log mode permits everything and records it. It is a way to discover a list, never a resting state,
+and `status` says so while it is on.
 
 ### Local git
 

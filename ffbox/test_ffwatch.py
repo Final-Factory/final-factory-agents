@@ -3033,6 +3033,90 @@ def test_verification_results_path_is_per_invocation():
         check("and the shared file is left exactly as it was", "9999" in fh.read())
 
 
+
+def test_the_run_is_on_the_filtered_network():
+    """A run reaches Anthropic and Unity, and nothing else — including this host.
+
+    Three separate claims, and the file that would quietly break each one:
+
+      ffbox            puts the container on ffbox-net and refuses to run when it or the proxy
+                       is absent. A fallback to the default bridge here would restore the whole
+                       internet without a word in any log.
+      allowlist.txt    still contains api.anthropic.com. The container runs `claude -p`; an
+                       allowlist trimmed to Unity alone is not a stricter posture, it is a box
+                       that cannot do anything.
+      entrypoint.sh    defaults to enforce, and an unlisted name lands in the deny sink rather
+                       than being passed through.
+    """
+    print("egress: the run is on the filtered network")
+    src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    run = src.partition("docker run --rm")[2]
+    check("the container is given a network explicitly", '"${NETWORK_ARGS[@]}"' in run)
+    check("and the default is the filtered one", "NETWORK=${FFBOX_NETWORK:-ffbox-net}" in src)
+    check("a missing network is refused, not worked around",
+          "does not exist" in src and "exit 69" in src)
+    check("so is a proxy that is not running",
+          "is not running, so nothing on" in src)
+    check("opting out is loud", "this run has unfiltered network access" in src)
+    check("the container is told not to phone home about itself",
+          "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" in run and "DISABLE_AUTOUPDATER=1" in run)
+
+    egress = os.path.join(HERE, "egress")
+    allow = open(os.path.join(egress, "allowlist.txt"), encoding="utf-8").read()
+    check("the model's own endpoint is allowed, because otherwise no run does anything",
+          "api.anthropic.com" in allow)
+    check("Unity licensing is allowed", "license.unity3d.com" in allow)
+    check("and nothing has quietly added a git forge",
+          "github.com" not in allow and "githubusercontent" not in allow)
+
+    # The generator, for real. It validates and writes both configs before it ever calls nginx,
+    # so running it on a machine with no nginx still exercises everything worth testing.
+    def generate(names, mode="enforce"):
+        root = tempfile.mkdtemp(prefix="egress-", dir=TMPROOT)
+        listing = os.path.join(root, "allowlist.txt")
+        with open(listing, "w", encoding="utf-8") as fh:
+            fh.write(names)
+        proc = subprocess.run(
+            ["sh", os.path.join(egress, "entrypoint.sh")],
+            capture_output=True, text=True,
+            env={**os.environ, "FFBOX_EGRESS_IP": "10.80.0.2", "FFBOX_EGRESS_MODE": mode,
+                 "FFBOX_EGRESS_ALLOWLIST": listing, "FFBOX_EGRESS_CONF": root},
+        )
+        read = lambda n: (open(os.path.join(root, n), encoding="utf-8").read()
+                          if os.path.exists(os.path.join(root, n)) else "")
+        return proc, read("dnsmasq.conf"), read("nginx.conf")
+
+    _, dns, ngx = generate("api.anthropic.com\nlicense.unity3d.com\n")
+    check("an allowed name resolves to the proxy",
+          "address=/api.anthropic.com/10.80.0.2" in dns, dns)
+    check("everything else is NXDOMAIN", "address=/#/\n" in dns, dns)
+    # Without the local= line the same name answers AAAA out of the catch-all, and NXDOMAIN on
+    # one query type reads as "no such host" to a resolver that has already had a good A record.
+    check("an allowed name exists for every query type, not just A",
+          "local=/api.anthropic.com/" in dns, dns)
+    check("an allowed name maps to itself upstream",
+          "api.anthropic.com                        api.anthropic.com:443;" in ngx, ngx)
+    check("and anything unlisted maps to the deny sink",
+          "default" in ngx and "127.0.0.1:9;" in ngx, ngx)
+    check("the allowlist is not passed through by default",
+          "default                                  $ssl_preread_server_name:443;" not in ngx)
+
+    _, dns_log, ngx_log = generate("api.anthropic.com\n", mode="log")
+    check("log mode records everything instead of refusing it",
+          "address=/#/10.80.0.2" in dns_log
+          and "default                                  $ssl_preread_server_name:443;" in ngx_log)
+
+    # A list that has been emptied — by a bad edit, a bind mount that did not land — must stop
+    # the proxy, not produce one that permits whatever it is asked for.
+    empty, _, _ = generate("# nothing here\n")
+    check("an empty allowlist refuses to start", empty.returncode == 2, empty.returncode)
+    check("and says why", "refusing to start wide open" in empty.stderr, empty.stderr)
+
+    bad, _, _ = generate("api.anthropic.com\nevil.com; rm -rf /\n")
+    check("a malformed entry is refused rather than sanitised",
+          bad.returncode == 2 and "bad allowlist entry" in bad.stderr, bad.stderr)
+
+
 def test_destructive_docker_calls_name_the_container():
     """Design section 14 rule 2, checked against the source because it is a rule about what
     must NOT exist: there is deliberately no 'find stray Unity processes and work out which are
@@ -4080,6 +4164,7 @@ def main():
         test_github_client_retries_and_cannot_merge,
         test_verification_results_path_is_per_invocation,
         test_destructive_docker_calls_name_the_container,
+        test_the_run_is_on_the_filtered_network,
     ]
     for fn in tests:
         try:

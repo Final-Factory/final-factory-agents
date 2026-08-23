@@ -16,8 +16,8 @@
 # needs for its clones, and the Claude credential in that user's home.
 Description=ffwatch (Discord conversation manager for ffbox)
 PartOf=ffbox.target
-After=network-online.target ffdiscord-listener.service docker.service
-Wants=network-online.target ffdiscord-listener.service
+After=network-online.target ffdiscord-listener.service docker.service ffbox-egress.service
+Wants=network-online.target ffdiscord-listener.service ffbox-egress.service
 
 # A launch failure that repeats is a configuration problem; back off rather than spinning up
 # containers in a loop. These two live in [Unit] — systemd moved them there in v229 and

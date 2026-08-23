@@ -2,10 +2,11 @@
 
 What runs where, what is actually trusted, and which of the guarantees people repeat about this
 system are real. Written 2026-08-23, after an audit that found one live escalation path and two
-claims that were narrower than the shorthand for them.
+claims that were narrower than the shorthand for them. Revised the same day, when the container
+stopped having the whole internet.
 
-Read this before changing anything in `ffbox/ffbox`, `ffbox/ffwatch.py` or
-`ffbox/discord-task.sh` that touches capabilities, the harvest, or publication.
+Read this before changing anything in `ffbox/ffbox`, `ffbox/ffwatch.py`, `ffbox/discord-task.sh`
+or `ffbox/egress/` that touches capabilities, the harvest, publication, or what a run can reach.
 
 ## The shape
 
@@ -20,6 +21,16 @@ Discord / web / shell  ->  ffwatch.py (host)  ->  ffbox (host)  ->  container
                                   +-------------------------------------+
                                   |
                                   +-> git push, GitHub API, Discord reply
+```
+
+And the container's only way off the machine, which is a fence built out of routing rather than
+out of asking the agent nicely:
+
+```
+container -> ffbox-net -> ffbox-egress -> api.anthropic.com, *.unity3d.com, ...
+             (internal:    (SNI allowlist)
+              no default
+              route at all)
 ```
 
 The single most important property is that **no model runs on the host.** `ffwatch.py` is fixed
@@ -49,17 +60,18 @@ reason from it. The accurate claim is that it holds **no git or GitHub credentia
 | `CLAUDE_CODE_OAUTH_TOKEN` | Anthropic API access |
 | `UNITY_SERIAL`, `UNITY_EMAIL`, `UNITY_PASSWORD` | the Unity account, including its password |
 
-The container also has network access, because the model is remote. An agent with shell can read
-its own environment and send it anywhere. Treat both of those secrets as exposed to any run, and
-scope them accordingly: the Unity password in particular is a real account password, and moving
-that lane to a license file rather than interactive credentials would be a genuine improvement.
+The container has network access, because the model is remote. An agent with shell can read its
+own environment; what changed on 2026-08-23 is where it can send what it read. Both secrets are
+still exposed to any run and should be scoped accordingly. The Unity password in particular is a
+real account password, and moving that lane to a license file rather than interactive credentials
+would still be a genuine improvement — the allowlist does nothing about it.
 
 What is absent, and deliberately: `gh`, any git remote credential, and `ffdiscord`. The container
 task checks for a stray `ffdiscord` on PATH at startup and says so loudly if one resolves.
 
 ## What contains it
 
-Four things, in descending order of how much weight they carry.
+Five things, in descending order of how much weight they carry.
 
 **No push credential anywhere in the container.** `GH_TOKEN` is host-side only. There is no
 authenticated remote in the clone. This is what makes "nothing merges" true.
@@ -77,11 +89,62 @@ is a design change, not a feature.
 **The clone is destroyed.** Each run is a ZFS clone of golden, thrown away when the run ends.
 Whatever an agent leaves behind on disk goes with it.
 
+**There is one route out, and it is not the agent's to choose.** The run joins `ffbox-net`, a
+Docker `--internal` bridge. Internal means no default route: not a firewall the container could
+argue with, an absence of anywhere to send a packet. The only host on that bridge is
+`ffbox-egress`, which resolves and connects the names in `ffbox/egress/allowlist.txt` and refuses
+everything else. This is what stops an injected agent fetching a second stage, reaching this
+machine's other services, or posting the workspace somewhere.
+
 Two further host-side gates apply to the pull request specifically. `verification_gate()`
 requires `compiled=true`, at least one test run and zero failures, judged from a report the
 container task writes where the agent cannot reach it. On top of that the agent must have set
 `confident`. Confidence gates the pull request, not the branch: work is always published so it
 cannot be lost with the clone, and only the proposal to merge is withheld.
+
+## The egress filter
+
+Three parts, and it is worth knowing which one is doing the work.
+
+**The network.** `docker network create --internal` is the boundary. A container on it has no
+default route at all, so the internet, the LAN and every other Docker network are simply not
+addressable. An agent that ignores DNS and dials an IP finds nothing to dial. Nothing inside the
+container can change this: the routing lives in the host's namespace and Docker's, and the run
+holds no capability over either.
+
+**The proxy.** `ffbox-egress` is the one neighbour on that bridge. dnsmasq answers only
+allowlisted names, and answers them with its own address; nginx reads the TLS SNI with
+`ssl_preread` and connects onward only for a name in the map, sending anything else to a closed
+port and logging it. There is no certificate and no decryption — it learns the name from the
+ClientHello and then splices bytes, so a run's TLS is still end to end with Anthropic and Unity.
+Both configurations are generated from `allowlist.txt` at container start, so the list has one
+spelling and cannot drift between its two consumers.
+
+**The host rule.** Measured, not assumed: `--internal` stops routing but does NOT stop the
+container from reaching the host itself at the bridge gateway. On this machine an internal-network
+container could open port 22 and port 445 on `10.80.0.1`. `ffbox-egress.sh` drops everything
+arriving from the `ffbox0` interface addressed to the host, and `ffbox-egress.service` re-applies
+it at boot, because netfilter rules do not survive one and a missing rule is silent.
+
+`ffbox` refuses to start a run when the network or the proxy is missing, rather than letting
+Docker fall back to the default bridge. The alternative to a filter that is not there is the whole
+internet, which is not a fallback to take quietly. `--network bridge` is the deliberate opt-out,
+and it warns.
+
+### What the allowlist cannot do
+
+**It cannot exclude Anthropic.** The container runs `claude -p`, so `api.anthropic.com` has to be
+on the list. An agent that wants to smuggle the workspace out can write it into a prompt to its
+own account. The allowlist narrows exfiltration from anywhere to two vendors; it does not close
+it, and no arrangement that runs the model from inside the container can.
+
+**It is a name list, not an authorisation list.** Anything reachable at an allowlisted name is
+reachable. Both credentials in the container are for services on that list, which is precisely
+what makes them still worth treating as exposed.
+
+**It says nothing about what the agent writes.** Gap 1 below — a workflow file harvested and
+pushed to a self-hosted runner — needs no network from the container at all. The fence and that
+gap are unrelated, and closing one does not touch the other.
 
 ## What is not a boundary
 
@@ -177,6 +240,9 @@ so the whole chain fails closed at push time with a clear error. Behind that, ex
 at harvest, and keep `ffbox/**` branches out of both CI triggers. Branch filtering on `push`
 alone is not enough, because a same-repo `pull_request` also gets secrets.
 
+The egress filter does nothing for this one. The container never needed to reach anything; it
+wrote a file, and the trusted host carried it. Still the first thing to fix.
+
 **2. The host push credential is a plaintext file.** `/opt/FinalFactory` uses
 `credential.helper store`, so the token sits in `~/.git-credentials` (mode 0600) owned by the
 same user `ffwatch` runs as. Anything that gets execution as that user has it. "Nothing merges"
@@ -213,9 +279,11 @@ It was rejected because it costs a lot and buys nothing that was actually wanted
 messages, commit chains, history lookups and branch switching are all local operations; none of
 them needs a push credential. Against that:
 
-- The container has network, so an injected agent exfiltrates the token and the attacker has
-  persistent repo write from outside this machine. Today the worst case is one bad branch, visible
-  in the run row.
+- An injected agent exfiltrates the token and the attacker has persistent repo write from outside
+  this machine. The egress filter makes that harder rather than impossible — a token is small, and
+  `api.anthropic.com` has to stay reachable — and it does nothing about the credential being usable
+  from anywhere in the world once it is out. Today the worst case is one bad branch, visible in the
+  run row.
 - The whole threat model assumes this container is hostile. Handing it a credential undoes the
   premise.
 - The guarantee moves from code you can read into a web console setting that can drift or gain a
@@ -243,3 +311,4 @@ document:
 - `test_a_refused_harvest_is_reported`
 - `test_the_container_cannot_author_a_message`
 - `test_github_client_retries_and_cannot_merge`
+- `test_the_run_is_on_the_filtered_network`

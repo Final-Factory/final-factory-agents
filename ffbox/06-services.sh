@@ -58,6 +58,10 @@ UNIT_NAMES="ffbox.target ffdiscord-listener.service ffwatch.service ffweb.servic
 # and is enabled separately — it has to survive a broken ffbox to be able to fix one.
 # See design/self_update_design.txt section 3.
 UPDATE_UNITS="ffbox-update.service ffbox-update.timer"
+# Same treatment, same reason, different lifetime: the egress filter is what keeps a run off this
+# host and off the internet, so it is enabled outside ffbox.target and a stop of the target
+# leaves it standing.
+EGRESS_UNITS="ffbox-egress.service"
 
 # The listener watches whatever the config says to watch. Reading it back from the ffwatch block
 # means adding a channel there and re-installing is enough — no second place to edit, and no
@@ -119,9 +123,10 @@ render_units() {
     _webhost=$(web_bind | cut -d' ' -f1)
     _webport=$(web_bind | cut -d' ' -f2)
     mkdir -p "$_dest"
-    for u in $UNIT_NAMES $UPDATE_UNITS; do
+    for u in $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
         sed -e "s|@FFWATCH@|$HERE/ffwatch.py|g" \
             -e "s|@UPDATE@|$HERE/update_ffbox.sh|g" \
+            -e "s|@EGRESS@|$HERE/egress/ffbox-egress.sh|g" \
             -e "s|@REPO@|$(CDPATH= cd -- "$HERE/.." && pwd)|g" \
             -e "s|@FFWEB@|$HERE/ffweb.py|g" \
             -e "s|@USER@|$RUN_USER|g" \
@@ -160,7 +165,7 @@ if [ "$INSTALL" = 1 ]; then
     # command line — which is exactly how ffweb stayed on 127.0.0.1 through two correct installs.
     CHANGED=""
     WAS_ACTIVE=""
-    for u in $UNIT_NAMES $UPDATE_UNITS; do
+    for u in $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
         cmp -s "$TMP/$u" "$UNIT_DIR/$u" 2>/dev/null || CHANGED="$CHANGED $u"
         case "$u" in
             *.target) continue ;;
@@ -168,7 +173,7 @@ if [ "$INSTALL" = 1 ]; then
         systemctl is-active --quiet "$u" 2>/dev/null && WAS_ACTIVE="$WAS_ACTIVE $u"
     done
 
-    for u in $UNIT_NAMES $UPDATE_UNITS; do
+    for u in $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
         install -m 0644 "$TMP/$u" "$UNIT_DIR/$u"
         did "$UNIT_DIR/$u"
     done
@@ -187,6 +192,11 @@ if [ "$INSTALL" = 1 ]; then
         # SEPARATELY, and on purpose: enabling the timer through ffbox.target would tie the
         # updater's lifetime to the thing it updates. A stop of the target must leave this
         # firing, because a bad commit that stops ffwatch is exactly when the next one matters.
+        # Before the pipeline, not after: ffwatch's first sweep can launch a container, and that
+        # container has nowhere to resolve a name from until this is up.
+        systemctl enable --now ffbox-egress.service \
+            || did "WARNING: ffbox-egress.service failed — ffbox will refuse to start a run"
+        did "enabled ffbox-egress.service (internal network + SNI allowlist + firewall rule)"
         systemctl enable --now ffbox-update.timer
         did "enabled ffbox-update.timer (fetch + fast-forward + restart, every 15min)"
         did "  next update check: $(systemctl show ffbox-update.timer -p NextElapseUSecRealtime --value 2>/dev/null)"
@@ -225,7 +235,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 render_units "$TMP"
 STALE=0
-for u in $UNIT_NAMES $UPDATE_UNITS; do
+for u in $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
     st=$([ -f "$UNIT_DIR/$u" ] && echo installed || echo 'NOT INSTALLED')
     if [ -f "$UNIT_DIR/$u" ]; then
         st="$st, $(systemctl is-enabled "$u" 2>/dev/null | head -1 || echo unknown)"
