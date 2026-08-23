@@ -34,7 +34,8 @@ separates the undeliverable private half from the approval queue's pending state
 names the two ffweb guards that do not cover a new flag for free (section 12), and replaces
 file:line citations with symbol names, since the tree they pointed at is mid-change.
 
-Design only. Nothing here is implemented.
+Revision 10, 2026-08-22: IMPLEMENTED. Section 18 records what building it changed about the
+design, which is the part a design document usually loses.
 
 
 0. The ask
@@ -840,3 +841,54 @@ Still open:
      is routed by type rather than pinned to the dev lane. These two belong together, because
      widening the operator set without the lane rule would put both accounts on the Unity write
      lane for every question they ask.
+
+
+18. What building it changed
+----------------------------
+
+Written after the fact, because the interesting half of a design is where it turned out to be
+wrong. Everything in sections 0-17 shipped; these are the places the shape moved.
+
+  A lane must not be demoted by a gate call it never asked for. The gate runs the classifier on
+  channels whose kind ALREADY decides the lane, and the classifier fails closed to "question,
+  read-only". So the first bug_reports thread after the gate landed came out in the answer lane
+  rather than triage: a gate failure had dragged the lane down with it, though the kind decided
+  that lane and the classifier was never consulted about it. Classifications now carry
+  lane_source, and only a classifier-chosen lane falls back.
+
+  Engage applies where there is a watch ENTRY, not where there is an alias. A doorbell names the
+  channel it fired for whether or not anything is watching it, and the first cut gated on that
+  name. The result was that an unwatched channel — where the doorbell only fires BECAUSE the bot
+  was addressed — fell to mention-only and declined itself. The policy belongs to the entry, and
+  where there is no entry the doorbell is the policy.
+
+  "Was the bot spoken to" had to become a stored column. The gate needs it long after the raw
+  Discord payload is gone, so message.addressed is computed at ingest while `mentions` is still
+  in hand. That needed the bot's own id, which nothing on the ffwatch side knew, hence
+  `ffdiscord whoami`. A failure to resolve it treats every message as addressed: the noisy
+  direction, not the silent one, and said loudly at startup.
+
+  A thread opening is "this thread has produced no turn yet", not "this message id equals the
+  thread id". Discord gives a forum starter the same id as its thread, but a bundle does not
+  always carry it, and the id form failed on exactly the case the rule exists to protect.
+
+  conversation.watch_alias exists because the alias is known at ingest, and reverse-mapping it
+  from a channel id later needs a table that may not be filled in.
+
+  The undeliverable private half needed its own status rather than the queue's existing held
+  state, which section 7e predicted, and it is worth repeating why: `ffwatch approve` releases
+  pending rows, and releasing this one retries the same closed DM.
+
+  `str(None)` is the string "None", which matched no author on earth. An ordinary bug, recorded
+  because it lived in the middle of the trust lookup and looked exactly like working software.
+
+  A listener test fixture had been under-specifying guild_id on guild dispatches. It did not
+  matter until the absence of guild_id started meaning "this is a DM".
+
+  max_unity_runs is 2 rather than 1, and the reason it could be raised at all was a measurement
+  rather than a design decision: see revision 9.
+
+  Deployment order matters once, and only once. `ffdiscord whoami` ships in the plugin, and the
+  plugin is served from a version-pinned cache, so an ffwatch that updates ahead of the plugin
+  treats every message as addressed until `registerAgents.sh` runs. Loud, safe and temporary,
+  but worth knowing before wondering why a mention-only channel woke for everything.

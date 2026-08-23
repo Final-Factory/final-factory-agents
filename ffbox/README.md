@@ -250,6 +250,9 @@ Consequences:
   rather than fatal.
 
 Use `--no-unity` for read-only or code-only prompts: no seat consumed, much faster startup.
+The Discord lanes no longer pass it: every lane, read or write, gets a working editor, because
+a worker asked what something's actual power draw is should be able to go and look rather than
+infer from source and hedge. See `design/trusted_ingress_design.txt` section 13.
 
 If you have access to a Unity Licensing Server or a floating license, that sidesteps seat
 exhaustion entirely and is worth preferring.
