@@ -957,11 +957,12 @@ def test_the_live_pages_reload_themselves():
             check(f"{label} does not reload under the reader",
                   ffweb.REFRESH_SCRIPT not in body, path)
 
-        # The three refusals the script makes, read off the source rather than a browser: it
+        # The four refusals the script makes, read off the source rather than a browser: it
         # backs off while a control has focus or the prompt box has text (a reload mid-sentence
         # throws the text away), it strips the acknowledgement from the URL so a toast cannot
-        # come back every minute, and it stops after thirty ticks so an abandoned tab cannot
-        # hold a signed-in session open past the idle timeout by poking the server forever.
+        # come back every minute, it stops after thirty ticks so an abandoned tab cannot
+        # hold a signed-in session open past the idle timeout by poking the server forever,
+        # and it hands the reader's scroll offset to the page it replaces itself with.
         src = ffweb.REFRESH_SCRIPT
         check("a focused control defers the tick",
               "document.activeElement" in src and "input, select, textarea, button" in src)
@@ -971,6 +972,13 @@ def test_the_live_pages_reload_themselves():
               "searchParams.delete('sent')" in src and "searchParams.delete('msg')" in src)
         check("and it does not run forever", "n > 30" in src and "clearInterval" in src)
         check("the interval is a minute, not a hot loop", "60000" in src)
+        check("the tick saves where the reader was",
+              "sessionStorage.setItem(k, String(window.scrollY))" in src)
+        check("and the page it loads puts them back there",
+              "sessionStorage.getItem(k)" in src and "window.scrollTo(0, +y)" in src)
+        # Consumed on read: arriving by link or by the back button starts where the browser
+        # wants to, not at the offset some earlier tick happened to leave behind.
+        check("the saved offset is spent once", "sessionStorage.removeItem(k)" in src)
     finally:
         srv.stop()
 
