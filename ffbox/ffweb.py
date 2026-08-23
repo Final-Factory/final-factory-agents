@@ -982,7 +982,15 @@ class FFWebHandler(BaseHTTPRequestHandler):
         # text/plain we chose for a player's upload is really HTML and running it.
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", CSP)
-        self.send_header("Referrer-Policy", "no-referrer")
+        # same-origin, NOT no-referrer. Under `no-referrer` a browser strips the Origin header
+        # off our OWN form POSTs as well: Fetch's "append a request Origin header" serializes
+        # the origin as `null` for a non-GET, non-CORS request whose referrer policy is
+        # no-referrer. _origin_ok() then saw `Origin: null` on every action this page submits
+        # and refused it, so the prompt box 403'd itself and the login form only survived
+        # because the session verbs log-and-continue. `same-origin` keeps the privacy this
+        # header was for — no referrer leaves this origin — while a same-origin POST still
+        # carries a real Origin, and a cross-site one is nulled, which is the case we refuse.
+        self.send_header("Referrer-Policy", "same-origin")
         # Nothing here is cacheable once it is behind a login: a page held in the browser
         # cache is a page the next person at this keyboard reads with the back button after
         # someone signed out. There is no static asset to lose by saying this everywhere.
@@ -1053,10 +1061,12 @@ class FFWebHandler(BaseHTTPRequestHandler):
         """Refuse a POST that a page on another origin submitted to us.
 
         Browsers send Origin on every cross-site form POST, so a mismatch is the signal.
-        Two things are accepted: an origin on the list main() built from the bind address,
-        and one that matches the Host header this very request carried — the second is what
-        keeps a machine reachable under a name the operator never put in the config, without
-        which signing in over a LAN DNS name would 403 on the login form itself.
+        Three things are accepted: an origin on the list main() built from the bind address;
+        one that matches the Host header this very request carried — that is what keeps a
+        machine reachable under a name the operator never put in the config, without which
+        signing in over a LAN DNS name would 403 on the login form itself; and a request the
+        browser itself labelled Sec-Fetch-Site: same-origin, which covers an Origin that
+        arrived opaque for a reason that has nothing to do with who submitted the form.
         """
         origin = self.headers.get("Origin")
         if not origin:
@@ -1066,6 +1076,13 @@ class FFWebHandler(BaseHTTPRequestHandler):
             return True, ""
         host = self.headers.get("Host")
         if host and origin == f"{self.app.scheme}://{host}":
+            return True, ""
+        # Belt and braces, added after the Referrer-Policy above locked this page out of its
+        # own prompt box: the browser computes Sec-Fetch-Site itself and page script cannot
+        # set it, so "same-origin" is proof of where the form was, even when the Origin
+        # arrived opaque. It only ever ADDS an accept — a cross-site submission still says
+        # cross-site, and a client that sends no such header is judged on Origin alone.
+        if self.headers.get("Sec-Fetch-Site") == "same-origin":
             return True, ""
         # Refused. Hand back what was actually seen: an operator locked out of the login form
         # by a proxy that rewrites Host, or by a browser sending "null", cannot fix that from

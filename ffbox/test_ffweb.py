@@ -858,6 +858,31 @@ def test_the_prompt_box_needs_no_flag():
         check("a cross-origin prompt POST is REFUSED, not merely logged", code == 403, code)
         check("and ffwatch was not invoked for it", os.path.getsize(CALLS) == 0)
 
+        # The box 403'ing ITSELF is the failure this page actually shipped: with
+        # Referrer-Policy: no-referrer the browser serialised the Origin of our own form POST
+        # as `null`, and the check above refused it. The header is same-origin now, and an
+        # opaque Origin the browser labels same-origin is accepted on top of that.
+        open(CALLS, "w").close()
+        code, _h, _b = srv.post("/actions/prompt", {"prompt": "hi"},
+                                headers={"Origin": "null"})
+        check("an opaque Origin alone is still refused", code == 403, code)
+        check("and ffwatch was not invoked for it either", os.path.getsize(CALLS) == 0)
+
+        open(CALLS, "w").close()
+        code, _h, _b = srv.post("/actions/prompt", {"prompt": "hi"},
+                                headers={"Origin": "null",
+                                         "Sec-Fetch-Site": "same-origin"})
+        check("but the browser's own same-origin label lets the page's form through",
+              code == 303, code)
+        check("and that one really did reach ffwatch", os.path.getsize(CALLS) > 0)
+
+        open(CALLS, "w").close()
+        code, _h, _b = srv.post("/actions/prompt", {"prompt": "hi"},
+                                headers={"Origin": "http://evil.example",
+                                         "Sec-Fetch-Site": "cross-site"})
+        check("a cross-site label does not launder a mismatched origin", code == 403, code)
+        check("and ffwatch was not invoked for that one", os.path.getsize(CALLS) == 0)
+
         # The other half of the grant did NOT come along for the ride.
         code, _h, _b = srv.post("/actions/approve", {"id": "1"})
         check("approve is still refused without --enable-actions", code == 403, code)
@@ -1289,6 +1314,11 @@ def test_https_is_what_is_actually_on_the_wire():
               "Strict-Transport-Security" not in hdr, hdr.get("Strict-Transport-Security"))
         check("pages behind the login are not cacheable",
               hdr.get("Cache-Control") == "no-store", hdr.get("Cache-Control"))
+        # NOT no-referrer, and this is not a style preference. Fetch serialises the Origin of a
+        # non-GET, non-CORS request as `null` when the referrer policy is no-referrer, so that
+        # header made every form on this page arrive looking cross-site to _origin_ok().
+        check("the referrer policy does not strip the Origin off this page's own POSTs",
+              hdr.get("Referrer-Policy") == "same-origin", hdr.get("Referrer-Policy"))
 
         # The certificate really does carry an IP SAN: verifying against the cert file itself,
         # with hostname checking ON, fails if the SAN is missing or wrong.
