@@ -17,6 +17,29 @@ channel does not burn a run on "thanks".
 Revision 5, 2026-08-22: the gate runs on every message in all three watched channels,
 including the first message of a new thread, and its bias toward answering is written as
 rules rather than as an adjective (section 5).
+Revision 14, 2026-08-23: the shell lane is gone, merged into dev. It differed from dev in
+exactly two fields — bare Bash, and no verdict schema — and neither difference survived the
+question of who the lane is for. Both routes into dev are a person this box already trusts: an
+operator whose author id Discord authenticated, or somebody with a login here. So dev takes
+bare Bash (section 13's allow list narrows the lanes fed untrusted PLAYER text, and fix keeps
+it for that reason), dev's daily rate limit is dropped, and a locally typed prompt runs under
+the same structured verdict every other lane does — result_text unwraps `summary`, so the
+person at the terminal reads what they always read.
+  Everything that was conditional on `lane == "shell"` is now conditional on
+is_local_conversation, which is the question that was actually being asked: is there a thread
+on the other end of this. A local turn gets no <discord> fence, no outbound row, no
+harness-owned verification, and no published branch. The container is told which case it is in
+through job["local"] and picks its preamble from that, rather than inferring it from a missing
+schema. Section 8's operator rule is unchanged; what changed is that its two destinations are
+now the only two write lanes.
+  The Discord-bound preambles also state the 2000-character message limit and ask for a
+summary under 1500. The host already refused to lose an over-long reply (compose_head cuts at
+HEAD_CAP and attaches the rest), but that safety net produces a thread post that stops
+mid-sentence next to a file nobody opens; the lane writing it is now told the budget instead of
+being truncated into it. Deliberately not on the local preamble, where nothing truncates.
+  Schema v8 rewrites the rows that still say `shell`. The web page builds its lane filter from
+DISTINCT over the data, so a stale value would keep offering a lane nothing can produce.
+
 Revision 13, 2026-08-23: the page can CONTINUE a conversation, not only open one (section 12).
 A reply box on /conversation/<id> adds a message to the end of a LOCAL conversation and the
 turn it produces resumes that conversation's session. Discord threads are refused on both

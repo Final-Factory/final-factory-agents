@@ -156,13 +156,33 @@ PREAMBLE_QUESTION = (
     "investigation."
 )
 
-PREAMBLE_SHELL = (
-    "You are running one turn of a Final Factory session on the build server, started from that "
-    "machine's own shell by the person reading your output. The repository is checked out at "
-    "/workspace in a container that is destroyed when you exit, so your edits live only in the "
-    "harvested patch. Do NOT commit, push, or open a pull request — this container holds no "
-    "credential that could — and say plainly what you changed and what you verified. Answer in "
-    "prose: a human is reading this in a terminal."
+PREAMBLE_LOCAL = (
+    "You are running one turn of a Final Factory session on the build server, started by the "
+    "person reading your output — at that machine's own shell, or from the web page. There is "
+    "no Discord thread on the other end of this and nothing you write is posted anywhere. The "
+    "repository is checked out at /workspace in a container that is destroyed when you exit, "
+    "so your edits live only in the harvested patch. Do NOT commit, push, or open a pull "
+    "request — this container holds no credential that could — and say plainly what you "
+    "changed and what you verified. "
+    "Put your whole answer in `summary`: it is printed verbatim to the terminal or the page, "
+    "so write it as prose for a person, at whatever length the question deserves. Nothing "
+    "truncates it and no length rule applies here. The other fields are bookkeeping for the "
+    "record; `summary` is the answer."
+)
+
+# Appended to the DISCORD-bound preambles only. The host already refuses to lose an over-long
+# reply — compose_head cuts the summary at HEAD_CAP and attaches the rest as summary.md — but
+# that safety net produces a thread post that stops mid-sentence next to a file nobody opens.
+# Better output is shorter output, so the lane is told the constraint it is actually writing
+# against rather than being truncated into it. Deliberately NOT on PREAMBLE_LOCAL: a person at
+# a terminal wants the whole thing.
+PREAMBLE_LENGTH = (
+    " Discord hard-limits a message to 2000 characters. Keep `summary` under about 1500 so it "
+    "lands whole: anything longer is cut in the thread and the remainder goes up as an "
+    "attached file, which is a worse answer than a shorter one. Lead with the conclusion, give "
+    "the evidence that supports it, and leave out the narrative of how you searched. If the "
+    "detail genuinely will not fit, say what you found and what you would need to say next "
+    "rather than trailing off."
 )
 
 PREAMBLE_CHANGE = (
@@ -199,22 +219,23 @@ PREAMBLE_SPLIT = (
     "private venue, where your one reply already goes somewhere internals may be said."
 )
 
-# verdict_schema None is the SHELL lane: a person typed this prompt at this machine and is
-# waiting at a terminal for prose, not for a JSON object. The structured verdict exists so the
-# HARNESS can act on an answer — open a pull request, queue an autofix — and nothing is acting
-# on this one.
+# WHICH PREAMBLE is decided by `local`, not by the schema and not by the lane. Every lane
+# carries a verdict schema now, and the lane a locally typed prompt takes is `dev` — the same
+# one an operator directive takes — so neither of those can still answer "is there a Discord
+# thread on the other end of this". `local` is the host's answer to exactly that question.
 schema_kind = job.get("verdict_schema")
 is_change = schema_kind == "change"
+is_local = bool(job.get("local"))
 schema = None if schema_kind is None else (
     VERDICT_SCHEMA_CHANGE if is_change else VERDICT_SCHEMA_QUESTION)
-if schema_kind is None:
-    preamble = PREAMBLE_SHELL
+if is_local:
+    preamble = PREAMBLE_LOCAL
 else:
-    preamble = PREAMBLE_CHANGE if is_change else PREAMBLE_QUESTION
+    preamble = (PREAMBLE_CHANGE if is_change else PREAMBLE_QUESTION) + PREAMBLE_LENGTH
 
 trust = job.get("trust") or {}
 venue = (job.get("venue") or {}).get("kind") or "public"
-if schema_kind is not None and trust.get("tier") == "operator" and venue == "public":
+if not is_local and trust.get("tier") == "operator" and venue == "public":
     preamble += PREAMBLE_SPLIT
 
 if lane == "triage":
@@ -283,8 +304,8 @@ if model.get("effort"):
 with open(argv_path, "wb") as fh:
     fh.write(b"\0".join(a.encode("utf-8") for a in argv))
 
-sys.stderr.write("lane=%s tools=%s unity=%s resume=%s\n" % (
-    lane, caps.get("tools"), caps.get("unity"), bool(session.get("resume"))))
+sys.stderr.write("lane=%s local=%s tools=%s unity=%s resume=%s\n" % (
+    lane, is_local, caps.get("tools"), caps.get("unity"), bool(session.get("resume"))))
 PYEOF
 then
     log "ERROR: could not build the claude invocation from $JOB_FILE"

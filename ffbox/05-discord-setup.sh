@@ -157,7 +157,9 @@ for key, value in (
     # measured with no licensing trouble. See ffbox/README.md.
     ("max_unity_runs", 2),
     ("catchup_secs", 900),
-    ("rate_limits", {"answer": 200, "triage": 100, "fix": 3, "dev": 25}),
+    # No `dev` entry: it is the lane an operator directive and a locally typed prompt both
+    # take, and neither is the runaway a busy forum is. See ffwatch.py DEFAULTS.
+    ("rate_limits", {"answer": 200, "triage": 100, "fix": 3}),
     # The page. It is behind a login and served over TLS, but 127.0.0.1 is still the default:
     # it renders raw model thinking, and one hardcoded password is a thin thing to hold a LAN
     # off with. Widening it stays a deliberate edit, made here where it is reviewable.

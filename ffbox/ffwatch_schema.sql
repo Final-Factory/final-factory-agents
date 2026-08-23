@@ -29,8 +29,11 @@ CREATE TABLE IF NOT EXISTS conversation (
     kind                TEXT,                -- bug_report | suggestion | ask | mention
                                              -- | directive | operator_dm | shell | web
                                              -- shell and web are the LOCAL kinds: no Discord
-                                             -- side, and they share one lane. See LOCAL_KINDS
-                                             -- in ffwatch.py, which is what enforces that.
+                                             -- side. See LOCAL_KINDS in ffwatch.py, which is
+                                             -- what enforces that. They take the dev lane,
+                                             -- like an operator directive does; what makes
+                                             -- them different is the absence of a thread, not
+                                             -- a lane of their own.
     -- Which watch entry this conversation belongs to, recorded at ingest from the doorbell
     -- rather than reverse-mapped from a channel id later. It is what venue and engage are
     -- looked up by (design/trusted_ingress_design.txt section 5). NULL for a conversation that
@@ -47,6 +50,11 @@ CREATE TABLE IF NOT EXISTS conversation (
     session_id          TEXT,
     session_generation  INTEGER NOT NULL DEFAULT 1,
     base_sha            TEXT,
+    -- answer | triage | fix | dev. Written by queue_turn from the LAST turn queued, so it is a
+    -- convenience for the list view; turn.lane is the per-turn truth. There was a fifth value,
+    -- `shell`, until the local ingress was folded into dev (schema v8, 2026-08-23) — init_schema
+    -- rewrites any row that still says it, because the web page builds its lane filter from
+    -- DISTINCT over this column and would otherwise keep offering a lane nothing can produce.
     lane                TEXT,
     in_watermark_id     TEXT,
     out_watermark_id    TEXT,

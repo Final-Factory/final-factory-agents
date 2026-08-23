@@ -483,6 +483,20 @@ Every lane names its tools on the command line. The answer and triage lanes get
 than asked not to. If classification cannot complete, the turn runs read-only anyway and the
 record says why — a failure to decide never widens capability.
 
+**There are four lanes, and `dev` is the one for people this box already trusts.** A prompt
+typed at the shell or into the web page used to take a fifth, `shell`, which differed from
+`dev` in exactly two fields; they were merged on 2026-08-23. Both routes in are authenticated —
+an operator directive carrying a Discord-authenticated author id, or somebody with a login
+here — so `dev` gets bare `Bash` rather than the enumerated allow list, and carries no daily
+rate limit. `fix` deliberately does not: it is reached only by a triage AUTOFIX verdict, which
+is to say a stranger's bug report is what decided there should be a write turn at all.
+
+What still separates a locally typed prompt from a Discord one is `is_local_conversation`, not
+the lane, because the question was always whether there is a thread on the other end. A local
+turn gets no `<discord>` fence, no outbound row, no harness verification run, and no published
+branch; a Discord turn gets all four. The container is told which it is through `job["local"]`,
+and picks its preamble from that.
+
 Set it up with:
 
 ```bash
