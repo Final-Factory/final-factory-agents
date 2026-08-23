@@ -164,6 +164,31 @@ TLS_DAYS = 3650
 FILTER_SCRIPT = ("for (const s of document.querySelectorAll('#conversation-filters select'))"
                  " s.addEventListener('change', () => s.form.submit());")
 
+# Every page that shows live pipeline state reloads itself on a timer, because the rows on it
+# go stale on their own: a turn queued a moment ago is running now and done in a minute, and
+# the operator was watching for exactly that.
+#
+# Three things it refuses to do:
+#
+#   Interrupt typing. A reload while someone is halfway through the prompt box throws the text
+#   away, so a focused control or a box with anything in it defers the tick.
+#   Carry the acknowledgement forward. `sent` and `msg` are stripped from the URL, so a toast
+#   does not come back from the dead every minute; the filters in the rest of the query do
+#   survive, since they are what the operator chose to look at.
+#   Keep a session alive forever. Each reload is an authenticated request, and those slide the
+#   idle timeout forward — an abandoned tab would hold a signed-in session open indefinitely.
+#   Thirty ticks is half an hour; after that the page goes quiet and the hour can run out.
+REFRESH_SCRIPT = (
+    "let n = 0; const t = setInterval(() => {"
+    " if (++n > 30) { clearInterval(t); return; }"
+    " const el = document.activeElement;"
+    " if (el && el.matches && el.matches('input, select, textarea, button')) return;"
+    " const box = document.querySelector('input[name=prompt]');"
+    " if (box && box.value.trim()) return;"
+    " const u = new URL(location.href);"
+    " u.searchParams.delete('sent'); u.searchParams.delete('msg');"
+    " location.replace(u.href); }, 60000);")
+
 
 def script_hash(source):
     """The CSP source expression for an inline <script> holding exactly `source`."""
@@ -172,10 +197,11 @@ def script_hash(source):
 
 
 # Rendered on every page. There is no external resource to allow, so the policy is simply
-# "nothing but this document" plus the one hashed script above, which also neuters any
-# escaping bug that does slip through.
+# "nothing but this document" plus the two hashed scripts above, which also neuters any
+# escaping bug that does slip through. A hash is over the EXACT bytes rendered, so editing
+# either script without this line following it along breaks that script silently.
 CSP = ("default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
-       "script-src " + script_hash(FILTER_SCRIPT) + "; "
+       "script-src " + script_hash(FILTER_SCRIPT) + " " + script_hash(REFRESH_SCRIPT) + "; "
        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 
 # A ceiling on how much of one subagent chain is rendered. Not a depth limit: a subagent's
@@ -776,6 +802,18 @@ details.sidechain > summary { cursor: pointer; color: #b9a; font-size: 12px; }
 img.blob { max-width: 100%; max-height: 480px; border: 1px solid #2b313b; border-radius: 3px; }
 .empty { color: #8f98a6; font-style: italic; }
 .note { color: #8f98a6; font-size: 12px; margin: 10px 0 18px; }
+/* The acknowledgement a queued prompt gets. It says one thing and then leaves: whoever just
+   hit run does not need ffwatch's startup chatter — config warnings, the conversation it
+   opened, the turn id — pinned to the top of the page, and a note that never clears is one
+   more line to read past on every later visit. That output is still in the journal, and the
+   turn itself shows up as a row below. Pure CSS, so it costs no script budget under the CSP.
+   Failures keep .note, which stays put until it is read. */
+.toast { position: fixed; top: 54px; right: 18px; z-index: 5;
+         background: #1d2a20; border: 1px solid #3c5b40; border-radius: 5px;
+         color: #bfe3c4; padding: 8px 14px;
+         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+         animation: toast-go 5s ease-in forwards; }
+@keyframes toast-go { 0%, 60% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
 form.logout { margin: 0 0 0 auto; }
 form.logout button { font-size: 12px; color: #8f98a6; }
 main.login { max-width: 420px; margin: 12vh auto 0; }
@@ -802,7 +840,11 @@ body.signin main.login { background: rgba(20, 22, 26, 0.88); border: 1px solid #
 STYLE = STYLE.replace("@LOGIN_BACKGROUND@", LOGIN_BACKGROUND_URL)
 
 
-def page(title, body_parts, banner=""):
+def page(title, body_parts, banner="", refresh=False):
+    """`refresh` is for the pages that watch work happen — the conversation list, one
+    conversation, the outbound queue. A run transcript and the lanes table do not move once
+    they are written, and reloading a page somebody is reading through is a way to lose their
+    place."""
     return (
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
@@ -815,7 +857,9 @@ def page(title, body_parts, banner=""):
         "<form class=\"logout\" method=\"post\" action=\"/logout\">"
         "<button type=\"submit\">sign out</button></form>"
         "</header><main>"
-        + "".join(body_parts) + "</main></body></html>"
+        + "".join(body_parts) + "</main>"
+        + ("<script>" + REFRESH_SCRIPT + "</script>" if refresh else "")
+        + "</body></html>"
     )
 
 
@@ -1219,8 +1263,14 @@ class FFWebHandler(BaseHTTPRequestHandler):
             if len(prompt) > 16000:
                 return self._error(413, "prompt too long")
             ok, out = app.actions.submit(prompt)
-            note = ("queued" if ok else "failed") + ": " + short(out, 300)
-            return self._redirect("/?msg=" + urllib.parse.quote(note))
+            if ok:
+                # Nothing but the acknowledgement. `out` is ffwatch's own stdout — the config
+                # warnings it prints at startup, the conversation it opened, the turn it
+                # queued — and none of that is an answer to "did my message go". It is in the
+                # journal, and the turn appears as a row on this very page.
+                return self._redirect("/?sent=1")
+            # A failure still says everything it knows. This one does NOT clear itself.
+            return self._redirect("/?msg=" + urllib.parse.quote("failed: " + short(out, 300)))
 
         if path not in ("/actions/approve", "/actions/reject"):
             return self._error(404, "no such action")
@@ -1430,9 +1480,12 @@ class App:
         heading = f"<h1>conversations ({len(rows)})</h1>"
         msg = (query.get("msg") or [""])[0].strip()
         note = ["<p class=\"note\">" + esc(msg) + "</p>"] if msg else []
+        if (query.get("sent") or [""])[0]:
+            note.insert(0, "<div class=\"toast\">Message sent</div>")
         return page("conversations",
                     [heading] + note + [self._prompt_box(), "".join(form)] + body
-                    + [self._totals_note(), "<script>" + FILTER_SCRIPT + "</script>"])
+                    + [self._totals_note(), "<script>" + FILTER_SCRIPT + "</script>"],
+                    refresh=True)
 
     def _prompt_box(self):
         """Ask for work from the page. The same rows `ffbox "..."` makes, by the same route.
@@ -1489,7 +1542,8 @@ class App:
 
         items = self._timeline(conv_id)
         body = ["<h2>timeline</h2>"] + items
-        return page(conv["title"] or f"conversation {conv_id}", head + body)
+        return page(conv["title"] or f"conversation {conv_id}", head + body,
+                    refresh=True)
 
     def _timeline(self, conv_id):
         """THE CONVERSATION, not the machinery that carried it.
@@ -1847,7 +1901,7 @@ class App:
             body.append(self._render_outbound(row))
         if not rows:
             body.append("<p class=\"empty\">nothing queued</p>")
-        return page("outbound", head + body)
+        return page("outbound", head + body, refresh=True)
 
     def _render_outbound(self, row):
         try:

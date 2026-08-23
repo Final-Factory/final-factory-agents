@@ -834,7 +834,7 @@ def test_the_prompt_box_needs_no_flag():
         code, hdr, _b = srv.post("/actions/prompt", {"prompt": "what does the splitter do?"})
         check("a prompt POST redirects", code == 303, code)
         check("back to the conversation list where the new turn will appear",
-              (hdr.get("Location") or "").startswith("/?msg="), hdr.get("Location"))
+              (hdr.get("Location") or "") == "/?sent=1", hdr.get("Location"))
         calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
         check("it shelled out to `ffwatch submit`, so ffwatch stays the sole writer",
               calls and calls[0] == ["--state-dir", STATE, "submit", "--",
@@ -886,6 +886,76 @@ def test_the_prompt_box_needs_no_flag():
         # The other half of the grant did NOT come along for the ride.
         code, _h, _b = srv.post("/actions/approve", {"id": "1"})
         check("approve is still refused without --enable-actions", code == 403, code)
+    finally:
+        srv.stop()
+
+
+def test_a_queued_prompt_says_one_thing_and_a_failure_says_everything():
+    """What came back from `ffwatch submit` used to be pinned to the top of the page: config
+    warnings, the conversation it opened, the turn id, all of it, and none of it an answer to
+    "did my message go". Success is now an acknowledgement that clears itself. Failure is not
+    — a refused submission is the one case where the operator needs the output."""
+    srv = serve()
+    try:
+        code, hdr, _b = srv.post("/actions/prompt", {"prompt": "hello"})
+        check("the redirect carries no ffwatch output at all",
+              (hdr.get("Location") or "") == "/?sent=1", hdr.get("Location"))
+        home = text_of(srv.get("/?sent=1")[2])
+        check("the page says the one thing it was asked to say", "Message sent" in home)
+        check("and not what the stub printed", "stub ffwatch" not in home)
+        check("it is the self-clearing kind of notice", 'class="toast"' in home)
+        check("which the stylesheet really does animate away",
+              "@keyframes toast-go" in home and "visibility: hidden" in home)
+
+        # One reload later the acknowledgement is gone rather than pinned. The script strips
+        # `sent`; this is the server half of that — a plain / carries no toast.
+        check("a later visit is not still being told", 'class="toast"' not in
+              text_of(srv.get("/")[2]))
+
+        os.environ["FFWEB_TEST_RC"] = "3"
+        try:
+            code, hdr, _b = srv.post("/actions/prompt", {"prompt": "hello"})
+            loc = hdr.get("Location") or ""
+            check("a failed submission redirects with its reason", loc.startswith("/?msg="), loc)
+            page = text_of(srv.get(loc)[2])
+            check("which names the failure", "failed" in page and "stub ffwatch" in page)
+            check("and stays put instead of fading", 'class="note"' in page and
+                  'class="toast"' not in page)
+        finally:
+            os.environ["FFWEB_TEST_RC"] = "0"
+    finally:
+        srv.stop()
+
+
+def test_the_live_pages_reload_themselves():
+    """Rows on this page go stale on their own — a queued turn is running a moment later — so
+    the pages that watch work happen reload on a timer. The ones that do not move, do not."""
+    srv = serve()
+    try:
+        for path, label in [("/", "the conversation list"),
+                            ("/conversation/1", "one conversation"),
+                            ("/outbound", "the outbound queue")]:
+            body = text_of(srv.get(path)[2])
+            check(f"{label} carries the refresh script", ffweb.REFRESH_SCRIPT in body, path)
+        for path, label in [("/run/1", "a run transcript"), ("/lanes", "the lanes table")]:
+            body = text_of(srv.get(path)[2])
+            check(f"{label} does not reload under the reader",
+                  ffweb.REFRESH_SCRIPT not in body, path)
+
+        # The three refusals the script makes, read off the source rather than a browser: it
+        # backs off while a control has focus or the prompt box has text (a reload mid-sentence
+        # throws the text away), it strips the acknowledgement from the URL so a toast cannot
+        # come back every minute, and it stops after thirty ticks so an abandoned tab cannot
+        # hold a signed-in session open past the idle timeout by poking the server forever.
+        src = ffweb.REFRESH_SCRIPT
+        check("a focused control defers the tick",
+              "document.activeElement" in src and "input, select, textarea, button" in src)
+        check("and so does a prompt half-typed",
+              "input[name=prompt]" in src and "box.value.trim()" in src)
+        check("the reload drops the acknowledgement",
+              "searchParams.delete('sent')" in src and "searchParams.delete('msg')" in src)
+        check("and it does not run forever", "n > 30" in src and "clearInterval" in src)
+        check("the interval is a minute, not a hot loop", "60000" in src)
     finally:
         srv.stop()
 
@@ -1059,9 +1129,11 @@ def test_headers_and_content_types():
         home = text_of(srv.get("/")[2])
         check("the CSS is inline, with no external reference",
               "<style>" in home and not re.search(r'<(link|script)\b[^>]*\b(src|href)=', home))
-        check("the only script is the hashed filter script, admitted by hash not unsafe-inline",
-              re.findall(r'<script>(.*?)</script>', home, re.S) == [ffweb.FILTER_SCRIPT] and
+        check("the only scripts are the two hashed ones, admitted by hash not unsafe-inline",
+              re.findall(r'<script>(.*?)</script>', home, re.S) ==
+              [ffweb.FILTER_SCRIPT, ffweb.REFRESH_SCRIPT] and
               ffweb.script_hash(ffweb.FILTER_SCRIPT) in ffweb.CSP and
+              ffweb.script_hash(ffweb.REFRESH_SCRIPT) in ffweb.CSP and
               "'unsafe-inline'" not in ffweb.CSP.split("script-src")[1].split(";")[0])
     finally:
         srv.stop()
@@ -1497,6 +1569,8 @@ def main():
         test_nothing_is_served_without_a_login,
         test_the_login_background_is_served_to_a_browser_with_no_session,
         test_the_password_is_the_only_way_in,
+        test_a_queued_prompt_says_one_thing_and_a_failure_says_everything,
+        test_the_live_pages_reload_themselves,
         test_next_cannot_leave_this_origin,
         test_signing_out_ends_the_session,
         test_login_and_logout_refuse_a_cross_origin_post,

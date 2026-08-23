@@ -647,6 +647,17 @@ The Origin check has to cover it in its REFUSING form: _route_post refuses a mis
 on the actions and merely logs it on the session verbs, and a prompt is an action. A CSRF hole
 into `ffwatch submit` is a stranger running work on this box.
 
+That check turned out to be refusing the page's own forms, and the culprit was a header the
+page sends itself. Under `Referrer-Policy: no-referrer` a browser serialises the Origin of a
+non-GET, non-CORS request as the literal `null` — Fetch says the Origin header is covered by
+the referrer policy — so every form ffweb serves arrived looking cross-site. The prompt box
+403'd itself; the login form survived only because the session verbs log and continue. The
+policy is `same-origin` now, which keeps the privacy the header was for while a same-origin
+POST still carries a real Origin, and `Sec-Fetch-Site: same-origin` is accepted alongside it as
+a signal page script cannot forge. Worth remembering when a fourth ingress adds a form: a suite
+that posts without an Origin header at all takes the "not a browser, allow" branch and will
+never see this.
+
 Reply venue is private, and the reply is the run record itself: the timeline row, the
 transcript index, the result text. The same thing a waiting terminal reads.
 
