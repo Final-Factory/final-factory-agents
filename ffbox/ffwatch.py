@@ -235,12 +235,29 @@ DEFAULTS = {
     # per-lane turns per rolling 24h. `fix` mirrors the existing "max 3 autofixes per pass".
     "rate_limits": {"answer": 200, "triage": 100, "fix": 3, "dev": 25},
 
-    # alias -> conversation kind. The listener reports the parent channel's alias on every
-    # thread event, so this is enough to decide the lane without a second Discord round trip.
+    # alias -> what this channel IS. kind decides the lane; the listener reports the parent
+    # channel's alias on every thread event, so that much needs no second Discord round trip.
+    #
+    # venue and engage are the two per-channel decisions of design/trusted_ingress_design.txt
+    # sections 4 and 5, written here rather than inferred anywhere:
+    #
+    #   venue   public or private. NEVER read off Discord's permission bits. A role edit that
+    #           widened a channel would silently reclassify it, and the first sign would be a
+    #           file path posted where it should not be. Private is a decision meaning
+    #           "everyone who can read this may see internals", which is a thing to review on
+    #           purpose.
+    #   engage  all or mention. Whether every human message is considered, or only one that
+    #           addresses the bot. Spelled out on all three entries so a config that predates
+    #           the keys keeps today's behaviour: _deep_merge recurses, so an existing
+    #           {"kind": ..., "forum": ...} entry merges over these key by key rather than
+    #           replacing them.
     "watch": {
-        "ask_claude": {"kind": "ask", "forum": False},
-        "bug_reports": {"kind": "bug_report", "forum": True},
-        "suggestions": {"kind": "suggestion", "forum": True},
+        "ask_claude": {"kind": "ask", "forum": False,
+                       "venue": "public", "engage": "all"},
+        "bug_reports": {"kind": "bug_report", "forum": True,
+                        "venue": "public", "engage": "all"},
+        "suggestions": {"kind": "suggestion", "forum": True,
+                        "venue": "public", "engage": "all"},
     },
 
     # The web page's bind address, read by ffweb and rendered into ffweb.service by
@@ -362,9 +379,87 @@ def load_config():
         gh["token"] = os.environ.get(gh.get("token_env") or "GH_TOKEN") or None
     cfg["github"] = gh
     # The Discord-side config (channel aliases, guild) is read-only context for us; ffdiscord
-    # itself resolves aliases, so we never duplicate the id table here.
-    cfg["_discord"] = {k: raw.get(k) for k in ("guild_id", "channels", "mentions")}
+    # itself resolves aliases, so we never duplicate the id table here. `trust` rides along for
+    # the same reason it lives in that file at all: the LISTENER has to answer "is this an
+    # operator" and reads no other config, so the table cannot live on this side.
+    cfg["_discord"] = {k: raw.get(k) for k in ("guild_id", "channels", "mentions", "trust")}
     return cfg
+
+
+# ------------------------------------------------------------------------------------------
+# trust and venue  (design/trusted_ingress_design.txt sections 3, 4 and 5)
+# ------------------------------------------------------------------------------------------
+# Two questions, both answered from config alone: WHO is an operator, and WHERE may internals
+# be said out loud. Neither is ever decided by a model, and neither is ever read out of message
+# text — that is the single most important property of that design. These readers exist so the
+# later steps have one place to ask; nothing routes on them yet.
+
+VENUES = ("public", "private")
+ENGAGEMENTS = ("all", "mention")
+
+
+def operators(cfg):
+    """{name: snowflake} for the configured operator accounts, {} when there are none.
+
+    Anything whose value is not a digit string is DROPPED rather than kept. Usernames are
+    changeable and a trust key somebody else can claim by renaming is not a trust key, so a
+    `".slims"` in this table would match nobody while looking like it worked.
+    """
+    raw = ((cfg.get("_discord") or {}).get("trust") or {})
+    ops = raw.get("operators") if isinstance(raw, dict) else None
+    if not isinstance(ops, dict):
+        return {}
+    return {str(k): str(v) for k, v in ops.items() if str(v).isdigit()}
+
+
+def is_operator(cfg, author_id):
+    """Discord's authenticated author.id, looked up. Never a name, never message content."""
+    return bool(author_id) and str(author_id) in set(operators(cfg).values())
+
+
+def watch_entry(cfg, alias):
+    entry = (cfg.get("watch") or {}).get(alias or "")
+    return entry if isinstance(entry, dict) else {}
+
+
+def venue_for(cfg, alias):
+    """public unless a watch entry says private. A channel nobody classified is public."""
+    venue = watch_entry(cfg, alias).get("venue")
+    return venue if venue in VENUES else "public"
+
+
+def engage_for(cfg, alias):
+    """mention unless a watch entry says all. A channel nobody classified is quiet."""
+    engage = watch_entry(cfg, alias).get("engage")
+    return engage if engage in ENGAGEMENTS else "mention"
+
+
+def config_warnings(cfg):
+    """Every fail-closed default taken silently, as lines for the log.
+
+    Loud, not fatal — the same call this file makes everywhere else about config. A machine
+    part-way through setup should run on the safe answers and SAY which ones it took, because
+    the safe answers here are "nobody is trusted" and "nothing is private", and both look
+    exactly like working software until somebody expects otherwise.
+    """
+    out = []
+    if not operators(cfg):
+        raw = ((cfg.get("_discord") or {}).get("trust") or {})
+        present = isinstance(raw, dict) and raw.get("operators")
+        out.append(
+            "trust.operators in the Discord config is "
+            + ("present but holds no numeric ids (usernames are not trust keys)" if present
+               else "missing")
+            + ": NOBODY is an operator and every message is treated as a player's")
+    for alias in sorted(cfg.get("watch") or {}):
+        entry = watch_entry(cfg, alias)
+        if entry.get("venue") not in VENUES:
+            out.append(f"watch.{alias} declares no valid venue (got {entry.get('venue')!r}); "
+                       f"treating it as PUBLIC")
+        if entry.get("engage") not in ENGAGEMENTS:
+            out.append(f"watch.{alias} declares no valid engage (got {entry.get('engage')!r}); "
+                       f"waking only on a direct MENTION")
+    return out
 
 
 def now_iso():
@@ -3308,6 +3403,8 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     cfg = load_config()
+    for warning in config_warnings(cfg):
+        log(f"CONFIG: {warning}")
     if args.state_dir:
         cfg["state_dir"] = os.path.expanduser(args.state_dir)
     if args.approve_before_send:

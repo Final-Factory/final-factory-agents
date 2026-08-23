@@ -494,6 +494,79 @@ def bug_thread(fixture, tid, title, msgs):
 # ------------------------------------------------------------------------------------------
 
 
+def test_operator_table_holds_ids_only():
+    print("operators")
+    cfg = {"_discord": {"trust": {"operators": {
+        "ben": "226422780445458432", "lothsahn": "193210319093497857",
+        "impostor": ".slims"}}}}
+    ops = ffwatch.operators(cfg)
+    check("a username entry is dropped rather than kept", "impostor" not in ops, ops)
+    check("the two real ids survive",
+          set(ops.values()) == {"226422780445458432", "193210319093497857"}, ops)
+    check("an authenticated author id matches",
+          ffwatch.is_operator(cfg, "193210319093497857"))
+    check("an author id that is merely SIMILAR does not",
+          not ffwatch.is_operator(cfg, "19321031909349785"))
+    check("a name is never a trust key", not ffwatch.is_operator(cfg, "lothsahn"))
+    check("no table means nobody is an operator",
+          ffwatch.operators({}) == {} and not ffwatch.is_operator({}, "193210319093497857"))
+    check("a table of usernames also means nobody",
+          not ffwatch.is_operator({"_discord": {"trust": {"operators": {"ben": "slims"}}}},
+                                  "slims"))
+
+
+def test_venue_and_engage_come_from_the_watch_entry():
+    print("venue and engage")
+    cfg = ffwatch._deep_merge(ffwatch.DEFAULTS, {"watch": {
+        "dev_chat": {"kind": "ask", "forum": False, "venue": "private", "engage": "mention"},
+        "half_done": {"kind": "ask", "forum": False},
+        "nonsense": {"kind": "ask", "venue": "secret", "engage": "sometimes"},
+    }})
+    check("a declared private channel reads back private",
+          ffwatch.venue_for(cfg, "dev_chat") == "private")
+    check("and mention-only reads back mention",
+          ffwatch.engage_for(cfg, "dev_chat") == "mention")
+    check("the shipped ask_claude entry is public and all",
+          (ffwatch.venue_for(cfg, "ask_claude"), ffwatch.engage_for(cfg, "ask_claude"))
+          == ("public", "all"))
+    check("a shipped entry named without the new keys keeps the shipped values",
+          (ffwatch.venue_for(cfg, "bug_reports"), ffwatch.engage_for(cfg, "bug_reports"))
+          == ("public", "all"))
+    check("an entry with no venue or engage falls closed to public and mention",
+          (ffwatch.venue_for(cfg, "half_done"), ffwatch.engage_for(cfg, "half_done"))
+          == ("public", "mention"))
+    check("an entry with junk values falls closed the same way",
+          (ffwatch.venue_for(cfg, "nonsense"), ffwatch.engage_for(cfg, "nonsense"))
+          == ("public", "mention"))
+    check("a channel with no entry at all is public and mention-only",
+          (ffwatch.venue_for(cfg, "never_heard_of_it"),
+           ffwatch.engage_for(cfg, "never_heard_of_it")) == ("public", "mention"))
+
+
+def test_config_warnings_name_every_silent_default():
+    print("config warnings")
+    quiet = ffwatch._deep_merge(ffwatch.DEFAULTS, {})
+    quiet["_discord"] = {"trust": {"operators": {"ben": "226422780445458432"}}}
+    check("a fully declared config warns about nothing",
+          ffwatch.config_warnings(quiet) == [], ffwatch.config_warnings(quiet))
+    bare = ffwatch._deep_merge(ffwatch.DEFAULTS, {"watch": {"mystery": {"kind": "ask"}}})
+    bare["_discord"] = {}
+    warnings = " | ".join(ffwatch.config_warnings(bare))
+    check("a missing operator table is called out by name",
+          "trust.operators" in warnings and "NOBODY" in warnings, warnings)
+    check("an undeclared venue says which channel and which way it fell",
+          "watch.mystery" in warnings and "PUBLIC" in warnings, warnings)
+    check("an undeclared engage does too",
+          "MENTION" in warnings, warnings)
+    check("the three shipped entries are not warned about",
+          "ask_claude" not in warnings and "bug_reports" not in warnings, warnings)
+    usernames = ffwatch._deep_merge(ffwatch.DEFAULTS, {})
+    usernames["_discord"] = {"trust": {"operators": {"ben": ".slims"}}}
+    check("a table of usernames warns that it holds no ids",
+          "no numeric ids" in " ".join(ffwatch.config_warnings(usernames)),
+          ffwatch.config_warnings(usernames))
+
+
 def test_schema_idempotent():
     print("schema")
     case = Case("schema")
@@ -2627,6 +2700,9 @@ def test_allow_list_is_scope_not_a_boundary():
 
 def main():
     tests = [
+        test_operator_table_holds_ids_only,
+        test_venue_and_engage_come_from_the_watch_entry,
+        test_config_warnings_name_every_silent_default,
         test_schema_idempotent,
         test_ingest_dedupe,
         test_attachments_shared,
