@@ -148,9 +148,10 @@ tmp = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False)
 tmp.close()
 
 
-def fresh_listener(lothsahn_id="600601"):
+def fresh_listener(operator_ids=("600601",)):
     open(tmp.name, "w").close()
-    li = L.Listener("tok", {"111": "ask_claude", "222": "bug_reports"}, tmp.name, lothsahn_id=lothsahn_id)
+    li = L.Listener("tok", {"111": "ask_claude", "222": "bug_reports"}, tmp.name,
+                    operator_ids=operator_ids)
     li.bot_id = "999"
     return li
 
@@ -219,34 +220,39 @@ print("mention/reply dispatch (any channel):")
 
 li = fresh_listener()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "700", "id": "p1",
-                                       "author": {"id": "42"}, "mentions": [{"id": "999"}]})
+                                       "guild_id": "1", "author": {"id": "42"},
+                                       "mentions": [{"id": "999"}]})
 evs = events()
 check("bot @-mention in unwatched channel rings as player_mention",
       len(evs) == 1 and evs[0]["kind"] == "player_mention" and evs[0]["channel_id"] == "700"
       and evs[0]["author_id"] == "42")
 
 li = fresh_listener()
-li.handle_dispatch("MESSAGE_CREATE", {"type": 19, "channel_id": "701", "id": "p2", "author": {"id": "42"},
+li.handle_dispatch("MESSAGE_CREATE", {"type": 19, "channel_id": "701", "id": "p2",
+                                       "guild_id": "1", "author": {"id": "42"},
                                        "referenced_message": {"author": {"id": "999"}}})
 evs = events()
 check("reply to bot's own message rings as player_mention (no explicit mention needed)",
       len(evs) == 1 and evs[0]["kind"] == "player_mention")
 
 li = fresh_listener()
-li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "702", "id": "p3", "author": {"id": "42"}})
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "702", "id": "p3",
+                                       "guild_id": "1", "author": {"id": "42"}})
 check("plain unaddressed message in unwatched channel does not ring", events() == [])
 
 li = fresh_listener()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "703", "id": "p4",
-                                       "author": {"id": "42"}, "mentions": [{"id": "111"}]})
+                                       "guild_id": "1", "author": {"id": "42"},
+                                       "mentions": [{"id": "111"}]})
 check("mentioning someone else (not the bot) does not ring", events() == [])
 
 li = fresh_listener()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "704", "id": "p5",
-                                       "author": {"id": "600601"}, "mentions": [{"id": "999"}]})
+                                       "guild_id": "1", "author": {"id": "600601"},
+                                       "mentions": [{"id": "999"}]})
 evs = events()
-check("bot @-mention from the CONFIGURED lothsahn id rings as lothsahn_directive",
-      len(evs) == 1 and evs[0]["kind"] == "lothsahn_directive" and evs[0]["author_id"] == "600601")
+check("bot @-mention from a CONFIGURED operator id rings as operator_directive",
+      len(evs) == 1 and evs[0]["kind"] == "operator_directive" and evs[0]["author_id"] == "600601")
 
 li = fresh_listener()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "111", "id": "p6",
@@ -255,12 +261,43 @@ evs = events()
 check("lothsahn mentioning the bot INSIDE an already-watched channel still just rings 'message' "
       "(no double-fire)", len(evs) == 1 and evs[0]["kind"] == "message")
 
-li = fresh_listener(lothsahn_id=None)
+li = fresh_listener(operator_ids=())
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "705", "id": "p7",
-                                       "author": {"id": "600601"}, "mentions": [{"id": "999"}]})
+                                       "guild_id": "1", "author": {"id": "600601"},
+                                       "mentions": [{"id": "999"}]})
 evs = events()
-check("with lothsahn_id unconfigured, the same author is just an ordinary player_mention",
+check("with no operators configured, the same author is just an ordinary player_mention",
       len(evs) == 1 and evs[0]["kind"] == "player_mention")
+
+# -- direct messages ---------------------------------------------------------------------
+# A DM carries no guild_id, and that is the only signal available: MESSAGE_CREATE does not
+# carry the channel type, so the one-to-one/group distinction is settled by ffwatch later.
+print("\ndirect messages:")
+
+li = fresh_listener()
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "dm1", "id": "d1",
+                                       "author": {"id": "600601"}})
+evs = events()
+check("a DM from an operator rings as operator_dm, with no mention needed",
+      len(evs) == 1 and evs[0]["kind"] == "operator_dm" and evs[0]["channel_id"] == "dm1")
+
+li = fresh_listener()
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "dm2", "id": "d2",
+                                       "author": {"id": "42"}})
+check("a DM from anyone else rings nothing at all", events() == [])
+
+li = fresh_listener()
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "dm3", "id": "d3",
+                                       "author": {"id": "42"}, "mentions": [{"id": "999"}]})
+check("and mentioning the bot inside that DM does not get a stranger in either",
+      events() == [])
+
+li = fresh_listener()
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "111", "id": "d4",
+                                       "author": {"id": "600601"}})
+evs = events()
+check("a watched channel is never mistaken for a DM, whatever the payload carries",
+      len(evs) == 1 and evs[0]["kind"] == "message")
 
 os.unlink(tmp.name)
 

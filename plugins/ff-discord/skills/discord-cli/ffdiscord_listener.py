@@ -10,9 +10,11 @@ Discord Gateway websocket open and appends a single JSON line to
   - a new thread appears in a watched forum           -> kind "thread"
   - a human reply lands in such a thread              -> kind "thread_message"
   - the bot is @-mentioned/replied-to ANYWHERE ELSE by
-    the configured Lothsahn account                   -> kind "lothsahn_directive"
+    an account in the configured operator set         -> kind "operator_directive"
   - the bot is @-mentioned/replied-to ANYWHERE ELSE by
     any other human                                   -> kind "player_mention"
+  - an operator sends the bot a DIRECT MESSAGE        -> kind "operator_dm"
+    (a DM from anyone else rings nothing at all)
   - the listener (re)started or lost resume state      -> kind "catchup"
 
 The line is a DOORBELL, not the mail. It carries ids only — the consumer still pulls
@@ -22,18 +24,19 @@ never correctness. Gaps self-heal: the Gateway resume protocol replays dispatche
 missed during short disconnects, and any path that can lose events (fresh start,
 failed resume) emits a `catchup` line so one sweep runs.
 
-`lothsahn_directive` vs `player_mention` is decided from Discord's own authenticated
-`author.id` on the dispatch — never from message content. A message merely CLAIMING
-to be Lothsahn is worthless (see discord-answerer's untrusted-input rules); the
-Gateway's author field is not spoofable without compromising his Discord account, so
+`operator_directive` and `operator_dm` versus `player_mention` is decided from Discord's
+own authenticated `author.id` on the dispatch — never from message content. A message
+merely CLAIMING to be Ben or Lothsahn is worthless (see discord-answerer's untrusted-input
+rules); the Gateway's author field is not spoofable without compromising the account, so
 it's the one signal in this whole pipeline actually safe to key elevated trust off of.
-`lothsahn_id` comes from the same config as everything else (`mentions.lothsahn`) —
-never hardcoded.
+The ids come from `trust.operators` in the same config as everything else, with
+`mentions.lothsahn` read as a fallback for a machine that predates that table — never
+hardcoded, and never a username, which is renameable.
 
 Zero dependencies, like ffdiscord.py: a minimal RFC 6455 websocket client over
 ssl+socket, Gateway v10 (hello / identify / heartbeat / resume). Intents are
-GUILDS + GUILD_MESSAGES only — the privileged MESSAGE_CONTENT intent is deliberately
-NOT requested; the listener never sees message text. Mention/reply detection doesn't
+GUILDS + GUILD_MESSAGES + DIRECT_MESSAGES, none of them privileged — MESSAGE_CONTENT is
+deliberately NOT requested; the listener never sees message text. Mention/reply detection doesn't
 need it either: `mentions` and `referenced_message` are structured relationship
 fields Discord does not gate behind MESSAGE_CONTENT — exactly why this design works
 without asking for the players'-eyes-only privileged intent.
@@ -80,7 +83,11 @@ EVENTS_PATH = os.path.join(CONFIG_DIR, "events.jsonl")
 LOG_PATH = os.path.join(CONFIG_DIR, "listener.log")
 LOCK_PATH = os.path.join(CONFIG_DIR, "listener.lock")
 
-INTENTS = (1 << 0) | (1 << 9)  # GUILDS | GUILD_MESSAGES — no privileged intents
+# GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES. None of the three is privileged.
+# DIRECT_MESSAGES is what makes an operator DM ring at all; without it a DM to the bot is
+# delivered nowhere and the doorbell never fires. MESSAGE_CONTENT is still deliberately NOT
+# requested: this file carries ids, and the text is pulled over REST, which intents do not gate.
+INTENTS = (1 << 0) | (1 << 9) | (1 << 12)
 
 # Close codes where retrying can never help (bad token / bad intents / bad version).
 FATAL_CLOSE_CODES = {4004, 4010, 4011, 4012, 4013, 4014}
@@ -243,11 +250,14 @@ class WS:
 
 
 class Listener:
-    def __init__(self, token, watch_ids, events_path, lothsahn_id=None, debug=False):
+    def __init__(self, token, watch_ids, events_path, operator_ids=None, debug=False):
         self.token = token
         self.watch_ids = watch_ids  # channel id -> alias
         self.events_path = events_path
-        self.lothsahn_id = lothsahn_id
+        # Discord snowflakes, from config. The ONE signal in this pipeline safe to key elevated
+        # trust off, because the gateway's author.id is not spoofable without owning the
+        # account. Never a username: those are renameable.
+        self.operator_ids = set(operator_ids or ())
         self.debug = debug
         self.thread_parents = {}  # thread id -> watched parent id (seen this process)
         self.bot_id = None
@@ -323,14 +333,31 @@ class Listener:
                 parent = self.thread_parents[ch]
                 self.emit("thread_message", self.watch_ids[parent], ch, d.get("id"), author_id)
                 return None
+            # A DIRECT MESSAGE. guild_id is present on every guild message and absent here, and
+            # it is the only signal available: MESSAGE_CREATE does not carry the channel's type,
+            # so a one-to-one DM and a group DM look identical from this side. ffwatch settles
+            # that with a channel fetch before it makes a conversation.
+            #
+            # This branch must come BEFORE the _bot_is_addressed fall-through below. In a DM
+            # nobody @-mentions the bot, so that test says "not addressed" and the message
+            # would be dropped.
+            if not d.get("guild_id"):
+                if author_id in self.operator_ids:
+                    self.emit("operator_dm", None, ch, d.get("id"), author_id)
+                # Anyone else DMing the bot is ignored outright, and deliberately: any user who
+                # shares a guild can open one, and a DM has no moderator watching, no other
+                # players to correct a wrong answer, and no public record. #ask-assistant is the
+                # supported surface.
+                return None
+
             # Not one of the swept channels/threads — only ring if directly addressed.
             # This is what makes "any channel the bot is in" work without maintaining
             # a channel list: GUILD_MESSAGES already delivers every channel the bot can
             # see: we just filter for "was I actually spoken to" everywhere else.
             if not self._bot_is_addressed(d):
                 return None
-            if self.lothsahn_id and author_id == self.lothsahn_id:
-                self.emit("lothsahn_directive", ch, ch, d.get("id"), author_id)
+            if author_id in self.operator_ids:
+                self.emit("operator_directive", ch, ch, d.get("id"), author_id)
             else:
                 self.emit("player_mention", ch, ch, d.get("id"), author_id)
             return None
@@ -481,16 +508,24 @@ def main(argv=None):
             return 2
         watch_ids[cid] = name
 
-    lothsahn_id = cfg["mentions"].get("lothsahn")
-    if not lothsahn_id:
-        log("WARNING: mentions.lothsahn not configured — lothsahn_directive will never fire, "
-            "his messages will be treated as ordinary player_mention events")
+    # trust.operators is the table; mentions.lothsahn is read as a fallback so a machine that
+    # has not run the newer setup keeps working. Digit strings only: a username in this table
+    # would match nobody while looking like it worked.
+    operators = (cfg.get("trust") or {}).get("operators") or {}
+    operator_ids = {str(v) for v in operators.values() if str(v).isdigit()}
+    if not operator_ids and str(cfg["mentions"].get("lothsahn") or "").isdigit():
+        operator_ids = {str(cfg["mentions"]["lothsahn"])}
+        log("WARNING: no trust.operators configured; falling back to mentions.lothsahn")
+    if not operator_ids:
+        log("WARNING: no operators configured — no directive and no DM will ever fire, and "
+            "every mention will be treated as an ordinary player_mention")
 
     lock = acquire_instance_lock()  # held until process exit
     rotate_events_file(args.events_path)
-    listener = Listener(cfg["token"], watch_ids, args.events_path, lothsahn_id=lothsahn_id, debug=args.debug)
+    listener = Listener(cfg["token"], watch_ids, args.events_path,
+                        operator_ids=operator_ids, debug=args.debug)
     log(f"listener starting (pid {os.getpid()}) channels={args.channels} intents={INTENTS} "
-        f"lothsahn_id={'set' if lothsahn_id else 'MISSING'}")
+        f"operators={len(operator_ids)}")
     if not args.once_ready:
         # Anything that arrived while no listener was running needs one sweep.
         listener.emit_catchup("listener startup")
