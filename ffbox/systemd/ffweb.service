@@ -14,7 +14,9 @@
 # start. That is one password against whoever can reach the port, so the default stays
 # loopback: on a laptop use `ssh -N -L 8787:127.0.0.1:8787 thisbox`. On a build server people
 # work against, a LAN address is a reasonable trade — but it is a trade, so make it
-# deliberately. Sessions live in memory, so restarting this unit signs everyone out.
+# deliberately. Sessions survive a restart of this unit (their hashes live in
+# <state-dir>/ffweb-sessions.json, 0600) and time out after an hour of inactivity. Delete that
+# file and restart to sign everyone out by hand.
 #
 # It never writes: the database is opened file:...?mode=ro and ffwatch stays the sole writer.
 # --enable-actions (approve/reject on the outbound queue) is deliberately NOT set here; it

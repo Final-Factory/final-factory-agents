@@ -20,6 +20,7 @@ asserted rather than assumed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -240,8 +241,10 @@ class Server:
     login=False gets a client that has never authenticated, which is what the gate tests want.
     """
 
+    _session_seq = 0
+
     def __init__(self, state, db_path, blobs, ffwatch_py, enable_actions=False, tls=False,
-                 login=True):
+                 login=True, session_path=None, ttl=ffweb.SESSION_TTL_SECS):
         scheme = "https" if tls else "http"
         # The port has to be known BEFORE App is built: App copies the set it is given, so an
         # allowlist filled in afterwards would silently stay empty and every case here would
@@ -251,9 +254,17 @@ class Server:
         port = probe.getsockname()[1]
         probe.close()
         origins = {f"{scheme}://127.0.0.1:{port}", f"{scheme}://localhost:{port}"}
+        # Its OWN session file unless a test deliberately shares one: two servers pointed at
+        # one file would otherwise hand each other sessions, and a case that meant to prove
+        # isolation would pass for the wrong reason.
+        if session_path is None:
+            Server._session_seq += 1
+            session_path = os.path.join(TMPROOT, f"sessions-{Server._session_seq}.json")
+        self.session_path = session_path
         self.app = ffweb.App(db_path, blobs, state, ffwatch_py,
                              enable_actions=enable_actions, quiet=True, origins=origins,
-                             scheme=scheme)
+                             scheme=scheme,
+                             sessions=ffweb.Sessions(ttl=ttl, path=session_path))
         ctx = None
         self.client_ctx = None
         if tls:
@@ -336,6 +347,7 @@ class Server:
     def stop(self):
         self.httpd.shutdown()
         self.httpd.server_close()
+        self.app.sessions.close()
         self.app.db.close()
         self.thread.join(timeout=5)
 
@@ -1206,6 +1218,116 @@ def test_openssl_is_present():
     check("openssl is on PATH (ffweb needs it to mint the certificate)", ok, detail)
 
 
+def test_sessions_survive_a_restart():
+    """A deploy restarts this unit. Signing everyone out every time the code moves is a tax."""
+    path = os.path.join(TMPROOT, "restart-sessions.json")
+    if os.path.exists(path):
+        os.remove(path)
+
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, session_path=path)
+    cookie = srv.cookie
+    check("signing in wrote the session file", os.path.isfile(path), path)
+    mode = os.stat(path).st_mode & 0o777
+    check("the session file is not world-readable", mode == 0o600, oct(mode))
+
+    # The token itself must not be in the file: it is a bearer credential, and the state
+    # directory gets backed up like anything else in it.
+    raw = open(path, encoding="utf-8").read()
+    token = cookie.split("=", 1)[1]
+    check("the token is stored hashed, not in the clear", token not in raw, raw[:120])
+    check("its sha256 is what is stored",
+          hashlib.sha256(token.encode()).hexdigest() in raw, raw[:200])
+    srv.stop()
+
+    # "Restart": a brand new server and a brand new Sessions over the same file.
+    again = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, session_path=path, login=False)
+    try:
+        again.cookie = cookie
+        code, _hdr, body = again.get("/")
+        check("the cookie from before the restart still works",
+              code == 200 and b"conversations" in body, code)
+
+        # ... and signing out still reaches the file, so it does not come back next restart.
+        again.post("/logout", {})
+        third = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, session_path=path, login=False)
+        try:
+            third.cookie = cookie
+            check("a signed-out session does not survive the restart either",
+                  third.get("/")[0] == 303, third.get("/")[0])
+        finally:
+            third.stop()
+    finally:
+        again.stop()
+
+
+def test_the_session_times_out_after_an_hour_of_inactivity():
+    check("the timeout is one hour", ffweb.SESSION_TTL_SECS == 3600, ffweb.SESSION_TTL_SECS)
+
+    # Driven through a 1-second ttl rather than by waiting an hour.
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, ttl=1)
+    try:
+        check("a fresh session works", srv.get("/")[0] == 200)
+        # Activity slides it forward: three requests over more than one ttl, still in.
+        slid = True
+        for _ in range(3):
+            time.sleep(0.6)
+            if srv.get("/")[0] != 200:
+                slid = False
+        check("activity pushes the expiry out rather than counting from sign-in", slid)
+        # Then stop using it for longer than the ttl.
+        time.sleep(1.4)
+        code, hdr, _b = srv.get("/")
+        check("an idle session expires and lands on the login form",
+              code == 303 and hdr.get("Location", "").startswith("/login"), code)
+    finally:
+        srv.stop()
+
+    # The browser's copy has to slide too, or the cookie would be dropped an hour after
+    # SIGN-IN however much the page was used, and the sliding expiry would be server-side
+    # fiction the browser never honoured.
+    srv = serve()
+    try:
+        _c, hdr, _b = srv.get("/")
+        cookie = hdr.get("Set-Cookie", "")
+        check("an authenticated response re-sends the cookie with a fresh Max-Age",
+              f"Max-Age={ffweb.SESSION_TTL_SECS}" in cookie, cookie)
+        check("the refreshed cookie carries the same token, not a new session",
+              srv.cookie.split("=", 1)[1] in cookie, cookie)
+        check("the refreshed cookie keeps HttpOnly and SameSite",
+              "HttpOnly" in cookie and "SameSite=Lax" in cookie, cookie)
+
+        # Sign-out says what the cookie must become; nothing may contradict it.
+        _c, hdr, _b = srv.post("/logout", {})
+        cookies = [v for k, v in hdr.items() if k.lower() == "set-cookie"]
+        check("sign-out sends exactly one Set-Cookie, the clearing one",
+              len(cookies) == 1 and "Max-Age=0" in cookies[0], cookies)
+    finally:
+        srv.stop()
+
+
+def test_the_session_store_survives_a_bad_file():
+    """Unreadable state means everyone signs in again. It must not mean ffweb will not start."""
+    path = os.path.join(TMPROOT, "corrupt-sessions.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("{not json at all")
+    said = []
+    store = ffweb.Sessions(path=path, on_error=said.append)
+    check("a corrupt session file starts empty instead of raising", not store.valid("x"))
+    check("and says so once", said and "could not read" in said[0], said)
+
+    token = store.issue()
+    check("a new session is issued over the corrupt file", store.valid(token))
+    check("and the file is now valid json",
+          isinstance(json.load(open(path, encoding="utf-8")), dict))
+
+    # An entry that is already past its expiry is dropped at load, not served.
+    stale = hashlib.sha256(b"stale").hexdigest()
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"version": 1, "tokens": {stale: time.time() - 10}}, fh)
+    check("an expired entry does not come back after a restart",
+          not ffweb.Sessions(path=path).valid("stale"))
+
+
 def main():
     print("ffweb — read-only web UI")
     tests = [
@@ -1231,6 +1353,9 @@ def main():
         test_openssl_is_present,
         test_a_self_signed_certificate_is_generated,
         test_https_is_what_is_actually_on_the_wire,
+        test_sessions_survive_a_restart,
+        test_the_session_times_out_after_an_hour_of_inactivity,
+        test_the_session_store_survives_a_bad_file,
     ]
     for fn in tests:
         try:
