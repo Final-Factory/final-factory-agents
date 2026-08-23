@@ -244,7 +244,8 @@ class Server:
     _session_seq = 0
 
     def __init__(self, state, db_path, blobs, ffwatch_py, enable_actions=False, tls=False,
-                 login=True, session_path=None, ttl=ffweb.SESSION_TTL_SECS):
+                 login=True, session_path=None, ttl=ffweb.SESSION_TTL_SECS,
+                 enable_prompts=False):
         scheme = "https" if tls else "http"
         # The port has to be known BEFORE App is built: App copies the set it is given, so an
         # allowlist filled in afterwards would silently stay empty and every case here would
@@ -263,7 +264,7 @@ class Server:
         self.session_path = session_path
         self.app = ffweb.App(db_path, blobs, state, ffwatch_py,
                              enable_actions=enable_actions, quiet=True, origins=origins,
-                             scheme=scheme,
+                             scheme=scheme, enable_prompts=enable_prompts,
                              sessions=ffweb.Sessions(ttl=ttl, path=session_path))
         ctx = None
         self.client_ctx = None
@@ -419,8 +420,9 @@ ROUTES = ["/", "/lanes", "/outbound", "/outbound?status=pending",
          ["/blob/" + d for d in BLOB_IDS.values()]
 
 
-def serve(enable_actions=False):
-    return Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, enable_actions=enable_actions)
+def serve(enable_actions=False, enable_prompts=False):
+    return Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, enable_actions=enable_actions,
+                  enable_prompts=enable_prompts)
 
 
 def text_of(body):
@@ -807,12 +809,82 @@ def test_actions_call_ffwatch_not_the_database():
         srv.stop()
 
 
+def test_the_prompt_box_is_its_own_grant():
+    """Submitting work is a larger grant than approving a reply somebody already wrote, so it
+    has its own flag and its own guards rather than riding on --enable-actions."""
+    srv = serve(enable_actions=True)
+    try:
+        code, _h, body = srv.get("/")
+        check("with actions on but prompts off, the box is not rendered",
+              'action="/actions/prompt"' not in text_of(body) and code == 200)
+        check("and the page says which flag it wants",
+              "--enable-prompts" in text_of(body))
+        open(CALLS, "w").close()
+        code, _h, _b = srv.post("/actions/prompt", {"prompt": "what does the splitter do?"})
+        check("a prompt POST is refused without the flag, even with actions enabled",
+              code == 403, code)
+        check("and ffwatch was not invoked", os.path.getsize(CALLS) == 0)
+    finally:
+        srv.stop()
+
+    srv = serve(enable_prompts=True)
+    try:
+        code, _h, body = srv.get("/")
+        check("with the flag on, the box is on the page",
+              'action="/actions/prompt"' in text_of(body), code)
+        open(CALLS, "w").close()
+        code, hdr, _b = srv.post("/actions/prompt", {"prompt": "what does the splitter do?"})
+        check("a prompt POST redirects", code == 303, code)
+        check("back to the conversation list where the new turn will appear",
+              (hdr.get("Location") or "").startswith("/?msg="), hdr.get("Location"))
+        calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
+        check("it shelled out to `ffwatch submit`, so ffwatch stays the sole writer",
+              calls and calls[0] == ["--state-dir", STATE, "submit", "--",
+                                     "what does the splitter do?"], calls)
+
+        # No shell is involved: subprocess.run takes a list, so this is one argv element and
+        # the semicolons are text. The check is that it arrives INTACT rather than split.
+        open(CALLS, "w").close()
+        nasty = "look at $(id); `whoami` && rm -rf / ; echo done"
+        srv.post("/actions/prompt", {"prompt": nasty})
+        calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
+        check("shell metacharacters arrive as one inert argv element",
+              calls and calls[0][-1] == nasty and calls[0][-2] == "--", calls)
+
+        code, _h, _b = srv.post("/actions/prompt", {"prompt": "   "})
+        check("an empty prompt is refused", code == 400, code)
+
+        open(CALLS, "w").close()
+        code, _h, _b = srv.post("/actions/prompt", {"prompt": "hi"},
+                                headers={"Origin": "http://evil.example"})
+        check("a cross-origin prompt POST is REFUSED, not merely logged", code == 403, code)
+        check("and ffwatch was not invoked for it", os.path.getsize(CALLS) == 0)
+    finally:
+        srv.stop()
+
+    # Signed out, the route is a redirect to the login page and never a submission.
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, enable_prompts=True, login=False)
+    try:
+        open(CALLS, "w").close()
+        code, hdr, _b = srv.post("/actions/prompt", {"prompt": "hi"})
+        check("a signed-out prompt POST is redirected to the login page", code == 303, code)
+        check("and runs nothing", os.path.getsize(CALLS) == 0)
+        del hdr
+    finally:
+        srv.stop()
+
+
 def test_actions_refuse_a_public_bind():
     """--enable-actions on a non-loopback host must not come up without saying so out loud."""
     argv = ["--host", "0.0.0.0", "--enable-actions", "--db", DB_PATH,
             "--state-dir", STATE, "--blobs", BLOBS, "--port", "0"]
     rc = run_main(argv)
     check("main() refuses --enable-actions on 0.0.0.0", rc == 2, rc)
+    # The same guard has to NAME the prompt flag: the two are independent, and a check written
+    # against one covers the other only by accident.
+    rc = run_main(["--host", "0.0.0.0", "--enable-prompts", "--db", DB_PATH,
+                   "--state-dir", STATE, "--blobs", BLOBS, "--port", "0"])
+    check("and refuses --enable-prompts there too", rc == 2, rc)
     check("is_loopback recognises the loopback forms",
           all(ffweb.is_loopback(h) for h in ("127.0.0.1", "localhost", "::1", "127.0.0.5")) and
           not any(ffweb.is_loopback(h) for h in ("0.0.0.0", "10.0.0.4", "example.com")))
@@ -1376,6 +1448,7 @@ def main():
         test_a_long_subagent_chain_is_not_truncated,
         test_actions_are_off_by_default,
         test_actions_call_ffwatch_not_the_database,
+        test_the_prompt_box_is_its_own_grant,
         test_actions_refuse_a_public_bind,
         test_a_stale_schema_is_refused_with_a_fixable_message,
         test_aggregates_match_hand_computed_values,
