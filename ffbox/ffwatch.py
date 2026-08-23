@@ -277,12 +277,13 @@ DEFAULTS = {
     },
 
     # The web page's bind address, read by ffweb and rendered into ffweb.service by
-    # 06-services.sh so both agree. 127.0.0.1 is the safe default and the right answer on a
-    # laptop; a build server that people reach over the LAN sets its own address here. THE PAGE
-    # HAS NO AUTHENTICATION — anyone who can reach the port reads player messages, repo
-    # internals, the contents of files agents read, and raw model thinking. Widen this only to
-    # a network you would hand those to, and leave actions off (ffweb refuses to combine
-    # --enable-actions with a non-loopback host unless --allow-remote-actions is also given).
+    # 06-services.sh so both agree. A build server that people reach over the LAN sets its own
+    # address here; 127.0.0.1 is what a machine with no opinion gets. The page is behind a
+    # login and TLS, but it is ONE password, and whoever gets past it reads player messages,
+    # repo internals, the contents of files agents read and raw model thinking, and can start
+    # work on this box from the prompt box. Point this at a network you would hand all of that
+    # to, and leave actions off (ffweb refuses to combine --enable-actions with a non-loopback
+    # host unless --allow-remote-actions is also given).
     "web_host": "127.0.0.1",
     "web_port": 8787,
 

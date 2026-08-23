@@ -17,6 +17,9 @@ channel does not burn a run on "thanks".
 Revision 5, 2026-08-22: the gate runs on every message in all three watched channels,
 including the first message of a new thread, and its bias toward answering is written as
 rules rather than as an adjective (section 5).
+Revision 10, 2026-08-22: the prompt box loses its flag — starting a conversation is what the
+page is for, and the login is the grant (section 12). The bind is a deliberate LAN address on
+the build server, so this section stops treating loopback as the thing holding the page shut.
 Revision 9, 2026-08-22: the seat lock is gone. Revision 7 designed lazy activation and a
 cross-container flock around a constraint that turned out to be a hedge rather than a
 measurement; Lothsahn has run four game-ci containers in parallel with no licensing trouble, so
@@ -594,33 +597,49 @@ added first rather than a guarantee. They are separate tables in separate files,
 is a lookup that can miss: an ffweb account with no matching trust.operators key is not an
 operator, and gets nothing. Fail closed, as everywhere else.
 
+The page is bound to a LAN address on the build server, deliberately: it is where the queue,
+the transcripts and the verification rows are read, and the people who read them are not always
+sitting at the box. The login and TLS are what hold it shut, and that is the arrangement rather
+than a lapse from a loopback ideal.
+
 Two things still make this login weaker than a Unix account on the box, and both are worth
-fixing before the page is exposed anywhere but loopback, because section 2's rule says an
-ingress may not grant more than the asker already holds:
+fixing, because section 2's rule says an ingress may not grant more than the asker already
+holds:
 
   - FFWEB_PASSWORD sets ONE password for every account in the table, so the two accounts are
-    not distinguishable by anything secret. Per-account passwords before remote exposure.
+    not distinguishable by anything secret. Per-account passwords are the next thing to do here.
   - The certificate is self-signed, so the browser warning is accurate and the operator is
     trained to click through it. That protects the password from passive capture and not from
     an active man in the middle.
 
-Until both are addressed, keeping the bind on loopback is what makes shell-equivalent
-capability defensible, and it is a deployment choice rather than something the code enforces.
+Both are reasons to be careful about WHICH network the bind faces, which is a deployment choice
+made in the config rather than something the code enforces.
 
 ffweb currently writes nothing, and that property is worth keeping, so a prompt box does what
 approve/reject already does: shell out to ffwatch, which owns the database.
 
     POST /prompt  ->  ffwatch submit "<text>"  ->  the same rows a shell prompt makes
 
-Its own flag, --enable-prompts, separate from --enable-actions. Submitting work is a larger
-grant than approving a queued reply, and the two should not ride on one switch.
+No flag in front of it. This was tried the other way first, with a --enable-prompts to match
+--enable-actions, on the reasoning that submitting work is a larger grant than approving a
+queued reply. The reasoning holds for approve/reject and does not hold here: section 13 already
+sets web (operator-only) equal to shell, so the person reading this page is the person who
+could open a terminal on this box, and a switch in front of the box only ever produced an
+operator finding a dead page and a note naming a flag. Starting a conversation is what the page
+is FOR. The login is the grant, and the bind address is where the decision about who reaches
+the login gets made.
 
-Two existing guards have to LEARN about the new flag rather than covering it for free. The
-startup refusal is written against --enable-actions specifically, so it needs the same test for
---enable-prompts: no prompt box on a non-loopback bind without --allow-remote-actions said out
-loud. And the Origin check has to cover the prompt route, in its REFUSING form: _route_post
-refuses a mismatched Origin on the actions and merely logs it on the session verbs, and a
-prompt is an action. A CSRF hole into `ffwatch submit` is a stranger running work on this box.
+That leaves approve/reject as the only flagged surface, and it stays flagged for a reason that
+is about DISCLOSURE and not about capability: it releases a reply into a public Discord thread,
+where a prompt runs work in a container that cannot post at all. Same reason the startup
+refusal on a non-loopback bind is written against --enable-actions alone — a test against the
+prompt box would refuse every non-loopback bind there is, which is a way of saying the bind is
+already the decision.
+
+One existing guard does have to LEARN about the prompt route rather than covering it for free.
+The Origin check has to cover it in its REFUSING form: _route_post refuses a mismatched Origin
+on the actions and merely logs it on the session verbs, and a prompt is an action. A CSRF hole
+into `ffwatch submit` is a stranger running work on this box.
 
 Reply venue is private, and the reply is the run record itself: the timeline row, the
 transcript index, the result text. The same thing a waiting terminal reads.
@@ -798,9 +817,9 @@ Still open:
      can arrive minutes apart when the queue is gated.
 
   i. Should the private half ever be a LINK instead of content? The whole run is already on the
-     web page, in more detail than a DM can hold. A link is cheaper, leaks nothing to Discord,
-     and is useless off the box while the page is loopback-only. Content now, link later if the
-     page ever gets an operator-reachable address?
+     web page, in more detail than a DM can hold. A link is cheaper and leaks nothing to
+     Discord, and now that the page has an operator-reachable address it is not useless off the
+     box either. Content now, link once the address is stable enough to paste into a DM?
 
   j. Operator DMs are a conversation with no channel to scope them. Two unrelated questions
      DM'd an hour apart: same conversation and one growing session, or a new conversation per

@@ -1,33 +1,43 @@
 [Unit]
-# The read-only web UI over ffwatch.db (design section 19).
+# The web UI over ffwatch.db (design section 19).
 #
 # @FFWEB@ is substituted with the absolute path to ffbox/ffweb.py by 06-services.sh — this
 # repo can be cloned anywhere, so the unit cannot carry a fixed path. Re-run
 # `sudo sh ffbox/06-services.sh --install` after moving the checkout.
 #
-# THE BIND ADDRESS COMES FROM THE CONFIG (ffwatch.web_host, default 127.0.0.1) and is rendered
-# in here by 06-services.sh. The page renders transcript_event, which holds repo internals,
-# file contents the agent read and raw model thinking, alongside Discord message text. It is
-# behind a login (hardcoded accounts for Ben and Lothsahn; FFWEB_PASSWORD / FFWEB_USER in
-# secrets.env override them) and served over TLS with a self-signed certificate minted into
-# <state-dir>/tls on first
-# start. That is one password against whoever can reach the port, so the default stays
-# loopback: on a laptop use `ssh -N -L 8787:127.0.0.1:8787 thisbox`. On a build server people
-# work against, a LAN address is a reasonable trade — but it is a trade, so make it
-# deliberately. Sessions survive a restart of this unit (their hashes live in
-# <state-dir>/ffweb-sessions.json, 0600) and time out after an hour of inactivity. Delete that
-# file and restart to sign everyone out by hand.
+# THE BIND ADDRESS COMES FROM THE CONFIG (ffwatch.web_host) and is rendered in here by
+# 06-services.sh, so changing it means editing the config and re-running that script — not
+# editing this file. On a build server people work against, that is the LAN address; a machine
+# with no opinion gets 127.0.0.1.
 #
-# It never writes: the database is opened file:...?mode=ro and ffwatch stays the sole writer.
-# --enable-actions (approve/reject on the outbound queue) is deliberately NOT set here; it
-# shells out to `ffwatch approve`, and a unit that carries it would mean anything that can
-# reach the port can release a reply into a public thread. Add it by hand, on this box, when
-# approve_before_send is on and someone is actually moderating.
+# The page renders transcript_event, which holds repo internals, file contents the agent read
+# and raw model thinking, alongside Discord message text. What holds it shut is a login
+# (hardcoded accounts for Ben and Lothsahn; FFWEB_PASSWORD / FFWEB_USER in secrets.env override
+# them) and TLS with a self-signed certificate minted into <state-dir>/tls on first start. That
+# is ONE password, so point the bind at a network you would hand all of the above to. Sessions
+# survive a restart of this unit (their hashes live in <state-dir>/ffweb-sessions.json, 0600)
+# and time out after an hour of inactivity. Delete that file and restart to sign everyone out
+# by hand.
+#
+# It never writes the database itself: the connection is opened file:...?mode=ro and ffwatch
+# stays the sole writer. Where the page needs to act it shells out to ffwatch, and there are
+# two such surfaces, set independently:
+#
+#   The prompt box is ALWAYS ON, for anyone who gets past the login. It runs
+#   `ffwatch submit`, which queues the same turn `ffbox "..."` does, in the same disposable
+#   container that cannot reach Discord. Whoever holds the password holds shell-equivalent
+#   capability on this box, which is the same thing the login already meant — so the bind
+#   address above, not a flag, is the decision about who can do it.
+#
+#   --enable-actions (approve/reject on the outbound queue) is deliberately NOT set here. It
+#   shells out to `ffwatch approve`, and a unit that carries it would mean anything that can
+#   reach the port can release a reply into a public thread. Add it by hand, on this box, when
+#   approve_before_send is on and someone is actually moderating.
 #
 # NOT OPTIONAL. It is part of ffbox.target and comes up with the pipeline: the outbound queue,
 # the run transcripts and the verification rows are only legible through this page, and a
 # moderation queue nobody can see is not a moderation queue.
-Description=ffweb (read-only web UI for ffwatch)
+Description=ffweb (web UI for ffwatch)
 PartOf=ffbox.target
 After=network.target ffwatch.service
 Wants=ffwatch.service

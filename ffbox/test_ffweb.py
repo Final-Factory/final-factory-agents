@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests for ffweb.py — the read-only web UI.
+"""Offline tests for ffweb.py — the web UI.
 
 Run: python3 ffbox/test_ffweb.py
 
@@ -244,8 +244,7 @@ class Server:
     _session_seq = 0
 
     def __init__(self, state, db_path, blobs, ffwatch_py, enable_actions=False, tls=False,
-                 login=True, session_path=None, ttl=ffweb.SESSION_TTL_SECS,
-                 enable_prompts=False):
+                 login=True, session_path=None, ttl=ffweb.SESSION_TTL_SECS):
         scheme = "https" if tls else "http"
         # The port has to be known BEFORE App is built: App copies the set it is given, so an
         # allowlist filled in afterwards would silently stay empty and every case here would
@@ -264,7 +263,7 @@ class Server:
         self.session_path = session_path
         self.app = ffweb.App(db_path, blobs, state, ffwatch_py,
                              enable_actions=enable_actions, quiet=True, origins=origins,
-                             scheme=scheme, enable_prompts=enable_prompts,
+                             scheme=scheme,
                              sessions=ffweb.Sessions(ttl=ttl, path=session_path))
         ctx = None
         self.client_ctx = None
@@ -420,9 +419,8 @@ ROUTES = ["/", "/lanes", "/outbound", "/outbound?status=pending",
          ["/blob/" + d for d in BLOB_IDS.values()]
 
 
-def serve(enable_actions=False, enable_prompts=False):
-    return Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, enable_actions=enable_actions,
-                  enable_prompts=enable_prompts)
+def serve(enable_actions=False):
+    return Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, enable_actions=enable_actions)
 
 
 def text_of(body):
@@ -819,29 +817,19 @@ def test_actions_call_ffwatch_not_the_database():
         srv.stop()
 
 
-def test_the_prompt_box_is_its_own_grant():
-    """Submitting work is a larger grant than approving a reply somebody already wrote, so it
-    has its own flag and its own guards rather than riding on --enable-actions."""
-    srv = serve(enable_actions=True)
-    try:
-        code, _h, body = srv.get("/")
-        check("with actions on but prompts off, the box is not rendered",
-              'action="/actions/prompt"' not in text_of(body) and code == 200)
-        check("and the page says which flag it wants",
-              "--enable-prompts" in text_of(body))
-        open(CALLS, "w").close()
-        code, _h, _b = srv.post("/actions/prompt", {"prompt": "what does the splitter do?"})
-        check("a prompt POST is refused without the flag, even with actions enabled",
-              code == 403, code)
-        check("and ffwatch was not invoked", os.path.getsize(CALLS) == 0)
-    finally:
-        srv.stop()
+def test_the_prompt_box_needs_no_flag():
+    """Starting a conversation is what the page is for, so the box is there for anyone who got
+    past the login — no flag, and none of the guards around it weakened to get that.
 
-    srv = serve(enable_prompts=True)
+    Approve/reject is still gated, and this proves the two did not get merged on the way: a
+    server with actions OFF still renders the box and still runs the submit."""
+    srv = serve()
     try:
         code, _h, body = srv.get("/")
-        check("with the flag on, the box is on the page",
+        check("with actions off, the box is still on the page",
               'action="/actions/prompt"' in text_of(body), code)
+        check("and no flag is named at the operator",
+              "--enable-prompts" not in text_of(body))
         open(CALLS, "w").close()
         code, hdr, _b = srv.post("/actions/prompt", {"prompt": "what does the splitter do?"})
         check("a prompt POST redirects", code == 303, code)
@@ -869,11 +857,15 @@ def test_the_prompt_box_is_its_own_grant():
                                 headers={"Origin": "http://evil.example"})
         check("a cross-origin prompt POST is REFUSED, not merely logged", code == 403, code)
         check("and ffwatch was not invoked for it", os.path.getsize(CALLS) == 0)
+
+        # The other half of the grant did NOT come along for the ride.
+        code, _h, _b = srv.post("/actions/approve", {"id": "1"})
+        check("approve is still refused without --enable-actions", code == 403, code)
     finally:
         srv.stop()
 
     # Signed out, the route is a redirect to the login page and never a submission.
-    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, enable_prompts=True, login=False)
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
     try:
         open(CALLS, "w").close()
         code, hdr, _b = srv.post("/actions/prompt", {"prompt": "hi"})
@@ -890,11 +882,16 @@ def test_actions_refuse_a_public_bind():
             "--state-dir", STATE, "--blobs", BLOBS, "--port", "0"]
     rc = run_main(argv)
     check("main() refuses --enable-actions on 0.0.0.0", rc == 2, rc)
-    # The same guard has to NAME the prompt flag: the two are independent, and a check written
-    # against one covers the other only by accident.
-    rc = run_main(["--host", "0.0.0.0", "--enable-prompts", "--db", DB_PATH,
-                   "--state-dir", STATE, "--blobs", BLOBS, "--port", "0"])
-    check("and refuses --enable-prompts there too", rc == 2, rc)
+    # The prompt box is NOT part of that guard any more — it has no flag, and a guard against
+    # it would refuse every non-loopback bind there is. The flag being gone is the assertion:
+    # argparse exits 2 on an unknown option, so an old unit file fails loudly at start rather
+    # than quietly serving a page whose box it thinks it turned on.
+    try:
+        run_main(["--enable-prompts", "--db", DB_PATH, "--state-dir", STATE,
+                  "--blobs", BLOBS, "--port", "0"])
+        check("--enable-prompts is gone from the CLI", False, "it parsed")
+    except SystemExit as exc:
+        check("--enable-prompts is gone from the CLI", exc.code == 2, exc.code)
     check("is_loopback recognises the loopback forms",
           all(ffweb.is_loopback(h) for h in ("127.0.0.1", "localhost", "::1", "127.0.0.5")) and
           not any(ffweb.is_loopback(h) for h in ("0.0.0.0", "10.0.0.4", "example.com")))
@@ -1450,7 +1447,7 @@ def test_the_session_store_survives_a_bad_file():
 
 
 def main():
-    print("ffweb — read-only web UI")
+    print("ffweb — web UI")
     tests = [
         test_every_route_serves,
         test_timeline_reads_as_a_conversation,
@@ -1462,7 +1459,7 @@ def main():
         test_a_long_subagent_chain_is_not_truncated,
         test_actions_are_off_by_default,
         test_actions_call_ffwatch_not_the_database,
-        test_the_prompt_box_is_its_own_grant,
+        test_the_prompt_box_needs_no_flag,
         test_actions_refuse_a_public_bind,
         test_a_stale_schema_is_refused_with_a_fixable_message,
         test_aggregates_match_hand_computed_values,
