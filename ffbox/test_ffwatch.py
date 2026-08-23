@@ -1844,6 +1844,17 @@ def test_sender_approval_holds_the_queue():
           rejected)
     check("and it never reached Discord", len(sent_calls(case)) == 1, case.calls())
 
+    # Approving twice is the same two-process race as sending twice: the page and a terminal
+    # both read 'pending'. The status test rides in the UPDATE, so the second one reports what
+    # actually happened rather than claiming a transition it did not make.
+    case.watcher.record_outbound(None, conv, "post", {"channel": ASK_CHANNEL, "text": "twice"})
+    oid = case.rows("SELECT id FROM outbound ORDER BY id")[-1]["id"]
+    check("only one of two approvals on one row counts",
+          case.watcher.approve([oid]) == [oid] and case.watcher.approve([oid]) == [])
+    check("and rejecting something already sent does not rewrite it",
+          case.watcher.reject([case.rows("SELECT id FROM outbound ORDER BY id")[0]["id"]]) == []
+          and case.rows("SELECT status FROM outbound ORDER BY id")[0]["status"] == "sent")
+
 
 def test_read_marks_are_rows():
     """`ffwatch read` / `ffwatch unread` — the web UI's queue, written where every other fact
@@ -1916,6 +1927,61 @@ def test_read_marks_are_rows():
     ro.close()
     check("an existing database gains read_through on the next start",
           "read_through" in cols and ver == ffwatch.SCHEMA_VERSION, (sorted(cols), ver))
+
+
+def test_two_senders_cannot_both_post():
+    """The outbound race: two ffwatch processes holding the same 'pending' row.
+
+    This is not hypothetical and never was. The daemon calls send_pending() every poll_secs
+    while `ffwatch approve` (which is what the ffweb button runs) and `ffwatch send` call it
+    inline from a second process, so two SELECTs routinely return the same row. Before the
+    claim, both reached send_one and both posted; the nonce hid it, because Discord collapses
+    two posts carrying the same nonce. That made a remote dedupe window the only thing standing
+    between the queue and a double reply.
+
+    The race is reproduced exactly rather than with threads: two processes racing ARE two
+    callers acting on the same row as they last read it, which is what a stale row object is.
+    """
+    print("sender: two senders, one post")
+    case = Case("twosend")
+    conv = seed_conversation(case)
+    case.watcher.record_outbound(None, conv, "post", {"channel": ASK_CHANNEL, "text": "once"})
+    row = case.rows("SELECT * FROM outbound")[0]
+
+    # A second Watcher over the same state directory — a genuinely separate object, so nothing
+    # here can pass because one instance remembered what it had already claimed.
+    other = ffwatch.Watcher(case.cfg)
+    check("the first claim wins", case.watcher._claim_for_send(row) is True)
+    check("the second, holding the row as IT last read it, loses",
+          other._claim_for_send(row) is False)
+    after = case.rows("SELECT * FROM outbound")[0]
+    check("and the attempt was counted once, not twice", after["attempts"] == 1,
+          after["attempts"])
+
+    # Re-reading is what a later pass does, and that claim is allowed: the row is still
+    # pending, so this is a retry rather than a duplicate.
+    check("a claim on the re-read row is a retry and succeeds",
+          other._claim_for_send(after) is True)
+    check("attempts moved once more", case.rows("SELECT * FROM outbound")[0]["attempts"] == 2)
+
+    # End to end: the row goes out exactly once even though two senders run over it, and the
+    # count on a sent row is the number of times it was actually tried.
+    case2 = Case("twosend2")
+    conv2 = seed_conversation(case2)
+    case2.watcher.record_outbound(None, conv2, "post", {"channel": ASK_CHANNEL, "text": "hi"})
+    stale = case2.rows("SELECT * FROM outbound")[0]
+    sent = case2.watcher.send_pending()
+    check("one pass sends it", sent == 1 and len(sent_calls(case2)) == 1, case2.calls())
+    # The second sender takes the exact path send_pending's loop takes, on the row as it read
+    # it. Unclaimed, this reaches send_one and a SECOND post goes on the wire — which is the
+    # bug, and what the nonce was quietly absorbing.
+    if case2.watcher._claim_for_send(stale):
+        case2.watcher.send_one(stale)
+    check("the second sender posts nothing: exactly one message reached Discord",
+          len(sent_calls(case2)) == 1, case2.calls())
+    final = case2.rows("SELECT * FROM outbound")[0]
+    check("a sent row counts one attempt, not two",
+          final["status"] == "sent" and final["attempts"] == 1, dict(final))
 
 
 def test_nonce_survives_a_crash():
@@ -3532,6 +3598,7 @@ def main():
         test_sender_failure_is_retryable,
         test_sender_approval_holds_the_queue,
         test_read_marks_are_rows,
+        test_two_senders_cannot_both_post,
         test_nonce_survives_a_crash,
         test_the_container_cannot_author_a_message,
         test_schema_migrates_an_existing_database,

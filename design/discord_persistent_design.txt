@@ -689,7 +689,15 @@ Read-only over ffwatch.db plus the blob directory:
 
 Keep ffwatch the sole writer. If the UI needs to act, it goes through a small write API so the
 UI can move off-box later — including the read ticks, which nothing but the UI ever reads and
-which are a row on the conversation all the same. transcript_event holds repo internals and raw model thinking: the UI
+which are a row on the conversation all the same.
+
+Sole writer means one codebase, not one process: the daemon polls while `ffwatch approve`,
+`ffwatch send` and the UI's own subprocess write from beside it. Any row two processes can act
+on is claimed by compare-and-swap rather than check-then-act — the send claim advances
+`attempts` from the value it read, approve/reject put the status test in the WHERE — with
+SQLite's single-writer WAL as the serialisation point. Launching a run is the exception that
+needs a real lock (per-conversation flock), because the thing being guarded is a container and
+a session id, not a row. transcript_event holds repo internals and raw model thinking: the UI
 is internal-only, and none of its text is ever reused in a Discord post.
 
 
