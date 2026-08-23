@@ -37,6 +37,11 @@ TASK=
 JOB_FILE=
 RUN_ID_OVERRIDE=
 MOUNTS=()
+# Golden is brought to origin before every clone (see "golden" below). This is the escape hatch
+# for the two cases where that is wrong: reproducing a bug against exactly the code golden is
+# already on, and running when origin is unreachable and you would rather have a stale run than
+# no run.
+SKIP_FETCH=${FFBOX_SKIP_FETCH:-0}
 
 # The three clocks of the Discord design, section 8. They are ENFORCED only when this run is a
 # task run (or when one of the flags is given explicitly): a plain interactive one-shot was
@@ -62,6 +67,9 @@ Options:
                        machine and for debugging the container itself.
   --keep               Leave the ZFS clone and its mountpoint in place for inspection.
                        Destroy it yourself with: sudo zfs destroy <dataset>
+  --no-fetch           Clone golden exactly as it is instead of bringing it to origin first.
+                       Also FFBOX_SKIP_FETCH=1. Without this the run fails rather than
+                       silently reasoning against a checkout of unknown age.
   --json               Emit Claude's stream-json output instead of plain text.
   --image NAME         Container image to run (default: ffbox:latest).
   --ref REF            Check the workspace out at REF after cloning (a branch, tag or sha;
@@ -108,6 +116,7 @@ while [ $# -gt 0 ]; do
         --prompt-file)    PROMPT_FILE=${2:?--prompt-file needs a path}; shift 2 ;;
         --direct)         DIRECT=1; shift ;;
         --keep)           KEEP=1; shift ;;
+        --no-fetch)       SKIP_FETCH=1; shift ;;
         --json)           OUTPUT_FORMAT=stream-json; shift ;;
         --image)          IMAGE=${2:?--image needs a name}; shift 2 ;;
         --ref)            REF=${2:?--ref needs a git ref}; shift 2 ;;
@@ -359,9 +368,52 @@ harvest_failed() {
 }
 
 echo "[ffbox] run $RUN_ID"
+
+# --- golden: update and snapshot, as ONE critical section ------------------------------------
+# THE LOCK SPANS BOTH, and that is the whole point of it. `zfs snapshot` is atomic in the
+# crash-consistent sense, not the application-consistent one: fired while another run is
+# half-way through `git pull`, it captures golden exactly as it is at that instant — some files
+# at the new commit, some at the old, and quite possibly a live .git/index.lock. The clone
+# inherits all of it, and the first thing this script does with a clone is run git in it
+# (rev-parse HEAD, checkout -B). The lucky outcome is that git refuses and the run dies here.
+# The unlucky one is a working tree that never existed as a commit anywhere, harvested into a
+# patch whose recorded base_sha does not describe it.
+#
+# It blocks with NO timeout. A timeout would make mutual exclusion contingent on a guess, and
+# the moment a pull ran longer than the guess we would be back to snapshotting mid-write. A run
+# that arrives during an update wants that update's result, so waiting is the right answer, and
+# the wait is bounded in practice by a no-op fetch per run ahead of us. flock lives on the open
+# file description: if we die holding it, including on SIGKILL, the kernel releases it. No stale
+# lock, no PID file, no recovery path to get wrong.
+#
+# Released the moment the snapshot exists. `zfs clone` derives from a snapshot that is already
+# immutable and cannot be torn, so the expensive half of the launch runs unlocked and the
+# container run — an hour of it — holds nothing.
+GOLDEN_LOCK=${FFBOX_GOLDEN_LOCK:-${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/golden.lock}
+mkdir -p "$(dirname "$GOLDEN_LOCK")"
+exec {GOLDEN_FD}>"$GOLDEN_LOCK"
+flock "$GOLDEN_FD"
+
+if [ "$SKIP_FETCH" = 1 ]; then
+    echo "[ffbox] --no-fetch: cloning golden as it stands" >&2
+elif [ -x "$FFBOX_DIR/update-golden.sh" ]; then
+    # Fail the run rather than clone a checkout of unknown freshness. A run whose base is
+    # silently a day old produces a patch against code nobody is on any more, which is a worse
+    # and much quieter failure than this one. --no-fetch is the deliberate way to opt out.
+    "$FFBOX_DIR/update-golden.sh" --locked || {
+        echo "ffbox: golden could not be brought to origin; refusing to clone it." >&2
+        echo "       Fix $GOLDEN_MNT, or pass --no-fetch to run against it as it stands." >&2
+        exit 69
+    }
+else
+    echo "ffbox: $FFBOX_DIR/update-golden.sh is missing or not executable" >&2
+    exit 69
+fi
+
 echo "[ffbox] snapshotting $GOLDEN_DS"
 sudo zfs snapshot "$SNAP"
 SNAP_MADE=1
+exec {GOLDEN_FD}>&-
 
 sudo zfs clone -o mountpoint="$MNT" "$SNAP" "$CLONE"
 CLONE_MADE=1

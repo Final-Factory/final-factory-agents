@@ -10,8 +10,14 @@
 # read-write, since the whole point is to leave Library/ behind.
 set -eu
 
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
 IMAGE=${FFBOX_IMAGE:-ffbox:latest}
 GOLDEN_MNT=${FFBOX_GOLDEN_MNT:-/opt/FinalFactory}
+CONFIG_DIR=${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}
+GOLDEN_LOCK=${FFBOX_GOLDEN_LOCK:-$CONFIG_DIR/golden.lock}
+DRAIN_SWITCH=$CONFIG_DIR/draining
+FFWATCH=$HERE/ffwatch.py
 SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
 
@@ -48,10 +54,56 @@ command -v docker >/dev/null || die "docker not found"
 docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image '$IMAGE' not built — run: sh ffbox/build.sh"
 [ -d "$GOLDEN_MNT/.git" ] || die "$GOLDEN_MNT is not a git checkout"
 
-# Unity takes an exclusive lock on a project directory. A concurrent ffbox run holds golden's
-# clone, not golden itself, so this only needs to exclude another task on golden.
+# Unity takes an exclusive lock on a project directory, so two warm-ups on golden cannot overlap.
 if docker ps --format '{{.Names}}' | grep -q '^ffbox-warm$'; then
     die "a warm-up is already running (container ffbox-warm)"
+fi
+
+# ------------------------------------------------------------------------------------------------
+# Exclude everything else that touches golden
+# ------------------------------------------------------------------------------------------------
+# TWO mechanisms, because they answer two different questions.
+#
+# THE LOCK IS THE CORRECTNESS ONE, and it is held for the WHOLE run of this script rather than
+# just its git phase. The import writes Library/ for up to an hour, and a run that snapshots
+# golden in the middle of that clones a half-built import cache along with an inherited
+# Library/UnityLockfile. That is worse than a torn worktree: Unity may trust a corrupt artifact
+# database rather than reject it.
+#
+# THE DRAIN IS THE COURTESY ONE. It exists only so that the normal path does not spend an hour
+# blocked on the lock: with the flag set, ffwatch stops launching and turns queue instead. It is
+# deliberately NOT `--wait` — runs already in flight cannot hurt this import, because each one
+# took its snapshot before it started and works from a clone that is now independent of golden.
+# Nothing here waits on anything with a clock.
+#
+# The lock is still needed underneath it, because drain cannot reach `ffbox --direct`, which
+# never consults ffwatch. That caller blocks on the lock, which is the correct outcome: it wants
+# a consistent golden, and one exists an hour from now.
+command -v flock >/dev/null 2>&1 || die "flock not found; it is not optional here"
+mkdir -p "$CONFIG_DIR"
+exec 9>"$GOLDEN_LOCK" || die "cannot open $GOLDEN_LOCK for writing"
+log "waiting for the golden lock"
+flock 9 || die "could not lock $GOLDEN_LOCK"
+
+# Only ours to lift if it was not already set: an updater or an operator may own the drain, and
+# clearing somebody else's is how a box quietly starts launching again mid-deploy.
+DRAINED=0
+lift_drain() {
+    [ "$DRAINED" = 1 ] || return 0
+    DRAINED=0
+    rm -f "$DRAIN_SWITCH" 2>/dev/null || :
+}
+trap 'lift_drain' EXIT HUP INT TERM
+
+if [ -e "$DRAIN_SWITCH" ]; then
+    log "already drained by someone else — leaving the flag alone"
+elif [ -r "$FFWATCH" ]; then
+    if python3 "$FFWATCH" drain >/dev/null 2>&1; then
+        DRAINED=1
+        log "drained: ffwatch will not launch while this runs"
+    else
+        echo "warmLibrary.sh: WARNING: could not set the drain flag; runs may queue on the lock" >&2
+    fi
 fi
 
 # ------------------------------------------------------------------------------------------------
@@ -60,58 +112,11 @@ fi
 if [ "$SKIP_UPDATE" -eq 1 ]; then
     log "skipping git update (--skip-update)"
 else
-    # Golden is meant to stay pristine — every run clones it. Local edits here would silently
-    # propagate into every future run, so refuse rather than stash or discard them.
-    if [ -n "$(git -C "$GOLDEN_MNT" status --porcelain)" ]; then
-        git -C "$GOLDEN_MNT" status --short | head -20 >&2
-        die "$GOLDEN_MNT has local changes; golden must stay clean. Resolve them, then re-run."
-    fi
-
-    log "fetching $(git -C "$GOLDEN_MNT" config --get remote.origin.url)"
-    git -C "$GOLDEN_MNT" fetch --prune
-
-    branch=$(git -C "$GOLDEN_MNT" rev-parse --abbrev-ref HEAD)
-    log "pulling $branch"
-    # --ff-only: a merge commit in golden would be nobody's intent and would diverge it from the
-    # remote permanently. If this fails, the branch needs a human.
-    git -C "$GOLDEN_MNT" pull --ff-only
-
-    # actions/checkout's lfs handling has the same trap called out in main.yml: a file left as a
-    # pointer by an earlier failed smudge is considered UNMODIFIED by git, so nothing rewrites it.
-    # Unity then skips those DLLs as managed plugins and compilation fails with a confusing CS0246.
-    # `git lfs pull` re-smudges unconditionally.
-    if command -v git-lfs >/dev/null 2>&1; then
-        log "materializing LFS content"
-        git -C "$GOLDEN_MNT" lfs pull
-        # Scan every TRACKED file, not `git lfs ls-files`. That command resolves through
-        # .gitattributes, and attribute patterns are matched CASE-SENSITIVELY on Linux while
-        # Windows (core.ignoreCase=true on a case-insensitive filesystem) matches them either
-        # way. The repo's patterns are lowercase — `*.png` — so on this machine the 236 `.PNG`
-        # files, plus .JPG/.TGA/.PSD/.OBJ, are not LFS files at all: `git lfs ls-files` cannot
-        # see them, and this check was blind exactly where the problem lives. `*.FBX` already
-        # carries an uppercase twin in .gitattributes, which is why FBX is the one type that
-        # behaves. Reading the first bytes of each file needs no attributes and cannot be fooled.
-        pointers=$(cd "$GOLDEN_MNT" && git ls-files -z | python3 -c "
-import sys
-for path in sys.stdin.buffer.read().split(b'\0'):
-    if not path:
-        continue
-    try:
-        with open(path, 'rb') as fh:
-            if fh.read(42).startswith(b'version https://git-lfs'):
-                sys.stdout.write(path.decode('utf-8', 'replace') + '\n')
-    except OSError:
-        pass
-" || true)
-        if [ -n "$pointers" ]; then
-            printf '%s\n' "$pointers" | head -20 >&2
-            die "LFS content did not materialize; the files above are still pointers"
-        fi
-    else
-        echo "warmLibrary.sh: WARNING: git-lfs not installed — LFS files may still be pointers" >&2
-    fi
-
-    log "golden now at $(git -C "$GOLDEN_MNT" rev-parse --short HEAD)"
+    # --locked: the fd above is the lock, and re-acquiring it here would deadlock on a
+    # non-recursive mutex. --verify: this is the deliberate, once-in-a-while pass over golden, so
+    # it pays for the full LFS pointer scan that the per-run path skips when HEAD did not move.
+    [ -x "$HERE/update-golden.sh" ] || die "$HERE/update-golden.sh is missing or not executable"
+    sh "$HERE/update-golden.sh" --locked --verify || die "golden update failed"
 fi
 
 # ------------------------------------------------------------------------------------------------

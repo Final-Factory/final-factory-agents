@@ -191,6 +191,66 @@ directories, so concurrent runs also stop fighting over Unity's project lock.
 
 Golden must be its own dataset — ZFS cannot snapshot a subdirectory. See "Host setup" below.
 
+### Golden is brought to origin before every clone
+
+Every launch fast-forwards `/opt/FinalFactory` to `origin/<its branch>` before it snapshots, so a
+run's base is at least as new as origin was when that run started. That is a contract you can
+state. "Latest" is not one: origin can advance a nanosecond after any fetch.
+
+The update and the snapshot are **one critical section**, under an exclusive `flock` on
+`~/.config/ffbox/golden.lock`:
+
+```
+flock ───────────────────────────────────────────── release
+  │  fetch → merge --ff-only → lfs pull  │  zfs snapshot  │
+                                                           └── zfs clone, docker run … (unlocked)
+```
+
+Both halves are inside it because `zfs snapshot` is atomic in the crash-consistent sense, not the
+application-consistent one. Fired while another run is half-way through a pull, it captures golden
+mid-write — some files at the new commit, some at the old, and quite possibly a live
+`.git/index.lock`. The clone inherits all of it, and the first thing `ffbox` does with a clone is
+run git in it. The lucky outcome is that git refuses and the run dies there. The unlucky one is a
+working tree that never existed as a commit anywhere, harvested into a patch whose recorded
+`base_sha` does not describe it.
+
+**The lock blocks with no timeout.** A timeout would make mutual exclusion contingent on a number
+somebody guessed, and the first pull that ran longer than the guess would put us back to
+snapshotting mid-write. A run arriving during an update wants that update's result, so waiting is
+the correct behaviour; at `max_concurrent_runs: 8` the worst case is one no-op fetch per run ahead
+of you. `flock` lives on the open file description, so the kernel releases it when the last holder
+dies — there is no stale lock to reap and no PID file to get wrong. Liveness is handled separately
+and never decides who wins: the fetch carries git's low-speed abort so a half-dead connection
+cannot hold the lock all day.
+
+It is released the moment the snapshot exists. `zfs clone` derives from something already
+immutable and cannot be torn, so the expensive half of a launch runs unlocked and the container
+run — an hour of it — holds nothing.
+
+Three things follow from this that are worth knowing:
+
+- **A failed update fails the run.** A run whose base is silently a day old produces a patch
+  against code nobody is on any more, which is a quieter and worse failure than an honest one.
+  `--no-fetch` (or `FFBOX_SKIP_FETCH=1`) is the deliberate opt-out — for reproducing a bug against
+  exactly what golden holds, or for working through an origin outage.
+- **A dirty golden refuses.** Every run clones it, so a stray edit is not one contaminated run, it
+  is every run launched until somebody notices.
+- **It fixes `--ref` as well.** `--ref develop` resolves `origin/develop` out of the clone, so a
+  stale golden used to mean stale remote refs and not just a stale worktree.
+
+The same code path is runnable by hand:
+
+```bash
+sh ffbox/update-golden.sh            # take the lock, fast-forward golden, release
+sh ffbox/update-golden.sh --verify   # also scan every tracked file for unmaterialized LFS pointers
+```
+
+Offline tests: `python3 ffbox/test_golden_lock.py`. They build real git repositories rather than
+stubbing git, and the mutual-exclusion tests observe the lock with `flock -n` at a moment the test
+controls — an updater stopped mid-critical-section by a stub `git` that blocks on a pipe — rather
+than inferring exclusion from the order two processes happened to finish in. An earlier version
+did infer it from ordering, and passed with the `flock` deleted.
+
 ### Why this base image
 
 `FROM unityci/editor:ubuntu-6000.3.19f1-windows-mono-3.2.2` — byte-identical to the `customImage`
@@ -308,9 +368,19 @@ it is the reason the whole layout exists: pay it once in golden, and every later
 warm cache for free.
 
 ```bash
-sh ffbox/04-warmLibrary.sh                 # fetch, pull --ff-only, git lfs pull, then import
+sh ffbox/04-warmLibrary.sh                 # fetch, fast-forward, git lfs pull, then import
 sh ffbox/04-warmLibrary.sh --skip-update   # import what is already checked out
 ```
+
+It holds the golden lock for its **whole** run, not just the git part. Unity writes `Library/` for
+up to an hour, and a run that snapshots golden in the middle of that clones a half-built import
+cache along with an inherited `Library/UnityLockfile` — worse than a torn worktree, because Unity
+may trust a corrupt artifact database rather than reject it. It also sets the drain flag, so
+ffwatch queues turns instead of launching runs that would sit on the lock for an hour; the drain
+is a courtesy and the lock is the guarantee, which is why it does not wait for in-flight runs to
+finish (they took their snapshots already and work from clones that are now independent of
+golden). `ffbox --direct` never consults ffwatch, so that one does block on the lock, which is the
+right answer: it wants a consistent golden, and one exists when the import lands.
 
 It refuses to run if golden has local changes. Golden must stay pristine — every run clones it,
 so a stray edit here silently propagates into every future run. It also re-verifies LFS content
