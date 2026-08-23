@@ -1610,6 +1610,79 @@ def test_transcript_reindex_is_stable():
     check("re-indexing the same file adds nothing", again == 0 and after == 4, (again, after))
 
 
+def test_a_live_run_is_indexed_as_it_goes():
+    """The transcript fills in WHILE the container works, not in one lump when it exits.
+
+    Claude Code appends to its session JSONL from inside a bind mount, so the file is on this
+    host and growing the whole time. index_live_runs is the scheduler reading it every pass;
+    everything below is what that repeated read has to survive — a file that grew since last
+    time, a line caught half-written, and a run that has already finished."""
+    print("live transcript indexing")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(7601, "why is the belt backing up?")]
+    case = Case("live-index", fixture)
+    case.events(ask_event(7601))
+    case.watcher.once()
+
+    run = case.rows("SELECT * FROM run")[0]
+    conv = case.rows("SELECT * FROM conversation")[0]
+    tpath = case.watcher.transcript_path(conv["id"], run["session_id"])
+    os.makedirs(os.path.dirname(tpath), exist_ok=True)
+    # Put the run back in flight and clear what the stub indexed, so what follows is about
+    # this file alone.
+    case.watcher.db.execute("DELETE FROM transcript_event")
+    case.watcher.db.execute("UPDATE run SET terminal_state=NULL WHERE id=?", (run["id"],))
+
+    def write(records, mode="a", tail=""):
+        with open(tpath, mode, encoding="utf-8") as fh:
+            for rec in records:
+                fh.write(json.dumps(rec) + "\n")
+            fh.write(tail)
+
+    write([{"type": "user", "uuid": "u-1", "parentUuid": None,
+            "message": {"content": "why is the belt backing up?"}},
+           {"type": "assistant", "uuid": "a-1", "parentUuid": "u-1",
+            "message": {"content": [{"type": "text", "text": "reading the belt code"}]}}],
+          mode="w")
+
+    added = case.watcher.index_live_runs()
+    rows = case.rows("SELECT * FROM transcript_event ORDER BY seq")
+    check("a run still in flight is indexed before it finishes",
+          added == 2 and [r["type"] for r in rows] == ["user", "assistant"],
+          [dict(r) for r in rows])
+
+    # The agent keeps talking, and the pass catches the newest line half-written.
+    write([{"type": "assistant", "uuid": "a-2", "parentUuid": "a-1",
+            "message": {"content": [{"type": "text", "text": "found it: the inserter stalls"}]}}],
+          tail='{"type": "assistant", "uuid": "a-3", "message": {"cont')
+    added = case.watcher.index_live_runs()
+    rows = case.rows("SELECT * FROM transcript_event ORDER BY seq")
+    check("the next pass appends the new records and nothing else",
+          added == 1 and len(rows) == 3, [dict(r) for r in rows])
+    check("seq continues rather than restarting, so the page keeps its order",
+          [r["seq"] for r in rows] == [1, 2, 3], [r["seq"] for r in rows])
+    check("a half-written line is skipped rather than indexed broken",
+          "a-3" not in [r["uuid"] for r in rows], [r["uuid"] for r in rows])
+
+    # That line finishes; the pass that skipped it picks it up whole.
+    write([], tail='ent": [{"type": "text", "text": "and here is why"}]}}\n')
+    case.watcher.index_live_runs()
+    rows = case.rows("SELECT * FROM transcript_event ORDER BY seq")
+    check("the completed line lands on the next pass, once",
+          [r["uuid"] for r in rows] == ["u-1", "a-1", "a-2", "a-3"],
+          [r["uuid"] for r in rows])
+
+    # Indexing twice over must never double a record: finish_run runs the same pass at the end.
+    check("the final catch-up adds nothing the live passes already have",
+          case.watcher.index_transcript(run["id"], conv["id"], run["session_id"]) == 0)
+
+    case.watcher.db.execute("UPDATE run SET terminal_state='done' WHERE id=?", (run["id"],))
+    write([{"type": "assistant", "uuid": "a-4", "parentUuid": "a-3",
+            "message": {"content": [{"type": "text", "text": "written after the run ended"}]}}])
+    check("a finished run is not re-read on every pass forever",
+          case.watcher.index_live_runs() == 0)
+
+
 # ------------------------------------------------------------------------------------------
 # phase 2: the sender
 # ------------------------------------------------------------------------------------------
@@ -3215,6 +3288,7 @@ def main():
         test_harvest_excludes_what_was_already_dirty,
         test_failed_launch_frees_the_slot,
         test_transcript_reindex_is_stable,
+        test_a_live_run_is_indexed_as_it_goes,
         # phase 2
         test_sender_posts_silently,
         test_sender_splits_an_over_long_reply,

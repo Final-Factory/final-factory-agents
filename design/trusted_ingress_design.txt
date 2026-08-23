@@ -672,6 +672,17 @@ never see this.
 Reply venue is private, and the reply is the run record itself: the timeline row, the
 transcript index, the result text. The same thing a waiting terminal reads.
 
+That record has to be LIVE, and at first it was not. The transcript was indexed in exactly one
+place — finish_run, after the container exits — so an operator who asked a question through the
+page watched an empty timeline for three and a half minutes and then got the whole history in
+one lump. Nothing about the pipeline required that: the container writes Claude Code's session
+JSONL into a bind mount, so the file is on the host and growing the entire time, and every
+launch runs on its own thread, so the scheduler is free to read it. It now does, every pass, for
+every run whose terminal_state is still NULL; finish_run keeps its final pass for the tail. The
+two passes overlap by construction, which is what the uuid de-dupe, the continued seq and the
+lock around the indexer are for. A waiting terminal streams; a waiting page had nothing to
+stream, and this is what it streams instead.
+
 
 13. Capability, separately from disclosure
 ------------------------------------------

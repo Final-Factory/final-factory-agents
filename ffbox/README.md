@@ -639,14 +639,29 @@ sent"** toast that fades on its own — ffwatch's stdout (config warnings, the c
 opened, the turn id) is in the journal and not pinned to the top of the page. A submission
 that *fails* still prints everything it knows, and that notice stays until it is read.
 
-**The live pages reload themselves once a minute.** The conversation list, a single
-conversation and the outbound queue carry a small inline script that reloads them, because
-their rows go stale on their own: a turn queued a moment ago is running now. It defers while a
-form control has focus or the prompt box has text in it, so a reload cannot eat a half-typed
-prompt; it strips the acknowledgement from the URL, so a toast does not come back every minute;
-and it gives up after half an hour, so an abandoned tab cannot hold a signed-in session open
-forever by poking the server. A run transcript and the lanes table do not reload — they do not
-move once written, and losing your place in one is a cost with no benefit.
+**The live pages reload themselves once a minute — ten seconds while a container works.**
+The conversation list, a single conversation and the outbound queue carry a small inline script
+that reloads them, because their rows go stale on their own: a turn queued a moment ago is
+running now. It defers while a form control has focus or the prompt box has text in it, so a
+reload cannot eat a half-typed prompt; it strips the acknowledgement from the URL, so a toast
+does not come back every minute; and it gives up after half an hour, so an abandoned tab cannot
+hold a signed-in session open forever by poking the server. A conversation with a run **in
+flight**, and that run's own transcript page, tick at ten seconds instead — there is something
+new on them every few seconds (below), and a minute is long enough to feel like nothing is
+happening. The lanes table never reloads, and a *finished* transcript stops: neither moves once
+written, and losing your place in one is a cost with no benefit.
+
+**A run's transcript appears as the agent writes it, not when the container exits.** The
+container writes Claude Code's session JSONL into a bind mount, so the file is on the host and
+growing the whole time; ffwatch's scheduler indexes it into `transcript_event` every pass —
+`poll_secs`, two seconds — for every run whose `terminal_state` is still NULL, and `finish_run`
+indexes the same file once more at the end to catch the tail. Both passes are idempotent: they
+de-dupe by record uuid and continue `seq` from what the run already has, so a line caught
+half-written is skipped and picked up whole next time. On `/conversation/<id>` the latest thing
+the agent said shows up under the message that started it, marked **"still working — the latest
+thing it said, not the reply"** until the turn reaches a terminal state. Warm-up — the clone,
+the container, Unity — happens before the agent says anything, so a run page opened in that
+window says so rather than showing an empty transcript.
 
 **Approve/reject** on the outbound queue is the one that stays behind a flag. `--enable-actions`
 is **off by default**, and the systemd unit does not carry it. The difference is disclosure, not
