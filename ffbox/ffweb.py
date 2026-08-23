@@ -91,6 +91,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_STATE_DIR = os.path.expanduser(os.environ.get("FFWATCH_STATE_DIR", "~/ffbox-state"))
 DEFAULT_PORT = 8787
 
+# A turn in one of these has stopped; anything else is still on its way. Kept in step with
+# ffwatch's own list by hand, because this process deliberately imports nothing from it — it
+# is a reader of the database, not a second copy of the daemon.
+TERMINAL_TURN_STATES = ("done", "failed", "timed_out", "blocked")
+
 # The blob store is content-addressed, so a digest is the ONLY shape a blob request may take.
 # Anything with a slash, a dot or an escape in it fails this before it becomes a path.
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -184,19 +189,36 @@ FILTER_SCRIPT = ("for (const s of document.querySelectorAll('#conversation-filte
 #   Carry the acknowledgement forward. `sent` and `msg` are stripped from the URL, so a toast
 #   does not come back from the dead every minute; the filters in the rest of the query do
 #   survive, since they are what the operator chose to look at.
-#   Keep a session alive forever. Each reload is an authenticated request, and those slide the
-#   idle timeout forward — an abandoned tab would hold a signed-in session open indefinitely.
-#   Thirty ticks is half an hour; after that the page goes quiet and the hour can run out.
-REFRESH_SCRIPT = (
+#   Tick forever. Each reload is an authenticated request, and those slide the idle timeout
+#   forward — an abandoned tab would hold a signed-in session open indefinitely. The tick
+#   COUNT is derived from the interval so both variants below stop after the same half hour,
+#   whatever their cadence.
+REFRESH_BUDGET_MS = 1800000
+
+_REFRESH_TEMPLATE = (
     "let n = 0; const t = setInterval(() => {"
-    " if (++n > 30) { clearInterval(t); return; }"
+    " if (++n > @TICKS@) { clearInterval(t); return; }"
     " const el = document.activeElement;"
     " if (el && el.matches && el.matches('input, select, textarea, button')) return;"
     " const box = document.querySelector('input[name=prompt]');"
     " if (box && box.value.trim()) return;"
     " const u = new URL(location.href);"
     " u.searchParams.delete('sent'); u.searchParams.delete('msg');"
-    " location.replace(u.href); }, 60000);")
+    " location.replace(u.href); }, @MS@);")
+
+
+def refresh_script(ms):
+    return (_REFRESH_TEMPLATE.replace("@TICKS@", str(REFRESH_BUDGET_MS // ms))
+            .replace("@MS@", str(ms)))
+
+
+# A minute is right for rows that change when a turn does. It is far too slow for a page
+# watching an agent think: ffwatch indexes a running container's transcript every couple of
+# seconds now, and a page that only looked once a minute would still feel like a page that
+# showed nothing until the end. So a page with a run IN FLIGHT ticks at ten seconds, and drops
+# back to the minute the moment the work is over.
+REFRESH_SCRIPT = refresh_script(60000)
+LIVE_REFRESH_SCRIPT = refresh_script(10000)
 
 
 def script_hash(source):
@@ -210,7 +232,8 @@ def script_hash(source):
 # escaping bug that does slip through. A hash is over the EXACT bytes rendered, so editing
 # either script without this line following it along breaks that script silently.
 CSP = ("default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
-       "script-src " + script_hash(FILTER_SCRIPT) + " " + script_hash(REFRESH_SCRIPT) + "; "
+       "script-src " + script_hash(FILTER_SCRIPT) + " " + script_hash(REFRESH_SCRIPT) +
+       " " + script_hash(LIVE_REFRESH_SCRIPT) + "; "
        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 
 # A ceiling on how much of one subagent chain is rendered. Not a depth limit: a subagent's
@@ -851,9 +874,14 @@ STYLE = STYLE.replace("@LOGIN_BACKGROUND@", LOGIN_BACKGROUND_URL)
 
 def page(title, body_parts, banner="", refresh=False):
     """`refresh` is for the pages that watch work happen — the conversation list, one
-    conversation, the outbound queue. A run transcript and the lanes table do not move once
-    they are written, and reloading a page somebody is reading through is a way to lose their
-    place."""
+    conversation, the outbound queue. The lanes table does not move once it is written, and
+    reloading a page somebody is reading through is a way to lose their place.
+
+    True is the minute tick. "live" is the ten-second one, for a page whose run is in flight:
+    a transcript being indexed as the container writes it is the one thing here that changes
+    faster than a turn does. A finished run reverts to False — nothing more is coming, so the
+    reader keeps their scroll position.
+    """
     return (
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
@@ -867,7 +895,8 @@ def page(title, body_parts, banner="", refresh=False):
         "<button type=\"submit\">sign out</button></form>"
         "</header><main>"
         + "".join(body_parts) + "</main>"
-        + ("<script>" + REFRESH_SCRIPT + "</script>" if refresh else "")
+        + ("<script>" + (LIVE_REFRESH_SCRIPT if refresh == "live" else REFRESH_SCRIPT)
+           + "</script>" if refresh else "")
         + "</body></html>"
     )
 
@@ -1558,7 +1587,19 @@ class App:
         items = self._timeline(conv_id)
         body = ["<h2>timeline</h2>"] + items
         return page(conv["title"] or f"conversation {conv_id}", head + body,
-                    refresh=True)
+                    refresh="live" if self._in_flight(conv_id) else True)
+
+    def _in_flight(self, conv_id):
+        """Is a container working for this conversation right now?
+
+        terminal_state NULL is the run's own answer and the only one worth asking: the
+        conversation's state column says 'running' from the moment a turn is claimed, which
+        includes the minutes of warm-up before there is a transcript to watch.
+        """
+        row = self.db.one(
+            "SELECT COUNT(*) AS n FROM run r JOIN turn t ON t.id = r.turn_id"
+            " WHERE t.conversation_id = ? AND r.terminal_state IS NULL", (conv_id,))
+        return bool(row and row["n"])
 
     def _timeline(self, conv_id):
         """THE CONVERSATION, not the machinery that carried it.
@@ -1642,6 +1683,12 @@ class App:
                esc(f" · {turn['ended_at'] or turn['started_at'] or ''}"), "</div>"]
         if text.strip():
             out.append("<pre>" + esc(text) + "</pre>")
+            if state not in TERMINAL_TURN_STATES:
+                # The transcript is indexed while the container works, so this is the latest
+                # thing the agent said, not the answer. Saying so is the difference between a
+                # page that reads as live and a page that looks like it replied and stopped.
+                out.append("<div class=\"meta\">still working — the latest thing it said, "
+                           "not the reply</div>")
         elif state in ("failed", "timed_out", "blocked"):
             out.append("<pre>" + esc(turn["error"] or f"the turn ended {state} with no reply")
                        + "</pre>")
@@ -1804,15 +1851,24 @@ class App:
               fmt_secs(run["verify_secs"]), run["container_name"] or "—"]]))
         rows = self.db.query(
             "SELECT * FROM transcript_event WHERE run_id = ? ORDER BY seq, id", (run_id,))
-        body = ["<h2>transcript (", esc(len(rows)), " events)</h2>",
+        live = run["terminal_state"] is None
+        body = ["<h2>transcript (", esc(len(rows)), " events",
+                " so far" if live else "", ")</h2>",
                 "<p class=\"note\">Raw model thinking and repo internals. Never quote any of "
                 "this into Discord.</p>",
-                self._render_transcript(rows)]
-        return page(f"run {run['ffbox_run_id'] or run_id}", head + body)
+                self._render_transcript(rows, live=live)]
+        # A finished transcript does not move, so it does not reload under its reader. One
+        # still being written does, and somebody watching a run is watching for exactly that.
+        return page(f"run {run['ffbox_run_id'] or run_id}", head + body,
+                    refresh="live" if live else False)
 
-    def _render_transcript(self, rows):
+    def _render_transcript(self, rows, live=False):
         if not rows:
-            return "<p class=\"empty\">no transcript indexed for this run</p>"
+            # An empty LIVE transcript is warm-up, not absence: the clone, the container and
+            # Unity all happen before the agent says its first word, and the page reloads.
+            return ("<p class=\"empty\">the container is still warming up — nothing on the "
+                    "transcript yet</p>" if live else
+                    "<p class=\"empty\">no transcript indexed for this run</p>")
         order, by_uuid = build_records(rows)
         sides = sidechain_roots(order, by_uuid)
         out = []

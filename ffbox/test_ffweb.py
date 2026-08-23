@@ -974,6 +974,81 @@ def test_the_live_pages_reload_themselves():
     finally:
         srv.stop()
 
+
+def live_fixture():
+    """A copy of the fixture with work IN FLIGHT: one run mid-transcript, one still warming up.
+
+    Its own state directory, because every other case here reads the shared fixture and an
+    in-flight run would change what those pages say.
+    """
+    root = tempfile.mkdtemp(prefix="ffweb-live-", dir=TMPROOT)
+    state, db_path, blobs, _ids = build_fixture(root)
+    db = ffwatch.Db(db_path)
+    ex = db.execute
+    # Conversation 3's queued turn is now running, with a container that has started talking.
+    ex("UPDATE turn SET status='running', started_at='2026-08-18T10:00:10Z' WHERE id=4")
+    ex("INSERT INTO run(id, turn_id, ffbox_run_id, container_name, session_id, base_sha,"
+       " tools, terminal_state) VALUES(4,4,'run-d','ffbox-run-d','sess-3','abc123',"
+       "'Read,Grep,Glob',NULL)")
+    for seq, (kind, text) in enumerate(
+            [("user", "Add conveyor colours"),
+             ("assistant", "reading the belt renderer"),
+             ("assistant", "halfway through — the inserter picks the tint")], start=1):
+        ex("INSERT INTO transcript_event(run_id, seq, uuid, parent_uuid, is_sidechain, agent,"
+           " type, text, ts) VALUES(4,?,?,?,0,'main',?,?, '2026-08-18T10:0" + str(seq) + ":00Z')",
+           (seq, f"live-{seq}", f"live-{seq - 1}" if seq > 1 else None, kind, text))
+    # Conversation 2 gets a run that has not said anything yet: the clone and the container
+    # come first, and the page has to say that rather than "no transcript".
+    ex("INSERT INTO turn(id, conversation_id, seq, trigger, lane, status, queued_at,"
+       " started_at) VALUES(5,2,2,'message','answer','running','2026-08-19T12:00:00Z',"
+       "'2026-08-19T12:00:05Z')")
+    ex("INSERT INTO run(id, turn_id, ffbox_run_id, container_name, session_id, tools,"
+       " terminal_state) VALUES(5,5,'run-e','ffbox-run-e','sess-2','Read',NULL)")
+    return state, db_path, blobs
+
+
+def test_work_in_flight_shows_up_while_it_happens():
+    """ffwatch indexes a running container's transcript every couple of seconds, so these pages
+    have something new to show every few seconds. Two things follow: they tick faster than the
+    minute the settled pages use, and what they show has to read as PARTIAL — a mid-run
+    narration presented as the answer is worse than showing nothing."""
+    state, db_path, blobs = live_fixture()
+    srv = Server(state, db_path, blobs, STUB_FFWATCH)
+    try:
+        body = text_of(srv.get("/conversation/3")[2])
+        check("a conversation with a container working ticks at ten seconds",
+              ffweb.LIVE_REFRESH_SCRIPT in body and ffweb.REFRESH_SCRIPT not in body)
+        check("the transcript so far is on the page, not held back until the run ends",
+              "the inserter picks the tint" in body, body[-2000:])
+        check("and it is labelled as the latest thing said, not as the reply",
+              "still working" in body)
+
+        settled = text_of(srv.get("/conversation/1")[2])
+        check("a conversation with nothing running stays on the minute",
+              ffweb.REFRESH_SCRIPT in settled and ffweb.LIVE_REFRESH_SCRIPT not in settled)
+        check("and a finished turn's answer is not hedged",
+              "still working" not in settled)
+
+        run = text_of(srv.get("/run/4")[2])
+        check("a run transcript reloads while it is still being written",
+              ffweb.LIVE_REFRESH_SCRIPT in run)
+        check("and says its event count is a running total",
+              "events so far" in run)
+        warming = text_of(srv.get("/run/5")[2])
+        check("a run with nothing indexed yet reads as warming up, not as empty",
+              "still warming up" in warming and ffweb.LIVE_REFRESH_SCRIPT in warming)
+        done = text_of(srv.get("/run/1")[2])
+        check("a finished transcript still does not move under its reader",
+              ffweb.REFRESH_SCRIPT not in done and ffweb.LIVE_REFRESH_SCRIPT not in done)
+
+        check("both cadences are admitted by hash, and neither by unsafe-inline",
+              ffweb.script_hash(ffweb.LIVE_REFRESH_SCRIPT) in ffweb.CSP and
+              ffweb.script_hash(ffweb.REFRESH_SCRIPT) in ffweb.CSP)
+        check("the faster tick still gives up after the same half hour",
+              "n > 180" in ffweb.LIVE_REFRESH_SCRIPT and "10000" in ffweb.LIVE_REFRESH_SCRIPT)
+    finally:
+        srv.stop()
+
     # Signed out, the route is a redirect to the login page and never a submission.
     srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
     try:
@@ -1586,6 +1661,7 @@ def main():
         test_the_password_is_the_only_way_in,
         test_a_queued_prompt_says_one_thing_and_a_failure_says_everything,
         test_the_live_pages_reload_themselves,
+        test_work_in_flight_shows_up_while_it_happens,
         test_next_cannot_leave_this_origin,
         test_signing_out_ends_the_session,
         test_login_and_logout_refuse_a_cross_origin_post,

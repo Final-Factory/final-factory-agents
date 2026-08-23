@@ -1216,6 +1216,11 @@ class Watcher:
         self.cursor_path = os.path.join(self.state_dir, "events.cursor.json")
         self._launches = []
         self._launch_lock = threading.Lock()
+        # index_transcript is called from TWO threads for the same run — the scheduler's live
+        # pass while the container works, and the launch thread's final catch-up in finish_run.
+        # Nothing in transcript_event is UNIQUE, so two overlapping passes would each read the
+        # same not-yet-inserted uuid and insert it twice, which renders as a duplicated turn.
+        self._index_lock = threading.Lock()
         self._kill_switch_logged = False
         self._drain_logged = False
 
@@ -2426,15 +2431,30 @@ class Watcher:
         turns of one session, so records already indexed for this conversation are skipped by
         uuid rather than by an offset — an offset would be wrong the first time Claude Code
         rewrites the file during a compaction.
+
+        Called REPEATEDLY for one run: the scheduler runs it every pass while the container
+        works (index_live_runs) so the page fills in as the agent talks, and finish_run runs it
+        once more at the end to catch whatever landed after the last pass. That is why seq
+        continues from what this run already has rather than restarting at 0, and why the
+        de-dupe is by uuid — the same file is read from the top every time.
+
+        Claude Code appends to the file as it goes, so a pass can catch a half-written last
+        line. It fails json.loads, is skipped, and — having never been marked seen — is picked
+        up whole on the next pass.
         """
         path = self.transcript_path(conv_id, session_id)
         if not os.path.exists(path):
             return 0
+        with self._index_lock:
+            return self._index_transcript(run_row_id, conv_id, path)
+
+    def _index_transcript(self, run_row_id, conv_id, path):
         seen = {r["uuid"] for r in self.db.query(
             "SELECT DISTINCT te.uuid AS uuid FROM transcript_event te"
             " JOIN run r ON r.id=te.run_id JOIN turn t ON t.id=r.turn_id"
             " WHERE t.conversation_id=?", (conv_id,)) if r["uuid"]}
-        seq = 0
+        seq = self.db.scalar("SELECT COALESCE(MAX(seq), 0) FROM transcript_event"
+                             " WHERE run_id=?", (run_row_id,), default=0)
         added = 0
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -2472,6 +2492,34 @@ class Watcher:
                     added += 1
                 if ruuid:
                     seen.add(ruuid)
+        return added
+
+    def index_live_runs(self):
+        """Index the transcript of every run still in flight. Returns rows added.
+
+        This is what makes a conversation page fill in WHILE the agent works instead of
+        arriving whole three minutes later. The container writes Claude Code's session JSONL
+        into a bind mount, so the file is on this host and growing the entire time; nothing was
+        missing but a reader. The scheduler is that reader because it is the loop that keeps
+        ticking during a run — each launch has its own thread, and this pass runs on the
+        daemon's.
+
+        A run that has not named its session yet, or whose file is not there, indexes nothing
+        and costs one stat. Errors are swallowed per run: a transcript this cannot read is not
+        a reason to take down the pass that also sends replies.
+        """
+        added = 0
+        for run in self.db.query(
+                "SELECT r.id AS id, r.session_id AS session_id,"
+                " t.conversation_id AS conversation_id FROM run r"
+                " JOIN turn t ON t.id=r.turn_id WHERE r.terminal_state IS NULL"
+                " AND r.session_id IS NOT NULL"):
+            try:
+                added += self.index_transcript(run["id"], run["conversation_id"],
+                                               run["session_id"])
+            except (OSError, sqlite3.Error) as exc:  # noqa: BLE001 - one run, not the pass
+                log(f"WARNING: could not index the live transcript of run {run['id']}: "
+                    f"{type(exc).__name__}: {exc}")
         return added
 
     # -- outbound --------------------------------------------------------------------------
@@ -3440,6 +3488,10 @@ class Watcher:
         self.drain_events()
         self.claim_turns()
         started = self.schedule()
+        # Before the join, because the join is what blocks: in this pass-at-a-time form the
+        # live index only ever catches a run some OTHER caller started. The daemon loop below
+        # is where it earns its keep, ticking every poll_secs while a container works.
+        self.index_live_runs()
         self.join_launches()
         self.drain_events()
         self.claim_turns()
@@ -3473,6 +3525,10 @@ class Watcher:
                     last_sweep = time.time()
                 self.claim_turns()
                 self.schedule()
+                # Every pass, so the web page shows the agent talking as it talks rather than
+                # in one lump when the container exits. finish_run indexes the same transcript
+                # once more at the end; both are idempotent by uuid.
+                self.index_live_runs()
                 self.send_pending()
                 self.live_launches()
             except KeyboardInterrupt:
