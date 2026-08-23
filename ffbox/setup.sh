@@ -303,7 +303,7 @@ fi
 stage "setup complete"
 cat <<EOF
 Try it:
-  $ROOT/ffbox --no-unity 'summarise how the save migration system works'
+  $ROOT/ffbox 'summarise how the save migration system works'
 EOF
 
 # EVERY REMAINING MANUAL STEP, IN ONE PLACE. Stage 5 prints the same list in Discord terms;

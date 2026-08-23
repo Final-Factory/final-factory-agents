@@ -626,7 +626,7 @@ def test_an_operator_dm_is_a_private_venue():
         message(5001, "which file defines the belt merger?", channel=DM_CHANNEL,
                 author=LOTHSAHN, name="lothsahn")]
     case = Case("dm", fixture,
-                verdict={"engage": True, "type": "question", "needs_unity": False,
+                verdict={"engage": True, "type": "question",
                          "reason": "wants to know where something lives"})
     case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_dm", "channel": None,
@@ -860,7 +860,7 @@ def test_the_gate_declines_a_message_that_asks_nothing():
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [message(4201, "thanks, that fixed it")]
     case = Case("gate-none", fixture,
-                verdict={"engage": False, "type": "question", "needs_unity": False,
+                verdict={"engage": False, "type": "question",
                          "reason": "social acknowledgement, nothing asked"})
     case.events(ask_event(4201))
     case.watcher.drain_events()
@@ -896,7 +896,7 @@ def test_evidence_and_thread_openings_never_reach_the_gate():
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [message(4401, "log attached", attachments=[att])]
     case = Case("always-turn", fixture,
-                verdict={"engage": False, "type": "question", "needs_unity": False,
+                verdict={"engage": False, "type": "question",
                          "reason": "the model would have declined this"})
     case.events(ask_event(4401))
     case.watcher.drain_events()
@@ -911,7 +911,7 @@ def test_evidence_and_thread_openings_never_reach_the_gate():
                    "parent_id": BUG_FORUM, "owner_id": PLAYER},
         "messages": [message(30001, "it drops one item in eight", channel="30000")]}
     opener = Case("always-turn-thread", thread,
-                  verdict={"engage": False, "type": "question", "needs_unity": False,
+                  verdict={"engage": False, "type": "question",
                            "reason": "the model would have declined this too"})
     opener.events(thread_event("30000", kind="thread"))
     opener.watcher.drain_events()
@@ -1072,8 +1072,8 @@ def test_read_only_capabilities():
     argv = json.load(open(os.path.join(os.path.dirname(job_files[0]), "ffbox-argv.json"),
                           encoding="utf-8"))
     check("ffbox is called with a working editor and the three clocks",
-          "--no-unity" not in argv and "--agent-timeout" in argv and "--warmup-timeout" in argv
-          and "--kill-grace" in argv, argv)
+          not any("unity" in a for a in argv) and "--agent-timeout" in argv
+          and "--warmup-timeout" in argv and "--kill-grace" in argv, argv)
     check("the container name is owned by the host via --run-id",
           run["container_name"] == f"ffbox-{run['ffbox_run_id']}", run)
     check("the conversation pins the base sha it was first cloned from",
@@ -1275,7 +1275,7 @@ def test_dev_lane_runs_a_directive():
     fixture["messages"][RANDOM_CHANNEL] = [message(15001, "ship the merger fix",
                                                    channel=RANDOM_CHANNEL, author=LOTHSAHN)]
     case = Case("writelane", fixture,
-                verdict={"engage": True, "type": "change", "needs_unity": True,
+                verdict={"engage": True, "type": "change",
                          "reason": "asks for a defect to be fixed"})
     case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
@@ -1298,7 +1298,7 @@ def test_dev_lane_runs_a_directive():
     ask["messages"][RANDOM_CHANNEL] = [message(15101, "which file defines the merger?",
                                                channel=RANDOM_CHANNEL, author=LOTHSAHN)]
     q = Case("directive-question", ask,
-             verdict={"engage": True, "type": "question", "needs_unity": False,
+             verdict={"engage": True, "type": "question",
                       "reason": "wants to know where something lives"})
     q.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
     q.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
@@ -1316,7 +1316,7 @@ def test_dev_lane_runs_a_directive():
     legacy["messages"][RANDOM_CHANNEL] = [message(15201, "ship it", channel=RANDOM_CHANNEL,
                                                   author=LOTHSAHN)]
     old = Case("directive-legacy", legacy,
-               verdict={"engage": True, "type": "change", "needs_unity": True, "reason": "x"})
+               verdict={"engage": True, "type": "change", "reason": "x"})
     old.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
     old.events({"ts": "2026-08-21T00:00:00Z", "kind": "lothsahn_directive",
                 "channel": RANDOM_CHANNEL, "channel_id": RANDOM_CHANNEL, "id": "15201",
@@ -2235,7 +2235,8 @@ def test_fix_lane_launches_with_write_capabilities():
 
     run_dir = os.path.join(case.watcher.conv_dir(1), "runs", run["ffbox_run_id"])
     argv = json.load(open(os.path.join(run_dir, "ffbox-argv.json"), encoding="utf-8"))
-    check("ffbox is NOT told --no-unity for a write lane", "--no-unity" not in argv, argv)
+    check("ffbox is told nothing about unity — there is no switch left",
+          not any("unity" in a for a in argv), argv)
     check("it is given the work branch the host named",
           "--branch" in argv and argv[argv.index("--branch") + 1] == f"ffbox/{run['ffbox_run_id']}",
           argv)
@@ -2252,7 +2253,7 @@ def test_fix_lane_launches_with_write_capabilities():
 
 
 def test_unity_lane_is_capped_at_one():
-    print("write lane: the activation seat")
+    print("write lane: the editor ceiling")
     case = bug_case("unitycap")
     git_origin(case)
     conv = case.rows("SELECT * FROM conversation")[0]
@@ -2265,15 +2266,15 @@ def test_unity_lane_is_capped_at_one():
         (triage["id"], "other-unity-run", "ffbox-other-unity-run"))
     before = len(case.rows("SELECT * FROM run"))
     started = case.watcher.schedule()
-    check("a second Unity lane does not start while one holds the seat",
+    check("a second run does not start while one is already holding an editor",
           started == [] and len(case.rows("SELECT * FROM run")) == before, started)
     check("and the turn stays queued rather than being failed",
           case.rows("SELECT status FROM turn WHERE lane='fix'")[0]["status"] == "queued")
 
-    # Seat returned: the same turn now starts, with nothing else changed.
+    # The editor is free again: the same turn now starts, with nothing else changed.
     case.watcher.db.execute("UPDATE run SET terminal_state='done' WHERE ffbox_run_id=?",
                             ("other-unity-run",))
-    check("once the seat comes back it starts", case.watcher.schedule() != [])
+    check("once it frees up the turn starts", case.watcher.schedule() != [])
     case.watcher.join_launches()
 
 
@@ -2711,8 +2712,7 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
     """
     print("shell: one pipeline, several front doors")
     case = Case("shellingress")
-    turn_id = case.watcher.submit("what does the merger do when both inputs saturate?",
-                                  unity=False)
+    turn_id = case.watcher.submit("what does the merger do when both inputs saturate?")
     turn = case.watcher.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
     conv = case.watcher.db.one("SELECT * FROM conversation WHERE id=?",
                                (turn["conversation_id"],))
@@ -2722,8 +2722,8 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
     check("it is not classified — the person typing already has a login here",
           json.loads(turn["classification_json"])["source"] == "shell",
           turn["classification_json"])
-    check("--no-unity survives to the turn as an option",
-          json.loads(turn["options_json"])["unity"] is False, turn["options_json"])
+    check("the submission carries no unity switch to survive",
+          "unity" not in json.loads(turn["options_json"]), turn["options_json"])
 
     case.watcher.once()
     turn = case.watcher.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
@@ -2731,7 +2731,7 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
     check("the ordinary scheduler runs it", turn["status"] == "done", turn["status"])
     check("and it lands in the run table like any other run",
           run is not None and run["terminal_state"] == "done", run)
-    check("with no Unity, because the submission said so", not run["unity"], run["unity"])
+    check("with an editor, because every run gets one", run["unity"] == 1, run["unity"])
 
     job = json.load(open(os.path.join(os.path.dirname(run["stream_path"]), "job.json"),
                          encoding="utf-8"))

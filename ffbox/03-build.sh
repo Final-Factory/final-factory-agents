@@ -27,4 +27,4 @@ docker build \
 echo
 echo "Built $TAG."
 echo "  'sh ffbox/setup.sh' handles the secrets file and the Unity Library warm-up."
-echo "  Quick check:  ffbox/ffbox --no-unity 'what does the belt merger do?'"
+echo "  Quick check:  ffbox/ffbox 'what does the belt merger do?'"

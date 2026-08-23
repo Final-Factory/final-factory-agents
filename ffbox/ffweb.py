@@ -936,7 +936,7 @@ class FfwatchActions:
             args += ["--reason", reason]
         return self._run(args)
 
-    def submit(self, prompt, unity=True):
+    def submit(self, prompt):
         """Queue a shell-style turn from the page (design/trusted_ingress_design.txt s12).
 
         Same route as approve/reject and for the same reason: ffwatch owns the database and
@@ -948,10 +948,7 @@ class FfwatchActions:
         this path at all: subprocess.run takes a list, so quoting, backticks and semicolons in
         the text are inert.
         """
-        args = ["submit", "--", prompt]
-        if not unity:
-            args.insert(1, "--no-unity")
-        return self._run(args)
+        return self._run(["submit", "--", prompt])
 
 
 # ------------------------------------------------------------------------------------------
@@ -1204,8 +1201,7 @@ class FFWebHandler(BaseHTTPRequestHandler):
                 return self._error(400, "an empty prompt is not a question")
             if len(prompt) > 16000:
                 return self._error(413, "prompt too long")
-            unity = (form.get("unity") or ["1"])[0] not in ("0", "", "off", "no")
-            ok, out = app.actions.submit(prompt, unity=unity)
+            ok, out = app.actions.submit(prompt)
             note = ("queued" if ok else "failed") + ": " + short(out, 300)
             return self._redirect("/?msg=" + urllib.parse.quote(note))
 
@@ -1430,7 +1426,6 @@ class App:
         return ("<form class=\"filters\" method=\"post\" action=\"/actions/prompt\">"
                 "<input name=\"prompt\" placeholder=\"ask for work, or a question\" "
                 "size=\"70\" autocomplete=\"off\">"
-                "<label><input type=\"checkbox\" name=\"unity\" value=\"1\" checked> unity</label>"
                 "<button type=\"submit\">run</button></form>")
 
     def _totals_note(self):

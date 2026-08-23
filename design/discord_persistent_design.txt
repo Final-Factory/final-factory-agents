@@ -540,10 +540,10 @@ Recovery on restart, following jobs.recover():
 13. Lanes
 ---------
 
-  answer  message on ask_claude, player_mention, catchup. --no-unity, read-only capability set.
-          discord-answerer. High volume, low risk, no seat.
+  answer  message on ask_claude, player_mention, catchup. Read-only capability set.
+          discord-answerer. High volume, low risk.
 
-  triage  thread and thread_message on bug_reports and suggestions. --no-unity, read-only.
+  triage  thread and thread_message on bug_reports and suggestions. Read-only.
           discord-triager reads the thread, the downloaded log and save, path-traces against
           source, returns a verdict. An AUTOFIX verdict enqueues a separate fix job.
 
