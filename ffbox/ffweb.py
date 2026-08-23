@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ffweb — the read-only web UI over ffwatch.db and the blob store (design section 19).
+"""ffweb — the web UI over ffwatch.db and the blob store (design section 19).
 
   ffweb                       serve on https://127.0.0.1:8787 over ~/ffbox-state
   ffweb --port 9000           somewhere else
@@ -14,12 +14,17 @@ FOUR THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the pag
    out to `ffwatch approve` / `ffwatch reject`, which is the same code path the CLI uses, so
    the write happens inside ffwatch and the UI can move to another box later without the
    database moving with it. That is why the action surface is deliberately tiny — one verb
-   pair over one table — and off unless --enable-actions is given.
+   pair over one table — and off unless --enable-actions is given. The prompt box takes the
+   same route, to `ffwatch submit`, and it has NO flag: signing in is the grant. The account
+   table is people who could open a terminal on this box, so a switch in front of the box only
+   ever meant an operator hunting for the flag that unhid it.
 
 2. THIS PAGE IS INTERNAL-ONLY AND NONE OF ITS TEXT IS EVER REUSED IN A DISCORD POST.
    transcript_event holds repo internals, file contents the agent read, and raw model
-   thinking. It binds to 127.0.0.1 by default for that reason, and --enable-actions refuses to
-   come up on a non-loopback address without --allow-remote-actions said out loud.
+   thinking. The bind address decides who can reach that, and it is a deployment decision made
+   in the config (ffwatch.web_host): a laptop keeps the default, and the build server binds the
+   LAN address people actually read the queue from. What holds the page shut there is the login
+   and TLS, not the address.
 
 3. EVERY VALUE ON THE PAGE WAS WRITTEN BY A STRANGER. Player bug reports, Discord display
    names, attachment filenames and raw model output all render here, and any of them can
@@ -896,7 +901,7 @@ def select(name, current, options, blank="any"):
 # ------------------------------------------------------------------------------------------
 
 class FfwatchActions:
-    """approve/reject, performed by running ffwatch — never by touching the database.
+    """approve/reject/submit, performed by running ffwatch — never by touching the database.
 
     ffwatch owns transitions on `outbound`: approving also flushes the send queue, respects the
     kill switch, the send-side rate limits and dry-run, and records attempts and errors on the
@@ -1184,14 +1189,16 @@ class FFWebHandler(BaseHTTPRequestHandler):
             return self._require_login("/")
 
         if path == "/actions/prompt":
-            # Its own flag, not --enable-actions. Submitting work is a larger grant than
-            # approving a reply somebody already wrote, and the two should not ride on one
-            # switch. The Origin check above covers this route in its REFUSING form, which
-            # matters more here than anywhere else on the page: a CSRF hole into
-            # `ffwatch submit` is a stranger running work on this box.
-            if not app.prompts_enabled:
-                return self._error(403, "the prompt box is disabled; restart ffweb with "
-                                        "--enable-prompts")
+            # No flag in front of this. Starting a conversation is what the page is FOR, and
+            # the session check above is the grant: the account table is two people who could
+            # open a terminal on this box anyway, so a switch only ever meant one of them
+            # finding a dead page and a note naming a flag. --enable-actions still gates
+            # approve/reject, which is a different grant — that one releases a reply into a
+            # public Discord thread, where this one runs work in a container that cannot post.
+            #
+            # The Origin check above covers this route in its REFUSING form, which matters
+            # more here than anywhere else on the page: a CSRF hole into `ffwatch submit` is a
+            # stranger running work on this box.
             prompt = (form.get("prompt") or [""])[0].strip()
             if not prompt:
                 return self._error(400, "an empty prompt is not a question")
@@ -1206,9 +1213,9 @@ class FFWebHandler(BaseHTTPRequestHandler):
             return self._error(404, "no such action")
         if not app.actions.enabled:
             # The default. Said plainly rather than 404'd, because the operator who just tried
-            # it needs to know the flag exists and that the page is otherwise read-only.
-            return self._error(403, "actions are disabled; restart ffweb with --enable-actions "
-                                    "(this page is read-only by default)")
+            # it needs to know the flag exists, and that this is the one surface behind it.
+            return self._error(403, "releasing a queued reply is disabled; restart ffweb with "
+                                    "--enable-actions (the prompt box needs no flag)")
         ids = []
         for value in form.get("id", []):
             if value.strip().isdigit():
@@ -1330,14 +1337,11 @@ def blob_content_type(filename, declared):
 
 class App:
     def __init__(self, db_path, blobs_dir, state_dir, ffwatch_py, enable_actions=False,
-                 quiet=False, origins=(), scheme="https", sessions=None,
-                 enable_prompts=False):
+                 quiet=False, origins=(), scheme="https", sessions=None):
         self.db = ReadOnlyDb(db_path)
         self.blobs_dir = os.path.realpath(blobs_dir)
         self.state_dir = state_dir
         self.actions = FfwatchActions(ffwatch_py, state_dir, enabled=enable_actions)
-        # Separate from actions.enabled on purpose: see the /actions/prompt branch.
-        self.prompts_enabled = bool(enable_prompts)
         self.quiet = quiet
         self.self_origins = set(origins)
         # The scheme this process is actually serving. It decides two things and only two:
@@ -1420,12 +1424,9 @@ class App:
     def _prompt_box(self):
         """Ask for work from the page. The same rows `ffbox "..."` makes, by the same route.
 
-        Only rendered when --enable-prompts is on; without it the page says the flag exists
-        rather than hiding the affordance, so the operator who wanted it knows where it went.
+        Always here, for anyone who got past the login. Every prompt starts a NEW conversation,
+        the way a shell prompt does; this is not a reply into the thread below it.
         """
-        if not self.prompts_enabled:
-            return ("<p class=\"note\">The prompt box needs <code>--enable-prompts</code>. "
-                    "Without it this page cannot start work, which is the default.</p>")
         return ("<form class=\"filters\" method=\"post\" action=\"/actions/prompt\">"
                 "<input name=\"prompt\" placeholder=\"ask for work, or a question\" "
                 "size=\"70\" autocomplete=\"off\">"
@@ -1987,11 +1988,11 @@ def missing_columns(db):
 
 
 def configured_bind():
-    """(host, port) from the ffwatch block of the ffdiscord config, else the safe default.
+    """(host, port) from the ffwatch block of the ffdiscord config, else the default.
 
     Read here rather than only rendered into the unit so that `python3 ffbox/ffweb.py` by hand
-    lands on the same address as the service. A missing or unreadable config is not an error —
-    it means loopback, which is the answer that cannot leak anything.
+    lands on the same address as the service. A missing or unreadable config is not an error: it
+    falls back to 127.0.0.1, because a config this cannot read is not one to widen a bind on.
     """
     def read(path):
         try:
@@ -2023,25 +2024,22 @@ def build_parser():
     host, port = configured_bind()
     p = argparse.ArgumentParser(prog="ffweb", description=__doc__.split("\n")[0])
     p.add_argument("--host", default=host,
-                   help=f"bind address (default {host} — from the ffwatch config block; this "
-                        "page has no authentication, so widen it only to a trusted network)")
+                   help=f"bind address (default {host} — from the ffwatch config block; one "
+                        "password is all that holds this page shut, and anyone through it can "
+                        "start work here, so widen it only to a trusted network)")
     p.add_argument("--port", type=int, default=port)
     p.add_argument("--state-dir", default=DEFAULT_STATE_DIR,
                    help="ffwatch state directory (default ~/ffbox-state)")
     p.add_argument("--db", help="ffwatch.db (default <state-dir>/ffwatch.db)")
     p.add_argument("--blobs", help="blob store (default <state-dir>/blobs)")
     p.add_argument("--ffwatch", default=os.path.join(HERE, "ffwatch.py"),
-                   help="ffwatch.py to invoke for approve/reject")
+                   help="ffwatch.py to invoke for submit/approve/reject")
     p.add_argument("--enable-actions", action="store_true",
-                   help="allow approve/reject on the outbound queue (off by default; the page "
-                        "is otherwise read-only)")
-    p.add_argument("--enable-prompts", action="store_true",
-                   help="allow submitting a prompt from the page, which queues a turn the way "
-                        "`ffbox \"...\"` does (off by default; separate from --enable-actions "
-                        "because submitting work is a larger grant than approving a reply)")
+                   help="allow approve/reject on the outbound queue, which releases a reply "
+                        "into a public Discord thread (off by default; the prompt box, which "
+                        "only starts work on this box, needs no flag)")
     p.add_argument("--allow-remote-actions", action="store_true",
-                   help="required to combine --enable-actions or --enable-prompts with a "
-                        "non-loopback --host")
+                   help="required to combine --enable-actions with a non-loopback --host")
     p.add_argument("--no-tls", dest="tls", action="store_false", default=True,
                    help="serve plaintext http instead of https (only reasonable inside an "
                         "SSH tunnel; the login password crosses the wire in the clear)")
@@ -2062,21 +2060,18 @@ def main(argv=None):
     if not os.path.isfile(db_path):
         sys.stderr.write(f"ffweb: no database at {db_path} — run `ffwatch init` first\n")
         return 2
-    writes = [f for f, on in (("--enable-actions", args.enable_actions),
-                              ("--enable-prompts", args.enable_prompts)) if on]
-    if writes and not is_loopback(args.host) and not args.allow_remote_actions:
-        # The page renders repo internals and raw model thinking, its action surface can
-        # release a reply into a public Discord thread, and its prompt box runs work on this
-        # box with shell capability. Refusing here rather than warning is deliberate: the
-        # failure mode of getting this wrong is not recoverable.
+    if args.enable_actions and not is_loopback(args.host) and not args.allow_remote_actions:
+        # The page renders repo internals and raw model thinking, and its action surface can
+        # release a reply into a public Discord thread. Refusing here rather than warning is
+        # deliberate: the failure mode of getting this wrong is not recoverable.
         #
-        # --enable-prompts is named here explicitly rather than left to ride on the actions
-        # check. The two flags are independent, and a guard written against one of them covers
-        # the other only by accident.
+        # The prompt box is deliberately NOT part of this test any more. It has no flag, so a
+        # test against it would refuse every non-loopback bind there is — and the bind is
+        # already where that decision gets made: widening it hands whoever is on that network
+        # the page, the login, and the shell capability behind it, in one move.
         sys.stderr.write(
-            f"ffweb: refusing {' and '.join(writes)} on non-loopback host {args.host}.\n"
-            "       This UI is internal-only, its action surface can post to Discord, and its\n"
-            "       prompt box runs work on this machine.\n"
+            f"ffweb: refusing --enable-actions on non-loopback host {args.host}.\n"
+            "       This UI is internal-only and its action surface can post to Discord.\n"
             "       Put it behind an SSH tunnel, or pass --allow-remote-actions to say you\n"
             "       have read that sentence and meant it anyway.\n")
         return 2
@@ -2086,7 +2081,7 @@ def main(argv=None):
                f"{scheme}://127.0.0.1:{args.port}"}
     app = App(db_path, blobs, state_dir, os.path.abspath(args.ffwatch),
               enable_actions=args.enable_actions, quiet=args.quiet, origins=origins,
-              scheme=scheme, enable_prompts=args.enable_prompts)
+              scheme=scheme)
     gaps = missing_columns(app.db)
     if gaps:
         sys.stderr.write(

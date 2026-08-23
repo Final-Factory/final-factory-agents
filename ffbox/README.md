@@ -12,7 +12,7 @@ front door decides only what goes in and where the answer is read.
 |---|---|
 | **the shell** | `ffbox "<prompt>"` submits a turn and waits; the answer prints, and the run is on the page |
 | **Discord** | a thread or a mention becomes a turn; the harness composes and posts the reply |
-| **the web page** | `ffweb` — every conversation, run, transcript and queued reply, whatever it came from |
+| **the web page** | `ffweb` — every conversation, run, transcript and queued reply, whatever it came from; its prompt box starts one too |
 
 `ffbox --direct` is the exception: it clones and runs right here, skipping the database, the
 ceilings and the page. It exists for bootstrapping a machine and for debugging the container.
@@ -105,8 +105,9 @@ Re-run `06-services.sh --install` and `systemctl restart ffbox.target` after cha
 the bind address or the units; `--check` tells you when what is installed no longer matches
 this checkout.
 
-The page binds `https://127.0.0.1:8787` by default. To reach it from another machine, either
-tunnel (`ssh -N -L 8787:127.0.0.1:8787 <box>`) or bind it to an address on your network:
+The bind address is config, not a constant. A machine with no opinion gets
+`https://127.0.0.1:8787`; the build server binds the address people actually read the queue
+from:
 
 ```json
 "ffwatch": { "web_host": "192.168.51.10", "web_port": 8787 }
@@ -118,10 +119,11 @@ login** — one hardcoded account, `Ben`, overridable per machine with `FFWEB_US
 certificate minted into `~/ffbox-state/tls` on first start. Your browser will warn about that
 certificate once, and the warning is accurate: nothing signed it.
 
-One password is still a thin thing to hold a network off with, and whoever gets past it reads
-player messages, repo internals, the contents of files agents read, and raw model thinking.
-Widen the bind only to a network you would hand all of that to, change the password when you
-do, and leave actions off (ffweb refuses `--enable-actions` on a non-loopback host unless
+One password is still a thin thing to hold a network off with. Whoever gets past it reads
+player messages, repo internals, the contents of files agents read, and raw model thinking —
+and can start work on this box from the prompt box, which is on for everyone who signs in. So
+point the bind at a network you would hand all of that to, set a real password there, and leave
+actions off (ffweb refuses `--enable-actions` on a non-loopback host unless
 `--allow-remote-actions` is given too).
 
 ## Staying current
@@ -553,7 +555,7 @@ python3 ffbox/ffwatch.py reject 14 --reason "wrong"    # drop, with a reason on 
 python3 ffbox/ffwatch.py send                          # flush the queue once
 ```
 
-Phase 4 is what is implemented: all four lanes, plus the read-only web UI below. On top of
+Phase 4 is what is implemented: all four lanes, plus the web UI below. On top of
 phase 2's ingest, fail-closed classification, ceilings and host-side sender, the write
 lanes (`fix`, `dev`) add the three things the harness owns and the agent cannot touch:
 
@@ -615,15 +617,26 @@ the certificate, because the standard library can serve TLS but cannot create an
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 
-**It is read-only, and ffwatch stays the sole writer.** The connection is opened
-`file:…?mode=ro` through a URI with `PRAGMA query_only` on top, so a write is refused by SQLite
-rather than caught in review — the test suite asserts both that the connection rejects an
-`INSERT` and that the database file's mtime is unchanged after a crawl of every route. The one
-thing the UI can change is the outbound queue, and it does not change it: `--enable-actions`
-(**off by default**) turns on an approve/reject form that shells out to `ffwatch approve` /
-`ffwatch reject`. That keeps the transition where the kill switch, the send-side rate limits
-and the retry bookkeeping already live, and it is what lets the page move off this box later
-without the database moving with it.
+**ffwatch stays the sole writer.** The connection is opened `file:…?mode=ro` through a URI
+with `PRAGMA query_only` on top, so a write is refused by SQLite rather than caught in review —
+the test suite asserts both that the connection rejects an `INSERT` and that the database
+file's mtime is unchanged after a crawl of every route. Where the page needs to change
+something it shells out to ffwatch instead, which keeps the transition where the kill switch,
+the send-side rate limits and the retry bookkeeping already live, and is what lets the page
+move off this box later without the database moving with it. Two surfaces do that:
+
+The **prompt box** at the top of `/` runs `ffwatch submit` and queues the same turn
+`ffbox "<prompt>"` does, in the same disposable container. It has **no flag**: signing in is
+the grant. The account table is people who could open a terminal on this box, so a switch in
+front of it only ever meant one of them finding a dead page and a note naming a flag. Every
+prompt starts a *new* conversation, the way a shell prompt does — there is no reply-into-this-
+thread box on `/conversation/<id>`. The `unity` checkbox is `--no-unity` inverted; clear it for
+read-only or code-only work, and the turn takes no Unity seat.
+
+**Approve/reject** on the outbound queue is the one that stays behind a flag. `--enable-actions`
+is **off by default**, and the systemd unit does not carry it. The difference is disclosure, not
+capability: approving releases a reply into a public Discord thread, where a prompt runs work in
+a container that cannot post at all.
 
 **Nothing is served until someone signs in, and the wire is TLS.** Every route except the
 login form goes through the session check, so an unauthenticated request is a `303` to
@@ -662,13 +675,13 @@ saying so rather than a dropped connection.
 
 **It is internal-only, and none of its text is ever reused in a Discord post.**
 `transcript_event` holds repo internals, the contents of files the agent read, and raw
-model thinking. That is why the bind address defaults to `127.0.0.1` everywhere it is decided —
-the CLI flag, the `ffwatch.web_host` config key, and the fallback ffweb uses when there is no
-config to read. An SSH tunnel (`ssh -N -L 8787:127.0.0.1:8787 <box>`) leaks nothing; a LAN
-address is a deliberate trade, made in the config so it is visible and reviewable rather than
-buried in a unit file. Combining `--enable-actions` with a non-loopback host is refused
-outright unless `--allow-remote-actions` is also given, because the action surface can release
-a reply into a public thread.
+model thinking. Which network reaches that is set in one place — `ffwatch.web_host` in the
+config, which the CLI flag and the rendered unit both agree with — so it is visible and
+reviewable rather than buried in a unit file. It is also the whole decision about who can start
+work here, since the prompt box is on for anyone who signs in. On the build server it is the
+LAN address, which is the point of the login and the TLS in front of it. Combining
+`--enable-actions` with a non-loopback host is refused outright unless `--allow-remote-actions`
+is also given, because that surface can release a reply into a public thread.
 
 Everything on the page was written by a stranger — player bug reports, Discord display names,
 attachment filenames, raw model output — so every value goes through one escape function and
