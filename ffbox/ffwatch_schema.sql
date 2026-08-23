@@ -250,7 +250,11 @@ CREATE TABLE IF NOT EXISTS outbound (
     action          TEXT NOT NULL,               -- post | react | edit | ask | thread-create
     payload_json    TEXT,
     nonce           TEXT NOT NULL UNIQUE,
-    status          TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | sent | rejected | dry
+    -- 'undeliverable' is the split reply's private half with nowhere to go (design section 7):
+    -- terminal, never retried, and deliberately not 'pending', because `ffwatch approve`
+    -- releases those and releasing this one would try the same closed DM again.
+    status          TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | sent | rejected
+                                                      -- | dry | undeliverable
     discord_id      TEXT,
     reject_reason   TEXT,
     created_at      TEXT,

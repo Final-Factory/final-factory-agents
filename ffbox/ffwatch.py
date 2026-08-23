@@ -2341,6 +2341,35 @@ class Watcher:
         if terminal == "done":
             self.enqueue_autofix(turn, conv, verdict)
 
+    def record_private_half(self, run_row_id, conv, turn, verdict):
+        """The second destination of a split reply (design section 7).
+
+        An operator asked in a channel players read. They are entitled to the answer and the
+        channel is not, so the public half went out under the player rules and this carries the
+        rest to the asker alone. Conditions, all of them:
+
+          * the turn is an OPERATOR turn, so there is somebody entitled to it. A player never
+            gets a private half, which is why there is nothing here for a jailbreak to aim at.
+          * the venue is PUBLIC. At a private venue the whole answer already went out in place.
+          * the verdict actually carries one. If the answer was public-safe there is no second
+            half, and the split responds to content rather than being a habit.
+
+        The recipient is the ASKER, resolved at send time from their user id, never a broadcast
+        to every operator: whoever else wants it can read the run on the web page.
+        """
+        if (turn["trust_tier"] or "player") != "operator" or (turn["venue"] or "public") != "public":
+            return 0
+        private = (verdict.get("private_summary") or "").strip()
+        if not private:
+            return 0
+        actor = str(turn["trust_actor"] or "")
+        if not actor.isdigit():
+            log(f"WARNING: turn {turn['id']} produced a private half but its actor {actor!r} "
+                f"is not a Discord id, so there is nobody to send it to")
+            return 0
+        payload = {"dm_to": actor, "text": private, "silent": True, "private_half": True}
+        return 1 if self.record_outbound(run_row_id, conv["id"], "post", payload) else 0
+
     def finish_turn(self, turn_id, status, error=None):
         self.db.execute("UPDATE turn SET status=?, ended_at=?, error=? WHERE id=?",
                         (status, now_iso(), error, turn_id))
@@ -2483,6 +2512,8 @@ class Watcher:
                 pass
         if self.record_outbound(run_row_id, conv["id"], "post", payload):
             recorded += 1
+
+        recorded += self.record_private_half(run_row_id, conv, turn, verdict)
 
         trigger = job["messages"][-1]["discord_id"] if job["messages"] else None
         if trigger:
@@ -3030,6 +3061,21 @@ class Watcher:
             self._reject(row, "payload_json is not an object")
             return False
 
+        if payload.get("dm_to") and not payload.get("channel"):
+            # Resolve the DM channel now rather than at compose time, and write it back onto
+            # the row: POST /users/@me/channels returns the existing channel when one is open,
+            # so this both opens and re-opens, and a cached id that has gone stale costs one
+            # extra call rather than a failed send.
+            try:
+                dm = ffd_json(self.cfg, ["dm", str(payload["dm_to"])]) or {}
+            except FFDiscordError as exc:
+                return self._undeliverable(row, f"could not open a DM: {exc}")
+            if not dm.get("id"):
+                return self._undeliverable(row, "Discord returned no DM channel")
+            payload["channel"] = str(dm["id"])
+            self.db.execute("UPDATE outbound SET payload_json=? WHERE id=?",
+                            (json.dumps(payload, ensure_ascii=False), row["id"]))
+
         try:
             args, wants_id = self.sender_args(row, payload)
         except SendRejected as exc:
@@ -3248,6 +3294,23 @@ class Watcher:
             "UPDATE outbound SET status='rejected', reject_reason=?, last_attempt_at=?"
             " WHERE id=?", (reason, now_iso(), row["id"]))
         log(f"outbound {row['id']} rejected: {reason}")
+
+    def _undeliverable(self, row, reason):
+        """A private half that cannot reach its recipient. Its OWN terminal state, on purpose.
+
+        Not 'pending': `ffwatch approve` releases those, and releasing this one would try the
+        same closed DM again. Not merged into the public message either, and never appended to
+        it — the whole reason the half exists is that the channel may not have it. A human
+        clears this row after fixing the cause, which is usually the recipient's privacy
+        settings rather than anything here.
+        """
+        self.db.execute(
+            "UPDATE outbound SET status='undeliverable', reject_reason=?, attempts=attempts+1,"
+            " last_attempt_at=?, last_error=? WHERE id=?",
+            (reason, now_iso(), reason[:500], row["id"]))
+        log(f"outbound {row['id']} UNDELIVERABLE: {reason}. The public half was posted; this "
+            f"half was not, and is not retried.")
+        return False
 
     # -- the approval affordance -------------------------------------------------------------
 
