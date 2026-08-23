@@ -12,7 +12,7 @@ front door decides only what goes in and where the answer is read.
 |---|---|
 | **the shell** | `ffbox "<prompt>"` submits a turn and waits; the answer prints, and the run is on the page. Kind `shell` |
 | **Discord** | a thread or a mention becomes a turn; the harness composes and posts the reply |
-| **the web page** | `ffweb` — every conversation, run, transcript and queued reply, whatever it came from; its prompt box starts one too, kind `web` |
+| **the web page** | `ffweb` — every conversation, run, transcript and queued reply, whatever it came from; its prompt box starts one too, kind `web`, and a local conversation's reply box continues it |
 
 `ffbox --direct` is the exception: it clones and runs right here, skipping the database, the
 ceilings and the page. It exists for bootstrapping a machine and for debugging the container.
@@ -120,7 +120,8 @@ certificate once, and the warning is accurate: nothing signed it.
 
 One password is still a thin thing to hold a network off with. Whoever gets past it reads
 player messages, repo internals, the contents of files agents read, and raw model thinking —
-and can start work on this box from the prompt box, which is on for everyone who signs in. So
+and can start work on this box from the prompt box, or add a turn to a conversation already
+open from the reply box, both of which are on for everyone who signs in. So
 point the bind at a network you would hand all of that to, set a real password there, and leave
 actions off (ffweb refuses `--enable-actions` on a non-loopback host unless
 `--allow-remote-actions` is given too).
@@ -610,7 +611,7 @@ the certificate, because the standard library can serve TLS but cannot create an
 | route | what it is |
 |---|---|
 | `/` | conversations, filtered live by kind, state, verdict and lane as the dropdowns change, with cost, tokens and the average warm-up and agent time per conversation. The id and the title both open the conversation |
-| `/conversation/<id>` | one thread: `message`, `turn`, `run` and `verification` rows interleaved in time, with attachments rendered in place |
+| `/conversation/<id>` | one thread: `message`, `turn`, `run` and `verification` rows interleaved in time, with attachments rendered in place. A local conversation also carries a reply box that continues it |
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per lane |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
@@ -623,7 +624,7 @@ the test suite asserts both that the connection rejects an `INSERT` and that the
 file's mtime is unchanged after a crawl of every route. Where the page needs to change
 something it shells out to ffwatch instead, which keeps the transition where the kill switch,
 the send-side rate limits and the retry bookkeeping already live, and is what lets the page
-move off this box later without the database moving with it. Two surfaces do that:
+move off this box later without the database moving with it. Three surfaces do that:
 
 The **prompt box** at the top of `/` runs `ffwatch submit --source web` and queues the same
 turn `ffbox "<prompt>"` does, in the same disposable container. The `--source` is recorded and
@@ -632,12 +633,24 @@ apart from a terminal, and everything else the kind decides — the lane, the ca
 private venue, having no Discord side at all — is deliberately identical. It has **no flag**: signing in is
 the grant. The account table is people who could open a terminal on this box, so a switch in
 front of it only ever meant one of them finding a dead page and a note naming a flag. Every
-prompt starts a *new* conversation, the way a shell prompt does — there is no reply-into-this-
-thread box on `/conversation/<id>`. There is nothing to configure beside the text: every run
-gets an editor, so the box is one field and one button. A queued prompt gets a **"Message
-sent"** toast that fades on its own — ffwatch's stdout (config warnings, the conversation it
-opened, the turn id) is in the journal and not pinned to the top of the page. A submission
-that *fails* still prints everything it knows, and that notice stays until it is read.
+prompt there starts a *new* conversation, the way a shell prompt does. There is nothing to
+configure beside the text: every run gets an editor, so the box is one field and one button. A
+queued prompt gets a **"Message sent"** toast that fades on its own — ffwatch's stdout (config
+warnings, the conversation it opened, the turn id) is in the journal and not pinned to the top
+of the page. A submission that *fails* still prints everything it knows, and that notice stays
+until it is read.
+
+The **reply box** on `/conversation/<id>` runs `ffwatch submit --conversation <id>` and
+continues the conversation being read instead of opening another one. The difference is
+downstream and is the whole point: the follow-up is turn *N* of that conversation, so the run
+resumes its session id and the agent picks up its own transcript rather than meeting the
+question cold. Typed while a container is still working, the message is recorded immediately
+and claimed when that run ends — several typed during one long run batch into a single turn,
+exactly as a burst of Discord follow-ups does — and the placeholder says so before the button
+is pressed. **Local conversations only.** A Discord thread gets a sentence saying where it is
+answered instead of a box, and the route refuses one even if the POST is hand-built: a message
+inserted from here would carry this box's unix user as its author, and whether that person may
+speak in a public thread is Discord's question, not something a login here answers.
 
 **The live pages reload themselves once a minute — ten seconds while a container works.**
 The conversation list, a single conversation and the outbound queue carry a small inline script

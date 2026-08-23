@@ -15,7 +15,8 @@ FOUR THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the pag
    the write happens inside ffwatch and the UI can move to another box later without the
    database moving with it. That is why the action surface is deliberately tiny — one verb
    pair over one table — and off unless --enable-actions is given. The prompt box takes the
-   same route, to `ffwatch submit`, and it has NO flag: signing in is the grant. The account
+   same route, to `ffwatch submit`, as does the reply box that continues a conversation
+   (`--conversation <id>`), and neither has a flag: signing in is the grant. The account
    table is people who could open a terminal on this box, so a switch in front of the box only
    ever meant an operator hunting for the flag that unhid it.
 
@@ -1049,6 +1050,23 @@ class FfwatchActions:
         """
         return self._run(["submit", "--source", "web", "--", prompt])
 
+    def follow_up(self, conversation_id, prompt):
+        """Continue an existing conversation instead of opening another one.
+
+        The same route, the same argv-not-a-shell rule, and the same reason for both. What is
+        different is downstream: a turn on an existing conversation resumes that conversation's
+        session, so the agent reads the follow-up with everything it already did in front of
+        it. Starting a new conversation for "no, the other belt" is how a person ends up
+        re-explaining a bug to something that just spent four minutes reading the code for it.
+
+        --source is not passed. The front door is a property of the CONVERSATION and that row
+        already exists; a follow-up cannot change where it was opened from.
+
+        ffwatch refuses this for a Discord conversation, and so does the route that calls
+        it — deliberately both, since only one of the two is the writer.
+        """
+        return self._run(["submit", "--conversation", str(int(conversation_id)), "--", prompt])
+
 
 # ------------------------------------------------------------------------------------------
 # request handling
@@ -1240,7 +1258,7 @@ class FFWebHandler(BaseHTTPRequestHandler):
             return self._send(200, app.page_outbound(query))
         m = re.fullmatch(r"/conversation/(\d+)", path)
         if m:
-            body = app.page_conversation(int(m.group(1)))
+            body = app.page_conversation(int(m.group(1)), query)
             return self._send(200, body) if body else self._error(404, "no such conversation")
         m = re.fullmatch(r"/run/(\d+)", path)
         if m:
@@ -1326,6 +1344,37 @@ class FFWebHandler(BaseHTTPRequestHandler):
                 return self._redirect("/?sent=1")
             # A failure still says everything it knows. This one does NOT clear itself.
             return self._redirect("/?msg=" + urllib.parse.quote("failed: " + short(out, 300)))
+
+        if path == "/actions/reply":
+            # Continuing a conversation, which is the same grant as starting one and behind the
+            # same session check: it runs work in a container that cannot post, on a
+            # conversation nobody but a signed-in operator can see.
+            raw_id = (form.get("conversation") or [""])[0].strip()
+            if not raw_id.isdigit():
+                return self._error(400, "a reply needs a conversation to reply to")
+            conv = app.db.one("SELECT id, kind FROM conversation WHERE id = ?", (int(raw_id),))
+            if conv is None:
+                return self._error(404, "no such conversation")
+            if conv["kind"] not in LOCAL_KINDS:
+                # ffwatch refuses this too, and that is the refusal that counts — it is the
+                # writer. This one is here so the page answers in a sentence instead of showing
+                # the operator a subprocess's stderr, and so a hand-built POST at a Discord
+                # thread never reaches the writer at all.
+                return self._error(403, f"conversation {conv['id']} came from Discord; it is "
+                                        f"answered there, not from this page")
+            prompt = (form.get("prompt") or [""])[0].strip()
+            if not prompt:
+                return self._error(400, "an empty reply is not a question")
+            if len(prompt) > 16000:
+                return self._error(413, "reply too long")
+            ok, out = app.actions.follow_up(conv["id"], prompt)
+            where = f"/conversation/{conv['id']}"
+            if ok:
+                # Back to the conversation it was typed into, where the new message is already
+                # a row and the turn appears under it as the scheduler gets to it.
+                return self._redirect(where + "?sent=1")
+            return self._redirect(where + "?msg=" +
+                                  urllib.parse.quote("failed: " + short(out, 300)))
 
         if path not in ("/actions/approve", "/actions/reject"):
             return self._error(404, "no such action")
@@ -1546,8 +1595,9 @@ class App:
     def _prompt_box(self):
         """Ask for work from the page. The same rows `ffbox "..."` makes, by the same route.
 
-        Always here, for anyone who got past the login. Every prompt starts a NEW conversation,
-        the way a shell prompt does; this is not a reply into the thread below it.
+        Always here, for anyone who got past the login. Every prompt here starts a NEW
+        conversation, the way a shell prompt does. Continuing one is _reply_box, on the
+        conversation page, which is a different act with a different route.
         """
         return ("<form class=\"filters\" method=\"post\" action=\"/actions/prompt\">"
                 "<input name=\"prompt\" placeholder=\"Start a new conversation...\" "
@@ -1581,10 +1631,11 @@ class App:
 
     # -- one conversation -------------------------------------------------------------------
 
-    def page_conversation(self, conv_id):
+    def page_conversation(self, conv_id, query=None):
         conv = self.db.one("SELECT * FROM conversation WHERE id = ?", (conv_id,))
         if conv is None:
             return None
+        query = query or {}
         agg = conversation_aggregates(self.db, conv_id).get(conv_id)
 
         head = ["<h1>", esc(short(conv["title"] or conv["thread_id"], 140)), "</h1>"]
@@ -1596,10 +1647,51 @@ class App:
               conv["github_pr"] or "—"]]))
         head.append(table(AGG_HEADERS, [agg_cells(agg)]))
 
+        in_flight = self._in_flight(conv_id)
+        note = []
+        msg = (query.get("msg") or [""])[0].strip()
+        if (query.get("sent") or [""])[0]:
+            note.append("<div class=\"toast\">Message sent</div>")
+        if msg:
+            note.append("<p class=\"note\">" + esc(msg) + "</p>")
         items = self._timeline(conv_id)
         body = ["<h2>timeline</h2>"] + items
-        return page(conv["title"] or f"conversation {conv_id}", head + body,
-                    refresh="live" if self._in_flight(conv_id) else True)
+        return page(conv["title"] or f"conversation {conv_id}",
+                    head + note + [self._reply_box(conv, in_flight)] + body,
+                    refresh="live" if in_flight else True)
+
+    def _reply_box(self, conv, in_flight):
+        """Say something else to THIS conversation, rather than starting another one.
+
+        The box on the list page opens a conversation; this one continues the one being read,
+        which is a different act and the one somebody looking at an answer usually wants. The
+        message lands on the end of the thread above and the turn it produces RESUMES the
+        session, so the agent picks up where its own transcript left off.
+
+        LOCAL CONVERSATIONS ONLY. A Discord thread gets a note instead of a box: the reply to
+        one of those is written by a run and released through the outbound queue, and a message
+        typed here would carry this box's unix user as its author into a conversation whose
+        whole trust model is Discord's authenticated author id.
+
+        Named `prompt` like the box on the list page, which is not a coincidence: the refresh
+        script backs off while an input named prompt has text in it, so a reload cannot throw
+        away a half-typed follow-up here either.
+        """
+        if conv["kind"] not in LOCAL_KINDS:
+            return ("<p class=\"note\">This conversation came from Discord, and that is where "
+                    "it is answered — the reply is written by the run and released from the "
+                    "outbound queue.</p>")
+        # Said before it is pressed rather than after. A follow-up typed mid-run is recorded
+        # immediately and claimed when the container exits (ffwatch's claim_turns), which is
+        # the right behaviour and looks like nothing happening if the page does not say so.
+        placeholder = ("Say something else — it runs when the work in flight finishes..."
+                       if in_flight else "Continue this conversation...")
+        return ("<form class=\"filters\" method=\"post\" action=\"/actions/reply\">"
+                "<input type=\"hidden\" name=\"conversation\" value="
+                + attr(conv["id"]) + ">"
+                "<input name=\"prompt\" placeholder=" + attr(placeholder)
+                + " size=\"70\" autocomplete=\"off\">"
+                "<button type=\"submit\">send</button></form>")
 
     def _in_flight(self, conv_id):
         """Is a container working for this conversation right now?
