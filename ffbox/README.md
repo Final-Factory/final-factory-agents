@@ -597,14 +597,17 @@ sudo systemctl enable --now ffbox.target     # normally: it comes up with the pi
 
 A page over the same database, and nothing else: no build step, no package manager, no CDN,
 no web font. It is `http.server` plus `sqlite3` plus `ssl`, the CSS is inline, and it renders
-correctly with the machine unplugged. The single asset is `ffbox/steam_background.jpg`, served
+correctly with the machine unplugged. There is one line of JavaScript in the whole site — it
+applies the conversation filters as soon as a dropdown changes, which is why that list has no
+"filter" button — and the CSP admits it by sha256 hash rather than by `'unsafe-inline'`, so
+that exact line is the only script a browser will run here. The single asset is `ffbox/steam_background.jpg`, served
 from this directory as the sign-in backdrop; swap the file and the next login form shows the
 new one, with no restart. The one external program is `openssl`, run once to mint
 the certificate, because the standard library can serve TLS but cannot create an X.509.
 
 | route | what it is |
 |---|---|
-| `/` | conversations, filterable by kind, state, verdict and lane, with cost, tokens and the average warm-up and agent time per conversation |
+| `/` | conversations, filtered live by kind, state, verdict and lane as the dropdowns change, with cost, tokens and the average warm-up and agent time per conversation |
 | `/conversation/<id>` | one thread: `message`, `turn`, `run` and `verification` rows interleaved in time, with attachments rendered in place |
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per lane |

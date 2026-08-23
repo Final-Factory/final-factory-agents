@@ -55,6 +55,7 @@ and the page works with the machine unplugged.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import hmac
 import html
@@ -151,9 +152,25 @@ LOGIN_BACKGROUND_URL = "/" + LOGIN_BACKGROUND_FILE
 TLS_SUBDIR = "tls"
 TLS_DAYS = 3650
 
+# The one script on the site: it makes the conversation filters apply the moment a dropdown
+# changes, so the list has no "filter" button to press. It is scoped to that one form's
+# selects and touches nothing else, and the CSP admits it BY HASH (below) rather than by
+# 'unsafe-inline', so this exact text is the only script a browser will run here.
+FILTER_SCRIPT = ("for (const s of document.querySelectorAll('#conversation-filters select'))"
+                 " s.addEventListener('change', () => s.form.submit());")
+
+
+def script_hash(source):
+    """The CSP source expression for an inline <script> holding exactly `source`."""
+    digest = base64.b64encode(hashlib.sha256(source.encode("utf-8")).digest()).decode("ascii")
+    return "'sha256-" + digest + "'"
+
+
 # Rendered on every page. There is no external resource to allow, so the policy is simply
-# "nothing but this document", which also neuters any escaping bug that does slip through.
+# "nothing but this document" plus the one hashed script above, which also neuters any
+# escaping bug that does slip through.
 CSP = ("default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
+       "script-src " + script_hash(FILTER_SCRIPT) + "; "
        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 
 # A ceiling on how much of one subagent chain is rendered. Not a depth limit: a subagent's
@@ -1375,10 +1392,14 @@ class App:
         options = {col: [r[0] for r in self.db.query(
             f"SELECT DISTINCT {col} FROM conversation WHERE {col} IS NOT NULL"
             f" AND {col} <> '' ORDER BY 1")] for col in ("kind", "state", "verdict", "lane")}
-        form = ["<form class=\"filters\" method=\"get\" action=\"/\">"]
+        # No filter button: FILTER_SCRIPT submits this form the moment a dropdown changes, so
+        # picking a value IS applying it. The <noscript> button is the fallback for a browser
+        # that will not run the script — without it those dropdowns would do nothing at all.
+        form = ["<form class=\"filters\" id=\"conversation-filters\" method=\"get\" "
+                "action=\"/\">"]
         for col in ("kind", "state", "verdict", "lane"):
             form.append(select(col, filters[col], options[col]))
-        form.append("<button type=\"submit\">filter</button>"
+        form.append("<noscript><button type=\"submit\">filter</button></noscript>"
                     "<a href=\"/\">clear</a></form>")
 
         body = [table(
@@ -1394,7 +1415,7 @@ class App:
         note = ["<p class=\"note\">" + esc(msg) + "</p>"] if msg else []
         return page("conversations",
                     [heading] + note + [self._prompt_box(), "".join(form)] + body
-                    + [self._totals_note()])
+                    + [self._totals_note(), "<script>" + FILTER_SCRIPT + "</script>"])
 
     def _prompt_box(self):
         """Ask for work from the page. The same rows `ffbox "..."` makes, by the same route.

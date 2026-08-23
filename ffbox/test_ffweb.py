@@ -527,6 +527,16 @@ def test_filters_actually_filter():
                     ok, detail = False, f"{path}: {needle!r} should have been filtered out"
         check("the list filters (kind, state, verdict, lane) filter", ok, detail)
 
+        # The dropdowns apply themselves, so the button is gone except as a <noscript>
+        # fallback, and the form the script hooks has to be the one carrying the selects.
+        home = text_of(srv.get("/")[2])
+        form = home.split("id=\"conversation-filters\"", 1)[-1].split("</form>", 1)[0]
+        check("the conversation filter form is the one the script targets",
+              "id=\"conversation-filters\"" in home and form.count("<select") == 4, form[:200])
+        check("no filter button outside <noscript>",
+              ">filter</button>" not in re.sub(r'<noscript>.*?</noscript>', "", form, flags=re.S)
+              and "<noscript><button type=\"submit\">filter</button></noscript>" in form)
+
         _c, _h, body = srv.get("/outbound?status=rejected")
         ob = text_of(body)
         check("the outbound status filter filters",
@@ -1024,9 +1034,13 @@ def test_headers_and_content_types():
               hdr.get("Content-Type") == "text/html; charset=utf-8", hdr.get("Content-Type"))
         check("the header no longer carries the internal-only warning",
               "never quote this into Discord" not in text_of(srv.get("/")[2]))
+        home = text_of(srv.get("/")[2])
         check("the CSS is inline, with no external reference",
-              "<style>" in text_of(srv.get("/")[2]) and
-              not re.search(r'<(link|script)\b', text_of(srv.get("/")[2])))
+              "<style>" in home and not re.search(r'<(link|script)\b[^>]*\b(src|href)=', home))
+        check("the only script is the hashed filter script, admitted by hash not unsafe-inline",
+              re.findall(r'<script>(.*?)</script>', home, re.S) == [ffweb.FILTER_SCRIPT] and
+              ffweb.script_hash(ffweb.FILTER_SCRIPT) in ffweb.CSP and
+              "'unsafe-inline'" not in ffweb.CSP.split("script-src")[1].split(";")[0])
     finally:
         srv.stop()
 
