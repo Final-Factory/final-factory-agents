@@ -193,10 +193,18 @@ FILTER_SCRIPT = ("for (const s of document.querySelectorAll('#conversation-filte
 #   forward — an abandoned tab would hold a signed-in session open indefinitely. The tick
 #   COUNT is derived from the interval so both variants below stop after the same half hour,
 #   whatever their cadence.
+#   Move the reader. location.replace() is a navigation, not a reload, so the browser lands at
+#   the top of the document every time — which on a long transcript throws away the place
+#   somebody was reading. The tick writes the scroll offset to sessionStorage on its way out,
+#   and the next page consumes it. Only a tick writes that entry and only one read survives
+#   it, so arriving by link or by the back button still starts where the browser wants to.
 REFRESH_BUDGET_MS = 1800000
 
 _REFRESH_TEMPLATE = (
-    "let n = 0; const t = setInterval(() => {"
+    "const k = 'ffweb:scroll:' + location.pathname;"
+    " try { const y = sessionStorage.getItem(k);"
+    " if (y !== null) { sessionStorage.removeItem(k); window.scrollTo(0, +y); } } catch (e) {}"
+    " let n = 0; const t = setInterval(() => {"
     " if (++n > @TICKS@) { clearInterval(t); return; }"
     " const el = document.activeElement;"
     " if (el && el.matches && el.matches('input, select, textarea, button')) return;"
@@ -204,6 +212,7 @@ _REFRESH_TEMPLATE = (
     " if (box && box.value.trim()) return;"
     " const u = new URL(location.href);"
     " u.searchParams.delete('sent'); u.searchParams.delete('msg');"
+    " try { sessionStorage.setItem(k, String(window.scrollY)); } catch (e) {}"
     " location.replace(u.href); }, @MS@);")
 
 
@@ -879,8 +888,11 @@ def page(title, body_parts, banner="", refresh=False):
 
     True is the minute tick. "live" is the ten-second one, for a page whose run is in flight:
     a transcript being indexed as the container writes it is the one thing here that changes
-    faster than a turn does. A finished run reverts to False — nothing more is coming, so the
-    reader keeps their scroll position.
+    faster than a turn does. A finished run reverts to False — nothing more is coming, so
+    there is nothing to reload for.
+
+    A tick carries the reader's scroll offset across the reload (see the refresh script), so
+    watching a long transcript grow does not keep snapping back to the top.
     """
     return (
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
