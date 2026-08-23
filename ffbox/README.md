@@ -594,7 +594,9 @@ sudo systemctl enable --now ffbox.target     # normally: it comes up with the pi
 
 A page over the same database, and nothing else: no build step, no package manager, no CDN,
 no web font. It is `http.server` plus `sqlite3` plus `ssl`, the CSS is inline, and it renders
-correctly with the machine unplugged. The one external program is `openssl`, run once to mint
+correctly with the machine unplugged. The single asset is `ffbox/steam_background.jpg`, served
+from this directory as the sign-in backdrop; swap the file and the next login form shows the
+new one, with no restart. The one external program is `openssl`, run once to mint
 the certificate, because the standard library can serve TLS but cannot create an X.509.
 
 | route | what it is |
@@ -605,7 +607,7 @@ the certificate, because the standard library can serve TLS but cannot create an
 | `/lanes` | cost, tokens and durations per lane |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
 | `/blob/<sha256>` | one content-addressed attachment |
-| `/login` | the only route served without a session; `POST /logout` ends one |
+| `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 
 **It is read-only, and ffwatch stays the sole writer.** The connection is opened
 `file:…?mode=ro` through a URI with `PRAGMA query_only` on top, so a write is refused by SQLite

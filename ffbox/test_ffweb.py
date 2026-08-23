@@ -999,6 +999,41 @@ def test_nothing_is_served_without_a_login():
         srv.stop()
 
 
+def test_the_login_background_is_served_to_a_browser_with_no_session():
+    """The one file served before a password, and the CSS that asks for it.
+
+    A browser renders the login form before it has any session at all, so the backdrop has to
+    be reachable from the far side of the gate. What makes that safe is that it is a static
+    file from this directory rather than anything the database knows, which is the half of
+    this case worth regressing: the route reads a fixed path and nothing else.
+    """
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
+    try:
+        code, hdr, body = srv.get(ffweb.LOGIN_BACKGROUND_URL)
+        check("the background is served without a session", code == 200, code)
+        check("it is sent as a jpeg", hdr.get("Content-Type") == "image/jpeg",
+              hdr.get("Content-Type"))
+        check("the bytes are the file on disk beside ffweb.py",
+              body == open(ffweb.LOGIN_BACKGROUND_PATH, "rb").read(), len(body))
+        check("and it really is a JPEG", body[:2] == b"\xff\xd8", body[:8])
+
+        page = text_of(srv.get("/login")[2])
+        check("the login page asks for it, at the URL the route answers on",
+              "url(" + ffweb.LOGIN_BACKGROUND_URL + ")" in page)
+        check("and the body opts into the sign-in background",
+              'class="signin"' in page)
+        signed_in = serve()
+        try:
+            check("only the sign-in page does — the rest of the site stays flat",
+                  'class="signin"' not in text_of(signed_in.get("/")[2]))
+        finally:
+            signed_in.stop()
+        check("the image is still a same-origin URL, which the CSP allows",
+              "img-src 'self'" in ffweb.CSP)
+    finally:
+        srv.stop()
+
+
 def test_the_password_is_the_only_way_in():
     srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
     try:
@@ -1346,6 +1381,7 @@ def main():
         test_aggregates_match_hand_computed_values,
         test_headers_and_content_types,
         test_nothing_is_served_without_a_login,
+        test_the_login_background_is_served_to_a_browser_with_no_session,
         test_the_password_is_the_only_way_in,
         test_next_cannot_leave_this_origin,
         test_signing_out_ends_the_session,
