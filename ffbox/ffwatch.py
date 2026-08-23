@@ -73,7 +73,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a column added to
 # the schema file never reaches a database created before it. These are applied with ALTER on
@@ -250,8 +250,16 @@ DEFAULTS = {
     "effort": None,
     "max_budget_usd": 10,
 
-    # per-lane turns per rolling 24h. `fix` mirrors the existing "max 3 autofixes per pass".
-    "rate_limits": {"answer": 200, "triage": 100, "fix": 3, "dev": 25},
+    # Per-lane turns per rolling 24h, for the lanes driven by UNTRUSTED text. `fix` mirrors
+    # the existing "max 3 autofixes per pass".
+    #
+    # `dev` is deliberately absent, and rate_limited() reads a missing key as no limit. It is
+    # the lane an operator directive and a locally typed prompt both take, and neither is a
+    # runaway risk the way a busy forum is: nobody accidentally types two hundred prompts, and
+    # a person sitting at a terminal watching a prompt refused because "the lane is full today"
+    # is a worse failure than the one the cap prevents. max_concurrent_runs and the three
+    # clocks still bound what it can spend at any moment.
+    "rate_limits": {"answer": 200, "triage": 100, "fix": 3},
 
     # alias -> what this channel IS. kind decides the lane; the listener reports the parent
     # channel's alias on every thread event, so that much needs no second Discord round trip.
@@ -536,7 +544,11 @@ WRITE_DISALLOWED = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)"]
 # An ALLOW list. It exists for a mechanical reason, measured on this host: `--permission-mode
 # acceptEdits` auto-approves EDITS, not Bash. A non-interactive run has nobody to ask, so
 # without this every single Bash command in a write lane is denied and the fix lane could not
-# run one shell command. Naming what Bash may run is what makes the write lanes work at all.
+# run one shell command. Naming what Bash may run is what makes the read lanes and `fix` work.
+#
+# `dev` names bare `Bash` on top of these, and is the only lane that does — see
+# LANE_CAPABILITIES for why the enumeration is worth keeping where the text is a stranger's and
+# not where it is an authenticated person's.
 #
 # READ THIS BEFORE TREATING IT AS A SECURITY BOUNDARY. IT IS NOT ONE. Measured, both ways:
 #
@@ -604,30 +616,32 @@ LANE_CAPABILITIES = {
                "agent": "discord-answerer", "verdict": "question"},
     "triage": {"tools": READ_TOOLS, "disallowed": [], "allowed": list(READ_ALLOWED),
                "agent": "discord-triager", "verdict": "question"},
+    # `fix` is reached ONLY by a triage AUTOFIX verdict, which is to say it is driven by a
+    # player-authored bug report. It keeps the enumerated allow list for that reason: the text
+    # that decided there should be a write turn at all was written by a stranger.
     "fix":    {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
                "allowed": list(WRITE_ALLOWED),
                "agent": "discord-dev-agent", "verdict": "change"},
-    "dev":    {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
-               "allowed": list(WRITE_ALLOWED),
-               "agent": "discord-dev-agent", "verdict": "change"},
 
-    # THE SHELL LANE. `ffbox "<prompt>"` used to clone, run a container and exit, touching none
-    # of this — which is why a shell run was invisible on the web page. It now enters here, so
-    # one pipeline serves every ingress: same scheduler, same ceilings, same kill switch, same
-    # transcript index, same rows the UI reads.
+    # THE DEV LANE, which since 2026-08-23 is also the local lane. There used to be a separate
+    # `shell` entry here, identical to this one but for two fields, and the two lanes have now
+    # been merged — see LANE_BY_KIND and design/trusted_ingress_design.txt section 8.
     #
-    # Its capabilities are NOT the Discord lanes'. The prompt was typed by someone with a login
-    # on this box, so the reasons the answer and fix lanes are narrow do not apply: Bash is
-    # allowed outright rather than by a list of program prefixes. What is unchanged is what
-    # actually contains any lane — the container holds no credential, and the clone is
-    # destroyed at the end of the run.
+    # It gets bare `Bash` rather than the enumerated allow list, and this is the one lane that
+    # does. Every route into it is an authenticated person the box already trusts: an operator
+    # directive carrying a Discord-authenticated author id, or a prompt typed by somebody with
+    # a login here. The allow list exists to narrow lanes fed untrusted player text, and the
+    # measured truth about it is unflattering anyway — a trailing `*` matches the whole command
+    # string, so `git status --short && touch marker` rode straight through `Bash(git status*)`.
+    # What actually contains this lane is unchanged and is not the allow list: no git or GitHub
+    # credential in the container, host-owned publish, and a clone destroyed at the end of the
+    # run.
     #
-    # verdict None means NO --json-schema: a shell prompt gets prose back, the way it always
-    # has. The structured verdict exists so the HARNESS can act on an answer (open a PR, queue
-    # an autofix); nobody is acting on this one but the person reading the terminal.
-    "shell":  {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
+    # The deny list stays. It is a tripwire, not a boundary, and it still catches the accident
+    # of a model reaching for `git push` out of habit.
+    "dev":    {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
                "allowed": list(WRITE_ALLOWED) + ["Bash"],
-               "agent": None, "verdict": None},
+               "agent": "discord-dev-agent", "verdict": "change"},
 }
 
 # All four lanes launch. What used to hold the write lanes back was a phase gate; what holds
@@ -640,11 +654,20 @@ LANE_CAPABILITIES = {
 LANE_BY_KIND = {
     # A prompt typed by somebody who already has a login on this box, at the terminal or on
     # the web page. It is not untrusted player text, so it is not classified and never fails
-    # closed; it goes straight to its own lane. Both front doors share that lane on purpose —
-    # `web` exists so the page can be told apart on the conversation list, not so it can be
-    # treated differently.
-    "shell": "shell",
-    "web": "shell",
+    # closed; it goes straight to the dev lane.
+    #
+    # THE SAME LANE AN OPERATOR DIRECTIVE TAKES, since 2026-08-23. There was a `shell` lane
+    # here that differed from `dev` in exactly two fields — bare Bash, and no verdict schema —
+    # and neither difference survived contact with the question "who is this lane for". Both
+    # are for a person this box already trusts, so both now get bare Bash; and the structured
+    # verdict is what the HARNESS reads, so imposing it on a local prompt costs the person at
+    # the terminal nothing (result_text unwraps `summary` for them).
+    #
+    # What is still local-only is decided by is_local_conversation, not by the lane: no Discord
+    # framing in the prompt, no outbound row, no harness publish, no verification run. Those
+    # are properties of having nowhere to post, which is a fact about the conversation.
+    "shell": "dev",
+    "web": "dev",
     "ask": "answer",
     "mention": "answer",
     "bug_report": "triage",
@@ -887,6 +910,14 @@ class Db:
         val = row[0]
         return default if val is None else val
 
+    def _has_column(self, table, column):
+        """Does this database actually carry that column? Used by the data migrations above.
+
+        A missing TABLE answers False rather than raising: PRAGMA table_info on a name that
+        does not exist returns no rows, which is exactly the answer we want.
+        """
+        return column in {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+
     def init_schema(self):
         with open(SCHEMA_PATH, "r", encoding="utf-8") as fh:
             script = fh.read()
@@ -896,6 +927,31 @@ class Db:
                 cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
                 if column not in cols:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            # v8 (2026-08-23): the `shell` lane was merged into `dev`. Rewrite the rows that
+            # name it, or the web page keeps offering a lane filter for a lane nothing can
+            # produce any more — those dropdowns are built from DISTINCT over the data, not
+            # from LANE_CAPABILITIES. Idempotent, like every statement in the schema file, so
+            # it can run on every start alongside them.
+            #
+            # GUARDED ON THE COLUMNS EXISTING. A database predating this table's current shape
+            # is what every long-lived box has, and CREATE TABLE IF NOT EXISTS does not widen
+            # one that is already there — so `conversation.lane` and even `turn` itself may be
+            # absent here, and a bare UPDATE would abort the whole start-up script.
+            if self._has_column("conversation", "lane"):
+                self.conn.execute("UPDATE conversation SET lane='dev' WHERE lane='shell'")
+            if self._has_column("turn", "lane"):
+                self.conn.execute("UPDATE turn SET lane='dev' WHERE lane='shell'")
+            # And the imported standalone runs, whose conversation never got a lane at all:
+            # import_run_dir inserts its turn directly rather than through queue_turn, which is
+            # the only writer of conversation.lane. Take it from the turn rather than assuming.
+            if self._has_column("conversation", "lane") and self._has_column("turn", "lane"):
+                self.conn.execute(
+                    "UPDATE conversation SET lane = ("
+                    "  SELECT t.lane FROM turn t WHERE t.conversation_id = conversation.id"
+                    "   AND t.lane IS NOT NULL ORDER BY t.seq DESC LIMIT 1)"
+                    " WHERE lane IS NULL AND EXISTS ("
+                    "  SELECT 1 FROM turn t WHERE t.conversation_id = conversation.id"
+                    "   AND t.lane IS NOT NULL)")
             have = self.conn.execute(
                 "SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
             if have < SCHEMA_VERSION:
@@ -1018,11 +1074,11 @@ def lane_for(cfg, conv_kind, text, gate=False):
         # Not classified at all. Classification exists to decide how much capability untrusted
         # text may have; a prompt typed by somebody with a login on this box has already
         # answered that. `source` carries the front door so the record says which one it was.
-        return True, "shell", {"engage": True, "type": "change",
-                               "status": "ok", "source": conv_kind,
-                               "reason": "typed into "
-                                         + LOCAL_KIND_ORIGIN.get(conv_kind, conv_kind),
-                               "scope_note": ""}
+        return True, "dev", {"engage": True, "type": "change",
+                             "status": "ok", "source": conv_kind,
+                             "reason": "typed into "
+                                       + LOCAL_KIND_ORIGIN.get(conv_kind, conv_kind),
+                             "scope_note": ""}
     if conv_kind in ("directive", "operator_dm"):
         # An operator message. The channel's kind does not decide the lane, because an operator
         # asks questions as often as they hand out work, and a question does not need a write
@@ -1780,7 +1836,7 @@ class Watcher:
         alias = conv["watch_alias"] or alias_for_channel(self.cfg, conv["channel_id"])
         engage_policy = engage_for(self.cfg, alias)
         forced = self.always_a_turn(conv, msgs)
-        # mention, directive and shell conversations are addressed to the bot by construction:
+        # mention, directive and local conversations are addressed to the bot by construction:
         # the doorbell for them only fires because somebody spoke to it, or because a person
         # typed the prompt. There is no channel policy to consult.
         # Only a WATCHED channel has an engagement policy. Everywhere else the doorbell is the
@@ -2026,6 +2082,15 @@ class Watcher:
                 "session_generation": generation,
             },
             "lane": turn["lane"],
+            # WHERE THE ANSWER GOES, and the discriminator that replaced `lane == "shell"`
+            # when the shell lane was merged into dev. It is not the same question as the
+            # venue: an operator DM is `private` and still a Discord conversation that must be
+            # posted to. This one means there is no thread at all — the record is the reply.
+            #
+            # The container reads it to pick its preamble: a local turn is not told it is
+            # answering a Discord thread, and is not told to keep its summary short, because
+            # nobody is going to truncate it.
+            "local": is_local_conversation(conv),
             "agent": cap["agent"],
             "session": {"id": session_id, "resume": bool(resume)},
             "capabilities": {"tools": cap["tools"], "disallowed": list(cap["disallowed"]),
@@ -2035,7 +2100,11 @@ class Watcher:
             "classification": json.loads(turn["classification_json"] or "{}"),
             "failed_closed": bool(turn["failed_closed"]),
             "failed_closed_reason": turn["failed_closed_reason"],
-            "verdict_schema": cap["verdict"],       # None on the shell lane: prose, no schema
+            # Every lane now carries one. The local ingress used to pass None here and get
+            # prose, on the reasoning that nobody was acting on the answer — but result_text
+            # already unwraps `summary` out of a dict, so a person at a terminal reads exactly
+            # what they read before, and the harness gets the same shape from every run.
+            "verdict_schema": cap["verdict"],
             "note": turn["note"],
             # A deliberate re-base is announced in the turn's own prompt (design section 6), not
             # left for the model to notice that the line numbers moved.
@@ -2047,7 +2116,14 @@ class Watcher:
             # Tied to the lane being a WRITE lane, not to Unity being present. Every lane has an
             # editor now, and running the suite after a read-only lane would spend a Unity run
             # proving that a container which cannot write did not change anything.
-            "verify": {"enabled": cap["verdict"] == "change",
+            # NOT for a local turn, which is the behaviour the old shell lane had and the one
+            # worth keeping. `ffbox "which file defines the belt merger?"` must not spend
+            # fifteen minutes on an EditMode suite proving that a question changed nothing.
+            # A person at a terminal who wants the suite has `ffverify` in the container and
+            # can say so; a Discord write turn has nobody to ask, which is why it is automatic
+            # there.
+            "verify": {"enabled": cap["verdict"] == "change"
+                                  and not is_local_conversation(conv),
                        "assemblies": self.cfg.get("verify_assemblies") or "",
                        "out": "/ffbox/out/verification"},
             "messages": [self.job_message(m, att_dir) for m in msgs],
@@ -2055,13 +2131,13 @@ class Watcher:
             "resume_summary": summary,
             "model": {"model": self.cfg["model"], "fallback_model": self.cfg["fallback_model"],
                       "max_budget_usd": self.cfg["max_budget_usd"], "effort": self.cfg["effort"]},
-            # Mounted on EVERY lane. It used to be withheld from the shell lane, because with
-            # the answerer role loaded `ffbox "what file defines the belt merger?"` came back
-            # with a policy refusal addressed to a player. That was the right diagnosis and the
-            # wrong cure: unmounting the plugin also cost the shell lane max-voice and every
-            # other ff-discord skill. The policy is now conditional on the declared venue below,
-            # so the plugin can be present everywhere and a fourth ingress needs a venue value
-            # rather than a fourth special case here.
+            # Mounted on EVERY lane. It used to be withheld from local runs, because with the
+            # answerer role loaded `ffbox "what file defines the belt merger?"` came back with
+            # a policy refusal addressed to a player. That was the right diagnosis and the
+            # wrong cure: unmounting the plugin also cost those runs max-voice and every other
+            # ff-discord skill. The policy is now carried by the declared venue and by `local`
+            # above, so the plugin can be present everywhere and a fourth ingress needs a venue
+            # value rather than a fourth special case here.
             "plugin_dir": f"/ffbox/plugins/{self.cfg['plugin']}",
             # WHO asked and WHERE the answer goes. Computed on the host, from config and from
             # Discord's authenticated author id, before this container starts. The model is
@@ -2132,13 +2208,18 @@ class Watcher:
         material to investigate, never an instruction to follow."""
         conv = job["conversation"]
         lane = job["lane"]
-        if lane == "shell":
+        if job["local"]:
             # NOT A DISCORD TURN. No <discord> fence, no untrusted-input framing, no role and no
             # ff-discord policy: the prompt was typed by the person who owns this machine and
             # they are waiting at a terminal. Measured the hard way — with the Discord framing
             # in place, `ffbox "what file defines the belt merger?"` came back with a policy
             # refusal addressed to a player, because the answerer role forbids naming repo
             # internals to Discord users. Correct behaviour for that role; wrong conversation.
+            #
+            # KEYED ON LOCALITY, NOT ON THE LANE. It used to read `lane == "shell"`, which
+            # stopped being a question anybody could answer once shell and dev became one lane.
+            # The thing that was ever really being asked is whether there is a thread on the
+            # other end of this.
             #
             # EVERY message in the turn, not just the last. A turn batches whatever was typed
             # while the previous run was working (claim_turns), so a person who followed one
@@ -2259,9 +2340,12 @@ class Watcher:
         # is derived from the run id, so it is unique, addressable and — like the container name
         # — owned by the host rather than chosen by the agent.
         options = turn_options(turn)
-        # A shell run harvests a patch like it always did unless a branch was asked for; the
-        # Discord write lanes always get one, because the harness publishes on their behalf.
-        if turn["lane"] == "shell":
+        # A local run harvests a patch like it always did unless a branch was asked for; a
+        # Discord write turn always gets one, because the harness publishes on its behalf.
+        # Locality again, not the lane: both are the dev lane now, and `ffbox "explain X"`
+        # must not push a branch to origin because it shares a capability table with a turn
+        # that does.
+        if is_local_conversation(conv):
             branch = options.get("branch") or None
         else:
             branch = f"{self.cfg['branch_prefix']}{run_id}" if cap["verdict"] == "change" else None
@@ -2669,7 +2753,7 @@ class Watcher:
         the shell through here rather than letting `ffbox` clone a workspace on its own.
 
         `kind` is which front door it came through, and it is RECORDED, not obeyed: every local
-        kind takes the shell lane, the same capabilities and the same private venue. It exists
+        kind takes the dev lane, the same capabilities and the same private venue. It exists
         so a page submission is distinguishable from a terminal one on the conversation list,
         which is a question people ask of the record and could not previously answer.
         """
@@ -2811,19 +2895,33 @@ class Watcher:
             time.sleep(1 if drive else float(self.cfg["poll_secs"]))
 
     def result_text(self, turn_id):
-        """What the person who typed the prompt is waiting to read."""
+        """What the person who typed the prompt is waiting to read.
+
+        THE VERDICT IS UNWRAPPED HERE, and it has to be. A local turn takes the dev lane now,
+        which means it runs under `--json-schema` like every other lane, and `result` comes
+        back as the SERIALISED verdict — a JSON string, not a dict. Returning it as-is printed
+        a wall of escaped JSON at the terminal where a paragraph of prose used to be. Parse it
+        the same way the Discord side does and hand back `summary`, which the local preamble
+        tells the lane is the whole answer.
+
+        A verdict that will not parse falls back to the raw text rather than to nothing: an
+        answer in the wrong shape is still an answer, and swallowing it would leave the person
+        who typed the prompt with an empty terminal and a run row that says done.
+        """
         run = self.db.one("SELECT * FROM run WHERE turn_id=? ORDER BY id DESC LIMIT 1",
                           (turn_id,))
         if run is None:
             return ""
         result = _read_json(os.path.join(os.path.dirname(run["stream_path"] or ""),
                                          "result.json")) or {}
-        text = result.get("result")
-        if isinstance(text, str):
-            return text
-        if isinstance(text, dict):
-            return text.get("summary") or json.dumps(text, indent=2)
-        return ""
+        raw = result.get("result")
+        if not isinstance(raw, (str, dict)):
+            return ""
+        verdict = _parse_verdict(raw)
+        summary = (verdict.get("summary") or "").strip()
+        if summary:
+            return summary
+        return raw if isinstance(raw, str) else json.dumps(raw, indent=2)
 
     # ======================================================================================
     # importing runs that happened before any of this existed
@@ -2858,8 +2956,8 @@ class Watcher:
         conv_id = self.upsert_conversation(
             key, kind="shell", channel_id=None, title=prompt.splitlines()[0][:100],
             root_message_id=key, opener=getpass.getuser(), is_thread=False)
-        self.db.execute("UPDATE conversation SET created_at=?, last_activity_at=?, state='idle'"
-                        " WHERE id=?", (stamp, stamp, conv_id))
+        self.db.execute("UPDATE conversation SET created_at=?, last_activity_at=?, state='idle',"
+                        " lane='dev' WHERE id=?", (stamp, stamp, conv_id))
         # An import that died partway through leaves a conversation with no turn, and the
         # thread_id check above would then skip it forever. Clear whatever it left instead.
         self.db.execute("DELETE FROM turn WHERE conversation_id=?", (conv_id,))
@@ -2870,7 +2968,7 @@ class Watcher:
         cur = self.db.execute(
             "INSERT INTO turn(conversation_id, seq, trigger, lane, status, classification_json,"
             " failed_closed, queued_at, started_at, ended_at, note, options_json)"
-            " VALUES(?,1,'shell_prompt','shell','done',?,0,?,?,?,?,?)",
+            " VALUES(?,1,'shell_prompt','dev','done',?,0,?,?,?,?,?)",
             (conv_id, json.dumps({"type": "change", "source": "imported", "status": "ok",
                                   "reason": "imported from a standalone ffbox run"}),
              stamp, stamp, stamp, f"imported from {run_dir}",
@@ -3005,6 +3103,14 @@ class Watcher:
         """
         cap = LANE_CAPABILITIES.get(turn["lane"]) or LANE_CAPABILITIES["answer"]
         if cap["verdict"] != "change":
+            return {}
+        if is_local_conversation(conv):
+            # A local run is not published. It shares the dev lane's capability table but not
+            # its purpose: `ffbox --branch wip "..."` asks for a branch in the harvested bundle
+            # so the person who typed it can look at the work, and turning that into a push to
+            # origin and a pull request against develop is not what they asked for. Publication
+            # belongs to the turns whose answer goes to Discord, where nobody is standing at a
+            # terminal to do it themselves.
             return {}
 
         bundle = os.path.join(run_dir, "work.bundle")

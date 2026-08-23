@@ -135,7 +135,7 @@ def build_fixture(root):
     ex("INSERT INTO conversation(id, channel_id, thread_id, kind, title, opener_discord_id,"
        " state, is_thread, session_id, lane, created_at, last_activity_at)"
        " VALUES(4,NULL,'1755999000123','web','what does the merger do when both inputs"
-       " saturate?','ben','idle',0,'sess-4','shell','2026-08-21T09:00:00Z',"
+       " saturate?','ben','idle',0,'sess-4','dev','2026-08-21T09:00:00Z',"
        "'2026-08-21T09:04:00Z')")
 
     ex("INSERT INTO message(id, conversation_id, discord_id, direction, author_id, author_name,"
@@ -188,7 +188,7 @@ def build_fixture(root):
     # No run row for this one: the aggregates below are hand-computed over runs 1-3, and a
     # fourth would quietly change every number this file asserts.
     ex("INSERT INTO turn(id, conversation_id, seq, trigger, lane, status, queued_at, ended_at)"
-       " VALUES(10,4,1,'web_prompt','shell','done','2026-08-21T09:00:05Z',"
+       " VALUES(10,4,1,'web_prompt','dev','done','2026-08-21T09:00:05Z',"
        "'2026-08-21T09:04:00Z')")
 
     ex("UPDATE message SET turn_id=1 WHERE id IN (1,2)")
@@ -1391,7 +1391,7 @@ def live_fixture():
        " terminal_state) VALUES(5,5,'run-e','ffbox-run-e','sess-2','Read',NULL)")
     # And one on the LOCAL conversation, which is the only kind with a reply box to change.
     ex("INSERT INTO turn(id, conversation_id, seq, trigger, lane, status, queued_at,"
-       " started_at) VALUES(11,4,2,'web_prompt','shell','running','2026-08-21T09:05:00Z',"
+       " started_at) VALUES(11,4,2,'web_prompt','dev','running','2026-08-21T09:05:00Z',"
        "'2026-08-21T09:05:05Z')")
     ex("INSERT INTO run(id, turn_id, ffbox_run_id, container_name, session_id, tools,"
        " terminal_state) VALUES(11,11,'run-f','ffbox-run-f','sess-4','Read',NULL)")

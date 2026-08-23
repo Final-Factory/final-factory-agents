@@ -27,6 +27,7 @@ path gets exercised without a model call.
 from __future__ import annotations
 
 import importlib
+import io
 import json
 import os
 import re
@@ -2929,7 +2930,7 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
     conv = case.watcher.db.one("SELECT * FROM conversation WHERE id=?",
                                (turn["conversation_id"],))
     check("a shell prompt becomes a conversation, a message and a queued turn",
-          conv["kind"] == "shell" and turn["status"] == "queued" and turn["lane"] == "shell",
+          conv["kind"] == "shell" and turn["status"] == "queued" and turn["lane"] == "dev",
           (conv["kind"], turn["status"], turn["lane"]))
     check("it is not classified — the person typing already has a login here",
           json.loads(turn["classification_json"])["source"] == "shell",
@@ -2947,26 +2948,207 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
 
     job = json.load(open(os.path.join(os.path.dirname(run["stream_path"]), "job.json"),
                          encoding="utf-8"))
-    check("the shell lane gets Bash outright, not a list of program prefixes",
+    check("the dev lane gets Bash outright, not a list of program prefixes",
           "Bash" in job["capabilities"]["allowed"], job["capabilities"]["allowed"])
-    check("no JSON schema is forced: a person is reading this in a terminal",
-          job["verdict_schema"] is None, job["verdict_schema"])
+    # The merged lane runs under a schema like every other lane. What keeps the terminal
+    # readable is result_text unwrapping `summary`, not the absence of a schema — checked
+    # below, because it is the half of the merge that could regress silently.
+    check("it runs under the dev lane's verdict schema, like any other dev turn",
+          job["verdict_schema"] == "change", job["verdict_schema"])
+    check("and the container is told there is no thread on the other end of it",
+          job["local"] is True, job["local"])
+    check("what the person at the terminal reads is the summary, not the raw verdict",
+          case.watcher.result_text(turn_id) ==
+          "Checked the belt merger path; this is expected behaviour.",
+          case.watcher.result_text(turn_id))
+    # A question typed at a terminal must not spend fifteen minutes on an EditMode suite
+    # proving it changed nothing. This is the one write-lane behaviour locality still suppresses.
+    check("no harness verification is scheduled for a local turn",
+          job["verify"]["enabled"] is False, job["verify"])
+    check("and nothing was published: no branch asked for, none created",
+          run["branch"] is None and run["pushed"] == 0, (run["branch"], run["pushed"]))
     # Measured, not assumed: with the Discord framing in place, a shell prompt asking which file
     # defines something came back as a POLICY REFUSAL addressed to a player, because the
     # answerer role forbids naming repo internals to Discord users.
     check("the prompt carries no Discord framing and no answerer role",
           "<discord>" not in job["prompt"] and "ff-discord" not in (job["prompt"] or ""),
           job["prompt"][:200])
-    # The plugin IS mounted now, and the policy is carried by the declared venue instead. The
-    # shell lane gets max-voice and the rest of the ff-discord skills back; what it does not get
-    # is a role, a Discord fence, or a player-facing disclosure rule.
+    # The plugin IS mounted, and the policy is carried by the declared venue instead. A local
+    # run gets max-voice and the rest of the ff-discord skills; what it does not get is a
+    # Discord fence or a player-facing disclosure rule.
     check("the ff-discord plugin is mounted, so its skills are available",
           job["plugin_dir"] and job["plugin_dir"].endswith("ff-discord"), job["plugin_dir"])
-    check("no role is loaded for it", job["agent"] is None, job["agent"])
     check("the shell ingress is an operator at a private venue",
           (job["trust"]["tier"], job["venue"]["kind"]) == ("operator", "private"), job["trust"])
     check("nothing is queued for Discord, because there is no thread to answer",
           not case.rows("SELECT * FROM outbound"), case.rows("SELECT * FROM outbound"))
+
+
+def build_container_argv(job, tmpname):
+    """Run discord-task.sh's OWN argv builder over a job.json and hand back the argv.
+
+    The preamble a lane gets is decided inside that heredoc, not on the host, so asserting on
+    the host's job dict would prove nothing about what `claude` is actually told. The block is
+    lifted out and executed here instead: same code, real job files, no container.
+    """
+    text = io.open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
+    start = text.index("<<'PYEOF'\n") + len("<<'PYEOF'\n")
+    block = text[start:text.index("\nPYEOF", start)]
+    job_path = os.path.join(TMPROOT, tmpname + ".job.json")
+    argv_path = os.path.join(TMPROOT, tmpname + ".argv")
+    with io.open(job_path, "w", encoding="utf-8") as fh:
+        json.dump(job, fh)
+    saved = sys.argv
+    sys.argv = ["builder", job_path, argv_path]
+    try:
+        exec(compile(block, "discord-task.sh:PYEOF", "exec"), {"__name__": "__main__"})
+    finally:
+        sys.argv = saved
+    with io.open(argv_path, "rb") as fh:
+        return [a.decode("utf-8") for a in fh.read().split(b"\0")]
+
+
+def test_the_shell_lane_was_merged_into_dev():
+    """There is no `shell` lane any more, and nothing lost a capability in the merge.
+
+    The two entries differed in exactly two fields — bare Bash, and no verdict schema — and
+    neither difference survived the question "who is this lane for". Both routes into dev are a
+    person this box already trusts: an operator with a Discord-authenticated author id, or
+    somebody with a login here. So both get bare Bash, and both run under the schema the
+    harness reads.
+
+    What is still different about a locally typed prompt is decided by is_local_conversation,
+    never by the lane, because the real question was always whether there is a thread on the
+    other end. That is the half worth pinning down here: the same lane, told two different
+    things, because it is answering into two different places.
+    """
+    print("lanes: shell merged into dev")
+    check("there is no shell lane left to select",
+          "shell" not in ffwatch.LANE_CAPABILITIES, sorted(ffwatch.LANE_CAPABILITIES))
+    check("dev gets Bash outright",
+          "Bash" in ffwatch.LANE_CAPABILITIES["dev"]["allowed"],
+          ffwatch.LANE_CAPABILITIES["dev"]["allowed"])
+    # The line the merge does NOT cross. `fix` is reached only by a triage AUTOFIX verdict, so
+    # the text that decided there should be a write turn was written by a stranger.
+    check("but fix does not, because a player's bug report is what enqueues it",
+          "Bash" not in ffwatch.LANE_CAPABILITIES["fix"]["allowed"],
+          ffwatch.LANE_CAPABILITIES["fix"]["allowed"])
+    check("both local kinds route to it",
+          ffwatch.LANE_BY_KIND["shell"] == "dev" and ffwatch.LANE_BY_KIND["web"] == "dev",
+          ffwatch.LANE_BY_KIND)
+
+    # -- the rate limit -------------------------------------------------------------------
+    # Asserted against DEFAULTS, not against the loaded config: a box whose
+    # ~/.config/ffbox/config.json still pins the old dev cap keeps it, because _deep_merge
+    # merges the dict rather than replacing it. That is the correct behaviour for an operator
+    # override and the reason this check cannot read case.cfg — it would pass or fail on the
+    # machine running the suite rather than on the code.
+    limits = ffwatch.DEFAULTS["rate_limits"]
+    check("dev carries no daily cap by default", "dev" not in limits, limits)
+    check("and the lanes fed untrusted text still do",
+          limits["fix"] == 3 and limits["answer"] == 200, limits)
+    case = Case("devunlimited")
+    case.cfg["rate_limits"] = dict(limits)
+    case.watcher.db.execute(
+        "INSERT INTO conversation(id, thread_id, kind, state) VALUES(9001,'t-9001','shell','idle')")
+    for seq in range(1, 60):
+        case.watcher.db.execute(
+            "INSERT INTO turn(conversation_id, seq, lane, status, started_at)"
+            " VALUES(9001,?,'dev','done',?)", (seq, ffwatch.now_iso()))
+    check("fifty-nine dev turns in a day do not close the lane",
+          case.watcher.rate_limited("dev") is False)
+
+    # -- the same lane, told two different things -------------------------------------------
+    local = Case("mergelocal")
+    local_turn = local.watcher.submit("what does the merger do when both inputs saturate?")
+    local.watcher.once()
+    local_run = local.watcher.db.one("SELECT * FROM run WHERE turn_id=?", (local_turn,))
+    local_job = json.load(open(os.path.join(os.path.dirname(local_run["stream_path"]),
+                                            "job.json"), encoding="utf-8"))
+
+    fixture = base_fixture()
+    fixture["messages"][RANDOM_CHANNEL] = [message(15001, "ship the merger fix",
+                                                   channel=RANDOM_CHANNEL, author=LOTHSAHN)]
+    remote = Case("mergeremote", fixture,
+                  verdict={"engage": True, "type": "change", "reason": "asks for a fix"})
+    remote.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    remote.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
+                   "channel": RANDOM_CHANNEL, "channel_id": RANDOM_CHANNEL, "id": "15001",
+                   "author_id": LOTHSAHN})
+    remote.watcher.once()
+    remote_run = remote.rows("SELECT * FROM run")[0]
+    remote_job = json.load(open(os.path.join(remote.watcher.conv_dir(1), "runs",
+                                             remote_run["ffbox_run_id"], "job.json"),
+                                encoding="utf-8"))
+
+    check("both turns take the dev lane",
+          (local_job["lane"], remote_job["lane"]) == ("dev", "dev"),
+          (local_job["lane"], remote_job["lane"]))
+    check("with identical capabilities, Bash included",
+          local_job["capabilities"] == remote_job["capabilities"],
+          (local_job["capabilities"], remote_job["capabilities"]))
+    check("and identical verdict schemas",
+          local_job["verdict_schema"] == remote_job["verdict_schema"] == "change",
+          (local_job["verdict_schema"], remote_job["verdict_schema"]))
+    check("locality is what separates them, and the host decides it",
+          (local_job["local"], remote_job["local"]) == (True, False),
+          (local_job["local"], remote_job["local"]))
+    check("only the Discord turn is verified by the harness",
+          (local_job["verify"]["enabled"], remote_job["verify"]["enabled"]) == (False, True),
+          (local_job["verify"], remote_job["verify"]))
+    check("only the Discord turn gets a host-named branch to publish",
+          local_run["branch"] is None and remote_run["branch"] is not None,
+          (local_run["branch"], remote_run["branch"]))
+    check("only the Discord turn is fenced as untrusted input",
+          "<discord>" not in local_job["prompt"] and "<discord>" in remote_job["prompt"],
+          local_job["prompt"][:120])
+
+    # -- what the container is actually told -------------------------------------------------
+    local_argv = build_container_argv(local_job, "mergelocal")
+    remote_argv = build_container_argv(remote_job, "mergeremote")
+    check("both invocations impose the verdict schema",
+          "--json-schema" in local_argv and "--json-schema" in remote_argv, local_argv)
+    local_pre = local_argv[local_argv.index("--append-system-prompt") + 1]
+    remote_pre = remote_argv[remote_argv.index("--append-system-prompt") + 1]
+    check("the local preamble says nothing is posted anywhere",
+          "no Discord thread on the other end" in local_pre, local_pre[:160])
+    check("and tells it summary IS the answer, at whatever length the question deserves",
+          "printed verbatim" in local_pre and "no length rule applies" in local_pre,
+          local_pre[-200:])
+    # Discord hard-limits a message to 2000 characters. compose_head already cuts at HEAD_CAP
+    # and attaches the rest, but a post that stops mid-sentence next to an unopened file is a
+    # worse answer than a shorter one, so the lane writing it is told the budget.
+    check("the Discord preamble states the 2000-character limit and a budget under it",
+          "2000 characters" in remote_pre and "1500" in remote_pre, remote_pre[-320:])
+    check("which the local one does not carry",
+          "2000 characters" not in local_pre, local_pre[-160:])
+    check("and the budget is under the host's own cap, so the host never has to truncate",
+          ffwatch.HEAD_CAP == 1500, ffwatch.HEAD_CAP)
+
+    # -- the migration -------------------------------------------------------------------------
+    old = os.path.join(case.root, "pre-v8.db")
+    conn = sqlite3.connect(old)
+    with conn:
+        conn.executescript(io.open(os.path.join(HERE, "ffwatch_schema.sql"),
+                                   encoding="utf-8").read())
+        conn.execute("INSERT INTO conversation(id, thread_id, kind, lane)"
+                     " VALUES(1,'t-1','shell','shell')")
+        conn.execute("INSERT INTO conversation(id, thread_id, kind, lane)"
+                     " VALUES(2,'imported-x','shell',NULL)")
+        conn.execute("INSERT INTO turn(conversation_id, seq, lane, status)"
+                     " VALUES(1,1,'shell','done')")
+        conn.execute("INSERT INTO turn(conversation_id, seq, lane, status)"
+                     " VALUES(2,1,'shell','done')")
+    conn.close()
+    ffwatch.Db(old).init_schema()
+    ro = sqlite3.connect(old)
+    lanes = [r[0] for r in ro.execute("SELECT lane FROM conversation ORDER BY id")]
+    tlanes = [r[0] for r in ro.execute("SELECT lane FROM turn ORDER BY id")]
+    ro.close()
+    check("an existing database stops naming a lane that cannot be produced any more",
+          tlanes == ["dev", "dev"], tlanes)
+    check("and an imported run, whose conversation never got a lane, is filled in from its turn",
+          lanes == ["dev", "dev"], lanes)
 
 
 def test_web_is_the_same_ingress_wearing_a_different_label():
@@ -2987,8 +3169,8 @@ def test_web_is_the_same_ingress_wearing_a_different_label():
                                (turn["conversation_id"],))
     check("the conversation records the front door it came through",
           conv["kind"] == "web", conv["kind"])
-    check("but it takes the shell lane, because there is one local lane",
-          turn["lane"] == "shell", turn["lane"])
+    check("but it takes the dev lane, the same one a terminal prompt and a directive take",
+          turn["lane"] == "dev", turn["lane"])
     check("the trigger says which door too",
           turn["trigger"] == "web_prompt", turn["trigger"])
     check("it is not classified either — the person typing signed in here",
@@ -3003,6 +3185,8 @@ def test_web_is_the_same_ingress_wearing_a_different_label():
                          encoding="utf-8"))
     check("with the same operator tier and private venue a shell prompt gets",
           (job["trust"]["tier"], job["venue"]["kind"]) == ("operator", "private"), job["trust"])
+    check("and is local too, so it is framed for a reader rather than for a thread",
+          job["local"] is True, job["local"])
     check("and the same Bash-outright capability set",
           "Bash" in job["capabilities"]["allowed"], job["capabilities"]["allowed"])
     check("no Discord framing, because there is still no Discord in this",
@@ -3043,8 +3227,8 @@ def test_a_local_conversation_can_be_continued():
     check("not a second conversation",
           len(case.rows("SELECT * FROM conversation")) == 1,
           case.rows("SELECT id, kind, title FROM conversation"))
-    check("it takes the same local lane, unclassified like the prompt that opened it",
-          turns[1]["lane"] == "shell"
+    check("it takes the same lane, unclassified like the prompt that opened it",
+          turns[1]["lane"] == "dev"
           and json.loads(turns[1]["classification_json"])["source"] == "web",
           (turns[1]["lane"], turns[1]["classification_json"]))
     check("and the same operator tier at the same private venue",
@@ -3294,7 +3478,7 @@ def test_a_local_conversation_never_reaches_discord():
     # have; give this one a turn and the same unclaimed message is claimed on the next pass.
     case.watcher.db.execute(
         "INSERT INTO turn(conversation_id, seq, trigger, lane, status, queued_at)"
-        " VALUES(?,1,'shell_prompt','shell','done',?)", (conv_id, ffwatch.now_iso()))
+        " VALUES(?,1,'shell_prompt','dev','done',?)", (conv_id, ffwatch.now_iso()))
     check("a conversation that already answered one turn is swept for the next",
           len(case.watcher.claim_turns()) == 1,
           case.rows("SELECT id, seq, status FROM turn WHERE conversation_id=?", (conv_id,)))
@@ -3574,6 +3758,7 @@ def main():
         test_container_argv_is_valid,
         test_allow_list_is_scope_not_a_boundary,
         test_shell_is_an_ingress_not_a_second_pipeline,
+        test_the_shell_lane_was_merged_into_dev,
         test_web_is_the_same_ingress_wearing_a_different_label,
         test_a_local_conversation_can_be_continued,
         test_a_follow_up_typed_mid_run_waits_and_batches,
