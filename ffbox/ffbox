@@ -8,7 +8,6 @@
 # web page as everything else. --direct opts out; --task/--job-file IS executor mode.
 #
 #   ffbox "make the belt merger respect item priority"
-#   ffbox --no-unity "summarise how the save migration system works"
 #   ffbox --keep --prompt-file ./task.md
 #   ffbox --task ffbox/discord-task.sh --job-file job.json --run-id d7t2-1a2b   (ffwatch)
 #
@@ -28,7 +27,6 @@ SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
 
 KEEP=0
-UNITY=1
 OUTPUT_FORMAT=text
 PROMPT=
 DIRECT=0
@@ -62,8 +60,6 @@ Options:
   --direct             Do not route the prompt through ffwatch; clone and run right here.
                        Skips the database, the ceilings and the web page. For bootstrapping a
                        machine and for debugging the container itself.
-  --no-unity           Skip Unity activation. Use for read-only or code-only prompts; it
-                       consumes no activation seat and starts much faster.
   --keep               Leave the ZFS clone and its mountpoint in place for inspection.
                        Destroy it yourself with: sudo zfs destroy <dataset>
   --json               Emit Claude's stream-json output instead of plain text.
@@ -90,8 +86,10 @@ Options:
   --verify-timeout N   Seconds for the harness verification phase after the agent exits, from
                        <out>/.verify-started (default 1800). Its own clock, so a Unity test run
                        is never mistaken for a hung agent.
-  --kill-grace N       Seconds between SIGTERM and force (default 10). With Unity on, the stop
-                       always allows 120s regardless, so the activation seat comes back.
+  --kill-grace N       Seconds between SIGTERM and force (default 10). Every run holds an
+                       editor, so the stop allows at least 120s whatever this says — that is
+                       the licence round trip, not the agent. Raise it past 120 to give a
+                       stubborn agent longer; lowering it below cannot strand the seat.
   -h, --help           Show this help.
 
 Timeout exit codes: 123 = warm-up ceiling exceeded, 124 = agent ceiling exceeded, 125 =
@@ -108,7 +106,6 @@ EOF
 while [ $# -gt 0 ]; do
     case "$1" in
         --prompt-file)    PROMPT_FILE=${2:?--prompt-file needs a path}; shift 2 ;;
-        --no-unity)       UNITY=0; shift ;;
         --direct)         DIRECT=1; shift ;;
         --keep)           KEEP=1; shift ;;
         --json)           OUTPUT_FORMAT=stream-json; shift ;;
@@ -188,7 +185,6 @@ FFBOX_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 FFWATCH_PY=${FFWATCH_PY:-$FFBOX_DIR/ffwatch.py}
 if [ "$DIRECT" = 0 ] && [ -z "$TASK" ] && [ -z "$JOB_FILE" ] && [ -r "$FFWATCH_PY" ]; then
     ROUTE=("python3" "$FFWATCH_PY" "submit" "--wait")
-    [ "$UNITY" = 1 ] || ROUTE+=("--no-unity")
     [ -z "$REF" ] || ROUTE+=("--ref" "$REF")
     [ -z "$BRANCH" ] || ROUTE+=("--branch" "$BRANCH")
     ROUTE+=("$PROMPT")
@@ -220,7 +216,7 @@ fi
 # A Unity .ulf does not contain a usable license for the container: game-ci extracts the 27-char
 # serial out of it and activates online with that. Replicate the decode here so the secrets file
 # can hold either UNITY_SERIAL directly or a path to the .ulf.
-if [ "$UNITY" = 1 ] && [ -z "${UNITY_SERIAL:-}" ] && [ -n "${UNITY_LICENSE_FILE:-}" ]; then
+if [ -z "${UNITY_SERIAL:-}" ] && [ -n "${UNITY_LICENSE_FILE:-}" ]; then
     if [ ! -r "$UNITY_LICENSE_FILE" ]; then
         echo "ffbox: cannot read UNITY_LICENSE_FILE=$UNITY_LICENSE_FILE" >&2
         exit 78
@@ -388,7 +384,6 @@ docker run --rm \
     "${ENTRY_ENV[@]}" \
     -e CLAUDE_CODE_OAUTH_TOKEN \
     -e UNITY_SERIAL -e UNITY_EMAIL -e UNITY_PASSWORD \
-    -e FFBOX_UNITY="$UNITY" \
     -e FFBOX_OUTPUT_FORMAT="$OUTPUT_FORMAT" \
     "$IMAGE" &
 DOCKER_PID=$!
@@ -424,10 +419,11 @@ if [ "$CLOCKS" = 1 ]; then
     done
     if [ -n "$TIMEOUT_KIND" ]; then
         # Never `docker kill`: the task is PID 1 and its trap is what returns the Unity seat.
-        # With Unity on, the grace has to be long enough for that return call to complete —
-        # kill_grace is about an agent ignoring SIGTERM, not about the licence round trip.
+        # Every run holds an editor now, so 120s is a FLOOR rather than a special case: that is
+        # the licence round trip, and kill_grace is about an agent ignoring SIGTERM. Whichever
+        # is larger wins, so an operator who asked for a longer grace still gets it.
         STOP_TIMEOUT=$KILL_GRACE
-        if [ "$UNITY" = 1 ]; then STOP_TIMEOUT=120; fi
+        [ "$STOP_TIMEOUT" -ge 120 ] || STOP_TIMEOUT=120
         echo "[ffbox] $TIMEOUT_KIND ceiling exceeded — stopping ffbox-${RUN_ID}" >&2
         printf '%s\n' "$TIMEOUT_KIND" > "$OUT/ffbox-timeout"
         docker stop --timeout "$STOP_TIMEOUT" "ffbox-${RUN_ID}" >/dev/null 2>&1

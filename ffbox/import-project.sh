@@ -21,11 +21,8 @@ log() { printf '[ffbox] %s\n' "$*"; }
 . /ffbox/unity-license.sh
 
 # An import with no license produces a broken half-populated Library/, which is worse than none:
-# it looks warm and then fails at compile time. Never let this task run unlicensed.
-if [ "${FFBOX_UNITY:-1}" != 1 ]; then
-    log "ERROR: the Library import requires a Unity license; --no-unity is not valid here"
-    exit 78
-fi
+# it looks warm and then fails at compile time. ensure_unity_license exits the task rather than
+# returning, so there is no unlicensed path past this line.
 ensure_unity_license
 
 cd "$WORKSPACE" || exit 1

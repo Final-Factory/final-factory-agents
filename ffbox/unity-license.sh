@@ -59,20 +59,16 @@ activate_unity() {
     return 1
 }
 
-# Activate unless the caller opted out. Exits the task on failure — every caller needs a license
-# before it can do anything useful with the editor.
+# Activate. Exits the task on failure — every run gets an editor, and a container that could not
+# license one cannot do the thing it was started for.
 ensure_unity_license() {
-    if [ "${FFBOX_UNITY:-1}" != 1 ]; then
-        log "Unity licensing skipped (--no-unity) — editor invocations in this run will fail"
-        return 0
-    fi
     local missing="" v
     for v in UNITY_SERIAL UNITY_EMAIL UNITY_PASSWORD; do
         [ -n "${!v:-}" ] || missing="${missing} ${v}"
     done
     if [ -n "$missing" ]; then
         log "ERROR: missing Unity credentials:${missing}"
-        log "       set them in the ffbox secrets file, or pass --no-unity to skip licensing"
+        log "       set them in the ffbox secrets file"
         exit 78
     fi
     if ! activate_unity; then

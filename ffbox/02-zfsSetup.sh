@@ -315,7 +315,7 @@ Next:
   1. sh ffbox/build.sh
   2. install -m 600 ffbox/secrets.env.example ~/.config/ffbox/secrets.env
      claude setup-token        # paste into that file, along with the Unity credentials
-  3. ffbox/ffbox --no-unity 'summarise how the save migration system works'
+  3. ffbox/ffbox 'summarise how the save migration system works'
 
 Then warm golden's Library/ once, so every future clone inherits a warm Unity import cache.
 EOF

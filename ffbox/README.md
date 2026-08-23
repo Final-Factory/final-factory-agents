@@ -23,7 +23,6 @@ without the page that makes them legible, or the listener without the manager th
 
 ```bash
 ffbox/ffbox "make the belt merger respect item priority"
-ffbox/ffbox --no-unity "summarise how the save migration system works"
 ffbox/ffbox --keep --prompt-file ./task.md
 ```
 
@@ -251,10 +250,11 @@ Consequences:
   dying mid-run. `activate_unity` retries five times with backoff, so that failure is slow
   rather than fatal.
 
-Use `--no-unity` for read-only or code-only prompts: no seat consumed, much faster startup.
-The Discord lanes no longer pass it: every lane, read or write, gets a working editor, because
-a worker asked what something's actual power draw is should be able to go and look rather than
-infer from source and hedge. See `design/trusted_ingress_design.txt` section 13.
+**Every run gets an editor, and there is no way to ask for one without.** Read lanes included,
+the web prompt box included, `ffbox "..."` included — a worker asked what something's actual
+power draw is should be able to go and look rather than infer from source and hedge. The old
+`--no-unity` bought a faster start and is gone; the warm `Library/` every clone inherits is what
+makes that affordable. See `design/trusted_ingress_design.txt` section 13.
 
 If you have access to a Unity Licensing Server or a floating license, that sidesteps seat
 exhaustion entirely and is worth preferring.
@@ -439,9 +439,9 @@ is still worth posting — the run lands as unverified, which the pull-request g
 like a failed verification.
 
 Stopping always goes through `docker stop`, never `docker kill`, because the task is PID 1 and
-its trap is what returns the Unity seat. With Unity on, the stop allows 120 seconds regardless
-of `--kill-grace` — that flag is about an agent ignoring SIGTERM, not about the licence round
-trip.
+its trap is what returns the Unity seat. Every run holds an editor, so 120 seconds is a floor
+rather than a special case: `--kill-grace` is about an agent ignoring SIGTERM, the 120 is the
+licence round trip, and the larger of the two is what the stop allows.
 
 The clocks are enforced only when the run is a task run, or when you pass one of the three
 flags explicitly. A plain interactive one-shot stays unbounded, as it always was.
@@ -630,8 +630,8 @@ The **prompt box** at the top of `/` runs `ffwatch submit` and queues the same t
 the grant. The account table is people who could open a terminal on this box, so a switch in
 front of it only ever meant one of them finding a dead page and a note naming a flag. Every
 prompt starts a *new* conversation, the way a shell prompt does — there is no reply-into-this-
-thread box on `/conversation/<id>`. The `unity` checkbox is `--no-unity` inverted; clear it for
-read-only or code-only work, and the turn takes no Unity seat.
+thread box on `/conversation/<id>`. There is nothing to configure beside the text: every run
+gets an editor, so the box is one field and one button.
 
 **Approve/reject** on the outbound queue is the one that stays behind a flag. `--enable-actions`
 is **off by default**, and the systemd unit does not carry it. The difference is disclosure, not

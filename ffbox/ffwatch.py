@@ -102,9 +102,9 @@ ADDED_COLUMNS = [
     ("turn", "parent_turn_id", "INTEGER"),
     ("turn", "rebased_from", "TEXT"),
     ("turn", "note", "TEXT"),
-    # Per-submission overrides for a shell turn: unity on/off, a base ref, a branch to harvest
-    # onto. The Discord lanes take these from the lane table; the shell ingress takes them from
-    # the command line, and they have to survive until launch.
+    # Per-submission overrides for a shell turn: a base ref, and a branch to harvest onto. The
+    # Discord lanes take these from the lane table; the shell ingress takes them from the command
+    # line, and they have to survive until launch.
     ("turn", "options_json", "TEXT"),
     # The engagement gate (design/trusted_ingress_design.txt section 5)
     ("conversation", "watch_alias", "TEXT"),
@@ -228,8 +228,12 @@ DEFAULTS = {
     # number is about CPU and memory — four editors on one box is a real ceiling — and raising
     # it is an ordinary config question rather than a licensing-server one. ffbox/README.md
     # carries the one edge that survives (the return-licence trap fires on exit for the shared
-    # identity); design/trusted_ingress_design.txt section 13 is the change that raises this to
-    # match max_concurrent_runs once every lane gets an editor.
+    # identity).
+    #
+    # Now that there is no way to launch without an editor, this counts the same runs
+    # max_concurrent_runs does and the lower of the two is the ceiling that bites. It is kept
+    # as its own knob because the two limits answer different questions — how many agents, and
+    # how many editors — and the day those diverge is the day the second one earns its keep.
     "max_unity_runs": 2,
     "catchup_secs": 900,
     "poll_secs": 2,
@@ -593,14 +597,14 @@ LANE_CAPABILITIES = {
     # content can be reviewed before it is uploaded. Both preambles say so, so a lane does not
     # burn turns trying to post and then report its own failure as the answer.
     "answer": {"tools": READ_TOOLS, "disallowed": [], "allowed": list(READ_ALLOWED),
-               "unity": True, "agent": "discord-answerer", "verdict": "question"},
+               "agent": "discord-answerer", "verdict": "question"},
     "triage": {"tools": READ_TOOLS, "disallowed": [], "allowed": list(READ_ALLOWED),
-               "unity": True, "agent": "discord-triager", "verdict": "question"},
+               "agent": "discord-triager", "verdict": "question"},
     "fix":    {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
-               "allowed": list(WRITE_ALLOWED), "unity": True,
+               "allowed": list(WRITE_ALLOWED),
                "agent": "discord-dev-agent", "verdict": "change"},
     "dev":    {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
-               "allowed": list(WRITE_ALLOWED), "unity": True,
+               "allowed": list(WRITE_ALLOWED),
                "agent": "discord-dev-agent", "verdict": "change"},
 
     # THE SHELL LANE. `ffbox "<prompt>"` used to clone, run a container and exit, touching none
@@ -618,7 +622,7 @@ LANE_CAPABILITIES = {
     # has. The structured verdict exists so the HARNESS can act on an answer (open a PR, queue
     # an autofix); nobody is acting on this one but the person reading the terminal.
     "shell":  {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
-               "allowed": list(WRITE_ALLOWED) + ["Bash"], "unity": True,
+               "allowed": list(WRITE_ALLOWED) + ["Bash"],
                "agent": None, "verdict": None},
 }
 
@@ -892,14 +896,13 @@ class Db:
 
 CLASSIFIER_SCHEMA = {
     "type": "object",
-    "required": ["engage", "type", "needs_unity", "reason"],
+    "required": ["engage", "type", "reason"],
     "properties": {
         # The engagement gate (design/trusted_ingress_design.txt section 5). One call and two
         # fields, because it is one read of the same text: `engage` answers "is there a turn",
         # `type` answers "which lane". A caller that only needs one ignores the other.
         "engage": {"type": "boolean"},
         "type": {"enum": ["question", "change"]},
-        "needs_unity": {"type": "boolean"},
         "reason": {"type": "string", "maxLength": 200},
         "scope_note": {"type": "string"},
     },
@@ -926,8 +929,6 @@ true. When in doubt, true.
 
 - "question": the author wants an answer, an explanation, or an investigation. No code change.
 - "change": the author wants a defect fixed or a feature written.
-
-needs_unity: true only if answering or fixing plausibly requires compiling or running tests.
 
 <request>
 {text}
@@ -967,7 +968,6 @@ def classify_text(cfg, text):
         # Absent means engage: a field the model forgot must not silence the bot.
         "engage": bool(parsed.get("engage", True)),
         "type": parsed["type"],
-        "needs_unity": bool(parsed.get("needs_unity", parsed["type"] == "change")),
         "reason": str(parsed.get("reason", ""))[:200],
         "scope_note": str(parsed.get("scope_note", ""))[:500],
         "status": "ok",
@@ -987,7 +987,6 @@ def failed_closed(reason):
         # swallow a real bug report, so it is only ever a confident model decision.
         "engage": True,
         "type": "question",
-        "needs_unity": False,
         "reason": reason,
         "scope_note": "",
         "status": "failed_closed",
@@ -1005,7 +1004,7 @@ def lane_for(cfg, conv_kind, text, gate=False):
     if conv_kind == "shell":
         # Not classified at all. Classification exists to decide how much capability untrusted
         # text may have; a prompt typed at this machine's own shell has already answered that.
-        return True, "shell", {"engage": True, "type": "change", "needs_unity": True,
+        return True, "shell", {"engage": True, "type": "change",
                                "status": "ok", "source": "shell",
                                "reason": "typed at this machine's shell", "scope_note": ""}
     if conv_kind in ("directive", "operator_dm"):
@@ -1019,7 +1018,6 @@ def lane_for(cfg, conv_kind, text, gate=False):
     if lane and not gate:
         return True, lane, {"engage": True,
                             "type": "change" if lane in ("fix", "dev") else "question",
-                            "needs_unity": lane in ("fix", "dev"),
                             "reason": f"conversation kind {conv_kind!r} maps to the {lane} lane",
                             "scope_note": "", "status": "ok", "source": "doorbell",
                             "lane_source": "doorbell"}
@@ -1837,7 +1835,7 @@ class Watcher:
                 f"Triage outline:\n{outline[:4000]}")
         seq = int(self.db.scalar("SELECT COALESCE(MAX(seq),0) FROM turn WHERE conversation_id=?",
                                  (conv["id"],), 0)) + 1
-        classification = {"type": "change", "needs_unity": True,
+        classification = {"type": "change",
                           "reason": f"triage turn {turn['seq']} returned AUTOFIX",
                           "scope_note": outline[:500], "status": "ok", "source": "triage"}
         cur = self.db.execute(
@@ -1858,6 +1856,9 @@ class Watcher:
     # ======================================================================================
 
     def running_counts(self):
+        """(runs in flight, of which have an editor). Every launch takes one, so these agree;
+        an ADOPTED run can still say 0, because there the column records what the container
+        actually did rather than what it was asked for."""
         rows = self.db.query(
             "SELECT r.unity AS unity FROM run r WHERE r.terminal_state IS NULL")
         return len(rows), sum(1 for r in rows if r["unity"])
@@ -1888,7 +1889,7 @@ class Watcher:
             if total >= int(self.cfg["max_concurrent_runs"]):
                 break
             cap = LANE_CAPABILITIES.get(turn["lane"]) or LANE_CAPABILITIES["answer"]
-            if cap["unity"] and unity >= int(self.cfg["max_unity_runs"]):
+            if unity >= int(self.cfg["max_unity_runs"]):
                 continue
             if turn["conv_state"] == "running":
                 continue
@@ -1956,7 +1957,6 @@ class Watcher:
 
     def build_job(self, turn, conv, run_id, att_dir):
         cap = LANE_CAPABILITIES.get(turn["lane"]) or LANE_CAPABILITIES["answer"]
-        options = turn_options(turn)
         msgs = self.db.query(
             "SELECT * FROM message WHERE turn_id=? ORDER BY CAST(discord_id AS INTEGER)",
             (turn["id"],))
@@ -2000,7 +2000,7 @@ class Watcher:
             "capabilities": {"tools": cap["tools"], "disallowed": list(cap["disallowed"]),
                              "allowed": list(cap.get("allowed") or []),
                              "permission_mode": "acceptEdits",
-                             "unity": bool(options.get("unity", cap["unity"]))},
+                             "unity": True},
             "classification": json.loads(turn["classification_json"] or "{}"),
             "failed_closed": bool(turn["failed_closed"]),
             "failed_closed_reason": turn["failed_closed_reason"],
@@ -2016,8 +2016,7 @@ class Watcher:
             # Tied to the lane being a WRITE lane, not to Unity being present. Every lane has an
             # editor now, and running the suite after a read-only lane would spend a Unity run
             # proving that a container which cannot write did not change anything.
-            "verify": {"enabled": cap["verdict"] == "change" and bool(
-                           options.get("unity", cap["unity"])),
+            "verify": {"enabled": cap["verdict"] == "change",
                        "assemblies": self.cfg.get("verify_assemblies") or "",
                        "out": "/ffbox/out/verification"},
             "messages": [self.job_message(m, att_dir) for m in msgs],
@@ -2237,7 +2236,7 @@ class Watcher:
             " base_sha, unity, tools, disallowed, allowed, stream_path, branch)"
             " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (turn["id"], run_id, f"ffbox-{run_id}", job["session"]["id"],
-             1 if job["session"]["resume"] else 0, conv["base_sha"], 1 if options.get("unity", cap["unity"]) else 0,
+             1 if job["session"]["resume"] else 0, conv["base_sha"], 1,
              cap["tools"], ",".join(cap["disallowed"]),
              ",".join(cap.get("allowed") or []), os.path.join(run_dir, "stream.jsonl"), branch))
         run_row_id = cur.lastrowid
@@ -2264,13 +2263,10 @@ class Watcher:
             cmd += ["--mount",
                     f"{os.path.join(self.cfg['plugins_dir'], self.cfg['plugin'])}:"
                     f"{job['plugin_dir']}:ro"]
-        if not options.get("unity", cap["unity"]):
-            cmd.append("--no-unity")
-        else:
-            # ffverify is mounted onto PATH because the container task and the lane's Bash
-            # allow list both name it, and neither knows a host path. It is the only Unity
-            # entry point either of them gets, and the only thing on that PATH we put there.
-            cmd += ["--mount", f"{self.cfg['ffverify']}:/usr/local/bin/ffverify:ro"]
+        # ffverify is mounted onto PATH because the container task and the lane's Bash allow
+        # list both name it, and neither knows a host path. It is the only Unity entry point
+        # either of them gets, and the only thing on that PATH we put there.
+        cmd += ["--mount", f"{self.cfg['ffverify']}:/usr/local/bin/ffverify:ro"]
         if branch:
             cmd += ["--branch", branch]
 
@@ -2584,7 +2580,7 @@ class Watcher:
         finally:
             fh.close()
 
-    def submit(self, prompt, *, unity=True, ref=None, branch=None, title=None):
+    def submit(self, prompt, *, ref=None, branch=None, title=None):
         """A shell prompt becomes a conversation, a message and a queued turn. Returns turn id.
 
         The SAME rows a Discord message produces, so everything downstream — scheduler,
@@ -2613,7 +2609,7 @@ class Watcher:
         if turn_id is None:
             raise RuntimeError("the prompt did not produce a turn")
         self.db.execute("UPDATE turn SET options_json=? WHERE id=?",
-                        (json.dumps({"unity": bool(unity), "ref": ref, "branch": branch}),
+                        (json.dumps({"ref": ref, "branch": branch}),
                          turn_id))
         return turn_id
 
@@ -2791,11 +2787,6 @@ class Watcher:
         report gets a row saying exactly that rather than no row at all — an absent row would
         read downstream as "not a lane that needs verifying".
         """
-        cap = LANE_CAPABILITIES.get(turn["lane"]) or LANE_CAPABILITIES["answer"]
-        if not turn_options(turn).get("unity", cap["unity"]):
-            # `ffbox --no-unity` is a promise that this run never touched the editor, so there
-            # is nothing to verify and no missing report to complain about.
-            return None
         report = _read_json(os.path.join(run_dir, "verification.json"))
         if not isinstance(report, dict):
             reason = ("verification hit its own ceiling and was stopped"
@@ -3807,7 +3798,6 @@ def build_parser():
     sp.add_argument("id", nargs="+", type=int, help="outbound row id(s) from `ffwatch status`")
     sp = sub.add_parser("submit", help="run a prompt through the pipeline (the shell ingress)")
     sp.add_argument("prompt", nargs="*", help="the prompt; '-' or empty reads stdin")
-    sp.add_argument("--no-unity", action="store_true", help="skip Unity: faster, no seat used")
     sp.add_argument("--ref", help="check the workspace out at this ref (default: base_ref)")
     sp.add_argument("--branch", help="harvest the work onto this branch as a git bundle")
     sp.add_argument("--wait", action="store_true", help="block until the run finishes")
@@ -3871,7 +3861,7 @@ def main(argv=None):
         prompt = " ".join(args.prompt).strip()
         if not prompt or prompt == "-":
             prompt = sys.stdin.read()
-        turn_id = watcher.submit(prompt, unity=not args.no_unity, ref=args.ref,
+        turn_id = watcher.submit(prompt, ref=args.ref,
                                  branch=args.branch)
         if not args.wait:
             print(f"queued turn {turn_id}")

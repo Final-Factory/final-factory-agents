@@ -17,6 +17,9 @@ channel does not burn a run on "thanks".
 Revision 5, 2026-08-22: the gate runs on every message in all three watched channels,
 including the first message of a new thread, and its bias toward answering is written as
 rules rather than as an adjective (section 5).
+Revision 11, 2026-08-22: Unity stops being optional anywhere. --no-unity is gone from ffbox,
+from `ffwatch submit` and from the web prompt box, the per-lane unity key is gone from
+LANE_CAPABILITIES, and the classifier stops being asked needs_unity (section 13).
 Revision 10, 2026-08-22: the prompt box loses its flag — starting a conversation is what the
 page is for, and the login is the grant (section 12). The bind is a deliberate LAN address on
 the build server, so this section stops treating loopback as the thing holding the page shut.
@@ -620,6 +623,9 @@ approve/reject already does: shell out to ffwatch, which owns the database.
 
     POST /prompt  ->  ffwatch submit "<text>"  ->  the same rows a shell prompt makes
 
+One field and one button. It carried a unity checkbox for as long as Unity was optional; that
+went with the flag it mirrored, and there is now nothing to configure beside the text.
+
 No flag in front of it. This was tried the other way first, with a --enable-prompts to match
 --enable-actions, on the reasoning that submitting work is a larger grant than approving a
 queued reply. The reasoning holds for approve/reject and does not hold here: section 13 already
@@ -674,9 +680,12 @@ Everything that actually contains a lane is untouched: no credential in the cont
 destroyed at the end of the run, no path from any container to Discord, every reply composed
 on the host from the structured verdict.
 
-UNITY ON EVERY LANE. The --no-unity launch goes away for the Discord lanes. Every container,
-read or write, gets a working editor, because a worker answering "what is the actual power draw
-of X" should be able to go and look rather than infer from source and hedge.
+UNITY ON EVERY LANE. The --no-unity launch goes away, and not only for the Discord lanes: the
+flag itself is gone, from ffbox, from `ffwatch submit`, and from the web prompt box, which no
+longer has a checkbox to clear. Every container, read or write, shell or Discord, gets a working
+editor, because a worker answering "what is the actual power draw of X" should be able to go and
+look rather than infer from source and hedge. Unity being optional was a per-submission answer
+to a question nobody wants to be asked at submission time.
 
 Revision 7 made a meal of this. It assumed max_unity_runs=1 was a hard licensing constraint and
 designed around it: lazy activation, a flock on a host path shared by every container, a bounded
@@ -692,14 +701,23 @@ in parallel with no licensing trouble. That is the test, and it passed.
 
 So the change is the small one it should have been:
 
-  capability     Every lane gets unity true. The editor and a warm Library are in every
-                 container, and activation stays where it is, eager, at container start.
+  capability     Every lane gets an editor. It is no longer a lane property at all — the key
+                 is gone from LANE_CAPABILITIES, because a table of per-lane values that are
+                 all the same value is a switch pretending to be a decision. The editor and a
+                 warm Library are in every container, and activation stays where it is, eager,
+                 at container start. The classifier's needs_unity field goes with it: it was
+                 asked on every classification and read by nothing.
 
   the ceiling    max_unity_runs stops being a licensing answer. Keep the knob, because four
                  editors on one box is a real CPU and memory ceiling worth having, but reframe
                  it as a resource limit and default it to match max_concurrent_runs instead of
                  pinning it at 1. The README paragraph that calls raising it "a licensing-server
                  question, not a config question" is now wrong and gets corrected with it.
+
+                 With no way to launch without an editor, it now counts the same runs
+                 max_concurrent_runs counts, and the lower of the two is what bites. Both knobs
+                 stay: they answer different questions — how many agents, how many editors —
+                 and the day those diverge is the day the second one earns its keep.
 
   verification   Unchanged, and still write-lanes only: a read-only lane changed nothing, so
                  there is nothing to verify and no reason to spend a Unity run proving it.

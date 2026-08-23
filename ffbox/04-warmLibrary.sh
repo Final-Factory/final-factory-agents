@@ -163,7 +163,6 @@ docker run \
     -v "$OUT:/ffbox/out" \
     -e FFBOX_ENTRY=/ffbox/import-project.sh \
     -e UNITY_SERIAL -e UNITY_EMAIL -e UNITY_PASSWORD \
-    -e FFBOX_UNITY=1 \
     "$IMAGE" && rc=0 || rc=$?
 
 if [ "$rc" -eq 0 ]; then
