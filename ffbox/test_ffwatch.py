@@ -115,7 +115,13 @@ def all_messages():
 
 
 cmd = argv[0]
-if cmd == "whoami":
+if cmd == "channel":
+    print(json.dumps(fixture.get("channel_objects", {}).get(resolve(argv[1]),
+                                                            {"id": resolve(argv[1]), "type": 0})))
+elif cmd == "dm":
+    print(json.dumps({"id": fixture.get("dm_channels", {}).get(argv[1], "dm-" + argv[1]),
+                      "type": 1, "recipients": [argv[1]]}))
+elif cmd == "whoami":
     print(json.dumps({"id": os.environ.get("FFD_BOT_ID", "999000999"),
                       "username": "max", "global_name": "Max"}))
 elif cmd == "read":
@@ -514,6 +520,69 @@ def bug_thread(fixture, tid, title, msgs):
 
 
 LOTHSAHN = "193210319093497857"
+
+
+DM_CHANNEL = "700000000000000009"
+
+
+def test_an_operator_dm_is_a_private_venue():
+    print("operator DM")
+    fixture = base_fixture()
+    fixture["channel_objects"] = {DM_CHANNEL: {"id": DM_CHANNEL, "type": 1,
+                                               "recipients": [{"id": LOTHSAHN}]}}
+    fixture["messages"][DM_CHANNEL] = [
+        message(5001, "which file defines the belt merger?", channel=DM_CHANNEL,
+                author=LOTHSAHN, name="lothsahn")]
+    case = Case("dm", fixture,
+                verdict={"engage": True, "type": "question", "needs_unity": False,
+                         "reason": "wants to know where something lives"})
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_dm", "channel": None,
+                 "channel_id": DM_CHANNEL, "id": "5001", "author_id": LOTHSAHN})
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    turn = case.rows("SELECT * FROM turn")[0]
+    check("a DM from an operator is an operator turn at a private venue",
+          (turn["trust_tier"], turn["venue"]) == ("operator", "private"), turn)
+    check("and a question there takes the read-only answer lane", turn["lane"] == "answer", turn)
+    case.watcher.launch(turn["id"])
+    run = case.watcher.db.one("SELECT * FROM run WHERE turn_id=?", (turn["id"],))
+    job = json.load(open(os.path.join(os.path.dirname(run["stream_path"]), "job.json"),
+                         encoding="utf-8"))
+    check("the container is told to answer fully",
+          "PRIVATE channel" in job["prompt"] and "Answer fully" in job["prompt"],
+          job["prompt"][:500])
+
+
+def test_a_dm_that_is_not_a_private_venue_is_dropped():
+    print("group DMs and strangers")
+    group = base_fixture()
+    group["channel_objects"] = {DM_CHANNEL: {"id": DM_CHANNEL, "type": 3,
+                                             "recipients": [{"id": LOTHSAHN}, {"id": PLAYER}]}}
+    group["messages"][DM_CHANNEL] = [message(5101, "hey", channel=DM_CHANNEL, author=LOTHSAHN)]
+    case = Case("dm-group", group)
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_dm", "channel": None,
+                 "channel_id": DM_CHANNEL, "id": "5101", "author_id": LOTHSAHN})
+    case.watcher.drain_events()
+    check("a group DM never becomes a conversation, however trusted the author",
+          case.rows("SELECT * FROM conversation") == [],
+          case.rows("SELECT * FROM conversation"))
+
+    stranger = base_fixture()
+    stranger["channel_objects"] = {DM_CHANNEL: {"id": DM_CHANNEL, "type": 1,
+                                                "recipients": [{"id": PLAYER}]}}
+    stranger["messages"][DM_CHANNEL] = [message(5201, "hi", channel=DM_CHANNEL)]
+    case2 = Case("dm-stranger", stranger)
+    case2.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    # A forged doorbell: the listener would never emit this, so ffwatch checking the author
+    # again is what keeps the listener out of the trust path.
+    case2.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_dm", "channel": None,
+                  "channel_id": DM_CHANNEL, "id": "5201", "author_id": PLAYER})
+    case2.watcher.drain_events()
+    check("a DM doorbell naming a non-operator is dropped rather than trusted",
+          case2.rows("SELECT * FROM conversation") == [],
+          case2.rows("SELECT * FROM conversation"))
 
 
 def test_tier_and_venue_reach_the_container():
@@ -1094,24 +1163,69 @@ def test_dry_run():
 def test_dev_lane_runs_a_directive():
     """Trust here is anchored ONLY to Discord's authenticated author.id on the dispatch
     (design section 13), never to message content — the listener decides the kind, and ffwatch
-    maps the kind to the lane. A message merely claiming to be Lothsahn is an `ask`."""
+    maps the kind to the lane. A message merely claiming to be an operator is an `ask`.
+
+    The lane is no longer pinned by the kind. An operator asks questions as often as they hand
+    out work, so a directive is classified for TYPE: a change takes the dev lane, a question
+    takes the read-only answer lane, and answering "which file defines X" stops costing a
+    Unity-enabled write lane.
+    """
     print("dev lane")
     fixture = base_fixture()
     fixture["messages"][RANDOM_CHANNEL] = [message(15001, "ship the merger fix",
-                                                   channel=RANDOM_CHANNEL)]
-    case = Case("writelane", fixture)
-    case.events({"ts": "2026-08-21T00:00:00Z", "kind": "lothsahn_directive",
+                                                   channel=RANDOM_CHANNEL, author=LOTHSAHN)]
+    case = Case("writelane", fixture,
+                verdict={"engage": True, "type": "change", "needs_unity": True,
+                         "reason": "asks for a defect to be fixed"})
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
                  "channel": RANDOM_CHANNEL, "channel_id": RANDOM_CHANNEL, "id": "15001",
-                 "author_id": PLAYER})
+                 "author_id": LOTHSAHN})
     case.watcher.once()
     turn = case.rows("SELECT * FROM turn")[0]
-    check("a lothsahn_directive classifies into the dev lane", turn["lane"] == "dev", turn)
+    check("a directive the classifier calls a change takes the dev lane",
+          turn["lane"] == "dev", turn)
+    check("and it is an operator turn at a public venue",
+          (turn["trust_tier"], turn["venue"]) == ("operator", "public"), turn)
     check("and it actually launches", turn["status"] == "done", turn)
     run = case.rows("SELECT * FROM run")[0]
     check("with the write tool set and Unity on",
           run["tools"] == "Read,Grep,Glob,Edit,Write,Bash" and run["unity"] == 1, run)
     check("a verification row is written even though this run changed nothing",
           len(case.rows("SELECT * FROM verification WHERE run_id=?", (run["id"],))) == 1)
+
+    ask = base_fixture()
+    ask["messages"][RANDOM_CHANNEL] = [message(15101, "which file defines the merger?",
+                                               channel=RANDOM_CHANNEL, author=LOTHSAHN)]
+    q = Case("directive-question", ask,
+             verdict={"engage": True, "type": "question", "needs_unity": False,
+                      "reason": "wants to know where something lives"})
+    q.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    q.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
+              "channel": RANDOM_CHANNEL, "channel_id": RANDOM_CHANNEL, "id": "15101",
+              "author_id": LOTHSAHN})
+    q.watcher.drain_events()
+    q.watcher.claim_turns()
+    qturn = q.rows("SELECT * FROM turn")[0]
+    check("a directive that is really a question takes the read-only answer lane",
+          qturn["lane"] == "answer", qturn)
+
+    # An old listener on some machine still emits the pre-operator-set kind. It must keep
+    # working: ffwatch and the plugin update on their own schedules.
+    legacy = base_fixture()
+    legacy["messages"][RANDOM_CHANNEL] = [message(15201, "ship it", channel=RANDOM_CHANNEL,
+                                                  author=LOTHSAHN)]
+    old = Case("directive-legacy", legacy,
+               verdict={"engage": True, "type": "change", "needs_unity": True, "reason": "x"})
+    old.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    old.events({"ts": "2026-08-21T00:00:00Z", "kind": "lothsahn_directive",
+                "channel": RANDOM_CHANNEL, "channel_id": RANDOM_CHANNEL, "id": "15201",
+                "author_id": LOTHSAHN})
+    old.watcher.drain_events()
+    old.watcher.claim_turns()
+    check("the pre-operator-set doorbell kind is still accepted",
+          old.rows("SELECT * FROM turn")[0]["lane"] == "dev",
+          old.rows("SELECT kind FROM conversation"))
 
 
 def test_thread_triage_lane():
@@ -2905,6 +3019,8 @@ def main():
         test_the_gate_declines_a_message_that_asks_nothing,
         test_the_gate_answers_when_it_is_unsure,
         test_evidence_and_thread_openings_never_reach_the_gate,
+        test_an_operator_dm_is_a_private_venue,
+        test_a_dm_that_is_not_a_private_venue_is_dropped,
         test_tier_and_venue_reach_the_container,
         test_a_player_never_inherits_an_operators_clearance,
         test_operator_table_holds_ids_only,

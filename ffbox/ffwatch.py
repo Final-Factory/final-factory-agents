@@ -616,7 +616,11 @@ LANE_BY_KIND = {
     "mention": "answer",
     "bug_report": "triage",
     "suggestion": "triage",
-    "directive": "dev",
+    # NOT listed: "directive" and "operator_dm". An operator message is routed by the TYPE
+    # classifier instead — a question takes the read-only answer lane, a change takes the dev
+    # lane. Pinning every directive to the dev lane, which is what used to happen, spent a
+    # Unity-enabled write lane and the machine's Unity slot answering "which file defines X".
+    # See operator_lane() and design/trusted_ingress_design.txt section 8.
 }
 
 # Kinds with NO Discord side. A prompt typed at this machine's shell has no thread and no
@@ -647,7 +651,8 @@ TRIGGER_BY_KIND = {
     "mention": "player_mention",
     "bug_report": "thread_message",
     "suggestion": "thread_message",
-    "directive": "lothsahn_directive",
+    "directive": "operator_directive",
+    "operator_dm": "operator_dm",
 }
 
 TERMINAL_TURN_STATES = ("done", "failed", "timed_out", "blocked")
@@ -981,6 +986,13 @@ def lane_for(cfg, conv_kind, text, gate=False):
         return True, "shell", {"engage": True, "type": "change", "needs_unity": True,
                                "status": "ok", "source": "shell",
                                "reason": "typed at this machine's shell", "scope_note": ""}
+    if conv_kind in ("directive", "operator_dm"):
+        # An operator message. The channel's kind does not decide the lane, because an operator
+        # asks questions as often as they hand out work, and a question does not need a write
+        # lane. Classify for TYPE. Tier and venue are still not the classifier's business.
+        cls = classify_text(cfg, text)
+        return True, ("dev" if cls["type"] == "change" else "answer"), \
+            dict(cls, lane_source="model", engage=True)
     lane = LANE_BY_KIND.get(conv_kind)
     if lane and not gate:
         return True, lane, {"engage": True,
@@ -1358,7 +1370,10 @@ class Watcher:
             if kind in ("thread", "thread_message"):
                 return self.ingest_thread(ev.get("channel_id") or ev.get("id"),
                                           alias=ev.get("channel"))
-            if kind in ("message", "player_mention", "lothsahn_directive"):
+            if kind == "operator_dm":
+                return self.ingest_dm(ev)
+            if kind in ("message", "player_mention", "operator_directive",
+                        "lothsahn_directive"):
                 return self.ingest_channel_message(ev)
             if kind == "catchup":
                 return self.sweep()
@@ -1386,6 +1401,58 @@ class Watcher:
         for m in msgs:
             m.setdefault("channel_id", str(thread_id))
             self.insert_message(conv_id, m)
+        return conv_id
+
+    def ingest_dm(self, ev):
+        """A direct message from an operator. Its own path, because a DM has no watch entry.
+
+        Two things are settled HERE rather than at the doorbell, because the gateway dispatch
+        carries neither. That it really is a one-to-one DM: a group DM is channel type 3, looks
+        identical on the wire, and is dropped, because "private" means one recipient we trust
+        and not a room somebody can add people to. And that the author really is an operator:
+        the listener checked, and checking again costs one dictionary lookup and removes the
+        listener from the trust path entirely.
+        """
+        channel_id = str(ev.get("channel_id"))
+        author_id = str(ev.get("author_id") or "")
+        if not is_operator(self.cfg, author_id):
+            log(f"WARNING: dropping a DM doorbell from {author_id!r}, who is not an operator")
+            return None
+        try:
+            ch = ffd_json(self.cfg, ["channel", channel_id]) or {}
+        except FFDiscordError as exc:
+            log(f"WARNING: could not read DM channel {channel_id}: {exc}")
+            return None
+        if int(ch.get("type") or 0) != 1:
+            log(f"WARNING: dropping DM channel {channel_id}: type {ch.get('type')} is not a "
+                f"one-to-one DM, so it is not a private venue")
+            return None
+        msg = fetch_message(self.cfg, channel_id, str(ev.get("id")))
+        if msg is None:
+            log(f"WARNING: DM {ev.get('id')} in {channel_id} could not be read")
+            return None
+        # A DM has no thread and no reply chain to hang a conversation on, so each top-level
+        # message opens its own unless it replies to something already here. Two unrelated
+        # questions an hour apart should not share one growing session.
+        ref = (msg.get("referenced_message") or {}).get("id")
+        root_id = None
+        if ref:
+            known = self.db.one("SELECT * FROM message WHERE discord_id=?", (str(ref),))
+            if known:
+                root_id = self.db.scalar(
+                    "SELECT thread_id FROM conversation WHERE id=?", (known["conversation_id"],))
+        title = (msg.get("content") or "").strip().splitlines()
+        conv_id = self.upsert_conversation(
+            root_id or str(msg.get("id")),
+            kind="operator_dm",
+            channel_id=channel_id,
+            guild_id=None,
+            title=(title[0][:100] if title else None),
+            root_message_id=root_id or str(msg.get("id")),
+            opener=author_id,
+            is_thread=False)
+        msg.setdefault("channel_id", channel_id)
+        self.insert_message(conv_id, msg)
         return conv_id
 
     def ingest_channel_message(self, ev):
@@ -1451,7 +1518,11 @@ class Watcher:
         return chain[0], chain
 
     def conversation_kind(self, doorbell_kind, alias):
-        if doorbell_kind == "lothsahn_directive":
+        if doorbell_kind == "operator_dm":
+            return "operator_dm"
+        # lothsahn_directive is what a listener from before the operator set emitted. Accepted
+        # so an older plugin cache on some machine keeps working after ffwatch updates.
+        if doorbell_kind in ("operator_directive", "lothsahn_directive"):
             return "directive"
         if doorbell_kind == "player_mention":
             return "mention"
@@ -1599,7 +1670,10 @@ class Watcher:
         else is public unless a watch entry says otherwise, including a channel nobody has
         classified.
         """
-        if conv["kind"] == "shell":
+        if conv["kind"] in ("shell", "operator_dm"):
+            # A DM has no watch entry, so its venue is derived rather than declared. There is
+            # only one value it can take: a DM that is not with an operator never became a
+            # conversation at all (see ingest_dm).
             return "private"
         return venue_for(self.cfg, alias)
 

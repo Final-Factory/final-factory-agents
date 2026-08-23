@@ -489,6 +489,39 @@ def cmd_whoami(client, args):
     print(f"{out['username']} (id {out['id']})")
 
 
+def cmd_channel(client, args):
+    """One channel object. `type` and `recipients` are the two fields worth having: they are
+    what separates a one-to-one DM (type 1) from a group DM (type 3), which is a distinction a
+    gateway dispatch cannot make."""
+    ch = client.get(f"/channels/{resolve_channel(client, args.channel)}") or {}
+    if args.json:
+        print(json.dumps(ch))
+        return
+    kind = CHANNEL_TYPES.get(ch.get("type"), ch.get("type"))
+    print(f"{ch.get('name') or '(dm)'}  id {ch.get('id')}  type {kind}")
+
+
+def cmd_dm(client, args):
+    """Open (or re-open) the DM channel with one user and print its id.
+
+    POST /users/@me/channels is idempotent: Discord returns the existing channel when one is
+    already open, so this is safe to call again after a cached id goes stale. `recipients` comes
+    back with it, which is what lets a caller check this really is a one-to-one DM and not a
+    group — the two are indistinguishable from a gateway dispatch.
+    """
+    who = str(args.user)
+    if not who.isdigit():
+        die(f"a DM needs a numeric user id, not {who!r}. Usernames are renameable and are "
+            f"never an identity here.")
+    ch = client.post("/users/@me/channels", {"recipient_id": who}) or {}
+    out = {"id": ch.get("id"), "type": ch.get("type"),
+           "recipients": [r.get("id") for r in (ch.get("recipients") or [])]}
+    if args.json:
+        print(json.dumps(out))
+        return
+    print(out["id"] or "(no channel)")
+
+
 def cmd_doctor(client, args):
     problems, notes = [], []
     me = client.get("/users/@me")
@@ -1082,6 +1115,12 @@ def build_parser():
         return sp
 
     add("whoami", cmd_whoami, "print the bot's own user id")
+
+    sp = add("channel", cmd_channel, "print one channel object (type, name, recipients)")
+    sp.add_argument("channel", help="id, alias or #name")
+
+    sp = add("dm", cmd_dm, "open the DM channel with a user and print its channel id")
+    sp.add_argument("user", help="the recipient's numeric user id")
     add("doctor", cmd_doctor, "verify token, guild, channel permissions and intents")
     add("channels", cmd_channels, "list guild channels with ids")
 
