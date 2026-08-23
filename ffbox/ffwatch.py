@@ -14,6 +14,7 @@ and records everything in SQLite.
   ffwatch send      flush the outbound queue once and exit
   ffwatch approve   release held outbound rows (approve_before_send)
   ffwatch reject    drop held outbound rows, with a reason
+  ffwatch read      mark conversations read in the web UI (ffwatch unread puts them back)
 
 PHASE 3. All four lanes run, and NONE of them talks to Discord. A turn says what it wants said
 in the `summary` of its structured verdict; ffwatch composes the reply from that and records it
@@ -72,7 +73,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a column added to
 # the schema file never reaches a database created before it. These are applied with ALTER on
@@ -115,6 +116,9 @@ ADDED_COLUMNS = [
     ("message", "addressed", "INTEGER NOT NULL DEFAULT 0"),
     ("message", "gate", "TEXT"),
     ("message", "gate_reason", "TEXT"),
+    # How far the web UI has been read through (schema v7). NULL on every existing row, which
+    # is the right answer: a database that predates the column has been read by nobody.
+    ("conversation", "read_through", "TEXT"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -3531,6 +3535,46 @@ class Watcher:
             log(f"outbound {oid} rejected: {reason or 'rejected by hand'}")
         return done
 
+    # -- read / unread, for the web UI -------------------------------------------------------
+
+    def mark_read(self, ids):
+        """Tick conversations off as read UP TO WHATEVER THEY HAVE DONE SO FAR.
+
+        What is stored is the conversation's own activity stamp, not the clock now. Two
+        reasons, and the second is the one that bites. A stamp taken from now() makes the
+        column depend on this box's clock agreeing with the clock that wrote last_activity_at,
+        and a machine running a few seconds behind would mark a row read and have it come
+        straight back. Reading the row's own value cannot skew against itself.
+
+        The other reason is that this is the value the UNREAD test compares against, so it has
+        to mean "read through here" rather than "was looked at around then". See read_through
+        in the schema for why it is a timestamp and not a flag at all.
+
+        Reads that change nothing still count as done: ticking an already-read conversation is
+        idempotent, not an error, because the UI can send one while a page is stale.
+        """
+        return self._set_read(ids, read=True)
+
+    def mark_unread(self, ids):
+        """Put conversations back in the queue by clearing the column."""
+        return self._set_read(ids, read=False)
+
+    def _set_read(self, ids, read):
+        done = []
+        for cid in ids:
+            row = self.db.one(
+                "SELECT id, last_activity_at, created_at FROM conversation WHERE id=?", (cid,))
+            if row is None:
+                log(f"conversation {cid}: no such row")
+                continue
+            through = (row["last_activity_at"] or row["created_at"] or "") if read else None
+            self.db.execute("UPDATE conversation SET read_through=? WHERE id=?",
+                            (through, row["id"]))
+            done.append(row["id"])
+            log(f"conversation {row['id']} marked "
+                + (f"read through {through}" if read else "unread"))
+        return done
+
     # ======================================================================================
     # recovery
     # ======================================================================================
@@ -3994,6 +4038,15 @@ def build_parser():
     sp = sub.add_parser("reject", help="drop outbound rows instead of sending them")
     sp.add_argument("id", nargs="+", type=int)
     sp.add_argument("--reason", help="recorded on the row so the UI can show why")
+
+    # The web UI's read queue. Here rather than in ffweb because ffwatch is the sole writer of
+    # the database and a tick is a row like any other; ffweb shells out to these the same way
+    # it shells out to approve/reject. Useful from a terminal too — `ffwatch read $(seq 1 40)`
+    # is how you clear a backlog you have already been through in Discord.
+    sp = sub.add_parser("read", help="mark conversations read in the web UI")
+    sp.add_argument("id", nargs="+", type=int, help="conversation id(s)")
+    sp = sub.add_parser("unread", help="put conversations back in the web UI's unread queue")
+    sp.add_argument("id", nargs="+", type=int, help="conversation id(s)")
     return p
 
 
@@ -4039,6 +4092,13 @@ def main(argv=None):
     if args.cmd == "reject":
         done = watcher.reject(args.id, args.reason)
         print(f"rejected {len(done)} row(s)")
+        return 0 if done else 1
+    if args.cmd in ("read", "unread"):
+        done = (watcher.mark_read if args.cmd == "read" else watcher.mark_unread)(args.id)
+        print(f"marked {len(done)} conversation(s) {args.cmd}")
+        # Non-zero only when NOTHING was touched, which means every id was wrong. Re-marking a
+        # conversation that is already in that state is a success: the UI sends one from a page
+        # that may be a minute stale, and a failure there would be noise, not information.
         return 0 if done else 1
     if args.cmd == "submit":
         prompt = " ".join(args.prompt).strip()

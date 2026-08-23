@@ -20,6 +20,10 @@ FOUR THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the pag
    table is people who could open a terminal on this box, so a switch in front of the box only
    ever meant an operator hunting for the flag that unhid it.
 
+   Marking a conversation read takes that same route, to `ffwatch read` / `ffwatch unread`. It
+   is a row in the database like everything else on this page and it is not this process's to
+   write, even though nothing outside this UI ever reads it back.
+
 2. THIS PAGE IS INTERNAL-ONLY AND NONE OF ITS TEXT IS EVER REUSED IN A DISCORD POST.
    transcript_event holds repo internals, file contents the agent read, and raw model
    thinking. The bind address decides who can reach that, and it is a deployment decision made
@@ -154,6 +158,15 @@ SESSION_TTL_SECS = 3600
 # and never late.
 SESSION_SAVE_INTERVAL_SECS = 60
 SESSION_FILE = "ffweb-sessions.json"
+# The three ways the conversation list can be narrowed by whether it has been read. `unread`
+# is the default because the list is a queue of things to look at: the value of an inbox is
+# that it empties, and one that opens on everything ever said makes ticking a row off a gesture
+# with no reward. `all` is the old behaviour and is one dropdown away.
+#
+# The tick itself is `conversation.read_through` in the database, written by ffwatch — see
+# ffwatch's mark_read and the column's comment in ffwatch_schema.sql. This file only reads it.
+READ_FILTERS = ("unread", "read", "all")
+DEFAULT_READ_FILTER = "unread"
 # A wrong password costs this much wall clock. Not a rate limiter — it is one constant-time
 # comparison against one password, so the only thing worth blunting is how fast a script on
 # the LAN can walk a dictionary through the form.
@@ -186,7 +199,10 @@ FILTER_SCRIPT = ("for (const s of document.querySelectorAll('#conversation-filte
 # Three things it refuses to do:
 #
 #   Interrupt typing. A reload while someone is halfway through the prompt box throws the text
-#   away, so a focused control or a box with anything in it defers the tick.
+#   away, so a focused control or a box with anything in it defers the tick. The title filter
+#   is the same hazard with a different tell: it is ALWAYS full once a filter is applied, so
+#   what defers the tick there is the box disagreeing with the `title` already in the URL —
+#   a word typed and not yet submitted, rather than one that is on screen doing its job.
 #   Carry the acknowledgement forward. `sent` and `msg` are stripped from the URL, so a toast
 #   does not come back from the dead every minute; the filters in the rest of the query do
 #   survive, since they are what the operator chose to look at.
@@ -212,6 +228,8 @@ _REFRESH_TEMPLATE = (
     " const box = document.querySelector('input[name=prompt]');"
     " if (box && box.value.trim()) return;"
     " const u = new URL(location.href);"
+    " const f = document.querySelector('input[name=title]');"
+    " if (f && f.value.trim() !== (u.searchParams.get('title') || '').trim()) return;"
     " u.searchParams.delete('sent'); u.searchParams.delete('msg');"
     " try { sessionStorage.setItem(k, String(window.scrollY)); } catch (e) {}"
     " location.replace(u.href); }, @MS@);")
@@ -245,6 +263,15 @@ CSP = ("default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
        "script-src " + script_hash(FILTER_SCRIPT) + " " + script_hash(REFRESH_SCRIPT) +
        " " + script_hash(LIVE_REFRESH_SCRIPT) + "; "
        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+
+# Has this conversation been read, as one SQL expression, over an aliased `conversation c`.
+# ffwatch writes read_through as the value COALESCE(last_activity_at, created_at) had at the
+# moment of the tick — the same COALESCE the list is ordered by — so comparing the two here is
+# comparing a row against its own past. Named once because it is used three times in one query
+# (as a WHERE for `read`, as its negation for `unread`, and as the column that decides which
+# way round each row's button reads) and three copies would be three chances to drift.
+IS_READ = ("c.read_through IS NOT NULL"
+           " AND c.read_through >= COALESCE(c.last_activity_at, c.created_at, '')")
 
 # A ceiling on how much of one subagent chain is rendered. Not a depth limit: a subagent's
 # records form a LINEAR parent chain, so a depth cap would silently truncate any subagent that
@@ -561,6 +588,18 @@ def short(text, limit=120):
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
+def like_escape(text):
+    """A typed word, turned into the literal middle of a LIKE pattern.
+
+    `%` and `_` are wildcards to SQLite, so a search for "100%" would otherwise match every
+    row on the page. The backslash goes first, because it is the escape character the query
+    declares and escaping it last would double-escape the prefixes the other two just gained.
+    """
+    for ch in ("\\", "%", "_"):
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
 # ------------------------------------------------------------------------------------------
 # the read-only database
 # ------------------------------------------------------------------------------------------
@@ -817,6 +856,11 @@ form.filters label { font-size: 12px; color: #8f98a6; display: block; }
 select, input, button { font: inherit; background: #1c2027; color: #d7dae0;
                         border: 1px solid #333a45; border-radius: 3px; padding: 4px 7px; }
 button { cursor: pointer; }
+/* The read tick sits in a table cell, so it loses the block margin a form normally has and
+   shrinks to something the size of the row's text rather than of a page button. */
+form.mark { margin: 0; }
+form.mark button { font-size: 12px; padding: 1px 6px; color: #8f98a6; white-space: nowrap; }
+form.mark button:hover { color: #d7dae0; border-color: #4a5261; }
 .pill { display: inline-block; padding: 0 6px; border-radius: 9px; font-size: 12px;
         border: 1px solid #333a45; background: #1c2027; }
 .pill.running, .pill.queued { border-color: #4a6; color: #7d9; }
@@ -979,9 +1023,34 @@ def pill(value):
     return Raw("<span class=\"pill " + esc(cls) + "\">" + esc(value) + "</span>")
 
 
-def select(name, current, options, blank="any"):
-    out = ["<label>" + esc(name) + "<select name=" + attr(name) + ">"]
-    out.append("<option value=\"\">" + esc(blank) + "</option>")
+def mark_button(conv_id, is_read, back):
+    """The per-row read tick, as its own one-button form.
+
+    A POST rather than a link, for the reason the sign-out button is: a GET that changes
+    something is a change any page on the internet can trigger with an <img>, and the Origin
+    check that protects the other actions only runs on POST.
+
+    The label is what the click WILL DO, not what the row currently is — "mark read" on an
+    unread row, "mark unread" on a read one — so the button is its own undo and the same
+    column works in all three views. `back` is where the browser lands afterwards and is
+    checked again server-side; nothing here is trusted for having been rendered here.
+    """
+    want = "unread" if is_read else "read"
+    return Raw("<form class=\"mark\" method=\"post\" action=\"/actions/read\">"
+               "<input type=\"hidden\" name=\"id\" value=" + attr(conv_id) + ">"
+               "<input type=\"hidden\" name=\"read\" value=" + attr(want) + ">"
+               "<input type=\"hidden\" name=\"back\" value=" + attr(back) + ">"
+               "<button type=\"submit\">mark " + esc(want) + "</button></form>")
+
+
+def select(name, current, options, blank="any", label=None):
+    """A labelled dropdown. `blank=None` omits the empty option, for a filter that is always
+    set to one of its values — "any" would be a fourth state that means the same as one of the
+    three. `label` is for when the caption is not the query parameter's name."""
+    out = ["<label>" + esc(label if label is not None else name) +
+           "<select name=" + attr(name) + ">"]
+    if blank is not None:
+        out.append("<option value=\"\">" + esc(blank) + "</option>")
     for opt in options:
         if opt is None:
             continue
@@ -1066,6 +1135,20 @@ class FfwatchActions:
         it — deliberately both, since only one of the two is the writer.
         """
         return self._run(["submit", "--conversation", str(int(conversation_id)), "--", prompt])
+
+    def read(self, ids, read=True):
+        """Tick conversations off, or put them back — `ffwatch read` / `ffwatch unread`.
+
+        Out through the subprocess like everything else that changes a row, even though this
+        one is a column no other program reads. The rule earns its keep precisely on the case
+        that looks like it does not need it: `read_through` is written as the conversation's
+        own activity stamp (see ffwatch's mark_read), and an UPDATE issued from here would be
+        this file quietly reimplementing that decision in a second place.
+
+        Not behind --enable-actions. That flag guards releasing a reply into a public Discord
+        thread; a tick that nothing outside this page ever reads is not that.
+        """
+        return self._run([("read" if read else "unread")] + [str(i) for i in ids])
 
 
 # ------------------------------------------------------------------------------------------
@@ -1376,6 +1459,30 @@ class FFWebHandler(BaseHTTPRequestHandler):
             return self._redirect(where + "?msg=" +
                                   urllib.parse.quote("failed: " + short(out, 300)))
 
+        if path == "/actions/read":
+            # No flag in front of this one either, and for the same reason the prompt box has
+            # none: --enable-actions guards releasing a reply into a public Discord thread, and
+            # a tick that nothing outside this page ever reads is not that. The Origin check
+            # above still applies in its refusing form, because a forged POST that emptied
+            # somebody's queue view would be a nuisance worth not having.
+            #
+            # WHICH stamp gets recorded is ffwatch's decision, not this file's — see its
+            # mark_read. All that is settled here is the id and the direction.
+            raw_id = (form.get("id") or [""])[0].strip()
+            if not raw_id.isdigit():
+                return self._error(400, "no conversation id given")
+            want_read = (form.get("read") or ["read"])[0].strip() != "unread"
+            back = safe_next((form.get("back") or ["/"])[0])
+            ok, out = app.actions.read([int(raw_id)], read=want_read)
+            if ok:
+                return self._redirect(back)
+            # Back to the list either way, but saying so. A tick that silently did nothing is
+            # the failure mode worth spending a query parameter on: the row would still be sat
+            # there afterwards and look like a button that does not work.
+            joiner = "&" if "?" in back else "?"
+            return self._redirect(back + joiner + "msg=" +
+                                  urllib.parse.quote("failed: " + short(out, 300)))
+
         if path not in ("/actions/approve", "/actions/reject"):
             return self._error(404, "no such action")
         if not app.actions.enabled:
@@ -1545,14 +1652,34 @@ class App:
     def page_conversations(self, query):
         filters = {k: (query.get(k) or [""])[0].strip() for k in
                    ("kind", "state", "verdict", "lane")}
+        # The title is typed rather than picked, because its values are unbounded: a
+        # distinct-values dropdown over free text written by strangers would be as long as the
+        # table it filters. So it matches a SUBSTRING, case-insensitively, and it matches what
+        # the title column actually SHOWS — a conversation with no title renders its thread_id
+        # in that cell, and filtering on something other than what is on screen would look
+        # broken. LIKE folds case for ASCII only; a word with an accent in it matches as typed.
+        title = (query.get("title") or [""])[0].strip()
         where, params = [], []
         for column, value in filters.items():
             if value:
                 where.append(f"c.{column} = ?")
                 params.append(value)
+        if title:
+            where.append("COALESCE(c.title, c.thread_id, '') LIKE ? ESCAPE '\\'")
+            params.append("%" + like_escape(title) + "%")
+        # Read/unread is a column like the rest of them, so it filters in SQL and the 500-row
+        # cap still applies to the set actually being shown. IS_READ is the whole definition of
+        # the feature in one expression: ticked off, AND nothing has happened since. `>=`
+        # because ffwatch records exactly the stamp the row had, so a conversation that has not
+        # moved compares equal to its own tick.
+        read_filter = (query.get("read") or [""])[0].strip() or DEFAULT_READ_FILTER
+        if read_filter not in READ_FILTERS:
+            read_filter = DEFAULT_READ_FILTER
+        if read_filter != "all":
+            where.append(("" if read_filter == "read" else "NOT ") + "(" + IS_READ + ")")
         clause = (" WHERE " + " AND ".join(where)) if where else ""
         rows = self.db.query(
-            "SELECT c.*,"
+            "SELECT c.*, " + IS_READ + " AS is_read,"
             " (SELECT COUNT(*) FROM turn t WHERE t.conversation_id = c.id) AS turns,"
             " (SELECT COUNT(*) FROM message m WHERE m.conversation_id = c.id) AS messages"
             " FROM conversation c" + clause +
@@ -1570,17 +1697,33 @@ class App:
                 "action=\"/\">"]
         for col in ("kind", "state", "verdict", "lane"):
             form.append(select(col, filters[col], options[col]))
+        # No blank option: this filter is ALWAYS one of its three values, and an "any" that
+        # meant the same as "all" would be a fourth way to say one of them. Labelled "show"
+        # rather than "read", because a dropdown named read holding the value read reads as a
+        # tautology; what it answers is which rows to show.
+        form.append(select("read", read_filter, READ_FILTERS, blank=None, label="show"))
+        # Typed, so it cannot apply itself on every keystroke the way a dropdown does: Enter
+        # applies it. That needs no button even with the script running, because this is the
+        # form's only text field and a browser implicitly submits a form that has exactly one.
+        form.append("<label>title<input name=\"title\" value=" + attr(title) +
+                    " placeholder=\"contains…\" size=\"18\" autocomplete=\"off\"></label>")
         form.append("<noscript><button type=\"submit\">filter</button></noscript>"
                     "<a href=\"/\">clear</a></form>")
 
+        # Where the button sends you back to. The whole query, filters included, so a tick
+        # taken from `?kind=bug_report` returns to the bug reports and not to the front page;
+        # `sent` and `msg` are dropped, because coming back from a POST is not the moment to
+        # re-show an acknowledgement of a different one.
+        back = self._back_to(query)
         body = [table(
             ["id", "kind", "state", "lane", "verdict", "title", "msgs", "turns"] + AGG_HEADERS
-            + ["last activity"],
+            + ["last activity", "read"],
             [[link(f"/conversation/{r['id']}", r["id"]), r["kind"], pill(r["state"]),
               r["lane"] or "—", r["verdict"] or "—",
               link(f"/conversation/{r['id']}", short(r["title"] or r["thread_id"], 70)),
               r["messages"], r["turns"]]
-             + agg_cells(aggs.get(r["id"])) + [r["last_activity_at"] or "—"]
+             + agg_cells(aggs.get(r["id"]))
+             + [r["last_activity_at"] or "—", mark_button(r["id"], r["is_read"], back)]
              for r in rows])]
         heading = f"<h1>conversations ({len(rows)})</h1>"
         msg = (query.get("msg") or [""])[0].strip()
@@ -1591,6 +1734,13 @@ class App:
                     [heading] + note + [self._prompt_box(), "".join(form)] + body
                     + [self._totals_note(), "<script>" + FILTER_SCRIPT + "</script>"],
                     refresh=True)
+
+    @staticmethod
+    def _back_to(query):
+        """This page's own URL, as somewhere a POST can redirect to afterwards."""
+        keep = [(k, v) for k, values in sorted(query.items()) for v in values
+                if k not in ("sent", "msg")]
+        return "/" + ("?" + urllib.parse.urlencode(keep) if keep else "")
 
     def _prompt_box(self):
         """Ask for work from the page. The same rows `ffbox "..."` makes, by the same route.
@@ -2200,7 +2350,8 @@ def is_loopback(host):
 # missing them. sqlite3.Row raises IndexError on a missing key, which would surface as a
 # traceback on a page rather than as a fixable message, so it is checked once at startup.
 REQUIRED_COLUMNS = {
-    "conversation": ["kind", "state", "lane", "verdict", "title", "thread_id"],
+    "conversation": ["kind", "state", "lane", "verdict", "title", "thread_id",
+                     "read_through"],
     "message": ["direction", "author_name", "content", "turn_id"],
     "attachment": ["filename", "content_type", "sha256", "blob_path", "kind"],
     "turn": ["seq", "lane", "status", "failed_closed", "parent_turn_id", "rebased_from",

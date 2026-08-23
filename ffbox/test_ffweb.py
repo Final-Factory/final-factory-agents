@@ -50,6 +50,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TMPROOT = tempfile.mkdtemp(prefix="ffweb-test-")
 os.environ["FFDISCORD_HOME"] = os.path.join(TMPROOT, "ffdiscord-home")
 os.makedirs(os.environ["FFDISCORD_HOME"], exist_ok=True)
+# The same, for the ffbox config: one case below runs the REAL ffwatch as a subprocess, and
+# that process reads ~/.config/ffbox/config.json unless this points it elsewhere.
+os.environ["FFBOX_CONFIG_DIR"] = os.path.join(TMPROOT, "ffbox-config")
+os.makedirs(os.environ["FFBOX_CONFIG_DIR"], exist_ok=True)
 
 sys.path.insert(0, HERE)
 import ffwatch   # noqa: E402
@@ -445,17 +449,25 @@ os.chmod(STUB_FFWATCH, 0o755)
 CALLS = os.path.join(TMPROOT, "ffwatch-calls.log")
 os.environ["FFWEB_TEST_CALLS"] = CALLS
 
+# The real thing, for the one case that has to prove the whole chain writes a row. Everywhere
+# else the stub is the point: it records argv and touches nothing, so "the UI delegated" is
+# asserted rather than inferred from a side effect that a stray UPDATE here would also produce.
+REAL_FFWATCH = os.path.join(HERE, "ffwatch.py")
+
 # Every GET route, for the crawl tests. Kept in one place so a new route joins them by being
 # added here rather than by being remembered.
 ROUTES = ["/", "/lanes", "/outbound", "/outbound?status=pending",
           "/?kind=bug_report", "/?state=closed", "/?verdict=ANSWERED", "/?lane=answer",
+          "/?read=all", "/?read=read", "/?read=unread",
           "/conversation/1", "/conversation/2", "/conversation/3", "/conversation/4",
           "/run/1", "/run/2", "/run/3"] + \
          ["/blob/" + d for d in BLOB_IDS.values()]
 
 
-def serve(enable_actions=False):
-    return Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, enable_actions=enable_actions)
+def serve(enable_actions=False, db_path=None, ffwatch_py=None):
+    return Server(STATE, db_path or DB_PATH, BLOBS, ffwatch_py or STUB_FFWATCH,
+                  enable_actions=enable_actions)
+
 
 
 def text_of(body):
@@ -578,7 +590,7 @@ def test_filters_actually_filter():
         home = text_of(srv.get("/")[2])
         form = home.split("id=\"conversation-filters\"", 1)[-1].split("</form>", 1)[0]
         check("the conversation filter form is the one the script targets",
-              "id=\"conversation-filters\"" in home and form.count("<select") == 4, form[:200])
+              "id=\"conversation-filters\"" in home and form.count("<select") == 5, form[:200])
         check("no filter button outside <noscript>",
               ">filter</button>" not in re.sub(r'<noscript>.*?</noscript>', "", form, flags=re.S)
               and "<noscript><button type=\"submit\">filter</button></noscript>" in form)
@@ -587,6 +599,233 @@ def test_filters_actually_filter():
         ob = text_of(body)
         check("the outbound status filter filters",
               "wrong thread" in ob and "here is the triage" not in ob)
+    finally:
+        srv.stop()
+
+
+def test_the_title_filter():
+    """A typed word narrows the list to the titles containing it.
+
+    Substring, not equality, and case-insensitive: the operator remembers "mass drivers", not
+    "How do mass drivers work?". The LIKE wildcards are the interesting part — a `%` typed in
+    that box has to come back with nothing rather than with everything.
+    """
+    srv = serve()
+    try:
+        def titles(path):
+            page = text_of(srv.get(path)[2])
+            body = page.split("<tbody>", 1)[-1].split("</tbody>", 1)[0]
+            return [t for t in ("Crash on load", "mass drivers", "conveyor colours")
+                    if t in body]
+
+        check("a word narrows the list to the titles holding it",
+              titles("/?title=mass+drivers") == ["mass drivers"],
+              titles("/?title=mass+drivers"))
+        check("the match is case-insensitive",
+              titles("/?title=CRASH") == ["Crash on load"], titles("/?title=CRASH"))
+        check("it is a substring, not a prefix",
+              titles("/?title=colours") == ["conveyor colours"], titles("/?title=colours"))
+        check("a word in no title empties the table",
+              titles("/?title=nothing-matches-this") == [])
+        check("an empty box is not a filter",
+              len(titles("/?title=")) == 3 and len(titles("/?title=++")) == 3)
+
+        # % and _ are LIKE's own wildcards. Escaped, they are looked for literally; unescaped,
+        # the first of these would return every row and the second would match "Crash on load"
+        # on the space.
+        check("a typed % is a percent sign, not 'match everything'",
+              titles("/?title=%25") == [], titles("/?title=%25"))
+        check("a typed _ is an underscore, not 'any character'",
+              titles("/?title=Crash_on") == [], titles("/?title=Crash_on"))
+        check("and a backslash does not escape the caller's escape",
+              titles("/?title=%5C") == [], titles("/?title=%5C"))
+
+        # It composes with the dropdowns rather than replacing them, and it survives into the
+        # box so the page shows what it is filtered by.
+        check("it ANDs with the dropdown filters",
+              titles("/?kind=ask&title=mass") == ["mass drivers"]
+              and titles("/?kind=bug_report&title=mass") == [])
+        home = text_of(srv.get("/?title=mass+%22drivers%22")[2])
+        form = home.split("id=\"conversation-filters\"", 1)[-1].split("</form>", 1)[0]
+        check("the box comes back holding the word, escaped",
+              '<input name="title" value="mass &quot;drivers&quot;"' in form, form[-300:])
+        check("and the form still has the five dropdowns beside it",
+              form.count("<select") == 5 and form.count("<input") == 1, form[:120])
+    finally:
+        srv.stop()
+
+
+def read_state_dir(name):
+    """A private state directory holding a copy of the fixture, for the read/unread cases.
+
+    Its own directory rather than the shared one because the real ffwatch WRITES here, and
+    ffwatch derives the database path from --state-dir (it is always <state-dir>/ffwatch.db),
+    so the copy has to sit under that name for the subprocess to find it.
+    """
+    state = os.path.join(TMPROOT, name)
+    os.makedirs(os.path.join(state, "blobs"), exist_ok=True)
+    path = os.path.join(state, "ffwatch.db")
+    src = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    dst = sqlite3.connect(path)
+    with dst:
+        src.backup(dst)
+    src.close()
+    dst.close()
+    return state, path
+
+
+def conv_ids(body):
+    rows = text_of(body).split("<tbody>", 1)[-1].split("</tbody>", 1)[0]
+    return sorted(int(m) for m in re.findall(r'<a href="/conversation/(\d+)">\1<', rows))
+
+
+def test_read_and_unread():
+    """The unread queue, end to end through the REAL ffwatch.
+
+    This case runs the actual subprocess rather than the stub, because the claim is a chain:
+    the button posts, ffweb shells out, ffwatch writes `conversation.read_through`, and the
+    next render reads it back out of the database. A stub proves the first link and a
+    hand-written column proves the last; only the real binary proves they meet.
+
+    The stale-tick case at the end is the one worth the extra fixture. A boolean column would
+    pass every other check here and still lose the row that matters — the thread you triaged on
+    Monday that a player replied to on Tuesday.
+    """
+    state, db_path = read_state_dir("read-state")
+    srv = Server(state, db_path, os.path.join(state, "blobs"), REAL_FFWATCH)
+    try:
+        def ids(path):
+            return conv_ids(srv.get(path)[2])
+
+        def read_through(cid):
+            ro = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            val = ro.execute("SELECT read_through FROM conversation WHERE id=?",
+                             (cid,)).fetchone()[0]
+            ro.close()
+            return val
+
+        check("the list opens on unread, and nothing is ticked yet",
+              ids("/") == [1, 2, 3, 4] and ids("/?read=unread") == [1, 2, 3, 4], ids("/"))
+        check("so the read view is empty", ids("/?read=read") == [], ids("/?read=read"))
+        check("and every row starts with the column null",
+              [read_through(i) for i in (1, 2, 3, 4)] == [None] * 4)
+
+        home = text_of(srv.get("/")[2])
+        check("every row offers the tick",
+              home.count('action="/actions/read"') == 4 and home.count(">mark read<") == 4,
+              home.count('action="/actions/read"'))
+        check("the show dropdown is on unread",
+              '<option value="unread" selected>' in home, home[:200])
+
+        # -- ticking one off ---------------------------------------------------------------
+        code, hdr, _b = srv.post("/actions/read", {"id": "2", "read": "read", "back": "/"})
+        check("the tick redirects back where it came from",
+              code == 303 and hdr.get("Location") == "/", (code, hdr.get("Location")))
+        check("ffwatch wrote the row's own activity stamp, not the clock",
+              read_through(2) == "2026-08-19T11:00:00Z", read_through(2))
+        check("the ticked row leaves the default view", ids("/") == [1, 3, 4], ids("/"))
+        check("and is the only thing in the read view",
+              ids("/?read=read") == [2], ids("/?read=read"))
+        check("while `all` still shows everything", ids("/?read=all") == [1, 2, 3, 4])
+
+        row = [r for r in text_of(srv.get("/?read=all")[2]).split("<tr>")
+               if '/conversation/2"' in r][0]
+        check("a ticked row's button offers the undo, not the same click again",
+              ">mark unread<" in row and ">mark read<" not in row, row[-300:])
+
+        # -- and back again ----------------------------------------------------------------
+        srv.post("/actions/read", {"id": "2", "read": "unread", "back": "/"})
+        check("un-ticking clears the column", read_through(2) is None, read_through(2))
+        check("and returns the row to the queue", ids("/") == [1, 2, 3, 4], ids("/"))
+
+        # -- the point of storing a stamp rather than a flag ------------------------------
+        srv.post("/actions/read", {"id": "1", "read": "read", "back": "/"})
+        check("conversation 1 is ticked off", ids("/") == [2, 3, 4], ids("/"))
+        conn = sqlite3.connect(db_path)
+        with conn:
+            conn.execute("UPDATE conversation SET last_activity_at='2026-08-21T09:00:00Z'"
+                         " WHERE id=1")
+        conn.close()
+        check("new activity un-reads it without clearing the column",
+              ids("/") == [1, 2, 3, 4] and read_through(1) == "2026-08-20T12:00:00Z", ids("/"))
+        srv.post("/actions/read", {"id": "1", "read": "read", "back": "/"})
+        check("and ticking it again records the NEWER moment",
+              ids("/") == [2, 3, 4] and read_through(1) == "2026-08-21T09:00:00Z",
+              read_through(1))
+
+        # -- the filters compose, and the button comes back to them -----------------------
+        check("the read filter ANDs with the column filters",
+              ids("/?read=all&kind=ask") == [2] and ids("/?read=read&kind=ask") == []
+              and ids("/?read=read&kind=bug_report") == [1])
+        page = text_of(srv.get("/?kind=bug_report&read=all")[2])
+        want = '<input type="hidden" name="back" value="/?kind=bug_report&amp;read=all">'
+        check("and the tick returns to the filtered list, not to the front page",
+              want in page, page.split('name="back"', 1)[-1][:120])
+
+        # -- refusals ----------------------------------------------------------------------
+        check("a tick with no usable id never reaches ffwatch",
+              srv.post("/actions/read", {"read": "read"})[0] == 400
+              and srv.post("/actions/read", {"id": "x", "read": "read"})[0] == 400)
+        code, hdr, _b = srv.post("/actions/read", {"id": "999", "read": "read", "back": "/"})
+        check("an id that is not a conversation comes back saying so",
+              code == 303 and hdr.get("Location", "").startswith("/?msg=failed"),
+              (code, hdr.get("Location")))
+        code, hdr, _b = srv.post("/actions/read", {"id": "3", "read": "read",
+                                                   "back": "//evil.example/"})
+        check("a `back` pointing off this origin lands on the front page instead",
+              code == 303 and hdr.get("Location") == "/", (code, hdr.get("Location")))
+        code, _h, _b = srv.post("/actions/read", {"id": "3", "read": "unread"},
+                                headers={"Origin": "https://evil.example"})
+        check("a cross-origin tick is refused", code == 403, code)
+        # Everything above ran on a server with --enable-actions OFF. That is the assertion:
+        # the flag guards releasing a reply into a public Discord thread, and a tick nothing
+        # outside this page ever reads is not that.
+        check("the tick needs no --enable-actions", not srv.app.actions.enabled)
+        check("an unknown value for `show` falls back to the default rather than 500ing",
+              ids("/?read=sideways") == ids("/?read=unread"), ids("/?read=sideways"))
+    finally:
+        srv.stop()
+
+
+def test_the_tick_goes_through_ffwatch():
+    """ffweb does not write the column itself — it runs `ffwatch read`.
+
+    The stub records argv and writes nothing, so the row NOT moving is the proof: if this
+    page were issuing its own UPDATE, the read view would have gained a row anyway.
+    """
+    state, db_path = read_state_dir("read-stub-state")
+    srv = Server(state, db_path, os.path.join(state, "blobs"), STUB_FFWATCH)
+    try:
+        open(CALLS, "w").close()
+        before = os.stat(db_path)
+        code, hdr, _b = srv.post("/actions/read", {"id": "3", "read": "read", "back": "/"})
+        calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
+        check("exactly one ffwatch invocation, and it is `read`",
+              calls == [["--state-dir", state, "read", "3"]], calls)
+        check("it redirected on the stub's success", code == 303, (code, hdr))
+        check("and nothing wrote the database from this process",
+              (before.st_mtime_ns, before.st_size) == (os.stat(db_path).st_mtime_ns,
+                                                       os.stat(db_path).st_size))
+        check("so the row is still unread", conv_ids(srv.get("/")[2]) == [1, 2, 3, 4])
+
+        open(CALLS, "w").close()
+        srv.post("/actions/read", {"id": "3", "read": "unread", "back": "/"})
+        calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
+        check("and the other direction is the `unread` verb",
+              calls == [["--state-dir", state, "unread", "3"]], calls)
+
+        # A failing ffwatch has to reach the operator. It is the whole write path now, so a
+        # silent failure would be a button that does nothing and says nothing.
+        open(CALLS, "w").close()
+        os.environ["FFWEB_TEST_RC"] = "3"
+        try:
+            code, hdr, _b = srv.post("/actions/read", {"id": "3", "read": "read",
+                                                       "back": "/?kind=ask"})
+        finally:
+            os.environ.pop("FFWEB_TEST_RC", None)
+        check("a failing ffwatch comes back with the reason, keeping the filters",
+              code == 303 and hdr.get("Location", "").startswith("/?kind=ask&msg=failed"),
+              (code, hdr.get("Location")))
     finally:
         srv.stop()
 
@@ -1817,6 +2056,9 @@ def main():
         test_every_route_serves,
         test_timeline_reads_as_a_conversation,
         test_filters_actually_filter,
+        test_the_title_filter,
+        test_read_and_unread,
+        test_the_tick_goes_through_ffwatch,
         test_the_ui_cannot_write,
         test_xss_is_escaped,
         test_blob_route_refuses_traversal,

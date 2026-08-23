@@ -1845,6 +1845,79 @@ def test_sender_approval_holds_the_queue():
     check("and it never reached Discord", len(sent_calls(case)) == 1, case.calls())
 
 
+def test_read_marks_are_rows():
+    """`ffwatch read` / `ffwatch unread` — the web UI's queue, written where every other fact
+    about a conversation is written.
+
+    What the column holds is the conversation's OWN activity stamp, not the clock at the moment
+    of the click. That is what makes staleness work — new activity is later than the stamp, so
+    the row comes back unread on its own — and it is also what keeps a box whose clock runs a
+    few seconds behind from marking a row read and having it bounce straight back.
+    """
+    print("read/unread: the web UI's queue")
+    case = Case("readmarks")
+    a = seed_conversation(case, thread_id="31000")
+    b = seed_conversation(case, thread_id="31001")
+
+    def through(cid):
+        return case.watcher.db.one("SELECT read_through FROM conversation WHERE id=?",
+                                   (cid,))["read_through"]
+
+    check("a conversation starts unread", through(a) is None and through(b) is None)
+
+    case.watcher.db.execute("UPDATE conversation SET last_activity_at='2026-08-20T10:00:00Z'"
+                            " WHERE id=?", (a,))
+    rc = ffwatch.main(["--state-dir", case.state_dir, "read", str(a)])
+    check("`ffwatch read` records the row's own activity stamp",
+          rc == 0 and through(a) == "2026-08-20T10:00:00Z", through(a))
+    check("and leaves the others alone", through(b) is None)
+
+    check("re-reading an already-read conversation is a success, not an error",
+          ffwatch.main(["--state-dir", case.state_dir, "read", str(a)]) == 0)
+
+    rc = ffwatch.main(["--state-dir", case.state_dir, "unread", str(a)])
+    check("`ffwatch unread` clears it", rc == 0 and through(a) is None, through(a))
+
+    rc = ffwatch.main(["--state-dir", case.state_dir, "read", str(a), str(b)])
+    check("both verbs take a list, the way approve does",
+          rc == 0 and through(a) and through(b), (through(a), through(b)))
+
+    # New activity does not touch read_through — it does not have to. The comparison is what
+    # decides, so an ingest that knows nothing about this column still un-reads the row.
+    case.watcher.db.execute("UPDATE conversation SET last_activity_at='2026-08-21T09:00:00Z'"
+                            " WHERE id=?", (a,))
+    check("activity after the tick leaves the stamp behind, which is what un-reads the row",
+          through(a) == "2026-08-20T10:00:00Z" and through(a) < "2026-08-21T09:00:00Z",
+          through(a))
+    ffwatch.main(["--state-dir", case.state_dir, "read", str(a)])
+    check("and ticking it again catches the stamp up",
+          through(a) == "2026-08-21T09:00:00Z", through(a))
+
+    check("an id that is not a conversation exits non-zero and writes nothing",
+          ffwatch.main(["--state-dir", case.state_dir, "read", "99999"]) == 1)
+    check("but one good id among bad ones still counts as done",
+          ffwatch.main(["--state-dir", case.state_dir, "unread", "99999", str(b)]) == 0
+          and through(b) is None)
+
+    # The column reaches an OLD database through ADDED_COLUMNS, not through the .sql: a
+    # conversation table created before v7 is what every existing box has.
+    old = os.path.join(case.root, "pre-v7.db")
+    conn = sqlite3.connect(old)
+    with conn:
+        conn.execute("CREATE TABLE conversation(id INTEGER PRIMARY KEY, thread_id TEXT)")
+        conn.execute("CREATE TABLE schema_version(version INTEGER NOT NULL,"
+                     " applied_at TEXT NOT NULL)")
+        conn.execute("INSERT INTO schema_version(version, applied_at) VALUES (6,'x')")
+    conn.close()
+    ffwatch.Db(old).init_schema()
+    ro = sqlite3.connect(old)
+    cols = {r[1] for r in ro.execute("PRAGMA table_info(conversation)")}
+    ver = ro.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+    ro.close()
+    check("an existing database gains read_through on the next start",
+          "read_through" in cols and ver == ffwatch.SCHEMA_VERSION, (sorted(cols), ver))
+
+
 def test_nonce_survives_a_crash():
     print("sender: nonce dedupe")
     check("the derived nonce fits Discord's 25-character limit",
@@ -3458,6 +3531,7 @@ def main():
         test_sender_rate_limit,
         test_sender_failure_is_retryable,
         test_sender_approval_holds_the_queue,
+        test_read_marks_are_rows,
         test_nonce_survives_a_crash,
         test_the_container_cannot_author_a_message,
         test_schema_migrates_an_existing_database,
