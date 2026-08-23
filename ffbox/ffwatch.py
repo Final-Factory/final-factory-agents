@@ -230,7 +230,7 @@ DEFAULTS = {
     # carries the one edge that survives (the return-licence trap fires on exit for the shared
     # identity); design/trusted_ingress_design.txt section 13 is the change that raises this to
     # match max_concurrent_runs once every lane gets an editor.
-    "max_unity_runs": 1,
+    "max_unity_runs": 2,
     "catchup_secs": 900,
     "poll_secs": 2,
 
@@ -510,7 +510,17 @@ def log(msg):
 # into a recorded permission_denials entry, never a boundary. What actually contains the write
 # lanes is the absence of any credential in the container (design section 7).
 
-READ_TOOLS = "Read,Grep,Glob"
+# Bash is on the read lanes now, and it is the one real trade in
+# design/trusted_ingress_design.txt section 13. It used to be absent, and that absence was the
+# main design's strongest containment claim: the lanes fed untrusted player text were contained
+# structurally by the tool list rather than by a policy a model is asked to follow.
+#
+# Unity means Bash, because ffverify is a command, and a worker asked what the actual power draw
+# of something is should be able to go and look rather than infer from source and hedge. What
+# these lanes get is EXACTLY the invocations in READ_ALLOWED — no trailing glob, so nothing can
+# ride along after an `&&`. What still contains them is what always did: no credential of any
+# kind in the container, a clone destroyed at the end of the run, and no path to Discord.
+READ_TOOLS = "Read,Grep,Glob,Bash"
 WRITE_TOOLS = "Read,Grep,Glob,Edit,Write,Bash"
 WRITE_DISALLOWED = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)"]
 
@@ -555,6 +565,17 @@ WRITE_DISALLOWED = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)"]
 # NOT here, on purpose: git add, git commit, git push, git remote, gh, and any shell that could
 # wrap them. ffbox makes the single commit itself during harvest, after the container is gone,
 # so the lane never needs write-side git and the commit stays a harness fact.
+# EXACT patterns, deliberately, and the difference from WRITE_ALLOWED below is the whole point.
+# A trailing `*` matches the WHOLE command string rather than decomposing a chain — measured:
+# `git status --short && touch marker` was PERMITTED under `Bash(git status*)`. On a lane whose
+# prompt is built from player-authored text that is not a trade worth making, so the legal
+# invocations are enumerated instead. Adding one here is a deliberate act; adding a `*` is not
+# the same act and must not be done casually.
+READ_ALLOWED = [
+    "Bash(ffverify)",
+    "Bash(ffverify --assemblies FFEditorTests)",
+]
+
 WRITE_ALLOWED = [
     "Bash(ffverify)", "Bash(ffverify *)",
     "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)",
@@ -570,10 +591,10 @@ LANE_CAPABILITIES = {
     # strictly less capability for the same outcome, and the only arrangement in which the
     # content can be reviewed before it is uploaded. Both preambles say so, so a lane does not
     # burn turns trying to post and then report its own failure as the answer.
-    "answer": {"tools": READ_TOOLS, "disallowed": [], "allowed": [], "unity": False,
-               "agent": "discord-answerer", "verdict": "question"},
-    "triage": {"tools": READ_TOOLS, "disallowed": [], "allowed": [], "unity": False,
-               "agent": "discord-triager", "verdict": "question"},
+    "answer": {"tools": READ_TOOLS, "disallowed": [], "allowed": list(READ_ALLOWED),
+               "unity": True, "agent": "discord-answerer", "verdict": "question"},
+    "triage": {"tools": READ_TOOLS, "disallowed": [], "allowed": list(READ_ALLOWED),
+               "unity": True, "agent": "discord-triager", "verdict": "question"},
     "fix":    {"tools": WRITE_TOOLS, "disallowed": list(WRITE_DISALLOWED),
                "allowed": list(WRITE_ALLOWED), "unity": True,
                "agent": "discord-dev-agent", "verdict": "change"},
@@ -1990,7 +2011,12 @@ class Watcher:
                        if turn["rebased_from"] else None),
             # Harness-owned verification, run by the container task AFTER the agent exits. The
             # agent cannot turn this off: it is read from job.json, which is mounted read-only.
-            "verify": {"enabled": bool(options.get("unity", cap["unity"])),
+            #
+            # Tied to the lane being a WRITE lane, not to Unity being present. Every lane has an
+            # editor now, and running the suite after a read-only lane would spend a Unity run
+            # proving that a container which cannot write did not change anything.
+            "verify": {"enabled": cap["verdict"] == "change" and bool(
+                           options.get("unity", cap["unity"])),
                        "assemblies": self.cfg.get("verify_assemblies") or "",
                        "out": "/ffbox/out/verification"},
             "messages": [self.job_message(m, att_dir) for m in msgs],

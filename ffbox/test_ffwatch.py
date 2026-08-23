@@ -1046,25 +1046,33 @@ def test_read_only_capabilities():
     case.watcher.once()
 
     run = case.rows("SELECT * FROM run")[0]
-    check("the read-only lane is launched with exactly Read,Grep,Glob",
-          run["tools"] == "Read,Grep,Glob", run["tools"])
-    check("it has no Bash at all", "Bash" not in (run["tools"] or ""), run["tools"])
+    check("the read-only lane cannot edit or write",
+          run["tools"] == "Read,Grep,Glob,Bash"
+          and not {"Edit", "Write"} & set((run["tools"] or "").split(",")), run["tools"])
     check("and no deny patterns to lean on", (run["disallowed"] or "") == "", run["disallowed"])
-    check("and no allow list either, having no Bash to allow",
-          (run["allowed"] or "") == "", run["allowed"])
-    check("Unity is off for a read-only lane", run["unity"] == 0, run)
+    # Bash arrived with Unity. What keeps it narrow is that these are EXACT patterns: a trailing
+    # `*` matches the whole command string, so `Bash(ffverify *)` would also permit
+    # `ffverify && anything`, and this lane's prompt is built from player-authored text.
+    allowed = (run["allowed"] or "").split(",") if run["allowed"] else []
+    check("its allow list is ffverify and nothing else",
+          allowed and all(a.startswith("Bash(ffverify") for a in allowed), allowed)
+    check("with no trailing glob for a command chain to ride in on",
+          not any(a.endswith("*)") for a in allowed), allowed)
+    check("Unity is on, so a read lane can go and look", run["unity"] == 1, run)
 
     job_files = []
     for dirpath, _, files in os.walk(case.watcher.conv_root):
         job_files += [os.path.join(dirpath, f) for f in files if f == "job.json"]
     job = json.load(open(job_files[0], encoding="utf-8"))
     check("job.json names the same capability set",
-          job["capabilities"]["tools"] == "Read,Grep,Glob"
+          job["capabilities"]["tools"] == "Read,Grep,Glob,Bash"
           and job["capabilities"]["disallowed"] == [], job["capabilities"])
+    check("but the harness does not verify a lane that could not have changed anything",
+          job["verify"]["enabled"] is False, job["verify"])
     argv = json.load(open(os.path.join(os.path.dirname(job_files[0]), "ffbox-argv.json"),
                           encoding="utf-8"))
-    check("ffbox is called with --no-unity and the three clocks",
-          "--no-unity" in argv and "--agent-timeout" in argv and "--warmup-timeout" in argv
+    check("ffbox is called with a working editor and the three clocks",
+          "--no-unity" not in argv and "--agent-timeout" in argv and "--warmup-timeout" in argv
           and "--kill-grace" in argv, argv)
     check("the container name is owned by the host via --run-id",
           run["container_name"] == f"ffbox-{run['ffbox_run_id']}", run)
@@ -1341,7 +1349,8 @@ def test_thread_triage_lane():
     turn = case.rows("SELECT * FROM turn")[0]
     check("it runs in the triage lane", turn["lane"] == "triage", turn)
     run = case.rows("SELECT * FROM run")[0]
-    check("triage is read-only too", run["tools"] == "Read,Grep,Glob", run)
+    check("triage cannot edit or write either",
+          not {"Edit", "Write"} & set((run["tools"] or "").split(",")), run["tools"])
     check("both thread messages were claimed",
           len(case.rows("SELECT * FROM message WHERE turn_id IS NOT NULL")) == 2)
 
@@ -3090,12 +3099,18 @@ def test_allow_list_is_scope_not_a_boundary():
     check("nothing in the write allow list can publish on its own",
           not [p for p in ffwatch.WRITE_ALLOWED
                if "push" in p or "gh " in p or "remote" in p], ffwatch.WRITE_ALLOWED)
-    # The read-only lanes are the ones fed untrusted player text directly, and they are not
-    # given Bash on the strength of a pattern that a chain rides through.
+    # The read-only lanes are the ones fed untrusted player text directly. They have Bash now,
+    # because Unity is a command, but not on the strength of a pattern a chain rides through:
+    # every entry is an exact invocation, so `ffverify && anything` matches nothing.
     for lane in ("answer", "triage"):
         cap = ffwatch.LANE_CAPABILITIES[lane]
-        check(f"the {lane} lane still has no Bash and no allow list at all",
-              "Bash" not in cap["tools"] and not cap["allowed"], cap)
+        check(f"the {lane} lane can still never edit or write",
+              not {"Edit", "Write"} & set(cap["tools"].split(",")), cap["tools"])
+        check(f"the {lane} lane's allow list is ffverify and nothing else",
+              cap["allowed"] and all(a.startswith("Bash(ffverify") for a in cap["allowed"]),
+              cap["allowed"])
+        check(f"and carries no trailing glob for a chain to ride in on",
+              not any(a.endswith("*)") for a in cap["allowed"]), cap["allowed"])
     # And since 2026-08-21 no lane of either family can reach Discord: the outbox shim is gone
     # rather than merely unmounted, so there is nothing on the list to argue about.
     check("no lane's allow list names ffdiscord",

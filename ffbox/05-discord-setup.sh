@@ -153,7 +153,9 @@ for key, value in (
     ("warmup_secs", 3600),
     ("kill_grace_secs", 10),
     ("max_concurrent_runs", 2),
-    ("max_unity_runs", 1),
+    # A CPU and memory ceiling, not a licensing one: four game-ci containers in parallel were
+    # measured with no licensing trouble. See ffbox/README.md.
+    ("max_unity_runs", 2),
     ("catchup_secs", 900),
     ("rate_limits", {"answer": 200, "triage": 100, "fix": 3, "dev": 25}),
     # The page. It is behind a login and served over TLS, but 127.0.0.1 is still the default:
