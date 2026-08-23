@@ -420,7 +420,7 @@ does its Unity import. The flags below make it usable from outside this director
 | `--mount HOST:CONTAINER[:ro]` | An extra bind mount, repeatable. Nested paths under `/workspace` work — Docker creates the intermediates. |
 | `--run-id ID` | Caller-supplied run id, so the caller owns the `ffbox-<ID>` container name and can address exactly that container later. |
 | `--ref REF` | Check the clone out at `REF` after cloning. `develop` falls back to `origin/develop`. The resolved sha lands in `base_sha.txt`. |
-| `--branch NAME` | Create `NAME` at that commit before the container starts — a ref move, so nothing churns under the warm `Library/`. At harvest, the run's work is committed on it and bundled to `work.bundle`. No changed files means no commit, no bundle and no branch. |
+| `--branch NAME` | Create `NAME` at that commit before the container starts — a ref move, so nothing churns under the warm `Library/`. At harvest, anything the agent left uncommitted is committed, `NAME` is pointed at wherever HEAD ended, and `base..NAME` is bundled to `work.bundle`. No changed files means no commit, no bundle and no branch. |
 | `--agent-timeout N` | Agent working time, default 900s. |
 | `--warmup-timeout N` | Everything before the agent starts, default 3600s. |
 | `--verify-timeout N` | The harness verification phase after the agent exits, default 1800s. |
@@ -584,9 +584,10 @@ lanes (`fix`, `dev`) add the three things the harness owns and the agent cannot 
   leaves no `verification` row at all — an absent row means "nothing to verify here", and a
   row saying it did not run means the check was owed and is missing, which is what the reply
   reports as `NOT VERIFIED`.
-- **Publication.** ffbox commits the working tree on `ffbox/<run-id>` and harvests a git bundle
-  of `base..branch`. ffwatch verifies the bundle, fetches it under `refs/ffbox/` in the host
-  checkout — no local branch moved, no working tree touched — and pushes it.
+- **Publication.** The agent commits its own work on `ffbox/<run-id>` (see "Local git" below);
+  ffbox commits whatever is left over, points the branch at wherever HEAD ended, and harvests a
+  git bundle of `base..branch`. ffwatch verifies the bundle, fetches it under `refs/ffbox/` in
+  the host checkout — no local branch moved, no working tree touched — and pushes it.
 - **The pull request.** Opened through the stdlib GitHub client, targeting `develop`. Branch, PR
   number and PR url are recorded from git and the API response, never parsed from the agent's
   summary, and stay correct when the summary contradicts them.
@@ -599,7 +600,28 @@ re-based onto `develop` and told so in its prompt.
 
 `GH_TOKEN` is host-side only and never enters the container, which has no `gh` binary and no
 push credential. That, not the deny list, is what makes "nothing merges" true — and there is
-deliberately no merge method on the GitHub client.
+deliberately no merge method on the GitHub client. Note the scope of that claim: the container
+holds no *git* credential, but it does hold `CLAUDE_CODE_OAUTH_TOKEN` and the Unity account
+secrets, and it has network. `docs/docker-security-model.md` is the full account, including the
+gaps this README does not cover.
+
+### Local git
+
+Since 2026-08-23 the write lanes can run `git add`, `commit`, `branch`, `checkout`, `switch`,
+`restore`, `reset` and `stash`, so a run comes back as a readable chain of commits instead of one
+squashed blob. Nothing in that set leaves the clone. `merge`, `rebase` and `cherry-pick` are
+deliberately absent, because all three import commits authored by other people and the harvest
+requires every commit in `base..branch` to carry the ffbox identity.
+
+The harness stopped owning "there is exactly one commit" and now owns the published range
+instead. ffbox refuses to harvest, and records why in `harvest_error.txt`, when the range no
+longer descends from `base_sha`, when a commit claims an identity this run does not own, or when
+`FFBOX_MAX_CHANGED_FILES` (2000) or `FFBOX_MAX_BUNDLE_BYTES` (256 MiB) is exceeded. ffwatch reads
+that file back as the run's `no_branch_reason`, so a refusal never reads as an idle turn.
+
+The clone is also cleaned before the agent starts rather than subtracted from at harvest.
+Inherited dirt that the agent has already committed cannot be unstaged back out, and a `git
+status` full of noise it did not cause would mislead every judgement it makes.
 
 Offline tests: `python3 ffbox/test_ffwatch.py`. They stub `ffdiscord`, `ffbox` and `docker`, so
 they need no network, no token, no Docker and no ZFS. The end-to-end case has the stub container

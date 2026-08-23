@@ -304,6 +304,60 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# --- git identity and harvest ceilings -----------------------------------------------------------
+# The agent commits its OWN work now (WRITE_ALLOWED in ffwatch.py grants local git), so the
+# clone carries the identity those commits get and the harvest checks every commit against it.
+# A commit claiming somebody else is how an agent would dress its work up as a human's, and it
+# would reach a reviewer looking exactly like one.
+FFBOX_GIT_NAME=${FFBOX_GIT_NAME:-ffbox}
+FFBOX_GIT_EMAIL=${FFBOX_GIT_EMAIL:-ffbox@final-factory.invalid}
+
+# Ceilings on what one run may publish. Not a security boundary — the agent could stay under
+# either one — but a runaway `git add -A` over a re-imported Library/ is a mistake worth
+# catching before it becomes a 40GB push.
+MAX_CHANGED_FILES=${FFBOX_MAX_CHANGED_FILES:-2000}
+MAX_BUNDLE_BYTES=${FFBOX_MAX_BUNDLE_BYTES:-268435456}
+
+# Splits `git status --porcelain -z` into two NUL-separated pathspec files: paths that exist in
+# HEAD, and paths that do not. Called twice — once to clean the clone before the agent sees it,
+# once at harvest as a backstop for whatever the clean could not reach.
+#
+# A rename carries a SECOND NUL-terminated field (the original path) which must be consumed or
+# every later entry is read one field out of step.
+split_status_z() {
+    python3 - "$1" "$2" "$3" <<'PYBASE'
+import sys
+
+fields = open(sys.argv[1], "rb").read().split(b"\0")
+tracked, untracked = [], []
+i = 0
+while i < len(fields):
+    entry = fields[i]
+    i += 1
+    if len(entry) < 4:
+        continue
+    code, path = entry[:2], entry[3:]
+    if b"R" in code or b"C" in code:
+        # The original path of a rename/copy. It is tracked in HEAD, and it has to be consumed
+        # here or every following entry is read one field out of step.
+        if i < len(fields):
+            tracked.append(fields[i])
+            i += 1
+    (untracked if code == b"??" else tracked).append(path)
+open(sys.argv[2], "wb").write(b"\0".join(tracked) + (b"\0" if tracked else b""))
+open(sys.argv[3], "wb").write(b"\0".join(untracked) + (b"\0" if untracked else b""))
+PYBASE
+}
+
+# Refuse to publish, and say why in a file ffwatch reads back as the run's no_branch_reason.
+# Without this the host cannot tell "the harvest broke" from "the run changed nothing", and
+# those two want very different replies.
+harvest_failed() {
+    printf '%s\n' "$1" > "$OUT/harvest_error.txt"
+    rm -f "$OUT/work.bundle" "$OUT/branch.txt"
+    echo "ffbox: harvest refused: $1" >&2
+}
+
 echo "[ffbox] run $RUN_ID"
 echo "[ffbox] snapshotting $GOLDEN_DS"
 sudo zfs snapshot "$SNAP"
@@ -346,22 +400,70 @@ if [ -d "$MNT/.git" ]; then
             echo "ffbox: could not create branch $BRANCH" >&2; exit 69; }
     fi
 
-    # WHAT WAS ALREADY DIRTY BEFORE THE AGENT RAN. The harvest below does `git add -A`, so
-    # anything the clone inherited from golden would be committed onto the work branch as if the
-    # agent had done it — and "no changed files means no branch and no PR" would never fire.
+    # The identity the agent's commits get. Set in the clone rather than passed per-invocation,
+    # because the agent runs `git commit` itself and would otherwise be stopped by git asking
+    # who it is. The harvest checks the range against this address.
+    # Not fatal under `set -e`: if this fails the agent cannot commit, but the harvest passes the
+    # identity explicitly on its own commit, so the run still produces work. Aborting here would
+    # throw away a whole container start over a config write.
+    git -C "$MNT" config user.name "$FFBOX_GIT_NAME" || \
+        echo "ffbox: WARNING: could not set the commit identity; the agent cannot commit" >&2
+    git -C "$MNT" config user.email "$FFBOX_GIT_EMAIL" || true
+
+    # THE CLONE MUST BE CLEAN BEFORE THE AGENT SEES IT, for two reasons that used to be one.
+    # The old one: harvest does `git add -A`, so anything inherited from golden would be
+    # committed onto the work branch as if the agent had done it, and "no changed files means
+    # no branch and no PR" would never fire. The new one, and the reason subtracting at harvest
+    # is no longer enough: the agent commits its own work now, so inherited dirt lands inside
+    # ITS commits, where the harvest can no longer take it back out. It would also poison every
+    # `git status` the agent reads while deciding what it has changed.
     #
-    # This is not hypothetical. golden currently carries 247 staged files, ~52MB of textures:
-    # .gitattributes marks LFS patterns in lowercase (`*.png`), git matches attribute patterns
-    # case-sensitively on Linux and case-insensitively on Windows, so every `.PNG`/`.JPG`/`.TGA`/
-    # `.PSD`/`.OBJ` is an LFS file on the Windows machines that committed it and a plain binary
-    # here. `git lfs pull` in 04-warmLibrary.sh then writes real content over the pointers.
-    #
-    # Recording the baseline costs one `git status` (measured at 0.09s on golden, whose stat
-    # cache is warm) and makes the harvest immune to ANY pre-dirty golden, not just this one.
+    # Golden itself is clean. It stops being clean the moment --ref checks out a tree whose
+    # .gitattributes differs from golden's: LFS patterns were lowercase-only until 2abbcc945
+    # (2026-08-22, master), and git matches attribute patterns case-sensitively on Linux and
+    # case-insensitively on Windows. On a ref without that commit, every `.PNG`/`.JPG`/`.TGA`/
+    # `.PSD`/`.OBJ` committed from a Windows machine reads as modified against its pointer blob
+    # — 247 files, ~52MB, when this was found.
     git -C "$MNT" status --porcelain -z > "$OUT/base_dirty.z" 2>/dev/null || : > "$OUT/base_dirty.z"
     if [ -s "$OUT/base_dirty.z" ]; then
-        echo "[ffbox] baseline: $(tr -d -c '\0' < "$OUT/base_dirty.z" | wc -c) path(s) already" \
-             "dirty before the run; they will be excluded from the harvest"
+        echo "[ffbox] baseline: $(tr -d -c '\0' < "$OUT/base_dirty.z" | wc -c) path(s) dirty" \
+             "before the run; restoring them so the agent starts clean"
+        split_status_z "$OUT/base_dirty.z" "$OUT/base_tracked.z" "$OUT/base_untracked.z" \
+            || { : > "$OUT/base_tracked.z"; : > "$OUT/base_untracked.z"; }
+        if [ -s "$OUT/base_tracked.z" ]; then
+            git -C "$MNT" restore --source=HEAD --staged --worktree \
+                --pathspec-from-file="$OUT/base_tracked.z" --pathspec-file-nul 2>/dev/null || true
+        fi
+        if [ -s "$OUT/base_untracked.z" ]; then
+            # Untracked at baseline, so deleting them loses nothing that git is tracking, and
+            # the clone is destroyed at the end of the run either way. Ignored paths are not in
+            # this list at all — `git status --porcelain` does not report them — so Library/
+            # survives and Unity has nothing to re-import.
+            python3 - "$OUT/base_untracked.z" "$MNT" <<'PYCLEAN' || true
+import os, shutil, sys
+
+root = sys.argv[2].encode()
+for path in open(sys.argv[1], "rb").read().split(b"\0"):
+    if not path:
+        continue
+    target = os.path.join(root, path.rstrip(b"/"))
+    try:
+        shutil.rmtree(target) if os.path.isdir(target) else os.remove(target)
+    except OSError:
+        pass
+PYCLEAN
+        fi
+        # Re-record. Whatever is STILL dirty is what the harvest has to subtract, and using the
+        # pre-restore list there would be wrong: those paths are clean now, so subtracting them
+        # would throw away the agent's work if it edited one of them.
+        git -C "$MNT" status --porcelain -z > "$OUT/base_dirty.z" 2>/dev/null \
+            || : > "$OUT/base_dirty.z"
+        if [ -s "$OUT/base_dirty.z" ]; then
+            echo "ffbox: WARNING: $(tr -d -c '\0' < "$OUT/base_dirty.z" | wc -c) path(s) still" \
+                 "dirty after the restore; the harvest will exclude them" >&2
+        else
+            echo "[ffbox] baseline restored; the clone is clean"
+        fi
     fi
 fi
 
@@ -446,42 +548,20 @@ if [ -d "$MNT/.git" ]; then
     git -C "$MNT" status --porcelain > "$OUT/status.txt" 2>/dev/null || true
 
     if [ -n "$BRANCH" ]; then
-        # The commit is made HERE, by the harness, after the container is gone — not by the
-        # agent. The write lanes are given no `git commit` at all (see WRITE_ALLOWED in
-        # ffwatch.py), so there is exactly one commit on this branch and its author, message and
-        # contents are facts the harness owns. A lane that "forgot to commit" cannot exist.
+        # The agent commits its own work now, so this is no longer "the harness makes the one
+        # commit". What the harness still owns is the PUBLISHED RANGE: it commits whatever was
+        # left uncommitted, points $BRANCH at wherever the agent ended, and refuses to bundle a
+        # range that fails any check below. A lane that "forgot to commit" still cannot exist.
         BASE_SHA=$(cat "$OUT/base_sha.txt" 2>/dev/null || echo "")
         git -C "$MNT" add -A -- . 2>/dev/null || true
-        # Put back everything that was already dirty when the run started, so the commit holds
-        # the AGENT's work and nothing else. Tracked paths go back to their HEAD state; paths
+        # Backstop for a baseline the pre-run restore could not clean. It only ever reaches what
+        # is still UNCOMMITTED; anything the agent committed is past saving here, which is why
+        # the restore moved to before the run. Tracked paths go back to their HEAD state; paths
         # that were untracked at baseline leave the index entirely. Both are pathspec-driven and
         # NUL-separated, because Final Factory has asset paths with spaces in them.
         if [ -s "$OUT/base_dirty.z" ]; then
-            python3 - "$OUT/base_dirty.z" "$OUT/base_tracked.z" "$OUT/base_untracked.z" <<'PYBASE'
-import sys
-
-# `git status --porcelain -z` is XY, a space, then the path, NUL-terminated. A rename carries a
-# SECOND NUL-terminated field (the original path) which must be consumed or every later entry
-# is misread by one field.
-fields = open(sys.argv[1], "rb").read().split(b"\0")
-tracked, untracked = [], []
-i = 0
-while i < len(fields):
-    entry = fields[i]
-    i += 1
-    if len(entry) < 4:
-        continue
-    code, path = entry[:2], entry[3:]
-    if b"R" in code or b"C" in code:
-        # The original path of a rename/copy. It is tracked in HEAD, and it has to be consumed
-        # here or every following entry is read one field out of step.
-        if i < len(fields):
-            tracked.append(fields[i])
-            i += 1
-    (untracked if code == b"??" else tracked).append(path)
-open(sys.argv[2], "wb").write(b"\0".join(tracked) + (b"\0" if tracked else b""))
-open(sys.argv[3], "wb").write(b"\0".join(untracked) + (b"\0" if untracked else b""))
-PYBASE
+            split_status_z "$OUT/base_dirty.z" "$OUT/base_tracked.z" "$OUT/base_untracked.z" \
+                || { : > "$OUT/base_tracked.z"; : > "$OUT/base_untracked.z"; }
             if [ -s "$OUT/base_tracked.z" ]; then
                 git -C "$MNT" restore --staged --source=HEAD \
                     --pathspec-from-file="$OUT/base_tracked.z" --pathspec-file-nul \
@@ -494,25 +574,97 @@ PYBASE
             fi
         fi
         if ! git -C "$MNT" diff --cached --quiet 2>/dev/null; then
+            # Named for what it is. When the agent committed nothing this IS the work; when it
+            # committed as it went, this is the tail it left behind, and calling both "agent
+            # work" would make a reviewer read the second as the whole change.
+            if [ "$(git -C "$MNT" rev-list --count "${BASE_SHA}..HEAD" 2>/dev/null || echo 0)" \
+                 = "0" ]; then
+                LEFTOVER_MSG="ffbox ${RUN_ID}: agent work"
+            else
+                LEFTOVER_MSG="ffbox ${RUN_ID}: uncommitted work at exit"
+            fi
+            # The identity is already in the clone's config, for the agent's sake. Passing it
+            # again here is not redundant: if that config write failed, git refuses to commit
+            # at all, and the harness's own commit is the one that must never be the thing that
+            # silently drops a run's work.
             git -C "$MNT" \
-                -c user.name="ffbox" -c user.email="ffbox@final-factory.invalid" \
-                commit --quiet --no-verify \
-                -m "ffbox ${RUN_ID}: agent work" 2>/dev/null || true
+                -c user.name="$FFBOX_GIT_NAME" -c user.email="$FFBOX_GIT_EMAIL" \
+                commit --quiet --no-verify -m "$LEFTOVER_MSG" 2>/dev/null || true
         fi
-        git -C "$MNT" diff --name-only "${BASE_SHA}..HEAD" > "$OUT/changed_files.txt" 2>/dev/null \
-            || true
-        if [ -s "$OUT/changed_files.txt" ]; then
+
+        # The agent may branch and switch freely, so $BRANCH follows HEAD rather than the other
+        # way round: what publishes is whatever HEAD points at when the container exits. A run
+        # that did its work on a side branch and never switched back still publishes it, which
+        # beats publishing the empty branch it started on and calling that the answer.
+        CURRENT_BRANCH=$(git -C "$MNT" symbolic-ref --short -q HEAD 2>/dev/null || echo "")
+        if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+            echo "[ffbox] run ended on ${CURRENT_BRANCH:-a detached HEAD}; pointing $BRANCH at it"
+            git -C "$MNT" branch -f "$BRANCH" HEAD >/dev/null 2>&1 || true
+        fi
+
+        # --- what the harness will not publish ---------------------------------------------
+        # None of these is a security boundary; the container is contained by holding no
+        # credential. They catch the ways a range can stop meaning what the host assumes it
+        # means once the agent, rather than the harness, decides what a commit is.
+        HARVEST_OK=1
+        # Everything below is defined in terms of base..branch. Without a base there is no
+        # range to check and no prerequisite for the host's `git bundle verify`, so publishing
+        # would mean pushing a history nobody can describe.
+        if [ -z "$BASE_SHA" ]; then
+            harvest_failed "the run recorded no base commit, so its work cannot be bundled"
+            HARVEST_OK=0
+        fi
+        # The bundle is base..branch, and `git bundle verify` on the host checks the host has
+        # base. An agent that reset or amended below base makes that range either empty or a
+        # rewrite of history the host already has, and neither should reach origin.
+        if [ "$HARVEST_OK" = 1 ] \
+           && ! git -C "$MNT" merge-base --is-ancestor "$BASE_SHA" "$BRANCH" 2>/dev/null; then
+            harvest_failed "the run rewrote history below its base commit ${BASE_SHA}"
+            HARVEST_OK=0
+        fi
+        # Every commit must be this run's own. `git merge`, `git rebase` and `git cherry-pick`
+        # are deliberately absent from WRITE_ALLOWED, so there is no legitimate way for a commit
+        # by somebody else to appear in this range: what would put one there is an agent running
+        # `git -c user.email=... commit` to make its work look like a person's, on a branch a
+        # reviewer reads by author.
+        if [ "$HARVEST_OK" = 1 ]; then
+            FOREIGN=$(git -C "$MNT" log --format='%ae%n%ce' "${BASE_SHA}..${BRANCH}" 2>/dev/null \
+                      | sort -u | grep -Fxv "$FFBOX_GIT_EMAIL" || true)
+            if [ -n "$FOREIGN" ]; then
+                FOREIGN_ONE_LINE=$(printf '%s' "$FOREIGN" | tr '\n' ' ')
+                harvest_failed "commits claim an identity this run does not own: $FOREIGN_ONE_LINE"
+                HARVEST_OK=0
+            fi
+        fi
+
+        git -C "$MNT" diff --name-only "${BASE_SHA}..${BRANCH}" > "$OUT/changed_files.txt" \
+            2>/dev/null || true
+        if [ "$HARVEST_OK" = 1 ] && [ -s "$OUT/changed_files.txt" ] \
+           && [ "$(wc -l < "$OUT/changed_files.txt")" -gt "$MAX_CHANGED_FILES" ]; then
+            harvest_failed "$(wc -l < "$OUT/changed_files.txt") changed files, over the ceiling of ${MAX_CHANGED_FILES}"
+            HARVEST_OK=0
+        fi
+
+        if [ "$HARVEST_OK" = 0 ]; then
+            : # harvest_failed recorded the reason and removed the branch and bundle
+        elif [ -s "$OUT/changed_files.txt" ]; then
             printf '%s\n' "$BRANCH" > "$OUT/branch.txt"
-            git -C "$MNT" diff --binary "${BASE_SHA}..HEAD" > "$OUT/changes.patch" 2>/dev/null \
-                || true
+            git -C "$MNT" diff --binary "${BASE_SHA}..${BRANCH}" > "$OUT/changes.patch" \
+                2>/dev/null || true
             # A bundle of the RANGE, not of the branch: a full bundle would carry the project's
             # entire history (gigabytes) where the range carries only what this run added.
             # base_sha is a commit on origin, so the host already has the prerequisite — which is
             # exactly the condition `git bundle verify` checks before ffwatch fetches from it.
             if git -C "$MNT" bundle create "$OUT/work.bundle" "${BASE_SHA}..${BRANCH}" \
                     >/dev/null 2>&1; then
-                echo "[ffbox] bundled $(wc -l < "$OUT/changed_files.txt") changed file(s) on" \
-                     "$BRANCH: $OUT/work.bundle"
+                BUNDLE_BYTES=$(wc -c < "$OUT/work.bundle" 2>/dev/null || echo 0)
+                if [ "$BUNDLE_BYTES" -gt "$MAX_BUNDLE_BYTES" ]; then
+                    harvest_failed "the work bundle is ${BUNDLE_BYTES} bytes, over the ceiling of ${MAX_BUNDLE_BYTES}"
+                else
+                    echo "[ffbox] bundled $(wc -l < "$OUT/changed_files.txt") changed file(s)" \
+                         "in $(git -C "$MNT" rev-list --count "${BASE_SHA}..${BRANCH}")" \
+                         "commit(s) on $BRANCH: $OUT/work.bundle"
+                fi
             else
                 rm -f "$OUT/work.bundle"
                 echo "ffbox: WARNING: could not bundle ${BASE_SHA}..${BRANCH}" >&2
@@ -525,8 +677,14 @@ PYBASE
             echo "[ffbox] no file changes in this run — no branch, no bundle"
         fi
     else
+        # No work branch: the shell lane harvests a patch instead. It has to span the agent's
+        # COMMITS as well as its uncommitted edits now that it can make them — a diff of the
+        # index alone would silently drop everything the agent had already committed and hand
+        # back a patch that looks like a much smaller change than the one it made.
+        BASE_SHA=$(cat "$OUT/base_sha.txt" 2>/dev/null || echo "")
         git -C "$MNT" add -A -- . 2>/dev/null || true
-        git -C "$MNT" diff --cached --binary > "$OUT/changes.patch" 2>/dev/null || true
+        git -C "$MNT" diff --cached --binary ${BASE_SHA:+"$BASE_SHA"} > "$OUT/changes.patch" \
+            2>/dev/null || true
         git -C "$MNT" reset >/dev/null 2>&1 || true
     fi
 

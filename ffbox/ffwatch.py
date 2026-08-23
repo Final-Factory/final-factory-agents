@@ -539,7 +539,13 @@ def log(msg):
 # kind in the container, a clone destroyed at the end of the run, and no path to Discord.
 READ_TOOLS = "Read,Grep,Glob,Bash"
 WRITE_TOOLS = "Read,Grep,Glob,Edit,Write,Bash"
-WRITE_DISALLOWED = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)"]
+# A TRIPWIRE, not a boundary: `sh -c 'git push'` walks straight through it. Its value is the
+# permission_denials record — an agent reaching for one of these is worth seeing, and since
+# 2026-08-23 that includes the local-git commands deliberately left out of WRITE_ALLOWED, whose
+# absence the harvest's identity check depends on.
+WRITE_DISALLOWED = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)", "Bash(git fetch*)",
+                    "Bash(git merge*)", "Bash(git rebase*)", "Bash(git cherry-pick*)",
+                    "Bash(git am*)"]
 
 # An ALLOW list. It exists for a mechanical reason, measured on this host: `--permission-mode
 # acceptEdits` auto-approves EDITS, not Bash. A non-interactive run has nobody to ask, so
@@ -579,13 +585,30 @@ WRITE_DISALLOWED = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)"]
 #               `Bash(unity-editor *)`: with the raw editor allowed, a lane could pass its own
 #               -testResults — the shared companyName/productName path design section 14 exists
 #               to keep us away from — or -executeMethod anything at all.
-#   git status/diff/log/show/rev-parse
+#   git status/diff/log/show/rev-parse/blame
 #               read-only orientation. "What have I actually changed" is the question a fix lane
 #               asks most, and answering it any other way means reading the whole tree.
+#   git add/commit/branch/checkout/switch/restore/reset/stash
+#               LOCAL git, granted 2026-08-23. The agent commits its own work: a message that
+#               says why, a chain of commits instead of one squashed blob, and a way back from
+#               an approach that did not work. None of it can reach a remote — every one of
+#               these operates on the clone and nothing else.
 #
-# NOT here, on purpose: git add, git commit, git push, git remote, gh, and any shell that could
-# wrap them. ffbox makes the single commit itself during harvest, after the container is gone,
-# so the lane never needs write-side git and the commit stays a harness fact.
+# NOT here, on purpose:
+#   git push, git remote, git fetch, gh
+#               the publish path. It belongs to the host, which holds the only credential.
+#   git merge, git rebase, git cherry-pick, git am
+#               all four import commits authored by somebody else. ffbox's harvest requires
+#               every commit in base..branch to carry the ffbox identity, because a commit
+#               claiming a person is how an agent would dress its work up as a human's on a
+#               branch a reviewer reads by author. Allowing these would mean giving that check
+#               up or making it much subtler. If a lane ever needs to integrate another branch,
+#               change the check to "not reachable from origin/*" first, then add the command.
+#
+# Note which lane this list actually binds. `dev` names bare `Bash`, so it can already run any
+# of the four; only `fix` is held to the enumeration. What holds BOTH is ffbox's harvest, which
+# refuses to publish a range carrying a commit this run did not author, whatever produced it.
+# That is the enforcement — this list is the statement of intent.
 # EXACT patterns, deliberately, and the difference from WRITE_ALLOWED below is the whole point.
 # A trailing `*` matches the WHOLE command string rather than decomposing a chain — measured:
 # `git status --short && touch marker` was PERMITTED under `Bash(git status*)`. On a lane whose
@@ -600,7 +623,9 @@ READ_ALLOWED = [
 WRITE_ALLOWED = [
     "Bash(ffverify)", "Bash(ffverify *)",
     "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)",
-    "Bash(git rev-parse*)",
+    "Bash(git rev-parse*)", "Bash(git blame*)",
+    "Bash(git add*)", "Bash(git commit*)", "Bash(git branch*)", "Bash(git checkout*)",
+    "Bash(git switch*)", "Bash(git restore*)", "Bash(git reset*)", "Bash(git stash*)",
 ]
 
 LANE_CAPABILITIES = {
@@ -3132,6 +3157,13 @@ class Watcher:
         branch = _read_text(os.path.join(run_dir, "branch.txt"))
         changed = [ln for ln in (_read_text(os.path.join(run_dir, "changed_files.txt")) or "")
                    .splitlines() if ln.strip()]
+        # ffbox refused to harvest: the range rewrote history below its base, carried a commit
+        # claiming somebody else's identity, or blew a ceiling. It is a distinct outcome from
+        # "the run changed nothing" and from "the harvest broke", and the reply has to say which
+        # one happened rather than let a refusal read as an idle turn.
+        refused = _read_text(os.path.join(run_dir, "harvest_error.txt"))
+        if refused:
+            return self._no_branch(run_row_id, refused[:200])
         if not branch:
             return self._no_branch(run_row_id, "the run changed no files")
         if not os.path.exists(bundle):

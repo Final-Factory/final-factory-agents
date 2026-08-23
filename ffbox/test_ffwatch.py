@@ -197,6 +197,7 @@ Behaviour comes from the environment so one stub covers every case:
   FFBOX_STUB_GIT_ORIGIN    a bare repo to clone, branch and bundle from, so the publish path is
                            exercised against real git rather than a hand-written bundle
   FFBOX_STUB_CHANGED       JSON list of file names the "agent" changed; empty means no branch
+  FFBOX_STUB_HARVEST_ERROR a reason ffbox refused to harvest; clears the branch and bundle
   FFBOX_STUB_VERIFY        JSON the container task's verification.json would have contained
   FFBOX_STUB_VERDICT       JSON verdict the agent returned, replacing the default
 """
@@ -278,6 +279,17 @@ if branch and os.environ.get("FFBOX_STUB_GIT_ORIGIN"):
             fh.write(branch + "\n")
         git("-C", work, "bundle", "create", os.path.join(out, "work.bundle"),
             "%s..%s" % (base, branch))
+
+# A harvest ffbox refused: the range rewrote history below its base, carried a commit claiming
+# somebody else, or blew a ceiling. ffbox removes the branch and bundle and leaves the reason.
+if os.environ.get("FFBOX_STUB_HARVEST_ERROR"):
+    for name in ("work.bundle", "branch.txt"):
+        try:
+            os.remove(os.path.join(out, name))
+        except OSError:
+            pass
+    with open(os.path.join(out, "harvest_error.txt"), "w", encoding="utf-8") as fh:
+        fh.write(os.environ["FFBOX_STUB_HARVEST_ERROR"] + "\n")
 
 # The harness's own verification, written by the container task AFTER the agent exits.
 if os.environ.get("FFBOX_STUB_VERIFY"):
@@ -2456,9 +2468,14 @@ def test_fix_lane_launches_with_write_capabilities():
     allowed = (run["allowed"] or "").split(",")
     check("the allow list names ffverify, which is the only Unity entry point",
           "Bash(ffverify *)" in allowed, allowed)
-    check("and it never allows a write-side git command",
-          not any(a.startswith(("Bash(git push", "Bash(git add", "Bash(git commit",
-                                "Bash(git remote", "Bash(gh")) for a in allowed), allowed)
+    # Local git is granted (test_the_agent_commits_its_own_work); reaching a REMOTE is not, and
+    # neither is importing a commit somebody else authored.
+    check("and it never allows a git command that leaves the clone",
+          not any(a.startswith(("Bash(git push", "Bash(git remote", "Bash(git fetch",
+                                "Bash(git merge", "Bash(git rebase", "Bash(gh"))
+                  for a in allowed), allowed)
+    check("while the local half is there for the agent to commit with",
+          "Bash(git commit*)" in allowed, allowed)
 
     run_dir = os.path.join(case.watcher.conv_dir(1), "runs", run["ffbox_run_id"])
     argv = json.load(open(os.path.join(run_dir, "ffbox-argv.json"), encoding="utf-8"))
@@ -2653,6 +2670,242 @@ def test_compile_failure_blocks_the_pull_request():
           "NOT VERIFIED" in text2, text2[:400])
 
 
+def test_the_agent_commits_its_own_work():
+    """Local git, granted 2026-08-23. The agent writes its own commits; the host still publishes.
+
+    The point of the split is that every command added here operates on the clone and nothing
+    else, so the capability the container gained is history, not reach. What must stay absent is
+    anything that talks to a remote, and anything that imports a commit somebody else authored —
+    the harvest's identity check has no answer for a legitimate `git merge`.
+    """
+    print("local git: the agent commits, the host publishes")
+    allowed = " ".join(ffwatch.WRITE_ALLOWED)
+    for verb in ("add", "commit", "branch", "checkout", "switch", "restore", "reset", "stash"):
+        check(f"the write lanes can run git {verb}", f"Bash(git {verb}*)" in allowed)
+    for verb in ("push", "remote", "fetch", "clone", "merge", "rebase", "cherry-pick", "am"):
+        check(f"but never git {verb}", f"Bash(git {verb}" not in allowed)
+    check("and still nothing that could publish on its own",
+          not [p for p in ffwatch.WRITE_ALLOWED
+               if "push" in p or "gh " in p or "remote" in p], ffwatch.WRITE_ALLOWED)
+    check("the read-only lanes gain none of it",
+          not [p for p in ffwatch.READ_ALLOWED if "git" in p], ffwatch.READ_ALLOWED)
+
+    ffbox_src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    check("ffbox configures the identity those commits get, in the clone",
+          'config user.email "$FFBOX_GIT_EMAIL"' in ffbox_src)
+    check("and no longer passes one per commit, because the agent runs the commit",
+          '-c user.email="ffbox@final-factory.invalid"' not in ffbox_src)
+
+    task = open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
+    change = task.split("PREAMBLE_CHANGE = (")[1].split(")\n")[0]
+    check("the change preamble asks for commits", "Commit as you work" in change)
+    check("and still forbids the things the container cannot do anyway",
+          "Do NOT push" in change and "do NOT open a pull request" in change)
+    check("it names the identity rule, since that is the one the harness enforces",
+          "--author" in change and "claims to be somebody else" in change)
+    local = task.split("PREAMBLE_LOCAL = (")[1].split(")\n")[0]
+    check("the local preamble stops telling the agent not to commit",
+          "commit freely" in local and "Do NOT commit" not in local)
+
+
+def test_the_clone_is_clean_before_the_agent_runs():
+    """Baseline dirt is restored BEFORE the container starts, not subtracted afterwards.
+
+    Subtracting at harvest was enough while the harness made the only commit. It stopped being
+    enough when the agent got `git commit`: dirt it has already committed is inside its history,
+    where `restore --staged` cannot reach, and a `git status` full of inherited noise poisons
+    every judgement the agent makes about what it has changed.
+
+    The re-record afterwards matters as much as the restore. base_dirty.z is read again at
+    harvest, and a stale list of paths that are clean now would make the backstop throw away the
+    agent's work on any file it happened to name.
+    """
+    print("pre-run: the clone is clean before the agent sees it")
+    src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    pre, _, post = src.partition("docker run --rm")
+    check("the restore runs before the container starts",
+          "restore --source=HEAD --staged --worktree" in pre,
+          "found only after docker run" if "restore --source=HEAD" in post else "not found")
+    check("untracked baseline paths are removed, not just unstaged", "PYCLEAN" in pre)
+    check("and the baseline is re-recorded after the restore",
+          pre.count('status --porcelain -z > "$OUT/base_dirty.z"') == 2,
+          pre.count('status --porcelain -z > "$OUT/base_dirty.z"'))
+
+    # The real thing, with the three shapes that actually occur: a staged binary, a loose
+    # untracked file, and an untracked DIRECTORY, which porcelain reports as one entry with a
+    # trailing slash and which os.remove cannot delete.
+    root = os.path.join(TMPROOT, "preclean")
+    repo = os.path.join(root, "repo")
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(os.path.join(repo, "Assets", "Hovl Studio"))
+
+    def g(*args):
+        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+
+    subprocess.run(["git", "init", "-q", repo], check=True)
+    g("config", "user.email", "t@t"); g("config", "user.name", "t")
+    for path, body in ((os.path.join("Assets", "Hovl Studio", "Splash.PNG"), "pointer"),
+                       (os.path.join("Assets", "Belt.cs"), "code")):
+        with open(os.path.join(repo, path), "w", encoding="utf-8") as fh:
+            fh.write(body)
+    g("add", "-A"); g("commit", "-qm", "base")
+
+    with open(os.path.join(repo, "Assets", "Hovl Studio", "Splash.PNG"), "w") as fh:
+        fh.write("smudged binary content")
+    g("add", os.path.join("Assets", "Hovl Studio", "Splash.PNG"))
+    with open(os.path.join(repo, "Assets", "Stray.tmp"), "w") as fh:
+        fh.write("untracked")
+    os.makedirs(os.path.join(repo, "Assets", "StrayDir"))
+    with open(os.path.join(repo, "Assets", "StrayDir", "a.txt"), "w") as fh:
+        fh.write("in an untracked directory")
+
+    base = os.path.join(root, "base_dirty.z")
+    with open(base, "wb") as fh:
+        fh.write(subprocess.run(["git", "-C", repo, "status", "--porcelain", "-z"],
+                                capture_output=True).stdout)
+    check("the clone starts dirty", os.path.getsize(base) > 0)
+
+    def heredoc(marker):
+        """The body of one of ffbox's inline python blocks, run here rather than re-implemented.
+
+        Everything after the marker on its own line is shell — `|| true`, a redirection — and
+        belongs to the invocation, not to the program.
+        """
+        return src.split("<<'%s'" % marker)[1].split(marker)[0].split("\n", 1)[1]
+
+    parser, cleaner = heredoc("PYBASE"), heredoc("PYCLEAN")
+    tracked_z, untracked_z = os.path.join(root, "t.z"), os.path.join(root, "u.z")
+    subprocess.run([sys.executable, "-c", parser, base, tracked_z, untracked_z], check=True)
+    if os.path.getsize(tracked_z):
+        g("restore", "--source=HEAD", "--staged", "--worktree",
+          f"--pathspec-from-file={tracked_z}", "--pathspec-file-nul")
+    if os.path.getsize(untracked_z):
+        subprocess.run([sys.executable, "-c", cleaner, untracked_z, repo], check=True)
+
+    left = g("status", "--porcelain").stdout
+    check("and is clean by the time the agent would see it", left.strip() == "", left)
+
+    # The agent's work must survive a file it touched having been dirty at baseline — which is
+    # exactly what re-recording prevents, and what reusing the stale list would destroy.
+    with open(os.path.join(repo, "Assets", "Hovl Studio", "Splash.PNG"), "w") as fh:
+        fh.write("the agent's own edit")
+    g("add", "-A"); g("commit", "-qm", "agent work")
+    with open(base, "wb") as fh:
+        fh.write(subprocess.run(["git", "-C", repo, "status", "--porcelain", "-z"],
+                                capture_output=True).stdout)
+    check("the re-recorded baseline is empty, so the harvest backstop takes nothing back",
+          os.path.getsize(base) == 0)
+    shown = g("show", "--stat", "--format=", "HEAD").stdout
+    check("and the agent's commit keeps the file it edited", "Splash.PNG" in shown, shown)
+
+
+def test_harvest_refuses_a_rewritten_or_forged_range():
+    """Three ways an agent-authored range stops meaning what the host assumes, and the checks.
+
+    None of these is containment — the container is contained by holding no credential. They
+    exist because `base..branch` is only a truthful description of "what this run did" while the
+    harness, not the agent, decides what a commit is. Once the agent decides, the range can
+    reach below its base, or carry a commit wearing a person's name onto a branch a reviewer
+    reads by author.
+    """
+    print("harvest: a range that stopped meaning what the host assumes")
+    src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    check("ffbox checks the range still descends from its base",
+          'merge-base --is-ancestor "$BASE_SHA" "$BRANCH"' in src)
+    check("checks every commit against the run's own identity",
+          "%ae%n%ce" in src and 'grep -Fxv "$FFBOX_GIT_EMAIL"' in src)
+    check("caps the changed files and the bundle bytes",
+          "MAX_CHANGED_FILES" in src and "MAX_BUNDLE_BYTES" in src)
+    check("and points the work branch at wherever the agent ended",
+          'branch -f "$BRANCH" HEAD' in src)
+    check("a refusal is written where ffwatch reads it back",
+          'harvest_error.txt' in src)
+
+    root = os.path.join(TMPROOT, "refuse")
+    repo = os.path.join(root, "repo")
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(repo)
+    email = "ffbox@final-factory.invalid"
+
+    def g(*args):
+        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+
+    subprocess.run(["git", "init", "-q", repo], check=True)
+    g("config", "user.email", email); g("config", "user.name", "ffbox")
+    # Two commits before the base, so the base HAS a parent to reset below. A root commit
+    # cannot be rewritten past, and testing the check against one would prove nothing.
+    with open(os.path.join(repo, "Belt.cs"), "w") as fh:
+        fh.write("code\n")
+    g("add", "-A"); g("commit", "-qm", "history nobody in this run wrote")
+    with open(os.path.join(repo, "Belt.cs"), "a") as fh:
+        fh.write("more\n")
+    g("add", "-A"); g("commit", "-qm", "base")
+    base_sha = g("rev-parse", "HEAD").stdout.strip()
+    g("checkout", "-q", "-B", "ffbox/run1")
+
+    for n in ("one", "two"):
+        with open(os.path.join(repo, "Belt.cs"), "a") as fh:
+            fh.write(n + "\n")
+        g("add", "-A"); g("commit", "-qm", n)
+
+    def foreign():
+        out = g("log", "--format=%ae%n%ce", f"{base_sha}..ffbox/run1").stdout.splitlines()
+        return sorted({a for a in out if a and a != email})
+
+    check("an honest chain of commits passes the identity check", foreign() == [], foreign())
+    check("and descends from its base",
+          g("merge-base", "--is-ancestor", base_sha, "ffbox/run1").returncode == 0)
+
+    # The agent's work is on a side branch it never switched back from. That publishes.
+    g("checkout", "-q", "-b", "sidetrack")
+    with open(os.path.join(repo, "Belt.cs"), "a") as fh:
+        fh.write("explored\n")
+    g("add", "-A"); g("commit", "-qm", "on a side branch")
+    head = g("rev-parse", "HEAD").stdout.strip()
+    g("branch", "-f", "ffbox/run1", "HEAD")
+    check("work left on a side branch is what gets published",
+          g("rev-parse", "ffbox/run1").stdout.strip() == head)
+
+    g("-c", f"user.email=lothsahn@example.com", "-c", "user.name=Lothsahn",
+      "commit", "-q", "--allow-empty", "-m", "looks like a person wrote it")
+    g("branch", "-f", "ffbox/run1", "HEAD")
+    check("a commit wearing somebody else's name is caught",
+          foreign() == ["lothsahn@example.com"], foreign())
+
+    g("checkout", "-q", "-B", "rewritten", base_sha)
+    g("reset", "-q", "--hard", f"{base_sha}~1")
+    check("and a range that no longer descends from its base is caught",
+          g("merge-base", "--is-ancestor", base_sha, "rewritten").returncode != 0)
+
+
+def test_a_refused_harvest_is_reported():
+    """A refusal must not read as an idle turn.
+
+    publish() has three ways to end without a branch and they mean different things: the run
+    changed nothing, the bundle went missing, or ffbox refused the range. Only the third is a
+    fault, and the player-facing reply is composed from this reason.
+    """
+    print("publication: ffbox refused the harvest")
+    case = bug_case("refused")
+    origin, host = git_origin(case)
+    os.environ["FFBOX_STUB_HARVEST_ERROR"] = \
+        "commits claim an identity this run does not own: lothsahn@example.com"
+    try:
+        escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    finally:
+        os.environ.pop("FFBOX_STUB_HARVEST_ERROR", None)
+
+    run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+    check("nothing is published", run["pushed"] == 0, run)
+    check("and no PR opens", run["pr_number"] is None, run)
+    check("the refusal is the recorded reason, not 'changed no files'",
+          "identity this run does not own" in (run["no_branch_reason"] or ""),
+          run["no_branch_reason"])
+    check("nothing reached the remote",
+          "ffbox/" not in git_run("-C", host, "ls-remote", "--heads", "origin").stdout)
+
+
 def test_no_changed_files_means_no_branch_and_no_pr():
     print("publication: nothing changed")
     case = bug_case("nochanges")
@@ -2839,12 +3092,17 @@ sys.exit(2)
 def test_harvest_excludes_what_was_already_dirty():
     """A run clone inherits golden's working tree, dirt included, and harvest does `git add -A`.
 
-    Without a baseline, anything golden was already carrying is committed onto the work branch
-    as if the agent had done it, and "no changed files means no branch and no PR" can never
-    fire. This is live on this machine: .gitattributes marks LFS patterns in lowercase
+    Without a baseline, anything the clone was already carrying is committed onto the work
+    branch as if the agent had done it, and "no changed files means no branch and no PR" can
+    never fire. The cause was found live: .gitattributes marked LFS patterns in lowercase only
     (`*.png`), git matches attribute patterns case-sensitively on Linux and case-insensitively
-    on Windows, so 247 uppercase-extension assets (~52MB) read as modified here and as clean
-    there.
+    on Windows, so 247 uppercase-extension assets (~52MB) read as modified here and clean there.
+    Fixed at the source on master in 2abbcc945, which is why this now bites only when --ref
+    checks out a tree that predates it.
+
+    This is the harvest-side BACKSTOP. The primary defence moved before the run once the agent
+    got its own `git commit` — see test_the_clone_is_clean_before_the_agent_runs — because dirt
+    the agent has already committed cannot be unstaged back out.
 
     The parser is not re-implemented here — it is extracted from ffbox and run — because the
     subtle case is a rename, whose `--porcelain -z` entry carries a SECOND NUL-terminated field
@@ -2854,7 +3112,7 @@ def test_harvest_excludes_what_was_already_dirty():
     src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
     check("ffbox records the baseline before the container starts",
           'status --porcelain -z > "$OUT/base_dirty.z"' in src)
-    check("and unstages it again at harvest, tracked and untracked separately",
+    check("and unstages whatever is left at harvest, tracked and untracked separately",
           "restore --staged --source=HEAD" in src and "rm --cached --quiet --ignore-unmatch"
           in src, )
     parser = src.split("<<'PYBASE'")[1].split("PYBASE")[0]
@@ -3708,7 +3966,10 @@ def test_allow_list_is_scope_not_a_boundary():
     check("the entries that end in a wildcard are known and few",
           sorted(trailing) == sorted([
               "Bash(ffverify *)", "Bash(git status*)", "Bash(git diff*)",
-              "Bash(git log*)", "Bash(git show*)", "Bash(git rev-parse*)"]), trailing)
+              "Bash(git log*)", "Bash(git show*)", "Bash(git rev-parse*)",
+              "Bash(git blame*)", "Bash(git add*)", "Bash(git commit*)", "Bash(git branch*)",
+              "Bash(git checkout*)", "Bash(git switch*)", "Bash(git restore*)",
+              "Bash(git reset*)", "Bash(git stash*)"]), trailing)
     check("every write-lane entry only ever grants a command PREFIX",
           all(p.startswith("Bash(") and p.endswith(")") for p in ffwatch.WRITE_ALLOWED),
           ffwatch.WRITE_ALLOWED)
@@ -3812,6 +4073,10 @@ def main():
         test_failed_verification_blocks_the_pull_request,
         test_compile_failure_blocks_the_pull_request,
         test_no_changed_files_means_no_branch_and_no_pr,
+        test_the_agent_commits_its_own_work,
+        test_the_clone_is_clean_before_the_agent_runs,
+        test_harvest_refuses_a_rewritten_or_forged_range,
+        test_a_refused_harvest_is_reported,
         test_github_client_retries_and_cannot_merge,
         test_verification_results_path_is_per_invocation,
         test_destructive_docker_calls_name_the_container,
