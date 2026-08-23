@@ -166,10 +166,17 @@ for key, value in (
     ("approve_before_send", False),
     ("send_limits", {"per_hour": 60, "per_conversation_hour": 12}),
     ("max_send_attempts", 5),
+    # venue and engage are declared here, not inferred from Discord permissions. See
+    # design/trusted_ingress_design.txt sections 4 and 5, and the same table in ffwatch's
+    # DEFAULTS. An existing config keeps whatever it already says; ffwatch's own defaults fill
+    # a missing key and warn about it at startup.
     ("watch", {
-        "ask_claude": {"kind": "ask", "forum": False},
-        "bug_reports": {"kind": "bug_report", "forum": True},
-        "suggestions": {"kind": "suggestion", "forum": True},
+        "ask_claude": {"kind": "ask", "forum": False,
+                       "venue": "public", "engage": "all"},
+        "bug_reports": {"kind": "bug_report", "forum": True,
+                        "venue": "public", "engage": "all"},
+        "suggestions": {"kind": "suggestion", "forum": True,
+                        "venue": "public", "engage": "all"},
     }),
 ):
     if key not in ffbox:
@@ -178,6 +185,21 @@ for key, value in (
 
 discord.setdefault("channels", {})
 discord.setdefault("mentions", {})
+
+# WHO IS AN OPERATOR. Snowflake ids, never usernames: a username is renameable, so a trust key
+# somebody else can claim by renaming is not a trust key. These two live in the DISCORD config
+# rather than the ffbox one because the Gateway listener has to answer the same question and
+# reads no other file (design/trusted_ingress_design.txt section 3).
+#
+# setdefault at every level, so a machine that has already edited either table is left alone.
+OPERATORS = {"ben": "226422780445458432", "lothsahn": "193210319093497857"}
+trust = discord.setdefault("trust", {})
+operators = trust.setdefault("operators", {})
+for name, uid in OPERATORS.items():
+    operators.setdefault(name, uid)
+    # The same ids are what "@ben" expands to in a post, so seed the mention table from them
+    # rather than leaving two places to fill in by hand and get inconsistent.
+    discord["mentions"].setdefault(name, uid)
 
 write(ffbox_path, ffbox)
 write(discord_path, discord)
