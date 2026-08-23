@@ -17,6 +17,9 @@ channel does not burn a run on "thanks".
 Revision 5, 2026-08-22: the gate runs on every message in all three watched channels,
 including the first message of a new thread, and its bias toward answering is written as
 rules rather than as an adjective (section 5).
+Revision 8, 2026-08-22: ffweb grew TLS and a login while this was being written, so section 12
+stops claiming the page has no authentication. Operator identity on the web ingress is the
+authenticated account name, not the fact that somebody reached the port.
 Revision 7, 2026-08-22: every container is Unity-capable, read lanes included. Activation stops
 being a launch-time decision and becomes a lazy, locked one, and the read lanes trade their
 no-Bash property for exactly one command (section 13).
@@ -566,17 +569,38 @@ a stale cached id as a re-open rather than a failure.
 12. The web front door
 ----------------------
 
-The page is an operator surface. Only operators can reach it, and everything in this design
-that says "operator" applies to whoever is typing into it: same tier as the shell, same
-private venue, same capability.
+The page is an operator surface. Everything in this design that says "operator" applies to
+whoever is typing into it: same tier as the shell, same private venue, same capability.
 
-That is a claim about deployment, and it is the load-bearing part. The page has no login of
-its own. What actually keeps players off it today is that it binds to 127.0.0.1 and lives on a
-box they have no account on. So the rule is:
+Written in revision 2, this section had to hedge, because the page had no login and the only
+thing keeping players off it was the loopback bind. That changed underneath the design: ffweb
+now serves TLS and admits nobody until they log in, with a credential table keyed by lowercase
+name holding exactly `ben` and `lothsahn`, and a session that survives a restart and times out
+after an hour of inactivity.
 
-    Shell-equivalent capability for the web ingress is conditional on the page being reachable
-    only by operators. Loopback satisfies that. A reverse proxy on the LAN does not, unless it
-    authenticates, and until it does the web ingress drops to the DM capability set.
+So the identity is real and the rule can be stated properly:
+
+    The web ingress's operator identity is the AUTHENTICATED ACCOUNT NAME, mapped into
+    trust.operators by key. Not the source address, and not the fact that somebody reached the
+    port.
+
+The two tables happen to hold the same two names today, and that is a coincidence of who was
+added first rather than a guarantee. They are separate tables in separate files, so the mapping
+is a lookup that can miss: an ffweb account with no matching trust.operators key is not an
+operator, and gets nothing. Fail closed, as everywhere else.
+
+Two things still make this login weaker than a Unix account on the box, and both are worth
+fixing before the page is exposed anywhere but loopback, because section 2's rule says an
+ingress may not grant more than the asker already holds:
+
+  - FFWEB_PASSWORD sets ONE password for every account in the table, so the two accounts are
+    not distinguishable by anything secret. Per-account passwords before remote exposure.
+  - The certificate is self-signed, so the browser warning is accurate and the operator is
+    trained to click through it. That protects the password from passive capture and not from
+    an active man in the middle.
+
+Until both are addressed, keeping the bind on loopback is what makes shell-equivalent
+capability defensible, and it is a deployment choice rather than something the code enforces.
 
 ffweb currently writes nothing, and that property is worth keeping, so a prompt box does what
 approve/reject already does: shell out to ffwatch, which owns the database.
@@ -589,9 +613,9 @@ grant than approving a queued reply, and the two should not ride on one switch.
 Two existing guards have to LEARN about the new flag rather than covering it for free. The
 startup refusal is written against --enable-actions specifically, so it needs the same test for
 --enable-prompts: no prompt box on a non-loopback bind without --allow-remote-actions said out
-loud. And do_POST's Origin check, which is what stops a page in another tab posting here on the
-operator's behalf, has to run on the prompt route too. A CSRF hole into `ffwatch submit` is a
-stranger running work on this box.
+loud. And the Origin check has to cover the prompt route, in its REFUSING form: _route_post
+refuses a mismatched Origin on the actions and merely logs it on the session verbs, and a
+prompt is an action. A CSRF hole into `ffwatch submit` is a stranger running work on this box.
 
 Reply venue is private, and the reply is the run record itself: the timeline row, the
 transcript index, the result text. The same thing a waiting terminal reads.
