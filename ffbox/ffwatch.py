@@ -634,10 +634,13 @@ LANE_CAPABILITIES = {
 # The doorbell kind decides the conversation kind; the conversation kind decides the lane
 # (design section 13). Anything that falls through goes to the classifier, which fails closed.
 LANE_BY_KIND = {
-    # A prompt typed at this machine's shell. It is not untrusted player text — the person who
-    # typed it already has a login here — so it is not classified and never fails closed; it
-    # goes straight to its own lane.
+    # A prompt typed by somebody who already has a login on this box, at the terminal or on
+    # the web page. It is not untrusted player text, so it is not classified and never fails
+    # closed; it goes straight to its own lane. Both front doors share that lane on purpose —
+    # `web` exists so the page can be told apart on the conversation list, not so it can be
+    # treated differently.
     "shell": "shell",
+    "web": "shell",
     "ask": "answer",
     "mention": "answer",
     "bug_report": "triage",
@@ -649,18 +652,23 @@ LANE_BY_KIND = {
     # See operator_lane() and design/trusted_ingress_design.txt section 8.
 }
 
-# Kinds with NO Discord side. A prompt typed at this machine's shell has no thread and no
-# channel to answer — the record is the reply (see record_reply) — so nothing about it may
-# enter the Discord pipeline. Naming that once, here, is what lets the two places that have to
-# know agree without either re-deriving it: claim_turns, so the sweep never invents a turn for
-# a local conversation, and record_outbound, so nothing can queue a message for one.
+# Kinds with NO Discord side. A prompt typed at this machine's shell, or into the web page, has
+# no thread and no channel to answer — the record is the reply (see record_reply) — so nothing
+# about it may enter the Discord pipeline. Naming that once, here, is what lets the two places
+# that have to know agree without either re-deriving it: claim_turns, so the sweep never invents
+# a turn for a local conversation, and record_outbound, so nothing can queue a message for one.
 #
 # The test is NOT-IN this list rather than IN a list of Discord kinds, deliberately. A kind
 # added tomorrow is a Discord kind by default: guessing wrong that way queues a reply the
 # outbound guard then refuses, which is loud. Guessing wrong the other way would leave a lane
 # silently unclaimed, and a conversation that never gets a turn looks exactly like one nobody
 # has posted in.
-LOCAL_KINDS = ("shell",)
+LOCAL_KINDS = ("shell", "web")
+
+# How to say where a local prompt was typed, for the one reason string each of them produces.
+# .get() rather than [], so a kind added to LOCAL_KINDS and forgotten here degrades to its own
+# name instead of raising in the middle of creating a turn.
+LOCAL_KIND_ORIGIN = {"shell": "this machine's shell", "web": "the web page"}
 
 
 def is_local_conversation(conv):
@@ -673,6 +681,7 @@ def is_local_conversation(conv):
 
 TRIGGER_BY_KIND = {
     "shell": "shell_prompt",
+    "web": "web_prompt",
     "ask": "message",
     "mention": "player_mention",
     "bug_report": "thread_message",
@@ -1001,12 +1010,15 @@ def lane_for(cfg, conv_kind, text, gate=False):
     well as the lane, which is what an engage: all channel needs; without it the behaviour is
     what it always was and a known kind never reaches the model at all.
     """
-    if conv_kind == "shell":
+    if conv_kind in LOCAL_KINDS:
         # Not classified at all. Classification exists to decide how much capability untrusted
-        # text may have; a prompt typed at this machine's own shell has already answered that.
+        # text may have; a prompt typed by somebody with a login on this box has already
+        # answered that. `source` carries the front door so the record says which one it was.
         return True, "shell", {"engage": True, "type": "change",
-                               "status": "ok", "source": "shell",
-                               "reason": "typed at this machine's shell", "scope_note": ""}
+                               "status": "ok", "source": conv_kind,
+                               "reason": "typed into "
+                                         + LOCAL_KIND_ORIGIN.get(conv_kind, conv_kind),
+                               "scope_note": ""}
     if conv_kind in ("directive", "operator_dm"):
         # An operator message. The channel's kind does not decide the lane, because an operator
         # asks questions as often as they hand out work, and a question does not need a write
@@ -1638,9 +1650,9 @@ class Watcher:
         the claim is a single UPDATE over every unclaimed message in the conversation. Nothing
         is dropped and nothing runs twice.
 
-        LOCAL CONVERSATIONS ARE NOT SWEPT. A shell prompt gets its turn from submit(), and an
-        imported run gets one from import_run_dir; both create it explicitly, alongside the
-        message row. This sweep exists for the opposite case — a message that arrived with no
+        LOCAL CONVERSATIONS ARE NOT SWEPT. A shell or web prompt gets its turn from submit(),
+        and an imported run gets one from import_run_dir; both create it explicitly, alongside
+        the message row. This sweep exists for the opposite case — a message that arrived with no
         turn attached, which for a Discord thread means a player is waiting. Reading a shell
         prompt that way costs a container and a Claude run to answer a question already
         answered, and used to end with a reply addressed at a channel id that does not exist.
@@ -1670,9 +1682,10 @@ class Watcher:
         makes the whole turn a player's, which is the conservative direction and the only one
         that cannot leak.
         """
-        if conv["kind"] == "shell":
-            who = conv["opener_discord_id"] or "shell"
-            return "operator", who, "typed at this machine's shell"
+        if is_local_conversation(conv):
+            who = conv["opener_discord_id"] or conv["kind"]
+            return "operator", who, ("typed into "
+                                     + LOCAL_KIND_ORIGIN.get(conv["kind"], conv["kind"]))
         authors = [str(m["author_id"] or "") for m in msgs]
         ops = operators(self.cfg)
         by_id = {uid: name for name, uid in ops.items()}
@@ -1686,11 +1699,11 @@ class Watcher:
     def turn_venue(self, conv, alias):
         """public or private, from the watch entry that declared it. Never inferred.
 
-        A shell prompt is private because the person is at a terminal reading it. Everything
-        else is public unless a watch entry says otherwise, including a channel nobody has
-        classified.
+        A local prompt is private because the person who typed it is the only one reading the
+        answer — at a terminal, or on a page nobody else is signed in to. Everything else is
+        public unless a watch entry says otherwise, including a channel nobody has classified.
         """
-        if conv["kind"] in ("shell", "operator_dm"):
+        if is_local_conversation(conv) or conv["kind"] == "operator_dm":
             # A DM has no watch entry, so its venue is derived rather than declared. There is
             # only one value it can take: a DM that is not with an operator never became a
             # conversation at all (see ingest_dm).
@@ -1756,7 +1769,7 @@ class Watcher:
         # policy: nothing rings in an unwatched channel unless the bot was addressed, so there
         # is nothing here to gate and a message that got this far was already selected.
         if (not forced and watch_entry(self.cfg, alias) and engage_policy == "mention"
-                and conv["kind"] not in ("shell", "directive", "mention")):
+                and conv["kind"] not in LOCAL_KINDS + ("directive", "mention")):
             return self.gate_declines(conv, msgs,
                                       f"{alias or conv['channel_id']} is mention-only and "
                                       f"nobody addressed the bot")
@@ -2580,14 +2593,21 @@ class Watcher:
         finally:
             fh.close()
 
-    def submit(self, prompt, *, ref=None, branch=None, title=None):
-        """A shell prompt becomes a conversation, a message and a queued turn. Returns turn id.
+    def submit(self, prompt, *, kind="shell", ref=None, branch=None, title=None):
+        """A local prompt becomes a conversation, a message and a queued turn. Returns turn id.
 
         The SAME rows a Discord message produces, so everything downstream — scheduler,
         ceilings, kill switch, container launch, verification, transcript index, the web page —
         works without knowing where the prompt came from. That is the whole point of routing
         the shell through here rather than letting `ffbox` clone a workspace on its own.
+
+        `kind` is which front door it came through, and it is RECORDED, not obeyed: every local
+        kind takes the shell lane, the same capabilities and the same private venue. It exists
+        so a page submission is distinguishable from a terminal one on the conversation list,
+        which is a question people ask of the record and could not previously answer.
         """
+        if kind not in LOCAL_KINDS:
+            raise ValueError(f"{kind!r} is not a local ingress; expected one of {LOCAL_KINDS}")
         prompt = (prompt or "").strip()
         if not prompt:
             raise ValueError("empty prompt")
@@ -2596,7 +2616,7 @@ class Watcher:
         key = f"{int(time.time() * 1000)}{os.getpid() % 1000:03d}"
         first_line = prompt.splitlines()[0][:100]
         conv_id = self.upsert_conversation(
-            key, kind="shell", channel_id=None, title=first_line,
+            key, kind=kind, channel_id=None, title=first_line,
             root_message_id=key, opener=getpass.getuser(), is_thread=False)
         self.insert_message(conv_id, {
             "id": key,
@@ -3796,8 +3816,12 @@ def build_parser():
     sub.add_parser("resume", help="remove the drain flag and start launching again")
     sp = sub.add_parser("approve", help="release outbound rows held for approval")
     sp.add_argument("id", nargs="+", type=int, help="outbound row id(s) from `ffwatch status`")
-    sp = sub.add_parser("submit", help="run a prompt through the pipeline (the shell ingress)")
+    sp = sub.add_parser("submit", help="run a prompt through the pipeline (the local ingress)")
     sp.add_argument("prompt", nargs="*", help="the prompt; '-' or empty reads stdin")
+    sp.add_argument("--source", choices=list(LOCAL_KINDS), default="shell",
+                    help="which front door this came through, recorded as the conversation "
+                         "kind (default shell; ffweb passes web). It changes the record and "
+                         "nothing else — every source takes the same lane.")
     sp.add_argument("--ref", help="check the workspace out at this ref (default: base_ref)")
     sp.add_argument("--branch", help="harvest the work onto this branch as a git bundle")
     sp.add_argument("--wait", action="store_true", help="block until the run finishes")
@@ -3861,7 +3885,7 @@ def main(argv=None):
         prompt = " ".join(args.prompt).strip()
         if not prompt or prompt == "-":
             prompt = sys.stdin.read()
-        turn_id = watcher.submit(prompt, ref=args.ref,
+        turn_id = watcher.submit(prompt, kind=args.source, ref=args.ref,
                                  branch=args.branch)
         if not args.wait:
             print(f"queued turn {turn_id}")

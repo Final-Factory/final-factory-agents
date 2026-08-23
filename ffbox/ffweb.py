@@ -105,6 +105,15 @@ TEXTISH_TYPES = {"application/json", "application/xml", "application/x-ndjson"}
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
 
+# Conversation kinds with no Discord side: a prompt typed at this box's shell, or into the
+# prompt box on this page. Their message ids are synthetic — minted by ffwatch to keep ordering
+# working — so this page must not label one "discord <id>". Mirrors LOCAL_KINDS in ffwatch.py,
+# which is the definition; this file is deliberately importless of ffwatch (it opens the
+# database read-only and shells out for everything else), so the list is repeated rather than
+# shared. It is two strings that change about once a year, and a wrong copy here shows a
+# useless id rather than breaking anything.
+LOCAL_KINDS = ("shell", "web")
+
 # ---- the credentials ----------------------------------------------------------------------
 # Hardcoded, on purpose and for now. The page is internal and a user table would be a database
 # this UI has spent its whole design NOT writing to.
@@ -991,8 +1000,13 @@ class FfwatchActions:
         The prompt is passed as an ARGV ELEMENT, never through a shell. There is no shell in
         this path at all: subprocess.run takes a list, so quoting, backticks and semicolons in
         the text are inert.
+
+        --source web records the front door on the conversation. It takes the same lane a
+        terminal prompt does and is not treated differently anywhere; it is here so the list
+        can answer "did this come from the page or from a shell", which the record could not
+        say before.
         """
-        return self._run(["submit", "--", prompt])
+        return self._run(["submit", "--source", "web", "--", prompt])
 
 
 # ------------------------------------------------------------------------------------------
@@ -1474,7 +1488,8 @@ class App:
             + ["last activity"],
             [[link(f"/conversation/{r['id']}", r["id"]), r["kind"], pill(r["state"]),
               r["lane"] or "—", r["verdict"] or "—",
-              short(r["title"] or r["thread_id"], 70), r["messages"], r["turns"]]
+              link(f"/conversation/{r['id']}", short(r["title"] or r["thread_id"], 70)),
+              r["messages"], r["turns"]]
              + agg_cells(aggs.get(r["id"])) + [r["last_activity_at"] or "—"]
              for r in rows])]
         heading = f"<h1>conversations ({len(rows)})</h1>"
@@ -1660,10 +1675,10 @@ class App:
         cls = "message out" if row["direction"] == "out" else "message"
         who = row["author_name"] or row["author_id"] or "?"
         bot = " (bot)" if row["is_bot"] else ""
-        # A shell prompt has a synthetic id that exists only to keep message ordering working.
+        # A local prompt has a synthetic id that exists only to keep message ordering working.
         # Printing it as "discord <id>" is worse than printing nothing: it is not a Discord id
         # and there is nothing to look it up in.
-        origin = "" if kind == "shell" else f" · discord {row['discord_id']}"
+        origin = "" if kind in LOCAL_KINDS else f" · discord {row['discord_id']}"
         out = ["<div class=\"item ", cls, "\"><div class=\"meta\">",
                esc(f"{row['direction']} · {who}{bot} · {row['created_at'] or ''}{origin}"),
                "</div>"]

@@ -17,6 +17,9 @@ channel does not burn a run on "thanks".
 Revision 5, 2026-08-22: the gate runs on every message in all three watched channels,
 including the first message of a new thread, and its bias toward answering is written as
 rules rather than as an adjective (section 5).
+Revision 12, 2026-08-22: the web ingress gets its own conversation kind, `web` (section 12).
+It is a label on the record, not a second pipeline: same lane, same capabilities, same private
+venue, same absence of a Discord side.
 Revision 11, 2026-08-22: Unity stops being optional anywhere. --no-unity is gone from ffbox,
 from `ffwatch submit` and from the web prompt box, the per-lane unity key is gone from
 LANE_CAPABILITIES, and the classifier stops being asked needs_unity (section 13).
@@ -621,7 +624,15 @@ made in the config rather than something the code enforces.
 ffweb currently writes nothing, and that property is worth keeping, so a prompt box does what
 approve/reject already does: shell out to ffwatch, which owns the database.
 
-    POST /prompt  ->  ffwatch submit "<text>"  ->  the same rows a shell prompt makes
+    POST /prompt  ->  ffwatch submit --source web "<text>"  ->  the rows a shell prompt makes
+
+The kind is `web` rather than `shell`, and that is the whole of the difference. --source is
+RECORDED, not obeyed: LANE_BY_KIND sends both to the shell lane, LOCAL_KINDS holds both, so the
+capability set, the operator tier, the private venue and the it-has-nowhere-to-post rule are one
+implementation serving two front doors. What it buys is a question the record could not answer
+before — did this come from the page or from a terminal — asked of a list where both used to
+read "shell". A front door that behaved differently would be a second pipeline, which is the
+thing this design keeps declining to grow.
 
 One field and one button. It carried a unity checkbox for as long as Unity was optional; that
 went with the flag it mirrored, and there is now nothing to configure beside the text.
