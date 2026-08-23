@@ -2879,6 +2879,153 @@ def test_web_is_the_same_ingress_wearing_a_different_label():
         check("an unknown ingress is refused", "not a local ingress" in str(exc), str(exc))
 
 
+def test_a_local_conversation_can_be_continued():
+    """A follow-up is turn 2 of the SAME conversation, which is what makes it worth having.
+
+    The page grew a box that says something else to the conversation being read, and the whole
+    value of it is downstream: the turn carries that conversation's session id, so the run
+    resumes its own transcript instead of meeting the follow-up cold. Asking again in a new
+    conversation is how a person ends up re-explaining a bug to something that just spent four
+    minutes reading the code for it.
+    """
+    print("local conversations: continuing one")
+    case = Case("continue")
+    first = case.watcher.submit("what does the merger do when both inputs saturate?",
+                                kind="web")
+    case.watcher.once()
+    conv_id = case.watcher.db.one("SELECT conversation_id FROM turn WHERE id=?",
+                                  (first,))["conversation_id"]
+
+    _msg, second = case.watcher.follow_up(conv_id, "and when only one of them is?")
+    turns = case.rows("SELECT * FROM turn ORDER BY seq")
+    check("the follow-up is a second turn on the same conversation",
+          len(turns) == 2 and turns[1]["id"] == second
+          and turns[1]["conversation_id"] == conv_id, turns)
+    check("not a second conversation",
+          len(case.rows("SELECT * FROM conversation")) == 1,
+          case.rows("SELECT id, kind, title FROM conversation"))
+    check("it takes the same local lane, unclassified like the prompt that opened it",
+          turns[1]["lane"] == "shell"
+          and json.loads(turns[1]["classification_json"])["source"] == "web",
+          (turns[1]["lane"], turns[1]["classification_json"]))
+    check("and the same operator tier at the same private venue",
+          (turns[1]["trust_tier"], turns[1]["venue"]) == ("operator", "private"),
+          (turns[1]["trust_tier"], turns[1]["venue"]))
+
+    case.watcher.once()
+    runs = case.rows("SELECT * FROM run ORDER BY id")
+    check("the ordinary scheduler runs it, like any other turn",
+          len(runs) == 2 and runs[1]["terminal_state"] == "done", runs)
+    check("turn 1 opened the session and turn 2 RESUMES it",
+          runs[0]["resumed"] == 0 and runs[1]["resumed"] == 1
+          and runs[0]["session_id"] == runs[1]["session_id"], runs)
+    job = json.load(open(os.path.join(os.path.dirname(runs[1]["stream_path"]), "job.json"),
+                         encoding="utf-8"))
+    check("the run is handed the follow-up, and nothing but the follow-up",
+          job["prompt"].strip() == "and when only one of them is?", job["prompt"][:200])
+    check("still no Discord framing on a local conversation",
+          "<discord>" not in job["prompt"], job["prompt"][:200])
+    check("and still nothing queued for Discord",
+          not case.rows("SELECT * FROM outbound"), case.rows("SELECT * FROM outbound"))
+
+
+def test_a_follow_up_typed_mid_run_waits_and_batches():
+    """Two follow-ups typed while the container works become ONE turn, after it exits.
+
+    Not a nicety: create_turn sets the conversation back to 'queued', which is the one state
+    the scheduler reads as free, so a turn created while a run is in flight would launch
+    alongside it — and two runs resuming one session id fork the transcript irrecoverably. So
+    the message is recorded and left unclaimed, exactly as a burst of Discord follow-ups is,
+    and claim_turns picks the batch up on the pass after the run ends.
+    """
+    print("local conversations: a follow-up typed mid-run")
+    case = Case("continuemidrun")
+    first = case.watcher.submit("start something long", kind="web")
+    case.watcher.once()
+    conv_id = case.watcher.db.one("SELECT conversation_id FROM turn WHERE id=?",
+                                  (first,))["conversation_id"]
+
+    # The state the scheduler leaves a conversation in for the life of the container.
+    case.watcher.db.execute("UPDATE conversation SET state='running' WHERE id=?", (conv_id,))
+    m1, t1 = case.watcher.follow_up(conv_id, "actually also this")
+    m2, t2 = case.watcher.follow_up(conv_id, "and this")
+    check("neither follow-up queues a turn against the run in flight",
+          t1 is None and t2 is None, (t1, t2))
+    check("but both messages are recorded, so nothing is lost",
+          [r["content"] for r in case.rows(
+              "SELECT content FROM message WHERE turn_id IS NULL ORDER BY id")]
+          == ["actually also this", "and this"],
+          case.rows("SELECT content, turn_id FROM message ORDER BY id"))
+    check("and the sweep will not claim them while the run is still in flight",
+          case.watcher.claim_turns() == []
+          and len(case.rows("SELECT * FROM turn")) == 1,
+          case.rows("SELECT id, seq, status FROM turn"))
+
+    case.watcher.db.execute("UPDATE conversation SET state='idle' WHERE id=?", (conv_id,))
+    created = case.watcher.claim_turns()
+    turns = case.rows("SELECT * FROM turn ORDER BY seq")
+    check("when it ends the pair becomes ONE turn, not two",
+          len(created) == 1 and len(turns) == 2, (created, turns))
+    check("with both messages on it",
+          [r["turn_id"] for r in case.rows(
+              "SELECT turn_id FROM message WHERE id IN (?, ?)", (m1, m2))]
+          == [turns[1]["id"], turns[1]["id"]],
+          case.rows("SELECT id, turn_id, content FROM message ORDER BY id"))
+
+    case.watcher.once()
+    runs = case.rows("SELECT * FROM run ORDER BY id")
+    job = json.load(open(os.path.join(os.path.dirname(runs[1]["stream_path"]), "job.json"),
+                         encoding="utf-8"))
+    # The shell lane used to hand the model job["messages"][-1] and only that, so a person who
+    # followed a question with a correction had the question silently dropped.
+    check("and the run is handed BOTH of them, not just the last one typed",
+          "actually also this" in job["prompt"] and "and this" in job["prompt"],
+          job["prompt"][:300])
+
+
+def test_only_a_local_conversation_can_be_continued_from_this_side():
+    """A Discord thread is answered in Discord. This refuses rather than adapts.
+
+    A message inserted here carries this box's unix user as its author, which is not a Discord
+    identity the trust rules can read, and the turn it produced would queue a reply into a
+    public thread on the strength of it. Whether the person at the keyboard may speak in that
+    thread is Discord's question, and a login on this box does not answer it.
+    """
+    print("local conversations: a Discord thread is not one")
+    fixture = bug_thread(base_fixture(), 17400, "merger drops items",
+                         [message(17401, "first report", channel="17400")])
+    case = Case("continueforeign", fixture)
+    case.events(thread_event(17400, kind="thread"))
+    case.watcher.once()
+    conv = case.watcher.db.one("SELECT * FROM conversation WHERE thread_id='17400'")
+    try:
+        case.watcher.follow_up(conv["id"], "any progress?")
+        check("a Discord conversation is refused", False, "it was accepted")
+    except ValueError as exc:
+        check("a Discord conversation is refused", "answered in Discord" in str(exc), str(exc))
+    check("and nothing was written for it",
+          not case.rows("SELECT * FROM message WHERE content='any progress?'"))
+
+    try:
+        case.watcher.follow_up(9999, "hello?")
+        check("so is a conversation that does not exist", False, "it was accepted")
+    except ValueError as exc:
+        check("so is a conversation that does not exist", "no conversation" in str(exc),
+              str(exc))
+
+
+def test_the_cli_can_continue_a_conversation():
+    """`ffwatch submit --conversation N` is the argv ffweb's reply box actually sends."""
+    print("local conversations: the CLI verb")
+    args = ffwatch.build_parser().parse_args(
+        ["submit", "--conversation", "11", "--", "and when only one is saturated?"])
+    check("the flag parses as the conversation to continue",
+          args.cmd == "submit" and args.conversation == 11
+          and args.prompt == ["and when only one is saturated?"], args)
+    check("and a plain submission still has none",
+          ffwatch.build_parser().parse_args(["submit", "hello"]).conversation is None)
+
+
 def test_drain_pauses_launches_without_holding_replies():
     """A drain is a pause, not a stop: nothing new launches, everything else keeps working.
 
@@ -3002,6 +3149,16 @@ def test_a_local_conversation_never_reaches_discord():
     check("a Discord conversation is still claimed, run and answered",
           [r["action"] for r in case.rows("SELECT action FROM outbound ORDER BY id")]
           == ["post", "react"], case.rows("SELECT * FROM outbound"))
+
+    # WHERE THE LINE IS, now that follow_up() leaves a message for the sweep on purpose. The
+    # sweep admits a local conversation that already HAS a turn, which a crashed submit cannot
+    # have; give this one a turn and the same unclaimed message is claimed on the next pass.
+    case.watcher.db.execute(
+        "INSERT INTO turn(conversation_id, seq, trigger, lane, status, queued_at)"
+        " VALUES(?,1,'shell_prompt','shell','done',?)", (conv_id, ffwatch.now_iso()))
+    check("a conversation that already answered one turn is swept for the next",
+          len(case.watcher.claim_turns()) == 1,
+          case.rows("SELECT id, seq, status FROM turn WHERE conversation_id=?", (conv_id,)))
 
 
 def test_past_standalone_runs_import():
@@ -3279,6 +3436,10 @@ def main():
         test_allow_list_is_scope_not_a_boundary,
         test_shell_is_an_ingress_not_a_second_pipeline,
         test_web_is_the_same_ingress_wearing_a_different_label,
+        test_a_local_conversation_can_be_continued,
+        test_a_follow_up_typed_mid_run_waits_and_batches,
+        test_only_a_local_conversation_can_be_continued_from_this_side,
+        test_the_cli_can_continue_a_conversation,
         test_drain_pauses_launches_without_holding_replies,
         test_drain_never_blocks_on_a_dead_daemon,
         test_a_local_conversation_never_reaches_discord,

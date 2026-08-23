@@ -17,6 +17,10 @@ channel does not burn a run on "thanks".
 Revision 5, 2026-08-22: the gate runs on every message in all three watched channels,
 including the first message of a new thread, and its bias toward answering is written as
 rules rather than as an adjective (section 5).
+Revision 13, 2026-08-23: the page can CONTINUE a conversation, not only open one (section 12).
+A reply box on /conversation/<id> adds a message to the end of a LOCAL conversation and the
+turn it produces resumes that conversation's session. Discord threads are refused on both
+sides, and a follow-up typed mid-run waits for the run in flight rather than racing it.
 Revision 12, 2026-08-22: the web ingress gets its own conversation kind, `web` (section 12).
 It is a label on the record, not a second pipeline: same lane, same capabilities, same private
 venue, same absence of a Discord side.
@@ -668,6 +672,50 @@ POST still carries a real Origin, and `Sec-Fetch-Site: same-origin` is accepted 
 a signal page script cannot forge. Worth remembering when a fourth ingress adds a form: a suite
 that posts without an Origin header at all takes the "not a browser, allow" branch and will
 never see this.
+
+CONTINUING ONE, WHICH IS A DIFFERENT ACT FROM STARTING ONE. The box above opens a
+conversation; the box on /conversation/<id> adds a message to the end of the one being read.
+The difference is not the form, it is what the turn carries:
+
+    POST /actions/reply  ->  ffwatch submit --conversation <id> "<text>"  ->  turn N of that
+                             conversation, which resumes its session id
+
+That resume is the whole reason the box exists. Turn N of a conversation reuses the session the
+earlier turns wrote, so the follow-up arrives with everything the agent already did in front of
+it. Asking again through the top box is a new conversation on a cold container: the person
+re-explains the bug to something that just spent four minutes reading the code for it, and the
+record splits into two threads about one question. Nothing new was needed to make the resume
+work — build_job has resumed a conversation's session since the Discord lanes did, and a local
+conversation was simply never given a second turn before.
+
+LOCAL CONVERSATIONS ONLY, refused on both sides. A message inserted here carries this box's
+unix user as its author, which is not a Discord identity the trust rules can read, and the turn
+it produced would queue a reply into a public thread on the strength of it. Whether the person
+at the keyboard may speak in that thread is Discord's question; a login on this box does not
+answer it. So ffwatch refuses a non-local conversation — it is the writer, and that is the
+refusal that counts — and the route refuses it as well, because a page that renders a form it
+knows will be rejected is a page lying about what it can do. A Discord thread gets a sentence
+saying where it is answered instead of a box.
+
+A FOLLOW-UP TYPED MID-RUN WAITS, AND BATCHES. This is the one place the obvious implementation
+is wrong. create_turn sets the conversation back to 'queued', which is the single state the
+scheduler reads as free, so a turn created while a container is working would launch alongside
+it — and two runs resuming one session id fork the transcript irrecoverably. The message is
+therefore recorded and left UNCLAIMED, and claim_turns gives it a turn on the pass after the
+run ends. That is exactly what a burst of Discord follow-ups already does (design section 12),
+so several messages typed during one long run become one turn rather than a queue of them, and
+the placeholder in the box says so before the button is pressed.
+
+claim_turns had to learn this, and only just this. It refuses local kinds outright today,
+because submit() writes a message and then a turn and a crash between the two INSERTs would
+otherwise leave the sweep re-answering an opening prompt that already has an answer — the
+2026-08-22 incident where five imported shell runs burned five containers. The narrowing is
+"local conversations that already have a turn": a crashed submit cannot have one, and a
+follow-up always does.
+
+One bug fell out of writing it, in a place nothing had exercised: render_prompt handed the
+shell lane job["messages"][-1] and nothing else, so a batched turn would have delivered only
+the last thing typed and silently dropped the rest. It joins them now.
 
 Reply venue is private, and the reply is the run record itself: the timeline row, the
 transcript index, the result text. The same thing a waiting terminal reads.

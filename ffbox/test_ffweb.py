@@ -126,6 +126,14 @@ def build_fixture(root):
        " VALUES(3,'chan','thread-3','suggestion','Add conveyor colours','running',1,'answer',"
        "'2026-08-18T10:00:00Z','2026-08-18T11:00:00Z')")
 
+    # A LOCAL conversation — the kind the prompt box on this page opens, with no Discord side
+    # at all. It is what the reply box is offered on, and what the other three are not.
+    ex("INSERT INTO conversation(id, channel_id, thread_id, kind, title, opener_discord_id,"
+       " state, is_thread, session_id, lane, created_at, last_activity_at)"
+       " VALUES(4,NULL,'1755999000123','web','what does the merger do when both inputs"
+       " saturate?','ben','idle',0,'sess-4','shell','2026-08-21T09:00:00Z',"
+       "'2026-08-21T09:04:00Z')")
+
     ex("INSERT INTO message(id, conversation_id, discord_id, direction, author_id, author_name,"
        " is_bot, content, created_at) VALUES(1,1,'d1','in','u1',?,0,?,'2026-08-20T10:00:00Z')",
        (f"player{XSS}", f"the game explodes {XSS}"))
@@ -135,6 +143,10 @@ def build_fixture(root):
     ex("INSERT INTO message(id, conversation_id, discord_id, direction, author_id, author_name,"
        " is_bot, content, created_at)"
        " VALUES(3,2,'d3','in','u2','asker',0,'how?','2026-08-19T10:00:00Z')")
+    ex("INSERT INTO message(id, conversation_id, discord_id, direction, author_id, author_name,"
+       " is_bot, content, created_at)"
+       " VALUES(10,4,'1755999000123','in','1000','ben',0,'what does the merger do when both"
+       " inputs saturate?','2026-08-21T09:00:00Z')")
 
     # Two real blobs: a PNG that must come back as image/png and render inline, and a log that
     # must be flattened to text/plain however it was declared.
@@ -169,9 +181,15 @@ def build_fixture(root):
        " VALUES(3,2,1,'message','answer','done','2026-08-19T10:00:05Z')")
     ex("INSERT INTO turn(id, conversation_id, seq, trigger, lane, status, queued_at)"
        " VALUES(4,3,1,'message',NULL,'queued','2026-08-18T10:00:05Z')")
+    # No run row for this one: the aggregates below are hand-computed over runs 1-3, and a
+    # fourth would quietly change every number this file asserts.
+    ex("INSERT INTO turn(id, conversation_id, seq, trigger, lane, status, queued_at, ended_at)"
+       " VALUES(10,4,1,'web_prompt','shell','done','2026-08-21T09:00:05Z',"
+       "'2026-08-21T09:04:00Z')")
 
     ex("UPDATE message SET turn_id=1 WHERE id IN (1,2)")
     ex("UPDATE message SET turn_id=3 WHERE id=3")
+    ex("UPDATE message SET turn_id=10 WHERE id=10")
 
     # run rows, with the NULLs on purpose (see test_aggregates_handle_nulls for the arithmetic)
     ex("INSERT INTO run(id, turn_id, ffbox_run_id, container_name, session_id, resumed,"
@@ -431,7 +449,7 @@ os.environ["FFWEB_TEST_CALLS"] = CALLS
 # added here rather than by being remembered.
 ROUTES = ["/", "/lanes", "/outbound", "/outbound?status=pending",
           "/?kind=bug_report", "/?state=closed", "/?verdict=ANSWERED", "/?lane=answer",
-          "/conversation/1", "/conversation/2", "/conversation/3",
+          "/conversation/1", "/conversation/2", "/conversation/3", "/conversation/4",
           "/run/1", "/run/2", "/run/3"] + \
          ["/blob/" + d for d in BLOB_IDS.values()]
 
@@ -608,7 +626,7 @@ def test_the_ui_cannot_write():
         n = ro.execute("SELECT COUNT(*) FROM conversation").fetchone()[0]
         status = ro.execute("SELECT status FROM outbound WHERE id=1").fetchone()[0]
         ro.close()
-        check("row state is unchanged after the crawl", n == 3 and status == "pending",
+        check("row state is unchanged after the crawl", n == 4 and status == "pending",
               f"{n} conversations, outbound 1 is {status}")
     finally:
         srv.stop()
@@ -922,6 +940,109 @@ def test_the_prompt_box_needs_no_flag():
         srv.stop()
 
 
+def test_a_conversation_can_be_answered_back():
+    """The box on a conversation page continues THAT conversation instead of opening another.
+
+    Conversation 4 is a local one (kind `web`); 1, 2 and 3 came from Discord. The box is on the
+    first and a note is on the others, and the route refuses the others too — ffwatch refuses
+    them as well, and that is the refusal that counts, but a page that shows a form it knows
+    will be rejected is a page that lies about what it can do.
+    """
+    srv = serve()
+    try:
+        body = text_of(srv.get("/conversation/4")[2])
+        check("a local conversation carries a reply box",
+              'action="/actions/reply"' in body, body[:300])
+        check("aimed at the conversation being read",
+              'name="conversation" value="4"' in body)
+        check("and it says what it does — continue this one, not start a new one",
+              "Continue this conversation" in body)
+        check("the box on the list page still says the opposite of that",
+              "Start a new conversation" in text_of(srv.get("/")[2]))
+
+        discord = text_of(srv.get("/conversation/1")[2])
+        check("a Discord conversation gets no box",
+              'action="/actions/reply"' not in discord)
+        check("it gets a sentence saying where it is answered instead",
+              "answered" in discord and "Discord" in discord)
+
+        open(CALLS, "w").close()
+        code, hdr, _b = srv.post("/actions/reply", {"conversation": "4",
+                                                    "prompt": "and when only one is?"})
+        check("a reply POST redirects", code == 303, code)
+        check("back to the conversation it was typed into",
+              (hdr.get("Location") or "") == "/conversation/4?sent=1", hdr.get("Location"))
+        calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
+        check("it shelled out to ffwatch, naming the conversation to continue",
+              calls and calls[0] == ["--state-dir", STATE, "submit", "--conversation", "4",
+                                     "--", "and when only one is?"], calls)
+        check("and did not pass --source: the front door is the conversation's, already set",
+              "--source" not in calls[0], calls[0])
+
+        page = text_of(srv.get("/conversation/4?sent=1")[2])
+        check("the acknowledgement lands on the conversation page too",
+              'class="toast"' in page and "Message sent" in page)
+        check("and clears itself on the next visit",
+              'class="toast"' not in text_of(srv.get("/conversation/4")[2]))
+
+        # The refusals, in the order somebody would meet them.
+        open(CALLS, "w").close()
+        for fields, code_wanted, label in (
+                ({"conversation": "4", "prompt": "  "}, 400, "an empty reply is refused"),
+                ({"prompt": "hello"}, 400, "a reply with no conversation is refused"),
+                ({"conversation": "abc", "prompt": "hi"}, 400,
+                 "a conversation id that is not a number is refused"),
+                ({"conversation": "9999", "prompt": "hi"}, 404,
+                 "a conversation that does not exist is refused"),
+                ({"conversation": "1", "prompt": "hi"}, 403,
+                 "and a Discord conversation is refused before ffwatch is even reached")):
+            code, _h, _b = srv.post("/actions/reply", fields)
+            check(label, code == code_wanted, code)
+        check("none of those reached ffwatch", os.path.getsize(CALLS) == 0)
+
+        # Same grant, same guard: this route runs work on the box, so a mismatched Origin is
+        # refused rather than logged, exactly as the prompt box's is.
+        code, _h, _b = srv.post("/actions/reply", {"conversation": "4", "prompt": "hi"},
+                                headers={"Origin": "http://evil.example"})
+        check("a cross-origin reply is REFUSED, not merely logged", code == 403, code)
+        check("and ffwatch was not invoked for it", os.path.getsize(CALLS) == 0)
+
+        open(CALLS, "w").close()
+        nasty = "look at $(id); `whoami` && rm -rf / ; echo done"
+        srv.post("/actions/reply", {"conversation": "4", "prompt": nasty})
+        calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
+        check("shell metacharacters arrive as one inert argv element",
+              calls and calls[0][-1] == nasty and calls[0][-2] == "--", calls)
+
+        os.environ["FFWEB_TEST_RC"] = "3"
+        try:
+            code, hdr, _b = srv.post("/actions/reply", {"conversation": "4", "prompt": "hi"})
+            loc = hdr.get("Location") or ""
+            check("a refused reply says so on the conversation it was typed into",
+                  loc.startswith("/conversation/4?msg="), loc)
+            page = text_of(srv.get(loc)[2])
+            check("and names the failure instead of fading",
+                  "failed" in page and 'class="note"' in page and 'class="toast"' not in page)
+        finally:
+            os.environ["FFWEB_TEST_RC"] = "0"
+    finally:
+        srv.stop()
+
+
+def test_the_reply_box_says_a_follow_up_will_wait():
+    """Typed while a container is working, a follow-up is recorded now and run when that run
+    ends. That is right, and it looks like nothing happening unless the page says so first."""
+    srv = Server(*live_fixture(), STUB_FFWATCH)
+    try:
+        body = text_of(srv.get("/conversation/4")[2])
+        check("with work in flight the box says the reply waits for it",
+              "when the work in flight finishes" in body, body[:400])
+        check("and the box is still there to type into",
+              'action="/actions/reply"' in body)
+    finally:
+        srv.stop()
+
+
 def test_a_queued_prompt_says_one_thing_and_a_failure_says_everything():
     """What came back from `ffwatch submit` used to be pinned to the top of the page: config
     warnings, the conversation it opened, the turn id, all of it, and none of it an answer to
@@ -1029,6 +1150,12 @@ def live_fixture():
        "'2026-08-19T12:00:05Z')")
     ex("INSERT INTO run(id, turn_id, ffbox_run_id, container_name, session_id, tools,"
        " terminal_state) VALUES(5,5,'run-e','ffbox-run-e','sess-2','Read',NULL)")
+    # And one on the LOCAL conversation, which is the only kind with a reply box to change.
+    ex("INSERT INTO turn(id, conversation_id, seq, trigger, lane, status, queued_at,"
+       " started_at) VALUES(11,4,2,'web_prompt','shell','running','2026-08-21T09:05:00Z',"
+       "'2026-08-21T09:05:05Z')")
+    ex("INSERT INTO run(id, turn_id, ffbox_run_id, container_name, session_id, tools,"
+       " terminal_state) VALUES(11,11,'run-f','ffbox-run-f','sess-4','Read',NULL)")
     return state, db_path, blobs
 
 
@@ -1698,6 +1825,8 @@ def main():
         test_actions_are_off_by_default,
         test_actions_call_ffwatch_not_the_database,
         test_the_prompt_box_needs_no_flag,
+        test_a_conversation_can_be_answered_back,
+        test_the_reply_box_says_a_follow_up_will_wait,
         test_actions_refuse_a_public_bind,
         test_a_stale_schema_is_refused_with_a_fixable_message,
         test_aggregates_match_hand_computed_values,

@@ -1655,21 +1655,30 @@ class Watcher:
         the claim is a single UPDATE over every unclaimed message in the conversation. Nothing
         is dropped and nothing runs twice.
 
-        LOCAL CONVERSATIONS ARE NOT SWEPT. A shell or web prompt gets its turn from submit(),
-        and an imported run gets one from import_run_dir; both create it explicitly, alongside
-        the message row. This sweep exists for the opposite case — a message that arrived with no
-        turn attached, which for a Discord thread means a player is waiting. Reading a shell
-        prompt that way costs a container and a Claude run to answer a question already
+        A LOCAL CONVERSATION IS ONLY SWEPT ONCE IT HAS A TURN. The opening prompt of a shell
+        or web conversation gets its turn from submit(), and an imported run gets one from
+        import_run_dir; both create it explicitly, alongside the message row. Reading THAT
+        message here would cost a container and a Claude run to answer a question already
         answered, and used to end with a reply addressed at a channel id that does not exist.
-        Left to the writers to always link the message, this is one crash between two INSERTs
-        away from coming back, so the sweep refuses the whole kind rather than trusting them.
+        Left to the writers to always link the message, that is one crash between two INSERTs
+        away from coming back — so a local conversation with no turn on it is still refused
+        outright rather than trusted.
+
+        A FOLLOW-UP is the case this does serve. follow_up() deliberately leaves its message
+        unclaimed when a container is already working for that conversation, because a turn
+        created then would race the run in flight; the message waits here instead, and is
+        claimed on the pass after the run ends — batched with anything else typed meanwhile,
+        exactly as a burst of Discord follow-ups is. A conversation that already has a turn
+        cannot be the crashed-submit case, so the guard above still holds.
         """
         created = []
         rows = self.db.query(
             "SELECT DISTINCT m.conversation_id AS cid FROM message m"
             " JOIN conversation c ON c.id = m.conversation_id"
             " WHERE m.turn_id IS NULL AND m.direction='in' AND m.is_bot=0"
-            f" AND c.kind NOT IN ({','.join('?' * len(LOCAL_KINDS))})", LOCAL_KINDS)
+            f" AND (c.kind NOT IN ({','.join('?' * len(LOCAL_KINDS))})"
+            "      OR EXISTS (SELECT 1 FROM turn t WHERE t.conversation_id = c.id))",
+            LOCAL_KINDS)
         for row in rows:
             conv = self.db.one("SELECT * FROM conversation WHERE id=?", (row["cid"],))
             if conv is None or conv["state"] in ("running", "queued", "closed"):
@@ -2126,7 +2135,13 @@ class Watcher:
             # in place, `ffbox "what file defines the belt merger?"` came back with a policy
             # refusal addressed to a player, because the answerer role forbids naming repo
             # internals to Discord users. Correct behaviour for that role; wrong conversation.
-            parts = [job["messages"][-1]["content"] if job["messages"] else ""]
+            #
+            # EVERY message in the turn, not just the last. A turn batches whatever was typed
+            # while the previous run was working (claim_turns), so a person who followed one
+            # question with a correction would have had the question dropped and only the
+            # correction delivered. Blank-line separated, the way they were typed.
+            parts = ["\n\n".join((m["content"] or "").strip() for m in job["messages"]
+                                 if (m["content"] or "").strip())]
             if job.get("note"):
                 parts += ["", "Harness instruction for this turn:", "", job["note"]]
             if job["resume_summary"]:
@@ -2680,6 +2695,87 @@ class Watcher:
                         (json.dumps({"ref": ref, "branch": branch}),
                          turn_id))
         return turn_id
+
+    def follow_up(self, conversation_id, prompt):
+        """Continue a LOCAL conversation: one more message on the end of it, and a turn for it.
+
+        Returns (message_id, turn_id). turn_id is None when the message was recorded but its
+        turn has to wait — see below.
+
+        The same rows a follow-up in a Discord thread produces, so everything downstream is
+        again unchanged: the turn is seq N of the SAME conversation, so build_job resumes the
+        session id the earlier turns wrote and the agent carries on with its own transcript
+        rather than meeting the question cold. That is the whole difference between this and
+        submit(), which opens a new conversation every time.
+
+        LOCAL CONVERSATIONS ONLY, and this refuses rather than adapts. A Discord thread is
+        answered in Discord: a message inserted here would carry this box's unix user as its
+        author, which is not a Discord identity the trust rules can read, and the turn it
+        produced would queue a reply into a public thread on the strength of it. Whether the
+        person at the keyboard is allowed to speak in that thread is Discord's question, and
+        nothing about a login on this box answers it.
+
+        NOT CLAIMED WHILE A CONTAINER IS WORKING. create_turn would set the conversation back
+        to 'queued', which is the one state the scheduler reads as free — the new turn would
+        launch alongside the run in flight, and two runs resuming one session id fork the
+        transcript irrecoverably. So the message is left unclaimed and claim_turns picks it up
+        on the pass after the run ends, which also batches several follow-ups typed during one
+        long run into a single turn instead of a queue of them.
+        """
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conversation_id,))
+        if conv is None:
+            raise ValueError(f"no conversation {conversation_id}")
+        if not is_local_conversation(conv):
+            raise ValueError(
+                f"conversation {conversation_id} is a {conv['kind']} conversation; only "
+                f"{'/'.join(LOCAL_KINDS)} conversations are continued from this side — a "
+                f"Discord thread is answered in Discord")
+        prompt = (prompt or "").strip()
+        if not prompt:
+            raise ValueError("empty prompt")
+        # The same minted key submit() uses, and for the same reason: message ordering casts
+        # discord_id to an integer everywhere, so a follow-up has to sort after the prompt it
+        # follows. Milliseconds do that on their own.
+        key = f"{int(time.time() * 1000)}{os.getpid() % 1000:03d}"
+        message_id = self.insert_message(conv["id"], {
+            "id": key,
+            "author": {"id": str(os.getuid()), "username": getpass.getuser(), "bot": False},
+            "content": prompt,
+            "timestamp": now_iso(),
+        })
+        if message_id is None:                  # the key collided; INSERT OR IGNORE dropped it
+            raise RuntimeError("the follow-up did not record a message")
+        if conv["state"] in ("running", "queued"):
+            log(f"conversation {conv['id']}: follow-up recorded, waiting for the turn ahead "
+                f"of it to end")
+            return message_id, None
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv["id"],))
+        turn_id = self.create_turn(conv)
+        if turn_id is None:
+            raise RuntimeError("the follow-up did not produce a turn")
+        return message_id, turn_id
+
+    def wait_for_claim(self, message_id, *, timeout=None, drive=None):
+        """Block until a deferred follow-up has a turn. The turn id, or None on a timeout.
+
+        Only the waiting half of follow_up()'s deferral. `drive` is decided the way
+        wait_for_turn decides it, and for the same reason: with no daemon up, this process is
+        the only thing that will ever run the pass that claims the message.
+        """
+        if drive is None:
+            drive = not self.daemon_alive()
+        started = time.monotonic()
+        while True:
+            if drive:
+                self.once()
+            row = self.db.one("SELECT turn_id FROM message WHERE id=?", (message_id,))
+            if row is None:
+                return None
+            if row["turn_id"]:
+                return row["turn_id"]
+            if timeout is not None and time.monotonic() - started > timeout:
+                return None
+            time.sleep(1 if drive else float(self.cfg["poll_secs"]))
 
     def wait_for_turn(self, turn_id, *, timeout=None, drive=None, on_log=None):
         """Block until the turn reaches a terminal state. Returns the turn row.
@@ -3878,6 +3974,13 @@ def build_parser():
                     help="which front door this came through, recorded as the conversation "
                          "kind (default shell; ffweb passes web). It changes the record and "
                          "nothing else — every source takes the same lane.")
+    sp.add_argument("--conversation", type=int, metavar="ID",
+                    help="continue conversation ID instead of opening a new one. Local "
+                         "conversations only: a Discord thread is answered in Discord. The "
+                         "turn resumes that conversation's session, so the agent carries on "
+                         "with its own transcript rather than meeting the question cold. "
+                         "--source is not consulted — the front door is a property of the "
+                         "conversation, which already exists.")
     sp.add_argument("--ref", help="check the workspace out at this ref (default: base_ref)")
     sp.add_argument("--branch", help="harvest the work onto this branch as a git bundle")
     sp.add_argument("--wait", action="store_true", help="block until the run finishes")
@@ -3941,9 +4044,39 @@ def main(argv=None):
         prompt = " ".join(args.prompt).strip()
         if not prompt or prompt == "-":
             prompt = sys.stdin.read()
-        turn_id = watcher.submit(prompt, kind=args.source, ref=args.ref,
-                                 branch=args.branch)
-        if not args.wait:
+        # A refusal is an ANSWER here, not a traceback. ffweb shows this process's output back
+        # to whoever pressed the button, and "conversation 7 is a bug_report conversation" is a
+        # sentence they can act on where a stack trace is not.
+        try:
+            if args.conversation:
+                # --ref and --branch belong to the OPENING turn: the conversation is pinned to
+                # the base it was first cloned from, and moving the tree under a session that
+                # has been citing file:line against it is how turn 5 reads a stale transcript.
+                for opt in ("ref", "branch"):
+                    if getattr(args, opt) is not None:
+                        print(f"ffwatch: --{opt} is ignored when continuing a conversation; "
+                              f"the opening turn settled it", file=sys.stderr)
+                message_id, turn_id = watcher.follow_up(args.conversation, prompt)
+            else:
+                message_id = None
+                turn_id = watcher.submit(prompt, kind=args.source, ref=args.ref,
+                                         branch=args.branch)
+        except ValueError as exc:
+            print(f"ffwatch: {exc}", file=sys.stderr)
+            return 2
+        if turn_id is None:
+            # A follow-up typed while the conversation is busy — a container working, or a
+            # turn queued and not started. The message is recorded; claim_turns gives it a
+            # turn on the pass after that one ends.
+            print(f"recorded on conversation {args.conversation}; it gets its turn when the "
+                  f"one ahead of it ends")
+            if not args.wait:
+                return 0
+            turn_id = watcher.wait_for_claim(message_id)
+            if turn_id is None:
+                print("ffwatch: the follow-up was never claimed", file=sys.stderr)
+                return 1
+        elif not args.wait:
             print(f"queued turn {turn_id}")
             return 0
         turn = watcher.wait_for_turn(turn_id)
