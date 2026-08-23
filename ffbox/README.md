@@ -580,7 +580,10 @@ lanes (`fix`, `dev`) add the three things the harness owns and the agent cannot 
   Unity's Performance Testing package writes to `$HOME/.config/unity3d/Never Games/finalfactory/`
   on Linux, which every copy of the project shares, and that file is never read. The task
   deletes anything already at the report path first, so an agent that wrote its own
-  `verification.json` mid-turn cannot have it believed.
+  `verification.json` mid-turn cannot have it believed. A lane that was never asked to verify
+  leaves no `verification` row at all — an absent row means "nothing to verify here", and a
+  row saying it did not run means the check was owed and is missing, which is what the reply
+  reports as `NOT VERIFIED`.
 - **Publication.** ffbox commits the working tree on `ffbox/<run-id>` and harvests a git bundle
   of `base..branch`. ffwatch verifies the bundle, fetches it under `refs/ffbox/` in the host
   checkout — no local branch moved, no working tree touched — and pushes it.

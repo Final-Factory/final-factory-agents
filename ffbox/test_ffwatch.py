@@ -1080,6 +1080,20 @@ def test_read_only_capabilities():
     check("the conversation pins the base sha it was first cloned from",
           case.rows("SELECT base_sha FROM conversation")[0]["base_sha"].startswith("0579c37b8"))
 
+    # AND IT LEAVES NO ROW BEHIND SAYING SO. record_verification used to run for every finished
+    # run, so a lane that was never asked to verify got the synthesised "the container produced
+    # no verification report" row — which compose_head prints as ⚠️ NOT VERIFIED and the web
+    # page renders under a verification heading. Every question asked in Discord carried that
+    # warning. The two states compose_head keeps apart, "we could not check" and "we did not
+    # need to check", have to stay apart in the table too.
+    check("and writes no verification row for a lane it never asked to verify",
+          case.rows("SELECT * FROM verification WHERE run_id=?", (run["id"],)) == [],
+          case.rows("SELECT * FROM verification"))
+    reply = json.loads(case.rows("SELECT * FROM outbound WHERE run_id=? AND action='post'",
+                                 (run["id"],))[0]["payload_json"])["text"]
+    check("so the answer does not warn the player that it was not verified",
+          "NOT VERIFIED" not in reply, reply[:400])
+
 
 def test_batching_during_a_run():
     print("messages arriving mid-run")

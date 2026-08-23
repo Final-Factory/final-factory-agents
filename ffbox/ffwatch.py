@@ -2466,7 +2466,18 @@ class Watcher:
         # it, so it is recorded first; publication is next, because compose_head prints the
         # branch and PR lines out of the run row; the reply is composed last, from what both of
         # those actually wrote rather than from what the agent said they would.
-        self.record_verification(run_row_id, turn, run_dir, timeout_kind)
+        #
+        # ONLY FOR A LANE THAT WAS ASKED TO VERIFY. This used to be unconditional, and so every
+        # question, every triage and every local shell run got a synthesised row saying "the
+        # container produced no verification report" — which compose_head then printed as
+        # ⚠️ NOT VERIFIED and the web page rendered under a verification heading. A read-only
+        # lane was never going to verify anything, and the two states compose_head is careful
+        # to keep apart, "we could not check" and "we did not need to check", had collapsed into
+        # the alarming one. The flag is read back out of job.json rather than recomputed from
+        # the lane, so the host records exactly what the container was told to do and the two
+        # cannot drift apart again.
+        if (job.get("verify") or {}).get("enabled"):
+            self.record_verification(run_row_id, turn, run_dir, timeout_kind)
         self.publish(run_row_id, turn, conv, run_dir, job, verdict)
 
         self.index_transcript(run_row_id, conv["id"], job["session"]["id"])
@@ -3052,6 +3063,10 @@ class Watcher:
         is therefore a harness fact, and a lane that should have been verified but produced no
         report gets a row saying exactly that rather than no row at all — an absent row would
         read downstream as "not a lane that needs verifying".
+
+        Which is exactly what an absent row does mean, and why the caller only reaches this for
+        a run whose job.json asked for verification in the first place. A read-only lane leaving
+        a row behind would be indistinguishable from a write lane whose report went missing.
         """
         report = _read_json(os.path.join(run_dir, "verification.json"))
         if not isinstance(report, dict):
