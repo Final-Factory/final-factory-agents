@@ -513,6 +513,82 @@ def bug_thread(fixture, tid, title, msgs):
 # ------------------------------------------------------------------------------------------
 
 
+LOTHSAHN = "193210319093497857"
+
+
+def test_tier_and_venue_reach_the_container():
+    print("trust and venue on the job")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [
+        message(4501, "what file defines the belt merger?", author=LOTHSAHN, name="lothsahn")]
+    case = Case("tier-public", fixture)
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.events(ask_event(4501))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    turn = case.rows("SELECT * FROM turn")[0]
+    check("an authenticated operator id makes an operator turn",
+          turn["trust_tier"] == "operator", turn)
+    check("and the reason names the config key it came from",
+          "trust.operators.lothsahn" in (turn["trust_reason"] or ""), turn["trust_reason"])
+    check("a public channel is a public venue however trusted the asker",
+          turn["venue"] == "public", turn)
+
+    case.watcher.launch(turn["id"])
+    run = case.watcher.db.one("SELECT * FROM run WHERE turn_id=?", (turn["id"],))
+    job = json.load(open(os.path.join(os.path.dirname(run["stream_path"]), "job.json"),
+                         encoding="utf-8"))
+    check("the job carries the tier as a fact", job["trust"]["tier"] == "operator", job["trust"])
+    prompt = job["prompt"]
+    check("the prompt states it as a HARNESS FACT rather than leaving it to be inferred",
+          "HARNESS FACT" in prompt and "OPERATOR" in prompt, prompt[:400])
+    check("and tells it to write a public half that stands alone",
+          "STANDS ALONE" in prompt and "private half" in prompt, prompt[:800])
+
+    # The same person, in a channel declared private. No split, everything in place.
+    priv = base_fixture()
+    priv["channels"]["dev_chat"] = DEVCHAT
+    priv["messages"][DEVCHAT] = [
+        message(4601, "which file defines the belt merger?", channel=DEVCHAT,
+                author=LOTHSAHN, name="lothsahn")]
+    priv["messages"][DEVCHAT][0]["mentions"] = [{"id": BOT}]
+    case2 = Case("tier-private", priv)
+    case2.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case2.cfg["watch"]["dev_chat"] = {"kind": "ask", "forum": False,
+                                      "venue": "private", "engage": "mention"}
+    case2.events(ask_event(4601, channel="dev_chat", channel_id=DEVCHAT))
+    case2.watcher.drain_events()
+    case2.watcher.claim_turns()
+    turn2 = case2.rows("SELECT * FROM turn")[0]
+    check("a declared private channel is a private venue", turn2["venue"] == "private", turn2)
+    case2.watcher.launch(turn2["id"])
+    run2 = case2.watcher.db.one("SELECT * FROM run WHERE turn_id=?", (turn2["id"],))
+    job2 = json.load(open(os.path.join(os.path.dirname(run2["stream_path"]), "job.json"),
+                          encoding="utf-8"))
+    check("the private prompt says answer fully",
+          "PRIVATE channel" in job2["prompt"] and "Answer fully" in job2["prompt"],
+          job2["prompt"][:600])
+    check("and does not ask for a split", "STANDS ALONE" not in job2["prompt"])
+
+
+def test_a_player_never_inherits_an_operators_clearance():
+    print("tier is a property of the turn")
+    fixture = base_fixture()
+    root = message(4701, "here is how it works", author=LOTHSAHN, name="lothsahn")
+    # A REPLY, so both land in one conversation and one turn batches them. The reply is a
+    # player's, and the turn answers both, so the whole turn is a player's.
+    fixture["messages"][ASK_CHANNEL] = [
+        root, message(4702, "wait, which file is that in?", ref=root)]
+    case = Case("tier-mixed", fixture)
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.events(ask_event(4701), ask_event(4702))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    tiers = {t["trust_tier"] for t in case.rows("SELECT * FROM turn")}
+    check("a batch that contains a player's message is a player's turn",
+          tiers == {"player"}, case.rows("SELECT trust_tier, trust_actor FROM turn"))
+
+
 def test_operator_table_holds_ids_only():
     print("operators")
     cfg = {"_discord": {"trust": {"operators": {
@@ -2454,8 +2530,14 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
     check("the prompt carries no Discord framing and no answerer role",
           "<discord>" not in job["prompt"] and "ff-discord" not in (job["prompt"] or ""),
           job["prompt"][:200])
-    check("and the ff-discord plugin is not mounted for it",
-          job["plugin_dir"] is None, job["plugin_dir"])
+    # The plugin IS mounted now, and the policy is carried by the declared venue instead. The
+    # shell lane gets max-voice and the rest of the ff-discord skills back; what it does not get
+    # is a role, a Discord fence, or a player-facing disclosure rule.
+    check("the ff-discord plugin is mounted, so its skills are available",
+          job["plugin_dir"] and job["plugin_dir"].endswith("ff-discord"), job["plugin_dir"])
+    check("no role is loaded for it", job["agent"] is None, job["agent"])
+    check("the shell ingress is an operator at a private venue",
+          (job["trust"]["tier"], job["venue"]["kind"]) == ("operator", "private"), job["trust"])
     check("nothing is queued for Discord, because there is no thread to answer",
           not case.rows("SELECT * FROM outbound"), case.rows("SELECT * FROM outbound"))
 
@@ -2823,6 +2905,8 @@ def main():
         test_the_gate_declines_a_message_that_asks_nothing,
         test_the_gate_answers_when_it_is_unsure,
         test_evidence_and_thread_openings_never_reach_the_gate,
+        test_tier_and_venue_reach_the_container,
+        test_a_player_never_inherits_an_operators_clearance,
         test_operator_table_holds_ids_only,
         test_venue_and_engage_come_from_the_watch_entry,
         test_config_warnings_name_every_silent_default,
