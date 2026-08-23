@@ -55,6 +55,12 @@ sys.path.insert(0, HERE)
 import ffwatch   # noqa: E402
 import ffweb     # noqa: E402
 
+# A refused login sleeps half a second in production, and this file refuses a lot of them.
+# The shipped value is kept and asserted — and briefly restored, once, by the case that times
+# the wait — so shrinking it here buys the runtime back without dropping the guarantee.
+SHIPPED_LOGIN_FAILURE_DELAY = ffweb.LOGIN_FAILURE_DELAY_SECS
+ffweb.LOGIN_FAILURE_DELAY_SECS = 0.01
+
 FAILURES = []
 
 XSS = "<script>alert(1)</script>"
@@ -277,9 +283,14 @@ class Server:
         self.httpd = ffweb.FFWebServer(("127.0.0.1", port), self.app, ssl_context=ctx)
         self.port = self.httpd.server_address[1]
         self.base = f"{scheme}://127.0.0.1:{self.port}"
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        # A hundredth of serve_forever's default poll interval. shutdown() blocks until the
+        # loop comes round to notice it, so at the default this harness paid half a second per
+        # server teardown — with a server per case, most of this file's runtime.
+        self.thread = threading.Thread(target=self.httpd.serve_forever, args=(0.01,),
+                                       daemon=True)
         self.thread.start()
         self.cookie = ""
+        self._opener = None
         if login:
             code, _hdr = self.login()
             assert code == 303, f"harness could not sign in: {code}"
@@ -321,10 +332,16 @@ class Server:
     def _open(self, req, timeout=20):
         # A 303 would be followed by urllib and turned into a GET; we want the redirect itself,
         # because "which page did the gate send me to" is most of what these tests assert.
-        handlers = [NoRedirect]
-        if self.client_ctx is not None:
-            handlers.append(urllib.request.HTTPSHandler(context=self.client_ctx))
-        return urllib.request.build_opener(*handlers).open(req, timeout=timeout)
+        #
+        # Built once and kept. build_opener() constructs an HTTPSHandler, whose default context
+        # loads the system CA bundle — 30ms, paid on every plain-http request in this file, for
+        # a trust store none of these cases has any use for.
+        if self._opener is None:
+            handlers = [NoRedirect]
+            if self.client_ctx is not None:
+                handlers.append(urllib.request.HTTPSHandler(context=self.client_ctx))
+            self._opener = urllib.request.build_opener(*handlers)
+        return self._opener.open(req, timeout=timeout)
 
     def raw(self, request_line, extra=""):
         """A hand-built request, for paths urllib would normalise before they reach us."""
@@ -1312,6 +1329,27 @@ def test_the_login_background_is_served_to_a_browser_with_no_session():
         srv.stop()
 
 
+def test_a_refused_login_is_answered_slowly():
+    """The half-second on a wrong password, timed against the real constant.
+
+    The rest of the file runs with that delay shrunk to a token value, so this is the one place
+    the shipped number is put back and actually waited on.
+    """
+    check("the shipped delay is half a second", SHIPPED_LOGIN_FAILURE_DELAY == 0.5,
+          SHIPPED_LOGIN_FAILURE_DELAY)
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
+    ffweb.LOGIN_FAILURE_DELAY_SECS = SHIPPED_LOGIN_FAILURE_DELAY
+    try:
+        started = time.monotonic()
+        code, _hdr, _body = srv.post("/login", {"user": "Ben", "password": "wrong"})
+        spent = time.monotonic() - started
+        check("a wrong password is refused", code == 401, code)
+        check("and the refusal is not immediate", spent >= 0.4, round(spent, 3))
+    finally:
+        ffweb.LOGIN_FAILURE_DELAY_SECS = 0.01
+        srv.stop()
+
+
 def test_the_password_is_the_only_way_in():
     srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
     try:
@@ -1587,7 +1625,7 @@ def test_the_session_times_out_after_an_hour_of_inactivity():
         check("a fresh session works", srv.get("/")[0] == 200)
         # Activity slides it forward: three requests over more than one ttl, still in.
         slid = True
-        for _ in range(3):
+        for _ in range(2):          # 1.2s of it, which is already past the ttl
             time.sleep(0.6)
             if srv.get("/")[0] != 200:
                 slid = False
@@ -1667,6 +1705,7 @@ def main():
         test_nothing_is_served_without_a_login,
         test_the_login_background_is_served_to_a_browser_with_no_session,
         test_the_password_is_the_only_way_in,
+        test_a_refused_login_is_answered_slowly,
         test_a_queued_prompt_says_one_thing_and_a_failure_says_everything,
         test_the_live_pages_reload_themselves,
         test_work_in_flight_shows_up_while_it_happens,
