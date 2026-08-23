@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS conversation (
     thread_id           TEXT    NOT NULL UNIQUE,
     root_message_id     TEXT,
     kind                TEXT,                -- bug_report | suggestion | ask | mention | directive
+    -- Which watch entry this conversation belongs to, recorded at ingest from the doorbell
+    -- rather than reverse-mapped from a channel id later. It is what venue and engage are
+    -- looked up by (design/trusted_ingress_design.txt section 5). NULL for a conversation that
+    -- belongs to no watched channel: a mention somewhere else, a DM, a shell prompt.
+    watch_alias         TEXT,
     title               TEXT,
     opener_discord_id   TEXT,
     state               TEXT    NOT NULL DEFAULT 'idle',  -- idle | queued | running | blocked | closed
@@ -62,7 +67,19 @@ CREATE TABLE IF NOT EXISTS message (
     content                 TEXT,
     referenced_discord_id   TEXT,
     turn_id                 INTEGER REFERENCES turn(id) ON DELETE SET NULL,
-    created_at              TEXT
+    created_at              TEXT,
+    -- Was the bot spoken to: @-mentioned, or this is a reply to one of its own messages.
+    -- Computed at ingest from the fetched message and stored, because the engagement gate
+    -- needs it long after the raw Discord payload is gone, and because "being spoken to" is
+    -- the one signal that decides a turn without asking a model
+    -- (design/trusted_ingress_design.txt section 5).
+    addressed               INTEGER NOT NULL DEFAULT 0,
+    -- Set only when the gate declined this message: 'none', plus why. A declined message stays
+    -- turn_id NULL so it still reads as history, and this column is what stops the scheduler
+    -- reconsidering it on every pass. NULL means "not declined" and says nothing about whether
+    -- a turn was made.
+    gate                    TEXT,
+    gate_reason             TEXT
 );
 
 -- turn_id IS NULL means "not yet claimed by a turn". The scheduler's unclaimed scan is the
