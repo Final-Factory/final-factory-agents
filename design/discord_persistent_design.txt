@@ -675,7 +675,11 @@ how the cursor keys are split.
 
 Read-only over ffwatch.db plus the blob directory:
 
-  - conversation list, filterable by kind, state, verdict, lane
+  - conversation list, filterable by kind, state, verdict, lane, and by a word contained
+    in the title
+  - read/unread, per conversation, defaulting the list to the unread ones. The tick is
+    `conversation.read_through`, written by `ffwatch read` / `ffwatch unread`; it holds the
+    conversation's activity time rather than a flag, so new activity un-reads it on its own
   - a thread view interleaving message, turn, run and verification rows
   - per-run trace: transcript_event as a tree via parent_uuid, subagent work collapsed under
     the spawning tool call, thinking inline
@@ -684,7 +688,8 @@ Read-only over ffwatch.db plus the blob directory:
   - the pending outbound queue when approval-before-send is on
 
 Keep ffwatch the sole writer. If the UI needs to act, it goes through a small write API so the
-UI can move off-box later. transcript_event holds repo internals and raw model thinking: the UI
+UI can move off-box later — including the read ticks, which nothing but the UI ever reads and
+which are a row on the conversation all the same. transcript_event holds repo internals and raw model thinking: the UI
 is internal-only, and none of its text is ever reused in a Discord post.
 
 

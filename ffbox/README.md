@@ -610,7 +610,7 @@ the certificate, because the standard library can serve TLS but cannot create an
 
 | route | what it is |
 |---|---|
-| `/` | conversations, filtered live by kind, state, verdict and lane as the dropdowns change, with cost, tokens and the average warm-up and agent time per conversation. The id and the title both open the conversation |
+| `/` | conversations, filtered live by kind, state, verdict and lane as the dropdowns change, plus a title box that narrows to the titles containing a typed word (Enter applies it) and a **show** dropdown that opens on the unread ones, with cost, tokens and the average warm-up and agent time per conversation. The id and the title both open the conversation, and each row has a button that ticks it read |
 | `/conversation/<id>` | one thread: `message`, `turn`, `run` and `verification` rows interleaved in time, with attachments rendered in place. A local conversation also carries a reply box that continues it |
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per lane |
@@ -675,6 +675,31 @@ the agent said shows up under the message that started it, marked **"still worki
 thing it said, not the reply"** until the turn reaches a terminal state. Warm-up — the clone,
 the container, Unity — happens before the agent says anything, so a run page opened in that
 window says so rather than showing an empty transcript.
+
+**Read and unread.** Every row on `/` carries a button that ticks that conversation off, and
+the **show** dropdown at the top picks between `unread`, `read` and `all`. It opens on
+`unread`, because the list is a queue of things to look at and the value of an inbox is that it
+empties; `all` is the old behaviour and is one dropdown away. The button says what the click
+will do rather than what the row is — *mark read* on an unread row, *mark unread* on a read one
+— so it is its own undo, and it comes back to the list you ticked from, filters and all.
+
+The button runs `ffwatch read <id>` (and `ffwatch unread <id>` the other way), which are also
+useful from a terminal: `ffwatch read $(seq 1 40)` clears a backlog you have already been
+through in Discord. What ffwatch records is not a flag but `conversation.read_through` — **the
+conversation's own activity timestamp, as it stood at the moment of the tick**. That is what
+makes a row come back on its own: a thread you triaged on Monday that a player replies to on
+Tuesday is unread again, because `read_through < last_activity_at` is the definition of
+"something happened since you looked". Ticking it again catches the stamp up. Nothing in the
+pipeline reads the column back — ffweb is its only reader — but it is a fact about a
+conversation, so it lives on the conversation, and the page filters on it in SQL like any other
+column. It arrives on an existing database through the usual `ALTER TABLE` list at the next
+start (schema v7); ffweb refuses to serve a database that is missing it, naming the command
+that adds it.
+
+There is **no flag** in front of the button, for the reason there is none in front of the
+prompt box: `--enable-actions` guards releasing a reply into a public Discord thread, and a tick
+nothing outside this page ever reads is not that. A mismatched `Origin` is still refused, since
+a forged POST that emptied someone's queue view would be a nuisance worth not having.
 
 **Approve/reject** on the outbound queue is the one that stays behind a flag. `--enable-actions`
 is **off by default**, and the systemd unit does not carry it. The difference is disclosure, not

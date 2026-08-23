@@ -51,6 +51,16 @@ CREATE TABLE IF NOT EXISTS conversation (
     in_watermark_id     TEXT,
     out_watermark_id    TEXT,
     verdict             TEXT,
+    -- How far the web UI has been read through: the value COALESCE(last_activity_at,
+    -- created_at) had at the moment somebody ticked this conversation off, or NULL for one
+    -- nobody has. A TIMESTAMP AND NOT A FLAG, deliberately: a flag would leave a thread you
+    -- triaged on Monday marked read after a player replies to it on Tuesday, and the unread
+    -- queue exists to show you exactly that. `read_through < last_activity_at` is the
+    -- definition of "something has happened since you looked", so new activity un-reads the
+    -- row on its own and ticking it again records the newer moment. Nothing in the pipeline
+    -- reads this column — ffwatch owns the write, ffweb is the only reader — but it lives
+    -- here rather than in a file beside the database so the record travels with the record.
+    read_through        TEXT,
     github_issue        TEXT,
     github_pr           TEXT,
     created_at          TEXT,
