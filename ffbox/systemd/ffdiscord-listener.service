@@ -32,8 +32,9 @@ Environment=HOME=@HOME@
 # The unit knows where this machine actually keeps it.
 Environment=FFDISCORD_HOME=@FFDHOME@
 ExecStart=@HOME@/.local/bin/ffdiscord-listener --channels @CHANNELS@
-# The bot token normally comes from ~/.config/ffdiscord/config.json; this is here so a machine
-# that prefers FFDISCORD_TOKEN in the ffbox secrets file works without a second copy.
+# The bot token normally comes from the "app_token" key in the ffdiscord config; this is here
+# so a machine that prefers FFDISCORD_APP_TOKEN in the ffbox secrets file works without a
+# second copy. (FFDISCORD_TOKEN, the older variable name, is still read.)
 EnvironmentFile=-@HOME@/.config/ffbox/secrets.env
 Restart=always
 RestartSec=5

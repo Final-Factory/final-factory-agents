@@ -477,6 +477,97 @@ def main():
     check("reports a revoked/bad token clearly",
           "revoked" in proc.stderr or "401" in proc.stderr, proc.stderr)
 
+    print("config key names (app_token / server_id, and the legacy spellings)")
+
+    def run_bare(home, *argv, **env_extra):
+        """Like run(), but WITHOUT FFDISCORD_TOKEN in the environment.
+
+        The point of these checks is what the FILE alone can authenticate with, and run()
+        always exports a token, which would mask a config that does not work on its own.
+        """
+        env = {k: v for k, v in os.environ.items() if not k.startswith("FFDISCORD_")}
+        env["FFDISCORD_API"] = f"http://127.0.0.1:{PORT[0]}"
+        env["FFDISCORD_HOME"] = home
+        env.update(env_extra)
+        return subprocess.run(
+            [sys.executable, os.path.join(HERE, "ffdiscord.py"), *argv],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+
+    def home_with(cfg_dict):
+        home = tempfile.mkdtemp(prefix="ffdiscord-keys-")
+        with open(os.path.join(home, "config.json"), "w") as fh:
+            json.dump(cfg_dict, fh)
+        return home
+
+    live = {"channels": {"bug_reports": FORUM, "dev_chat": DEVCHAT, "ask_claude": ASKCLAUDE},
+            "mentions": {"ben": BEN, "lothsahn": LOTH}}
+
+    h = home_with({**live, "app_token": "TESTTOKEN", "server_id": GUILD})
+    check("the new key names authenticate on their own",
+          "bug-reports" in run_bare(h, "channels").stdout)
+
+    h = home_with({**live, "token": "TESTTOKEN", "guild_id": GUILD})
+    check("the pre-rename key names still work",
+          "bug-reports" in run_bare(h, "channels").stdout)
+
+    # The setup template seeds app_token: "", so a half-migrated file has the secret under the
+    # OLD key and a blank under the new one. Preferring the blank would authenticate with "".
+    h = home_with({**live, "app_token": "", "token": "TESTTOKEN",
+                   "server_id": "", "guild_id": GUILD})
+    check("a blank new key does not shadow a filled legacy one",
+          "bug-reports" in run_bare(h, "channels").stdout)
+
+    h = home_with({**live, "server_id": GUILD})
+    check("the new env var authenticates",
+          "bug-reports" in run_bare(h, "channels", FFDISCORD_APP_TOKEN="TESTTOKEN").stdout)
+    check("the legacy env var still authenticates",
+          "bug-reports" in run_bare(h, "channels", FFDISCORD_TOKEN="TESTTOKEN").stdout)
+
+    h = home_with({**live, "token": "TESTTOKEN", "guild_id": GUILD})
+    out = run_bare(h, "config").stdout
+    check("redaction covers the legacy key too, which load_config copies forward",
+          "TESTTOKEN" not in out, out)
+
+    print("resolve-channels")
+    # Aliases are snake_case (they are JSON keys); Discord channel names are hyphenated.
+    blank_home = home_with({"app_token": "TESTTOKEN", "server_id": GUILD,
+                            "channels": {"dev_chat": "", "ask_claude": ASKCLAUDE,
+                                         "nope_not_here": ""}})
+    p = run_bare(blank_home, "resolve-channels")
+    check("matches a snake_case alias to a hyphenated channel name",
+          f"dev_chat" in p.stdout and DEVCHAT in p.stdout, p.stdout)
+    check("says nothing was saved without --write",
+          "nothing was saved" in p.stdout, p.stdout)
+    check("reports an alias with no matching channel",
+          "nope_not_here" in p.stdout and "no channel matches" in p.stdout, p.stdout)
+    with open(os.path.join(blank_home, "config.json")) as fh:
+        check("and really did not write", json.load(fh)["channels"]["dev_chat"] == "")
+
+    p = run_bare(blank_home, "resolve-channels", "--write")
+    with open(os.path.join(blank_home, "config.json")) as fh:
+        written = json.load(fh)
+    check("--write fills the blank in", written["channels"]["dev_chat"] == DEVCHAT, p.stdout)
+    check("leaves an already-set alias alone",
+          written["channels"]["ask_claude"] == ASKCLAUDE)
+    check("leaves an unresolvable alias blank rather than guessing",
+          written["channels"]["nope_not_here"] == "")
+    check("does not bake the env token into the file it writes",
+          "app_token" in written and written["app_token"] == "TESTTOKEN")
+
+    p = run_bare(home_with({"app_token": "TESTTOKEN", "server_id": GUILD,
+                            "channels": {"ask_claude": ASKCLAUDE}}), "resolve-channels")
+    check("re-running with nothing blank is a clean no-op",
+          "nothing to resolve" in p.stdout, p.stdout)
+
+    # A blank alias used to short-circuit to "", sending an empty id down a /channels/ path.
+    # ask_claude is the alias with a messages route on the mock, so a successful read proves
+    # the fall-through resolved #ask-claude by NAME and not to "".
+    blank2 = home_with({"app_token": "TESTTOKEN", "server_id": GUILD,
+                        "channels": {"ask_claude": ""}})
+    p = run_bare(blank2, "read", "ask_claude", "--limit", "1")
+    check("a blank alias falls through to the name lookup instead of resolving to ''",
+          p.returncode == 0, p.stdout + p.stderr)
+
     print("concurrent cursor writes (two sessions on one machine)")
     conc = tempfile.mkdtemp(prefix="ffdiscord-conc-")
     with open(os.path.join(conc, "config.json"), "w") as fh:

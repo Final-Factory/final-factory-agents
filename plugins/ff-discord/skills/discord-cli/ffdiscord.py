@@ -6,15 +6,22 @@ background `/loop` jobs and cron runs where no MCP handshake exists. Everything 
 Python 3 standard library only (urllib) — no pip install, no venv, no lockfile.
 
 Config (first match wins):
-  1. env vars  FFDISCORD_TOKEN, FFDISCORD_GUILD_ID
-  2. ~/.config/ffdiscord/config.json
+  1. env vars  FFDISCORD_APP_TOKEN, FFDISCORD_SERVER_ID
+               (FFDISCORD_TOKEN / FFDISCORD_GUILD_ID are the older names, still read)
+  2. ~/.config/ffbox/discord/config.json
 
   {
-    "token": "<bot token>",
-    "guild_id": "...",
-    "channels": { "bug_reports": "...", "dev_chat": "...", "ask_claude": "..." },
+    "app_token": "<the Bot tab's token — NOT the Application ID or public key>",
+    "server_id": "<right-click the server name > Copy Server ID>",
+    "channels": { "bug_reports": "<channel id>", "dev_chat": "<channel id>" },
     "mentions": { "ben": "<user id>", "lothsahn": "<user id>" }
   }
+
+  `channels` maps an alias to a channel's snowflake id. The alias is what the ffwatch "watch"
+  block names, which is what says what the channel MEANS; the id says which channel it is.
+
+  Pre-2026-08-24 configs say "token" and "guild_id"; both are still read, and
+  ffbox/05-discord-setup.sh renames them in place.
 
 The token NEVER lives in the repo. Config + read cursors live under ~/.config/ffdiscord/.
 
@@ -149,10 +156,31 @@ def load_config():
                 cfg = json.load(fh)
             except json.JSONDecodeError as exc:
                 die(f"{CONFIG_PATH} is not valid JSON: {exc}")
-    if os.environ.get("FFDISCORD_TOKEN"):
-        cfg["token"] = os.environ["FFDISCORD_TOKEN"]
-    if os.environ.get("FFDISCORD_GUILD_ID"):
-        cfg["guild_id"] = os.environ["FFDISCORD_GUILD_ID"]
+    # KEY NAMES, AND THE ONE PLACE THEY ARE NORMALIZED. The file says `app_token` and
+    # `server_id`, matching what a human is looking at: the developer portal issues an app and
+    # its bot token, and the Discord client calls a guild a server. Discord's API still says
+    # "guild", so every /guilds/... path below is unchanged — the rename covers what somebody
+    # types, not what goes on the wire.
+    #
+    # A config written before 2026-08-24 says `token` and `guild_id` and keeps working. The
+    # legacy key fills a new one that is missing OR blank, which matters because the setup
+    # template seeds `app_token: ""`: without the blank test, a half-migrated file would
+    # authenticate with the empty string and report a bad token instead of a stale key name.
+    for new_key, legacy_key in (("app_token", "token"), ("server_id", "guild_id")):
+        if not str(cfg.get(new_key) or "").strip() and str(cfg.get(legacy_key) or "").strip():
+            cfg[new_key] = cfg[legacy_key]
+
+    # Env beats file, and the new spelling beats the old one. FFDISCORD_TOKEN stays supported
+    # forever: it is in every existing secrets.env and in the systemd EnvironmentFile, and
+    # breaking a running box to rename a variable is not a trade worth making.
+    for env_new, env_legacy, key in (
+        ("FFDISCORD_APP_TOKEN", "FFDISCORD_TOKEN", "app_token"),
+        ("FFDISCORD_SERVER_ID", "FFDISCORD_GUILD_ID", "server_id"),
+    ):
+        value = os.environ.get(env_new) or os.environ.get(env_legacy)
+        if value:
+            cfg[key] = value
+
     cfg.setdefault("channels", {})
     cfg.setdefault("mentions", {})
     return cfg
@@ -257,11 +285,12 @@ def die(msg, code=1):
 class Client:
     def __init__(self, cfg):
         self.cfg = cfg
-        self.token = cfg.get("token")
+        self.token = cfg.get("app_token")
         if not self.token:
             die(
-                "no bot token. Set FFDISCORD_TOKEN or write "
-                f"{CONFIG_PATH} with a \"token\" field (see `ffdiscord.py doctor`)."
+                "no bot token. Set FFDISCORD_APP_TOKEN, or fill in the \"app_token\" field "
+                f"in {CONFIG_PATH}. `sh ffbox/05-discord-setup.sh --check` lists every blank, "
+                "and that file's \"_help\" block says where each value comes from."
             )
         self.ctx = ssl.create_default_context()
 
@@ -374,6 +403,19 @@ def fmt_time(sid_or_iso):
     return dt.strftime("%Y-%m-%d %H:%M UTC") if dt else "?"
 
 
+def name_matches(alias, channel_name):
+    """Would a human call this channel by this alias?
+
+    Discord channel names are lowercase and hyphenated; config aliases are snake_case,
+    because they are also JSON keys and Python-side identifiers. `agent_testing` and
+    #agent-testing are the same channel to everyone except a string comparison.
+    """
+    def norm(text):
+        return str(text).strip().lstrip("#").lower().replace("_", "-")
+
+    return norm(alias) == norm(channel_name)
+
+
 def resolve_channel(client, ref):
     """Accept a raw id, a config alias (bug_reports), or #channel-name."""
     if ref is None:
@@ -383,11 +425,15 @@ def resolve_channel(client, ref):
         return ref
     alias = ref.lstrip("#")
     channels = client.cfg.get("channels", {})
-    if alias in channels:
+    # A BLANK alias falls through to the name lookup instead of returning "". The setup
+    # template seeds every watched alias empty, so `alias in channels` is now true long before
+    # anybody has typed an id, and returning that empty string would send "" down a /channels/
+    # path and fail with something unrecognisable.
+    if str(channels.get(alias) or "").strip():
         return str(channels[alias])
     guild = require_guild(client)
     for ch in client.get(f"/guilds/{guild}/channels"):
-        if ch["name"] == alias:
+        if ch["name"] == alias or name_matches(alias, ch["name"]):
             return ch["id"]
     die(
         f"could not resolve channel {ref!r}. Use an id, a configured alias "
@@ -396,12 +442,12 @@ def resolve_channel(client, ref):
 
 
 def require_guild(client):
-    guild = client.cfg.get("guild_id")
+    guild = client.cfg.get("server_id")
     if not guild:
         guilds = client.get("/users/@me/guilds") or []
         if len(guilds) == 1:
             return guilds[0]["id"]
-        die("guild_id is not configured and the bot is in %d guilds" % len(guilds))
+        die("server_id is not configured and the bot is in %d servers" % len(guilds))
     return str(guild)
 
 
@@ -536,7 +582,7 @@ def cmd_doctor(client, args):
             "The bot is not in any server. Invite it with the OAuth2 URL from the setup doc."
         )
 
-    guild_id = client.cfg.get("guild_id")
+    guild_id = client.cfg.get("server_id")
     if not guild_id and len(guilds) == 1:
         guild_id = guilds[0]["id"]
         notes.append(f"guild_id not set in config; inferred {guild_id}")
@@ -564,6 +610,14 @@ def cmd_doctor(client, args):
             '"dev_chat": "<id>", "ask_claude": "<id>"}} to the config.'
         )
     for alias, cid in sorted(wanted.items()):
+        # A blank is the setup template's unfilled key, not a permissions problem. Reporting it
+        # as "not visible to the bot" sends the reader to Discord's role editor to debug a
+        # channel id they simply have not typed yet.
+        if not str(cid).strip():
+            problems.append(f"channel alias {alias!r} has no id yet — "
+                            f"ffdiscord set channels.{alias} <channel id>")
+            print(f"  {alias:<12} {'(empty)':<24} NOT FILLED IN")
+            continue
         ch = by_id.get(str(cid))
         if ch is None:
             problems.append(f"channel alias {alias!r} -> {cid} is not visible to the bot")
@@ -1078,10 +1132,69 @@ def cmd_cursors(client, args):
 def cmd_config(client_unused, args):
     cfg = load_config()
     redacted = dict(cfg)
-    if redacted.get("token"):
-        redacted["token"] = redacted["token"][:8] + "…(redacted)"
+    # Both spellings: load_config copies a legacy `token` into `app_token`, so an un-migrated
+    # config holds the secret under BOTH keys and redacting one of them leaks it.
+    for key in ("app_token", "token"):
+        if redacted.get(key):
+            redacted[key] = redacted[key][:8] + "…(redacted)"
     print(f"# {CONFIG_PATH}")
     print(json.dumps(redacted, indent=2, sort_keys=True))
+
+
+def cmd_resolve_channels(client, args):
+    """Fill blank `channels` entries by matching the alias against real channel names.
+
+    The alias is not decoration: the ffwatch watch block names channels the same way, so
+    `agent_testing` there and #agent-testing in Discord are already meant to be the same
+    thing. Once a token exists the bot can see the server's channel list, which makes
+    hand-copying an 18-digit id the only step here that a machine could have done itself.
+
+    Writes nothing without --write, because guessing an id from a name is a guess: two
+    channels can normalise to the same alias, and a forum and a text channel with similar
+    names are easy to confuse. An ambiguous alias is reported and never written.
+    """
+    cfg = load_config()
+    channels = dict(cfg.get("channels") or {})
+    blanks = [a for a, cid in sorted(channels.items()) if not str(cid or "").strip()]
+    if not blanks:
+        print("no blank channel aliases; nothing to resolve")
+        return
+    guild = require_guild(client)
+    live = client.get(f"/guilds/{guild}/channels") or []
+    resolved, unresolved = {}, []
+    for alias in blanks:
+        hits = [ch for ch in live if name_matches(alias, ch["name"])]
+        if len(hits) == 1:
+            ch = hits[0]
+            resolved[alias] = ch["id"]
+            kind = CHANNEL_TYPES.get(ch["type"], ch["type"])
+            print(f"  {alias:<16} -> #{ch['name']} ({ch['id']}, type={kind})")
+        elif hits:
+            unresolved.append(alias)
+            names = ", ".join(f"#{c['name']} ({c['id']})" for c in hits)
+            print(f"  {alias:<16} AMBIGUOUS: {names}")
+        else:
+            unresolved.append(alias)
+            print(f"  {alias:<16} no channel matches that name")
+    if unresolved:
+        print("\nunresolved: " + ", ".join(unresolved)
+              + "\n  fill these in by hand:  ffdiscord set channels.<alias> <channel id>"
+              + "\n  (the bot only sees channels it has been given access to)")
+    if not resolved:
+        return
+    if not args.write:
+        print("\n--write was not given; nothing was saved")
+        return
+    # Re-read rather than saving the `cfg` loaded above: load_config folds env vars and legacy
+    # key names into what it returns, and writing that back would bake FFDISCORD_APP_TOKEN
+    # from the environment into the file on disk.
+    on_disk = {}
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+            on_disk = json.load(fh)
+    on_disk.setdefault("channels", {}).update(resolved)
+    _atomic_write_json(CONFIG_PATH, on_disk)
+    print(f"\nwrote {len(resolved)} channel id(s) to {CONFIG_PATH}")
 
 
 def cmd_set(client_unused, args):
@@ -1202,6 +1315,11 @@ def build_parser():
 
     add("cursors", cmd_cursors, "show stored cursors", needs_client=False)
     add("config", cmd_config, "show config (token redacted)", needs_client=False)
+
+    sp = add("resolve-channels", cmd_resolve_channels,
+             "fill blank channel ids by matching the alias to a channel name")
+    sp.add_argument("--write", action="store_true",
+                    help="save the ids it resolved (without this it only reports)")
 
     sp = add("set", cmd_set, "set a config value, e.g. set channels.dev_chat 123",
              needs_client=False)

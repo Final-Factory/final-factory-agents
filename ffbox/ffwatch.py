@@ -435,7 +435,10 @@ def load_config():
     # itself resolves aliases, so we never duplicate the id table here. `trust` rides along for
     # the same reason it lives in that file at all: the LISTENER has to answer "is this an
     # operator" and reads no other config, so the table cannot live on this side.
-    cfg["_discord"] = {k: raw.get(k) for k in ("guild_id", "channels", "mentions", "trust")}
+    # server_id is the current key name and guild_id the pre-2026-08-24 one; both are carried
+    # because this is a read-only copy for context and nothing here decides which is canonical.
+    cfg["_discord"] = {k: raw.get(k)
+                       for k in ("server_id", "guild_id", "channels", "mentions", "trust")}
     return cfg
 
 

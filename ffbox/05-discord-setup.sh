@@ -59,6 +59,90 @@ done
 say()  { printf '[discord-setup] %s\n' "$*"; }
 did()  { printf '[discord-setup]   %s\n' "$*"; }
 
+# EVERY BLANK THE TEMPLATE STILL CARRIES, computed in one place. --check, the end of a
+# provisioning run and MANUAL STEPS all print this same list; three hand-maintained copies of
+# "what is missing" is how a setup script starts lying about its own state. Prints one line per
+# unfilled field with the command that fills it, and exits 1 when a REQUIRED one is still blank.
+blanks() {
+    FFDISCORD_HOME=$FFDISCORD_HOME FFBOX_CONFIG=$FFBOX_CONFIG \
+    FFBOX_CONFIG_JSON=$FFBOX_CONFIG_JSON python3 - <<'PY'
+import json
+import os
+import re
+import sys
+
+
+def read(path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+home = os.environ["FFDISCORD_HOME"]
+discord = read(os.path.join(home, "config.json"))
+ffbox = read(os.environ["FFBOX_CONFIG_JSON"])
+secrets = os.path.join(os.environ["FFBOX_CONFIG"], "secrets.env")
+
+
+def in_secrets(name):
+    # The units read this file through EnvironmentFile=, so a token living only there is
+    # configured even though the JSON blank is still empty. Commented-out lines do not count.
+    try:
+        with open(secrets, "r", encoding="utf-8") as fh:
+            body = fh.read()
+    except OSError:
+        return False
+    return bool(re.search(rf"^{name}=\s*\S", body, re.MULTILINE))
+
+
+def out(field, fix, required=True):
+    mark = "BLANK" if required else "blank"
+    print(f"[discord-setup]   {field:<26} {mark}  {fix}")
+    return 1 if required else 0
+
+
+missing = 0
+# Both spellings are accepted everywhere, so a box still carrying the pre-rename keys must not
+# be told it is unconfigured.
+def filled(new_key, legacy_key, *env_names):
+    if str(discord.get(new_key) or "").strip() or str(discord.get(legacy_key) or "").strip():
+        return True
+    return any(os.environ.get(e) or in_secrets(e) for e in env_names)
+
+
+if not filled("app_token", "token", "FFDISCORD_APP_TOKEN", "FFDISCORD_TOKEN"):
+    missing += out("app_token", "FFDISCORD_APP_TOKEN=<bot token> in secrets.env, "
+                                "or: ffdiscord set app_token <bot token>")
+
+# Not counted as missing: ffdiscord infers the guild when the bot is in exactly one, so a box
+# that never sets it still works. Reported anyway, because inference is not something you want
+# to discover the day a second guild appears.
+if not filled("server_id", "guild_id", "FFDISCORD_SERVER_ID", "FFDISCORD_GUILD_ID"):
+    out("server_id", "optional (inferred when the bot is in one server): "
+                     "ffdiscord set server_id <server id>", required=False)
+
+# The watch block is the list of aliases that MUST resolve: it is what 06-services.sh renders
+# into the listener's --channels argument, and the listener exits 2 on an alias it cannot turn
+# into a snowflake. An id that is not all digits is as unusable as an empty one.
+channels = discord.get("channels") or {}
+for alias in sorted(ffbox.get("watch") or {}):
+    if not str(channels.get(alias) or "").strip().isdigit():
+        missing += out(f"channels.{alias}",
+                       f"ffdiscord set channels.{alias} <channel id>")
+
+# The reverse mismatch is not a blank, but it is the same class of mistake: an id nothing
+# watches. Reported, never counted.
+for alias in sorted(set(channels) - set(ffbox.get("watch") or {})):
+    print(f"[discord-setup]   channels.{alias:<15} set, but no \"watch\" entry in "
+          f"{os.environ['FFBOX_CONFIG_JSON']} — nothing reads it")
+
+sys.exit(1 if missing else 0)
+PY
+}
+
 if [ "$CHECK" = 1 ]; then
     say "state dir      : $STATE_DIR $([ -d "$STATE_DIR" ] && echo present || echo MISSING)"
     say "database       : $STATE_DIR/ffwatch.db $([ -f "$STATE_DIR/ffwatch.db" ] && echo present || echo MISSING)"
@@ -66,6 +150,8 @@ if [ "$CHECK" = 1 ]; then
     say "config         : $FFDISCORD_HOME/config.json $([ -f "$FFDISCORD_HOME/config.json" ] && echo present || echo MISSING)"
     say "kill switch    : $KILL_SWITCH $([ -f "$KILL_SWITCH" ] && echo ACTIVE || echo 'not set (lanes may run)')"
     say "units          : see 'sh $HERE/06-services.sh'"
+    say "still to fill in:"
+    blanks || true
     exit 0
 fi
 
@@ -189,8 +275,58 @@ for key, value in (
         ffbox[key] = value
         seeded.append(key)
 
-discord.setdefault("channels", {})
+# THE FILL-IN-THE-BLANKS TEMPLATE. JSON carries no comments, so the only way this file can
+# tell a human what it wants is to already contain every key it needs, empty. A config that
+# omits "app_token" and "server_id" entirely looks finished when it is not: there is nothing on
+# page to fill in, and the reader has to find the shape in a README or in the CLI's docstring.
+# Every blank seeded here is falsy, which is exactly what each reader already tests for
+# ("if not cfg.get('token')"), so an unfilled template behaves identically to a missing key.
+# RENAME, ONCE (2026-08-24). token -> app_token, guild_id -> server_id, matching what a human
+# is looking at rather than what the API says: the portal issues an app and its bot token, and
+# the Discord client has called a guild a server for years. Every reader still accepts the old
+# names, so this migration is for legibility, not for correctness — but leaving both spellings
+# on disk is how a config ends up with a token under one key and a blank under the other.
+renamed = []
+for new_key, legacy_key in (("app_token", "token"), ("server_id", "guild_id")):
+    if legacy_key in discord:
+        if not str(discord.get(new_key) or "").strip():
+            discord[new_key] = discord[legacy_key]
+        del discord[legacy_key]
+        renamed.append(f"{legacy_key} -> {new_key}")
+
+discord.setdefault("app_token", "")
+discord.setdefault("server_id", "")
 discord.setdefault("mentions", {})
+
+# WHAT EACH VALUE IS. JSON has no comments, and a blank string does not say what shape belongs
+# in it — "channels": {"agent_testing": ""} tells you an alias is wanted and nothing about the
+# value. Rewritten on every run rather than setdefault: this is generated documentation, so it
+# should track the code, not whatever an old run left behind.
+discord["_help"] = {
+    "app_token": "Discord developer portal > your app > Bot > Reset Token. NOT the "
+                 "Application ID and NOT the public key. Better: leave this blank and put "
+                 f"FFDISCORD_APP_TOKEN in {os.path.dirname(ffbox_path)}/secrets.env, which "
+                 "keeps the secret out of this file.",
+    "server_id": "Right-click the server name > Copy Server ID (Settings > Advanced > "
+                 "Developer Mode must be on). Optional: it is inferred when the bot is in "
+                 "exactly one server.",
+    "channels": "alias -> that channel's id (right-click the channel > Copy Channel ID). The "
+                f"alias must match an entry in the \"watch\" block of {ffbox_path}, which is "
+                "what says what the channel MEANS; the id here says which channel it IS.",
+    "mentions": "name -> user id. What @name expands to in a post.",
+    "trust": "operators: name -> user id. Whose messages may command this box. Ids only, "
+             "never usernames: a username is renameable, so a trust key somebody else can "
+             "claim by renaming is not a trust key.",
+}
+
+# One blank per alias the ffwatch "watch" block declares, because those two tables have to
+# agree: watch says what a channel MEANS, channels says which channel it IS, and an alias in
+# one but not the other is the failure this seeding exists to prevent. The listener refuses to
+# start on an alias it cannot resolve to a snowflake, so a blank left here fails loudly at
+# startup rather than quietly watching nothing.
+channels = discord.setdefault("channels", {})
+for alias in sorted((ffbox.get("watch") or {})):
+    channels.setdefault(alias, "")
 
 # WHO IS AN OPERATOR. Snowflake ids, never usernames: a username is renameable, so a trust key
 # somebody else can claim by renaming is not a trust key. These two live in the DISCORD config
@@ -211,16 +347,48 @@ write(ffbox_path, ffbox)
 write(discord_path, discord)
 if moved:
     print("[discord-setup]   moved out of the Discord config: " + ", ".join(moved))
+if renamed:
+    print("[discord-setup]   renamed keys: " + ", ".join(renamed))
 print("[discord-setup]   seeded ffwatch keys: " + (", ".join(seeded) or "(nothing new)"))
 PY
 did "$FFBOX_CONFIG_JSON        (ffwatch + ffweb settings)"
 did "$FFDISCORD_HOME/config.json"
-if ! python3 -c "
-import json,sys
-cfg=json.load(open(sys.argv[1]))
-sys.exit(0 if cfg.get('token') else 1)" "$FFDISCORD_HOME/config.json" 2>/dev/null; then
-    did "NOTE: no bot token configured yet. Set one with:  ffdiscord set token <bot token>"
-    did "      (or put FFDISCORD_TOKEN in $FFBOX_CONFIG/secrets.env — host side only)"
+# The template now carries a key for everything it needs, so the useful thing to say is whether
+# any of those keys are still empty. The list itself belongs to MANUAL STEPS at the end, printed
+# once, next to the instructions for filling it.
+if ! blanks >/dev/null 2>&1; then
+    did "NOTE: not configured yet — see MANUAL STEPS at the end of this run"
+fi
+
+# --- channel ids the machine can find for itself -------------------------------------------------
+# The alias is not decoration: `agent_testing` in the watch block and #agent-testing in Discord
+# are already meant to be the same channel, so once a token exists the only step left is one the
+# bot could have done itself by reading the server's channel list. Hand-copying an 18-digit
+# snowflake is exactly the kind of transcription a setup script should not be asking for.
+#
+# Best effort, and never fatal. No token, no network, a name that matches two channels, or a
+# channel the bot has not been given access to all leave the blank in place for a human.
+say "channels"
+if blanks 2>/dev/null | grep -q ' app_token  *BLANK'; then
+    did "skipped: no app token yet, so the bot cannot read the server's channel list"
+elif ! blanks 2>/dev/null | grep -q ' channels\.'; then
+    did "every watched channel already has an id"
+elif ! command -v ffdiscord >/dev/null 2>&1; then
+    did "ffdiscord is not on PATH — run 'sh registerAgents.sh', or fill the ids in by hand"
+else
+    RESOLVE_RC=0
+    # A subshell so the token this sources stays out of the rest of this script's environment.
+    RESOLVE_OUT=$(
+        set +e
+        if [ -f "$FFBOX_CONFIG/secrets.env" ]; then
+            set -a
+            . "$FFBOX_CONFIG/secrets.env"
+            set +a
+        fi
+        ffdiscord resolve-channels --write 2>&1
+    ) || RESOLVE_RC=$?
+    printf '%s\n' "$RESOLVE_OUT" | sed 's/^/[discord-setup]   /'
+    [ "$RESOLVE_RC" = 0 ] || did "lookup did not complete; fill the rest in by hand (see below)"
 fi
 
 # --- kill switch ---------------------------------------------------------------------------------
@@ -248,26 +416,32 @@ say "done"
 # anything the script could do itself, it already did.
 say ""
 say "MANUAL STEPS REMAINING"
-if ! python3 -c "
-import json,sys
-cfg=json.load(open(sys.argv[1]))
-sys.exit(0 if (cfg.get('token') or '').strip() else 1)" "$FFDISCORD_HOME/config.json" 2>/dev/null \
-   && [ -z "${FFDISCORD_TOKEN:-}" ]; then
+if ! blanks >/dev/null 2>&1; then
     say "  1. Create a Discord bot (or reuse yours) at https://discord.com/developers"
-    say "     - enable the GUILDS and GUILD_MESSAGES intents; MESSAGE_CONTENT is NOT needed"
-    say "     - invite it to your server and give it access to the channels you want watched"
-    say "  2. Put the token in $FFDISCORD_HOME/config.json as \"token\""
-    say "     (or FFDISCORD_TOKEN in $FFBOX_CONFIG/secrets.env — host side only, never in git)"
-    say "  3. Add \"guild_id\" and each channel to \"channels\", e.g."
-    say '       "channels": { "agent_testing": "<channel id>" }'
-    say "     (Discord: Settings > Advanced > Developer Mode, then right-click to copy an id)"
-    say "  4. Tell ffwatch what each watched channel MEANS, in the ffwatch \"watch\" block:"
-    say '       "watch": { "agent_testing": { "kind": "ask", "forum": false } }'
+    say "     - Bot > Privileged Gateway Intents: leave all three OFF. The listener asks only"
+    say "       for GUILDS, GUILD_MESSAGES and DIRECT_MESSAGES, which are not privileged and"
+    say "       have no toggle; MESSAGE_CONTENT is deliberately not requested."
+    say "     - invite it (OAuth2 > URL Generator, scope 'bot') and give it, per channel:"
+    say "       View Channels, Read Message History, Send Messages, Embed Links, Attach Files,"
+    say "       plus Add Reactions + Create Public Threads + Send Messages in Threads on a forum."
+    say "  2. Fill in the blanks below. Every one of them is already a key in"
+    say "     $FFDISCORD_HOME/config.json, waiting empty, and the \"_help\" block in that"
+    say "     file says what each value is:"
+    blanks || true
+    say "     (Discord: Settings > Advanced > Developer Mode, then right-click to copy an id.)"
+    say "     app_token is the Bot tab's Reset Token, NOT the Application ID or public key."
+    say "     Channel ids: once app_token is set, re-run this script and it looks them up by"
+    say "     name, or do it directly with 'ffdiscord resolve-channels --write'."
+    say "  3. Watching a channel this box does not know about yet? Add it to the ffwatch"
+    say "     \"watch\" block in $FFBOX_CONFIG_JSON first, which is what says what it MEANS:"
+    say '       "watch": { "agent_testing": { "kind": "ask", "forum": false,'
+    say '                                     "venue": "private", "engage": "mention" } }'
     say "     kind ask/mention -> read-only answer lane; bug_report/suggestion -> triage;"
     say "     directive -> the write lane. A channel not listed here falls to the classifier,"
-    say "     which fails closed to read-only."
-    say "  5. ffdiscord doctor            # verifies the token, guild and channel permissions"
-    say "  6. sudo sh $HERE/06-services.sh --install   # picks up the new watch list"
+    say "     which fails closed to read-only. Re-run this script to get its blank."
+    say "  4. ffdiscord doctor            # verifies the token, guild and channel permissions"
+    say "     (reads the env, not secrets.env: 'set -a; . $FFBOX_CONFIG/secrets.env; set +a' first)"
+    say "  5. sudo sh $HERE/06-services.sh --install   # picks up the new watch list"
 else
     say "  1. ffdiscord doctor            # verifies the token, guild and channel permissions"
     say "  2. sudo sh $HERE/06-services.sh --install   # (re)install the units and start them"
