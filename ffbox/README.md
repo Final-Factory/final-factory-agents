@@ -155,7 +155,7 @@ deploys nothing. This is not hypothetical: on 2026-08-22 the build server was fo
 ffwatch from a checkout twelve hours older than HEAD, and a guard committed at 16:46 was still
 not live at 20:41.
 
-`ffbox-update.timer` closes that gap. Every fifteen minutes it fetches `origin/master`, and if
+`ffbox-update.timer` closes that gap. Every five minutes it fetches `origin/master`, and if
 there is anything new it drains the pipeline, fast-forwards, acts on what the diff touched and
 restarts:
 
