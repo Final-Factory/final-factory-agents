@@ -1982,10 +1982,11 @@ def test_sessions_survive_a_restart():
         again.stop()
 
 
-def test_the_session_times_out_after_an_hour_of_inactivity():
-    check("the timeout is one hour", ffweb.SESSION_TTL_SECS == 3600, ffweb.SESSION_TTL_SECS)
+def test_the_session_times_out_after_26_hours_of_inactivity():
+    check("the timeout is 26 hours", ffweb.SESSION_TTL_SECS == 26 * 3600,
+          ffweb.SESSION_TTL_SECS)
 
-    # Driven through a 1-second ttl rather than by waiting an hour.
+    # Driven through a 1-second ttl rather than by waiting 26 hours.
     srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, ttl=1)
     try:
         check("a fresh session works", srv.get("/")[0] == 200)
@@ -2004,7 +2005,7 @@ def test_the_session_times_out_after_an_hour_of_inactivity():
     finally:
         srv.stop()
 
-    # The browser's copy has to slide too, or the cookie would be dropped an hour after
+    # The browser's copy has to slide too, or the cookie would be dropped one TTL after
     # SIGN-IN however much the page was used, and the sliding expiry would be server-side
     # fiction the browser never honoured.
     srv = serve()
@@ -2087,7 +2088,7 @@ def main():
         test_a_self_signed_certificate_is_generated,
         test_https_is_what_is_actually_on_the_wire,
         test_sessions_survive_a_restart,
-        test_the_session_times_out_after_an_hour_of_inactivity,
+        test_the_session_times_out_after_26_hours_of_inactivity,
         test_the_session_store_survives_a_bad_file,
     ]
     for fn in tests:

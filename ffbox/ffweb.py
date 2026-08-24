@@ -48,7 +48,7 @@ FOUR THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the pag
    the hash of it is mirrored to <state-dir>/ffweb-sessions.json at 0600, because a deploy
    restarts this unit and signing everyone out whenever the code moves is a tax on the people
    the login exists to let in. ffwatch is still the sole writer of the DATABASE; this file is
-   not it. Sessions time out after an hour of INACTIVITY, sliding forward on every
+   not it. Sessions time out after 26 hours of INACTIVITY, sliding forward on every
    authenticated request, and the cookie's Max-Age is re-sent so the browser slides with the
    server. A mismatched Origin is refused on the actions and merely logged on
    the session verbs; see _route_post for why. The certificate is self-signed and generated
@@ -153,10 +153,11 @@ if os.environ.get("FFWEB_USER"):
 _DECOY = "\x00" * 32
 
 SESSION_COOKIE = "ffweb_session"
-# An hour of INACTIVITY, not an hour from sign-in: reading a long run transcript should not end
-# with a login form, and walking away from an unlocked laptop should not leave a session open
-# all afternoon. Every authenticated request pushes the expiry out again.
-SESSION_TTL_SECS = 3600
+# 26 hours of INACTIVITY, not 26 hours from sign-in: reading a long run transcript should not
+# end with a login form, and someone who opens this page once a day should never meet one.
+# A day plus two hours, so the same daily check-in never lands the wrong side of the edge.
+# Every authenticated request pushes the expiry out again.
+SESSION_TTL_SECS = 26 * 3600
 # How often a sliding expiry is allowed to reach the disk. Without this, persistence would mean
 # a file write on every page view to record that a session is still alive. The cost of the gap
 # is that a hard kill can lose up to this much of an extension, which expires a session early
@@ -302,7 +303,7 @@ class Sessions:
     credential store; hashing means a copy of it cannot be replayed as a session, which matters
     because it sits in a state directory that gets backed up and rsynced like anything else.
 
-    Expiry is an hour of inactivity and slides forward on every authenticated request, so it is
+    Expiry is 26 hours of inactivity and slides forward on every authenticated request, so it is
     wall-clock (time.time) rather than monotonic — monotonic does not survive the restart this
     class now exists to survive. The cost is that moving the clock moves the expiry, which for
     a session timeout is a shrug.
@@ -1250,7 +1251,7 @@ class FFWebHandler(BaseHTTPRequestHandler):
         if not self.app.sessions.valid(token):
             return False
         # The server-side expiry slid forward just now, so the cookie's Max-Age has to slide
-        # with it. Without this the browser would drop the cookie exactly one hour after
+        # with it. Without this the browser would drop the cookie exactly one TTL after
         # SIGN-IN however much you were using the page, and the sliding timeout would be a
         # server-side fiction. One extra header on an authenticated response is the price.
         self._refresh_cookie = token

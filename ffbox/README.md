@@ -1046,9 +1046,9 @@ what `secrets.env` is for. A success mints a random token that **survives a rest
 of that file — and it sits in a directory that gets backed up like anything else — cannot be
 replayed as a session. ffwatch is still the sole writer of the *database*; this file is not it.
 
-Sessions time out after **an hour of inactivity**, not an hour from sign-in: reading a long
-transcript should not end at a login form, and a walked-away-from laptop should not stay open
-all afternoon. Every authenticated request slides the expiry forward and re-sends the cookie
+Sessions time out after **26 hours of inactivity**, not 26 hours from sign-in: reading a long
+transcript should not end at a login form, and someone who opens the page once a day should
+never meet one — the extra two hours keep a daily check-in off the edge. Every authenticated request slides the expiry forward and re-sends the cookie
 with a fresh `Max-Age`, so the browser's copy and the server's agree. The session cookie is `HttpOnly`, `SameSite=Lax` and
 `Secure` when TLS is on.
 
