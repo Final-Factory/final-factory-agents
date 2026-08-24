@@ -807,6 +807,12 @@ TRIGGER_BY_KIND = {
 
 TERMINAL_TURN_STATES = ("done", "failed", "timed_out", "blocked")
 
+# Queued the moment the harness commits to answering a message, and never taken off.
+# It is an ACKNOWLEDGEMENT, not a verdict: it says a turn exists for this message, so a
+# message the gate declined carries no reaction at all and the absence of one is
+# readable. The run's own outcome is not reacted anywhere — the reply carries that.
+ACK_EMOJI = "👀"
+
 # What the sender knows how to put on the wire. Every row is composed by the host, but the
 # check stays: an unknown action is rejected rather than guessed at.
 SENDABLE_ACTIONS = ("post", "react", "edit", "ask", "thread-create")
@@ -1999,6 +2005,24 @@ class Watcher:
         self.db.execute(f"UPDATE message SET turn_id=? WHERE id IN ({ids})", (turn_id,))
         self.db.execute("UPDATE conversation SET state='queued', lane=? WHERE id=?",
                         (lane, conv["id"]))
+        if not is_local_conversation(conv):
+            # HERE, and not in record_reply, is the whole point: the acknowledgement goes out
+            # on the pass that DECIDES to answer, not after a container run that can take a
+            # quarter of an hour. Every early return above it is a message the harness will not
+            # act on, and those get nothing.
+            #
+            # It is a poll away only for a conversation that was idle when the message landed,
+            # which is the common case and the one worth being quick about. A follow-up posted
+            # WHILE a run is working still waits: claim_turns will not touch a running
+            # conversation, because a second turn there forks the resumed session. Nothing can
+            # be marked earlier than that without marking it before the harness has decided, and
+            # a reaction that does not mean "I am answering this" is worth nothing.
+            #
+            # The trigger message, matching the reply's reply_to: a burst of three follow-ups
+            # is one turn, and marking the last of them marks the batch.
+            self.record_outbound(None, conv["id"], "react", {
+                "channel": reply_channel(conv), "message": msgs[-1]["discord_id"],
+                "emoji": ACK_EMOJI})
         log(f"turn {turn_id} queued: lane={lane} conversation={conv['id']} "
             f"messages={len(msgs)} tier={tier} venue={venue}")
         return turn_id
@@ -2035,6 +2059,12 @@ class Watcher:
         # worse than losing the pin: the change has to land on today's develop. Clearing
         # base_sha makes the next launch resolve base_ref fresh, and rebased_from records what
         # we moved off so the prompt can say so.
+        #
+        # THE VENUE comes from the triage turn rather than being left NULL, which is the same
+        # answer turn_venue would give for this conversation and, until compose_head grew two
+        # shapes, was a distinction without a difference. It is one now: a NULL venue reads as
+        # public, and a fix escalated inside dev_chat would have had its branch, its PR link and
+        # its verification stripped out of the reply for no reason anybody could have found.
         old_base = conv["base_sha"]
         outline = (verdict.get("change_outline") or verdict.get("summary") or "").strip()
         note = ("Your own triage of this thread returned AUTOFIX. Implement that fix now, "
@@ -2047,9 +2077,10 @@ class Watcher:
                           "scope_note": outline[:500], "status": "ok", "source": "triage"}
         cur = self.db.execute(
             "INSERT INTO turn(conversation_id, seq, trigger, lane, status, classification_json,"
-            " failed_closed, queued_at, parent_turn_id, rebased_from, note)"
-            " VALUES(?,?,'autofix','fix','queued',?,0,?,?,?,?)",
-            (conv["id"], seq, json.dumps(classification), now_iso(), turn["id"], old_base, note))
+            " failed_closed, queued_at, parent_turn_id, rebased_from, note, venue)"
+            " VALUES(?,?,'autofix','fix','queued',?,0,?,?,?,?,?)",
+            (conv["id"], seq, json.dumps(classification), now_iso(), turn["id"], old_base, note,
+             turn["venue"]))
         turn_id = cur.lastrowid
         self.db.execute(
             "UPDATE conversation SET state='queued', lane='fix', base_sha=NULL, verdict='AUTOFIX'"
@@ -2101,10 +2132,12 @@ class Watcher:
             if turn["conv_state"] == "running":
                 continue
             if self.rate_limited(turn["lane"]):
-                self.db.execute(
-                    "UPDATE turn SET status='blocked', ended_at=?, error=? WHERE id=?",
-                    (now_iso(), f"rate limit for lane {turn['lane']} reached", turn["id"]))
-                log(f"turn {turn['id']} blocked: rate limit for lane {turn['lane']}")
+                reason = f"rate limit for lane {turn['lane']} reached"
+                # finish_turn rather than a bare UPDATE of the turn row: `blocked` is a terminal
+                # state and has to return the conversation to idle like the others, or the
+                # record shows work in flight that is never coming.
+                self.finish_turn(turn["id"], "blocked", error=reason)
+                self.record_blocked_reply(turn["id"], reason)
                 continue
             lock = ConversationLock(os.path.join(self.conv_dir(turn["conversation_id"]), "lock"))
             if not lock.acquire():
@@ -2121,6 +2154,68 @@ class Watcher:
             thread.start()
             started.append(turn["id"])
         return started
+
+    def record_blocked_reply(self, turn_id, reason):
+        """A turn that will never run still owes an answer.
+
+        `blocked` is terminal and is never retried, so without this the message keeps its
+        acknowledgement and nothing else ever happens — the silence the design rules out for
+        every other terminal state. Composed HERE, from a fixed string: there is no run, no
+        container and no model call behind it, so saying "not today" costs nothing at all,
+        which is the only reason it is safe to do on the path that exists because the box is
+        already at its ceiling.
+
+        The reason itself is only for a private venue. "rate limit for lane fix reached" names
+        an internal that means nothing to a player and invites an argument about it.
+
+        ONCE PER CHANNEL PER LANE PER CEILING WINDOW, which is the whole difference between
+        saying so and haranguing everybody about it. A blocked turn never sets started_at, so
+        it does not count towards the ceiling that blocked it: the lane stays over its limit
+        for the rest of the day while claim_turns keeps minting turns — turn CREATION is not
+        rate limited, only launching is — and every message after the 200th on the answer lane
+        would otherwise draw its own refusal. Those posts count against send_limits like any
+        other, so a channel could spend its whole hourly send budget saying no while replies
+        from runs still in flight waited behind them.
+
+        PER CHANNEL and not per conversation, which was the first shape of this guard and did
+        not hold: ingest roots a conversation at its reply chain, so every fresh question in
+        #ask_claude is a NEW conversation and would have passed a per-conversation check. The
+        later askers get their acknowledgement and no note; the channel has been told, and the
+        record has their turn and its reason either way.
+        """
+        turn = self.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
+        if turn is None:
+            return 0
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (turn["conversation_id"],))
+        if conv is None or is_local_conversation(conv):
+            # A shell or web prompt has nowhere to post, and the person who typed it is looking
+            # at `ffwatch status`, where the blocked turn and its reason already are.
+            return 0
+        # channel_id and not reply_channel(): a bug-report conversation IS a forum thread, and
+        # reply_channel hands back the thread id for one, which would key this per thread and
+        # give every new report of the day its own refusal — the per-conversation shape this
+        # guard exists to avoid, under another name. channel_id is the forum itself, the thing
+        # the watch entry is about. It falls back for the shape that has no parent: a reply
+        # chain rooted in a text channel already stores that channel here.
+        #
+        # The lane is in the key too: a channel refused by the fix ceiling and later by the
+        # triage one has two different things to be told.
+        marker = f"blocked:{conv['channel_id'] or reply_channel(conv)}:{turn['lane']}"
+        since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=? AND created_at>=?",
+                          (marker, since), 0):
+            log(f"turn {turn_id} blocked: {reply_channel(conv)} was already told about the "
+                f"{turn['lane']} ceiling today")
+            return 0
+        last = self.db.one("SELECT * FROM message WHERE turn_id=?"
+                           " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT 1", (turn_id,))
+        text = BLOCKED_NOTE
+        if (turn["venue"] or "public") == "private":
+            text += f"\n\n{reason}"
+        return 1 if self.record_outbound(None, conv["id"], "post", {
+            "channel": reply_channel(conv), "text": text, "silent": True, "local_id": marker,
+            "reply_to": last["discord_id"] if last else None}) else 0
+
 
     def join_launches(self, timeout=None):
         with self._launch_lock:
@@ -2817,8 +2912,9 @@ class Watcher:
         uploaded, and approve_before_send already gives that queue a gate. An intent queued by
         the container would arrive as a message that had already been decided.
 
-        The ✅/❌ reaction on the triggering message is the harness's verdict on the run rather
-        than the agent's, so it is recorded no matter what the turn said.
+        NO REACTION IS RECORDED HERE. The triggering message was already marked with ACK_EMOJI
+        by create_turn, when the harness decided to answer it; a second reaction saying how the
+        run ended would only tell a reader something the reply itself says better.
         """
         if is_local_conversation(conv):
             # No Discord side to answer. The record IS the reply: the run row, the transcript
@@ -2842,9 +2938,11 @@ class Watcher:
         payload = {"channel": reply_channel(conv), "text": head, "silent": True,
                    "reply_to": job["messages"][-1]["discord_id"] if job["messages"] else None}
         summary = (verdict.get("summary") or "").strip()
-        if len(summary) > HEAD_CAP:
+        if len(summary) > HEAD_CAP and answer_is_publishable(turn, terminal):
             # check_length DIES above 2000 characters rather than truncating, so the overflow
-            # is attached as a file instead of being allowed to fail the post.
+            # is attached as a file instead of being allowed to fail the post. The same gate as
+            # the head: withholding a failed run's output from the text and then attaching the
+            # whole of it as a file would have been no protection at all.
             spath = os.path.join(run_dir, "summary.md")
             try:
                 with open(spath, "w", encoding="utf-8") as fh:
@@ -2856,16 +2954,6 @@ class Watcher:
             recorded += 1
 
         recorded += self.record_private_half(run_row_id, conv, turn, verdict)
-
-        trigger = job["messages"][-1]["discord_id"] if job["messages"] else None
-        if trigger:
-            # 059's report.reply did this and it earns its keep: a player watching the thread
-            # sees the run land without reading the reply, and a ❌ is visible at a glance in a
-            # channel full of green ticks.
-            if self.record_outbound(run_row_id, conv["id"], "react", {
-                    "channel": reply_channel(conv), "message": trigger,
-                    "emoji": "✅" if terminal == "done" else "❌"}):
-                recorded += 1
         return recorded
 
 
@@ -3570,8 +3658,22 @@ class Watcher:
                 self._kill_switch_logged = True
             return 0
 
+        # MESSAGES FIRST, reactions after. The acknowledgement is queued at turn creation and so
+        # holds the lowest id in its conversation; by plain id order it took the last slot under
+        # a send ceiling and the reply it promised was the row left pending, which is the wrong
+        # one of the two to drop.
+        #
+        # TWO QUERIES rather than one ORDER BY, because `limit` is a batch cap and one query
+        # would let a backlog eat it: 200 posts held by an unattended approval queue or a
+        # Discord outage stay pending and are re-selected every pass, so a single ordered
+        # SELECT would return 200 posts and no reactions for as long as the backlog lasted, and
+        # the acknowledgement — the one thing in here that is supposed to land within a poll —
+        # would never be looked at. Sending is still bounded, by _send_limited, not by this.
         rows = self.db.query(
-            "SELECT * FROM outbound WHERE status IN ('pending','approved')"
+            "SELECT * FROM outbound WHERE status IN ('pending','approved') AND action<>'react'"
+            " ORDER BY id LIMIT ?", (limit,))
+        rows += self.db.query(
+            "SELECT * FROM outbound WHERE status IN ('pending','approved') AND action='react'"
             " ORDER BY id LIMIT ?", (limit,))
         approve = bool(self.cfg.get("approve_before_send"))
         sent = held = 0
@@ -3639,7 +3741,16 @@ class Watcher:
 
     def _send_limited(self, row):
         """Send-side ceilings. Separate from the per-lane turn limits: a single run that loops
-        writing intents would otherwise spray a thread no matter how few turns it ran."""
+        writing intents would otherwise spray a thread no matter how few turns it ran.
+
+        A reaction counts like everything else. It is tempting to exempt it — no content, no
+        ping, one PUT — but these ceilings are the only bound on what the bot puts on the wire
+        at all, and the acknowledgement is queued from create_turn, which nothing rate-limits.
+        Exempting it would leave a burst of newly-claimed conversations firing unthrottled.
+        What the acknowledgement gets instead is LOWER PRIORITY, in send_pending: it is queued
+        minutes before the reply and holds the lower id, so ordering by id alone spent the
+        conversation's last slot on the tick and held back the answer it promised.
+        """
         limits = self.cfg.get("send_limits") or {}
         since = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         per_hour = int(limits.get("per_hour") or 0)
@@ -4273,37 +4384,148 @@ class Watcher:
 
 HEAD_CAP = 1500        # leaves room for the framing lines under Discord's 2000-char limit
 
-STATE_EMOJI = {"done": "✅", "failed": "❌", "timed_out": "⏱️", "crashed": "🔌",
-               "blocked": "🚧"}
+# What a PUBLIC venue is told when the run produced no answer at all: a crashed container, or a
+# launcher that never started one. The alternative is an empty post, which the sender refuses,
+# and then the question is answered with silence — the exact failure record_launch_failure
+# exists to prevent. It carries no run id, no state and no cost, because none of that means
+# anything to the person who asked.
+PUBLIC_NO_ANSWER = ("Something broke on my end and this one never got an answer. "
+                    "It is logged. Try asking again.")
+
+# A run that finished cleanly and had nothing to say. NOT the note above: telling somebody it
+# broke when it did not invites a re-ask that burns another run for the same silence.
+PUBLIC_NOTHING_TO_SAY = "I had a look at this one and came back with nothing worth saying."
+
+
+def answer_is_publishable(turn, terminal):
+    """Does this reply carry the agent's own words at all?
+
+    Only a run that ended `done` has an answer to give. On any other ending `summary` is
+    whatever _parse_verdict could make of the result, and for the commonest failure — an API
+    error, where result.json is {"is_error": true, "result": "API Error: 500 ..."} — that IS
+    the error string. A private venue takes it anyway, under a state line that says what it is.
+    A public one must not: it would put a stack-shaped line in a player's thread as the reply.
+
+    Its own function because record_reply asks the same question about the ATTACHMENT. A
+    summary over HEAD_CAP is uploaded as summary.md, and gating the head without gating the
+    file would have withheld the text and attached it in the same message.
+    """
+    return terminal == "done" or (turn["venue"] or "public") == "private"
+
+# A turn stopped by a lane ceiling. Said plainly, and without inviting a retry that would hit
+# the same ceiling. The acknowledgement stays on the message: it was taken in, and this is the
+# answer to it.
+BLOCKED_NOTE = ("That is my limit for the day, so I have not started on this one. "
+                "It is on the record and nothing is lost.")
+
+
+def public_correction(turn, verification, publish):
+    """The one line a PUBLIC reply is allowed beyond the agent's own words, or "".
+
+    A public reply is the agent's prose, and prose is the one part of a reply the harness did
+    not write. That is fine while the two agree. It is not fine when they do not: a summary
+    saying "pushed the fix and opened a PR" reads as fact in a bug thread even when the tests
+    failed and the harness refused to propose anything. The private shape answers that by
+    printing what the harness knows next to what the agent said; the public shape cannot,
+    because branch names, test names and file paths are exactly what a player must not be
+    shown.
+
+    So: nothing at all while the harness has no quarrel with the run, and ONE fixed sentence
+    when it does. Fixed, never interpolated from `evidence` or `no_pr_reason`, because those
+    carry the internals this line exists to keep out. Whoever wants the detail has the web page.
+
+    `skipped` is not a disagreement. It means the run changed no files and there was nothing to
+    test, which is what the agent will have said itself — and it is also what keeps "no branch"
+    from correcting that same idle run.
+    """
+    if turn["failed_closed"]:
+        return "⚠️ I could not work out what this was asking for, so I only looked and changed nothing."
+    if verification is not None and not verification["skipped"]:
+        if not verification["ran"]:
+            return "⚠️ The tests never ran, so nothing here has been checked."
+        if not verification["compiled"] or (verification["tests_failed"] or 0) > 0:
+            return "⚠️ The tests did not pass, so nothing was put up for review."
+        if (publish or {}).get("no_branch_reason"):
+            # Inside the not-skipped branch on purpose. no_branch_reason covers two unlike
+            # things: "the run changed no files", which is a fine outcome the agent will have
+            # explained itself, and a push that failed, a harvest ffbox refused, or work that
+            # could not be bundled. The verification row tells them apart without reading the
+            # reason string — the container skips the suite exactly when nothing changed — so
+            # reaching here means files DID change and none of them got out of the box, which
+            # is a summary saying "pushed the fix" with nothing behind it.
+            return "⚠️ I could not save this work anywhere, so nothing was put up for review."
+    if (publish or {}).get("no_pr_reason"):
+        # "put up for review" and not "no fix was made": _no_pr is only reached AFTER a
+        # successful push, so on this path a branch really does exist. What did not happen is
+        # the proposal — whether the tests failed, the host had no GitHub token, or GitHub
+        # refused it — and that is what contradicts a summary claiming a PR was opened.
+        return "⚠️ Nothing was put up for review on this one."
+    return ""
 
 
 def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
                  verification=None, publish=None):
-    """The reply body, ported from 059's report.compose_head.
+    """The reply body. TWO SHAPES, chosen by the turn's venue.
 
-    Every line here comes from the HARNESS, not from the agent's prose: the state and the
-    clocks from ffbox, the classification from the record ffwatch wrote before launching, the
-    verification from the harness's own test run, the branch and PR from git and the GitHub API
-    response. Only `summary` is the agent's, and it is the one thing a human reads with that in
-    mind.
+    A PUBLIC reply is the agent's answer, and the only thing that may lead it is the one
+    correction in public_correction, on the runs where the harness disagrees with what the
+    agent said. The state, the run id, the lane, the cost, the turn count and the
+    classification are the harness talking to its operator, and a player reading a thread has
+    no use for any of them. Nothing is lost by dropping them: they are on the run row and on
+    the web page.
+
+    A PRIVATE reply keeps the lines a reader would otherwise have to take the agent's word for
+    — whether the harness's own tests ran and passed, which branch and PR the work landed on,
+    why a run was demoted to read-only, and the session to resume from. Every one of those
+    comes from the HARNESS (ffbox, the batchmode test run, git, the GitHub API) rather than
+    from the agent's prose, which is what makes them worth the space. The telemetry line is
+    gone from here too; what is left is fact a person acts on.
+
+    An unset venue reads as public. That is the safe direction for the one thing this function
+    can leak: a row written before the column existed gets the answer and none of the internals.
     """
-    publish = publish or {}
-    bits = [f"{STATE_EMOJI.get(terminal, '•')} {terminal} · `{job['run_id']}`",
-            f"lane {turn['lane']}"]
-    if isinstance(result, dict) and result.get("total_cost_usd") is not None:
-        bits.append(f"${result['total_cost_usd']:.2f}")
-    if isinstance(result, dict) and result.get("num_turns") is not None:
-        bits.append(f"{result['num_turns']} turns")
-    lines = [" · ".join(bits)]
+    summary = (verdict.get("summary") or "").strip()
+    # Cut to HEAD_CAP in BOTH shapes, because record_reply attaches summary.md on exactly this
+    # condition. Returning the whole thing here instead would send the full text AND the file,
+    # and past 2000 characters split_for_discord would attach a second copy of the same words.
+    body = summary[:HEAD_CAP] + ("\n…(full summary attached)" if len(summary) > HEAD_CAP
+                                 else "")
+    if (turn["venue"] or "public") != "private":
+        # ONLY a run that ended `done` has an answer to give. On any other ending `summary` is
+        # whatever _parse_verdict could make of the result, and for the commonest failure — an
+        # API error, where result.json is {"is_error": true, "result": "API Error: 500 ..."} —
+        # that IS the error string. Posting it would put a stack-shaped line in a player's
+        # thread as though it were the reply.
+        correction = public_correction(turn, verification, publish or {})
+        if not answer_is_publishable(turn, terminal):
+            answer = PUBLIC_NO_ANSWER
+        else:
+            answer = body or PUBLIC_NOTHING_TO_SAY
+        return f"{correction}\n\n{answer}" if correction else answer
 
-    classification = job.get("classification") or {}
+    publish = publish or {}
+    lines = []
     if turn["failed_closed"]:
         # Visible, not buried: the run was given the least privilege because the harness could
         # not decide, and whoever reads the answer should know it was answered blind.
         lines.append(f"⚠️ classification failed, ran read-only: {turn['failed_closed_reason']}"[:200])
-    elif classification.get("type"):
-        lines.append(f"type: {classification['type']}")
-    if timeout_kind:
+    if terminal != "done":
+        # ALWAYS a line, even with nothing to add to it. A run that died before it wrote a
+        # result leaves `result` empty, and a read-only lane was never asked to verify, so
+        # neither the error line nor the verification line below would fire — and the whole
+        # private reply came to the resume footer and nothing else. An operator has to be told
+        # that a run they are waiting on is not coming back.
+        detail = str(result.get("subtype") or result.get("error") or "") \
+            if isinstance(result, dict) else ""
+        said = f"the run {terminal.replace('_', ' ')}"
+        if timeout_kind:
+            said += f" on the {timeout_kind} clock"
+        if detail:
+            said += f": {detail}"
+        lines.append(said[:300])
+    elif timeout_kind:
+        # The VERIFY clock is the one timeout that still counts as done — the agent had already
+        # finished — so it is reported without calling the run a failure.
         lines.append(f"stopped on the {timeout_kind} clock")
 
     if verification is not None:
@@ -4343,18 +4565,21 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
     elif publish.get("no_branch_reason"):
         lines.append(f"no branch: {publish['no_branch_reason']}")
 
-    if terminal in ("failed", "crashed") and isinstance(result, dict):
-        detail = result.get("subtype") or result.get("error") or ""
-        if detail:
-            lines.append(f"error: {detail}"[:300])
-
-    summary = (verdict.get("summary") or "").strip()
-    if summary:
-        lines += ["", summary[:HEAD_CAP] +
-                  ("\n…(full summary attached)" if len(summary) > HEAD_CAP else "")]
+    if not body and not lines:
+        # A clean run that produced no summary at all, on a lane with nothing to verify and
+        # nothing to publish. Every conditional above it is skipped and the state line does not
+        # fire, so without this the whole reply is the resume footer — which reads like a run
+        # that went fine and said something, rather than one that said nothing.
+        lines.append("the run finished without saying anything")
+    if body:
+        if lines:
+            lines.append("")
+        lines.append(body)
     # So a human can pull the whole conversation onto a desktop and keep going interactively —
     # the session id is the same one the container ran under.
-    lines += ["", f"resume:  ffresume {job['session']['id']}"]
+    if lines:
+        lines.append("")
+    lines.append(f"resume:  ffresume {job['session']['id']}")
     return "\n".join(lines)
 
 

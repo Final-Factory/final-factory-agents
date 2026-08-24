@@ -440,7 +440,7 @@ class Case:
     """One isolated ffwatch installation: its own state dir, fixture, events file and stubs."""
 
     def __init__(self, name, fixture=None, mode="ok", classifier_ok=False, approve=False,
-                 verdict=None):
+                 verdict=None, venue="public"):
         self.root = os.path.join(TMPROOT, name)
         os.makedirs(self.root, exist_ok=True)
         self.fixture_path = os.path.join(self.root, "fixture.json")
@@ -478,10 +478,14 @@ class Case:
             os.environ.pop(key, None)
 
         cfg = ffwatch.load_config()
+        # `venue` is a per-case knob because compose_head has two shapes and the difference
+        # between them is the whole point: a public reply is the answer alone, a private one
+        # also carries what the HARNESS knows. A test about the branch, the PR or the
+        # verification therefore has to be a private one; there is nowhere else those lines go.
         cfg["watch"] = {"ask_claude": {"kind": "ask", "forum": False,
-                                       "venue": "public", "engage": "all"},
+                                       "venue": venue, "engage": "all"},
                         "bug_reports": {"kind": "bug_report", "forum": True,
-                                        "venue": "public", "engage": "all"}}
+                                        "venue": venue, "engage": "all"}}
         cfg["plugins_dir"] = os.path.join(self.root, "plugins")
         os.makedirs(os.path.join(cfg["plugins_dir"], "ff-discord"), exist_ok=True)
         cfg["approve_before_send"] = approve
@@ -1303,9 +1307,17 @@ def test_timeout_is_terminal():
     case.watcher.once()
     check("a later pass does NOT retry it", len(case.rows("SELECT * FROM run")) == 1,
           case.rows("SELECT * FROM run"))
-    payload = json.loads(case.rows("SELECT * FROM outbound")[0]["payload_json"])
-    check("the reply says which clock stopped it", "agent clock" in payload["text"]
-          or "agent" in payload["text"], payload["text"][:200])
+    payload = json.loads(case.rows(
+        "SELECT * FROM outbound WHERE action='post'")[0]["payload_json"])
+    # ask_claude is a PUBLIC venue, so which clock ran out is not the reply's business: the
+    # person who asked gets told an answer is not coming, in words that mean something to them.
+    # The correction above it is the classifier having failed closed, which this fixture also
+    # does; the clock itself is named nowhere.
+    check("the public reply says an answer is not coming, and never names the clock",
+          payload["text"].endswith(ffwatch.PUBLIC_NO_ANSWER)
+          and "clock" not in payload["text"], payload["text"][:300])
+    check("and the clock that stopped it is on the record instead",
+          "agent clock" in (turn["error"] or ""), dict(turn))
 
 
 def test_kill_switch():
@@ -1366,22 +1378,23 @@ def test_outbound_is_recorded_before_it_is_sent():
     case.watcher.once()
 
     rows = case.rows("SELECT * FROM outbound ORDER BY id")
-    check("the reply and its reaction exist in the database", len(rows) == 2,
+    check("the acknowledgement and the reply both exist in the database", len(rows) == 2,
           [(r["action"], r["status"]) for r in rows])
-    row = rows[0]
+    check("the acknowledgement leads, because it was queued when the turn was created",
+          rows[0]["action"] == "react"
+          and json.loads(rows[0]["payload_json"])["emoji"] == ffwatch.ACK_EMOJI, rows[0])
+    check("and it is aimed at the message that triggered the turn",
+          json.loads(rows[0]["payload_json"])["message"] == "13001", rows[0])
+    row = rows[1]
     check("the reply is pending, not sent", row["status"] == "pending", row)
     check("it carries a uuid nonce for enforce_nonce dedupe",
           str(uuid.UUID(row["nonce"])) == row["nonce"], row["nonce"])
     check("nothing has been given a Discord id yet", row["discord_id"] is None, row)
     payload = json.loads(row["payload_json"])
     check("the reply is composed --silent", payload["silent"] is True, payload)
-    check("and carries the ffresume footer", "ffresume" in payload["text"], payload["text"])
     check("a reply-chain conversation replies to the CHANNEL, not to the root message id",
           payload["channel"] == ASK_CHANNEL, payload["channel"])
     check("NOTHING reached Discord before approval", not sent_calls(case), case.calls())
-    check("the harness reacts on the triggering message",
-          rows[1]["action"] == "react"
-          and json.loads(rows[1]["payload_json"])["emoji"] == "✅", rows[1])
 
 
 def test_dry_run():
@@ -1690,7 +1703,8 @@ def test_failed_launch_frees_the_slot():
     # a Discord reply, a launch that never started included.
     posts = sent_calls(case)
     check("the failure was still reported to Discord", len(posts) == 1, case.calls())
-    check("and the reply names the failure", posts and "failed" in posts[0][3], posts)
+    check("and the reply says an answer is not coming, in words a player can read",
+          posts and posts[0][3].endswith(ffwatch.PUBLIC_NO_ANSWER), posts)
 
 
 def test_transcript_reindex_is_stable():
@@ -1942,6 +1956,45 @@ def test_sender_rate_limit():
           statuses == ["sent", "pending", "pending"], statuses)
     check("a second pass does not sneak them out either",
           case.watcher.send_pending() == 0, case.calls())
+
+    # WHICH OF THE TWO GETS DROPPED. The acknowledgement is queued at turn creation, so it holds
+    # the lowest id in its conversation; sent in id order it took the last slot under the
+    # ceiling and left the answer it promised sitting pending. It still counts — these limits
+    # are the only bound on what reaches Discord at all — it just goes last.
+    ack = Case("sendrateack")
+    ack.watcher.cfg["send_limits"] = {"per_hour": 0, "per_conversation_hour": 1}
+    conv = seed_conversation(ack)
+    ack.watcher.record_outbound(None, conv, "react",
+                                {"channel": ASK_CHANNEL, "message": "22001",
+                                 "emoji": ffwatch.ACK_EMOJI})
+    ack.watcher.record_outbound(None, conv, "post", {"channel": ASK_CHANNEL, "text": "answer"})
+    check("the one slot goes to the answer, not to the tick that promised it",
+          ack.watcher.send_pending() == 1 and sent_calls(ack)[0][0] == "post",
+          ack.calls())
+    check("and the acknowledgement is the row held back",
+          [(r["action"], r["status"]) for r in
+           ack.rows("SELECT action, status FROM outbound ORDER BY id")]
+          == [("react", "pending"), ("post", "sent")],
+          ack.rows("SELECT * FROM outbound"))
+    check("a react is still counted, so it is not a way around the ceiling either",
+          ack.watcher.send_pending() == 0, ack.calls())
+
+    # Deprioritised is not the same as starved. `limit` is a batch cap and pending rows are
+    # re-selected every pass, so one ordered SELECT would hand back nothing but posts for as
+    # long as a backlog outlasted it — and the acknowledgement, the one row here that is meant
+    # to land within a poll, would never be looked at.
+    batch = Case("sendbatch")
+    conv = seed_conversation(batch)
+    batch.watcher.record_outbound(None, conv, "post", {"channel": ASK_CHANNEL, "text": "one"})
+    batch.watcher.record_outbound(None, conv, "react",
+                                  {"channel": ASK_CHANNEL, "message": "22001",
+                                   "emoji": ffwatch.ACK_EMOJI})
+    batch.watcher.record_outbound(None, conv, "post", {"channel": ASK_CHANNEL, "text": "two"})
+    check("a batch too small for the backlog still carries the acknowledgement",
+          batch.watcher.send_pending(limit=1) == 2, batch.calls())
+    check("and it went out after the message, not instead of it",
+          [c[0] for c in batch.calls() if c and "--help" not in c] == ["post", "react"],
+          batch.calls())
 
 
 def test_sender_failure_is_retryable():
@@ -2224,8 +2277,8 @@ def test_the_container_cannot_author_a_message():
     check("the one reply is the host's, composed from the structured verdict",
           "the merger drops the second input" in json.loads(posts[0]["payload_json"])["text"],
           json.loads(posts[0]["payload_json"])["text"][:200])
-    check("the harness still stamps its own verdict on the trigger",
-          [r["action"] for r in rows] == ["post", "react"], [r["action"] for r in rows])
+    check("the acknowledgement was queued before the run, so it leads the queue",
+          [r["action"] for r in rows] == ["react", "post"], [r["action"] for r in rows])
     calls = sent_calls(case)
     check("exactly one send, to the THREAD, which is a channel id",
           len(calls) == 1 and calls[0][1] == "23000", calls)
@@ -2322,25 +2375,248 @@ def test_sender_argv_is_accepted_by_the_real_cli():
               detail)
 
 
-def test_reply_head_reports_what_the_harness_knows():
+def test_the_reply_has_two_shapes():
+    """A public venue gets the answer. A private one also gets what the harness knows.
+
+    The telemetry that used to lead every reply — the state, the run id, the lane, the cost,
+    the turn count and the classification — is gone from BOTH shapes. It is on the run row and
+    the web page, which is where somebody who wants it goes looking; it was never something the
+    person who asked had a use for, and in a public channel the run id and the lane are
+    internals besides.
+    """
     print("reply composition")
+    clean = base_fixture()
+    clean["messages"][ASK_CHANNEL] = [message(24201, "why does the belt stall?")]
+    case = Case("headclean", clean, approve=True,
+                verdict={"engage": True, "type": "question",
+                         "reason": "a player asking how something works", "scope_note": ""})
+    case.events(ask_event(24201))
+    case.watcher.once()
+    text = json.loads(case.rows("SELECT * FROM outbound WHERE action='post'"
+                                " ORDER BY id")[0]["payload_json"])["text"]
+    check("a public reply the harness has no quarrel with is the answer and nothing else",
+          text == "Checked the belt merger path; this is expected behaviour.", text)
+    check("no state, run id, lane, cost, turn count or classification leads it",
+          not any(bit in text for bit in ("✅", "lane ", "$0.21", "4 turns", "type:")), text)
+    check("and no ffresume footer, which names a session nobody there can resume",
+          "ffresume" not in text, text)
+
     fixture = base_fixture()
     fixture["messages"][RANDOM_CHANNEL] = [message(24001, "why does the belt stall?",
                                                    channel=RANDOM_CHANNEL)]
     # An unwatched channel: the classifier stub cannot run, so this turn fails closed.
-    case = Case("head", fixture, approve=True)
-    case.events(ask_event(24001, channel="random_chat", channel_id=RANDOM_CHANNEL))
-    case.watcher.once()
-    text = json.loads(case.rows("SELECT * FROM outbound ORDER BY id")[0]["payload_json"])["text"]
-    check("the head names the state and the run id", text.startswith("✅ done · `d"), text[:80])
-    check("it carries cost and turn count", "$0.21" in text and "4 turns" in text, text[:200])
-    check("a failed-closed classification is warned about visibly",
-          "⚠️" in text and "read-only" in text, text[:400])
-    check("the summary is included", "belt merger" in text, text)
+    blind = Case("head", fixture, approve=True)
+    blind.events(ask_event(24001, channel="random_chat", channel_id=RANDOM_CHANNEL))
+    blind.watcher.once()
+    btext = json.loads(blind.rows("SELECT * FROM outbound WHERE action='post'"
+                                  " ORDER BY id")[0]["payload_json"])["text"]
+    check("a public reply the harness DOES have a quarrel with says so, in one line",
+          btext.splitlines()[0] == "⚠️ I could not work out what this was asking for, "
+                                   "so I only looked and changed nothing.", btext)
+    check("and the answer still follows it", btext.endswith(
+        "Checked the belt merger path; this is expected behaviour."), btext)
+    check("the correction names no internal the private shape would have named",
+          "read-only" not in btext and "classification" not in btext, btext)
+
+    # The same failure, at a private venue. What was withheld above is here, spelled out,
+    # because everyone who can read this channel is already trusted with internals.
+    priv_fixture = base_fixture()
+    priv_fixture["messages"][ASK_CHANNEL] = [message(24101, "why does the belt stall?")]
+    priv = Case("headprivate", priv_fixture, approve=True, venue="private")
+    priv.events(ask_event(24101))
+    priv.watcher.once()
+    ptext = json.loads(priv.rows("SELECT * FROM outbound WHERE action='post'"
+                                 " ORDER BY id")[0]["payload_json"])["text"]
+    check("a private reply warns that the run was answered blind, and why",
+          "⚠️" in ptext and "read-only" in ptext, ptext[:400])
+    check("it carries the answer too", "belt merger" in ptext, ptext)
     check("and the ffresume footer lets a human take the session over",
-          f"ffresume {case.rows('SELECT session_id FROM run')[0]['session_id']}" in text, text)
-    check("no branch or PR line is faked while publication is phase 3",
-          "branch" not in text and "PR #" not in text, text)
+          f"ffresume {priv.rows('SELECT session_id FROM run')[0]['session_id']}" in ptext,
+          ptext)
+    check("but the telemetry is gone from here as well",
+          not any(bit in ptext for bit in ("✅", "lane ", "$0.21", "4 turns", "type:")), ptext)
+    check("no branch or PR line is faked for a lane that published nothing",
+          "branch" not in ptext and "PR #" not in ptext, ptext)
+
+
+def test_a_private_reply_never_composes_to_nothing():
+    """A run can die before it writes anything at all, and the operator still has to be told.
+
+    `result` is {} when there is no result.json to read, a read-only lane was never asked to
+    verify so there is no verification row, and a dead run left no verdict — so every
+    conditional line in the private shape is skipped. Until the state line was made
+    unconditional this composed to the resume footer and nothing else, which on a screen reads
+    exactly like a run that went fine.
+    """
+    print("reply: a run that produced nothing still says so")
+    job = {"run_id": "d1t1-dead", "session": {"id": "S"}, "classification": {}, "messages": []}
+    turn = {"venue": "private", "failed_closed": 0, "failed_closed_reason": None}
+
+    text = ffwatch.compose_head(None, turn, "failed", {}, {}, None, job)
+    check("the state is named even with nothing to add to it",
+          text.splitlines()[0] == "the run failed", text)
+    check("and the resume handle is still there", "ffresume S" in text, text)
+    check("but not the run id, the lane or a cost",
+          "d1t1-dead" not in text and "lane " not in text and "$" not in text, text)
+
+    text = ffwatch.compose_head(None, turn, "timed_out", {}, {}, "agent", job)
+    check("a clock that ran out is named in the same line",
+          "the run timed out on the agent clock" in text, text)
+
+    text = ffwatch.compose_head(None, turn, "failed", {"subtype": "container exited 3"}, {},
+                                None, job)
+    check("a detail is appended rather than replacing the state",
+          "the run failed: container exited 3" in text, text)
+
+    # The verify clock is the one timeout that leaves the run `done`: the agent had already
+    # finished and its answer is worth posting, so this must not read as a failure.
+    text = ffwatch.compose_head(None, turn, "done", {}, {"summary": "here is the answer"},
+                                "verify", job)
+    check("the verify clock is reported without calling the run failed",
+          "stopped on the verify clock" in text and "the run" not in text, text)
+    check("a run that went fine says nothing about its state at all",
+          ffwatch.compose_head(None, turn, "done", {}, {"summary": "fine"}, None, job)
+          == "fine\n\nresume:  ffresume S",
+          ffwatch.compose_head(None, turn, "done", {}, {"summary": "fine"}, None, job))
+    check("but a clean run that said nothing at all does not compose to the footer either",
+          ffwatch.compose_head(None, turn, "done", {}, {"summary": ""}, None, job)
+          == "the run finished without saying anything\n\nresume:  ffresume S",
+          ffwatch.compose_head(None, turn, "done", {}, {"summary": ""}, None, job))
+
+
+def test_a_failed_public_run_attaches_nothing_either():
+    """Withholding the text and attaching the whole of it is not withholding it.
+
+    record_reply uploads summary.md whenever the summary runs past HEAD_CAP, and that gate knew
+    nothing about the venue. A timed-out fix run in a public bug thread whose last prose ran
+    long would have been answered with "something broke on my end" and a file holding the file
+    paths and test names the public shape exists to keep out.
+    """
+    print("reply: the overflow follows the same rule as the head")
+    case = Case("overflowgate")
+    conv_id = seed_conversation(case)
+    conv = case.rows("SELECT * FROM conversation WHERE id=?", (conv_id,))[0]
+    case.watcher.db.execute(
+        "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
+        " VALUES(?,1,'fix','timed_out',?,'public')", (conv_id, ffwatch.now_iso()))
+    turn = case.rows("SELECT * FROM turn ORDER BY id DESC")[0]
+    leak = "Assets/Belt.cs:214 FF.BeltTests.Merges " + "x" * ffwatch.HEAD_CAP
+    job = {"run_id": "d1t1-long", "session": {"id": "S"}, "classification": {},
+           "messages": [{"discord_id": "22001"}]}
+    run_dir = case.watcher.conv_dir(conv_id)
+    os.makedirs(run_dir, exist_ok=True)
+    result = {"result": json.dumps({"summary": leak})}
+
+    case.watcher.record_reply(None, conv, turn, run_dir, "timed_out", result, "agent", job)
+    payload = json.loads(case.rows(
+        "SELECT * FROM outbound WHERE action='post'")[0]["payload_json"])
+    check("the fixture really is the trap: the summary is over HEAD_CAP",
+          len(leak) > ffwatch.HEAD_CAP, len(leak))
+    check("the head withholds it", payload["text"] == ffwatch.PUBLIC_NO_ANSWER, payload["text"])
+    check("and no file is sent carrying it instead", not payload.get("files"), payload)
+    check("nothing was even written to disk for it",
+          not os.path.exists(os.path.join(run_dir, "summary.md")), run_dir)
+
+    # The same overflow at a private venue is still attached, which is the behaviour the gate
+    # has to leave alone: there the head prints the summary and says the rest is attached.
+    case.watcher.db.execute("UPDATE turn SET venue='private' WHERE id=?", (turn["id"],))
+    priv = case.rows("SELECT * FROM turn WHERE id=?", (turn["id"],))[0]
+    case.watcher.record_reply(None, conv, priv, run_dir, "timed_out", result, "agent", job)
+    payload = json.loads(case.rows(
+        "SELECT * FROM outbound WHERE action='post' ORDER BY id DESC")[0]["payload_json"])
+    check("a private venue still gets the whole of it as a file",
+          payload.get("files") and payload["files"][0].endswith("summary.md"), payload)
+    check("and its head says where the rest went", "attached" in payload["text"],
+          payload["text"][-200:])
+
+
+def test_a_capped_lane_tells_a_channel_once_not_every_asker():
+    """Every fresh question in a text channel is its own conversation.
+
+    A blocked turn never sets started_at, so it does not count towards the ceiling that blocked
+    it: once the answer lane is over its cap it STAYS over it for the rest of the day while
+    claim_turns keeps minting turns for every new question. Keyed per conversation the guard
+    would have passed each one of them, and the channel would have spent its hourly send budget
+    turning people away.
+    """
+    print("scheduler: a capped lane says so once per channel")
+    case = Case("blockedchannel")
+    turns = []
+    for n in (0, 1):
+        conv_id = seed_conversation(case, thread_id=f"2500{n}")
+        case.watcher.db.execute(
+            "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
+            " VALUES(?,1,'answer','blocked',?,'public')", (conv_id, ffwatch.now_iso()))
+        turns.append(case.watcher.db.scalar("SELECT MAX(id) FROM turn", (), 0))
+    check("the two askers really are separate conversations",
+          len(case.rows("SELECT * FROM conversation")) == 2,
+          case.rows("SELECT id, thread_id, channel_id FROM conversation"))
+
+    reason = "rate limit for lane answer reached"
+    check("the channel is told once", case.watcher.record_blocked_reply(turns[0], reason) == 1)
+    check("and the next asker in the SAME channel is not told again",
+          case.watcher.record_blocked_reply(turns[1], reason) == 0,
+          case.rows("SELECT payload_json FROM outbound"))
+    check("so exactly one note exists",
+          len(case.rows("SELECT * FROM outbound WHERE action='post'")) == 1,
+          case.rows("SELECT * FROM outbound"))
+
+    # A different ceiling is a different thing to be told, so it is keyed apart.
+    case.watcher.db.execute("UPDATE turn SET lane='fix' WHERE id=?", (turns[1],))
+    check("but a different lane running out is",
+          case.watcher.record_blocked_reply(turns[1],
+                                            "rate limit for lane fix reached") == 1,
+          case.rows("SELECT * FROM outbound"))
+
+    # A forum is the shape that nearly slipped through: a bug-report conversation IS a thread,
+    # so keying on where the reply GOES keys on the thread, and twenty reports opened overnight
+    # would each have drawn their own refusal. The key is the forum they were opened in.
+    forum = []
+    for n in (0, 1):
+        conv_id = seed_conversation(case, thread_id=f"3100{n}", channel_id="777000", is_thread=1)
+        case.watcher.db.execute(
+            "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
+            " VALUES(?,1,'triage','blocked',?,'public')", (conv_id, ffwatch.now_iso()))
+        forum.append(case.watcher.db.scalar("SELECT MAX(id) FROM turn", (), 0))
+    check("the first thread of the day is told",
+          case.watcher.record_blocked_reply(forum[0], "rate limit for lane triage reached") == 1)
+    check("and the next thread in the same forum is not",
+          case.watcher.record_blocked_reply(forum[1], "rate limit for lane triage reached") == 0,
+          case.rows("SELECT payload_json FROM outbound WHERE action='post'"))
+
+
+def test_a_public_venue_never_publishes_a_failed_runs_output():
+    """`summary` is only an answer on a run that ended `done`.
+
+    The commonest failure writes {"is_error": true, "result": "API Error: 500 ..."}, and
+    _parse_verdict turns that string into the summary — so a public venue would post the error
+    itself as the reply, in a thread players read, with nothing marking it as a failure. The
+    private shape is covered by its unconditional state line; this is the public half.
+    """
+    print("reply: a failed run's output is not an answer")
+    job = {"run_id": "d1t1-boom", "session": {"id": "S"}, "classification": {}, "messages": []}
+    turn = {"venue": "public", "failed_closed": 0, "failed_closed_reason": None}
+    boom = {"is_error": True, "subtype": "error_during_execution",
+            "result": "API Error: 500 {\"type\":\"error\"}"}
+    verdict = ffwatch._parse_verdict(boom["result"])
+    check("the fixture really is the trap: the error became the summary",
+          "API Error" in verdict["summary"], verdict)
+
+    text = ffwatch.compose_head(None, turn, "failed", boom, verdict, None, job)
+    check("none of it reaches the thread", "API Error" not in text and "500" not in text, text)
+    check("and what does is the plain no-answer note", text == ffwatch.PUBLIC_NO_ANSWER, text)
+    check("a timed-out run is treated the same way",
+          ffwatch.compose_head(None, turn, "timed_out", boom, verdict, "agent", job)
+          == ffwatch.PUBLIC_NO_ANSWER, text)
+    check("while a run that ended done still answers with its summary",
+          ffwatch.compose_head(None, turn, "done", {}, {"summary": "the belt is fine"}, None,
+                               job) == "the belt is fine", text)
+    # And the other direction: a run that finished cleanly with nothing to say must not be
+    # reported as a breakage, or the asker re-asks and burns another run for the same silence.
+    check("a clean run that said nothing is not called a breakage",
+          ffwatch.compose_head(None, turn, "done", {}, {"summary": ""}, None, job)
+          == ffwatch.PUBLIC_NOTHING_TO_SAY,
+          ffwatch.compose_head(None, turn, "done", {}, {"summary": ""}, None, job))
 
 
 def test_sender_accounts_for_mention_expansion():
@@ -2688,11 +2964,117 @@ def test_fix_lane_rate_limit():
           fourth["error"])
     check("and no container was started for it",
           case.rows("SELECT * FROM run WHERE turn_id=?", (fourth["id"],)) == [])
+    # `blocked` is terminal and never retried, so a turn that stops here owes the same thing
+    # every other terminal state owes: a durable record AND a reply. The message already
+    # carries its acknowledgement, and this is what that acknowledgement resolves to.
+    check("the conversation is idle again, not showing work that is never coming",
+          case.rows("SELECT state FROM conversation")[0]["state"] == "idle",
+          case.rows("SELECT * FROM conversation"))
+    last = case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id DESC")[0]
+    check("the ceiling is answered rather than passed over in silence",
+          json.loads(last["payload_json"])["text"] == ffwatch.BLOCKED_NOTE,
+          json.loads(last["payload_json"])["text"])
+    check("and it cost no run, no container and no model call",
+          case.rows("SELECT * FROM run WHERE turn_id=?", (fourth["id"],)) == [],
+          case.rows("SELECT * FROM run"))
+    check("a public venue is not told which lane ran out",
+          "lane" not in json.loads(last["payload_json"])["text"], last)
+
+    # ONCE. A blocked turn never sets started_at, so it does not count towards the ceiling that
+    # blocked it: the lane stays over its limit all day while claim_turns keeps minting turns,
+    # and without a guard every message after the cap would draw its own refusal — spending the
+    # channel's send budget saying no while real replies queued behind them.
+    before = len(case.rows("SELECT * FROM outbound WHERE action='post'"))
+    # Detach the blocked turn from its triage parent first, or enqueue_autofix refuses the
+    # second escalation as the duplicate it normally would be.
+    case.watcher.db.execute("UPDATE turn SET parent_turn_id=NULL WHERE id=?", (fourth["id"],))
+    case.watcher.enqueue_autofix(
+        case.rows("SELECT * FROM turn WHERE id=?", (triage["id"],))[0],
+        case.rows("SELECT * FROM conversation")[0], {"verdict": "AUTOFIX"})
+    case.watcher.schedule()
+    blocked = case.rows("SELECT * FROM turn WHERE lane='fix' AND status='blocked'")
+    check("a fifth blocked turn is still recorded", len(blocked) == 2, blocked)
+    check("but the thread is not told twice in a day",
+          len(case.rows("SELECT * FROM outbound WHERE action='post'")) == before,
+          case.rows("SELECT payload_json FROM outbound WHERE action='post'"))
+
+
+def test_a_public_reply_is_corrected_when_the_harness_disagrees():
+    """The one thing a public reply may carry beyond the agent's own words.
+
+    Prose is the part of a reply nobody checked, and this is the case that makes it matter: a
+    summary claiming a fix was pushed and a PR opened, on a run where the tests failed and the
+    harness refused to propose anything. Saying nothing there publishes the claim as fact in a
+    thread players read. Saying too much puts branch names and test names in front of them.
+    """
+    print("reply: the harness contradicts the agent in public")
+    job = {"run_id": "d1t2-lies", "session": {"id": "S"}, "classification": {}, "messages": []}
+    turn = {"venue": "public", "failed_closed": 0, "failed_closed_reason": None}
+    lying = {"summary": "Pushed the fix and opened a PR."}
+    failed = {"skipped": 0, "ran": 1, "compiled": 1, "tests_run": 214, "tests_passed": 213,
+              "tests_failed": 1, "evidence": "FF.BeltTests.Merges: expected 3 got 2"}
+
+    text = ffwatch.compose_head(None, turn, "done", {}, lying, None, job, verification=failed,
+                               publish={"branch": "ffbox/d1t2", "no_pr_reason": "1 test(s) failed"})
+    check("the claim does not get to stand on its own",
+          text.startswith("⚠️ The tests did not pass, so nothing was put up for review."), text)
+    check("the agent's words still follow it", text.endswith(lying["summary"]), text)
+    check("and the correction carries no internal a player must not be shown",
+          not any(bit in text for bit in ("FF.BeltTests", "213", "214", "ffbox/d1t2",
+                                          "test(s) failed")), text)
+
+    check("a compile failure is corrected the same way",
+          ffwatch.compose_head(None, turn, "done", {}, lying, None, job,
+                               verification=dict(failed, compiled=0, tests_run=None,
+                                                 tests_passed=None, tests_failed=None)
+                               ).startswith("⚠️ The tests did not pass"), text)
+    check("a suite that was owed and never ran says that instead",
+          ffwatch.compose_head(None, turn, "done", {}, lying, None, job,
+                               verification=dict(failed, ran=0)
+                               ).startswith("⚠️ The tests never ran"), text)
+    check("and a run answered blind says THAT, without the word classification",
+          ffwatch.compose_head(None, dict(turn, failed_closed=1), "done", {}, lying, None, job
+                               ).startswith("⚠️ I could not work out"), text)
+
+    # publish() comes back with no_branch_reason for two unlike things, and only one of them is
+    # a disagreement. This is that one: the tests passed, so files really did change, and the
+    # push failed — the work is nowhere, under a summary saying it was pushed.
+    passed = dict(failed, tests_passed=214, tests_failed=0)
+    lost = ffwatch.compose_head(
+        None, turn, "done", {}, lying, None, job, verification=passed,
+        publish={"no_branch_reason": "git push to origin failed: remote rejected refs/ffbox/d1t2"})
+    check("a push that failed contradicts a summary claiming it landed",
+          lost.startswith("⚠️ I could not save this work anywhere"), lost)
+    check("and says so without naming the remote or the ref",
+          not any(bit in lost for bit in ("origin", "refs/ffbox", "git push")), lost)
+    check("a harvest ffbox refused reads the same way to a player",
+          ffwatch.compose_head(None, turn, "done", {}, lying, None, job, verification=passed,
+                               publish={"no_branch_reason": "the range rewrote history"})
+          .startswith("⚠️ I could not save this work anywhere"), lost)
+
+    # The other half of the rule, and the one that keeps the line meaning something: it appears
+    # only where the harness actually disagrees.
+    skipped = {"skipped": 1, "ran": 0, "compiled": None, "tests_run": None, "tests_passed": None,
+               "tests_failed": None, "evidence": ""}
+    honest = {"summary": "Already fixed on develop; nothing to do."}
+    check("a run that changed no files is not a disagreement",
+          ffwatch.compose_head(None, turn, "done", {}, honest, None, job, verification=skipped,
+                               publish={"no_branch_reason": "the run changed no files"})
+          == honest["summary"], honest)
+    check("nor is a run that verified and published cleanly",
+          ffwatch.compose_head(None, turn, "done", {}, lying, None, job,
+                               verification=dict(failed, tests_passed=214, tests_failed=0),
+                               publish={"branch": "ffbox/d1t2", "pr_number": 45,
+                                        "pr_url": "https://example/45"})
+          == lying["summary"], lying)
+    check("nor is a lane that was never asked to verify anything",
+          ffwatch.compose_head(None, turn, "done", {}, honest, None, job) == honest["summary"],
+          honest)
 
 
 def test_publish_opens_a_pull_request():
     print("publication: branch, push, PR")
-    case = bug_case("publish")
+    case = bug_case("publish", venue="private")
     origin, host = git_origin(case)
     # The summary names a DIFFERENT branch and a made-up PR. Nothing recorded may come from it.
     lying = dict(CONFIDENT_VERDICT,
@@ -2752,7 +3134,7 @@ def test_publish_opens_a_pull_request():
 
 def test_failed_verification_blocks_the_pull_request():
     print("publication: verification gates the PR")
-    case = bug_case("verifyfail")
+    case = bug_case("verifyfail", venue="private")
     origin, host = git_origin(case)
     calls_before = len(GH_STATE["requests"])
     failing = dict(PASSING_VERIFY, tests_passed=213, tests_failed=1,
@@ -2784,7 +3166,7 @@ def test_failed_verification_blocks_the_pull_request():
 
 def test_compile_failure_blocks_the_pull_request():
     print("publication: compiled=false blocks the PR")
-    case = bug_case("compilefail")
+    case = bug_case("compilefail", venue="private")
     git_origin(case)
     broken = {"ran": True, "compiled": False,
               "compile_errors": "Assets/Belt.cs(120,9): error CS0103: 'foo' does not exist",
@@ -2804,7 +3186,7 @@ def test_compile_failure_blocks_the_pull_request():
           "error CS0103" in (ver["compile_errors"] or ""), ver["compile_errors"])
 
     # A run with no verification report at all is treated exactly like a failed one.
-    case2 = bug_case("noverify")
+    case2 = bug_case("noverify", venue="private")
     git_origin(case2)
     escalate(case2, changed=["Assets/Belt.cs"], verify=None)
     run2 = case2.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
@@ -3062,7 +3444,7 @@ def test_a_refused_harvest_is_reported():
 
 def test_no_changed_files_means_no_branch_and_no_pr():
     print("publication: nothing changed")
-    case = bug_case("nochanges")
+    case = bug_case("nochanges", venue="private")
     origin, host = git_origin(case)
     escalate(case, changed=[], verify=PASSING_VERIFY,
              verdict=dict(CONFIDENT_VERDICT, changed_anything=False,
@@ -4013,9 +4395,9 @@ def test_a_local_conversation_never_reaches_discord():
     case.events(ask_event(9100))
     case.watcher.drain_events()
     case.watcher.once()
-    check("a Discord conversation is still claimed, run and answered",
+    check("a Discord conversation is still claimed, acknowledged, run and answered",
           [r["action"] for r in case.rows("SELECT action FROM outbound ORDER BY id")]
-          == ["post", "react"], case.rows("SELECT * FROM outbound"))
+          == ["react", "post"], case.rows("SELECT * FROM outbound"))
 
     # WHERE THE LINE IS, now that follow_up() leaves a message for the sweep on purpose. The
     # sweep admits a local conversation that already HAS a turn, which a crashed submit cannot
@@ -4518,7 +4900,7 @@ def test_a_run_that_changed_nothing_is_not_verified():
           changed() == "NOTHING", changed())
 
     # The host's half: a skipped suite is a third state, and it must not read as a failed one.
-    case = bug_case("skipped")
+    case = bug_case("skipped", venue="private")
     git_origin(case)
     escalate(case, changed=[], verify={"ran": False, "skipped": True, "compiled": None,
                                        "evidence": "the run changed no files, so the harness "
@@ -4644,7 +5026,7 @@ def test_the_pull_request_targets_the_branch_the_work_is_based_on():
     players, which is not a mistake worth being relaxed about.
     """
     print("publication: the PR targets the branch the work is based on")
-    case = bug_case("prbase")
+    case = bug_case("prbase", venue="private")
     origin, host = git_origin(case)
     os.environ["FFBOX_STUB_BASE"] = "master"
     try:
@@ -4771,7 +5153,12 @@ def main():
         test_the_container_cannot_author_a_message,
         test_schema_migrates_an_existing_database,
         test_sender_argv_is_accepted_by_the_real_cli,
-        test_reply_head_reports_what_the_harness_knows,
+        test_the_reply_has_two_shapes,
+        test_a_private_reply_never_composes_to_nothing,
+        test_a_public_reply_is_corrected_when_the_harness_disagrees,
+        test_a_public_venue_never_publishes_a_failed_runs_output,
+        test_a_failed_public_run_attaches_nothing_either,
+        test_a_capped_lane_tells_a_channel_once_not_every_asker,
         # phase 3
         test_autofix_enqueues_one_fix_job,
         test_fix_lane_launches_with_write_capabilities,
