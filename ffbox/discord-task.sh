@@ -80,11 +80,38 @@ PRE_AGENT_HEAD=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo "")
 export CLAUDE_CONFIG_DIR=/ffbox/claude
 mkdir -p "$CLAUDE_CONFIG_DIR"
 
+# THE WORKSPACE IS DELIBERATELY LEFT UNTRUSTED, and claude.log says so on every run:
+#
+#   Ignoring N permissions.allow entries from .claude/settings.json: this workspace has not
+#   been trusted. ... set projects["/workspace"].hasTrustDialogAccepted: true
+#
+# That line reads like a misconfiguration and is not one. Nothing here seeds the flag, on
+# purpose. `.claude/settings.json` in the game repo is a DEVELOPER'S WORKSTATION config — at
+# 7715b1ac its eleven allow entries were ssh to two named machines, scp, kill/pkill/pgrep,
+# `/Users/<someone>/...` paths and `sh scripts/*`. A lane's capabilities are ffwatch's to
+# decide (LANE_CAPABILITIES, READ_ALLOWED, WRITE_ALLOWED), not something a run inherits from
+# whatever that file happened to contain at the sha it checked out. Trust would let a lane gain
+# capability because somebody committed a local config tweak, which is exactly the drift the
+# enumerated lists exist to prevent.
+#
+# Measured 2026-08-24, so nobody has to re-derive it:
+#   * Trust gates ONLY permissions.allow. HOOKS RUN EITHER WAY — an untrusted workspace still
+#     fired its SessionStart hook. Nothing else is being lost while this stays untrusted.
+#   * Of those eleven, only `scripts/*` would have meant anything in here. The ssh/scp entries
+#     are inert: ffbox-net is a Docker --internal bridge, so `ssh <host>` gets "Network is
+#     unreachable" and there is no ~/.ssh to authenticate with anyway.
+# The narrow list is not what contains a run — see ffwatch.py's "A TRIPWIRE, not a boundary".
+# It is what keeps permission_denials meaningful and the lane table the single answer to "what
+# can this lane do".
+log "workspace trust: not granted, deliberately — this lane's capabilities come from job.json,"
+log "                 not from .claude/settings.json in the checkout (see the note above)"
+
 # job.json is JSON with player-authored text in it. Parse it with python3 (present in the
 # image) rather than sed/grep — a hand-rolled shell parser is exactly how a bug report
 # containing a quote character turns into a broken command line.
 if ! python3 - "$JOB_FILE" "$FFBOX_OUT/argv" <<'PYEOF'
 import json
+import os
 import sys
 
 job_path, argv_path = sys.argv[1], sys.argv[2]
@@ -338,6 +365,20 @@ if job.get("plugin_dir"):
 argv += [
     "--tools", caps.get("tools", "Read,Grep,Glob"),
     "--permission-mode", caps.get("permission_mode", "acceptEdits"),
+    # THE ATTACHMENTS DIRECTORY HAS TO BE NAMED HERE OR THE AGENT CANNOT OPEN A SINGLE ONE.
+    # cwd is $WORKSPACE, and Read/Glob against a path outside the working directory raise a
+    # permission request rather than just working. --permission-mode acceptEdits auto-approves
+    # EDITS, not out-of-tree reads, and a `-p` run has nobody to ask — so the request is
+    # denied. Measured on conversation 21 (2026-08-24): the turn was a screenshot with the
+    # message "Notes for when Ben gets back:" and nothing else, and both `Read
+    # /ffbox/attachments/<file>` and `Glob /ffbox/attachments/*` came back permission-denied
+    # and landed in the run's permission_denials. The lane answered that it could not see the
+    # image, which was true and useless. Reproduced with and without this flag against that
+    # same PNG; with it, zero denials and the image read fine.
+    #
+    # It grants READ, not write: the mount is :ro on the host side (ffwatch.py), so this widens
+    # what the agent may look at and nothing else.
+    "--add-dir", os.environ.get("FFBOX_ATTACHMENTS", "/ffbox/attachments"),
     # --verbose is not optional here: `claude -p --output-format stream-json` REFUSES to start
     # without it ("requires --verbose"), which would fail every Discord turn before the model
     # was ever reached. It does not add chatter to the stream; it unlocks it.

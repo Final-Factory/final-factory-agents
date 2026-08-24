@@ -1601,6 +1601,13 @@ def test_container_argv_is_valid():
           and "--verbose" in argv, argv)
     check("the read-only lane names exactly Read,Grep,Glob",
           "--tools" in argv and argv[argv.index("--tools") + 1] == "Read,Grep,Glob", argv)
+    # Without this the agent cannot open a single attachment. cwd is /workspace, and a Read
+    # outside the working directory is a permission request that `-p` has nobody to answer —
+    # so it is denied, and a turn whose whole content is a screenshot gets answered "I could
+    # not see it". Happened for real on conversation 21 (2026-08-24).
+    check("the attachments directory is granted, or no turn can read one",
+          "--add-dir" in argv and argv[argv.index("--add-dir") + 1] == "/ffbox/attachments",
+          argv)
     check("turn 1 opens the session id rather than resuming",
           "--session-id" in argv and argv[argv.index("--session-id") + 1] == sid
           and "--resume" not in argv, argv)
