@@ -23,7 +23,10 @@ checkout, then start a new shell. To run a working copy instead of the installed
 `FFDISCORD_CLI` to the path of an `ffdiscord.py`.
 
 Every command takes `--json` for machine-readable output. Channel arguments accept a raw
-snowflake, a configured alias (`bug_reports`, `dev_chat`, `ask_claude`), or `#channel-name`.
+snowflake, a configured alias, or `#channel-name`. An alias that is IN the config with a
+blank id is looked up by name on the server once and the id is written back, so
+`agent_testing` finds #agent-testing on its own and every later call reads the snowflake
+straight out of the file. Only an unambiguous single match is remembered.
 
 ## Commands
 
@@ -61,10 +64,17 @@ pings a real person; a long summary fails the command instead of arriving cut in
 lock in `listener.lock` enforces it, and exit code 2 means one is already running.
 
 ```bash
-ffdiscord-listener                     # watch ask_claude + bug_reports
-ffdiscord-listener --channels dev_chat # watch something else
-ffdiscord-listener --once-ready        # connect, prove READY, exit (smoke test)
+ffdiscord-listener                          # mentions and operator DMs only
+ffdiscord-listener --channels agent_testing # plus a wholesale sweep of that channel
+ffdiscord-listener --once-ready              # connect, prove READY, exit (smoke test)
 ```
+
+**`--channels` is the only thing that makes a channel sweep wholesale, and it has no default.**
+The Gateway's `GUILD_MESSAGES` intent is guild-wide — Discord has no per-channel subscription —
+so the listener sees every channel the bot can read and filters. A channel named here rings on
+every human message; everywhere else only a direct @-mention, a reply to the bot, or an
+operator DM rings. On ffbox the list is rendered from the ffwatch `watch` block, so there is
+one place to add a channel and no built-in list to inherit.
 
 Event kinds: `message`, `thread`, `thread_message`, `player_mention`, `lothsahn_directive`,
 `catchup`. The line is a **doorbell, not the mail** — it carries ids only. The listener does
@@ -85,17 +95,20 @@ whole directory, which is how a container gets its own copy.
 {
   "app_token": "<the Bot tab's token — not the Application ID, not the public key>",
   "server_id": "<right-click the server name > Copy Server ID>",
-  "channels": { "bug_reports": "<channel id>", "dev_chat": "<channel id>" },
-  "mentions": { "ben": "<user id>", "lothsahn": "<user id>" },
+  "channels": { "<alias>": "<channel id, or \"\" to resolve it by name>" },
+  "mentions": { "<name>": "<user id>" },
   "me": "ben"
 }
 ```
 
 `channels` maps an alias to that channel's snowflake id. The alias is what the ffwatch `watch`
 block calls the channel, which is what says what it MEANS; the id says which channel it IS.
-Blank ids are normal: `ffbox/05-discord-setup.sh` seeds one per watched alias, and
-**`ffdiscord resolve-channels --write`** fills them by matching the alias against real channel
-names (`agent_testing` finds #agent-testing). It writes only unambiguous single matches.
+Blank ids are normal: `ffbox/05-discord-setup.sh` seeds one per watched alias, and they fill
+themselves in. The first command that uses a blank alias matches it against real channel names
+(`agent_testing` finds #agent-testing) and **writes the id back to the config**, so the lookup
+happens once rather than on every call. **`ffdiscord resolve-channels [--write]`** does the
+same for every blank at once, and is what stage 5 runs once a token exists. Both write only
+unambiguous single matches; an alias that hits two channels stays blank and is reported.
 
 Renamed on 2026-08-24: `token` → `app_token`, `guild_id` → `server_id`, matching what the
 developer portal and the Discord client call them. Both old names are still read, and stage 5

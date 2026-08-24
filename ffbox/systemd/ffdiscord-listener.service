@@ -31,7 +31,10 @@ Environment=HOME=@HOME@
 # from the installed plugin, which may be an older build that still looks in ~/.config/ffdiscord.
 # The unit knows where this machine actually keeps it.
 Environment=FFDISCORD_HOME=@FFDHOME@
-ExecStart=@HOME@/.local/bin/ffdiscord-listener --channels @CHANNELS@
+# @CHANNELS_ARG@ is the whole argument ("--channels a,b") or empty, from the ffwatch watch
+# block. No channel is built in anywhere: an empty watch block leaves this a bare command
+# that rings only for mentions, directives and operator DMs.
+ExecStart=@HOME@/.local/bin/ffdiscord-listener @CHANNELS_ARG@
 # The bot token normally comes from the "app_token" key in the ffdiscord config; this is here
 # so a machine that prefers FFDISCORD_APP_TOKEN in the ffbox secrets file works without a
 # second copy. (FFDISCORD_TOKEN, the older variable name, is still read.)

@@ -797,6 +797,103 @@ def test_operator_table_holds_ids_only():
                                   "slims"))
 
 
+def test_no_channel_is_watched_unless_the_config_says_so():
+    """The regression this whole file exists to pin: a config naming ONE channel used to get
+    four more added to it, because _deep_merge recurses and DEFAULTS shipped a populated watch
+    table. The box then swept #dev-chat every catchup_secs and nobody could say "not that one",
+    because the table could only be added to."""
+    print("watch is config-only")
+    check("nothing ships a channel", ffwatch.DEFAULTS["watch"] == {},
+          ffwatch.DEFAULTS["watch"])
+    only_one = ffwatch._deep_merge(ffwatch.DEFAULTS, {"watch": {
+        "agent_testing": {"kind": "ask", "forum": False,
+                          "venue": "private", "engage": "mention"},
+    }})
+    check("a config naming one channel watches exactly that one",
+          list(only_one["watch"]) == ["agent_testing"], list(only_one["watch"]))
+    for gone in ("ask_claude", "bug_reports", "suggestions", "dev_chat"):
+        check(f"{gone} is not inherited from anywhere", gone not in only_one["watch"])
+    check("and a config with no watch block at all watches nothing",
+          ffwatch._deep_merge(ffwatch.DEFAULTS, {})["watch"] == {})
+    # The other half of the same rule: the source files must not name a channel either, or the
+    # default creeps back in as a fallback somewhere.
+    for name in ("ffwatch.py", "06-services.sh"):
+        body = open(os.path.join(HERE, name), encoding="utf-8").read()
+        for token in ('"ask_claude"', '"bug_reports"', '"suggestions"', '"dev_chat"',
+                      "ask_claude,bug_reports"):
+            check(f"{name} does not hard-code {token}", token not in body)
+
+
+def test_sweep_uses_the_id_once_the_config_has_one():
+    """sweep_target re-reads the Discord config from DISK every call, because `ffdiscord read
+    <alias>` writes a resolved id back into it. That is what makes the name lookup happen once
+    instead of on every sweep forever."""
+    print("sweep targets")
+    case = Case("sweep-targets")
+
+    def channels_on_disk(table):
+        with open(ffwatch.FFDISCORD_CONFIG, "w", encoding="utf-8") as fh:
+            json.dump({"channels": table}, fh)
+
+    try:
+        channels_on_disk({})
+        check("an alias with no id is passed by name, which is what lets it resolve once",
+              case.watcher.sweep_target("agent_testing") == "agent_testing")
+        channels_on_disk({"agent_testing": ASK_CHANNEL})
+        check("and the snowflake is used the moment the file has it",
+              case.watcher.sweep_target("agent_testing") == ASK_CHANNEL)
+        channels_on_disk({"agent_testing": "   "})
+        check("a blank id is not an id",
+              case.watcher.sweep_target("agent_testing") == "agent_testing")
+    finally:
+        if os.path.exists(ffwatch.FFDISCORD_CONFIG):
+            os.remove(ffwatch.FFDISCORD_CONFIG)
+
+    # An id written back at RUNTIME must be visible to everything that maps an id to an alias,
+    # not just to the sweep. cfg["_discord"] is a start-up snapshot and ffwatch never reloads
+    # it, so a config-only lookup would call the channel unknown and fall closed: no ping, and
+    # a private channel silently treated as public.
+    case.cfg["_discord"] = {"channels": {}}
+    case.cfg["watch"]["escalation"] = {"kind": "ask", "forum": False,
+                                       "venue": "private", "engage": "mention", "ping": True}
+    check("before the id exists, an unknown channel falls closed",
+          not case.watcher.ping_allowed({"ping": True}, DEVCHAT)
+          and ffwatch.venue_for(case.cfg, ffwatch.alias_for_channel(case.cfg, DEVCHAT))
+          == "public")
+    try:
+        with open(ffwatch.FFDISCORD_CONFIG, "w", encoding="utf-8") as fh:
+            json.dump({"channels": {"escalation": DEVCHAT}}, fh)
+        check("an id resolved after start-up is seen without restarting ffwatch",
+              ffwatch.alias_for_channel(case.cfg, DEVCHAT) == "escalation")
+        check("so the escalation may ping",
+              case.watcher.ping_allowed({"ping": True}, DEVCHAT))
+        check("and the channel is private, as declared",
+              ffwatch.venue_for(case.cfg, ffwatch.alias_for_channel(case.cfg, DEVCHAT))
+              == "private")
+    finally:
+        if os.path.exists(ffwatch.FFDISCORD_CONFIG):
+            os.remove(ffwatch.FFDISCORD_CONFIG)
+    del case.cfg["watch"]["escalation"]
+
+    # Repeated failures are one line, not four an hour: the sweep runs every catchup_secs.
+    case.cfg["watch"] = {"nowhere": {"kind": "ask", "forum": False}}
+    logged = []
+    real_log, real_ffd = ffwatch.log, ffwatch.ffd_json
+    ffwatch.log = lambda m: logged.append(m)
+    ffwatch.ffd_json = lambda *a, **k: (_ for _ in ()).throw(
+        ffwatch.FFDiscordError("could not resolve channel 'nowhere'"))
+    try:
+        case.watcher.sweep()
+        case.watcher.sweep()
+        case.watcher.sweep()
+    finally:
+        ffwatch.log, ffwatch.ffd_json = real_log, real_ffd
+    check("an unresolvable alias is reported once per process, not once per sweep",
+          len(logged) == 1, logged)
+    check("and the line says how to fix it",
+          "channels.nowhere" in logged[0] and "watch block" in logged[0], logged)
+
+
 def test_venue_and_engage_come_from_the_watch_entry():
     print("venue and engage")
     cfg = ffwatch._deep_merge(ffwatch.DEFAULTS, {"watch": {
@@ -808,12 +905,6 @@ def test_venue_and_engage_come_from_the_watch_entry():
           ffwatch.venue_for(cfg, "dev_chat") == "private")
     check("and mention-only reads back mention",
           ffwatch.engage_for(cfg, "dev_chat") == "mention")
-    check("the shipped ask_claude entry is public and all",
-          (ffwatch.venue_for(cfg, "ask_claude"), ffwatch.engage_for(cfg, "ask_claude"))
-          == ("public", "all"))
-    check("a shipped entry named without the new keys keeps the shipped values",
-          (ffwatch.venue_for(cfg, "bug_reports"), ffwatch.engage_for(cfg, "bug_reports"))
-          == ("public", "all"))
     check("an entry with no venue or engage falls closed to public and mention",
           (ffwatch.venue_for(cfg, "half_done"), ffwatch.engage_for(cfg, "half_done"))
           == ("public", "mention"))
@@ -827,10 +918,19 @@ def test_venue_and_engage_come_from_the_watch_entry():
 
 def test_config_warnings_name_every_silent_default():
     print("config warnings")
-    quiet = ffwatch._deep_merge(ffwatch.DEFAULTS, {})
+    quiet = ffwatch._deep_merge(ffwatch.DEFAULTS, {"watch": {
+        "agent_testing": {"kind": "ask", "forum": False,
+                          "venue": "private", "engage": "mention"}}})
     quiet["_discord"] = {"trust": {"operators": {"ben": "226422780445458432"}}}
     check("a fully declared config warns about nothing",
           ffwatch.config_warnings(quiet) == [], ffwatch.config_warnings(quiet))
+    # The shipped state is now "watches nothing", which is safe but is NOT what most people
+    # think they installed. It looks identical in the journal to a working box otherwise.
+    empty = ffwatch._deep_merge(ffwatch.DEFAULTS, {})
+    empty["_discord"] = {"trust": {"operators": {"ben": "226422780445458432"}}}
+    check("an empty watch block says so, rather than looking like a working box",
+          any("watch block is empty" in w for w in ffwatch.config_warnings(empty)),
+          ffwatch.config_warnings(empty))
     bare = ffwatch._deep_merge(ffwatch.DEFAULTS, {"watch": {"mystery": {"kind": "ask"}}})
     bare["_discord"] = {}
     warnings = " | ".join(ffwatch.config_warnings(bare))
@@ -840,8 +940,6 @@ def test_config_warnings_name_every_silent_default():
           "watch.mystery" in warnings and "PUBLIC" in warnings, warnings)
     check("an undeclared engage does too",
           "MENTION" in warnings, warnings)
-    check("the three shipped entries are not warned about",
-          "ask_claude" not in warnings and "bug_reports" not in warnings, warnings)
     usernames = ffwatch._deep_merge(ffwatch.DEFAULTS, {})
     usernames["_discord"] = {"trust": {"operators": {"ben": ".slims"}}}
     check("a table of usernames warns that it holds no ids",
@@ -1762,13 +1860,28 @@ def test_sender_posts_silently():
           sent_calls(case, "react")[0][1:] == [ASK_CHANNEL, "22001", "✅"],
           sent_calls(case, "react"))
 
-    # Dev-chat escalation is the one lane allowed to reach a human.
+    # Escalation may reach a human, but only into a channel the CONFIG marks pingable. No
+    # alias is special in the source any more, so this has to be declared to work at all.
     case.watcher.record_outbound(None, conv, "post",
                                  {"channel": DEVCHAT, "text": "@ben this needs you",
                                   "ping": True})
     case.watcher.send_pending()
-    check("dev-chat escalation may ping", "--silent" not in sent_calls(case)[-1],
-          sent_calls(case)[-1])
+    check("an undeclared channel cannot ping, however loudly the payload asks",
+          "--silent" in sent_calls(case)[-1], sent_calls(case)[-1])
+
+    case.cfg["watch"]["dev_chat"] = {"kind": "ask", "forum": False, "venue": "private",
+                                     "engage": "mention", "ping": True}
+    case.watcher.record_outbound(None, conv, "post",
+                                 {"channel": DEVCHAT, "text": "@ben this needs you",
+                                  "ping": True})
+    case.watcher.send_pending()
+    check("a declared escalation channel may ping, addressed by id",
+          "--silent" not in sent_calls(case)[-1], sent_calls(case)[-1])
+    case.watcher.record_outbound(None, conv, "post",
+                                 {"channel": "dev_chat", "text": "@ben again", "ping": True})
+    case.watcher.send_pending()
+    check("and addressed by alias, which is the other way the sender spells a channel",
+          "--silent" not in sent_calls(case)[-1], sent_calls(case)[-1])
 
 
 def test_sender_splits_an_over_long_reply():
@@ -4046,7 +4159,7 @@ def test_systemd_units_hang_off_one_target():
     check("ffweb is part of the pipeline rather than an extra someone remembers to enable",
           "ffweb.service" in target)
     setup = open(os.path.join(HERE, "06-services.sh"), encoding="utf-8").read()
-    for token in ("@USER@", "@GROUP@", "@HOME@", "@FFWATCH@", "@FFWEB@", "@CHANNELS@",
+    for token in ("@USER@", "@GROUP@", "@HOME@", "@FFWATCH@", "@FFWEB@", "@CHANNELS_ARG@",
                   "@WEBHOST@", "@WEBPORT@"):
         check(f"setup substitutes {token}", f"s|{token}|" in setup, )
     # The page's bind address is config, not a constant in the unit — but it must DEFAULT to
@@ -4597,6 +4710,8 @@ def main():
         test_tier_and_venue_reach_the_container,
         test_a_player_never_inherits_an_operators_clearance,
         test_operator_table_holds_ids_only,
+        test_no_channel_is_watched_unless_the_config_says_so,
+        test_sweep_uses_the_id_once_the_config_has_one,
         test_venue_and_engage_come_from_the_watch_entry,
         test_config_warnings_name_every_silent_default,
         test_schema_idempotent,

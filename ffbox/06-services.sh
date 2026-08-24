@@ -103,12 +103,27 @@ def read(path):
         return {}
 
 
+legacy = read(os.environ["LEGACY"])
 cfg = read(os.environ["FFBOX_CONFIG_JSON"])
 block = dict(cfg)
 block.update(cfg.get("ffwatch") or {})
 if "watch" not in block:                      # a machine that predates the config split
-    block = (read(os.environ["LEGACY"]).get("ffwatch") or {})
-print(",".join(sorted(block.get("watch") or {})) or "ask_claude,bug_reports")
+    block = (legacy.get("ffwatch") or {})
+
+# No fallback list. A default channel here is one nobody chose and everybody inherits, which
+# is the bug this whole path was rewritten to remove: the watch block is the only thing that
+# names a channel. Empty prints nothing, and render_units drops the flag entirely.
+#
+# Only aliases that ALREADY RESOLVE are rendered. The listener exits 2 on an alias it cannot
+# turn into a snowflake, and systemd would restart it into that same exit until StartLimitBurst
+# gave up — so a template whose ids are still blank (the example row, a channel added to watch
+# an hour before anyone copied its id) would take the whole doorbell down, mentions and
+# operator DMs included, rather than degrade. Those aliases are listed by `blanks` and in
+# MANUAL STEPS; they are not a reason for the daemon to be dead.
+channels = legacy.get("channels") or {}
+ready = [a for a in sorted(block.get("watch") or {})
+         if str(channels.get(a) or "").strip().isdigit()]
+print(",".join(ready))
 PY
 }
 
@@ -119,7 +134,15 @@ PY
 # nobody reads. Rendering never needs root — only installing does.
 render_units() {
     _dest=$1
+    # The whole ARGUMENT, not just its value: an empty watch block must render an ExecStart
+    # with no --channels at all, because `--channels` with nothing after it is an argparse
+    # error and the unit would crash-loop instead of watching nothing.
     _channels=$(watched_channels)
+    if [ -n "$_channels" ]; then
+        _channels_arg="--channels $_channels"
+    else
+        _channels_arg=""
+    fi
     _webhost=$(web_bind | cut -d' ' -f1)
     _webport=$(web_bind | cut -d' ' -f2)
     mkdir -p "$_dest"
@@ -132,7 +155,7 @@ render_units() {
             -e "s|@USER@|$RUN_USER|g" \
             -e "s|@GROUP@|$RUN_GROUP|g" \
             -e "s|@HOME@|$HOME|g" \
-            -e "s|@CHANNELS@|$_channels|g" \
+            -e "s|@CHANNELS_ARG@|$_channels_arg|g" \
             -e "s|@FFDHOME@|$FFDISCORD_HOME|g" \
             -e "s|@WEBHOST@|$_webhost|g" \
             -e "s|@WEBPORT@|$_webport|g" \
@@ -224,7 +247,8 @@ fi
 # --- no --install: report ------------------------------------------------------------------
 if ! command -v systemctl >/dev/null 2>&1; then
     say "no systemctl here. Run the daemons yourself:"
-    did "ffdiscord-listener --channels $(watched_channels)"
+    _c=$(watched_channels)
+    did "ffdiscord-listener${_c:+ --channels $_c}"
     did "python3 $HERE/ffwatch.py run"
     did "python3 $HERE/ffweb.py"
     exit 0

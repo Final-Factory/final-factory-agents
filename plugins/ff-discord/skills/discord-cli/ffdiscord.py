@@ -13,8 +13,8 @@ Config (first match wins):
   {
     "app_token": "<the Bot tab's token — NOT the Application ID or public key>",
     "server_id": "<right-click the server name > Copy Server ID>",
-    "channels": { "bug_reports": "<channel id>", "dev_chat": "<channel id>" },
-    "mentions": { "ben": "<user id>", "lothsahn": "<user id>" }
+    "channels": { "<alias>": "<channel id, or \"\" to have it resolved by name>" },
+    "mentions": { "<name>": "<user id>" }
   }
 
   `channels` maps an alias to a channel's snowflake id. The alias is what the ffwatch "watch"
@@ -220,17 +220,33 @@ def save_state(state):
     _atomic_write_json(STATE_PATH, state)
 
 
-@contextlib.contextmanager
 def state_lock():
-    """Serialise read-modify-write on the cursor file.
+    """The cursor file's lock. Unchanged for its callers."""
+    return file_lock(STATE_PATH)
+
+
+def config_lock():
+    """The config file's lock."""
+    return file_lock(CONFIG_PATH)
+
+
+@contextlib.contextmanager
+def file_lock(target_path):
+    """Serialise read-modify-write on one of this directory's JSON files.
 
     One machine routinely runs SEVERAL sessions against different channels — an
-    always-on #ask-assistant answerer plus a periodic bug-triage loop. They share this
-    file, so a plain read-modify-write lets the slower writer resurrect the other's old
+    always-on #ask-assistant answerer plus a periodic bug-triage loop. They share these
+    files, so a plain read-modify-write lets the slower writer resurrect the other's old
     cursor and re-answer messages that were already handled.
+
+    The config file needs this as much as the cursor file does, and more so since channel ids
+    began filling themselves in on ordinary commands: an answerer resolving a blank alias and
+    an operator running `ffdiscord set app_token <tok>` would otherwise each write the whole
+    document from a pre-change read, and whichever renamed last would drop the other's key —
+    the token included.
     """
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
-    lock_path = STATE_PATH + ".lock"
+    lock_path = target_path + ".lock"
     with open(lock_path, "a+") as fh:
         acquired = False
         deadline = time.monotonic() + 20
@@ -416,8 +432,75 @@ def name_matches(alias, channel_name):
     return norm(alias) == norm(channel_name)
 
 
+# Channel types an alias could possibly mean: text, announcement, forum, media. Categories
+# (4), voice (2) and stage (13) are excluded because Discord lets a voice channel and a text
+# channel share a name — counting those as matches turns an unambiguous alias into an
+# "ambiguous" hard failure the day somebody adds a voice channel named after a text one.
+MESSAGEABLE_TYPES = (0, 5, 15, 16)
+
+
+def match_channels_by_name(live, alias):
+    """Every message-capable channel in `live` a human would call `alias`.
+
+    One hit means unambiguous. Callers treat more than one as a refusal to guess rather than
+    as a reason to pick the first, because the wrong guess here is written to the config and
+    then never re-examined.
+    """
+    return [ch for ch in live
+            if ch.get("type") in MESSAGEABLE_TYPES and name_matches(alias, ch.get("name"))]
+
+
+def remember_channel_id(alias, channel_id):
+    """Write channels.<alias> = <id> back to the config file. Best effort, never fatal.
+
+    Re-reads from disk rather than saving the in-memory config: load_config folds
+    FFDISCORD_APP_TOKEN and the legacy key names into what it returns, and writing that back
+    would bake the environment's secret into the file. Same reason cmd_resolve_channels
+    re-reads before it writes.
+
+    A read-only config directory, or two processes resolving at once, must not turn a working
+    command into a failed one — the id was already resolved, and the only thing lost is having
+    to look it up again next time.
+    """
+    try:
+        with config_lock():
+            on_disk = {}
+            if os.path.exists(CONFIG_PATH):
+                with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+                    on_disk = json.load(fh)
+            if not isinstance(on_disk, dict):
+                return False
+            channels = on_disk.get("channels")
+            if not isinstance(channels, dict):
+                # "channels": null, or a list. setdefault would hand back the junk value and
+                # the .get below would raise AttributeError, which is NOT in the except clause
+                # — the command would die with a traceback after the channel had already
+                # resolved fine. Replacing it is safe: nothing readable was in there.
+                channels = {}
+                on_disk["channels"] = channels
+            if str(channels.get(alias) or "").strip() == str(channel_id):
+                return False
+            channels[alias] = str(channel_id)
+            _atomic_write_json(CONFIG_PATH, on_disk)
+            return True
+    except (OSError, ValueError):
+        return False
+
+
 def resolve_channel(client, ref):
-    """Accept a raw id, a config alias (bug_reports), or #channel-name."""
+    """Accept a raw id, a config alias (bug_reports), or #channel-name.
+
+    A DECLARED alias with a blank id is looked up by name once and the id is written back to
+    the config, so every later call reads the snowflake straight out of the file and no name
+    lookup happens again. That is the whole migration path from the seeded template: stage 5
+    writes `"channels": {"agent_testing": ""}`, the first command that touches it fills the id
+    in, and the alias stops being a guess.
+
+    Only an UNAMBIGUOUS single match is remembered. Two channels can normalise to the same
+    alias (#dev-chat and #dev_chat), and writing either one would quietly pin the config to a
+    coin flip; those resolve for this one call and stay blank on disk, which is what
+    cmd_resolve_channels reports and refuses to write too.
+    """
     if ref is None:
         die("a channel is required")
     ref = str(ref)
@@ -432,9 +515,20 @@ def resolve_channel(client, ref):
     if str(channels.get(alias) or "").strip():
         return str(channels[alias])
     guild = require_guild(client)
-    for ch in client.get(f"/guilds/{guild}/channels"):
-        if ch["name"] == alias or name_matches(alias, ch["name"]):
-            return ch["id"]
+    live = client.get(f"/guilds/{guild}/channels") or []
+    hits = match_channels_by_name(live, alias)
+    if len(hits) == 1:
+        # Remembered only for an alias the config already DECLARES. A bare #channel-name typed
+        # at the CLI resolves for that command and adds nothing: the config says which channels
+        # this box is for, and a name somebody typed once is not that decision being made.
+        if alias in channels and remember_channel_id(alias, hits[0]["id"]):
+            print(f"resolved channels.{alias} -> {hits[0]['id']} (#{hits[0]['name']}); "
+                  f"saved to {CONFIG_PATH}", file=sys.stderr)
+        return hits[0]["id"]
+    if len(hits) > 1:
+        names = ", ".join(f"#{c['name']} ({c['id']})" for c in hits)
+        die(f"{ref!r} is ambiguous: {names}. Set the id you mean with "
+            f"'ffdiscord set channels.{alias} <channel id>'.")
     die(
         f"could not resolve channel {ref!r}. Use an id, a configured alias "
         f"({', '.join(sorted(channels)) or 'none configured'}), or #channel-name."
@@ -606,8 +700,9 @@ def cmd_doctor(client, args):
     wanted = client.cfg.get("channels", {})
     if not wanted:
         problems.append(
-            'No channels configured. Add {"channels": {"bug_reports": "<id>", '
-            '"dev_chat": "<id>", "ask_claude": "<id>"}} to the config.'
+            'No channels configured. Add {"channels": {"<alias>": "<channel id>"}} to the '
+            "config, using the same alias the ffwatch \"watch\" block gives the channel. "
+            "Leave the id empty and `ffdiscord resolve-channels --write` fills it in by name."
         )
     for alias, cid in sorted(wanted.items()):
         # A blank is the setup template's unfilled key, not a permissions problem. Reporting it
@@ -635,10 +730,7 @@ def cmd_doctor(client, args):
     # text. Deliberately does NOT probe bug_reports — that forum is fed by the in-game
     # webhook, so every message there is a bot/webhook message whose content is visible
     # regardless of the intent. Only a HUMAN-authored message proves the intent is on.
-    probe_alias = next(
-        (a for a in ("ask_claude", "dev_chat") if a in wanted),
-        sorted(wanted)[0] if wanted else None,
-    )
+    probe_alias = sorted(wanted)[0] if wanted else None
     if probe_alias:
         # Only ORDINARY user messages are evidence. A system message (join, pin, boost)
         # is authored by a human but always has empty content, and an attachment- or
@@ -661,38 +753,45 @@ def cmd_doctor(client, args):
                 out.append(m)
             return out
 
+        # Every configured channel, in config order. This used to try two aliases by name
+        # first, which did nothing on a box that had neither and read as though those two
+        # channels were special to the tool.
         candidates, probed = [], None
-        sources = [a for a in ("ask_claude", "dev_chat") if a in wanted]
-        sources += [a for a in sorted(wanted) if a not in sources]
-        for alias in sources:
+        for alias in sorted(wanted):
             cid = str(wanted[alias])
             if by_id.get(cid, {}).get("type") in (15, 16):
                 continue  # forums: handled by the thread fallback below
             try:
                 msgs = client.get(f"/channels/{cid}/messages?limit=25") or []
             except DiscordError as exc:
-                if exc.status == 403:
-                    notes.append(f"could not read #{alias} history (403)")
-                    continue
-                raise
+                # ANY failure here is a note and a skip, never the end of the run. doctor is
+                # the thing you reach for when something is already wrong; aborting it on a
+                # channel that was deleted between the channel-list read and this probe would
+                # withhold every check after this one, which are the ones you came for.
+                notes.append(f"could not read #{alias} history ({exc.status})")
+                continue
             found = evidence(msgs)
             if found:
                 candidates, probed = found, alias
                 break
 
-        # A brand-new #ask-assistant is empty and the bug forum is webhook-authored, so
-        # fall back to player posts inside forum threads.
-        if not candidates and "bug_reports" in wanted:
+        # A brand-new answer channel is empty and a bug forum is webhook-authored, so fall
+        # back to human posts inside the threads of ANY configured forum.
+        forums = [a for a in sorted(wanted)
+                  if by_id.get(str(wanted[a]), {}).get("type") in (15, 16)]
+        if not candidates and forums:
             try:
                 active = client.get(f"/guilds/{guild_id}/threads/active") or {}
+                parents = {str(wanted[a]): a for a in forums}
                 threads = [t for t in active.get("threads", [])
-                           if t.get("parent_id") == str(wanted["bug_reports"])]
+                           if str(t.get("parent_id")) in parents]
                 for t in sorted(threads, key=lambda t: int(t["id"]), reverse=True)[:5]:
                     found = evidence(
                         client.get(f"/channels/{t['id']}/messages?limit=25") or []
                     )
                     if found:
-                        candidates, probed = found, "bug_reports threads"
+                        candidates = found
+                        probed = f"{parents[str(t['parent_id'])]} threads"
                         break
             except DiscordError:
                 pass
@@ -720,9 +819,15 @@ def cmd_doctor(client, args):
         except DiscordError:
             problems.append(f"mention target {name!r} -> {uid} does not resolve to a user")
     if not mentions:
+        # The example names come from THIS box's operator table — the people it already trusts
+        # are exactly the people an escalation would ping. Two names used to be written in
+        # here, which told every other deployment to add somebody else's teammates.
+        ops = sorted((client.cfg.get("trust") or {}).get("operators") or {})
+        shape = ", ".join(f'"{n}": "<user id>"' for n in ops[:2]) or '"<name>": "<user id>"'
         problems.append(
-            'No mention targets. Add {"mentions": {"ben": "<user id>", '
-            '"lothsahn": "<user id>"}} so escalations can ping a human.'
+            f'No mention targets. Add {{"mentions": {{{shape}}}}} so escalations can ping a '
+            "human." + ("" if ops else " No operators are configured either — "
+                        "trust.operators is what decides whose messages may command this box.")
         )
 
     _report(problems, notes)
@@ -763,11 +868,18 @@ def _effective_perms(base, channel, user_id, role_ids, guild_id):
 
 
 def _missing_perms(perms, alias, ctype):
-    need = ["VIEW_CHANNEL", "READ_MESSAGE_HISTORY", "SEND_MESSAGES", "EMBED_LINKS"]
-    if ctype in (15, 16):  # forum / media: replies land in threads
-        need += ["SEND_MESSAGES_IN_THREADS"]
-    if alias == "ask_claude":
-        need += ["ADD_REACTIONS", "CREATE_PUBLIC_THREADS", "SEND_MESSAGES_IN_THREADS"]
+    """What the bot still needs in this channel. `alias` is unused and kept for callers.
+
+    The reaction and thread bits used to be required only on an alias literally named
+    ask_claude, so a box that called its answer channel anything else had them silently
+    unchecked. They are needed in every channel the bot answers in — it acknowledges with a
+    reaction and opens a job thread wherever it works — so every configured channel is held to
+    the same bar.
+    """
+    need = ["VIEW_CHANNEL", "READ_MESSAGE_HISTORY", "SEND_MESSAGES", "EMBED_LINKS",
+            "ADD_REACTIONS", "SEND_MESSAGES_IN_THREADS"]
+    if ctype not in (15, 16):   # a forum's posts ARE threads; you do not create them there
+        need += ["CREATE_PUBLIC_THREADS"]
     return [n for n in need if not perms & PERM[n]]
 
 
@@ -976,9 +1088,9 @@ def cmd_ask(client, args):
     emit(
         args,
         msg,
-        f"asked {', '.join(targets)} (message {msg['id']}).\n"
+        f"asked {', '.join(targets)} in {args.channel} ({channel}), message {msg['id']}.\n"
         f"Poll for a reply with:\n"
-        f"  ffdiscord.py read {args.channel} --after {msg['id']}",
+        f"  ffdiscord read {args.channel} --after {msg['id']}",
     )
 
 
@@ -1163,7 +1275,7 @@ def cmd_resolve_channels(client, args):
     live = client.get(f"/guilds/{guild}/channels") or []
     resolved, unresolved = {}, []
     for alias in blanks:
-        hits = [ch for ch in live if name_matches(alias, ch["name"])]
+        hits = match_channels_by_name(live, alias)
         if len(hits) == 1:
             ch = hits[0]
             resolved[alias] = ch["id"]
@@ -1188,12 +1300,15 @@ def cmd_resolve_channels(client, args):
     # Re-read rather than saving the `cfg` loaded above: load_config folds env vars and legacy
     # key names into what it returns, and writing that back would bake FFDISCORD_APP_TOKEN
     # from the environment into the file on disk.
-    on_disk = {}
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
-            on_disk = json.load(fh)
-    on_disk.setdefault("channels", {}).update(resolved)
-    _atomic_write_json(CONFIG_PATH, on_disk)
+    with config_lock():
+        on_disk = {}
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+                on_disk = json.load(fh)
+        if not isinstance(on_disk.get("channels"), dict):
+            on_disk["channels"] = {}
+        on_disk["channels"].update(resolved)
+        _atomic_write_json(CONFIG_PATH, on_disk)
     print(f"\nwrote {len(resolved)} channel id(s) to {CONFIG_PATH}")
 
 
@@ -1271,11 +1386,13 @@ def build_parser():
     sp.add_argument("--text", help="replacement body, or '-' to read stdin")
     sp.add_argument("--dry-run", action="store_true")
 
-    sp = add("ask", cmd_ask, "ask a teammate a question in #dev-chat, attributed to you")
+    sp = add("ask", cmd_ask, "ask a teammate a question, attributed to you")
     sp.add_argument("who", help="teammate key(s) from config mentions, comma-separated")
     sp.add_argument("--text", help="the question, or '-' to read stdin")
     sp.add_argument("--context", help="one line on what you're working on")
-    sp.add_argument("--channel", default="dev_chat")
+    sp.add_argument("--channel", default="agent_testing",
+                    help="config alias, id or #channel-name to ask in "
+                         "(default: agent_testing)")
     sp.add_argument("--label", help="override the sender label (default \"<Me>'s Claude\")")
     sp.add_argument("--dry-run", action="store_true")
 

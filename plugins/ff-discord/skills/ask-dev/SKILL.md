@@ -1,13 +1,19 @@
 ---
 name: ask-dev
-description: Ask the other developer (Ben or Lothsahn) a question in the Discord #dev-chat channel, attributed to whichever Claude is asking, and optionally poll for their reply. Invoke when the user says to ask Loth/Ben something, get a second opinion, or check in with the other dev about the work in progress.
+description: Ask the other developer (Ben or Lothsahn) a question in Discord, attributed to whichever Claude is asking, and optionally poll for their reply. Invoke when the user says to ask Loth/Ben something, get a second opinion, or check in with the other dev about the work in progress.
 ---
 
-# Ask the other dev in #dev-chat
+# Ask the other dev in Discord
 
 Ben and Lothsahn each drive their own Claude Code session against this repo. This skill lets
-one session put a question to the other developer in Discord `#dev-chat`, so the user doesn't
-have to context-switch to write it themselves.
+one session put a question to the other developer in Discord, so the user doesn't have to
+context-switch to write it themselves.
+
+**Where it lands is config, not a channel named in this file.** `ffdiscord ask` posts to the
+`agent_testing` alias unless `--channel` says otherwise, and that alias resolves through the
+`channels` table in the Discord config like every other channel. Pass `--channel <alias>` to
+send it somewhere else. If the CLI cannot resolve the destination it says so and posts
+nothing.
 
 ```bash
 ffdiscord ask lothsahn \
@@ -52,10 +58,11 @@ with everything that doesn't depend on the answer, and fold their reply in when 
 
 ## Getting the reply
 
-The `ask` command prints the message id and the exact command to poll:
+The `ask` command prints the message id and the exact command to poll — including the channel
+it actually posted to, so copy the line it gives you rather than typing an alias from memory:
 
 ```bash
-ffdiscord read dev_chat --after <message_id>
+ffdiscord read <the channel it named> --after <message_id>
 ```
 
 Check it when the user asks, or when you reach the point that's actually blocked. Don't poll
@@ -67,12 +74,13 @@ rather than from them.
 
 ## Guardrails
 
-- **Never post to `#dev-chat` without the user asking you to.** It pings a real person.
+- **Never post without the user asking you to.** It pings a real person.
 - **Never speak as the user.** The message says it's from their Claude; keep it that way, and
   never write "I think we should…" as though it were Ben's opinion. Ask the question; don't
   editorialise their position.
 - **Don't relay anything sensitive** — tokens, credentials, customer data — into Discord.
 - One message per question. If you need to add something, wait for the reply rather than
   double-pinging.
-- If the CLI reports a permission error on `dev_chat`, say so and stop: the bot's role needs
-  **View Channel** on that channel, which only Ben or Lothsahn can grant.
+- If the CLI reports a permission error on the destination, say so and stop: the bot's role
+  needs **View Channel** there, which only Ben or Lothsahn can grant. `ffdiscord doctor` lists
+  every configured channel with the permissions it is missing.

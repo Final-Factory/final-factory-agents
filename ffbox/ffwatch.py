@@ -284,8 +284,24 @@ DEFAULTS = {
     # alias -> what this channel IS. kind decides the lane; the listener reports the parent
     # channel's alias on every thread event, so that much needs no second Discord round trip.
     #
+    # EMPTY, AND IT STAYS EMPTY. The config file is the only place a channel is named. This
+    # used to ship ask_claude, bug_reports, suggestions and dev_chat, which read like harmless
+    # convenience and was not: _deep_merge recurses into dicts, so a config that declared one
+    # channel got those four ADDED to it rather than replacing them. A box configured for a
+    # single test channel swept #dev-chat every catchup_secs and filed twelve conversations
+    # nobody asked for. There was no way to say "not that one" — the table could only be added
+    # to. A default here is a channel somebody has to discover they are reading, so there are
+    # none, and a machine with no watch block sweeps nothing at all. (Doorbell kinds are
+    # unaffected: an @-mention or an operator DM still rings from anywhere the bot can see,
+    # because those are addressed to it by construction. See ffdiscord_listener.py.)
+    #
+    # A fresh machine gets its shape from 05-discord-setup.sh, which seeds one example entry
+    # into the FILE, where it is visible and deletable.
+    #
+    # Each entry: {"kind": ask|bug_report|suggestion, "forum": bool,
+    #              "venue": public|private, "engage": all|mention, "ping": bool}
     # venue and engage are the two per-channel decisions of design/trusted_ingress_design.txt
-    # sections 4 and 5, written here rather than inferred anywhere:
+    # sections 4 and 5, declared rather than inferred anywhere:
     #
     #   venue   public or private. NEVER read off Discord's permission bits. A role edit that
     #           widened a channel would silently reclassify it, and the first sign would be a
@@ -293,24 +309,15 @@ DEFAULTS = {
     #           "everyone who can read this may see internals", which is a thing to review on
     #           purpose.
     #   engage  all or mention. Whether every human message is considered, or only one that
-    #           addresses the bot. Spelled out on all three entries so a config that predates
-    #           the keys keeps today's behaviour: _deep_merge recurses, so an existing
-    #           {"kind": ..., "forum": ...} entry merges over these key by key rather than
-    #           replacing them.
-    "watch": {
-        "ask_claude": {"kind": "ask", "forum": False,
-                       "venue": "public", "engage": "all"},
-        "bug_reports": {"kind": "bug_report", "forum": True,
-                        "venue": "public", "engage": "all"},
-        "suggestions": {"kind": "suggestion", "forum": True,
-                        "venue": "public", "engage": "all"},
-        # The team channel. PRIVATE, so internals may be said out loud here, and mention-only,
-        # because two people talking to each other must not wake a container per message. It
-        # needs a `dev_chat` entry in the Discord config's channel table to resolve; without
-        # one the sweep logs that it could not read it and nothing else happens.
-        "dev_chat": {"kind": "ask", "forum": False,
-                     "venue": "private", "engage": "mention"},
-    },
+    #           addresses the bot.
+    #
+    #   ping    may a reply here @-mention a human. See ping_for: false unless stated, and the
+    #           only thing that lets an escalation pull somebody out of their evening.
+    #
+    # venue and engage fall closed when an entry omits them (public is the safe VENUE because
+    # it withholds internals; mention is the safe ENGAGE because it stays quiet), and
+    # config_warnings names every entry that made it choose.
+    "watch": {},
 
     # The web page's bind address, read by ffweb and rendered into ffweb.service by
     # 06-services.sh so both agree. A build server that people reach over the LAN sets its own
@@ -490,6 +497,35 @@ def engage_for(cfg, alias):
     return engage if engage in ENGAGEMENTS else "mention"
 
 
+def ping_for(cfg, alias):
+    """May a reply into this channel @-mention a human? False unless the entry says so.
+
+    Fail-closed by omission and deliberately unwarned, unlike venue and engage: "do not pull a
+    person out of their evening" is what almost every channel wants, so an entry that says
+    nothing has said the right thing. Turning it on is the deliberate part.
+    """
+    return watch_entry(cfg, alias).get("ping") is True
+
+
+def discord_channels(cfg):
+    """The alias -> id table AS IT IS ON DISK RIGHT NOW, over the snapshot in cfg.
+
+    cfg["_discord"] is read once in load_config and ffwatch is a long-lived daemon with no
+    reload path, so the snapshot goes stale the moment an id is filled in — and ids now fill
+    themselves in at runtime, because `ffdiscord read <alias>` writes back what it resolved by
+    name. Everything that maps an id BACK to an alias has to see that, or it decides a channel
+    is unknown and falls closed on a channel that is in fact configured. Two things ride on
+    that answer: whether a reply may ping a human, and whether the channel is private.
+
+    Disk wins on a key both have, because disk is the newer of the two by construction.
+    """
+    merged = dict((cfg.get("_discord") or {}).get("channels") or {})
+    on_disk = _read_config_json(FFDISCORD_CONFIG).get("channels")
+    if isinstance(on_disk, dict):
+        merged.update(on_disk)
+    return merged
+
+
 def alias_for_channel(cfg, channel_id):
     """Reverse the Discord config's alias -> id table. None when nothing claims this channel.
 
@@ -498,8 +534,7 @@ def alias_for_channel(cfg, channel_id):
     """
     if not channel_id:
         return None
-    channels = (cfg.get("_discord") or {}).get("channels") or {}
-    for alias, cid in channels.items():
+    for alias, cid in discord_channels(cfg).items():
         if str(cid) == str(channel_id):
             return alias
     return None
@@ -522,6 +557,11 @@ def config_warnings(cfg):
             + ("present but holds no numeric ids (usernames are not trust keys)" if present
                else "missing")
             + ": NOBODY is an operator and every message is treated as a player's")
+    if not (cfg.get("watch") or {}):
+        out.append(
+            "the watch block is empty: NO channel is swept, so only an @-mention, an operator "
+            "directive or an operator DM will ever start anything. Add a channel to \"watch\" "
+            "in the ffbox config if that is not what you meant")
     for alias in sorted(cfg.get("watch") or {}):
         entry = watch_entry(cfg, alias)
         if entry.get("venue") not in VENUES:
@@ -1332,6 +1372,10 @@ class Watcher:
         self._index_lock = threading.Lock()
         self._kill_switch_logged = False
         self._drain_logged = False
+        # Sweep complaints are per-alias-per-process. The sweep runs every catchup_secs, so an
+        # alias that cannot be resolved would otherwise write the same line to the journal four
+        # times an hour forever.
+        self._sweep_warned = set()
 
     # -- setup -----------------------------------------------------------------------------
 
@@ -1679,27 +1723,54 @@ class Watcher:
         # lane out on a guess. It falls through to the classifier instead, which fails closed.
         return "unknown"
 
+    def sweep_target(self, alias):
+        """What to hand ffdiscord for this watch alias: its id when the config has one.
+
+        The channels table is re-read from disk on every call rather than trusted from
+        self.cfg, because `ffdiscord read <alias>` WRITES an id back the first time it
+        resolves one by name. Reading it here is what makes that stick: the next sweep asks
+        for the snowflake and no name lookup happens again.
+
+        Falls back to the alias when the id is still blank, which is the one call that lets
+        that first resolution happen. An alias that matches no channel raises out of
+        ffd_json and is reported once per process by the caller.
+        """
+        return str(discord_channels(self.cfg).get(alias) or "").strip() or alias
+
     def sweep(self):
         """The catchup pass (design section 18). Re-reads every watched channel with no
         doorbell at all, because player_mention and lothsahn_directive have no cursor and a
         mention arriving during listener downtime is otherwise lost. Everything it re-reads is
-        deduped by message.discord_id, so running it often is free."""
+        deduped by message.discord_id, so running it often is free.
+
+        "Every watched channel" means every alias in the config's watch block and nothing
+        else. There are no built-in aliases to inherit — see DEFAULTS["watch"].
+        """
         limit = str(self.cfg["sweep_limit"])
         touched = []
         for alias, spec in (self.cfg.get("watch") or {}).items():
+            target = self.sweep_target(alias)
             try:
                 if spec.get("forum"):
-                    for t in ffd_json(self.cfg, ["threads", alias, "--limit", limit]) or []:
+                    for t in ffd_json(self.cfg, ["threads", target, "--limit", limit]) or []:
                         touched.append(self.ingest_thread(t["id"], alias=alias))
                 else:
-                    for m in ffd_json(self.cfg, ["read", alias, "--limit", limit]) or []:
+                    for m in ffd_json(self.cfg, ["read", target, "--limit", limit]) or []:
                         if (m.get("author") or {}).get("bot"):
                             continue
                         self.ingest_event({"kind": "message", "channel": alias,
                                            "channel_id": m.get("channel_id"), "id": m.get("id"),
                                            "author_id": (m.get("author") or {}).get("id")})
+                self._sweep_warned.discard(alias)   # it works now; a later break is news again
             except FFDiscordError as exc:
-                log(f"WARNING: sweep of {alias} failed: {exc}")
+                if alias not in self._sweep_warned:
+                    self._sweep_warned.add(alias)
+                    hint = ("" if target != alias else
+                            f"; watch.{alias} has no id in the Discord config's channels "
+                            f"table and no channel on the server is named for it. Fill it in "
+                            f"with 'ffdiscord set channels.{alias} <id>', or drop the alias "
+                            f"from the watch block")
+                    log(f"WARNING: sweep of {alias} failed: {exc}{hint}")
         return [t for t in touched if t]
 
     # -- the events file -------------------------------------------------------------------
@@ -3722,11 +3793,18 @@ class Watcher:
         return args, True
 
     def ping_allowed(self, payload, channel):
-        """Only dev-chat escalation may ping a human (design section 11)."""
+        """Only a channel the config MARKS pingable may @-mention a human (design section 11).
+
+        This used to be a literal alias in the source, which made the one channel allowed to
+        pull a person away from what they were doing a constant in the source rather than a
+        decision on the box. `channel` arrives as either an alias or a snowflake depending on
+        the caller, so both are turned back into an alias before the entry is read.
+        """
         if not payload.get("ping"):
             return False
-        dev_chat = ((self.cfg.get("_discord") or {}).get("channels") or {}).get("dev_chat")
-        return channel == "dev_chat" or (dev_chat and str(dev_chat) == channel)
+        alias = channel if watch_entry(self.cfg, channel) else alias_for_channel(
+            self.cfg, channel)
+        return ping_for(self.cfg, alias)
 
     def expanded_len(self, text):
         """How long this text will be WHEN THE CLI CHECKS IT, not as we hold it.

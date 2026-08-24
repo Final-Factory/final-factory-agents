@@ -18,7 +18,16 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# BEFORE the import, which is when CONFIG_DIR, LOG_PATH and LOCK_PATH are computed. Without
+# this the suite logs its fixtures into the REAL ~/.config/ffbox/discord/listener.log — which
+# it did for months, leaving lines like "READY as ffa#2265 watching ask_claude(111)" in the
+# operational log of a live box and making that log useless for diagnosing anything.
+os.environ["FFDISCORD_HOME"] = tempfile.mkdtemp(prefix="ffdiscord-listener-test-")
+
 import ffdiscord_listener as L  # noqa: E402
+
+assert L.LOG_PATH.startswith(os.environ["FFDISCORD_HOME"]), \
+    f"the suite would write to the real listener log at {L.LOG_PATH}"
 
 PASS = 0
 FAIL = 0
@@ -298,6 +307,42 @@ li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "111", "id": "d4"
 evs = events()
 check("a watched channel is never mistaken for a DM, whatever the payload carries",
       len(evs) == 1 and evs[0]["kind"] == "message")
+
+# --------------------------------------------------------------------------------------
+# no channel configured
+# --------------------------------------------------------------------------------------
+
+print("\nwatching nothing (the default):")
+
+_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "ffdiscord_listener.py"), encoding="utf-8").read()
+check("--channels ships no default, so no channel is watched by accident",
+      'ap.add_argument("--channels", default="",' in _src)
+for _gone in ('"ask_claude"', '"bug_reports"', '"suggestions"', '"dev_chat"',
+              'default="ask_claude'):
+    check(f"and {_gone} is not baked in anywhere", _gone not in _src)
+
+# A listener told to watch nothing is not a broken listener: it is the correct state for a box
+# whose channel ids are not filled in yet, and for one that only ever answers when spoken to.
+# Everything addressed TO the bot must still ring, or the daemon is dead weight.
+li = L.Listener("tok", {}, tmp.name, operator_ids=("600601",))
+li.bot_id = "999"
+open(tmp.name, "w").close()
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "808", "id": "n1",
+                                      "guild_id": "g1", "author": {"id": "42"}})
+check("an ordinary message in an unwatched channel rings nothing", events() == [])
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "808", "id": "n2",
+                                      "guild_id": "g1", "author": {"id": "42"},
+                                      "mentions": [{"id": "999"}]})
+evs = events()
+check("an @-mention still rings", len(evs) == 1 and evs[0]["kind"] == "player_mention", evs)
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "808", "id": "n3",
+                                      "guild_id": "g1", "author": {"id": "600601"},
+                                      "mentions": [{"id": "999"}]})
+check("an operator directive still rings", events()[-1]["kind"] == "operator_directive")
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "dm9", "id": "n4",
+                                      "author": {"id": "600601"}})
+check("and an operator DM still rings", events()[-1]["kind"] == "operator_dm")
 
 os.unlink(tmp.name)
 

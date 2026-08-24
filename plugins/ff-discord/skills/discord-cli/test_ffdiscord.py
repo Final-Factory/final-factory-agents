@@ -35,6 +35,8 @@ GUILD = "900000000000000001"
 FORUM = "900000000000000010"
 DEVCHAT = "900000000000000011"
 ASKCLAUDE = "900000000000000012"
+AGENTTEST = "900000000000000013"
+VOICEDUP = "900000000000000014"
 BOT_ID = "900000000000000099"
 BEN = "900000000000000100"
 LOTH = "900000000000000101"
@@ -94,6 +96,18 @@ class MockDiscord(BaseHTTPRequestHandler):
                  "permission_overwrites": []},
                 {"id": ASKCLAUDE, "name": "ask-claude", "type": 0, "position": 3,
                  "permission_overwrites": []},
+                {"id": AGENTTEST, "name": "agent-testing", "type": 0, "position": 4,
+                 "permission_overwrites": []},
+                # A VOICE channel sharing a text channel's name. Discord allows it, and it
+                # must not make the text alias ambiguous.
+                {"id": VOICEDUP, "name": "agent-testing", "type": 2, "position": 5,
+                 "permission_overwrites": []},
+            ])
+        if path.startswith(f"/channels/{AGENTTEST}/messages"):
+            return self._send(200, [
+                {"id": "950000000000000900", "content": "a human message with real text",
+                 "type": 0, "author": {"id": BEN, "username": "ben"},
+                 "timestamp": "2026-07-27T10:05:00+00:00", "attachments": []},
             ])
         if path == f"/guilds/{GUILD}/members/{BOT_ID}":
             return self._send(200, {"roles": ["900000000000000200"]})
@@ -258,8 +272,10 @@ def main():
     tmp = tempfile.mkdtemp(prefix="ffdiscord-test-")
     cfg = {
         "guild_id": GUILD,
+        # agent_testing is left BLANK on purpose: `ask` defaults to it, so the default path
+        # also exercises resolve-by-name and the write-back.
         "channels": {"bug_reports": FORUM, "dev_chat": DEVCHAT,
-                     "ask_claude": ASKCLAUDE},
+                     "ask_claude": ASKCLAUDE, "agent_testing": ""},
         "mentions": {"ben": BEN, "lothsahn": LOTH},
     }
     with open(os.path.join(tmp, "config.json"), "w") as fh:
@@ -383,8 +399,15 @@ def main():
     check("attributes the sender's Claude", "Ben's Claude" in body, body)
     check("carries the context line", "mass driver loading" in body, body)
     check("carries the question", "barge path" in body, body)
-    check("posts to dev_chat", DEVCHAT in POSTED[-1]["path"], POSTED[-1]["path"])
+    check("posts to the default channel, resolved from the config and not baked into the CLI",
+          AGENTTEST in POSTED[-1]["path"], POSTED[-1]["path"])
+    check("a voice channel of the same name does not make the alias ambiguous",
+          VOICEDUP not in POSTED[-1]["path"], POSTED[-1]["path"])
     check("tells the caller how to poll for a reply", "--after" in p.stdout, p.stdout)
+
+    p = run(tmp, "ask", "lothsahn", "--text", "elsewhere", "--channel", "dev_chat")
+    check("and --channel still overrides it", DEVCHAT in POSTED[-1]["path"],
+          POSTED[-1]["path"])
 
     p = run(tmp, "ask", "lothsahn,ben", "--text", "both of you")
     check("can ask several people at once",
@@ -567,6 +590,29 @@ def main():
     p = run_bare(blank2, "read", "ask_claude", "--limit", "1")
     check("a blank alias falls through to the name lookup instead of resolving to ''",
           p.returncode == 0, p.stdout + p.stderr)
+
+    # ...and the lookup happens ONCE. The name match is a round trip to /guilds/<id>/channels
+    # on every command otherwise, and worse, it leaves the config permanently unable to say
+    # which channel it means: the answer lives on Discord, where a rename changes it.
+    with open(os.path.join(blank2, "config.json")) as fh:
+        after = json.load(fh)
+    check("and the id it found is written back to the config",
+          after["channels"]["ask_claude"] == ASKCLAUDE, after["channels"])
+    check("the save is announced on stderr, not mixed into the command's output",
+          "resolved channels.ask_claude" in p.stderr and "resolved" not in p.stdout,
+          p.stderr)
+    check("nothing else in the file was disturbed",
+          after["app_token"] == "TESTTOKEN" and after["server_id"] == GUILD, after)
+
+    # An alias nobody DECLARED is resolved for the one command and not remembered: the config
+    # is where a box says which channels it is for, and a name typed at a prompt is not that.
+    undeclared = home_with({"app_token": "TESTTOKEN", "server_id": GUILD, "channels": {}})
+    p = run_bare(undeclared, "read", "#ask-claude", "--limit", "1")
+    check("a bare #channel-name still resolves for the command", p.returncode == 0,
+          p.stdout + p.stderr)
+    with open(os.path.join(undeclared, "config.json")) as fh:
+        check("but is not written into the channels table",
+              json.load(fh)["channels"] == {})
 
     print("concurrent cursor writes (two sessions on one machine)")
     conc = tempfile.mkdtemp(prefix="ffdiscord-conc-")
