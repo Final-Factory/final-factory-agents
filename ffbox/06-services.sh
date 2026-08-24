@@ -198,7 +198,7 @@ if [ "$INSTALL" = 1 ]; then
             || did "WARNING: ffbox-egress.service failed — ffbox will refuse to start a run"
         did "enabled ffbox-egress.service (internal network + SNI allowlist + firewall rule)"
         systemctl enable --now ffbox-update.timer
-        did "enabled ffbox-update.timer (fetch + fast-forward + restart, every 15min)"
+        did "enabled ffbox-update.timer (fetch + fast-forward + restart, every 5min)"
         did "  next update check: $(systemctl show ffbox-update.timer -p NextElapseUSecRealtime --value 2>/dev/null)"
         # Restart only what changed AND was already up: a unit just started by enable --now is
         # already running the new file, and ffwatch in particular should not be interrupted for

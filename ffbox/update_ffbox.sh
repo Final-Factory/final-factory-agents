@@ -94,7 +94,7 @@ if command -v flock >/dev/null 2>&1 && [ "${FFBOX_UPDATE_LOCKED:-0}" != 1 ]; the
     FFBOX_UPDATE_LOCKED=1; export FFBOX_UPDATE_LOCKED
     # NOT `exec flock ... || fallback`: exec REPLACES this shell, so the fallback never runs and
     # a trigger arriving during a drain exits with flock's 1 — a unit systemd reports as failed
-    # every fifteen minutes for doing exactly the right thing. Found by running it. -E gives the
+    # every five minutes for doing exactly the right thing. Found by running it. -E gives the
     # could-not-acquire case its own status so it can be told apart from the script failing.
     set +e
     flock -n -E 199 "$LOCK" sh "$0" "$@"
@@ -157,7 +157,7 @@ if [ "$BASE" = "$NEW_SHA" ]; then
     # HEAD contains the remote: someone committed here and has not pushed yet. That is not a
     # divergence and not an error — there is simply nothing upstream to take. Found by running
     # this on a box with an unpushed commit, where the divergence branch below fired instead
-    # and reported a failed unit every fifteen minutes.
+    # and reported a failed unit every five minutes.
     log "local is ahead of origin/$BRANCH by $(git_ rev-list --count "$NEW_SHA..$OLD_SHA") commit(s) — nothing to take"
     exit 0
 fi

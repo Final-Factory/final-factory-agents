@@ -23,7 +23,7 @@ Four requirements, in the order they constrain the design.
      must not take a different code path from the timer, or the rare path is the broken one.
 
   2. SURVIVE A BROKEN FFBOX. If a bad commit stops ffwatch from starting, the updater must
-     still be running fifteen minutes later to take the commit that fixes it. This is the
+     still be running five minutes later to take the commit that fixes it. This is the
      requirement that decides the process boundary: an updater that is part of ffbox goes
      down with ffbox, exactly when it is needed.
 
@@ -303,7 +303,7 @@ because the flock is what keeps the next tick from starting.
   kill switch           ~/.config/ffbox/update.disabled. Its own file, not discord.disabled:
                         pausing replies and pausing code updates are different intents, and
                         the second is what a human debugging on the box wants.
-  cadence               OnBootSec=5min, OnUnitActiveSec=15min, RandomizedDelaySec=5min,
+  cadence               OnBootSec=5min, OnUnitActiveSec=5min, RandomizedDelaySec=1min,
                         Persistent=true so a machine that was off catches up.
   drain timeout         FFBOX_DRAIN_TIMEOUT, default 7200 (section 4).
 
@@ -362,9 +362,12 @@ ffbox.target — see section 3, choice 1.
      the pipeline already holds: the host composes, and an update is not a reply to anyone. If
      it happens it belongs to a future dev-chat escalation path, not to this script.
 
-  3. IS 15 MINUTES RIGHT? Chosen to be small against a drain that can take an hour and large
-     against a fetch that costs nothing. If updates start landing in bursts, OnUnitActiveSec
-     is the only knob that needs to move.
+  3. IS 5 MINUTES RIGHT? It started at fifteen, chosen to be small against a drain that can
+     take an hour and large against a fetch that costs nothing. Fifteen turned out to be the
+     wrong side of that trade in practice — the wait to see a pushed fix live on the box is
+     what people actually feel — so the cadence is five. A fetch with nothing to take exits
+     before the drain, so the extra passes cost one `git fetch` each and nothing else.
+     OnUnitActiveSec is still the only knob that needs to move.
 
   4. WHAT ABOUT THE GAME REPO? ffbox clones it per run at a pinned ref; nothing here updates
      it, and nothing should. Named so it is not mistaken for an omission.
