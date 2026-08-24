@@ -22,6 +22,8 @@ worktrees and apply to ALL branches.
 - [Publish harness changes/lessons to ff-agents proactively](memories/feedback-publish-harness-changes-to-ff-agents.md) — whenever a session changes shared harness behavior or learns a durable, reusable lesson, run the publish-skills workflow in that SAME session without being asked; batch the session's lessons into one version bump; report a blocked publish explicitly
 - [ffbox installs as ONE service](memories/ffbox-installs-as-one-service.md) — every ffbox machine gets all of it (harness + Discord pipeline + ffweb) via `sh ffbox/setup.sh`, which installs AND starts `ffbox.target`; the `--skip-*` flags are re-run controls, not a menu, and a setup script must never stop one step short of running
 - [Write status reports in simpler, plainer language](memories/feedback-simple-report-language.md) — Ben wants the TL;DR-first shape and full detail kept, but carried by plain words and short sentences; run ids and codenames go in parentheses or bullets, never woven into dense prose
+- [launch-editor.sh brings editors up Burst-DISABLED](memories/launch-editor-burst-off.md) — observed 3x 2026-08-22/23; always editor-preflight after a relaunch, enable + drain to a stable zero (two readings 60s apart) before paired work
+- [Headless leg died mid-task: corrective resume](memories/headless-leg-corrective-resume.md) — pull the sid from the leg log, rewrite the prompt file with a corrective nudge, run-leg.sh <leg> <sid> <model>; context survives sleep-deaths and end-turn-to-wait deaths
 
 ## Unity MCP bridge
 
