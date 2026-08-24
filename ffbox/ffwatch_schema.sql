@@ -211,7 +211,11 @@ CREATE TABLE IF NOT EXISTS run (
     -- be lost, and only the proposal to merge is withheld.
     no_branch_reason    TEXT,
     no_pr_reason        TEXT,
-    verify_secs         REAL
+    verify_secs         REAL,
+    -- The branch this run's work was based on, which is what its pull request targets. NULL
+    -- when nothing was published, or when the base could not be established and the default
+    -- was used.
+    pr_base             TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_run_turn ON run(turn_id);
@@ -230,7 +234,10 @@ CREATE TABLE IF NOT EXISTS verification (
     tests_passed    INTEGER,
     tests_failed    INTEGER,
     results_path    TEXT,            -- ALWAYS per-invocation; never Unity's shared file
-    evidence        TEXT
+    evidence        TEXT,
+    -- ran=0 because there was nothing to test, which is not the same fact as ran=0 because the
+    -- suite could not be run. Only the second is a warning worth showing a human.
+    skipped         INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_verification_run ON verification(run_id);

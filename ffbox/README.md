@@ -10,7 +10,7 @@ front door decides only what goes in and where the answer is read.
 
 | ingress | what it does |
 |---|---|
-| **the shell** | `ffbox "<prompt>"` submits a turn and waits; the answer prints, and the run is on the page. Kind `shell` |
+| **the shell** | `ffbox "<prompt>"` submits a turn and waits; the answer prints, the run is on the page, and any code it changed comes back as a pushed branch and a pull request, the same as a dev DM. Kind `shell` |
 | **Discord** | a thread or a mention becomes a turn; the harness composes and posts the reply |
 | **the web page** | `ffweb` — every conversation, run, transcript and queued reply, whatever it came from; its prompt box starts one too, kind `web`, and a local conversation's reply box continues it |
 
@@ -196,6 +196,20 @@ Golden must be its own dataset — ZFS cannot snapshot a subdirectory. See "Host
 Every launch fast-forwards `/opt/FinalFactory` to `origin/<its branch>` before it snapshots, so a
 run's base is at least as new as origin was when that run started. That is a contract you can
 state. "Latest" is not one: origin can advance a nanosecond after any fetch.
+
+The fetch takes **every branch origin has**, the way a bare `git fetch` does, with `--prune` so
+golden mirrors origin rather than accumulating branches that no longer exist. Only golden's own
+branch is checked out or fast-forwarded onto; the rest are remote-tracking refs a clone inherits.
+It used to fetch just the branch golden sits on, which updates that branch's ref and no other —
+so `origin/develop`, the ref every Discord run checks out, was as stale as the last hand-typed
+fetch.
+
+`FFBOX_BASE_REFS` (default `develop master`) is a shorter list with a different job: those
+branches must exist, and their LFS objects are pre-fetched. `git lfs pull` materializes the
+checked-out tree only, so a run that checks out the other branch would find pointers wherever the
+two disagree about a binary — with no network to fix it and a CS0246 that names nothing useful.
+Pre-materializing that for *every* branch would cost far more than it could save, which is why
+this list is not simply "all of them".
 
 The update and the snapshot are **one critical section**, under an exclusive `flock` on
 `~/.config/ffbox/golden.lock`:
@@ -493,7 +507,8 @@ does its Unity import. The flags below make it usable from outside this director
 | `--mount HOST:CONTAINER[:ro]` | An extra bind mount, repeatable. Nested paths under `/workspace` work — Docker creates the intermediates. |
 | `--run-id ID` | Caller-supplied run id, so the caller owns the `ffbox-<ID>` container name and can address exactly that container later. |
 | `--ref REF` | Check the clone out at `REF` after cloning. `develop` falls back to `origin/develop`. The resolved sha lands in `base_sha.txt`. |
-| `--branch NAME` | Create `NAME` at that commit before the container starts — a ref move, so nothing churns under the warm `Library/`. At harvest, anything the agent left uncommitted is committed, `NAME` is pointed at wherever HEAD ended, and `base..NAME` is bundled to `work.bundle`. No changed files means no commit, no bundle and no branch. |
+| `--branch NAME` | Create `NAME` at that commit before the container starts — a ref move, so nothing churns under the warm `Library/`. At harvest, anything the agent left uncommitted is committed, the branch HEAD ended on is bundled to `work.bundle` as `base..branch`, and `NAME` is the name it publishes under unless `--branch-prefix` renames it. A run that ends on `develop`, `master` or `main` is refused. No changed files means no commit, no bundle and no branch. |
+| `--branch-prefix P` | Let the agent name the published branch: a branch it made itself is published as `P<its name>-<run id>` instead of `NAME`. ffwatch passes `ffbox/`. Without it the published name is always `NAME`, which is what `ffbox --branch wip "…"` has always meant. |
 | `--agent-timeout N` | Agent working time, default 900s. |
 | `--warmup-timeout N` | Everything before the agent starts, default 3600s. |
 | `--verify-timeout N` | The harness verification phase after the agent exits, default 1800s. |
@@ -565,10 +580,13 @@ rate limit. `fix` deliberately does not: it is reached only by a triage AUTOFIX 
 is to say a stranger's bug report is what decided there should be a write turn at all.
 
 What still separates a locally typed prompt from a Discord one is `is_local_conversation`, not
-the lane, because the question was always whether there is a thread on the other end. A local
-turn gets no `<discord>` fence, no outbound row, no harness verification run, and no published
-branch; a Discord turn gets all four. The container is told which it is through `job["local"]`,
-and picks its preamble from that.
+the lane, because the question was always whether there is a thread on the other end — and
+since 2026-08-23 that is the *only* difference. A local turn gets no `<discord>` fence and no
+outbound row; it is verified, branched, pushed and proposed as a pull request exactly like an
+operator's DM, under the same gates. It used to get none of that, on the reasoning that the
+person who typed it was standing at the terminal — what it actually produced was work stranded
+in a run directory after the ZFS clone holding it was destroyed. The container is told which
+kind of turn it is through `job["local"]`, and picks its preamble from that.
 
 Set it up with:
 
@@ -657,18 +675,29 @@ lanes (`fix`, `dev`) add the three things the harness owns and the agent cannot 
   leaves no `verification` row at all — an absent row means "nothing to verify here", and a
   row saying it did not run means the check was owed and is missing, which is what the reply
   reports as `NOT VERIFIED`.
-- **Publication.** The agent commits its own work on `ffbox/<run-id>` (see "Local git" below);
-  ffbox commits whatever is left over, points the branch at wherever HEAD ended, and harvests a
-  git bundle of `base..branch`. ffwatch verifies the bundle, fetches it under `refs/ffbox/` in
-  the host checkout — no local branch moved, no working tree touched — and pushes it.
-- **The pull request.** Opened through the stdlib GitHub client, targeting `develop`. Branch, PR
-  number and PR url are recorded from git and the API response, never parsed from the agent's
-  summary, and stay correct when the summary contradicts them.
+- **Publication.** The run starts on `ffbox/<run-id>` and the agent is told to make its own
+  branch off it, named for the change (see "Local git" below); ffbox commits whatever is left
+  over, publishes whatever branch HEAD ended on as `ffbox/<the agent's name>-<run-id>`, and
+  harvests a git bundle of `base..branch`. ffwatch verifies the bundle, fetches it under
+  `refs/ffbox/` in the host checkout — no existing branch moved, no working tree touched —
+  pushes it, and leaves the published branch checkoutable there with its upstream set, so
+  `git checkout ffbox/belt-merger-priority-<id>` in `/opt/FinalFactory` works with no further
+  ceremony.
+- **The pull request.** Opened through the stdlib GitHub client, targeting **the branch the work
+  is based on** — `master` for a fix to the build players are running, `develop` for everything
+  else. The agent chooses by choosing what it branches from; ffbox reads that back out of the
+  commit graph and the host checks the answer against `publish_bases` and against the pushed
+  commits before aiming anything. Branch, base, PR number and PR url are recorded from git and
+  the API response, never parsed from the agent's summary, and stay correct when the summary
+  contradicts them.
 
 Confidence gates the pull request, not the branch: the work is always published so it cannot be
-lost with the ZFS clone, and only the proposal to merge is withheld. No PR opens without
+lost with the ZFS clone, and only the proposal to merge is withheld. So does the base: a branch
+whose base the harness cannot establish is pushed and then left alone, because a pull request
+into a guessed branch is a proposal to ship unreleased work to players. No PR opens without
 `compiled=true` and zero test failures, whatever the agent claims. Zero changed files means no
-branch and no PR. A triage verdict of `AUTOFIX` enqueues a separate fix turn, deliberately
+branch and no PR — and no test run either, since the container skips the suite when the run
+changed nothing, which is what makes verification affordable on a typed question. A triage verdict of `AUTOFIX` enqueues a separate fix turn, deliberately
 re-based onto `develop` and told so in its prompt.
 
 `GH_TOKEN` is host-side only and never enters the container, which has no `gh` binary and no
@@ -732,10 +761,37 @@ deliberately absent, because all three import commits authored by other people a
 requires every commit in `base..branch` to carry the ffbox identity.
 
 The harness stopped owning "there is exactly one commit" and now owns the published range
-instead. ffbox refuses to harvest, and records why in `harvest_error.txt`, when the range no
-longer descends from `base_sha`, when a commit claims an identity this run does not own, or when
+instead. ffbox refuses to harvest, and records why in `harvest_error.txt`, when the run ends on
+`develop`, `master` or `main` (`FFBOX_PROTECTED_BRANCHES`), when the range no longer descends
+from `base_sha`, when a commit claims an identity this run does not own, or when
 `FFBOX_MAX_CHANGED_FILES` (2000) or `FFBOX_MAX_BUNDLE_BYTES` (256 MiB) is exceeded. ffwatch reads
 that file back as the run's `no_branch_reason`, so a refusal never reads as an idle turn.
+
+**The agent picks the base, too.** `publish_bases` in the config names the branches a run may
+base work on and says what each is for, and that text is rendered into the container's preamble,
+so the policy is written once. The run starts checked out at `base_ref` (`develop`); an agent
+that decides the change belongs in the released build branches from `origin/master` instead, and
+that is the whole mechanism — nothing else has to be told. At harvest ffbox takes the most
+specific base the work descends from: a branch off develop has master behind it as well, and
+develop is the descendant of the two, so develop wins; a branch off master does not have develop
+behind it at all. Work descending from neither is refused rather than published against a base
+nobody can name. `update-golden.sh` brings every branch on origin over before the snapshot, and
+pre-materializes the LFS content behind the ones in `FFBOX_BASE_REFS`, because the container has
+no network and can only check out what the clone already holds.
+
+One cost worth knowing: the clone starts checked out at `base_ref`, so a run that switches to the
+other branch churns whatever differs under the warm `Library/` and Unity re-imports it. That is a
+slower `ffverify`, not a broken one, and it is the price of the choice being the agent's.
+
+**The agent names the branch.** Every write preamble opens with the rule: make a branch before
+you change anything, named for the change. Whatever HEAD is on when the container exits is what
+publishes, renamed to `<--branch-prefix><that name>-<run id>` — the run id goes on the end of
+every one of them, because two runs at the same bug pick the same obvious name and a name that
+already exists on origin is a push rejected at the end of an hour's work. A run that ends on a
+protected branch is thrown away rather than pushed, which is the whole reason the agent is told
+the consequence and not just the rule. The host still creates `ffbox/<run-id>` and starts the
+run there, so an agent that never branches loses nothing; what the rule buys is a name a
+reviewer can read.
 
 The clone is also cleaned before the agent starts rather than subtracted from at harvest.
 Inherited dirt that the agent has already committed cannot be unstaged back out, and a `git

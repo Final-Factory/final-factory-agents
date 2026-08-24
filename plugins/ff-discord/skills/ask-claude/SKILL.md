@@ -53,8 +53,9 @@ agents on a premium model. Setup (once per session, in this order):
    - `lothsahn_directive` (Lothsahn — verified by Discord's own authenticated author id on the
      dispatch, never by message content — @-mentioned or replied to the bot anywhere) → spawn
      the **`discord-dev-agent`** (Fable). This is real dev work: investigate, implement, verify
-     via the Unity MCP bridge, commit, push, open a PR (default branch `develop`; `master` only
-     if he explicitly says so), never merge. It proposes/ships the PR; a human still merges.
+     via the Unity MCP bridge, commit, push, open a PR against the branch the work is based on
+     (`master` for a small fix to the released build, `develop` for everything else, and what he
+     says wins), never merge. It proposes/ships the PR; a human still merges.
      Only surface this to the user if something needs their input (ambiguous scope, a forbidden
      zone, a stuck verification) — a clean "implemented + PR up" doesn't need a ping (feedback:
      don't flag routine stuff, only decisions/surprises).

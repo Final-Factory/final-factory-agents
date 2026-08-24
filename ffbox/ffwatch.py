@@ -73,7 +73,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a column added to
 # the schema file never reaches a database created before it. These are applied with ALTER on
@@ -119,6 +119,10 @@ ADDED_COLUMNS = [
     # How far the web UI has been read through (schema v7). NULL on every existing row, which
     # is the right answer: a database that predates the column has been read by nobody.
     ("conversation", "read_through", "TEXT"),
+    # "there was nothing to test", as distinct from "the tests could not be run" (schema v9).
+    ("verification", "skipped", "INTEGER NOT NULL DEFAULT 0"),
+    # Which branch the run based its work on, and therefore what its PR targets (schema v9).
+    ("run", "pr_base", "TEXT"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -191,6 +195,20 @@ DEFAULTS = {
     "plugin": "ff-discord",
     "base_ref": "develop",
     "branch_prefix": "ffbox/",
+    # WHICH BRANCH A RUN'S WORK IS FOR, and the run decides by choosing what it branches from.
+    # `base_ref` above is only where the clone starts; the agent is told these two exist and
+    # what each is for, ffbox reads its choice back out of the commit graph at harvest, and the
+    # pull request targets whichever one the work descends from.
+    #
+    # Ordered, and the order is the tie-break: when the two are at the same commit — the moment
+    # after a release merge — the first one wins. The descriptions are not decoration; they are
+    # rendered into the container's preamble, so this is the one place the policy is written.
+    "publish_bases": {
+        "develop": "the integration branch, and the default. Anything for the next version, "
+                   "anything large, anything that needs soak time.",
+        "master": "what players are running right now. A small, low-risk fix to a bug in the "
+                  "released build belongs here, and nothing else does.",
+    },
 
     # -- verification (design section 14) --------------------------------------------------
     # The fast EditMode suite by default, matching the game repo's "run FFEditorTests unless
@@ -207,7 +225,9 @@ DEFAULTS = {
     "github": {
         "api_base": "https://api.github.com",
         "repo": "Final-Factory/FinalFactory",
-        # PRs target develop, the integration branch. master is release-controlled.
+        # The fallback when a run's own base cannot be established — not a fixed target any
+        # more. A run that based itself on master gets a pull request into master; see
+        # publish_bases above and pr_base() below.
         "base": "develop",
         # Host-side only, and never passed into a container. This absence, not the deny list,
         # is what makes "nothing merges" true (design section 17).
@@ -1224,10 +1244,11 @@ class GitHub:
                 raise GitHubError(0, str(exc)) from exc
         raise GitHubError(0, "retries exhausted")
 
-    def create_pull_request(self, head, title, body):
-        """Open a PR against the integration branch. Never merges it."""
+    def create_pull_request(self, head, title, body, base=None):
+        """Open a PR against `base`, or the configured default. Never merges it."""
         created = self._request("POST", f"/repos/{self.repo}/pulls", {
-            "title": title, "head": head, "base": self.base, "body": body, "draft": False,
+            "title": title, "head": head, "base": base or self.base, "body": body,
+            "draft": False,
         })
         return {"number": created.get("number"), "url": created.get("html_url")}
 
@@ -2141,14 +2162,23 @@ class Watcher:
             # Tied to the lane being a WRITE lane, not to Unity being present. Every lane has an
             # editor now, and running the suite after a read-only lane would spend a Unity run
             # proving that a container which cannot write did not change anything.
-            # NOT for a local turn, which is the behaviour the old shell lane had and the one
-            # worth keeping. `ffbox "which file defines the belt merger?"` must not spend
-            # fifteen minutes on an EditMode suite proving that a question changed nothing.
-            # A person at a terminal who wants the suite has `ffverify` in the container and
-            # can say so; a Discord write turn has nobody to ask, which is why it is automatic
-            # there.
-            "verify": {"enabled": cap["verdict"] == "change"
-                                  and not is_local_conversation(conv),
+            #
+            # LOCAL TURNS ARE IN, since 2026-08-23. They were excluded because
+            # `ffbox "which file defines the belt merger?"` must not spend fifteen minutes on an
+            # EditMode suite proving that a question changed nothing — but the cost was that a
+            # locally typed FIX was published, if it was published at all, with no harness fact
+            # about whether it compiled. The container now skips the suite when the run changed
+            # no files, which is the same protection without the exclusion: the question still
+            # costs nothing and the fix is still verified.
+            # WHAT THIS RUN MAY BASE ITS WORK ON. The names and what each is for, straight
+            # from config, because the container renders them into its own preamble and the
+            # policy should be written once. `checked_out` is where the clone starts; the agent
+            # moves off it if the change belongs somewhere else.
+            "bases": {"checked_out": turn_options(turn).get("ref") or conv["base_sha"]
+                                     or self.cfg["base_ref"],
+                      "choices": dict(self.cfg.get("publish_bases") or {})}
+                     if cap["verdict"] == "change" else None,
+            "verify": {"enabled": cap["verdict"] == "change",
                        "assemblies": self.cfg.get("verify_assemblies") or "",
                        "out": "/ffbox/out/verification"},
             "messages": [self.job_message(m, att_dir) for m in msgs],
@@ -2361,19 +2391,27 @@ class Watcher:
         with open(job_path, "w", encoding="utf-8") as fh:
             json.dump(job, fh, indent=2, ensure_ascii=False)
 
-        # A write lane commits its work on this branch, created at the pinned base sha. The name
-        # is derived from the run id, so it is unique, addressable and — like the container name
-        # — owned by the host rather than chosen by the agent.
+        # The branch a write lane STARTS on, created at the pinned base sha and named from the
+        # run id, so a run that never branches is still unique and addressable. What publishes
+        # is whatever HEAD ends on: the agent is told to make its own branch, and ffbox renames
+        # that to <prefix><its name>-<run id> at harvest. The host still owns the namespace and
+        # the run id on the end; the agent contributes the readable part.
         options = turn_options(turn)
-        # A local run harvests a patch like it always did unless a branch was asked for; a
-        # Discord write turn always gets one, because the harness publishes on its behalf.
-        # Locality again, not the lane: both are the dev lane now, and `ffbox "explain X"`
-        # must not push a branch to origin because it shares a capability table with a turn
-        # that does.
-        if is_local_conversation(conv):
-            branch = options.get("branch") or None
-        else:
-            branch = f"{self.cfg['branch_prefix']}{run_id}" if cap["verdict"] == "change" else None
+        # EVERY WRITE LANE GETS ONE, local or not. A locally typed prompt used to harvest a
+        # patch and nothing else unless somebody remembered --branch, which meant the work of a
+        # run started from the web page lived in a directory on this machine and nowhere else
+        # once the ZFS clone was destroyed. A shell or web prompt is a dev turn with nobody to
+        # post to, so it publishes the way a dev DM does; --branch is still honoured as a
+        # per-submission override of the name it starts on.
+        branch = None
+        if cap["verdict"] == "change":
+            branch = options.get("branch") or run_id
+            # Everything this pipeline publishes lives under one prefix on origin, including a
+            # name somebody chose by hand: `--branch wip` is a name for the work, not a claim on
+            # the top level of the repository's branch namespace. A name that already carries
+            # the prefix is left alone rather than gaining a second one.
+            if not branch.startswith(self.cfg["branch_prefix"]):
+                branch = f"{self.cfg['branch_prefix']}{branch}"
 
         # The run row is written BEFORE the container starts. A run that crashes, hangs or is
         # killed is still identifiable, and recovery can find it by the container name it owns.
@@ -2414,7 +2452,14 @@ class Watcher:
         # either of them gets, and the only thing on that PATH we put there.
         cmd += ["--mount", f"{self.cfg['ffverify']}:/usr/local/bin/ffverify:ro"]
         if branch:
-            cmd += ["--branch", branch]
+            # --branch is where the run STARTS; --branch-prefix is what lets it end somewhere
+            # better. When the agent makes its own branch, ffbox publishes that name under this
+            # prefix with the run id appended, so the reviewer reads what the change is rather
+            # than which run made it.
+            cmd += ["--branch", branch, "--branch-prefix", self.cfg["branch_prefix"],
+                    # Most-preferred first, which is also how ffbox breaks a tie between two
+                    # branches sitting on the same commit.
+                    "--base-refs", " ".join(self.cfg.get("publish_bases") or {})]
 
         env = dict(os.environ)
         env["FFBOX_RESULTS"] = runs_dir          # so ffbox's OUT is exactly our run_dir
@@ -3101,11 +3146,16 @@ class Watcher:
             report = {"ran": False, "compiled": None, "evidence": reason}
         cur = self.db.execute(
             "INSERT INTO verification(run_id, ran, compiled, compile_errors, tests_run,"
-            " tests_passed, tests_failed, results_path, evidence) VALUES(?,?,?,?,?,?,?,?,?)",
+            " tests_passed, tests_failed, results_path, evidence, skipped)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?)",
             (run_row_id, 1 if report.get("ran") else 0,
              None if report.get("compiled") is None else (1 if report["compiled"] else 0),
              report.get("compile_errors"), report.get("tests_run"), report.get("tests_passed"),
-             report.get("tests_failed"), report.get("results_path"), report.get("evidence")))
+             report.get("tests_failed"), report.get("results_path"), report.get("evidence"),
+             # The container skipped the suite because the run changed nothing. It is a third
+             # state next to "verified" and "could not verify", and collapsing it into the
+             # second is what made every question look like a failed test run.
+             1 if report.get("skipped") else 0))
         log(f"run {run_row_id}: verification ran={bool(report.get('ran'))} "
             f"compiled={report.get('compiled')} failed={report.get('tests_failed')}")
         return cur.lastrowid
@@ -3137,20 +3187,20 @@ class Watcher:
         it cannot be lost with the ZFS clone; only the proposal to merge is withheld. No changed
         files means no branch and no PR at all.
 
+        LOCAL RUNS PUBLISH TOO, since 2026-08-23. A shell or web prompt used to return here
+        immediately, on the reasoning that the person who typed it was standing at the terminal
+        and could push it themselves. What they were actually left with was a patch file in a
+        run directory, because the clone the work lived in is destroyed when the run ends — the
+        one outcome this method exists to prevent. A locally typed turn is a dev turn with
+        nowhere to post its answer, so it takes the same gates and the same pull request; what
+        locality still decides is the reply, which record_reply handles.
+
         Nothing here ever reads the agent's summary for a branch name, a PR number or a url.
         Those come from ffbox's harvest and from the GitHub API response, and stay correct when
         the summary omits them or contradicts them.
         """
         cap = LANE_CAPABILITIES.get(turn["lane"]) or LANE_CAPABILITIES["answer"]
         if cap["verdict"] != "change":
-            return {}
-        if is_local_conversation(conv):
-            # A local run is not published. It shares the dev lane's capability table but not
-            # its purpose: `ffbox --branch wip "..."` asks for a branch in the harvested bundle
-            # so the person who typed it can look at the work, and turning that into a push to
-            # origin and a pull request against develop is not what they asked for. Publication
-            # belongs to the turns whose answer goes to Discord, where nobody is standing at a
-            # terminal to do it themselves.
             return {}
 
         bundle = os.path.join(run_dir, "work.bundle")
@@ -3178,8 +3228,14 @@ class Watcher:
         ok, err = self.push_bundle(bundle, branch)
         if not ok:
             return self._no_branch(run_row_id, err)
-        self.db.execute("UPDATE run SET pushed=1 WHERE id=?", (run_row_id,))
-        log(f"run {run_row_id}: pushed {branch} ({len(changed)} file(s))")
+        # AFTER the push, because it is checked against the pushed commits. Recorded whether or
+        # not a PR follows: which branch the work is for is a fact about the work, and the
+        # verification gate below can withhold the PR without making that fact unavailable.
+        base, base_reason = self.pr_base(run_row_id, run_dir, branch)
+        self.db.execute("UPDATE run SET pushed=1, pr_base=? WHERE id=?", (base, run_row_id))
+        log(f"run {run_row_id}: pushed {branch} -> {base or '?'} ({len(changed)} file(s))")
+        if base is None:
+            return self._no_pr(run_row_id, conv, branch, base_reason)
 
         gate_ok, gate_reason = self.verification_gate(run_row_id)
         if not gate_ok:
@@ -3198,7 +3254,8 @@ class Watcher:
         try:
             existing = gh.find_pull_request(branch)
             pr = existing or gh.create_pull_request(branch, title[:72],
-                                                    self.pr_body(run_row_id, conv, job, verdict))
+                                                    self.pr_body(run_row_id, conv, job, verdict),
+                                                    base=base)
         except GitHubError as exc:
             log(f"ERROR: run {run_row_id}: could not open a PR for {branch}: {exc}")
             return self._no_pr(run_row_id, conv, branch, f"GitHub refused the PR: {exc}"[:200])
@@ -3209,6 +3266,47 @@ class Watcher:
                         (str(pr.get("url") or pr.get("number") or ""), conv["id"]))
         log(f"run {run_row_id}: PR #{pr.get('number')} {pr.get('url')}")
         return {"branch": branch, "pr_number": pr.get("number"), "pr_url": pr.get("url")}
+
+    def pr_base(self, run_row_id, run_dir, branch):
+        """(base branch, reason it could not be decided). Which branch this work is for.
+
+        The agent chooses by choosing what it branches from — origin/master for a fix to the
+        released build, origin/develop for everything else — and ffbox reads that choice out of
+        the commit graph at harvest and writes the name here. This method does NOT re-derive it;
+        it VERIFIES it, which is a different and much shorter job:
+
+          * the name is one of `publish_bases`, so the file cannot name an arbitrary ref, and
+          * `origin/<name>` is an ancestor of what we just pushed, so the pull request is a
+            proposal to fast-forward that branch rather than a diff against a stranger.
+
+        Both matter because `run_dir` is bind-mounted into the container: the agent can write
+        this file, and ffbox overwriting it at harvest is not something to lean on. What it
+        cannot do is make an unrelated branch an ancestor of its own work.
+
+        A missing or unusable name falls back to the configured default, and only if that
+        default passes the same ancestry check. Nothing else is a safe guess: a pull request
+        into the wrong branch is a proposal to ship unreleased work to players.
+        """
+        allowed = list(self.cfg.get("publish_bases") or {}) or [self.cfg["github"]["base"]]
+        claimed = (_read_text(os.path.join(run_dir, "publish_base.txt")) or "").strip()
+        candidates = [claimed] if claimed in allowed else []
+        default = self.cfg["github"]["base"]
+        if default not in candidates:
+            candidates.append(default)
+        if claimed and claimed not in allowed:
+            log(f"run {run_row_id}: ignoring a publish base of {claimed!r}, which is not one of "
+                f"{allowed}")
+
+        git_dir, remote = self.cfg["git_dir"], self.cfg["push_remote"]
+        for name in candidates:
+            done = subprocess.run(
+                ["git", "-C", git_dir, "merge-base", "--is-ancestor",
+                 f"refs/remotes/{remote}/{name}", f"refs/ffbox/{branch}"],
+                capture_output=True, text=True)
+            if done.returncode == 0:
+                return name, None
+        return None, ("the harness could not tell which branch this work is based on: it does "
+                      f"not descend from {' or '.join(candidates)}")
 
     def _no_branch(self, run_row_id, reason):
         self.db.execute("UPDATE run SET no_branch_reason=? WHERE id=?", (reason, run_row_id))
@@ -3227,9 +3325,11 @@ class Watcher:
         `git bundle verify` is exactly that check, and running it first turns "the host is
         behind origin" into a clear message instead of a cryptic fetch failure.
 
-        Everything lands under refs/ffbox/, never under refs/heads/, and no checkout happens:
-        git_dir is allowed to be the golden checkout that every ffbox clone is made from, and a
-        publish must not be able to move its branches or dirty its working tree.
+        The run's own commits land under refs/ffbox/, never under refs/heads/, and no checkout
+        happens: git_dir is allowed to be the golden checkout that every ffbox clone is made
+        from, and a publish must not be able to move an existing branch there or dirty its
+        working tree. The one local ref this does create is the published branch itself, with
+        its upstream configured — see set_upstream below.
 
         The GitHub token is deliberately NOT spliced into a push url. argv is world-readable
         through /proc, which is the same reason ffbox reads its secrets from an env file rather
@@ -3265,7 +3365,40 @@ class Watcher:
         pushed = git("push", remote, f"{ref}:refs/heads/{branch}")
         if pushed.returncode != 0:
             return False, f"push to {remote} failed: " + (pushed.stderr or "").strip()[:200]
+        self.set_upstream(git, remote, branch)
         return True, None
+
+    @staticmethod
+    def set_upstream(git, remote, branch):
+        """Leave the published branch checkoutable in the host checkout, tracking origin.
+
+        Best effort, and deliberately after the push: the work is on origin by the time this
+        runs, so nothing here can cost a run its publication. A failure is logged and the
+        publish still succeeds.
+
+        `git branch --track` is not used, because it needs refs/remotes/<remote>/<branch> to
+        exist and whether a push updated that ref depends on the refspec and the git version.
+        Writing branch.<name>.remote and .merge is the same two lines of config with no such
+        dependency, and it is what --set-upstream-to writes anyway.
+
+        The branch is NOT force-moved if it already exists and is not the commit we pushed —
+        `git branch -f` on a checked-out branch fails, and a branch a person has been working on
+        under a name a run happens to reuse is not this method's to rewrite.
+        """
+        head = git("symbolic-ref", "--quiet", "--short", "HEAD")
+        if (head.stdout or "").strip() == branch:
+            log(f"WARNING: {branch} is checked out in the host checkout; leaving it alone")
+            return
+        made = git("branch", "--no-track", branch, f"refs/ffbox/{branch}")
+        if made.returncode != 0 and git("rev-parse", "--verify", "--quiet",
+                                        f"refs/heads/{branch}").returncode != 0:
+            log(f"WARNING: could not create a local {branch}: "
+                f"{(made.stderr or '').strip()[:200]}")
+            return
+        for key, value in ((f"branch.{branch}.remote", remote),
+                           (f"branch.{branch}.merge", f"refs/heads/{branch}")):
+            if git("config", key, value).returncode != 0:
+                log(f"WARNING: could not set {key} in the host checkout")
 
     def pr_body(self, run_row_id, conv, job, verdict):
         """The PR description. The agent writes the explanation; the harness writes the facts."""
@@ -3273,10 +3406,18 @@ class Watcher:
                           (run_row_id,))
         run = self.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
         lines = [(verdict.get("pr_body") or verdict.get("summary") or "").strip(), "", "---", ""]
-        lines.append(f"Opened by ffwatch from Discord {conv['kind']} "
-                     f"`{conv['thread_id']}` ({conv['title'] or 'untitled'}).")
-        lines.append(f"Run `{job['run_id']}`, base `{(run['base_sha'] or '?')[:12]}`, "
-                     f"{run['changed_files']} file(s) changed.")
+        if is_local_conversation(conv):
+            # Not a Discord anything. Naming the thread id of a conversation that has none used
+            # to be harmless, because a local run never reached this method; now it would put a
+            # sentence in a public pull request that is simply untrue.
+            lines.append(f"Opened by ffwatch from a {conv['kind']} prompt on the build server "
+                         f"(conversation {conv['id']}: {conv['title'] or 'untitled'}).")
+        else:
+            lines.append(f"Opened by ffwatch from Discord {conv['kind']} "
+                         f"`{conv['thread_id']}` ({conv['title'] or 'untitled'}).")
+        lines.append(f"Run `{job['run_id']}`, based on `{run['pr_base'] or '?'}` at "
+                     f"`{(run['base_sha'] or '?')[:12]}`, {run['changed_files']} file(s) "
+                     f"changed.")
         if ver:
             lines.append(f"Harness verification: compiled={bool(ver['compiled'])}, "
                          f"tests {ver['tests_passed']}/{ver['tests_run']}, "
@@ -3297,14 +3438,40 @@ class Watcher:
         """
         if run_row_id is None:
             return {}
-        row = self.db.one("SELECT branch, pushed, pr_number, pr_url, no_branch_reason,"
+        row = self.db.one("SELECT branch, pushed, pr_number, pr_url, pr_base, no_branch_reason,"
                           " no_pr_reason FROM run WHERE id=?", (run_row_id,))
         if row is None:
             return {}
         return {"branch": row["branch"] if row["pushed"] else None,
                 "pr_number": row["pr_number"], "pr_url": row["pr_url"],
+                "base": row["pr_base"],
                 "no_branch_reason": row["no_branch_reason"],
                 "no_pr_reason": row["no_pr_reason"]}
+
+    def publish_line(self, turn_id):
+        """One line of publication facts for the person who typed the prompt, or "".
+
+        A local turn gets no reply composed for it — record_reply returns early, because there
+        is nowhere to post — so `summary` reaches the terminal and everything the HARNESS did
+        with the work would otherwise reach nobody. Now that a shell or web run pushes a branch
+        and can open a pull request, "where did my change go" is exactly the question this
+        answers, and the agent's prose is not allowed to be the answer to it.
+        """
+        run = self.db.one("SELECT id FROM run WHERE turn_id=? ORDER BY id DESC LIMIT 1",
+                          (turn_id,))
+        facts = self.publish_facts(run["id"]) if run else {}
+        if facts.get("branch"):
+            line = f"branch {facts['branch']} pushed to {self.cfg['push_remote']}"
+            if facts.get("base"):
+                line += f", based on {facts['base']}"
+            if facts.get("pr_url"):
+                return f"{line} · PR #{facts.get('pr_number')} {facts['pr_url']}"
+            if facts.get("no_pr_reason"):
+                return f"{line} · no PR: {facts['no_pr_reason']}"
+            return line
+        if facts.get("no_branch_reason"):
+            return f"no branch: {facts['no_branch_reason']}"
+        return ""
 
     # -- the sender (design section 11: the sender enforces, the skills only advise) ---------
 
@@ -3989,17 +4156,19 @@ class Watcher:
         # published, what did not, and why not. Both columns come from the run row, so this is
         # the same fact the Discord reply carried.
         published = self.db.query(
-            "SELECT ffbox_run_id, branch, pushed, pr_number, pr_url, no_branch_reason,"
-            " no_pr_reason FROM run WHERE branch IS NOT NULL OR no_branch_reason IS NOT NULL"
+            "SELECT ffbox_run_id, branch, pushed, pr_number, pr_url, pr_base,"
+            " no_branch_reason, no_pr_reason FROM run"
+            " WHERE branch IS NOT NULL OR no_branch_reason IS NOT NULL"
             " ORDER BY id DESC LIMIT 5")
         if published:
             out.append(f"recent write runs: {len(published)}")
             for p in published:
                 if p["pr_url"]:
-                    out.append(f"  {p['ffbox_run_id']}  {p['branch']}  PR #{p['pr_number']} "
-                               f"{p['pr_url']}")
+                    out.append(f"  {p['ffbox_run_id']}  {p['branch']} -> "
+                               f"{p['pr_base'] or '?'}  PR #{p['pr_number']} {p['pr_url']}")
                 elif p["pushed"]:
-                    out.append(f"  {p['ffbox_run_id']}  {p['branch']}  no PR: "
+                    out.append(f"  {p['ffbox_run_id']}  {p['branch']} -> "
+                               f"{p['pr_base'] or '?'}  no PR: "
                                f"{(p['no_pr_reason'] or '?')[:70]}")
                 else:
                     out.append(f"  {p['ffbox_run_id']}  no branch: "
@@ -4061,7 +4230,11 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # only for a lane that was supposed to be verified, and a row that did not run says so
         # out loud rather than being quietly omitted — "we could not check" and "we did not
         # need to check" must not look the same to whoever reads the reply.
-        if not verification["ran"]:
+        if verification["skipped"]:
+            # Nothing to test. Not a warning: the run changed no files, which the branch line
+            # below says again in its own words.
+            lines.append("no code changed, so no tests were run")
+        elif not verification["ran"]:
             lines.append("⚠️ NOT VERIFIED: " +
                          (verification["evidence"] or "the harness could not run the tests")
                          .splitlines()[0][:180])
@@ -4076,6 +4249,11 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
 
     if publish.get("branch"):
         line = f"branch `{publish['branch']}`"
+        if publish.get("base"):
+            # Which branch this is FOR, and it is not always develop: a fix to the released
+            # build is based on master and proposed into master. Whoever reads the reply is the
+            # person who most needs to see that it went to the right one.
+            line += f" → `{publish['base']}`"
         if publish.get("pr_url"):
             line += f" · PR #{publish.get('pr_number')} {publish['pr_url']}"
         elif publish.get("no_pr_reason"):
@@ -4229,7 +4407,12 @@ def build_parser():
                          "--source is not consulted — the front door is a property of the "
                          "conversation, which already exists.")
     sp.add_argument("--ref", help="check the workspace out at this ref (default: base_ref)")
-    sp.add_argument("--branch", help="harvest the work onto this branch as a git bundle")
+    sp.add_argument("--branch",
+                    help="name the branch this run starts on, instead of the run id. It is "
+                         "published under the ffbox/ prefix either way, and only if the agent "
+                         "does not make a branch of its own — which it is told to do, and "
+                         "which publishes as ffbox/<its name>-<run id>. A name reused from an "
+                         "earlier run is a push origin rejects, and the run says so.")
     sp.add_argument("--wait", action="store_true", help="block until the run finishes")
     sp.add_argument("--json", action="store_true", help="print the run's result as JSON")
 
@@ -4344,11 +4527,18 @@ def main(argv=None):
             return 0
         turn = watcher.wait_for_turn(turn_id)
         text = watcher.result_text(turn_id)
+        published = watcher.publish_line(turn_id)
         if args.json:
             print(json.dumps({"turn": turn_id, "status": turn["status"] if turn else None,
-                              "result": text}, indent=2))
-        elif text:
-            print(text)
+                              "result": text, "published": published}, indent=2))
+        else:
+            if text:
+                print(text)
+            # AFTER the answer, and on stderr, so `ffbox "..." > answer.md` still captures the
+            # answer alone while the person watching the terminal still learns where the work
+            # went. A run that published nothing says nothing here.
+            if published:
+                print(f"\n[ffbox] {published}", file=sys.stderr)
         if turn is None or turn["status"] != "done":
             print(f"ffwatch: turn {turn_id} ended {turn['status'] if turn else 'missing'}"
                   f"{': ' + turn['error'] if turn and turn['error'] else ''}", file=sys.stderr)

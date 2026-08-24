@@ -45,6 +45,8 @@ DIRECT=0
 PROMPT_FILE=
 REF=
 BRANCH=
+BRANCH_PREFIX=
+BASE_REFS=
 TASK=
 JOB_FILE=
 RUN_ID_OVERRIDE=
@@ -95,6 +97,19 @@ Options:
                        alongside the patch. Creating it is a ref move, so nothing churns under
                        the warm Library/. No changed files means no commit, no bundle and no
                        branch left behind.
+  --base-refs "A B"    Branches the run's work may be based on, most-preferred first (the
+                       harness passes "develop master"). At harvest the published range starts
+                       at whichever of them the work actually descends from, so an agent that
+                       branched off origin/master is bundled against master rather than refused
+                       for not descending from the ref the run was checked out at. The name is
+                       written to <results>/publish_base.txt, which is what the pull request
+                       ends up targeting. Empty means the checked-out commit is the only base.
+  --branch-prefix P    Let the agent name the published branch. When the run ends on a branch
+                       it made itself, the bundle is harvested as P<that name>-<run id> instead
+                       of NAME, so a reviewer reads "ffbox/belt-merger-priority-<id>" rather
+                       than a run id. Without this the published name is always NAME. Either
+                       way a run that ends on develop, master or main (FFBOX_PROTECTED_BRANCHES)
+                       is refused and publishes nothing.
   --task PATH          Container task to run instead of the default one-shot. A host path is
                        mounted read-only at /ffbox/task.sh; anything else is taken as a path
                        already inside the image. Sets FFBOX_ENTRY.
@@ -137,6 +152,8 @@ while [ $# -gt 0 ]; do
         --network)        NETWORK=${2:?--network needs a name}; shift 2 ;;
         --ref)            REF=${2:?--ref needs a git ref}; shift 2 ;;
         --branch)         BRANCH=${2:?--branch needs a name}; shift 2 ;;
+        --branch-prefix)  BRANCH_PREFIX=${2:?--branch-prefix needs a prefix}; shift 2 ;;
+        --base-refs)      BASE_REFS=${2:?--base-refs needs a list}; shift 2 ;;
         --task)           TASK=${2:?--task needs a path}; CLOCKS=1; shift 2 ;;
         --job-file)       JOB_FILE=${2:?--job-file needs a path}; CLOCKS=1; shift 2 ;;
         --mount)          MOUNTS+=("${2:?--mount needs HOST:CONTAINER[:ro]}"); shift 2 ;;
@@ -370,6 +387,16 @@ FFBOX_GIT_EMAIL=${FFBOX_GIT_EMAIL:-ffbox@final-factory.invalid}
 MAX_CHANGED_FILES=${FFBOX_MAX_CHANGED_FILES:-2000}
 MAX_BUNDLE_BYTES=${FFBOX_MAX_BUNDLE_BYTES:-268435456}
 
+# Branches a run may not END on. The agent is told to make its own branch and told what happens
+# if it does not; this is the half that makes the telling true. Work committed onto develop or
+# master is a change to the integration branch itself dressed up as a proposal — the range would
+# still bundle and still push, and the reviewer would have no way to see which it was.
+#
+# It is deliberately about where HEAD ENDS UP, not about which commits exist. An agent that
+# committed on develop and then branched off it publishes that work on the branch, which is the
+# outcome everybody wants; what is refused is finishing the run on the shared branch.
+PROTECTED_BRANCHES=${FFBOX_PROTECTED_BRANCHES:-develop master main}
+
 # Splits `git status --porcelain -z` into two NUL-separated pathspec files: paths that exist in
 # HEAD, and paths that do not. Called twice — once to clean the clone before the agent sees it,
 # once at harvest as a backstop for whatever the clean could not reach.
@@ -401,12 +428,47 @@ open(sys.argv[3], "wb").write(b"\0".join(untracked) + (b"\0" if untracked else b
 PYBASE
 }
 
+# WHICH BRANCH THIS WORK IS FOR, decided by where it actually sits in the history rather than by
+# anything the agent says about it. A fix for the released build is based on origin/master and a
+# change for the next version on origin/develop; the agent chooses by choosing what it branches
+# from, and this reads that choice back out of the commit graph.
+#
+# The rule is: among the candidate bases that are ANCESTORS of the work, take the one furthest
+# down the history — the most specific. A branch off develop has both develop and master behind
+# it (master is merged into develop), and develop is the descendant of the two, so develop wins.
+# A branch off master has only master behind it, because develop carries commits the branch does
+# not. Ties keep the earlier candidate, which is why the harness passes develop first.
+#
+# Ancestry is required, not merely preferred: the published range is base..work and the host
+# pushes it as a fast-forward. A branch that descends from nothing we know about is a range
+# nobody can describe, which is the same refusal an agent that reset below its base gets.
+#
+# Prints "<name> <sha>", or nothing at all when no candidate qualifies.
+resolve_publish_base() {
+    _tip=$1
+    _best_name= _best_sha=
+    for _name in $BASE_REFS; do
+        _sha=$(git -C "$MNT" rev-parse --verify --quiet "origin/${_name}^{commit}" 2>/dev/null) \
+            || _sha=$(git -C "$MNT" rev-parse --verify --quiet "${_name}^{commit}" 2>/dev/null) \
+            || continue
+        [ -n "$_sha" ] || continue
+        git -C "$MNT" merge-base --is-ancestor "$_sha" "$_tip" 2>/dev/null || continue
+        if [ -z "$_best_sha" ]; then
+            _best_name=$_name _best_sha=$_sha
+        elif [ "$_best_sha" != "$_sha" ] \
+             && git -C "$MNT" merge-base --is-ancestor "$_best_sha" "$_sha" 2>/dev/null; then
+            _best_name=$_name _best_sha=$_sha
+        fi
+    done
+    [ -z "$_best_sha" ] || printf '%s %s\n' "$_best_name" "$_best_sha"
+}
+
 # Refuse to publish, and say why in a file ffwatch reads back as the run's no_branch_reason.
 # Without this the host cannot tell "the harvest broke" from "the run changed nothing", and
 # those two want very different replies.
 harvest_failed() {
     printf '%s\n' "$1" > "$OUT/harvest_error.txt"
-    rm -f "$OUT/work.bundle" "$OUT/branch.txt"
+    rm -f "$OUT/work.bundle" "$OUT/branch.txt" "$OUT/publish_base.txt"
     echo "ffbox: harvest refused: $1" >&2
 }
 
@@ -651,6 +713,28 @@ if [ -d "$MNT/.git" ]; then
         # left uncommitted, points $BRANCH at wherever the agent ended, and refuses to bundle a
         # range that fails any check below. A lane that "forgot to commit" still cannot exist.
         BASE_SHA=$(cat "$OUT/base_sha.txt" 2>/dev/null || echo "")
+        # WHICH BRANCH THIS WORK IS FOR. Read off HEAD, before anything below moves a ref:
+        # adding a commit on top cannot change which published branch the work descends from,
+        # and resolving it here means the leftover commit's own message is chosen against the
+        # right base.
+        rm -f "$OUT/publish_base.txt"
+        PUBLISH_BASE= PUBLISH_BASE_SHA=
+        if [ -n "$BASE_REFS" ]; then
+            RESOLVED=$(resolve_publish_base HEAD)
+            if [ -n "$RESOLVED" ]; then
+                PUBLISH_BASE=${RESOLVED%% *}
+                PUBLISH_BASE_SHA=${RESOLVED##* }
+                echo "[ffbox] this work is based on $PUBLISH_BASE" \
+                     "($(printf %.12s "$PUBLISH_BASE_SHA"))"
+            fi
+        fi
+        if [ -z "$PUBLISH_BASE_SHA" ] && [ -n "$BASE_SHA" ] \
+           && git -C "$MNT" merge-base --is-ancestor "$BASE_SHA" HEAD 2>/dev/null; then
+            # No named branch claims it, but it still descends from the commit this run started
+            # at — an ordinary run on a conversation pinned to a sha origin has moved past.
+            # Publishable; the host targets its own default branch.
+            PUBLISH_BASE_SHA=$BASE_SHA
+        fi
         git -C "$MNT" add -A -- . 2>/dev/null || true
         # Backstop for a baseline the pre-run restore could not clean. It only ever reaches what
         # is still UNCOMMITTED; anything the agent committed is past saving here, which is why
@@ -675,8 +759,8 @@ if [ -d "$MNT/.git" ]; then
             # Named for what it is. When the agent committed nothing this IS the work; when it
             # committed as it went, this is the tail it left behind, and calling both "agent
             # work" would make a reviewer read the second as the whole change.
-            if [ "$(git -C "$MNT" rev-list --count "${BASE_SHA}..HEAD" 2>/dev/null || echo 0)" \
-                 = "0" ]; then
+            if [ "$(git -C "$MNT" rev-list --count "${PUBLISH_BASE_SHA}..HEAD" \
+                    2>/dev/null || echo 0)" = "0" ]; then
                 LEFTOVER_MSG="ffbox ${RUN_ID}: agent work"
             else
                 LEFTOVER_MSG="ffbox ${RUN_ID}: uncommitted work at exit"
@@ -690,34 +774,63 @@ if [ -d "$MNT/.git" ]; then
                 commit --quiet --no-verify -m "$LEFTOVER_MSG" 2>/dev/null || true
         fi
 
-        # The agent may branch and switch freely, so $BRANCH follows HEAD rather than the other
-        # way round: what publishes is whatever HEAD points at when the container exits. A run
-        # that did its work on a side branch and never switched back still publishes it, which
-        # beats publishing the empty branch it started on and calling that the answer.
-        CURRENT_BRANCH=$(git -C "$MNT" symbolic-ref --short -q HEAD 2>/dev/null || echo "")
-        if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
-            echo "[ffbox] run ended on ${CURRENT_BRANCH:-a detached HEAD}; pointing $BRANCH at it"
-            git -C "$MNT" branch -f "$BRANCH" HEAD >/dev/null 2>&1 || true
-        fi
-
         # --- what the harness will not publish ---------------------------------------------
         # None of these is a security boundary; the container is contained by holding no
         # credential. They catch the ways a range can stop meaning what the host assumes it
         # means once the agent, rather than the harness, decides what a commit is.
         HARVEST_OK=1
-        # Everything below is defined in terms of base..branch. Without a base there is no
-        # range to check and no prerequisite for the host's `git bundle verify`, so publishing
-        # would mean pushing a history nobody can describe.
-        if [ -z "$BASE_SHA" ]; then
-            harvest_failed "the run recorded no base commit, so its work cannot be bundled"
+
+        # WHERE HEAD ENDS UP IS WHAT PUBLISHES. The agent may branch and switch freely while it
+        # works, so the published branch follows HEAD rather than the other way round: a run
+        # that did its work on a side branch and never switched back still publishes it, which
+        # beats publishing the empty branch it started on and calling that the answer.
+        CURRENT_BRANCH=$(git -C "$MNT" symbolic-ref --short -q HEAD 2>/dev/null || echo "")
+        for protected in $PROTECTED_BRANCHES; do
+            [ "$CURRENT_BRANCH" = "$protected" ] || continue
+            harvest_failed "the run ended on $protected instead of on a branch of its own"
             HARVEST_OK=0
+            break
+        done
+
+        # The agent's own name for the work, which is the one a reviewer ends up reading.
+        # Sanitised rather than trusted: it reaches `git branch` here, a ref inside the bundle,
+        # and a `git push` refspec on the host. The run id goes on the end unconditionally —
+        # two runs at the same bug pick the same obvious name more often than you would think,
+        # and a name that already exists on origin is a rejected push at the end of an hour's
+        # work. Without --branch-prefix nothing is renamed and the host's name publishes, which
+        # is what `ffbox --branch wip` has always meant.
+        if [ "$HARVEST_OK" = 1 ] && [ -n "$BRANCH_PREFIX" ] && [ -n "$CURRENT_BRANCH" ] \
+           && [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+            AGENT_NAME=$(printf '%s' "${CURRENT_BRANCH#"$BRANCH_PREFIX"}" \
+                         | tr -c 'A-Za-z0-9._/-' '-' \
+                         | sed -e 's|//*|/|g' -e 's/--*/-/g' | cut -c1-80 \
+                         | sed -e 's|^[-./]*||' -e 's|[-./]*$||')
+            RENAMED="${BRANCH_PREFIX}${AGENT_NAME}-${RUN_ID}"
+            if [ -n "$AGENT_NAME" ] \
+               && git -C "$MNT" check-ref-format --branch "$RENAMED" >/dev/null 2>&1; then
+                echo "[ffbox] the agent worked on $CURRENT_BRANCH; publishing it as $RENAMED"
+                BRANCH=$RENAMED
+            else
+                echo "ffbox: WARNING: '$CURRENT_BRANCH' does not make a usable branch name;" \
+                     "publishing as $BRANCH instead" >&2
+            fi
         fi
-        # The bundle is base..branch, and `git bundle verify` on the host checks the host has
-        # base. An agent that reset or amended below base makes that range either empty or a
-        # rewrite of history the host already has, and neither should reach origin.
-        if [ "$HARVEST_OK" = 1 ] \
-           && ! git -C "$MNT" merge-base --is-ancestor "$BASE_SHA" "$BRANCH" 2>/dev/null; then
-            harvest_failed "the run rewrote history below its base commit ${BASE_SHA}"
+
+        if [ "$HARVEST_OK" = 1 ] && [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+            echo "[ffbox] run ended on ${CURRENT_BRANCH:-a detached HEAD}; pointing $BRANCH at it"
+            git -C "$MNT" branch -f "$BRANCH" HEAD >/dev/null 2>&1 || {
+                harvest_failed "the run's work could not be named $BRANCH"
+                HARVEST_OK=0
+            }
+        fi
+
+        # Everything below is defined in terms of base..branch, and the base is the one resolved
+        # above: the published branch this work descends from, or failing that the commit the
+        # run started at. Without one there is no range to bundle and no prerequisite for the
+        # host's `git bundle verify` — which is precisely what an agent that reset or amended
+        # below every base it could have had leaves behind.
+        if [ "$HARVEST_OK" = 1 ] && [ -z "$PUBLISH_BASE_SHA" ]; then
+            harvest_failed "the work descends neither from ${BASE_REFS:-any known branch} nor from the commit this run started at (${BASE_SHA:-none recorded}), so it cannot be bundled"
             HARVEST_OK=0
         fi
         # Every commit must be this run's own. `git merge`, `git rebase` and `git cherry-pick`
@@ -726,7 +839,7 @@ if [ -d "$MNT/.git" ]; then
         # `git -c user.email=... commit` to make its work look like a person's, on a branch a
         # reviewer reads by author.
         if [ "$HARVEST_OK" = 1 ]; then
-            FOREIGN=$(git -C "$MNT" log --format='%ae%n%ce' "${BASE_SHA}..${BRANCH}" 2>/dev/null \
+            FOREIGN=$(git -C "$MNT" log --format='%ae%n%ce' "${PUBLISH_BASE_SHA}..${BRANCH}" 2>/dev/null \
                       | sort -u | grep -Fxv "$FFBOX_GIT_EMAIL" || true)
             if [ -n "$FOREIGN" ]; then
                 FOREIGN_ONE_LINE=$(printf '%s' "$FOREIGN" | tr '\n' ' ')
@@ -735,7 +848,7 @@ if [ -d "$MNT/.git" ]; then
             fi
         fi
 
-        git -C "$MNT" diff --name-only "${BASE_SHA}..${BRANCH}" > "$OUT/changed_files.txt" \
+        git -C "$MNT" diff --name-only "${PUBLISH_BASE_SHA}..${BRANCH}" > "$OUT/changed_files.txt" \
             2>/dev/null || true
         if [ "$HARVEST_OK" = 1 ] && [ -s "$OUT/changed_files.txt" ] \
            && [ "$(wc -l < "$OUT/changed_files.txt")" -gt "$MAX_CHANGED_FILES" ]; then
@@ -747,25 +860,28 @@ if [ -d "$MNT/.git" ]; then
             : # harvest_failed recorded the reason and removed the branch and bundle
         elif [ -s "$OUT/changed_files.txt" ]; then
             printf '%s\n' "$BRANCH" > "$OUT/branch.txt"
-            git -C "$MNT" diff --binary "${BASE_SHA}..${BRANCH}" > "$OUT/changes.patch" \
+            # The name, not the sha: it is what the pull request targets, and the host checks it
+            # against its own allow list and against the pushed range before believing it.
+            [ -z "$PUBLISH_BASE" ] || printf '%s\n' "$PUBLISH_BASE" > "$OUT/publish_base.txt"
+            git -C "$MNT" diff --binary "${PUBLISH_BASE_SHA}..${BRANCH}" > "$OUT/changes.patch" \
                 2>/dev/null || true
             # A bundle of the RANGE, not of the branch: a full bundle would carry the project's
             # entire history (gigabytes) where the range carries only what this run added.
             # base_sha is a commit on origin, so the host already has the prerequisite — which is
             # exactly the condition `git bundle verify` checks before ffwatch fetches from it.
-            if git -C "$MNT" bundle create "$OUT/work.bundle" "${BASE_SHA}..${BRANCH}" \
+            if git -C "$MNT" bundle create "$OUT/work.bundle" "${PUBLISH_BASE_SHA}..${BRANCH}" \
                     >/dev/null 2>&1; then
                 BUNDLE_BYTES=$(wc -c < "$OUT/work.bundle" 2>/dev/null || echo 0)
                 if [ "$BUNDLE_BYTES" -gt "$MAX_BUNDLE_BYTES" ]; then
                     harvest_failed "the work bundle is ${BUNDLE_BYTES} bytes, over the ceiling of ${MAX_BUNDLE_BYTES}"
                 else
                     echo "[ffbox] bundled $(wc -l < "$OUT/changed_files.txt") changed file(s)" \
-                         "in $(git -C "$MNT" rev-list --count "${BASE_SHA}..${BRANCH}")" \
+                         "in $(git -C "$MNT" rev-list --count "${PUBLISH_BASE_SHA}..${BRANCH}")" \
                          "commit(s) on $BRANCH: $OUT/work.bundle"
                 fi
             else
                 rm -f "$OUT/work.bundle"
-                echo "ffbox: WARNING: could not bundle ${BASE_SHA}..${BRANCH}" >&2
+                echo "ffbox: WARNING: could not bundle ${PUBLISH_BASE_SHA}..${BRANCH}" >&2
             fi
         else
             # No changed files means no branch left behind and no PR (design section 17). Saying
