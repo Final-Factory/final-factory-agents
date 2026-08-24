@@ -133,6 +133,24 @@ for alias in sorted(ffbox.get("watch") or {}):
         missing += out(f"channels.{alias}",
                        f"ffdiscord set channels.{alias} <channel id>")
 
+# WHO MAY COMMAND THIS BOX. The template seeds trust.operators with an example name and an
+# empty id, so a fresh machine has NOBODY trusted — no operator directive and no operator DM
+# will fire. That is the right default and the wrong thing to discover from a journal line, and
+# MANUAL STEPS is driven entirely by this function, so it has to be listed here or the script
+# says "you are done" about a box that answers nobody.
+operators = ((discord.get("trust") or {}).get("operators") or {})
+if not any(str(v or "").strip().isdigit() for v in operators.values()):
+    named = ", ".join(sorted(operators)) or "none"
+    missing += out("trust.operators",
+                   f"ffdiscord set trust.operators.<name> <user id>   (present: {named}; "
+                   f"ids only, never usernames)")
+
+# Same table, the other half: a mention target is what "@name" expands to in a post.
+if not any(str(v or "").strip().isdigit()
+           for v in (discord.get("mentions") or {}).values()):
+    out("mentions", "ffdiscord set mentions.<name> <user id>   "
+                    "(optional until something needs to ping a human)", required=False)
+
 # The reverse mismatch is not a blank, but it is the same class of mistake: an id nothing
 # watches. Reported, never counted.
 for alias in sorted(set(channels) - set(ffbox.get("watch") or {})):
@@ -256,19 +274,19 @@ for key, value in (
     ("approve_before_send", False),
     ("send_limits", {"per_hour": 60, "per_conversation_hour": 12}),
     ("max_send_attempts", 5),
-    # venue and engage are declared here, not inferred from Discord permissions. See
-    # design/trusted_ingress_design.txt sections 4 and 5, and the same table in ffwatch's
-    # DEFAULTS. An existing config keeps whatever it already says; ffwatch's own defaults fill
-    # a missing key and warn about it at startup.
+    # ONE EXAMPLE ROW, NOT A SHIPPED CHANNEL LIST. This block is the only thing in the system
+    # that names a channel — ffwatch's DEFAULTS["watch"] is empty on purpose — so what gets
+    # seeded here is what a fresh machine reads. It used to seed the four Final Factory
+    # channels, which meant every box swept #dev-chat whether or not that box was for it.
+    # Rename the example to your channel's alias, or delete it; nothing is watched until you do.
+    #
+    # venue and engage are declared, never inferred from Discord permissions. See
+    # design/trusted_ingress_design.txt sections 4 and 5. The example is deliberately the
+    # QUIET, CAUTIOUS pair — public withholds internals, mention wakes nothing unless the bot
+    # is addressed — so a half-finished config errs the safe way.
     ("watch", {
-        "ask_claude": {"kind": "ask", "forum": False,
-                       "venue": "public", "engage": "all"},
-        "bug_reports": {"kind": "bug_report", "forum": True,
-                        "venue": "public", "engage": "all"},
-        "suggestions": {"kind": "suggestion", "forum": True,
-                        "venue": "public", "engage": "all"},
-        "dev_chat": {"kind": "ask", "forum": False,
-                     "venue": "private", "engage": "mention"},
+        "example_channel": {"kind": "ask", "forum": False, "venue": "public",
+                            "engage": "mention", "ping": False},
     }),
 ):
     if key not in ffbox:
@@ -312,11 +330,18 @@ discord["_help"] = {
                  "exactly one server.",
     "channels": "alias -> that channel's id (right-click the channel > Copy Channel ID). The "
                 f"alias must match an entry in the \"watch\" block of {ffbox_path}, which is "
-                "what says what the channel MEANS; the id here says which channel it IS.",
+                "what says what the channel MEANS; the id here says which channel it IS. "
+                "Leave the id blank and the first command that uses the alias looks it up by "
+                "name on the server and writes the id back here, so agent_testing finds "
+                "#agent-testing on its own. Nothing is watched unless it is in both tables.",
     "mentions": "name -> user id. What @name expands to in a post.",
     "trust": "operators: name -> user id. Whose messages may command this box. Ids only, "
              "never usernames: a username is renameable, so a trust key somebody else can "
-             "claim by renaming is not a trust key.",
+             "claim by renaming is not a trust key. Blank until you fill it in, which means "
+             "NOBODY is an operator and every message is treated as a player's.",
+    "example_rows": "Every table above ships one example row so the shape is visible. Rename "
+                    "it to the real alias or name and fill in the id, or delete the row. An "
+                    "example row is blank, and blank is what every reader treats as absent.",
 }
 
 # One blank per alias the ffwatch "watch" block declares, because those two tables have to
@@ -334,14 +359,48 @@ for alias in sorted((ffbox.get("watch") or {})):
 # reads no other file (design/trusted_ingress_design.txt section 3).
 #
 # setdefault at every level, so a machine that has already edited either table is left alone.
-OPERATORS = {"ben": "226422780445458432", "lothsahn": "193210319093497857"}
+#
+# AN EXAMPLE NAME AND A BLANK ID, not real people. Seeding real snowflakes made this box trust
+# two specific accounts by default, which is a decision that belongs to whoever runs the box,
+# not to the script that installs it. A blank is falsy, and every reader already filters for a
+# numeric id, so an unfilled template grants nobody anything: config_warnings says "NOBODY is
+# an operator" until a real id is typed in.
+#
+# The same id is what "@name" expands to in a post, so both tables get the row and there is
+# only one place to fill in.
+EXAMPLE_OPERATOR = "example_user"
 trust = discord.setdefault("trust", {})
 operators = trust.setdefault("operators", {})
-for name, uid in OPERATORS.items():
-    operators.setdefault(name, uid)
-    # The same ids are what "@ben" expands to in a post, so seed the mention table from them
-    # rather than leaving two places to fill in by hand and get inconsistent.
-    discord["mentions"].setdefault(name, uid)
+if not operators:
+    operators.setdefault(EXAMPLE_OPERATOR, "")
+if not discord["mentions"]:
+    discord["mentions"].setdefault(EXAMPLE_OPERATOR, "")
+
+# The ffbox config gets its own one-line map, for the same reason the Discord one does: JSON
+# carries no comments, "watch" is the single most consequential block on the machine, and a
+# reader should not have to find ffwatch.py to learn what "engage" does.
+ffbox["_help"] = {
+    "watch": "alias -> {\"kind\": ask|bug_report|suggestion, \"forum\": true for a forum "
+             "channel, \"venue\": public|private, \"engage\": all|mention, \"ping\": true "
+             "to let a reply there @-mention a human}. THE ONLY PLACE A "
+             "CHANNEL IS NAMED — nothing is built in, so this box reads exactly what is listed "
+             "here and nothing else. The alias needs a matching row in the \"channels\" table "
+             f"of {discord_path}, which says which channel it IS. venue private means "
+             "internals may be said out loud there; engage mention means only a message that "
+             "@-mentions the bot (or replies to it) is considered. Both fall closed when "
+             "omitted, and ffwatch logs which entry made it choose. ping is false unless "
+             "stated: mark your escalation channel true, and nothing else.",
+}
+
+# `ping` arrived after boxes were already configured, and stage 5 only seeds "watch" when the
+# whole key is absent — so an existing entry would never grow the key, and ping_allowed would
+# read a missing key as False. That is the safe direction, but it is also a silent change to
+# whichever channel used to be allowed to reach a human. Writing the explicit default makes it
+# visible in the file, which is the only place anybody would look for it.
+pinged = [a for a, e in sorted((ffbox.get("watch") or {}).items())
+          if isinstance(e, dict) and "ping" not in e]
+for alias in pinged:
+    ffbox["watch"][alias]["ping"] = False
 
 write(ffbox_path, ffbox)
 write(discord_path, discord)
@@ -350,6 +409,10 @@ if moved:
 if renamed:
     print("[discord-setup]   renamed keys: " + ", ".join(renamed))
 print("[discord-setup]   seeded ffwatch keys: " + (", ".join(seeded) or "(nothing new)"))
+if pinged:
+    print("[discord-setup]   added \"ping\": false to watch entries: " + ", ".join(pinged)
+          + "\n[discord-setup]     (a reply there cannot @-mention a human until you set it "
+            "true; nothing could, before this key existed on the entry)")
 PY
 did "$FFBOX_CONFIG_JSON        (ffwatch + ffweb settings)"
 did "$FFDISCORD_HOME/config.json"
@@ -434,8 +497,8 @@ if ! blanks >/dev/null 2>&1; then
     say "     name, or do it directly with 'ffdiscord resolve-channels --write'."
     say "  3. Watching a channel this box does not know about yet? Add it to the ffwatch"
     say "     \"watch\" block in $FFBOX_CONFIG_JSON first, which is what says what it MEANS:"
-    say '       "watch": { "agent_testing": { "kind": "ask", "forum": false,'
-    say '                                     "venue": "private", "engage": "mention" } }'
+    say '       "watch": { "agent_testing": { "kind": "ask", "forum": false, "venue": "private",'
+    say '                                     "engage": "mention", "ping": false } }'
     say "     kind ask/mention -> read-only answer lane; bug_report/suggestion -> triage;"
     say "     directive -> the write lane. A channel not listed here falls to the classifier,"
     say "     which fails closed to read-only. Re-run this script to get its blank."

@@ -42,8 +42,8 @@ fields Discord does not gate behind MESSAGE_CONTENT — exactly why this design 
 without asking for the players'-eyes-only privileged intent.
 
 Usage:
-  python scripts/discord/ffdiscord_listener.py                     # watch ask_claude + bug_reports
-  python scripts/discord/ffdiscord_listener.py --channels dev_chat # watch something else
+  python scripts/discord/ffdiscord_listener.py                     # mentions and DMs only
+  python scripts/discord/ffdiscord_listener.py --channels agent_testing,bug_reports
   python scripts/discord/ffdiscord_listener.py --once-ready        # connect, prove READY, exit
   python scripts/discord/ffdiscord_listener.py --max-events 1      # exit after N real events (testing)
 
@@ -308,7 +308,8 @@ class Listener:
             self.resume_url = d.get("resume_gateway_url")
             user = d.get("user", {})
             tag = f"{user.get('username')}#{user.get('discriminator')}"
-            watched = ", ".join(f"{a}({i})" for i, a in self.watch_ids.items())
+            watched = (", ".join(f"{a}({i})" for i, a in self.watch_ids.items())
+                       or "no channel (mentions, directives and operator DMs only)")
             log(f"READY as {tag} watching {watched}")
             self.connected_ok = True
             return "ready"
@@ -484,8 +485,14 @@ def rotate_events_file(path, cap=1 << 20):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--channels", default="ask_claude,bug_reports",
-                    help="comma-separated channel aliases or raw ids to watch")
+    # NO DEFAULT CHANNEL. A default here is a channel somebody has to discover they are
+    # reading: the caller (06-services.sh, from the ffwatch watch block) is the only thing that
+    # knows what this box is for. With none given the listener still rings for an @-mention, a
+    # reply, an operator directive and an operator DM, because those are addressed to the bot
+    # by construction — it just sweeps no channel wholesale.
+    ap.add_argument("--channels", default="",
+                    help="comma-separated channel aliases or raw ids to watch "
+                         "(default: none — mentions and DMs only)")
     ap.add_argument("--events-path", default=EVENTS_PATH)
     ap.add_argument("--once-ready", action="store_true",
                     help="connect, prove READY, then exit 0 (smoke test)")
@@ -506,9 +513,24 @@ def main(argv=None):
 
     watch_ids = {}
     for name in [c.strip() for c in args.channels.split(",") if c.strip()]:
-        cid = cfg["channels"].get(name, name)
+        cid = str(cfg["channels"].get(name, name) or "").strip()
         if not cid.isdigit():
-            print(f"unknown channel alias '{name}' and not a raw id", file=sys.stderr)
+            # Two different mistakes, and telling them apart is the whole point of the
+            # message: an alias the config has never heard of is a typo, while a DECLARED
+            # alias with an empty id is the setup template working as intended and one
+            # command away from done. Saying "unknown channel alias" about the second sends
+            # the reader to Discord's role editor to debug an id they simply have not filled
+            # in. The listener does not resolve names itself — it holds no REST client and
+            # this must not become a startup that talks to Discord before the websocket — so
+            # it names the command that does.
+            if name in cfg["channels"]:
+                print(f"channel alias '{name}' is declared but has no id yet. Run "
+                      f"'ffdiscord resolve-channels --write' to look it up by name, or "
+                      f"'ffdiscord set channels.{name} <channel id>'.", file=sys.stderr)
+            else:
+                print(f"unknown channel alias '{name}' and not a raw id. Configured "
+                      f"aliases: {', '.join(sorted(cfg['channels'])) or 'none'}.",
+                      file=sys.stderr)
             return 2
         watch_ids[cid] = name
 

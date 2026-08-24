@@ -100,8 +100,36 @@ renames them in place. Discord's API still says "guild", so only what a human ty
 
 Channel ids do not have to be typed. Once `app_token` is set, re-running stage 5 looks up every
 blank alias by name — `agent_testing` finds #agent-testing — or do it directly with
-`ffdiscord resolve-channels --write`. It only writes unambiguous single matches, and a name that
-hits two channels or none is left blank and reported.
+`ffdiscord resolve-channels --write`. Either way it only writes unambiguous single matches, and
+a name that hits two channels or none is left blank and reported. A blank that nobody resolved
+ahead of time fills itself in on first use: `ffdiscord` looks the alias up once, writes the id
+back, and reads the snowflake from the file every time after that.
+
+**Which channels this box reads is the `watch` block and nothing else.** There is no built-in
+list — `ffwatch.DEFAULTS["watch"]` is empty, and stage 5 seeds one `example_channel` row into
+the file to show the shape. This used to ship four Final Factory channels, and because config
+MERGES into the defaults rather than replacing them, a box configured for a single test channel
+also swept `#dev-chat` every `catchup_secs` with no way to say "not that one". Each entry:
+
+```json
+"watch": {
+  "agent_testing": {"kind": "ask", "forum": false,
+                    "venue": "private", "engage": "mention", "ping": false}
+}
+```
+
+`kind` picks the lane (`ask`, `bug_report`, `suggestion`); `forum` is true for a forum channel;
+`venue` says whether internals may be spoken there; `engage` is `all` (consider every human
+message) or `mention` (only when the bot is addressed); `ping` allows a reply there to
+@-mention a human. All four fall closed when omitted. ffwatch logs each entry that made it
+choose a `venue` or an `engage`, and logs when the whole block is empty; `ping` is deliberately
+not logged, because "cannot pull a person out of their evening" is what nearly every channel
+wants and warning about it everywhere would bury the two that matter.
+
+An alias whose id is still blank is passed to `ffdiscord` by name, which is what lets it
+resolve once and write the id back — after that the sweep asks for the snowflake. An alias that
+matches no channel at all is reported once per process, with the command that fixes it, and is
+not swept.
 
 Better than filling in `app_token`: put `FFDISCORD_APP_TOKEN` in `~/.config/ffbox/secrets.env`,
 which both units read through `EnvironmentFile=` and which never enters a container — `ffbox`
@@ -655,7 +683,8 @@ the skills merely advise:
 
 - **`--silent` on every post.** `ffdiscord post` turns `@name` into a real ping on a whole-word
   match, so an agent quoting `@ben` out of a code comment would ping a person. The only
-  exception is a `dev_chat` escalation that explicitly asks to ping.
+  exception is an escalation into a channel whose `watch` entry sets `"ping": true`, and that
+  asks to ping. No alias is special in the source; if nothing is marked, nothing can ping.
 - **The 2000-character limit never fails a post.** `check_length` exits rather than truncating,
   so anything longer goes out as a head under `HEAD_CAP` (1500) with the whole message attached
   as a file. Nothing is lost and nothing is halved.
