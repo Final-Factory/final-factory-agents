@@ -87,10 +87,31 @@ The two are separate because the units are ffbox's, not Discord's: `ffwatch` is 
 manager and `ffweb` is the page over the whole database. Only the listener is Discord-specific.
 
 Nothing is read from Discord until a bot token exists, so starting the daemons first is safe.
-Put the token, guild id and channels in `~/.config/ffbox/discord/config.json` (or `FFDISCORD_TOKEN`
-in `~/.config/ffbox/secrets.env`), add each watched channel to the `ffwatch` → `watch` block,
-then re-run `sudo sh ffbox/06-services.sh --install` so the listener picks up the new
-watch list.
+Stage 5 writes `~/.config/ffbox/discord/config.json` as a **fill-in-the-blanks template**: every
+key it needs is already there and empty, including one `channels` blank per alias the `ffwatch`
+→ `watch` block declares. JSON cannot carry comments, so an empty key is the only way the file
+can say what it wants. `sh ffbox/05-discord-setup.sh --check` lists what is still blank and the
+command that fills each one; re-run the stage after adding a `watch` entry to get its blank.
+
+The keys are `app_token` (the Bot tab's token, not the Application ID), `server_id` (right-click
+the server name, Copy Server ID) and `channels`, which maps each alias to that channel's id.
+They were called `token` and `guild_id` before 2026-08-24; both are still read, and stage 5
+renames them in place. Discord's API still says "guild", so only what a human types changed.
+
+Channel ids do not have to be typed. Once `app_token` is set, re-running stage 5 looks up every
+blank alias by name — `agent_testing` finds #agent-testing — or do it directly with
+`ffdiscord resolve-channels --write`. It only writes unambiguous single matches, and a name that
+hits two channels or none is left blank and reported.
+
+Better than filling in `app_token`: put `FFDISCORD_APP_TOKEN` in `~/.config/ffbox/secrets.env`,
+which both units read through `EnvironmentFile=` and which never enters a container — `ffbox`
+names the container's env vars one at a time and that is not one of them. Then re-run
+`sudo sh ffbox/06-services.sh --install` so the listener picks up the new watch list.
+
+`ffdiscord doctor` reads the environment, not the secrets file, so source it first if the token
+lives there: `set -a; . ~/.config/ffbox/secrets.env; set +a`. It verifies the token, the server,
+and the per-channel permissions — View Channels and Read Message History included, which a bot
+invited without them silently lacks.
 
 ```bash
 sudo systemctl stop ffbox.target      # stop all three  (the .target suffix is required)

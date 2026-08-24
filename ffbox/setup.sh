@@ -312,12 +312,14 @@ EOF
 printf '\n'
 sh "$ROOT/05-discord-setup.sh" --check 2>/dev/null | sed 's/^/  /' || true
 printf '\n'
+# app_token is the current key and token the pre-2026-08-24 one; both count as configured,
+# because the CLI reads both and this check exists only to decide whether to print the steps.
 if ! python3 -c "
 import json,sys
 cfg=json.load(open(sys.argv[1]))
-sys.exit(0 if (cfg.get('token') or '').strip() else 1)" \
-     "${FFDISCORD_HOME:-$HOME/.config/ffdiscord}/config.json" 2>/dev/null \
-   && [ -z "${FFDISCORD_TOKEN:-}" ]; then
+sys.exit(0 if any((cfg.get(k) or '').strip() for k in ('app_token','token')) else 1)" \
+     "${FFDISCORD_HOME:-$HOME/.config/ffbox/discord}/config.json" 2>/dev/null \
+   && [ -z "${FFDISCORD_APP_TOKEN:-}" ] && [ -z "${FFDISCORD_TOKEN:-}" ]; then
   cat <<EOF
 MANUAL STEPS REMAINING
   The Discord lanes need a bot before they can read anything:

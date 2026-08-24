@@ -83,15 +83,26 @@ whole directory, which is how a container gets its own copy.
 
 ```json
 {
-  "token": "<bot token>",
-  "guild_id": "...",
-  "channels": { "bug_reports": "...", "dev_chat": "...", "ask_claude": "..." },
+  "app_token": "<the Bot tab's token — not the Application ID, not the public key>",
+  "server_id": "<right-click the server name > Copy Server ID>",
+  "channels": { "bug_reports": "<channel id>", "dev_chat": "<channel id>" },
   "mentions": { "ben": "<user id>", "lothsahn": "<user id>" },
   "me": "ben"
 }
 ```
 
-`FFDISCORD_TOKEN` and `FFDISCORD_GUILD_ID` override the file. Channel and mention ids come only
+`channels` maps an alias to that channel's snowflake id. The alias is what the ffwatch `watch`
+block calls the channel, which is what says what it MEANS; the id says which channel it IS.
+Blank ids are normal: `ffbox/05-discord-setup.sh` seeds one per watched alias, and
+**`ffdiscord resolve-channels --write`** fills them by matching the alias against real channel
+names (`agent_testing` finds #agent-testing). It writes only unambiguous single matches.
+
+Renamed on 2026-08-24: `token` → `app_token`, `guild_id` → `server_id`, matching what the
+developer portal and the Discord client call them. Both old names are still read, and stage 5
+renames them in place. Discord's API still says "guild", so the URL paths are unchanged.
+
+`FFDISCORD_APP_TOKEN` and `FFDISCORD_SERVER_ID` override the file (`FFDISCORD_TOKEN` and
+`FFDISCORD_GUILD_ID` are the older spellings, still read). Channel and mention ids come only
 from the file. `me` is the attribution `ask` uses; without it the CLI refuses to post rather
 than send an anonymous message.
 

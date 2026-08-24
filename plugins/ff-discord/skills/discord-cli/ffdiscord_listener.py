@@ -496,8 +496,12 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     cfg = load_config()
-    if not cfg.get("token"):
-        print("no token configured; see Documentation/Discord-Agent-Integration.md", file=sys.stderr)
+    # load_config has already folded a legacy `token` into `app_token`, so this one read
+    # covers both spellings.
+    if not cfg.get("app_token"):
+        print("no app token configured. Set FFDISCORD_APP_TOKEN, or fill in \"app_token\" "
+              "in the config; `sh ffbox/05-discord-setup.sh --check` lists every blank.",
+              file=sys.stderr)
         return 2
 
     watch_ids = {}
@@ -522,7 +526,7 @@ def main(argv=None):
 
     lock = acquire_instance_lock()  # held until process exit
     rotate_events_file(args.events_path)
-    listener = Listener(cfg["token"], watch_ids, args.events_path,
+    listener = Listener(cfg["app_token"], watch_ids, args.events_path,
                         operator_ids=operator_ids, debug=args.debug)
     log(f"listener starting (pid {os.getpid()}) channels={args.channels} intents={INTENTS} "
         f"operators={len(operator_ids)}")
@@ -536,7 +540,7 @@ def main(argv=None):
     while True:
         try:
             if gateway_url is None:
-                gateway_url = get_gateway_url(cfg["token"])
+                gateway_url = get_gateway_url(cfg["app_token"])
             listener.run_connection(gateway_url, once_ready=args.once_ready,
                                     max_events=args.max_events, deadline=deadline)
             log("done")
