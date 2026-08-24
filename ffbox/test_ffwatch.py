@@ -197,6 +197,10 @@ Behaviour comes from the environment so one stub covers every case:
   FFBOX_STUB_GIT_ORIGIN    a bare repo to clone, branch and bundle from, so the publish path is
                            exercised against real git rather than a hand-written bundle
   FFBOX_STUB_CHANGED       JSON list of file names the "agent" changed; empty means no branch
+  FFBOX_STUB_AGENT_BRANCH  the descriptive name the "agent" branched under, which ffbox would
+                           have published as <--branch-prefix><name>-<run id>
+  FFBOX_STUB_BASE          the branch the "agent" based its work on (default develop), written
+                           to publish_base.txt the way ffbox's harvest writes it
   FFBOX_STUB_HARVEST_ERROR a reason ffbox refused to harvest; clears the branch and bundle
   FFBOX_STUB_VERIFY        JSON the container task's verification.json would have contained
   FFBOX_STUB_VERDICT       JSON verdict the agent returned, replacing the default
@@ -255,10 +259,16 @@ def git(*args):
 # whose prerequisite the host does not have is precisely the failure mode `git bundle verify`
 # exists to catch. Faking the file would test nothing.
 branch = opt("--branch")
+# The agent made its own branch and ffbox published it under the host's prefix with the run id
+# on the end. Simulated here because the rename happens in ffbox's harvest, which needs zfs and
+# docker; what the host does with the name it is handed is what these tests are about.
+if branch and os.environ.get("FFBOX_STUB_AGENT_BRANCH") and opt("--branch-prefix"):
+    branch = "%s%s-%s" % (opt("--branch-prefix"), os.environ["FFBOX_STUB_AGENT_BRANCH"], run_id)
 if branch and os.environ.get("FFBOX_STUB_GIT_ORIGIN"):
     work = os.path.join(out, "workspace")
     git("clone", "--quiet", os.environ["FFBOX_STUB_GIT_ORIGIN"], work)
-    base = git("-C", work, "rev-parse", "origin/develop").stdout.strip()
+    base_branch = os.environ.get("FFBOX_STUB_BASE") or "develop"
+    base = git("-C", work, "rev-parse", "origin/" + base_branch).stdout.strip()
     with open(os.path.join(out, "base_sha.txt"), "w", encoding="utf-8") as fh:
         fh.write(base + "\n")
     git("-C", work, "checkout", "--quiet", "--detach", base)
@@ -277,13 +287,15 @@ if branch and os.environ.get("FFBOX_STUB_GIT_ORIGIN"):
             fh.write("\n".join(changed) + "\n")
         with open(os.path.join(out, "branch.txt"), "w", encoding="utf-8") as fh:
             fh.write(branch + "\n")
+        with open(os.path.join(out, "publish_base.txt"), "w", encoding="utf-8") as fh:
+            fh.write(base_branch + "\n")
         git("-C", work, "bundle", "create", os.path.join(out, "work.bundle"),
             "%s..%s" % (base, branch))
 
 # A harvest ffbox refused: the range rewrote history below its base, carried a commit claiming
 # somebody else, or blew a ceiling. ffbox removes the branch and bundle and leaves the reason.
 if os.environ.get("FFBOX_STUB_HARVEST_ERROR"):
-    for name in ("work.bundle", "branch.txt"):
+    for name in ("work.bundle", "branch.txt", "publish_base.txt"):
         try:
             os.remove(os.path.join(out, name))
         except OSError:
@@ -461,7 +473,8 @@ class Case:
             os.environ.pop("FFWATCH_CLASSIFIER_JSON", None)
         for key in ("FFBOX_STUB_EVENTS", "FFBOX_STUB_FIXTURE_ADD", "FFBOX_STUB_SHIM_POSTS",
                     "FFD_FAIL_SEND", "FFBOX_STUB_GIT_ORIGIN", "FFBOX_STUB_CHANGED",
-                    "FFBOX_STUB_VERIFY", "FFBOX_STUB_VERDICT"):
+                    "FFBOX_STUB_VERIFY", "FFBOX_STUB_VERDICT", "FFBOX_STUB_AGENT_BRANCH",
+                    "FFBOX_STUB_BASE"):
             os.environ.pop(key, None)
 
         cfg = ffwatch.load_config()
@@ -2364,6 +2377,14 @@ def git_origin(case):
         fh.write("// seed\n")
     git_run("-C", host, "add", "-A")
     git_run("-C", host, "commit", "-qm", "seed")
+    # master is the released build and develop is ahead of it, which is the shape the base
+    # decision actually has to read: work branched off master descends from master and NOT from
+    # develop, so "which branch is this for" has one answer either way.
+    git_run("-C", host, "push", "-q", "origin", "HEAD:refs/heads/master")
+    with open(os.path.join(host, "Assets", "Belt.cs"), "a", encoding="utf-8") as fh:
+        fh.write("// on develop only\n")
+    git_run("-C", host, "add", "-A")
+    git_run("-C", host, "commit", "-qm", "develop is ahead of the release")
     git_run("-C", host, "push", "-q", "origin", "HEAD:refs/heads/develop")
     git_run("-C", host, "fetch", "-q", "origin")
     case.watcher.cfg["git_dir"] = host
@@ -2579,9 +2600,18 @@ def test_publish_opens_a_pull_request():
     remote_branches = git_run("-C", host, "ls-remote", "--heads", "origin").stdout
     check("the branch really exists on the remote", expected in remote_branches,
           remote_branches)
-    check("publishing left no local branch behind in the host checkout",
-          expected not in git_run("-C", host, "branch", "--list").stdout,
+    # The one local ref a publish creates, and it is the point of creating it: `git checkout
+    # ffbox/<name>` in the host checkout works without anybody remembering the refs/ffbox/
+    # namespace the bundle landed in. Nothing ELSE moved — no existing branch, no working tree.
+    check("the published branch is checkoutable in the host checkout",
+          expected in git_run("-C", host, "branch", "--list", expected).stdout,
           git_run("-C", host, "branch", "--list").stdout)
+    check("and it tracks the branch that was pushed",
+          git_run("-C", host, "config",
+                  f"branch.{expected}.merge").stdout.strip() == f"refs/heads/{expected}"
+          and git_run("-C", host, "config",
+                      f"branch.{expected}.remote").stdout.strip() == "origin",
+          git_run("-C", host, "config", "--get-regexp", "^branch\\.").stdout)
     check("and left its working tree clean",
           git_run("-C", host, "status", "--porcelain").stdout.strip() == "")
 
@@ -2696,16 +2726,19 @@ def test_the_agent_commits_its_own_work():
     check("and no longer passes one per commit, because the agent runs the commit",
           '-c user.email="ffbox@final-factory.invalid"' not in ffbox_src)
 
-    task = open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
-    change = task.split("PREAMBLE_CHANGE = (")[1].split(")\n")[0]
-    check("the change preamble asks for commits", "Commit as you work" in change)
-    check("and still forbids the things the container cannot do anyway",
-          "Do NOT push" in change and "do NOT open a pull request" in change)
-    check("it names the identity rule, since that is the one the harness enforces",
-          "--author" in change and "claims to be somebody else" in change)
-    local = task.split("PREAMBLE_LOCAL = (")[1].split(")\n")[0]
-    check("the local preamble stops telling the agent not to commit",
-          "commit freely" in local and "Do NOT commit" not in local)
+    # Assembled, not grepped out of the source: the git rules are shared constants that both
+    # write preambles concatenate, so a check against the PREAMBLE_CHANGE literal alone would
+    # pass while the text never reached the model.
+    change = preamble_for(dict(JOB_SKELETON, verdict_schema="change"), "gitchange")
+    local = preamble_for(dict(JOB_SKELETON, verdict_schema="change", local=True), "gitlocal")
+    for name, pre in (("change", change), ("local", local)):
+        check(f"the {name} preamble asks for commits", "Commit as you work" in pre, pre[:200])
+        check(f"the {name} one still forbids what the container cannot do anyway",
+              "Do NOT push" in pre and "do NOT open a pull request" in pre, pre[:200])
+        check(f"and the {name} one names the identity rule, the one the harness enforces",
+              "--author" in pre and "claims to be somebody else" in pre, pre[:200])
+    check("the local preamble stops telling the agent its work ends as a patch",
+          "harvested patch" not in local, local[:200])
 
 
 def test_the_clone_is_clean_before_the_agent_runs():
@@ -2810,8 +2843,9 @@ def test_harvest_refuses_a_rewritten_or_forged_range():
     """
     print("harvest: a range that stopped meaning what the host assumes")
     src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
-    check("ffbox checks the range still descends from its base",
-          'merge-base --is-ancestor "$BASE_SHA" "$BRANCH"' in src)
+    check("ffbox publishes only a range that descends from a base it knows",
+          'merge-base --is-ancestor "$_sha" "$_tip"' in src
+          and '[ -z "$PUBLISH_BASE_SHA" ]; then' in src)
     check("checks every commit against the run's own identity",
           "%ae%n%ce" in src and 'grep -Fxv "$FFBOX_GIT_EMAIL"' in src)
     check("caps the changed files and the bundle bytes",
@@ -3317,12 +3351,13 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
           case.watcher.result_text(turn_id) ==
           "Checked the belt merger path; this is expected behaviour.",
           case.watcher.result_text(turn_id))
-    # A question typed at a terminal must not spend fifteen minutes on an EditMode suite
-    # proving it changed nothing. This is the one write-lane behaviour locality still suppresses.
-    check("no harness verification is scheduled for a local turn",
-          job["verify"]["enabled"] is False, job["verify"])
-    check("and nothing was published: no branch asked for, none created",
-          run["branch"] is None and run["pushed"] == 0, (run["branch"], run["pushed"]))
+    # A local turn is a dev turn with nobody to post to, so it is verified and published like
+    # one. The fifteen-minute EditMode suite a typed question must not pay for is skipped by the
+    # CONTAINER, on the fact that the run changed no files, rather than by excluding the lane.
+    check("harness verification is scheduled for a local turn like any other dev turn",
+          job["verify"]["enabled"] is True, job["verify"])
+    check("and a branch is asked for, so the work can leave the clone",
+          run["branch"] == f"ffbox/{run['ffbox_run_id']}", run["branch"])
     # Measured, not assumed: with the Discord framing in place, a shell prompt asking which file
     # defines something came back as a POLICY REFUSAL addressed to a player, because the
     # answerer role forbids naming repo internals to Discord users.
@@ -3362,6 +3397,28 @@ def build_container_argv(job, tmpname):
         sys.argv = saved
     with io.open(argv_path, "rb") as fh:
         return [a.decode("utf-8") for a in fh.read().split(b"\0")]
+
+
+# The smallest job the argv builder will accept, for checks that are about the PREAMBLE rather
+# than about a particular run. Anything a test cares about it overrides.
+JOB_SKELETON = {
+    "prompt": "make the belt merger respect item priority",
+    "lane": "dev",
+    "local": False,
+    "verdict_schema": "change",
+    "session": {"id": "b0a1c2d3-0000-4000-8000-000000000000", "resume": False},
+    "capabilities": {"tools": "Read,Grep,Glob,Edit,Write,Bash",
+                     "permission_mode": "acceptEdits", "allowed": ["Bash"], "disallowed": []},
+    "model": {},
+    "trust": {"tier": "operator", "actor": "", "why": ""},
+    "venue": {"kind": "private"},
+}
+
+
+def preamble_for(job, tmpname):
+    """What --append-system-prompt actually carries for this job."""
+    argv = build_container_argv(job, tmpname)
+    return argv[argv.index("--append-system-prompt") + 1]
 
 
 def test_the_shell_lane_was_merged_into_dev():
@@ -3449,11 +3506,11 @@ def test_the_shell_lane_was_merged_into_dev():
     check("locality is what separates them, and the host decides it",
           (local_job["local"], remote_job["local"]) == (True, False),
           (local_job["local"], remote_job["local"]))
-    check("only the Discord turn is verified by the harness",
-          (local_job["verify"]["enabled"], remote_job["verify"]["enabled"]) == (False, True),
+    check("both are verified by the harness",
+          (local_job["verify"]["enabled"], remote_job["verify"]["enabled"]) == (True, True),
           (local_job["verify"], remote_job["verify"]))
-    check("only the Discord turn gets a host-named branch to publish",
-          local_run["branch"] is None and remote_run["branch"] is not None,
+    check("and both get a branch to publish, because both can change code",
+          local_run["branch"] is not None and remote_run["branch"] is not None,
           (local_run["branch"], remote_run["branch"]))
     check("only the Discord turn is fenced as untrusted input",
           "<discord>" not in local_job["prompt"] and "<discord>" in remote_job["prompt"],
@@ -3470,7 +3527,18 @@ def test_the_shell_lane_was_merged_into_dev():
           "no Discord thread on the other end" in local_pre, local_pre[:160])
     check("and tells it summary IS the answer, at whatever length the question deserves",
           "printed verbatim" in local_pre and "no length rule applies" in local_pre,
-          local_pre[-200:])
+          local_pre)
+    # The difference between the two is the destination of the ANSWER, and nothing else. Both
+    # are told to make a branch, both are told the harness pushes it, and both are told a run
+    # that ends on develop is thrown away — which is what stops a locally typed fix from
+    # quietly being the one kind of run whose work dies with its clone.
+    for name, pre in (("local", local_pre), ("Discord", remote_pre)):
+        check(f"the {name} preamble tells the agent to make its own branch first",
+              "MAKE A BRANCH BEFORE YOU CHANGE ANYTHING" in pre, pre[:200])
+        check(f"and the {name} one says what happens if it works on develop instead",
+              "ends on develop, master or main is refused" in pre, pre[:200])
+        check(f"the {name} one still forbids what the container cannot do anyway",
+              "Do NOT push" in pre and "do NOT open a pull request" in pre, pre[:200])
     # Discord hard-limits a message to 2000 characters. compose_head already cuts at HEAD_CAP
     # and attaches the rest, but a post that stops mid-sentence next to an unopened file is a
     # worse answer than a shorter one, so the lane writing it is told the budget.
@@ -4081,6 +4149,440 @@ def test_allow_list_is_scope_not_a_boundary():
           not os.path.exists(os.path.join(HERE, "ffdiscord_shim.py")))
 
 
+def run_branch_derivation(root, *, host_branch, prefix, run_id, ending, protected=None):
+    """Run ffbox's OWN branch-derivation block over a real repo. Returns (harvest_ok, branch).
+
+    The block is lifted out of the script rather than re-implemented here, for the same reason
+    the baseline-cleaning heredocs are: a re-implementation tests the test. Everything it needs
+    is a repo, a name to fall back to and the prefix — no zfs, no docker, no container.
+
+    `ending` is what the agent left HEAD on: a branch name, or None for a detached HEAD.
+    """
+    src = io.open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    block = src.split("        # WHERE HEAD ENDS UP IS WHAT PUBLISHES.")[1]
+    block = "        # WHERE HEAD ENDS UP IS WHAT PUBLISHES." + \
+        block.split("\n        # Everything below is defined in terms of base..branch")[0]
+    failed = "harvest_failed() {" + src.split("harvest_failed() {")[1].split("\n}\n")[0] + "\n}\n"
+
+    repo = os.path.join(root, "repo")
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(repo)
+
+    def g(*args):
+        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+
+    subprocess.run(["git", "init", "-q", "-b", "master", repo], check=True)
+    g("config", "user.email", "ffbox@final-factory.invalid"); g("config", "user.name", "ffbox")
+    with io.open(os.path.join(repo, "Belt.cs"), "w", encoding="utf-8") as fh:
+        fh.write("code\n")
+    g("add", "-A"); g("commit", "-qm", "base")
+    g("checkout", "-q", "-B", host_branch)
+    if ending is None:
+        g("checkout", "-q", "--detach")
+    elif ending != host_branch:
+        g("checkout", "-q", "-B", ending)
+    with io.open(os.path.join(repo, "Belt.cs"), "a", encoding="utf-8") as fh:
+        fh.write("the agent's work\n")
+    g("add", "-A"); g("commit", "-qm", "agent work")
+
+    out = os.path.join(root, "out")
+    os.makedirs(out, exist_ok=True)
+    script = "\n".join([
+        "set -euo pipefail",
+        'MNT="$1"; OUT="$2"; BRANCH="$3"; BRANCH_PREFIX="$4"; RUN_ID="$5"',
+        'PROTECTED_BRANCHES="$6"',
+        "HARVEST_OK=1",
+        failed,
+        block,
+        'printf "%s\\n%s\\n" "$HARVEST_OK" "$BRANCH"',
+    ])
+    done = subprocess.run(["bash", "-c", script, "ffbox-harvest", repo, out, host_branch,
+                           prefix, run_id, protected or "develop master main"],
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        raise AssertionError(f"the derivation block aborted: {done.stderr[-400:]}")
+    # The block narrates what it did on stdout, so the two lines printed after it are the last
+    # two, never the first.
+    printed = done.stdout.strip().splitlines()[-2:]
+    if len(printed) != 2:
+        raise AssertionError(f"the block printed nothing usable: {done.stdout!r}")
+    return printed[0].strip() == "1", printed[1].strip(), out, repo
+
+
+def test_the_agent_names_the_branch_it_publishes():
+    """The branch the agent made is the branch a reviewer reads, and develop is refused.
+
+    The host still creates ffbox/<run id> and starts the run on it, so nothing is lost by an
+    agent that never branches. What the rule buys is the name: `ffbox/belt-merger-priority-<id>`
+    says what the change is where a run id says only which run made it. The run id is on the end
+    of every one of them because two runs at the same bug pick the same obvious name, and a name
+    that already exists on origin is a push rejected at the end of an hour's work.
+    """
+    print("harvest: the agent names its own branch")
+    root = os.path.join(TMPROOT, "branchname")
+    run_id = "d7t2-1a2b3c4d"
+
+    ok, published, out, _ = run_branch_derivation(
+        root, host_branch=f"ffbox/{run_id}", prefix="ffbox/", run_id=run_id,
+        ending="belt-merger-priority")
+    check("a branch the agent made publishes under its own name",
+          (ok, published) == (True, f"ffbox/belt-merger-priority-{run_id}"), (ok, published))
+    check("and nothing was refused", not os.path.exists(os.path.join(out, "harvest_error.txt")))
+
+    ok, published, _, _ = run_branch_derivation(
+        root, host_branch=f"ffbox/{run_id}", prefix="ffbox/", run_id=run_id,
+        ending="ffbox/already-prefixed")
+    check("a name that already carries the prefix is not prefixed twice",
+          published == f"ffbox/already-prefixed-{run_id}", published)
+
+    # git itself refuses a space, a tilde or a colon in a branch name, so this is what an agent
+    # CAN hand over: legal to git, unwanted in a refspec the host pushes.
+    ok, published, _, _ = run_branch_derivation(
+        root, host_branch=f"ffbox/{run_id}", prefix="ffbox/", run_id=run_id,
+        ending="fix&the;merger")
+    check("a name legal to git but unwanted in a refspec is sanitised, not passed through",
+          (ok, published) == (True, f"ffbox/fix-the-merger-{run_id}"), (ok, published))
+
+    ok, published, _, _ = run_branch_derivation(
+        root, host_branch=f"ffbox/{run_id}", prefix="ffbox/", run_id=run_id, ending=None)
+    check("a detached HEAD publishes under the host's own name, so the work is not lost",
+          (ok, published) == (True, f"ffbox/{run_id}"), (ok, published))
+
+    ok, published, _, _ = run_branch_derivation(
+        root, host_branch=f"ffbox/{run_id}", prefix="ffbox/", run_id=run_id,
+        ending=f"ffbox/{run_id}")
+    check("an agent that never branched keeps the host's name, with no second run id on it",
+          (ok, published) == (True, f"ffbox/{run_id}"), (ok, published))
+
+    for shared in ("develop", "master"):
+        ok, published, out, repo = run_branch_derivation(
+            root, host_branch=f"ffbox/{run_id}", prefix="ffbox/", run_id=run_id, ending=shared)
+        reason = io.open(os.path.join(out, "harvest_error.txt"), encoding="utf-8").read()
+        check(f"a run that ends on {shared} is refused", not ok, (ok, published))
+        check("with a reason that says which branch it was, for the reply",
+              shared in reason and "branch of its own" in reason, reason)
+        check("and no branch file for the host to publish from",
+              not os.path.exists(os.path.join(out, "branch.txt")))
+
+    # `ffbox --branch wip "..."` at a terminal: somebody asked for a name and got it.
+    ok, published, _, _ = run_branch_derivation(
+        root, host_branch="wip", prefix="", run_id=run_id, ending="explored")
+    check("without a prefix the harness's own name still publishes",
+          (ok, published) == (True, "wip"), (ok, published))
+
+
+def test_a_local_run_publishes_like_a_dev_dm():
+    """A shell or web prompt is a dev turn with nobody to post to — and nothing else.
+
+    It used to be much more than that: no verification, no branch, no push, no pull request, on
+    the reasoning that the person who typed it was standing at the terminal. What that produced
+    was a patch file in a run directory, because the ZFS clone the work lived in is destroyed
+    when the run ends. So the flow is the operator DM's now, and locality decides the reply.
+    """
+    print("publication: a local prompt takes the same flow as a dev DM")
+    case = Case("localpublish")
+    origin, host = git_origin(case)
+    os.environ["FFBOX_STUB_CHANGED"] = json.dumps(["Assets/Belt.cs"])
+    os.environ["FFBOX_STUB_VERIFY"] = json.dumps(PASSING_VERIFY)
+    os.environ["FFBOX_STUB_VERDICT"] = json.dumps(CONFIDENT_VERDICT)
+    os.environ["FFBOX_STUB_AGENT_BRANCH"] = "belt-merger-priority"
+    try:
+        turn_id = case.watcher.submit("make the belt merger respect item priority")
+        case.watcher.once()
+    finally:
+        for key in ("FFBOX_STUB_CHANGED", "FFBOX_STUB_VERIFY", "FFBOX_STUB_VERDICT",
+                    "FFBOX_STUB_AGENT_BRANCH"):
+            os.environ.pop(key, None)
+
+    run = case.rows("SELECT * FROM run WHERE turn_id=?", (turn_id,))[0]
+    expected = f"ffbox/belt-merger-priority-{run['ffbox_run_id']}"
+    check("the agent's name for the work is what the host published",
+          run["branch"] == expected, run["branch"])
+    check("and it really was pushed", run["pushed"] == 1, run)
+    check("the branch exists on the remote",
+          expected in git_run("-C", host, "ls-remote", "--heads", "origin").stdout)
+    check("and is checkoutable in the host checkout, tracking origin",
+          git_run("-C", host, "config",
+                  f"branch.{expected}.merge").stdout.strip() == f"refs/heads/{expected}",
+          git_run("-C", host, "branch", "--list").stdout)
+
+    pull = GH_STATE["pulls"][-1]
+    check("a pull request opened, against develop like any other",
+          (pull["_head"], pull["base"]) == (expected, "develop"), pull)
+    check("whose body says where the prompt came from, and does not invent a Discord thread",
+          "on the build server" in (pull["body"] or "")
+          and "from Discord" not in (pull["body"] or ""), (pull["body"] or "")[:400])
+
+    check("nothing was queued for Discord, because there is no thread to answer",
+          not case.rows("SELECT * FROM outbound"), case.rows("SELECT * FROM outbound"))
+    line = case.watcher.publish_line(turn_id)
+    check("and the person who typed the prompt is told where the work went",
+          expected in line and str(pull["number"]) in line, line)
+
+    # `ffbox --branch wip "..."` names the work; it does not claim the top level of the
+    # repository's branch namespace, and it is still only the name the run STARTS on.
+    os.environ["FFBOX_STUB_CHANGED"] = json.dumps(["Assets/Belt.cs"])
+    os.environ["FFBOX_STUB_VERIFY"] = json.dumps(PASSING_VERIFY)
+    os.environ["FFBOX_STUB_VERDICT"] = json.dumps(dict(CONFIDENT_VERDICT, confident=False,
+                                                       confidence_reason="wanted a look first"))
+    try:
+        second = case.watcher.submit("try the other approach", branch="wip")
+        case.watcher.once()
+    finally:
+        for key in ("FFBOX_STUB_CHANGED", "FFBOX_STUB_VERIFY", "FFBOX_STUB_VERDICT"):
+            os.environ.pop(key, None)
+    run2 = case.rows("SELECT * FROM run WHERE turn_id=?", (second,))[0]
+    check("a hand-chosen name is published under the same prefix as everything else",
+          run2["branch"] == "ffbox/wip" and run2["pushed"] == 1,
+          (run2["branch"], run2["pushed"]))
+    check("and it reached the remote under exactly that name",
+          "refs/heads/ffbox/wip" in git_run("-C", host, "ls-remote", "--heads",
+                                            "origin").stdout)
+    check("but no pull request, because the agent was not confident",
+          run2["pr_number"] is None and "wanted a look first" in (run2["no_pr_reason"] or ""),
+          (run2["pr_number"], run2["no_pr_reason"]))
+
+
+def test_a_run_that_changed_nothing_is_not_verified():
+    """The suite costs fifteen minutes and the machine's one Unity slot, so it is skipped.
+
+    This is what let verification be turned on for locally typed prompts without making
+    `ffbox "which file defines the belt merger?"` a quarter of an hour. The decision is the
+    CONTAINER's, taken after the agent process is gone and measured against a HEAD read before
+    it started, because everything under /ffbox/out is writable by the agent.
+    """
+    print("verification: nothing changed, nothing to test")
+    task = io.open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
+    check("the pre-agent HEAD is read before the agent is launched",
+          task.index("PRE_AGENT_HEAD=") < task.index('"${ARGV[@]}"'))
+    check("and it is what the skip is measured against, not anything under /ffbox/out",
+          "PRE_AGENT_HEAD=$(git" in task
+          and 'diff --quiet "$PRE_AGENT_HEAD" HEAD' in task)
+
+    fn = "run_changed_anything() {" + \
+        task.split("run_changed_anything() {")[1].split("\n}\n")[0] + "\n}\n"
+    root = os.path.join(TMPROOT, "nothing")
+    repo = os.path.join(root, "repo")
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(repo)
+
+    def g(*args):
+        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+
+    subprocess.run(["git", "init", "-q", repo], check=True)
+    g("config", "user.email", "t@t"); g("config", "user.name", "t")
+    with io.open(os.path.join(repo, "Belt.cs"), "w", encoding="utf-8") as fh:
+        fh.write("code\n")
+    g("add", "-A"); g("commit", "-qm", "base")
+    base = g("rev-parse", "HEAD").stdout.strip()
+
+    def changed():
+        script = "\n".join(["set -euo pipefail", 'WORKSPACE="$1"', 'PRE_AGENT_HEAD="$2"', fn,
+                             'if run_changed_anything; then echo CHANGED; else echo NOTHING; fi'])
+        done = subprocess.run(["bash", "-c", script, "task", repo, base],
+                              capture_output=True, text=True)
+        if done.returncode != 0:
+            raise AssertionError(done.stderr[-300:])
+        return done.stdout.strip()
+
+    check("a run that touched nothing has nothing to verify", changed() == "NOTHING", changed())
+    with io.open(os.path.join(repo, "Belt.cs"), "a", encoding="utf-8") as fh:
+        fh.write("edited but not committed\n")
+    check("an uncommitted edit is a change", changed() == "CHANGED", changed())
+    g("add", "-A"); g("commit", "-qm", "the agent's own commit")
+    check("and so is one the agent committed", changed() == "CHANGED", changed())
+    reverted = g("revert", "--no-edit", "HEAD")
+    check("the revert itself worked, or the check below proves nothing",
+          reverted.returncode == 0, reverted.stderr[-200:])
+    check("a change the agent committed and then undid is not",
+          changed() == "NOTHING", changed())
+
+    # The host's half: a skipped suite is a third state, and it must not read as a failed one.
+    case = bug_case("skipped")
+    git_origin(case)
+    escalate(case, changed=[], verify={"ran": False, "skipped": True, "compiled": None,
+                                       "evidence": "the run changed no files, so the harness "
+                                                   "ran no tests"},
+             verdict=dict(CONFIDENT_VERDICT, changed_anything=False,
+                          summary="Already fixed on develop."))
+    run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+    ver = case.rows("SELECT * FROM verification WHERE run_id=?", (run["id"],))[0]
+    check("the row records that it was skipped, not that it failed",
+          (ver["ran"], ver["skipped"]) == (0, 1), dict(ver))
+    text = json.loads(case.rows("SELECT * FROM outbound WHERE run_id=? AND action='post'",
+                                (run["id"],))[0]["payload_json"])["text"]
+    check("and the reply says so instead of shouting NOT VERIFIED",
+          "no code changed" in text and "NOT VERIFIED" not in text, text[:400])
+
+
+def run_base_resolution(root, *, base_refs, ending):
+    """Run ffbox's OWN base resolver over a repo with a real origin/master and origin/develop.
+
+    Returns "<name> <sha>" exactly as the function prints it, or "". `ending` says what the work
+    was branched from: "develop", "master", or "below" for an agent that reset underneath both.
+    """
+    src = io.open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    fn = "resolve_publish_base() {" + \
+        src.split("resolve_publish_base() {")[1].split("\n}\n")[0] + "\n}\n"
+
+    origin = os.path.join(root, "origin.git")
+    repo = os.path.join(root, "clone")
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(root)
+    git_run("init", "-q", "--bare", "-b", "master", origin)
+    seed = os.path.join(root, "seed")
+    git_run("clone", "-q", origin, seed)
+    git_run("-C", seed, "config", "user.email", "t@t.invalid")
+    git_run("-C", seed, "config", "user.name", "test")
+
+    def commit(text, message):
+        with io.open(os.path.join(seed, "Belt.cs"), "a", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+        git_run("-C", seed, "add", "-A")
+        git_run("-C", seed, "commit", "-qm", message)
+
+    # Two commits on the release line, so "below every base" is a commit that exists. A root
+    # commit cannot be reset past, and an ending nobody can build proves nothing.
+    commit("shipped a while ago", "an older release")
+    commit("released", "the released build")
+    git_run("-C", seed, "push", "-q", "origin", "HEAD:refs/heads/master")
+    commit("next version", "develop is ahead of the release")
+    git_run("-C", seed, "push", "-q", "origin", "HEAD:refs/heads/develop")
+    if ending == "same":
+        # A release merge just landed: the two branches are the same commit.
+        git_run("-C", seed, "push", "-q", "-f", "origin", "HEAD:refs/heads/master")
+
+    git_run("clone", "-q", origin, repo)
+    git_run("-C", repo, "config", "user.email", "ffbox@final-factory.invalid")
+    git_run("-C", repo, "config", "user.name", "ffbox")
+    start = {"master": "origin/master", "below": "origin/master~1"}.get(ending, "origin/develop")
+    made = git_run("-C", repo, "checkout", "-q", "-b", "the-agents-branch", start)
+    if made.returncode != 0:
+        raise AssertionError(f"could not branch from {start}: {made.stderr.strip()}")
+    with io.open(os.path.join(repo, "Belt.cs"), "a", encoding="utf-8") as fh:
+        fh.write("the agent's work\n")
+    git_run("-C", repo, "add", "-A")
+    git_run("-C", repo, "commit", "-qm", "agent work")
+
+    script = "\n".join(["set -euo pipefail", 'MNT="$1"', 'BASE_REFS="$2"', fn,
+                         'resolve_publish_base HEAD'])
+    done = subprocess.run(["bash", "-c", script, "ffbox-base", repo, base_refs],
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        raise AssertionError(f"the resolver aborted: {done.stderr[-400:]}")
+    return done.stdout.strip()
+
+
+def test_the_agent_picks_the_branch_its_work_is_for():
+    """A fix for the released build is based on master; everything else on develop.
+
+    The agent decides by deciding what it branches from, and the harness reads that back out of
+    the commit graph rather than out of anything it said. The rule is "the most specific base
+    that is an ancestor of the work": a branch off develop has master behind it too, and develop
+    is the descendant of the two, so develop wins. A branch off master does not have develop
+    behind it at all.
+    """
+    print("harvest: which branch the work is for")
+    root = os.path.join(TMPROOT, "publishbase")
+
+    resolved = run_base_resolution(root, base_refs="develop master", ending="develop")
+    check("work branched off develop is for develop", resolved.split()[0] == "develop", resolved)
+
+    resolved = run_base_resolution(root, base_refs="develop master", ending="master")
+    check("work branched off master is for master — the released build",
+          resolved.split()[0] == "master", resolved)
+
+    resolved = run_base_resolution(root, base_refs="develop master", ending="same")
+    check("with the two at the same commit, the first-listed wins",
+          resolved.split()[0] == "develop", resolved)
+
+    resolved = run_base_resolution(root, base_refs="develop master", ending="below")
+    check("work that descends from neither resolves to nothing, and the harvest refuses it",
+          resolved == "", resolved)
+
+    resolved = run_base_resolution(root, base_refs="", ending="develop")
+    check("and with no candidates there is nothing to resolve",
+          resolved == "", resolved)
+
+    src = io.open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    check("the resolved base is what gets bundled, not the commit the run was checked out at",
+          'bundle create "$OUT/work.bundle" "${PUBLISH_BASE_SHA}..${BRANCH}"' in src)
+    check("and the commit the run started at is the fallback when no branch claims the work",
+          'PUBLISH_BASE_SHA=$BASE_SHA' in src)
+    check("the name reaches the host in publish_base.txt",
+          '"$OUT/publish_base.txt"' in src)
+
+
+def test_the_pull_request_targets_the_branch_the_work_is_based_on():
+    """master for a fix to the released build, develop for everything else.
+
+    The host does not re-derive the choice — ffbox already made it — but it does not take the
+    name on trust either: run_dir is bind-mounted into the container, so the file is checked
+    against the configured set AND against the pushed commits before a pull request is aimed
+    anywhere. A pull request into the wrong branch is a proposal to ship unreleased work to
+    players, which is not a mistake worth being relaxed about.
+    """
+    print("publication: the PR targets the branch the work is based on")
+    case = bug_case("prbase")
+    origin, host = git_origin(case)
+    os.environ["FFBOX_STUB_BASE"] = "master"
+    try:
+        escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    finally:
+        os.environ.pop("FFBOX_STUB_BASE", None)
+
+    run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+    pull = GH_STATE["pulls"][-1]
+    check("the run records which branch its work is for", run["pr_base"] == "master", run)
+    check("and the pull request targets it, not the default",
+          pull["base"] == "master", pull)
+    check("the PR body says so too", "based on `master`" in (pull["body"] or ""),
+          (pull["body"] or "")[-300:])
+    text = json.loads(case.rows("SELECT * FROM outbound WHERE run_id=? AND action='post'",
+                                (run["id"],))[0]["payload_json"])["text"]
+    check("and the reply names the branch it is proposed into", "→ `master`" in text,
+          text[:400])
+
+    # A name the container could have written itself. Neither half is trusted: it is not in the
+    # configured set, so it never reaches the API, and the default is used only because the work
+    # really does descend from it.
+    case2 = bug_case("prbaseforged")
+    git_origin(case2)
+    os.environ["FFBOX_STUB_BASE"] = "develop"
+    try:
+        escalate(case2, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+        run2 = case2.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                          " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+        run_dir = os.path.dirname(run2["stream_path"])
+        with io.open(os.path.join(run_dir, "publish_base.txt"), "w", encoding="utf-8") as fh:
+            fh.write("refs/heads/../../evil\n")
+        base, reason = case2.watcher.pr_base(run2["id"], run_dir, run2["branch"])
+        check("a base outside the configured set is ignored", base == "develop", (base, reason))
+    finally:
+        os.environ.pop("FFBOX_STUB_BASE", None)
+
+    check("and the allow list is the config's, not a literal in the code",
+          sorted(ffwatch.DEFAULTS["publish_bases"]) == ["develop", "master"],
+          sorted(ffwatch.DEFAULTS["publish_bases"]))
+    check("every base a run may choose is described, because the container renders those",
+          all(v.strip() for v in ffwatch.DEFAULTS["publish_bases"].values()),
+          ffwatch.DEFAULTS["publish_bases"])
+
+    # What the container is actually told about the choice.
+    job = dict(JOB_SKELETON, bases={"checked_out": "develop",
+                                    "choices": ffwatch.DEFAULTS["publish_bases"]})
+    pre = preamble_for(job, "basespre")
+    check("the preamble names both branches and what each is for",
+          "origin/develop" in pre and "origin/master" in pre
+          and "released build" in pre, pre[-600:])
+    check("and says the pull request follows what it branched from",
+          "opens the pull request against that branch" in pre, pre[-600:])
+    check("a lane with no bases to choose between is told nothing about them",
+          "CHOOSE WHAT YOU BRANCH FROM" not in preamble_for(dict(JOB_SKELETON), "nobases"))
+
+
 def main():
     tests = [
         test_a_mention_only_channel_stays_quiet,
@@ -4165,6 +4667,11 @@ def main():
         test_verification_results_path_is_per_invocation,
         test_destructive_docker_calls_name_the_container,
         test_the_run_is_on_the_filtered_network,
+        test_the_agent_names_the_branch_it_publishes,
+        test_a_local_run_publishes_like_a_dev_dm,
+        test_a_run_that_changed_nothing_is_not_verified,
+        test_the_agent_picks_the_branch_its_work_is_for,
+        test_the_pull_request_targets_the_branch_the_work_is_based_on,
     ]
     for fn in tests:
         try:

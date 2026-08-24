@@ -588,6 +588,19 @@ def fmt_secs(value):
     return f"{value / 60:.1f}m"
 
 
+def _row(row, key, default=None):
+    """A column that may not be there yet.
+
+    ffweb READS a database ffwatch owns and migrates on start. A page refreshed in the window
+    between a deploy and the daemon's next start would otherwise raise on the newest column and
+    return a 500 where an em dash would have done.
+    """
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
+
+
 def short(text, limit=120):
     text = (text or "").strip().replace("\n", " ")
     return text if len(text) <= limit else text[:limit - 1] + "…"
@@ -2062,7 +2075,8 @@ class App:
                    " · session " + esc(run["session_id"] or "—") + "</div>")
         pub = []
         if run["branch"]:
-            pub.append(f"branch {run['branch']}" + (" (pushed)" if run["pushed"] else ""))
+            pub.append(f"branch {run['branch']}" + (" (pushed)" if run["pushed"] else "")
+                       + (f" → {_row(run, 'pr_base')}" if _row(run, "pr_base") else ""))
         if run["pr_url"]:
             pub.append(f"PR #{run['pr_number']} {run['pr_url']}")
         if run["no_branch_reason"]:
@@ -2075,7 +2089,11 @@ class App:
         return "".join(out)
 
     def _render_verification(self, ver):
-        state = "not run" if not ver["ran"] else (
+        # Three states, not two. "nothing to test" is what a run that changed no files leaves
+        # behind now that the container skips the suite for one, and rendering it as "not run"
+        # next to a red-flavoured evidence block reads as a failure it is not.
+        state = ("nothing to test" if _row(ver, "skipped") else
+                 "not run") if not ver["ran"] else (
             "compiled" if ver["compiled"] else "COMPILE FAILED")
         out = ["<div class=\"item verification\"><div class=\"meta\">verification · ",
                esc(state), " · tests ", esc(fmt_int(ver["tests_run"])),
@@ -2367,7 +2385,7 @@ REQUIRED_COLUMNS = {
              "note"],
     "run": ["terminal_state", "cost_usd", "input_tokens", "output_tokens",
             "cache_read_tokens", "warmup_secs", "agent_secs", "verify_secs", "branch",
-            "pushed", "pr_number", "pr_url", "no_branch_reason", "no_pr_reason"],
+            "pushed", "pr_number", "pr_url", "pr_base", "no_branch_reason", "no_pr_reason"],
     "verification": ["ran", "compiled", "tests_run", "tests_passed", "tests_failed"],
     "transcript_event": ["seq", "uuid", "parent_uuid", "is_sidechain", "agent", "type",
                          "tool_name", "text"],

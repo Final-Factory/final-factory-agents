@@ -77,6 +77,10 @@ class Fixture:
         git(seed, "add", "-A")
         git(seed, "commit", "--quiet", "-m", "first")
         git(seed, "push", "--quiet", "origin", "master")
+        # The other branch a run may base its work on. update-golden.sh brings every name in
+        # FFBOX_BASE_REFS to origin, not just the one golden sits on, because a container with
+        # no network can only check out what the clone already has.
+        git(seed, "push", "--quiet", "origin", "master:refs/heads/develop")
         self.seed = seed
 
         subprocess.run(["git", "clone", "--quiet", self.origin, self.golden],
@@ -86,13 +90,18 @@ class Fixture:
         with open(os.path.join(repo, name), "w") as fh:
             fh.write(text)
 
-    def push_new_commit(self, text="two\n"):
-        """Advance origin by one commit. Returns its sha."""
+    def push_new_commit(self, text="two\n", branch="master"):
+        """Advance a branch on origin by one commit. Returns its sha."""
         self.write(self.seed, "README.md", text)
         git(self.seed, "add", "-A")
         git(self.seed, "commit", "--quiet", "-m", "next")
-        git(self.seed, "push", "--quiet", "origin", "master")
-        return head(self.seed)
+        git(self.seed, "push", "--quiet", "origin", f"HEAD:refs/heads/{branch}")
+        if branch != "master":
+            # Leave the seed clone on master, so a later push_new_commit() to master does not
+            # accidentally carry this commit with it.
+            git(self.seed, "reset", "--quiet", "--hard", "HEAD~1")
+        return head(self.seed) if branch == "master" else git(
+            self.seed, "rev-parse", f"HEAD@{{1}}")
 
     def env(self):
         return dict(os.environ, **GIT_ENV, **{
@@ -171,6 +180,53 @@ def test_refuses_a_divergence(fx):
     assert p.returncode != 0, "a divergence must not be merged"
     assert "fast-forward" in p.stderr, p.stderr
     assert head(fx.golden) == before
+
+
+def test_every_branch_on_origin_is_brought_over(fx):
+    """golden sits on one branch; what a run may want is any of them.
+
+    `git fetch origin <branch>` updates that branch's remote-tracking ref and nothing else, so
+    the ref a Discord run actually checks out — origin/develop, while golden is on master — was
+    only as fresh as the last time somebody fetched it by hand. Naming the refs runs might want
+    was the first fix and the wrong shape; this takes what a bare `git fetch` takes.
+    """
+    ahead = fx.push_new_commit(text="develop moved\n", branch="develop")
+    side = fx.push_new_commit(text="somebody's feature\n", branch="feature/mass-drivers")
+    stale = git(fx.golden, "rev-parse", "refs/remotes/origin/develop")
+    assert stale != ahead, "fixture is wrong: golden already has develop's new commit"
+
+    p = fx.update()
+    assert p.returncode == 0, p.stderr
+    assert git(fx.golden, "rev-parse", "refs/remotes/origin/develop") == ahead, \
+        "origin/develop was left stale, so a run basing on it would reason against old code"
+    assert git(fx.golden, "rev-parse", "refs/remotes/origin/feature/mass-drivers") == side, \
+        "a branch nobody declared was left behind; the fetch is supposed to take all of them"
+    assert head(fx.golden) == git(fx.golden, "rev-parse", "refs/remotes/origin/master"), \
+        "golden's own branch must still be the only one fast-forwarded onto"
+    assert git(fx.golden, "rev-parse", "--abbrev-ref", "HEAD") == "master", \
+        "nothing may check out another branch here"
+
+    # --prune, so golden mirrors origin rather than accumulating every branch that ever existed.
+    git(fx.seed, "push", "--quiet", "origin", ":refs/heads/feature/mass-drivers")
+    p = fx.update()
+    assert p.returncode == 0, p.stderr
+    gone = git(fx.golden, "rev-parse", "--verify", "--quiet",
+               "refs/remotes/origin/feature/mass-drivers", check=False)
+    assert not gone, "a branch deleted on origin is still here"
+
+
+def test_a_base_ref_that_does_not_exist_is_fatal(fx):
+    """Loudly, and before any run clones this checkout.
+
+    The alternative is a run that bases itself on whatever stale ref happens to be lying in the
+    clone, which is the failure this whole file exists to prevent — and it would be discovered
+    as a confusing diff against code nobody is on, hours later.
+    """
+    env = dict(fx.env(), FFBOX_BASE_REFS="develop no-such-branch")
+    p = subprocess.run(["sh", UPDATE_GOLDEN], env=env, capture_output=True, text=True)
+    assert p.returncode != 0, p.stdout
+    assert "no-such-branch" in p.stderr, p.stderr
+    assert "FFBOX_BASE_REFS" in p.stderr, p.stderr
 
 
 def test_survives_a_repo_with_no_lfs_content(fx):

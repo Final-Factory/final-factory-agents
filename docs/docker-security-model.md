@@ -167,15 +167,39 @@ cannot do, or must be checked by the host afterwards.
 2. The agent works. It edits files and, since 2026-08-23, makes its own commits.
 3. The container task runs `ffverify` after the agent exits and writes the verification report
    to a path it deletes first, so an agent-written report cannot be believed.
-4. `ffbox` harvests: commits anything left uncommitted, points the work branch at wherever HEAD
-   ended, runs the checks below, and writes a git bundle of `base_sha..branch`. A range bundle,
-   not a full one, so it carries this run's commits rather than the project's history.
+4. `ffbox` harvests: commits anything left uncommitted, takes the branch HEAD ended on as the
+   one to publish — renamed to `ffbox/<the agent's name>-<run id>` when the agent made its own —
+   resolves which published branch that work descends from, runs the checks below, and writes a
+   git bundle of `<that base>..branch`. A range bundle, not a full one, so it carries this run's
+   commits rather than the project's history.
 5. `ffwatch` runs `git bundle verify` (which is really "does the host have the base commit"),
-   fetches the bundle into `refs/ffbox/` in the host checkout without moving a branch or touching
-   a working tree, and pushes.
-6. If the verification gate and confidence both pass, it opens a pull request against
-   `github.base` (default `develop`) and records the number and url from the API response, never
-   from anything the agent said.
+   fetches the bundle into `refs/ffbox/` in the host checkout without moving an existing branch
+   or touching a working tree, pushes it, and then creates that one branch locally with its
+   upstream set so a human can check it out there.
+6. If the verification gate and confidence both pass, it opens a pull request against the branch
+   the work is based on, and records the number and url from the API response, never from
+   anything the agent said.
+
+## Which branch a run's work is for
+
+The agent decides — `origin/master` for a fix to the build players are running, `origin/develop`
+for everything else — and it decides by choosing what it branches from, not by saying so. `ffbox`
+resolves the most specific base its work descends from and writes the name to
+`publish_base.txt`; `ffwatch` then targets the pull request at it.
+
+That file is in the run directory, which is bind-mounted into the container, so the agent can
+write it. The host therefore verifies rather than trusts, and the two checks are the ones that
+make forging it pointless:
+
+- the name must be one of `publish_bases` in the config, so it cannot name an arbitrary ref, and
+- `origin/<name>` must be an ancestor of the commits just pushed, so the pull request is a
+  proposal to fast-forward that branch rather than a diff against a stranger.
+
+An agent can make its work descend from master by branching off master, which is the feature. It
+cannot make it descend from a branch it did not build on. A name that fails either check falls
+back to the configured default, and only if that default passes the ancestry check too; nothing
+else is a safe guess, because a pull request into the wrong branch is a proposal to ship
+unreleased work to players.
 
 ## Local git, granted 2026-08-23
 
@@ -211,6 +235,12 @@ as the run's `no_branch_reason`, when:
   `base_sha..branch` must be `ffbox@final-factory.invalid`, which `ffbox` writes into the clone's
   config before the agent starts. This is the one that matters: a commit wearing a person's name,
   on a branch a reviewer reads by author, is how agent work would pass as human work.
+- **The run ended on a shared branch.** `develop`, `master` or `main`
+  (`FFBOX_PROTECTED_BRANCHES`). Every write preamble opens by telling the agent to make its own
+  branch and telling it that a run ending on one of these is discarded; this is the half that
+  makes the telling true. It is about where HEAD ENDS UP, not about which commits exist — an
+  agent that committed on `develop` and then branched off it publishes that work on the branch,
+  which is the outcome everybody wants.
 - **A ceiling is blown.** `FFBOX_MAX_CHANGED_FILES` (2000) and `FFBOX_MAX_BUNDLE_BYTES` (256 MiB).
   Not security, just a runaway `git add -A` over a re-imported `Library/` caught before it becomes
   a very large push.

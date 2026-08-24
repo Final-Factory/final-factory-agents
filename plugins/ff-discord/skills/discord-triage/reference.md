@@ -85,15 +85,18 @@ Give the agent the complete report text, the log excerpt, your root-cause analys
    - *ffbox batchmode*: run `ffverify` and read its JSON report. The container is fresh, so the
      compile is cold and a `PASSED` cannot be stale. The harness re-runs it after you exit
      regardless, and its result — not your claim — is what gates the PR.
-5. Commit, push the branch, open a PR **targeting `develop`** (never `master`).
-6. Merge the PR to `develop` once tests are green.
+5. Commit, push the branch, open a PR against the branch you based the work on: `develop` for
+   anything that can wait for the next version, `master` only when the bug is in the build
+   players are running and the fix is small and low-risk. An AUTOFIX reached this point because
+   a stranger's bug report said so, so when the call is not obvious it is `develop`.
+6. Merge the PR to `develop` once tests are green. A PR into `master` is never yours to merge.
 
 **On the build server, steps 5 and 6 are not yours.** A Discord `fix` or `dev` turn holds no
 GitHub token and no push credential, and the image has no `gh` — so `git push` and `gh pr
 create` fail for want of a credential rather than for want of permission. Leave the change in
 the working tree and describe it. ffbox commits it on `ffbox/<run-id>`, ffwatch pushes it and
-opens the PR against `develop`, and the branch and PR recorded come from git and the GitHub API
-response rather than from anything you write. Nothing merges automatically, ever.
+opens the PR against whichever branch you based the work on, and the branch, base and PR
+recorded come from git and the GitHub API response rather than from anything you write. Nothing merges automatically, ever.
 
 Then close the loop with the reporter and the team. The templates below are *content*
 checklists, not wording to copy — the voice is [the `max-voice` skill](../max-voice/SKILL.md):

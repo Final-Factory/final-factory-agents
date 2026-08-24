@@ -27,9 +27,11 @@
 # forever. That decides when to give up on a network, never who wins the lock.
 #
 # WHAT CALLERS ARE PROMISED. On exit 0, golden is clean, at origin/<its branch> as of a fetch
-# that happened during this call, and any file this pull touched has real content rather than an
-# LFS pointer. On any other exit, golden was NOT left half-updated by us — every failure mode
-# here either changes nothing or fails a fast-forward that git itself performs atomically.
+# that happened during this call, every OTHER branch origin has is present as a remote-tracking
+# ref from that same fetch, the branches in FFBOX_BASE_REFS exist and have their LFS content on
+# disk, and any file this pull touched has real content rather than an LFS pointer. On any other
+# exit, golden was NOT left half-updated by us — every failure mode here either changes nothing
+# or fails a fast-forward that git itself performs atomically.
 #
 # POSIX sh, like its siblings.
 set -eu
@@ -37,6 +39,17 @@ set -eu
 GOLDEN_MNT=${FFBOX_GOLDEN_MNT:-/opt/FinalFactory}
 CONFIG_DIR=${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}
 LOCK=${FFBOX_GOLDEN_LOCK:-$CONFIG_DIR/golden.lock}
+
+# The branches a RUN may base its work on, which is not the same set as the branch golden itself
+# sits on. A run picks between them — a fix for the released build goes on master, everything
+# else on develop — inside a container with no network, so whatever it checks out has to already
+# be here.
+#
+# The REFS are not this list's job any more: the fetch below takes every branch origin has, the
+# way a bare `git fetch` does. What this list still decides is which of them get their LFS
+# content pre-materialized, and which must exist for the machine to be considered working at
+# all. Both are things you cannot do for "every branch" without paying for every branch.
+BASE_REFS=${FFBOX_BASE_REFS:-develop master}
 
 LOCKED=0
 VERIFY=0
@@ -52,7 +65,10 @@ Options:
   --quiet    Print only warnings and errors.
   --help     Show this message.
 
-Environment: FFBOX_GOLDEN_MNT (default $GOLDEN_MNT), FFBOX_GOLDEN_LOCK, FFBOX_CONFIG_DIR.
+Environment: FFBOX_GOLDEN_MNT (default $GOLDEN_MNT), FFBOX_GOLDEN_LOCK, FFBOX_CONFIG_DIR,
+FFBOX_BASE_REFS (default "$BASE_REFS") — the branches a run may base its work on. Every branch
+on origin is fetched either way; these are the ones that must exist and that get their LFS
+content pre-materialized, so a container with no network can check them out.
 EOF
 }
 
@@ -113,17 +129,40 @@ git_ rev-parse --verify --quiet "refs/remotes/origin/$BRANCH" >/dev/null 2>&1 \
 
 BEFORE=$(git_ rev-parse HEAD)
 
+# Where each base ref stood before the fetch, so the LFS pre-fetch below can be skipped when it
+# did not move. Encoded as "name=sha" words because POSIX sh has no arrays and this list has two
+# entries; "none" for a ref that does not exist yet, which reads as "moved" and then fails the
+# existence check on the next pass.
+base_before=
+for base_ref in $BASE_REFS; do
+    base_before="$base_before $base_ref=$(git_ rev-parse --verify --quiet \
+        "refs/remotes/origin/$base_ref" || echo none)"
+done
+
 # ------------------------------------------------------------------------------------------
 # fetch, then fast-forward
 # ------------------------------------------------------------------------------------------
+# EVERY branch, exactly as a bare `git fetch origin` does: the remote's own refspec into
+# refs/remotes/origin/*, plus --prune so a branch deleted on origin disappears here too. It used
+# to fetch the single branch golden sits on, which updated that branch's remote-tracking ref and
+# no other — so origin/develop, the ref every Discord run checks out, was only as fresh as the
+# last time somebody fetched it by hand. Naming the refs a run might want was the first fix and the
+# wrong shape: the set is not knowable here, a run can legitimately want any of them, and git
+# already has a name for "all of them".
+#
+# Nothing is checked out and no local branch moves. The one fast-forward is golden's own, below.
+#
 # http.lowSpeedLimit/Time is a LIVENESS bound, not a correctness one: it aborts a transfer that
 # has stalled below 1KB/s for a minute, so a half-dead connection cannot hold the lock for the
 # rest of the day. Nothing about who-updates-when depends on it.
 log "fetching $(git_ config --get remote.origin.url)"
-git_ -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 fetch --prune --quiet origin "$BRANCH" \
-    || die "fetch of origin/$BRANCH failed"
+git_ -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 fetch --prune --quiet origin \
+    || die "fetch of origin failed"
 
-TARGET=$(git_ rev-parse FETCH_HEAD)
+# From the remote-tracking ref rather than FETCH_HEAD: with no refspec on the command line,
+# FETCH_HEAD carries every branch that was fetched, and the first line of it is not this one.
+TARGET=$(git_ rev-parse --verify --quiet "refs/remotes/origin/$BRANCH") \
+    || die "origin/$BRANCH is gone from origin; $GOLDEN_MNT needs a human"
 
 # --ff-only: a merge commit in golden would be nobody's intent and would diverge it from the
 # remote permanently. When this fails the branch needs a human, and saying so beats inventing a
@@ -132,6 +171,41 @@ git_ merge --ff-only --quiet "$TARGET" \
     || die "origin/$BRANCH does not fast-forward onto golden's HEAD. Fix $GOLDEN_MNT by hand."
 
 AFTER=$(git_ rev-parse HEAD)
+
+# ------------------------------------------------------------------------------------------
+# the branches a run may base its work on
+# ------------------------------------------------------------------------------------------
+# The fetch above already brought every ref. What is left is the half that is easy to forget and
+# expensive to rediscover: `git lfs pull` below materializes content for the CHECKED-OUT tree
+# only, so a run that checks out one of these instead would find a pointer wherever the two
+# branches disagree about a binary — and it has no network to fix that with. Unity then skips
+# the DLL as a managed plugin and fails with a CS0246 that names nothing useful. `git lfs fetch`
+# puts the objects in .git/lfs/objects, which the clone inherits, so the container's checkout
+# smudges them from disk.
+#
+# Only these refs, not every branch that was just fetched: the harvest publishes work against
+# one of them or nothing, and pre-materializing every feature branch's binaries would cost far
+# more than it could ever save.
+#
+# A base ref that does not exist is fatal rather than skipped. The set is small and declared,
+# and a run silently basing itself on a ref that is not there is the failure this file exists to
+# prevent.
+for base_ref in $BASE_REFS; do
+    now=$(git_ rev-parse --verify --quiet "refs/remotes/origin/$base_ref" || echo none)
+    [ "$now" != none ] \
+        || die "origin/$base_ref does not exist, so runs cannot base on it. Set FFBOX_BASE_REFS if this repository has no such branch."
+    was=
+    for pair in $base_before; do
+        case "$pair" in "$base_ref="*) was=${pair#*=} ;; esac
+    done
+    [ "$was" != "$now" ] || [ "$VERIFY" = 1 ] || continue
+    if command -v git-lfs >/dev/null 2>&1; then
+        log "materializing LFS content for origin/$base_ref, which runs may base on"
+        git_ lfs fetch origin "refs/remotes/origin/$base_ref" >/dev/null 2>&1 \
+            || warn "could not pre-fetch LFS content for origin/$base_ref; a run that checks it"\
+                    "out may find pointers where it differs from $BRANCH"
+    fi
+done
 
 # ------------------------------------------------------------------------------------------
 # LFS, and the pointer trap

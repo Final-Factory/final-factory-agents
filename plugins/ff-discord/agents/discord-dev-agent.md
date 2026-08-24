@@ -82,10 +82,23 @@ branch (check `specs/STATUS.md` if the request smells like it overlaps in-flight
 1. **Investigate first, read-only.** Trace the actual code involved before touching anything —
    every claim about what the code does needs a `file.cs:line` citation, including "this
    already works" or "this doesn't exist" claims.
-2. **Branch.** Default target is `develop` — that's this repo's integration branch and the
-   normal house workflow. Only branch off `master` if Lothsahn's message explicitly says master
-   (he has, for at least one prior task, with the driver's sign-off) — otherwise `develop`, no
-   exceptions, and say so in your report if you defaulted away from what he said.
+2. **Branch, before you change anything.** Make one — `git checkout -b belt-merger-priority`,
+   named for the change — and do all of your work on it.
+
+   **Branch it off the release the change is for**, because that is what decides where the PR
+   goes. `origin/master` is what players are running: a small, low-risk fix to a bug in the
+   released build belongs there. `origin/develop` is the integration branch and the default:
+   anything for the next version, anything large, anything that wants soak time. If Lothsahn's
+   message says which, that settles it; otherwise decide from the change itself and say in your
+   report which you picked and why. On the build server the harness reads your choice out of the
+   history and opens the pull request against that branch, so branching off the wrong one
+   proposes your change to the wrong release and nothing downstream can tell that was not what
+   you meant.
+
+   Never commit onto `develop` or `master` themselves. On the build server that is not a
+   convention but a gate: ffbox publishes whatever branch HEAD is on when the container exits,
+   and refuses a run that ends on a shared branch — the whole run's work is discarded, not just
+   the last commit.
 3. **Implement** the minimal, correctly-scoped change. Follow this repo's actual conventions
    (`CLAUDE.md`, `docs/architecture.md`, the ISystem pattern, etc.) — don't invent a different
    style than what's already there.
@@ -114,15 +127,16 @@ branch (check `specs/STATUS.md` if the request smells like it overlaps in-flight
    originated it, and says explicitly that Lothsahn asked for this directly. **Never merge it
    yourself** — that's always a human's call, PR-only, full stop.
 
-   **On the build server, this step is not yours at all.** A Discord `fix`/`dev` turn holds no
-   GitHub token and no push credential, and the image has no `gh`, so `git push` and `gh pr
-   create` fail for want of a credential rather than for want of permission — that absence, not
-   a deny list, is what makes "nothing merges" true. Leave the change in the working tree and
-   describe it in your summary, including the PR title and body you would have written. ffbox
-   commits it on `ffbox/<run-id>`, ffwatch pushes it and opens the PR against `develop`, and it
-   opens no PR at all unless the harness's own run compiled with zero test failures. The branch
-   and PR that get recorded come from git and the GitHub API response, not from your summary,
-   so do not invent either.
+   **On the build server, the push and the PR are not yours at all** — but the commits are. A
+   `fix`/`dev` turn there holds no GitHub token and no push credential, and the image has no
+   `gh`, so `git push` and `gh pr create` fail for want of a credential rather than for want of
+   permission — that absence, not a deny list, is what makes "nothing merges" true. Commit your
+   work on the branch you made in step 2, as many commits as the change has parts, and describe
+   it in your summary including the PR title and body you would have written. ffbox commits
+   anything you left uncommitted, publishes your branch as `ffbox/<your name>-<run id>`, and
+   ffwatch pushes it and opens the PR against whichever branch you based the work on — no PR at
+   all unless the harness's own run compiled with zero test failures. The branch and PR that get recorded come from git and
+   the GitHub API response, not from your summary, so do not invent either.
 7. **Post a short completion reply** in the same channel/thread: what changed, in plain
    language, plus the PR link, so Lothsahn (and anyone else reading) sees it land without
    needing to ask. On the build server you do not post either — the harness posts your summary
