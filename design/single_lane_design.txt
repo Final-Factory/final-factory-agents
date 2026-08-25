@@ -211,10 +211,18 @@ batches several messages is operator-tier only if every message in it came from 
 6. Unity always on
 ------------------
 
-SHIPPED 2026-08-25, with section 5. max_unity_runs is gone from DEFAULTS, from claim_turns()
-and from the setup template; running_counts() returns one number; test_unity_lane_is_capped_at_one
-is deleted. run.unity stays as a column, because an adopted run records what the container
-actually did rather than what it was asked for.
+SHIPPED 2026-08-25, with section 5, and then removed ENTIRELY at the owner's instruction: not
+just the mechanism but every mention of the knob. Gone from DEFAULTS, claim_turns(), the
+05-discord-setup.sh template, ffbox/README.md and the round-trip config test that had been using
+it as its sample key. running_counts() returns one number; test_unity_lane_is_capped_at_one is
+deleted. max_concurrent_runs carries the comment explaining that it is now the only ceiling,
+because every concurrent run gets a Unity session. trusted_ingress_design.txt keeps its
+historical mentions, flagged as historical in its revision log.
+
+run.unity stays as a column, because an adopted run records what the container actually did
+rather than what it was asked for. The `unity: True` in the capabilities dict also stays for
+now, though it is nearly dead: nothing schedules on it and discord-task.sh reads it only for one
+stderr line. Delete it with the `agent` key when the lane table goes.
 
 max_unity_runs is deleted from DEFAULTS and from claim_turns(). running_counts() stops
 partitioning and returns one number. The `unity` capability field is already hardcoded True at

@@ -4446,7 +4446,7 @@ def test_config_lives_under_ffbox():
 
     # A machine that predates the move: everything in the Discord file's ffwatch block.
     with open(os.path.join(legacy, "config.json"), "w", encoding="utf-8") as fh:
-        json.dump({"token": "t", "ffwatch": {"web_host": "10.0.0.9", "max_unity_runs": 4}}, fh)
+        json.dump({"token": "t", "ffwatch": {"web_host": "10.0.0.9", "catchup_secs": 4242}}, fh)
 
     saved = dict(os.environ)
     try:
@@ -4458,7 +4458,7 @@ def test_config_lives_under_ffbox():
               ffwatch.FFDISCORD_HOME == legacy, ffwatch.FFDISCORD_HOME)
         cfg = ffwatch.load_config()
         check("and its settings are still read", cfg["web_host"] == "10.0.0.9"
-              and cfg["max_unity_runs"] == 4, (cfg["web_host"], cfg["max_unity_runs"]))
+              and cfg["catchup_secs"] == 4242, (cfg["web_host"], cfg["catchup_secs"]))
 
         # After the move, ~/.config/ffbox/config.json wins over anything left behind.
         with open(os.path.join(ffbox_dir, "config.json"), "w", encoding="utf-8") as fh:
@@ -4468,7 +4468,7 @@ def test_config_lives_under_ffbox():
         check("the ffbox file wins where the two disagree", cfg["web_host"] == "192.168.1.5",
               cfg["web_host"])
         check("and a setting only the old file has still comes through",
-              cfg["max_unity_runs"] == 4, cfg["max_unity_runs"])
+              cfg["catchup_secs"] == 4242, cfg["catchup_secs"])
         check("a key that is not a known setting is ignored rather than injected",
               "token" not in cfg, sorted(cfg)[:5])
 
