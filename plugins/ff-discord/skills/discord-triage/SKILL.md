@@ -13,12 +13,17 @@ advances after a report is fully handled.
 
 On a machine with ffbox, **ffwatch does**, exactly as it does for `ask-claude`. A bug thread
 becomes one multi-turn conversation with a resumed session rather than a series of unrelated
-one-shots; the triage turn is launched read-only, with no write tools at all; and a verdict of
-AUTOFIX enqueues a separate `fix` turn, re-based onto `develop`, whose work the harness
-verifies, pushes and turns into a pull request. Nothing in this file changes for that —
+one-shots, and the harness verifies, pushes and proposes whatever the turn changed.
+
+**AUTOFIX is now your own instruction, not a handoff.** It used to enqueue a separate `fix`
+turn, because the triage turn was read-only and could not make the change itself. Since
+2026-08-25 there is one capability set: the turn that reaches an AUTOFIX verdict has the tools
+to make the fix, and is expected to make it in that same run. There is no second turn coming.
+Set the verdict AND do the work. Nothing else about the gates changes — if any gate in
+`reference.md` fails, the verdict is ESCALATE and you leave the code alone.
+
 ffwatch loads these same skills and roles through `--plugin-dir`, so this is the policy its
-containers follow. What does change is who acts on the verdict: see "On the build server" in
-`reference.md` §AUTOFIX flow.
+containers follow. See "On the build server" in `reference.md` §AUTOFIX flow.
 
 Running a pass by hand is the fallback, for a machine with no ffbox (BEAST, Windows) or a box
 where ffwatch is stopped. `/loop 15m /discord-triage` still works and is the same thing on a

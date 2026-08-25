@@ -13,11 +13,16 @@ the rest to a human. One pass per invocation, idempotent.
 On a machine with ffbox, **ffwatch does** — the host daemon in
 `ffbox/ffwatch.py` (final-factory-agents repo). It tails the same
 `events.jsonl` doorbell, keys a conversation on the thread or reply chain, and runs each turn
-in a disposable container with the lane's tools named on the command line. Two things it gives
-you that a standing Claude session cannot: a bug thread becomes one multi-turn investigation
-with a resumed session rather than a series of unrelated one-shots, and a read-only lane is
-launched with no write tools at all, so it is incapable of editing rather than instructed not
-to. Everything lands in SQLite, which is what the review UI reads.
+in a disposable container whose capabilities are named on the command line by the host. What
+it gives you that a standing Claude session cannot: a thread becomes one multi-turn
+investigation with a resumed session rather than a series of unrelated one-shots, and
+everything lands in SQLite, which is what the review UI reads.
+
+Every turn gets the same capability set as of 2026-08-25 — reads, edits and shell. There used
+to be a read-only lane for questions, and it is worth knowing why losing it changed less than
+it sounds: the container has never held a git or GitHub credential, has never had any path to
+Discord, and its clone is destroyed when the run ends. The host owns publication, and a
+turn that answers a question simply changes nothing.
 
 Nothing in this file changes for that. ffwatch loads these same skills and agent roles through
 `--plugin-dir`, so the policy below is what its containers actually follow.
