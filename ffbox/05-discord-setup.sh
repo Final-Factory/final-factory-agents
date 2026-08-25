@@ -256,8 +256,8 @@ for key, value in (
     ("agent_secs", 900),
     ("warmup_secs", 3600),
     ("kill_grace_secs", 10),
-    # The one concurrency ceiling. max_unity_runs sat here until 2026-08-25 and is gone: every
-    # run takes an editor, so it counted exactly these runs.
+    # The only ceiling on runs: every concurrent run gets a Unity session, so one number
+    # bounds agents and editors together. See ffwatch.py DEFAULTS.
     ("max_concurrent_runs", 2),
     ("catchup_secs", 900),
     # Turns per rolling 24 hours, keyed on TRUST TIER — who wrote the text, not which lane it

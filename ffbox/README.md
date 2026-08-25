@@ -363,12 +363,12 @@ Consequences:
   two Unity runs at once were a race rather than two seats, because activation state is
   machine-level and the first container to exit fires `-returnlicense` for the shared identity.
   It also said, honestly, that whether concurrent activation worked at all was untested here.
-  It has since been tested — four game-ci containers in parallel, no licensing trouble — so
-  `max_unity_runs` is a **resource** ceiling (four editors on one box is real CPU and memory),
-  not a licensing one, and raising it is an ordinary config question. (`single_lane_design.txt`
-  deletes the knob: with no way to launch without an editor it counts the same runs
-  `max_concurrent_runs` counts, and the lower of two knobs that never diverge is the only one
-  doing anything. Not implemented yet.)
+  It has since been tested — four game-ci containers in parallel, no licensing trouble — so the
+  ceiling on parallel editors is about CPU and memory rather than licensing, and raising it is an
+  ordinary config question. **`max_concurrent_runs` is that ceiling and the only one.** Every
+  concurrent run gets a Unity session, so one number bounds agents and editors together. A
+  separate `max_unity_runs` existed until 2026-08-25, from when Unity was optional per run; it
+  counted exactly the same runs and was deleted.
 
   One edge is still worth knowing rather than fearing: the return-licence trap fires on exit for
   an identity every container shares. The likely reason four in parallel is fine is that the
@@ -1112,6 +1112,6 @@ what would fail if the SAN were ever dropped.
   cache) is the obvious next step.
 - **No concurrency guard in `ffbox` itself.** Nothing at this level stops two runs sharing one
   Unity activation or one golden snapshot name; the `$$`-suffixed run IDs make collisions
-  unlikely but not impossible. `ffwatch` serialises Unity above it (`max_unity_runs`), but a
-  hand-run `ffbox` alongside a live daemon is outside that.
+  unlikely but not impossible. `ffwatch` bounds runs above it (`max_concurrent_runs`, which is
+  also the editor ceiling), but a hand-run `ffbox` alongside a live daemon is outside that.
 - **`docker kill -9` still leaks a seat.** No in-process trap can catch SIGKILL.

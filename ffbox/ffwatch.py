@@ -241,13 +241,13 @@ DEFAULTS = {
     "warmup_secs": 3600,
     "kill_grace_secs": 10,
 
+    # THE ONLY CEILING ON RUNS. Every concurrent run gets a Unity session — there is no way
+    # to launch without an editor — so this bounds agents and editors with one number. It is a
+    # CPU and memory limit rather than a licensing one: ffbox does not copy game-ci's
+    # `dbus-uuidgen > /etc/machine-id`, so every container inherits the base image's machine id
+    # and they all look like one machine to Unity, and four game-ci containers in parallel have
+    # been run with no licensing trouble. Raising it is an ordinary config question.
     "max_concurrent_runs": 2,
-    # max_unity_runs USED TO BE HERE and was deleted 2026-08-25 (single_lane_design section 6).
-    # It was a resource ceiling on how many editors run at once. Every launch takes an editor
-    # now — there is no way to ask for a run without one — so it counted exactly the runs
-    # max_concurrent_runs counts, and a second knob that can never diverge from the first is not
-    # a knob. max_concurrent_runs above is the one ceiling. A value left in an old config file
-    # is ignored: load_config() keeps only keys that are still in DEFAULTS.
     "catchup_secs": 900,
     "poll_secs": 2,
 
@@ -2103,10 +2103,11 @@ class Watcher:
     def running_counts(self):
         """How many runs are in flight.
 
-        Returned a second number until 2026-08-25 — how many of them held an editor — which
-        existed only to feed max_unity_runs. Every launch takes an editor, so the two never
-        disagreed except on an ADOPTED run, where run.unity records what the container actually
-        did rather than what it was asked for. The column stays; nothing schedules on it.
+        Returned a second number until 2026-08-25 — how many of them held an editor — for a
+        separate editor ceiling that no longer exists. Every launch takes an editor, so the two
+        never disagreed except on an ADOPTED run, where run.unity records what the container
+        actually did rather than what it was asked for. The column stays; nothing schedules on
+        it.
         """
         return int(self.db.scalar(
             "SELECT COUNT(*) FROM run WHERE terminal_state IS NULL", (), 0))
