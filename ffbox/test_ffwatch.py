@@ -1706,8 +1706,8 @@ def test_failed_launch_frees_the_slot():
     check("the run row was written before the launch was attempted", len(runs) == 1, runs)
     check("and it was closed rather than left in flight",
           runs and runs[0]["terminal_state"] is not None, runs)
-    total, unity = case.watcher.running_counts()
-    check("so the concurrency slot came back", total == 0, (total, unity))
+    total = case.watcher.running_counts()
+    check("so the concurrency slot came back", total == 0, total)
     turns = case.rows("SELECT * FROM turn")
     check("the turn is terminal, not stuck running",
           turns[0]["status"] == "failed", turns[0]["status"])
@@ -2925,54 +2925,32 @@ def test_fix_lane_launches_with_write_capabilities():
           "RE-BASED" in job["prompt"], job["prompt"][-600:])
 
 
-def test_unity_lane_is_capped_at_one():
-    print("write lane: the editor ceiling")
-    case = bug_case("unitycap")
-    git_origin(case)
-    conv = case.rows("SELECT * FROM conversation")[0]
-    triage = case.rows("SELECT * FROM turn ORDER BY id")[0]
-    case.watcher.enqueue_autofix(triage, conv, {"verdict": "AUTOFIX"})
-
-    # Another conversation's Unity run, still in flight. running_counts() reads exactly this.
-    case.watcher.db.execute(
-        "INSERT INTO run(turn_id, ffbox_run_id, container_name, unity) VALUES(?,?,?,1)",
-        (triage["id"], "other-unity-run", "ffbox-other-unity-run"))
-    before = len(case.rows("SELECT * FROM run"))
-    started = case.watcher.schedule()
-    check("a second run does not start while one is already holding an editor",
-          started == [] and len(case.rows("SELECT * FROM run")) == before, started)
-    check("and the turn stays queued rather than being failed",
-          case.rows("SELECT status FROM turn WHERE lane='fix'")[0]["status"] == "queued")
-
-    # The editor is free again: the same turn now starts, with nothing else changed.
-    case.watcher.db.execute("UPDATE run SET terminal_state='done' WHERE ffbox_run_id=?",
-                            ("other-unity-run",))
-    check("once it frees up the turn starts", case.watcher.schedule() != [])
-    case.watcher.join_launches()
-
-
 def test_fix_lane_rate_limit():
-    print("write lane: three fix jobs a day")
+    print("trust tier: five player turns a day")
     case = bug_case("fixrate")
     conv = case.rows("SELECT * FROM conversation")[0]
     triage = case.rows("SELECT * FROM turn ORDER BY id")[0]
-    # Three fix turns already run today (design section 18, mirroring "max 3 autofixes").
-    for n in range(3):
+    # Five player-tier turns already run today. ONE budget across every kind of turn a player
+    # can cause: the lane they took does not matter, only who caused them.
+    for n in range(5):
         case.watcher.db.execute(
-            "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, started_at,"
-            " ended_at) VALUES(?,?,'fix','done',?,?,?)",
-            (conv["id"], 100 + n, ffwatch.now_iso(), ffwatch.now_iso(), ffwatch.now_iso()))
-    check("the limit is reached at three", case.watcher.rate_limited("fix") is True)
-    check("but the read-only lanes are unaffected",
-          case.watcher.rate_limited("triage") is False)
+            "INSERT INTO turn(conversation_id, seq, lane, status, trust_tier, queued_at,"
+            " started_at, ended_at) VALUES(?,?,?,'done','player',?,?,?)",
+            (conv["id"], 100 + n, "answer" if n % 2 else "fix",
+             ffwatch.now_iso(), ffwatch.now_iso(), ffwatch.now_iso()))
+    check("the limit is reached at five, whatever lanes they were",
+          case.watcher.rate_limited("player") is True)
+    check("but an operator is uncapped", case.watcher.rate_limited("operator") is False)
+    check("and a turn with no tier recorded counts as a player, not as uncapped",
+          case.watcher.rate_limited(None) is True)
 
     case.watcher.enqueue_autofix(triage, conv, {"verdict": "AUTOFIX"})
     started = case.watcher.schedule()
     fourth = case.rows("SELECT * FROM turn WHERE lane='fix' AND parent_turn_id IS NOT NULL")[0]
-    check("the fourth fix job of the day does not launch", started == [], started)
+    check("the sixth player turn of the day does not launch", started == [], started)
     check("it is blocked, not silently dropped", fourth["status"] == "blocked", fourth)
-    check("with a reason naming the lane and the limit",
-          "rate limit" in (fourth["error"] or "") and "fix" in (fourth["error"] or ""),
+    check("with a reason naming the tier and the limit",
+          "rate limit" in (fourth["error"] or "") and "player" in (fourth["error"] or ""),
           fourth["error"])
     check("and no container was started for it",
           case.rows("SELECT * FROM run WHERE turn_id=?", (fourth["id"],)) == [])
@@ -2989,8 +2967,9 @@ def test_fix_lane_rate_limit():
     check("and it cost no run, no container and no model call",
           case.rows("SELECT * FROM run WHERE turn_id=?", (fourth["id"],)) == [],
           case.rows("SELECT * FROM run"))
-    check("a public venue is not told which lane ran out",
-          "lane" not in json.loads(last["payload_json"])["text"], last)
+    check("a public venue is not told which tier ran out",
+          "tier" not in json.loads(last["payload_json"])["text"]
+          and "lane" not in json.loads(last["payload_json"])["text"], last)
 
     # ONCE. A blocked turn never sets started_at, so it does not count towards the ceiling that
     # blocked it: the lane stays over its limit all day while claim_turns keeps minting turns,
@@ -3971,9 +3950,9 @@ def test_the_shell_lane_was_merged_into_dev():
     # override and the reason this check cannot read case.cfg — it would pass or fail on the
     # machine running the suite rather than on the code.
     limits = ffwatch.DEFAULTS["rate_limits"]
-    check("dev carries no daily cap by default", "dev" not in limits, limits)
-    check("and the lanes fed untrusted text still do",
-          limits["fix"] == 3 and limits["answer"] == 200, limits)
+    check("an operator carries no daily cap by default", not limits.get("operator"), limits)
+    check("and a player does — one budget across every kind of turn they can cause",
+          limits["player"] == 5, limits)
     case = Case("devunlimited")
     case.cfg["rate_limits"] = dict(limits)
     case.watcher.db.execute(
@@ -4349,7 +4328,7 @@ def test_drain_never_blocks_on_a_dead_daemon():
         "INSERT INTO run(turn_id, ffbox_run_id, container_name) VALUES(?,'ghost','ffbox-ghost')",
         (cur.lastrowid,))
     check("the ghost run looks exactly like work in flight",
-          case.watcher.running_counts()[0] == 1, case.watcher.running_counts())
+          case.watcher.running_counts() == 1, case.watcher.running_counts())
 
     started = time.monotonic()
     left = case.watcher.drain(wait=True, timeout=30)
@@ -5174,7 +5153,6 @@ def main():
         # phase 3
         test_autofix_enqueues_one_fix_job,
         test_fix_lane_launches_with_write_capabilities,
-        test_unity_lane_is_capped_at_one,
         test_fix_lane_rate_limit,
         test_publish_opens_a_pull_request,
         test_failed_verification_blocks_the_pull_request,
