@@ -8,6 +8,13 @@ stopped having the whole internet.
 Read this before changing anything in `ffbox/ffbox`, `ffbox/ffwatch.py`, `ffbox/discord-task.sh`
 or `ffbox/egress/` that touches capabilities, the harvest, publication, or what a run can reach.
 
+**This describes the system as it runs today.** A designed but unimplemented change,
+`design/single_lane_design.txt` (2026-08-25), removes the lane system and gives every run the
+`dev` capability set. Where that changes something below, this document says so inline. Nothing
+in the containment list has changed and none of it is planned to: the change is about which text
+can reach a write-capable run, not about what contains one. Gap 1 is the exception, and it stops
+being a gap you can schedule.
+
 ## The shape
 
 Work arrives from Discord or from a person at this machine, and is turned into one `claude -p`
@@ -44,9 +51,16 @@ Prompts on the Discord lanes are built from text written by strangers. Prompt in
 expected case, not the unlucky one. So the design does not ask the agent to behave; it arranges
 for misbehaviour to be unable to reach anything.
 
-That assumption is why the read-only lanes (`answer`, `triage`) get no Bash at all, why no lane
-has any path to Discord, and why the reply a player sees is composed on the host out of the run's
-structured verdict rather than uploaded by the container.
+That assumption is why the read-only lanes (`answer`, `triage`) get no Edit and no Write, why no
+lane has any path to Discord, and why the reply a player sees is composed on the host out of the
+run's structured verdict rather than uploaded by the container.
+
+Those lanes do get Bash, which they did not when this was first written. `READ_ALLOWED` names
+exactly two invocations, `ffverify` and `ffverify --assemblies FFEditorTests`, with no trailing
+glob, so nothing can ride along after an `&&`. The reason is that Unity means Bash: a worker asked
+what the actual power draw of something is should be able to go and look rather than infer from
+source and hedge. What contains those lanes is unchanged — no Edit, no Write, no credential, no
+path to Discord, and a clone destroyed at the end of the run.
 
 ## What the container actually holds
 
@@ -256,7 +270,10 @@ else.
 
 Ranked by what I would fix first.
 
-**1. A pushed branch is code execution on your own hardware.** `FinalFactory`'s
+**1. A pushed branch is code execution on your own hardware.** A PREREQUISITE, not a backlog
+item, once `design/single_lane_design.txt` lands: today player-authored text structurally cannot
+reach `Edit` or `Write`, and that is the only thing holding this shut. See section 9 of that
+design. `FinalFactory`'s
 `.github/workflows/main.yml` is `on: [push, pull_request]` and `runs-on: self-hosted`, with
 `UNITY_LICENSE`, `UNITY_PASSWORD` and `GITHUB_TOKEN` in scope. The agent controls file contents,
 `ffbox` harvests with `git add -A` and no path exclusions, and the host pushes the result. So an
@@ -285,10 +302,11 @@ verification gate compiles and tests against `base_sha`, which is whatever `deve
 clone was taken, so a green, confident pull request can still be unmergeable. Nobody finds out
 until a human opens it.
 
-**4. Golden's fetch is unscheduled.** The clone resolves `develop` to `origin/develop` out of
-golden's snapshot, and `ffbox` never fetches. Only `04-warmLibrary.sh` refreshes golden, and
-nothing runs it on a timer. How stale the base is, and therefore how likely a conflict is,
-depends on when somebody last ran that by hand.
+**4. Golden's fetch — FIXED, kept here for the record.** This used to read "the clone resolves
+`develop` to `origin/develop` out of golden's snapshot, and `ffbox` never fetches". It does now:
+`ffbox` runs `update-golden.sh --locked` before every clone, under a flock on the golden dataset,
+and REFUSES the run when golden cannot be brought to origin rather than cloning a checkout of
+unknown age. `--no-fetch` is the deliberate opt-out.
 
 **5. Follow-up turns lose the previous turn's work.** There is no `git apply` in `ffwatch.py`;
 `changes.patch` is recorded and never replayed. Turn 2 clones fresh at the pinned `base_sha`,

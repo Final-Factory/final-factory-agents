@@ -1599,8 +1599,10 @@ def test_container_argv_is_valid():
     answer = {"prompt": "why does the belt stall?", "lane": "answer",
               "verdict_schema": "question", "plugin_dir": "/ffbox/plugins/ff-discord",
               "session": {"id": sid, "resume": False},
-              "capabilities": {"tools": "Read,Grep,Glob", "disallowed": [],
-                               "permission_mode": "acceptEdits", "unity": False},
+              "capabilities": {"tools": "Read,Grep,Glob,Bash", "disallowed": [],
+                               "allowed": ["Bash(ffverify)",
+                                           "Bash(ffverify --assemblies FFEditorTests)"],
+                               "permission_mode": "acceptEdits", "unity": True},
               "model": {"model": "claude-opus-5", "fallback_model": None,
                         "max_budget_usd": None, "effort": None}}
     argv, err = build(answer)
@@ -1612,8 +1614,8 @@ def test_container_argv_is_valid():
     check("stream-json is paired with --verbose",
           "--output-format" in argv and argv[argv.index("--output-format") + 1] == "stream-json"
           and "--verbose" in argv, argv)
-    check("the read-only lane names exactly Read,Grep,Glob",
-          "--tools" in argv and argv[argv.index("--tools") + 1] == "Read,Grep,Glob", argv)
+    check("the read-only lane names exactly READ_TOOLS",
+          "--tools" in argv and argv[argv.index("--tools") + 1] == "Read,Grep,Glob,Bash", argv)
     # Without this the agent cannot open a single attachment. cwd is /workspace, and a Read
     # outside the working directory is a permission request that `-p` has nobody to answer —
     # so it is denied, and a turn whose whole content is a screenshot gets answered "I could
@@ -1626,9 +1628,19 @@ def test_container_argv_is_valid():
           and "--resume" not in argv, argv)
     check("permissions are never skipped for a Discord lane",
           "--dangerously-skip-permissions" not in argv, argv)
-    # The read-only lanes keep NO Bash — the design's strongest containment claim.
-    check("a read-only lane gets no Bash and so needs no allow list",
-          "Bash" not in argv[argv.index("--tools") + 1] and "--allowedTools" not in argv, argv)
+    # The read-only lanes keep NO Edit and NO Write — the design's strongest containment claim,
+    # and the one that is structural rather than a policy the model is asked to follow. They DO
+    # have Bash, and this pins the shape that makes that safe: EXACT invocations, no trailing
+    # glob, so nothing rides along after an `&&`. This fixture mirrors READ_TOOLS/READ_ALLOWED;
+    # it said "no Bash and so needs no allow list" until 2026-08-25, long after that stopped
+    # being true, which is how the same wrong claim reached three documents.
+    tools = argv[argv.index("--tools") + 1]
+    granted_read = [argv[i + 1] for i, a in enumerate(argv) if a == "--allowedTools"]
+    check("a read-only lane gets no Edit and no Write",
+          "Edit" not in tools and "Write" not in tools, tools)
+    check("and its Bash is exact invocations, with no trailing glob to ride",
+          granted_read == ["Bash(ffverify)", "Bash(ffverify --assemblies FFEditorTests)"]
+          and not any(g.endswith("*)") for g in granted_read), granted_read)
     preamble = argv[argv.index("--append-system-prompt") + 1]
     check("and is told the harness posts for it, so it does not report failing to post",
           "there is no ffdiscord command in this container" in preamble
