@@ -398,10 +398,11 @@ if schema is not None:
 # auto-approves EDITS, not Bash; a non-interactive run has nobody to ask, so without this every
 # Bash command is denied and the lane cannot run one shell command at all.
 #
-# It is scope reduction, NOT a boundary: a command whose prefix matches no entry is refused,
-# but a trailing `*` matches the whole command string, so an appended `&& something-else` rides
-# along. Measured. The real containment is that this container holds no credential and cannot
-# publish anything; see ffwatch.py's WRITE_ALLOWED for the full note.
+# It is scope reduction, NOT a boundary, which is why the enumerated list it used to carry is
+# gone: a command whose prefix matches no entry is refused, but a trailing `*` matches the whole
+# command string, so an appended `&& something-else` rides along. Measured. What this now carries
+# is bare `Bash`, and the real containment is that this container holds no credential and cannot
+# publish anything; see ffwatch.py's CAPABILITIES for the full note.
 for pattern in caps.get("allowed") or []:
     argv += ["--allowedTools", pattern]
 for pattern in caps.get("disallowed") or []:
