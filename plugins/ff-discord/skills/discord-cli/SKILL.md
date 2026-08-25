@@ -72,19 +72,22 @@ ffdiscord-listener --once-ready              # connect, prove READY, exit (smoke
 **`--channels` is the only thing that makes a channel sweep wholesale, and it has no default.**
 The Gateway's `GUILD_MESSAGES` intent is guild-wide — Discord has no per-channel subscription —
 so the listener sees every channel the bot can read and filters. A channel named here rings on
-every human message; everywhere else only a direct @-mention, a reply to the bot, or an
-operator DM rings. On ffbox the list is rendered from the ffwatch `watch` block, so there is
-one place to add a channel and no built-in list to inherit.
+every human message. **Everywhere else rings nothing at all, as of 2026-08-25** — an @-mention
+or a reply to the bot in an unlisted channel is logged and dropped, whoever sent it, operators
+included. An operator DM is unaffected, because a DM has no channel to list. On ffbox the list
+is rendered from the ffwatch `watch` block, so there is one place to add a channel and no
+built-in list to inherit.
 
-Event kinds: `message`, `thread`, `thread_message`, `player_mention`, `lothsahn_directive`,
-`catchup`. The line is a **doorbell, not the mail** — it carries ids only. The listener does
+Event kinds: `message`, `thread`, `thread_message`, `operator_dm`, `catchup`. The listener no
+longer emits `player_mention` or `lothsahn_directive`/`operator_directive`; ffwatch still
+understands them so that an older listener elsewhere keeps working. The line is a **doorbell, not the mail** — it carries ids only. The listener does
 not request the privileged MESSAGE_CONTENT intent and never sees message text, so the consumer
 still pulls through the normal cursor flow. Duplicate, late, or missed doorbells cost latency,
 never correctness.
 
-`lothsahn_directive` is decided from Discord's own authenticated `author.id` on the dispatch,
-never from message content. That distinction is what makes it safe to key elevated trust off,
-and it is the only signal in this pipeline for which that is true.
+`operator_dm` is decided from Discord's own authenticated `author.id` on the dispatch, never
+from message content. That distinction is what makes it safe to key elevated trust off, and it
+is the only signal in this pipeline for which that is true.
 
 ## Configuration
 

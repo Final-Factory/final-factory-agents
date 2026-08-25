@@ -29,7 +29,7 @@
     {
       "name": "ff-discord",
       "description": "Discord integration for Final Factory — triage bug reports from the #bug-reports forum, answer player questions in #ask-assistant, and ask the other developer a question in #dev-chat. Requires the ffdiscord bot credentials.",
-      "version": "1.7.0",
+      "version": "1.8.0",
       "author": {
         "name": "Final Factory"
       },
