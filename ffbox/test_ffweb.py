@@ -174,15 +174,15 @@ def build_fixture(root):
         del cur
 
     ex("INSERT INTO turn(id, conversation_id, seq, trigger, lane, status, classification_json,"
-       " failed_closed, failed_closed_reason, queued_at, started_at, ended_at)"
-       " VALUES(1,1,1,'message','triage','done','{\"type\":\"question\"}',0,NULL,"
-       "'2026-08-20T10:00:05Z','2026-08-20T10:00:10Z','2026-08-20T10:10:00Z')")
+       " failed_closed, failed_closed_reason, queued_at, started_at, ended_at, trust_tier)"
+       " VALUES(1,1,1,'message','dev','done','{\"type\":\"question\"}',0,NULL,"
+       "'2026-08-20T10:00:05Z','2026-08-20T10:00:10Z','2026-08-20T10:10:00Z','player')")
     ex("INSERT INTO turn(id, conversation_id, seq, trigger, lane, status, failed_closed,"
-       " failed_closed_reason, queued_at, started_at, ended_at)"
-       " VALUES(2,1,2,'autofix','fix','failed',1,'classifier could not run',"
-       "'2026-08-20T11:00:00Z','2026-08-20T11:00:05Z','2026-08-20T11:20:00Z')")
-    ex("INSERT INTO turn(id, conversation_id, seq, trigger, lane, status, queued_at)"
-       " VALUES(3,2,1,'message','answer','done','2026-08-19T10:00:05Z')")
+       " failed_closed_reason, queued_at, started_at, ended_at, trust_tier)"
+       " VALUES(2,1,2,'message','dev','failed',1,'the gate could not run',"
+       "'2026-08-20T11:00:00Z','2026-08-20T11:00:05Z','2026-08-20T11:20:00Z','operator')")
+    ex("INSERT INTO turn(id, conversation_id, seq, trigger, lane, status, queued_at, trust_tier)"
+       " VALUES(3,2,1,'message','dev','done','2026-08-19T10:00:05Z','player')")
     ex("INSERT INTO turn(id, conversation_id, seq, trigger, lane, status, queued_at)"
        " VALUES(4,3,1,'message',NULL,'queued','2026-08-18T10:00:05Z')")
     # No run row for this one: the aggregates below are hand-computed over runs 1-3, and a
@@ -540,7 +540,7 @@ def test_timeline_reads_as_a_conversation():
         check("but it is all still there, one click down",
               all(s in timeline for s in ("item turn", "item run", "item verification")))
         check("the fold is labelled with the turn, its lane and its state",
-              re.search(r"<summary>[^<]*turn 1[^<]*triage", timeline) is not None,
+              re.search(r"<summary>[^<]*turn 1[^<]*dev", timeline) is not None,
               timeline[:600])
     finally:
         srv.stop()
@@ -1568,23 +1568,22 @@ def test_aggregates_match_hand_computed_values():
         check("the per-conversation query returns only that conversation",
               list(scoped) == [1], list(scoped))
 
-        lanes = {r["lane"]: r for r in ffweb.lane_aggregates(srv.app.db)}
-        ok3 = ("triage" in lanes and lanes["triage"]["runs"] == 1 and
-               abs(lanes["triage"]["cost_usd"] - 0.25) < 1e-9 and
-               abs(lanes["triage"]["avg_agent_secs"] - 60.0) < 1e-9 and
-               "fix" in lanes and lanes["fix"]["runs"] == 1 and
-               lanes["fix"]["agent_samples"] == 0 and
-               abs(lanes["fix"]["avg_warmup_secs"] - 90.0) < 1e-9 and
-               "answer" in lanes and lanes["answer"]["cost_usd"] is None)
-        check("per-lane aggregates split cost and durations by lane", ok3,
-              {k: dict(v) for k, v in lanes.items()})
+        tiers = {r["tier"]: r for r in ffweb.tier_aggregates(srv.app.db)}
+        ok3 = ("player" in tiers and tiers["player"]["runs"] == 2 and
+               abs(tiers["player"]["cost_usd"] - 0.25) < 1e-9 and
+               abs(tiers["player"]["avg_agent_secs"] - 60.0) < 1e-9 and
+               "operator" in tiers and tiers["operator"]["runs"] == 1 and
+               tiers["operator"]["agent_samples"] == 0 and
+               abs(tiers["operator"]["avg_warmup_secs"] - 90.0) < 1e-9)
+        check("per-tier aggregates split cost and durations by who caused the turn", ok3,
+              {k: dict(v) for k, v in tiers.items()})
 
         # and they reach the page
         _c, _h, body = srv.get("/lanes")
         page = text_of(body)
-        check("the lanes page renders every lane with a run",
-              all(lane in page for lane in ("triage", "fix", "answer")), page[:300])
-        check("the lanes page shows the cost", "$0.2500" in page and "$0.7500" in page)
+        check("the tiers page renders every tier with a run",
+              all(t in page for t in ("player", "operator")), page[:300])
+        check("the tiers page shows the cost", "$0.2500" in page and "$0.7500" in page)
         _c, _h, body = srv.get("/")
         check("the conversation list carries the per-conversation cost",
               "$1.0000" in text_of(body))

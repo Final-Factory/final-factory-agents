@@ -706,13 +706,18 @@ def conversation_aggregates(db, conversation_id=None):
     return {r["conversation_id"]: r for r in db.query(sql, params)}
 
 
-def lane_aggregates(db):
-    """Per-lane totals. The lane lives on `turn`, not on `run`, so this joins rather than
-    grouping run alone; a turn that never got a lane (a launch that failed before
-    classification) groups under '(none)' rather than vanishing from the totals."""
-    sql = ("SELECT COALESCE(t.lane, '(none)') AS lane," + _AGG_COLUMNS +
+def tier_aggregates(db):
+    """Per-trust-tier totals.
+
+    Was per-LANE until 2026-08-25, when every lane collapsed into one and the page became a
+    single row. The question it was really answering survives and still has two answers: what
+    are players costing against what operators are. The tier lives on `turn`, not on `run`, so
+    this joins rather than grouping run alone; a turn written before the column existed groups
+    under '(none)' rather than vanishing from the totals.
+    """
+    sql = ("SELECT COALESCE(t.trust_tier, '(none)') AS tier," + _AGG_COLUMNS +
            " FROM run r JOIN turn t ON t.id = r.turn_id"
-           " GROUP BY COALESCE(t.lane, '(none)') ORDER BY 1")
+           " GROUP BY COALESCE(t.trust_tier, '(none)') ORDER BY 1")
     return db.query(sql)
 
 
@@ -966,7 +971,7 @@ def page(title, body_parts, banner="", refresh=False):
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
         "<title>" + esc(title) + " — ffweb</title><style>" + STYLE + "</style></head><body>"
         "<header><span class=\"brand\">ffweb</span>"
-        "<a href=\"/\">conversations</a><a href=\"/lanes\">lanes</a>"
+        "<a href=\"/\">conversations</a><a href=\"/lanes\">tiers</a>"
         "<a href=\"/outbound\">outbound</a>" + banner +
         "<span class=\"version\">v" + VERSION + "</span>" +
         # POST, not a link: a GET that ends a session is a logout any page on the internet can
@@ -1788,19 +1793,19 @@ class App:
             f"{row['runs']} runs · {fmt_usd(row['cost'] or 0)} · {total:,} tokens "
             f"(+{row['cache'] or 0:,} cache reads)") + "</p>")
 
-    # -- per-lane aggregates ---------------------------------------------------------------
+    # -- per-tier aggregates ---------------------------------------------------------------
 
     def page_lanes(self):
-        rows = lane_aggregates(self.db)
+        rows = tier_aggregates(self.db)
         body = [table(
-            ["lane"] + AGG_HEADERS + ["total warm-up", "total agent", "cache reads"],
-            [[r["lane"]] + agg_cells(r) + [fmt_secs(r["warmup_secs"]), fmt_secs(r["agent_secs"]),
+            ["trust tier"] + AGG_HEADERS + ["total warm-up", "total agent", "cache reads"],
+            [[r["tier"]] + agg_cells(r) + [fmt_secs(r["warmup_secs"]), fmt_secs(r["agent_secs"]),
                                            fmt_int(r["cache_read_tokens"])] for r in rows])]
         note = ("<p class=\"note\">Averages are over the runs that recorded that clock — a run "
                 "killed during warm-up has a warm-up but no agent time, and a launch that never "
                 "reached the container has neither. The count in brackets is how many runs each "
                 "average covers.</p>")
-        return page("lanes", ["<h1>lanes</h1>"] + body + [note])
+        return page("tiers", ["<h1>trust tiers</h1>"] + body + [note])
 
     # -- one conversation -------------------------------------------------------------------
 
