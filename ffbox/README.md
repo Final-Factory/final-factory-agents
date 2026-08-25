@@ -86,6 +86,15 @@ sh ffbox/06-services.sh               # what is installed, enabled, running, or 
 The two are separate because the units are ffbox's, not Discord's: `ffwatch` is the conversation
 manager and `ffweb` is the page over the whole database. Only the listener is Discord-specific.
 
+**Run `--install` from the checkout the machine is meant to run from.** The units carry absolute
+paths rendered from wherever the script sat, so installing from a scratch clone repoints ffwatch,
+ffweb, the egress fence and the self-updater at that clone, and nothing complains afterwards —
+`--check` compares against whichever checkout you invoke it from, so it reports "current" from
+the wrong one. `--install` therefore refuses unless it is being run from the path
+`registerAgents.sh` recorded in `~/.claude/final-factory-agents-checkout`. To move the machine to
+a different checkout deliberately, `--install --force` and then re-run `registerAgents.sh` so the
+recorded path follows.
+
 Nothing is read from Discord until a bot token exists, so starting the daemons first is safe.
 Stage 5 writes `~/.config/ffbox/discord/config.json` as a **fill-in-the-blanks template**: every
 key it needs is already there and empty, including one `channels` blank per alias the `ffwatch`

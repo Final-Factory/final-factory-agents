@@ -8,6 +8,10 @@
 #   sudo sh ffbox/06-services.sh --install --no-enable
 #                                        install them but leave them stopped
 #   sh ffbox/06-services.sh --check      exit 1 if installing would change anything (no root)
+#   sudo sh ffbox/06-services.sh --install --force
+#                                        install from a checkout that is NOT the one this
+#                                        machine is recorded as running from, and make it the
+#                                        one it runs from. See THE RECORDED CHECKOUT below.
 #
 # WHY THIS IS ITS OWN STAGE. The units are ffbox's, not Discord's: ffwatch is the conversation
 # manager, ffweb is the page over the whole database, and only the listener is Discord-specific.
@@ -58,17 +62,46 @@ fi
 RUN_GROUP=$(id -gn "$RUN_USER")
 FFBOX_CONFIG=$HOME/.config/ffbox
 FFDISCORD_HOME=${FFDISCORD_HOME:-$FFBOX_CONFIG/discord}
+
+# THE RECORDED CHECKOUT.
+#
+# registerAgents.sh writes the path of the checkout this machine runs from into
+# ~/.claude/final-factory-agents-checkout. This guard exists because the units carry ABSOLUTE
+# paths rendered from $HERE, so --install from the wrong clone silently repoints ffwatch, ffweb,
+# the egress fence and the self-updater at that clone. Nothing complains afterwards: --check
+# compares the installed units against whichever checkout you invoke it from, so it says
+# "current" from the wrong one and "drift" from the right one, and neither answer names which is
+# meant to be canonical.
+#
+# That happened on 2026-08-25. A machine with four clones of this repo spent an afternoon running
+# from a scratch one because an install was run from the wrong working directory.
+#
+# HOME is the OWNER's here, not root's — the block above resolves it before this point, which is
+# what makes the file readable at all under sudo.
+REPO_ROOT=$(CDPATH= cd -- "$HERE/.." && pwd)
+RECORDED_FILE="$HOME/.claude/final-factory-agents-checkout"
+
+# The recorded path, canonicalised, or non-zero when there is nothing recorded. Canonicalised
+# because a symlink or a trailing slash is the same checkout and must not read as a different one.
+recorded_checkout() {
+    [ -r "$RECORDED_FILE" ] || return 1
+    _rec=$(head -n1 "$RECORDED_FILE" 2>/dev/null | tr -d ' \t\r\n')
+    [ -n "$_rec" ] || return 1
+    (CDPATH= cd -- "$_rec" 2>/dev/null && pwd) || printf '%s\n' "${_rec%/}"
+}
 FFBOX_CONFIG_JSON=$FFBOX_CONFIG/config.json
 
 INSTALL=0
 NO_ENABLE=0
 CHECK=0
+FORCE=0
 for arg in "$@"; do
     case "$arg" in
         --install)    INSTALL=1 ;;
         --no-enable)  NO_ENABLE=1 ;;
         --check)      CHECK=1 ;;
-        -h|--help)    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --force)      FORCE=1 ;;
+        -h|--help)    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)            echo "06-services.sh: unknown option $arg" >&2; exit 2 ;;
     esac
 done
@@ -222,6 +255,12 @@ if [ "$CHECK" = 1 ]; then
             _drift="$_drift $u"
         fi
     done
+    if _rec=$(recorded_checkout) && [ "$_rec" != "$REPO_ROOT" ]; then
+        # Without this the exit code is answering a question nobody asked: drift against a
+        # checkout the machine does not run from is expected, not a problem to fix.
+        say "NOTE: this checkout ($REPO_ROOT) is not the recorded one ($_rec)."
+        say "      Any drift below is drift against a clone the machine does not run from."
+    fi
     if [ -n "$_drift" ]; then
         say "units differ from what this checkout and config render:$_drift"
         exit 1
@@ -231,6 +270,28 @@ if [ "$CHECK" = 1 ]; then
 fi
 
 if [ "$INSTALL" = 1 ]; then
+    if _rec=$(recorded_checkout); then
+        if [ "$_rec" != "$REPO_ROOT" ] && [ "$FORCE" = 0 ]; then
+            say "REFUSING: this is not the checkout this machine runs from."
+            say "  this checkout: $REPO_ROOT"
+            say "  recorded:      $_rec"
+            say "The units carry absolute paths, so installing from here would repoint ffwatch,"
+            say "ffweb, the egress fence and the self-updater at this directory. Either install"
+            say "from the recorded checkout:"
+            say "  sudo sh $_rec/ffbox/06-services.sh --install"
+            say "or, to make THIS one what the machine runs from, say so and then record it:"
+            say "  sudo sh $HERE/06-services.sh --install --force"
+            say "  sh $REPO_ROOT/registerAgents.sh"
+            exit 1
+        fi
+        if [ "$_rec" != "$REPO_ROOT" ]; then
+            say "WARNING: --force — repointing the runtime from $_rec to $REPO_ROOT."
+            say "         Run 'sh $REPO_ROOT/registerAgents.sh' afterwards, or the recorded"
+            say "         path stays wrong and the next install refuses for the wrong reason."
+        fi
+    else
+        say "nothing recorded at $RECORDED_FILE — installing from $REPO_ROOT"
+    fi
     if [ "$(id -u)" != 0 ]; then
         say "--install writes to $UNIT_DIR and needs root. Run:"
         say "  sudo sh $HERE/06-services.sh --install"
