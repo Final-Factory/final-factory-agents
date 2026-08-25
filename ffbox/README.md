@@ -833,25 +833,28 @@ A run gets no internet. It joins `ffbox-net`, a Docker `--internal` bridge with 
 whose only other occupant is `ffbox-egress` — a proxy that resolves and connects the names in
 `ffbox/egress/allowlist.txt` and refuses everything else at the TLS SNI. That list is Anthropic
 (the model has to be reachable or nothing runs) and Unity licensing and packages. No GitHub, no
-package registries, no LAN, and not this host either: `--internal` leaves the bridge gateway
-reachable, so the filter also installs an INPUT rule dropping traffic from `ffbox0` to the
-machine. Without it a run can open this box's SSH and SMB ports.
+package registries, no LAN, and not this host either. Under the rootless daemon the bridge lives
+inside the rootlesskit network namespace, so this machine is not on the other side of it and no
+firewall rule is involved. On the root daemon it was: `--internal` left the bridge gateway
+reachable, a run could open this box's SSH and SMB ports, and the filter had to insert an
+iptables INPUT drop for `ffbox0` — which is why that unit used to be the only one running as
+root. See `design/rootless_docker_design.txt` section 5.
 
 ```bash
-sh ffbox/egress/ffbox-egress.sh up        # networks, proxy, firewall rule (needs sudo once)
-sh ffbox/egress/ffbox-egress.sh status    # what is up, and whether the rule is really there
+sh ffbox/egress/ffbox-egress.sh up        # networks and proxy — no root, no sudo
+sh ffbox/egress/ffbox-egress.sh status    # what is up, and which daemon it was built in
 sh ffbox/egress/ffbox-egress.sh log       # every destination asked for, allowed and DENIED
 ```
 
-`01-dockerSetup.sh` builds and starts it; `ffbox-egress.service` re-applies the firewall rule at
+`01-dockerSetup.sh` builds and starts it; `ffbox-egress.service` rebuilds whatever is missing at
 boot, enabled outside `ffbox.target` so stopping the pipeline does not take the fence down.
 
 Two different edits, two different restarts. `allowlist.txt` is bind-mounted and both configs are
 regenerated at container start, so changing what is permitted is `docker restart ffbox-egress`.
 Changing `entrypoint.sh` or the `Dockerfile` needs the image rebuilt and the container **recreated**
 — `docker restart` reuses the image the container was created from, and will quietly go on running
-the old one. `sudo systemctl restart ffbox-egress` does the recreate. `up` needs root either way,
-because it cannot tell whether the firewall rule is in place without reading the rule.
+the old one. `sudo systemctl restart ffbox-egress` does the recreate; the sudo there is for
+systemd, not for the fence, which needs no privilege of its own any more.
 
 `ffbox` refuses to start a run when the network or the proxy is missing rather than falling back
 to the default bridge — the alternative to a filter that is not there is the whole internet.
