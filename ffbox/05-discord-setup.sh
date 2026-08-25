@@ -1,5 +1,5 @@
 #!/bin/sh
-# 05-discord-setup.sh — the Discord lanes' state: database, config, kill switch.
+# 05-discord-setup.sh — the Discord pipeline's state: database, config, kill switch.
 #
 # Normally you do not run this: `sh ffbox/setup.sh` runs it as stage 5. It needs no root and
 # starts nothing — the systemd units belong to 06-services.sh, because ffwatch and ffweb are
@@ -500,9 +500,9 @@ if ! blanks >/dev/null 2>&1; then
     say "     \"watch\" block in $FFBOX_CONFIG_JSON first, which is what says what it MEANS:"
     say '       "watch": { "agent_testing": { "kind": "ask", "forum": false, "venue": "private",'
     say '                                     "engage": "mention", "ping": false } }'
-    say "     kind ask/mention -> read-only answer lane; bug_report/suggestion -> triage;"
-    say "     directive -> the write lane. A channel not listed here falls to the classifier,"
-    say "     which fails closed to read-only. Re-run this script to get its blank."
+    say "     kind says what the channel IS (ask, bug_report, suggestion); every turn gets the"
+    say "     same capabilities whichever it is. A channel NOT listed here produces no events"
+    say "     at all — the watch block is the list. Re-run this script to get its blank."
     say "  4. ffdiscord doctor            # verifies the token, guild and channel permissions"
     say "     (reads the env, not secrets.env: 'set -a; . $FFBOX_CONFIG/secrets.env; set +a' first)"
     say "  5. sudo sh $HERE/06-services.sh --install   # picks up the new watch list"

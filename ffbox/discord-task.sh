@@ -4,10 +4,11 @@
 # Invoked by entrypoint.sh as PID 1 — not meant to be run directly.
 #
 # It reads ONE file, /ffbox/job.json, and turns it into one `claude -p` invocation. Every
-# capability the run has is named on that command line by the host: the lane's --tools list is
-# structural (an excluded tool is never offered to the model), so a read-only lane is
-# incapable of writing rather than asked not to. --disallowed-tools is a tripwire on top of
-# that, never a boundary — `sh -c 'git push'` walks straight through it.
+# capability the run has is named on that command line by the host: --tools is structural, so
+# an excluded tool is never offered to the model. Nothing is excluded any more — there is one
+# capability set — and --disallowed-tools is a tripwire on top of it, never a boundary, since
+# `sh -c 'git push'` walks straight through. What contains a run is that it holds no git or
+# GitHub credential, the host owns the refspec, and the clone is destroyed at the end.
 #
 # Deliberately NOT --dangerously-skip-permissions. run-as-user.sh keeps that flag for ordinary
 # interactive one-shots where the operator chose the prompt; here the prompt derives from text
@@ -53,12 +54,12 @@ fi
 # There must be NO ffdiscord in here. Nothing is expected to provide one — ffwatch mounts no
 # shim any more — so anything that resolves came from the image, would hold or want a token,
 # and is a path from player-authored text to the wire that this design does not grant. Say so
-# loudly; the run continues, because the lane is told not to post and the harness does the
-# posting either way.
+# loudly; the run continues, because the preamble says the harness posts and the harness does
+# the posting either way.
 FFDISCORD_RESOLVED=$(command -v ffdiscord 2>/dev/null || true)
 if [ -n "$FFDISCORD_RESOLVED" ]; then
     log "WARNING: ffdiscord resolves to $FFDISCORD_RESOLVED inside this container — nothing"
-    log "         should. No lane is supposed to have any path to Discord (design section 11)."
+    log "         should. No run is supposed to have any path to Discord (design section 11)."
 else
     log "ffdiscord: absent, as intended — the host composes and posts this turn's reply"
 fi
@@ -88,11 +89,10 @@ mkdir -p "$CLAUDE_CONFIG_DIR"
 # That line reads like a misconfiguration and is not one. Nothing here seeds the flag, on
 # purpose. `.claude/settings.json` in the game repo is a DEVELOPER'S WORKSTATION config — at
 # 7715b1ac its eleven allow entries were ssh to two named machines, scp, kill/pkill/pgrep,
-# `/Users/<someone>/...` paths and `sh scripts/*`. A lane's capabilities are ffwatch's to
-# decide (LANE_CAPABILITIES, READ_ALLOWED, WRITE_ALLOWED), not something a run inherits from
-# whatever that file happened to contain at the sha it checked out. Trust would let a lane gain
-# capability because somebody committed a local config tweak, which is exactly the drift the
-# enumerated lists exist to prevent.
+# `/Users/<someone>/...` paths and `sh scripts/*`. A run's capabilities are ffwatch's to decide
+# (CAPABILITIES), not something it inherits from whatever that file happened to contain at the
+# sha it checked out. Trust would let a run gain capability because somebody committed a local
+# config tweak, which is exactly the drift naming the set in one place exists to prevent.
 #
 # Measured 2026-08-24, so nobody has to re-derive it:
 #   * Trust gates ONLY permissions.allow. HOOKS RUN EITHER WAY — an untrusted workspace still
@@ -100,10 +100,10 @@ mkdir -p "$CLAUDE_CONFIG_DIR"
 #   * Of those eleven, only `scripts/*` would have meant anything in here. The ssh/scp entries
 #     are inert: ffbox-net is a Docker --internal bridge, so `ssh <host>` gets "Network is
 #     unreachable" and there is no ~/.ssh to authenticate with anyway.
-# The narrow list is not what contains a run — see ffwatch.py's "A TRIPWIRE, not a boundary".
-# It is what keeps permission_denials meaningful and the lane table the single answer to "what
-# can this lane do".
-log "workspace trust: not granted, deliberately — this lane's capabilities come from job.json,"
+# None of this is what contains a run — see ffwatch.py's "A TRIPWIRE, not a boundary". It is
+# what keeps permission_denials meaningful and job.json the single answer to "what can this run
+# do".
+log "workspace trust: not granted, deliberately — this run's capabilities come from job.json,"
 log "                 not from .claude/settings.json in the checkout (see the note above)"
 
 # job.json is JSON with player-authored text in it. Parse it with python3 (present in the
