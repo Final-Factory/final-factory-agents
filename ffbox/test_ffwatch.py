@@ -4713,6 +4713,25 @@ def test_systemd_units_hang_off_one_target():
     check("and renders the socket from the OWNER's uid, not from whoever ran sudo",
           'id -u "$RUN_USER"' in svc, )
 
+    # INSTALLING FROM THE WRONG CLONE. The units carry absolute paths rendered from $HERE, so
+    # --install from a scratch checkout silently repoints ffwatch, ffweb, the fence and the
+    # updater at it — and --check then agrees with whichever clone you ask, because it compares
+    # against the caller. A box with four clones ran from the wrong one for an afternoon on
+    # 2026-08-25 for exactly this reason.
+    check("--install checks the recorded checkout before doing anything",
+          "recorded_checkout" in svc and "REFUSING" in svc, )
+    check("and the check comes before the root check, so the sudo round trip is not wasted",
+          svc.index("REFUSING") < svc.index("--install writes to $UNIT_DIR"), )
+    check("--force is the deliberate way past it", "--force)      FORCE=1" in svc, )
+    check("which warns that the recorded path now needs updating too",
+          "WARNING: --force" in svc and "registerAgents.sh" in svc, )
+    check("a machine with nothing recorded is not blocked",
+          "nothing recorded at" in svc, )
+    check("--check says when its answer is about a clone the machine does not run from",
+          "is not the recorded one" in svc, )
+    check("and --force is documented in --help, whose sed range covers it",
+          "--install --force" in svc and "sed -n '2,14p'" in svc, )
+
     # The egress fence lost its root. Nothing in the script may reach for privilege again, and
     # the `sudo docker` fallback in particular would have addressed the WRONG daemon.
     egress = open(os.path.join(HERE, "egress", "ffbox-egress.sh"), encoding="utf-8").read()
