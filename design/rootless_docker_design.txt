@@ -1,0 +1,519 @@
+ffbox rootless Docker design
+============================
+
+Revision 1, 2026-08-25.
+
+Scope: move ffbox's containers off the root Docker daemon onto a rootless daemon owned by
+FinalFactoryTester, and close the second passwordless-root route that the ZFS sudoers rule
+leaves open. Both, or neither: each one alone leaves the account root without a password.
+
+Why this exists: on 2026-08-25, while narrowing the updater's sudoers grant, the account the
+updater runs as turned out to already hold passwordless root by a route that has nothing to do
+with sudo. FinalFactoryTester is in the docker group, and the docker group talks to a root
+daemon. The narrow grant was written to keep an unattended process from becoming root; it does
+not do that while a second, wider route is open next to it. The owner's requirement, stated the
+same day: FinalFactoryTester may sudo with a password, and must have no root access without one.
+
+
+0. What this must do
+--------------------
+
+  1. NO UNATTENDED ROOT. A process running as FinalFactoryTester with no human at a keyboard
+     must not be able to become root. Interactive `sudo` with a password stays, and is the
+     point: a person can still administer the box, a timer cannot.
+
+  2. KEEP THE EGRESS FENCE. The run container reaches the network only through the SNI
+     allowlist proxy, and reaches this host not at all. Whatever replaces the current
+     mechanism has to hold that line, and be checkable.
+
+  3. LEAVE THE WORKSPACE OWNED BY THE HOST USER. Files a container writes into the ZFS clone
+     must come back owned by FinalFactoryTester, or the harvest step on the host cannot read
+     or clean them.
+
+  4. DO NOT BREAK THE OTHER USERS OF THIS MACHINE. The root daemon serves accounts that are
+     not ffbox's. This change removes one member from a group; it does not turn a daemon off.
+
+Explicitly NOT a requirement: removing FinalFactoryTester from the sudo group. A human at a
+terminal is meant to be able to become root on this box. The password is what separates that
+human from the timer.
+
+
+1. Verified facts
+-----------------
+
+Measured on Loth2400 on 2026-08-25, not assumed. A rootless daemon was run on a scratch data
+root under /home/FinalFactoryTester, exercised, and removed; the root daemon was not touched.
+
+  a. THE ACCOUNT HAS PASSWORDLESS ROOT TODAY, VIA DOCKER. As FinalFactoryTester, with no
+     password:
+
+         docker run --rm -v /etc:/hostetc:ro alpine sh -c 'id -u; wc -l < /hostetc/shadow'
+         0
+         84
+
+     The socket is srw-rw---- root:docker and dockerd runs as root. sudo is not in the path,
+     so nothing prompts.
+
+  b. SUDO ITSELF IS PASSWORD-GATED. `sudo -n -l` reports `(ALL : ALL) ALL` from the sudo group
+     with no NOPASSWD, and a NOPASSWD list containing four zfs commands and nothing else.
+
+  c. THE NOPASSWD ZFS RULE IS WIDER THAN IT LOOKS. It contains
+
+         /usr/sbin/zfs clone -o * rpool/ff/golden@ffbox-* rpool/ff/run-*
+
+     and sudo matches wildcards per argument, so `-o mountpoint=/etc` is inside the grant.
+     /opt/FinalFactory is owned by 1015, and `zfs snapshot rpool/ff/golden@ffbox-*` is granted
+     too. Write files into golden, snapshot, clone with mountpoint=/etc, and the real /etc is
+     shadowed by a dataset whose sudoers and shadow the caller wrote. This is section 4.
+
+  d. THE SANDBOXED AGENT IS NOT THE PROBLEM. ffbox/ffbox:636 runs the agent container with no
+     /var/run/docker.sock mount and no --privileged. There is no docker route out of it. The
+     accounts that hold the group are host-side: the daemons, and any Claude Code session
+     started as FinalFactoryTester.
+
+  e. EVERY ROOTLESS PREREQUISITE IS ALREADY INSTALLED. Kernel 6.8.0-138, /usr/bin/newuidmap
+     and newgidmap, /etc/subuid and /etc/subgid carrying FinalFactoryTester:1083040:65536,
+     /usr/bin/dockerd-rootless-setuptool.sh, rootlesskit, slirp4netns, systemd 255 with
+     Delegate=yes on user@1015.service. Nothing needs installing except the change itself.
+
+  f. OVERLAY2 WORKS ON ZFS IN A USER NAMESPACE. This was the go/no-go. A rootless daemon with
+     its data root on rpool/USERDATA/FinalFactoryTester reported
+
+         Backing Filesystem: zfs
+         Storage Driver:     overlay2
+         Native Overlay Diff: true
+         Supports d_type:     true
+
+     and completed a pull, a `docker build` with a RUN layer, and a run. No fuse-overlayfs
+     fallback, and no performance caveat from one.
+
+  g. THE ESCALATION IS CLOSED, INCLUDING THE OPT-OUT. Against the rootless daemon, all three
+     forms return Permission denied: a plain `-v /etc:/hostetc:ro` read, `--privileged -v /:/host`,
+     and `--userns=host`. The last is why a userns-remap on the root daemon would not have
+     done: a docker-group member can ask for the host namespace back, and a rootless daemon
+     has no host namespace to give.
+
+  h. THE ENTRYPOINT ALREADY DOES THE RIGHT THING UNDER ROOTLESS. entrypoint.sh reads the
+     workspace's owner and skips its uid dance when that owner is 0:
+
+         uid=$(stat -c '%u' "$WORKSPACE")
+         if [ "$uid" -eq 0 ]; then exec bash "$TASK"; fi
+
+     The same 1015-owned directory stats differently depending on the daemon:
+
+         host-side owner                        uid=1015 gid=1015
+         inside a rootless container            uid=0    gid=0
+         inside a rootful container (today)     uid=1015 gid=1015
+
+     Rootless maps host 1015 to container 0, so the branch fires and the task runs as
+     container root, which is host 1015. Files written into a bind mount came back owned by
+     1015, confirmed directly. Requirement 3 is satisfied by code that already exists,
+     because it keys off observed ownership instead of a hardcoded uid.
+
+  i. NETWORK THROUGHPUT IS UNCHANGED. A 20 MB download inside a container took 1.05s rootless
+     and 1.09s rootful. slirp4netns is not a bottleneck for this workload.
+
+  j. THE EGRESS TOPOLOGY WORKS UNCHANGED. Built under the rootless daemon: an --internal
+     network with a fixed subnet and a pinned bridge name, a proxy container holding a static
+     --ip on it and a second attachment to a routed uplink, and a client on the internal
+     network only.
+
+         proxy -> 1.1.1.1:443                   reached
+         client -> proxy:8053                   reached
+         client -> 1.1.1.1:443                  sealed
+         client -> host 192.168.51.10:22        blocked
+
+     The last line is the one that retires work: the bridge lives inside the rootlesskit
+     network namespace, so the host is not on the other side of it. See section 5.
+
+  k. WITHOUT CGROUP DELEGATION, CONTAINERS DO NOT START AT ALL. With no user session the
+     daemon starts but every run fails:
+
+         open /sys/fs/cgroup/user.slice/user-1015.slice/cgroup.controllers: no such file or directory
+
+     There is no /run/user/1015 and user@1015.service is inactive, because lingering is not
+     enabled for this account. This is a hard prerequisite, not a loss of resource limits.
+
+  l. A CONTAINER ON THE DEFAULT BRIDGE STILL REACHES THIS HOST. It connected to
+     192.168.51.10:22. --disable-host-loopback blocks 127.0.0.1, not the host's LAN address.
+     True on the root daemon today as well, so not a regression, but it means ffbox's
+     deliberately unfiltered `--network bridge` mode stays genuinely unfiltered.
+
+  m. OTHER PEOPLE USE THE ROOT DAEMON. getent group docker lists spaceengineers,
+     FinalFactoryTester and rrobin, and there is a docker user at uid 1017 with lingering
+     already enabled. Requirement 4 comes from this line.
+
+     A full inventory of that daemon on 2026-08-25 found one container (ffbox-egress),
+     six images and two networks, all ffbox's, and one thing that is not: the volume
+     devops_postgres_data, 489 MB, created 2026-08-20 by a compose project named devops, with
+     nothing currently attached to it. See the prune hazard in section 7.
+
+     Rootless is not new to this machine. /home/lothsahn/.local/share/docker is a populated
+     store dating from January 2025 and lothsahn holds a subuid range, though without
+     lingering. Only the root daemon was running at the time of the inventory.
+
+  n. THE IMAGES ARE HEAVY. ffbox:latest is 11.3 GB on an 11 GB unityci/editor base; total
+     image weight 11.42 GB with 3.4 GB of build cache. /var/lib/docker is its own dataset,
+     rpool/docker, with 2.1 TB free.
+
+  o. ffbox-egress.sh FALLS BACK TO `sudo docker`. Line 70, taken when the caller is not in the
+     docker group, which is exactly what this change makes true.
+
+  p. 01-dockerSetup.sh ADDS THE OWNER TO THE DOCKER GROUP, at line 533, and warns at 534 that
+     the membership is root-equivalent.
+
+  q. NOTHING IN ffbox/ MENTIONS DOCKER_HOST. Every caller finds the daemon by its default
+     socket path today.
+
+  r. NOTHING IN ffbox/ SETS A RESOURCE LIMIT OR PUBLISHES A PORT. No --memory, --cpus, -p or
+     --publish anywhere. Nothing is lost by the cgroup situation in fact k once linger is on,
+     and nothing needs the rootless port driver.
+
+  s. THE WORKSPACE TREES ARE ALREADY OWNED BY THE USER. /opt/FinalFactory and /opt/ffruns are
+     both 1015:1015, as is the golden dataset's content.
+
+
+2. Why rootless, and not one of the cheaper options
+---------------------------------------------------
+
+Three alternatives were considered and rejected before the probe was run.
+
+USERNS-REMAP ON THE ROOT DAEMON is one line in daemon.json and looks like it does the job:
+container root maps to an unprivileged host uid, so a bind mount of / stops being readable. A
+docker-group member defeats it by passing --userns=host or --privileged, both of which restore
+the host namespace. It hardens against a container breaking out. It is not a boundary against
+the account holding the socket, which is the boundary this needs.
+
+A SOCKET PROXY filters the Docker API by endpoint. The endpoint ffbox needs is
+POST /containers/create, and that is the request carrying the bind mount. There is nothing left
+to filter once it is allowed.
+
+AN AUTHORIZATION PLUGIN, such as the OPA one, does express the policy: deny --privileged, deny
+bind mounts outside an allowed prefix. It also puts a third-party component in the path of every
+container start, where a bug or an unmaintained release stops all work on the box. The
+protection is real and so is the new failure mode.
+
+Rootless removes the privilege rather than policing its use. There is nothing to bypass because
+there is no root daemon on the other end of the socket.
+
+
+3. What the change is
+---------------------
+
+The daemon moves and everything else follows the socket.
+
+  - A rootless dockerd runs inside user@1015.service, installed by
+    dockerd-rootless-setuptool.sh, kept alive across logout by lingering, with its data root at
+    /opt/ffbox_docker: a ZFS dataset, rpool/ff/docker, owned by 1015. The path is set in
+    ~/.config/docker/daemon.json, since the rootless default is under the home directory.
+  - Every ffbox caller learns DOCKER_HOST=unix:///run/user/1015/docker.sock: the four systemd
+    units, and a profile.d line so an interactive session does not quietly talk to the root
+    daemon instead.
+  - ffbox-egress.service loses User= root and its iptables work, and becomes another unit
+    running as the owner (section 5).
+  - ffbox-egress.sh loses the `sudo docker` fallback (fact o), which after this change would
+    silently address the wrong daemon.
+  - 01-dockerSetup.sh stops adding anyone to the docker group and instead performs the
+    rootless install.
+  - FinalFactoryTester leaves the docker group. Last, after the rest is proven.
+
+What does not change: ffbox itself, the entrypoint's uid handling (fact h), the ZFS clone
+mechanism, the target and unit topology, and the root daemon that other accounts use.
+
+ONE AWKWARDNESS IN WHERE THE INSTALL RUNS. 01-dockerSetup.sh is a system stage: setup.sh runs
+it under sudo because installing the engine needs root. The rootless install is the opposite,
+a per-user operation that must run AS FinalFactoryTester and needs that user's systemd session,
+because dockerd-rootless-setuptool.sh finishes with `systemctl --user enable docker`. runuser
+alone does not provide the session. With lingering already on, the working form is
+
+    runuser -u FinalFactoryTester -- env XDG_RUNTIME_DIR=/run/user/1015 \
+        DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1015/bus \
+        dockerd-rootless-setuptool.sh install
+
+which is why lingering has to be enabled before the install rather than after it. setup.sh
+already has an as_owner helper for HOME-scoped work; this needs that plus the two variables.
+
+
+4. The ZFS sudoers hole
+-----------------------
+
+Rootless alone does not satisfy requirement 1. Fact c is a second passwordless route to root,
+and it is live right now.
+
+The rule allows any property on the clone. `-o mountpoint=` takes a path, ZFS will mount a
+dataset over a populated directory, and the dataset's content is a clone of a tree the caller
+owns. The sequence is: write /opt/FinalFactory/sudoers as yourself, `sudo zfs snapshot
+rpool/ff/golden@ffbox-evil`, `sudo zfs clone -o mountpoint=/etc rpool/ff/golden@ffbox-evil
+rpool/ff/run-evil`. Neither sudo call prompts.
+
+The fix is to pin the property, which costs nothing because ffbox already passes exactly one
+form of it. ffbox:523 calls
+
+    sudo zfs clone -o mountpoint="$MNT" "$SNAP" "$CLONE"
+
+with MNT=${RUNS_MNT}/run-${RUN_ID} and RUNS_MNT defaulting to /opt/ffruns. So the rule becomes
+
+    ${ZFS_BIN} clone -o mountpoint=${RUNS_MNT}/run-* ${GOLDEN_DS}@ffbox-* ${FF_DS}/run-*
+
+The other three commands in FFBOX_ZFS are already tight. `destroy` can only name a run-* clone
+or an ffbox-* snapshot, and a flag such as -r would be an extra argument that does not match.
+
+This is independent of everything else in this document and should land first. It is a one-line
+change to a hole that exists today, and it does not wait on the daemon move.
+
+
+5. The egress fence under rootless
+----------------------------------
+
+The fence has two mechanisms today. One survives untouched and one becomes unnecessary.
+
+The SNI allowlist proxy is the fence proper: an --internal Docker network that no container can
+route off, a proxy holding a fixed address on it with a second leg on a routed network, and run
+containers pointed at that address with --dns. All of it worked unmodified under the rootless
+daemon (fact j).
+
+The iptables INPUT rule is the other mechanism, and it exists for a specific reason recorded in
+the unit: on the root daemon, a container on an internal network can still reach the host at the
+bridge gateway, so the rule drops packets arriving on the ffbox0 interface. Under rootless the
+bridge is created inside the rootlesskit network namespace. The host is not at the other end of
+it, and the internal client could not reach 192.168.51.10:22 with no rule anywhere. The rule has
+nothing left to drop.
+
+Removing it takes the last root requirement out of ffbox. ffbox-egress.service is currently the
+only unit with no User=, precisely because iptables is not something the ffbox user has. With
+the rule gone the unit runs as the owner like the other four, and the ExecStart pointing at a
+script inside a user-writable checkout stops being a root shell with extra steps.
+
+Two things to preserve while doing it. The pinned bridge name exists so that a rule can name an
+interface Docker did not choose; with the rule gone the pin is no longer load-bearing, but it is
+still worth keeping for diagnosis. And `ffbox-egress.sh status` reports on the INPUT rule; that
+reporting should be removed rather than left to print a permanent MISSING.
+
+What is not fixed: fact l. A container started with --network bridge reaches this host's LAN
+address, on either daemon. That mode is documented as deliberately unfiltered and the comment
+should say that the host is included in what it does not filter.
+
+
+6. Boot ordering
+----------------
+
+The one genuinely new failure mode. ffbox's units are system units that run as the owner. The
+rootless daemon lives in user@1015.service, on the other side of the boundary that
+After= and Wants= cannot cross. At boot the units will start before the socket exists.
+
+Lingering makes /run/user/1015 exist from boot, which is necessary and not sufficient: the
+directory appears before dockerd inside it is listening. The fix is an ExecStartPre on each unit
+that needs docker, waiting for the socket with a bounded timeout, so a daemon that never comes
+up fails the unit visibly instead of producing a container error at the first turn.
+
+ffbox-egress.service is the one that matters most, because the proxy container carries
+--restart unless-stopped and the whole point of that unit is to be the thing that answers
+"is the fence up".
+
+
+7. Failure modes
+----------------
+
+  CALLER TALKS TO THE WRONG DAEMON. The quiet one. A missing DOCKER_HOST does not error; it
+  finds the root daemon, which is running, and does the work in the wrong place with different
+  images and different networks. The `sudo docker` fallback in fact o is the same failure with
+  a different cause. Both are why removing the group membership is the last step and not the
+  first: until it is gone, a wrong-daemon call succeeds and looks fine.
+
+  CONTAINERS REFUSE TO START. Fact k, if linger is not enabled or is turned off later. Loud
+  and unmistakable, and recorded here so the message is recognisable.
+
+  IMAGES ARE MISSING AFTER THE MOVE. The rootless daemon starts with an empty store. Nothing
+  breaks silently; the first run reports the image is not built. Rebuilding is 11.4 GB of pull
+  and build (fact n).
+
+  THE OLD DATASET IS NOT ORPHANED. rpool/docker holds the root daemon's store, and the other
+  accounts still use that daemon (fact m), so it stays where it is and keeps its 2.1 TB. The
+  rootless store is a separate dataset at /opt/ffbox_docker. Nothing is migrated between them;
+  the images are rebuilt (fact n).
+
+  A PRUNE ON THE ROOT DAEMON DELETES devops_postgres_data. That volume (fact m) has nothing
+  attached to it, so `docker system df` reports it 100% reclaimable and
+  `docker system prune --volumes` takes it. AUTHORISED 2026-08-25 by the owner, who holds
+  backups of it, so this is a decision already made rather than a hazard to route around.
+
+  Two things about the timing, neither of which changes the authorisation. Nothing forces the
+  prune: the rebuild writes to /opt/ffbox_docker, and rpool/docker has 2.1 TB free regardless.
+  And the natural moment is AFTER phase 6, not during phase 5, because until the rootless
+  daemon has run a real turn the root daemon's ffbox images are the fallback. Pruning them at
+  phase 5 deletes the way back.
+
+  Confirm the devops backup restores before running it. Everything else in that daemon can be
+  rebuilt from a Dockerfile; that volume cannot.
+
+  NO RESOURCE LIMITS. Only if the cgroupfs workaround used during the probe is shipped by
+  accident. With linger on, delegation is real. Nothing in ffbox sets a limit today (fact r),
+  so the exposure is a runaway container rather than a regression.
+
+
+8. Files this touches
+---------------------
+
+  02-zfsSetup.sh          the FFBOX_ZFS mountpoint pin (section 4). Independent of the rest.
+  01-dockerSetup.sh       stop adding to the docker group, and do not remove it either
+                          (question c); run the rootless install; report the membership in
+                          --status; rewrite the root-equivalence warning at 534, which stops
+                          being true.
+  06-services.sh          DOCKER_HOST and the socket-wait ExecStartPre in the rendered units.
+  systemd/ffbox-egress.service    drop the root comment and the iptables rationale; run as the
+                          owner; add the socket wait.
+  systemd/ffwatch.service DOCKER_HOST. ffwatch.py runs `docker ps` at line 4040 and launches
+                          every turn through ffbox, which runs `docker run`.
+  systemd/ffbox-update.service
+                          DOCKER_HOST, for its CHILDREN rather than itself: update_ffbox.sh
+                          names docker only in a comment, but it re-runs setup.sh, which runs
+                          03-build.sh and 04-warmLibrary.sh.
+  ffweb.service, ffdiscord-listener.service
+                          nothing. Neither ffweb.py nor ffdiscord_listener.py contains the
+                          string docker. Listed so the omission reads as checked rather than
+                          forgotten.
+  egress/ffbox-egress.sh  remove the `sudo docker` fallback, apply_rules, rules_present, the
+                          require_root and as_root helpers, and the INPUT line in status.
+  ffbox/ffbox             the --network bridge comment (fact l).
+  README.md               the docker-group identity claim at line 663, and the setup story.
+  test_ffwatch.py         assertions for the new sudoers shape and the unit contents.
+
+06-services.sh is again the only place that learns the new unit contents, and the rendered-unit
+check it already carries is what will report drift after this lands.
+
+DELIBERATELY NOT EDITED: 03-build.sh and 04-warmLibrary.sh call docker directly, once and eight
+times, and need no change. Both run as the owner, and both inherit DOCKER_HOST from whatever
+started them: the unit's Environment= when the updater runs setup.sh, the profile.d line when a
+human does. Naming them here so that a later reader does not add a third place for the socket
+path to be wrong.
+
+
+9. Open questions
+-----------------
+
+  a. WHERE THE ROOTLESS STORE LIVES. DECIDED 2026-08-25 by the owner: its own dataset,
+     rpool/ff/docker, mounted at /opt/ffbox_docker and owned by 1015. Not under the home
+     directory, and not by repointing rpool/docker, which stays with the root daemon the other
+     accounts use. This follows the shape already in place for rpool/ff/golden at
+     /opt/FinalFactory, and rpool/ff carries mountpoint=none so the child needs the mountpoint
+     named explicitly.
+
+     The overlay2 driver needs xattr=sa on the dataset. rpool sets it pool-wide, along with
+     acltype=posix, dnodesize=auto and compression=lz4, so a new child of rpool/ff inherits all
+     four and no property has to be set by hand. Worth checking anyway after creation, because
+     a store that silently lacks xattr=sa fails later and further away.
+
+     A quota is available and not set, matching rpool/docker. If the build cache turns out to
+     grow without bound it belongs here, at a size well clear of the 11.4 GB the images need.
+
+  b. WHETHER THE SOCKET WAIT BELONGS IN EACH UNIT OR IN ONE. A single oneshot unit that the
+     others order after is tidier than four copies of the same ExecStartPre, and it is one more
+     unit to install. Leaning towards the shared oneshot.
+
+  c. WHETHER 01-dockerSetup.sh SHOULD REMOVE THE GROUP MEMBERSHIP ITSELF. DECIDED 2026-08-25
+     by the owner: no. This is the only ffbox machine, so the removal is one command run once
+     by a human, and a script that performs it could cut the daemons off from the socket they
+     are using, mid-flight.
+
+     The script must still stop ADDING the membership. That half is not optional: leaving the
+     usermod in place means the next run of setup.sh silently reopens the hole this document
+     closes, and setup.sh is now re-run unattended by the updater. Report the membership in
+     --status, add nothing, remove nothing.
+
+  d. WHETHER THE OTHER MEMBERS SHOULD BE TOLD. spaceengineers and rrobin hold the same
+     root-equivalent membership on this machine (fact m). Out of scope here, worth raising
+     with the owner separately.
+
+
+10. Tasks
+---------
+
+Each phase leaves the box working. The order is chosen so that the two phases which change the
+security posture are the first and the last. Tasks marked (root) need a human at a terminal,
+because sudo prompts and this document exists to keep that true.
+
+  PHASE 1  PIN THE ZFS CLONE MOUNTPOINT. Standalone. Closes a hole that is open today and
+           depends on nothing else here.
+
+           1.1  02-zfsSetup.sh: FFBOX_ZFS gains `-o mountpoint=${RUNS_MNT}/run-*` in place of
+                `-o *`. RUNS_MNT is already a variable in that script (line 29, --runs at 79).
+                Rewrite the "Deliberately narrow" comment to say what the pin buys.
+           1.2  test_ffwatch.py: assert the alias carries no bare `-o *`, and that the pinned
+                pattern matches the mountpoint ffbox:523 actually passes. That pairing is the
+                part that rots.
+           1.3  (root) visudo -c on the rendered file, re-run 02-zfsSetup.sh, confirm a real
+                ffbox turn still clones, and confirm `sudo -n zfs clone -o mountpoint=/etc ...`
+                is refused.
+
+  PHASE 2  STAND UP THE ROOTLESS DAEMON. Nothing points at it yet; the root daemon is still
+           doing the work.
+
+           2.1  (root) loginctl enable-linger FinalFactoryTester. Confirm /run/user/1015
+                exists and user@1015.service is active. Must precede 2.3 (section 3).
+           2.2  (root) zfs create -o mountpoint=/opt/ffbox_docker rpool/ff/docker, chown to
+                1015, confirm xattr=sa was inherited (question a).
+           2.3  (root) dockerd-rootless-setuptool.sh install, run as the owner with the two
+                session variables from section 3. Write ~/.config/docker/daemon.json with
+                "data-root": "/opt/ffbox_docker".
+           2.4  Verify the daemon reports storage-driver overlay2, Native Overlay Diff true,
+                and cgroup=systemd. Not cgroup=none: that is the probe workaround from fact k
+                and it means delegation is missing.
+
+  PHASE 3  POINT THE CALLERS AT IT. Reversible throughout, because the variable is what
+           selects the daemon.
+
+           3.1  Decide question b, then render DOCKER_HOST and the bounded socket wait from
+                06-services.sh into the three units that need them: ffwatch, ffbox-update and
+                ffbox-egress (section 6, and the file list in section 8 for why the other two
+                are left alone).
+           3.2  A profile.d line, so an interactive session does not silently address the root
+                daemon.
+           3.3  Extend 06-services.sh --check to catch drift on the new lines.
+           3.4  test_ffwatch.py: assertions on the rendered unit contents.
+
+  PHASE 4  MOVE THE FENCE.
+
+           4.1  egress/ffbox-egress.sh: remove the `sudo docker` fallback (line 70),
+                apply_rules, rules_present, require_root, as_root, and the INPUT lines in
+                cmd_status (188, 190). The largest single edit in this document.
+           4.2  systemd/ffbox-egress.service: drop User= root and the iptables rationale, run
+                as the owner, add the socket wait. The header comment explains a design that
+                will no longer exist and has to be rewritten, not trimmed.
+           4.3  ffbox/ffbox: amend the --network bridge comment to say that the host is among
+                what that mode does not filter (fact l).
+           4.4  Verify the four-line fence check from fact j against the real proxy and a real
+                run container, not against alpine.
+
+  PHASE 5  REBUILD AND PROVE. Leave the root daemon's images alone: they are the way back
+           until this passes. The last point at which backing out is a matter of unsetting a
+           variable.
+
+           5.1  01-dockerSetup.sh: stop calling usermod -aG docker (533), perform the rootless
+                install instead, report the existing membership in --status, and rewrite the
+                root-equivalence warning at 534, which stops being true (question c).
+           5.2  Rebuild ffbox:latest against the rootless daemon. 11.4 GB, mostly the
+                unityci/editor pull (fact n).
+           5.3  Run a real ffbox turn end to end. Confirm workspace files come back owned by
+                1015. Fact h says they will; this is where that is confirmed on the real image
+                rather than on alpine.
+
+  PHASE 6  CLOSE THE DOOR.
+
+           6.1  (root) sudo gpasswd -d FinalFactoryTester docker. Supplementary groups are read
+                at process start, so everything already running keeps socket access until it is
+                restarted, and the operator's own shell keeps it until they log out. Neither is
+                a reason to skip the restart.
+           6.2  Verify the escalation in fact a now fails, from a fresh login.
+           6.3  README.md: the docker-group identity claim at line 663, and the setup story.
+           6.4  test_ffwatch.py: assert nothing under ffbox/ reintroduces a docker-group add or
+                a `sudo docker` call.
+
+  PHASE 7  CLEAN OUT THE ROOT DAEMON. Housekeeping, and only once phase 6 has held.
+
+           7.1  Confirm the devops_postgres_data backup restores (section 7).
+           7.2  Remove ffbox's images and the two ffbox networks from the root daemon.
+           7.3  Prune devops_postgres_data, which the owner has authorised.
+
+Phase 6 is the only one that satisfies requirement 1 for the docker route, and phase 1 is the
+only one that satisfies it for the sudo route. The four in between are what keep the box
+running between them, and phase 7 changes nothing.
