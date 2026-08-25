@@ -147,11 +147,19 @@ For every other kind the two existing steps stay, in order. First the channel's 
 4. Watched channels only
 ------------------------
 
+THE LISTENER HALF SHIPPED 2026-08-25, ahead of the rest of this design, because it needed no
+lane work: ffdiscord_listener.py no longer falls through to "was I actually spoken to" for a
+channel outside --channels. An addressed message in an unlisted channel is logged and dropped,
+whoever sent it, and the listener stops emitting player_mention and operator_directive
+altogether. ff-discord 1.8.0. What is left below is the ffwatch half.
+
 A channel with no watch entry produces nothing. This closes the `unknown` kind, which currently
 falls through to the classifier, and it removes the "bug_report" default that ingest_thread()
 applies to a thread whose alias is not in the config.
 
-One guard at the top of ingest_event(), before dispatch:
+The doorbell can no longer deliver one (see above), so what remains is the ingest side, which
+the sweep and a stale doorbell can still reach. One guard at the top of ingest_event(), before
+dispatch:
 
   - operator_dm is exempt by construction. A DM has no channel to configure, and ingest_dm()
     already drops any DM whose author is not in the operator set.
@@ -164,9 +172,11 @@ refuses a thread with no watch entry instead of guessing.
 
 The sweep already reads only watched aliases and needs no change.
 
-Consequence to accept: an @-mention of the bot in an unconfigured channel is serviced today and
-will be dropped. That is the requirement as written. The log line is what makes it findable when
-somebody asks why the bot ignored them.
+Consequence accepted 2026-08-25: an @-mention of the bot in an unconfigured channel used to be
+serviced and is now dropped, INCLUDING an operator's — the channel decides, not the author. An
+operator keeps two routes that were never channel-scoped: a DM, which has no channel to list,
+and any watched channel. The log line is what makes it findable when somebody asks why the bot
+ignored them, and _bot_is_addressed survives only to decide whether to write it.
 
 
 5. Rate limits by trust tier
@@ -473,6 +483,10 @@ THE PLUGIN — and note which consumer needs what
                                       point — but loses the word lane. "ffwatch caps the `fix`
                                       lane at three turns per rolling day" (66) becomes five per
                                       rolling 24 hours for player-tier turns.
+
+  skills/discord-cli/SKILL.md         DONE 2026-08-25 with the listener change: the event-kind
+                                      list and the "everywhere else only a direct @-mention"
+                                      paragraph. Nothing lane-shaped left in it.
 
   skills/ask-claude/SKILL.md          "the lane's tools named on the command line" and "a
                                       read-only lane is launched with no write tools at all"
