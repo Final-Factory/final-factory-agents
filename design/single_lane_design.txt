@@ -2,6 +2,10 @@ Single-lane ffbox design
 ========================
 
 Revision 1, 2026-08-25.
+Revision 3, 2026-08-25: IMPLEMENTED, except for one item that is not a code change. Sections 2,
+3, 4, 5, 6, 7, 8 and 10 are shipped, along with the harvest half of section 9. The tests in
+section 12 were rewritten alongside, and the plugin and documentation work in section 14 is
+done. What is left is in section 16.
 Revision 2, 2026-08-25: sections 14 and 15 added — the file-by-file work list and the order to
 do it in. Three things the first revision missed: 05-discord-setup.sh seeds the retired config
 keys onto every machine, a live config needs its retired keys handled rather than left to
@@ -571,3 +575,32 @@ OUTSIDE THIS REPO
      the bump is what reaches interactive sessions.
 
   5. README and the security model, rewritten against the code that now exists.
+
+
+16. What is left
+----------------
+
+**Take the `workflow` scope off the host push token.** Not a commit — a credential edit, and
+the only item on this list. The harvest now refuses to publish a range touching `.github/**`,
+which closes the path from inside; this closes it again at push time, one step later, with an
+error nobody can edit from inside the container. Two independent failures are the point: the
+harvest check lives in a file an agent's own pull request could propose changing.
+
+Two things deliberately NOT done, recorded so they are decisions rather than oversights:
+
+  retired config keys   No machinery to log and prune them. load_config()'s `k in DEFAULTS`
+                        filter already drops a retired TOP-LEVEL key from the ffbox config
+                        file, this box's config was edited by hand, and the owner declined the
+                        rest. The gap that remains: a retired key INSIDE a known dict survives
+                        _deep_merge, and the LEGACY Discord config block is merged without the
+                        DEFAULTS filter at all. If another machine ever comes online carrying
+                        the old lane-keyed `rate_limits`, its `answer`/`triage`/`fix` entries
+                        will sit beside the live ones doing nothing. Check by hand.
+
+  the vestigial fields  `run.unity` stays as a column, because an adopted run records what the
+                        container actually did rather than what it was asked for. `unity: True`
+                        stays in the capabilities dict, though nothing schedules on it and
+                        discord-task.sh reads it only for one stderr line. The `agent` key in
+                        job.json is DEAD — nothing reads it; the role reaches the model as prose
+                        in the prompt. Delete the last two together when something else is
+                        already changing the job.json shape, rather than churning it twice.
