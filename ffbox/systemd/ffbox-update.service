@@ -15,14 +15,29 @@
 # untested one.
 Description=ffbox self-update (fetch, fast-forward, restart)
 Wants=network-online.target
-After=network-online.target
+After=network-online.target ffbox-docker.service
 
 [Service]
 Type=oneshot
-# Root, and the script drops to the checkout's owner for every git call (see as_owner in it).
-# The alternative — running as the owner with a NOPASSWD sudoers entry for systemctl — is a
-# permission file to maintain for nothing gained.
+# UNPRIVILEGED, as the account that owns the checkout. This used to run as root "and drop to the
+# owner for every git call", which is backwards: the thing that fetches code off the internet
+# every five minutes and then executes it is the last process on the box that should start with
+# root and give privilege away. It now starts with none.
+#
+# The one thing it cannot do as itself is stop and start the services whose code it is
+# replacing, so 02-zfsSetup.sh grants exactly those systemctl verbs on exactly these units in
+# /etc/sudoers.d/ffbox. Installing a unit is deliberately NOT granted — writing
+# /etc/systemd/system can define a unit that runs anything as anyone, which is root by another
+# name — so a unit-template change is applied by a human running
+# `sudo sh ffbox/06-services.sh --install`. The updater says when that is owed.
+User=@USER@
+Group=@GROUP@
+Environment=HOME=@HOME@
 Environment=FFBOX_UPDATE_REPO=@REPO@
+# For its CHILDREN rather than for itself: update_ffbox.sh never calls docker, but it re-runs
+# setup.sh, which runs 03-build.sh and 04-warmLibrary.sh, and both do. An unset DOCKER_HOST
+# there would rebuild the image on the root daemon, where nothing would ever use it.
+Environment=DOCKER_HOST=unix://@DOCKERSOCK@
 ExecStart=/bin/sh @UPDATE@
 
 # THE DRAIN CAN TAKE AN HOUR. DefaultTimeoutStartSec is 90 seconds, which would kill the

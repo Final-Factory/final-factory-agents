@@ -12,12 +12,20 @@
 #
 # A SYSTEM unit running as @USER@, not a user unit: a build server reboots with nobody logged
 # in, and user units need `loginctl enable-linger` to survive that. Running as @USER@ keeps the
-# identity everything else already depends on — the docker group, the NOPASSWD zfs rules ffbox
-# needs for its clones, and the Claude credential in that user's home.
+# identity everything else already depends on — the rootless Docker daemon in that user's own
+# systemd instance, the NOPASSWD zfs rules ffbox needs for its clones, and the Claude
+# credential in that user's home.
+#
+# The rootless daemon is the reason this orders after ffbox-docker.service: that daemon lives
+# in user@<uid>.service, on the far side of a boundary After= cannot cross by itself. See
+# design/rootless_docker_design.txt section 6.
 Description=ffwatch (Discord conversation manager for ffbox)
 PartOf=ffbox.target
-After=network-online.target ffdiscord-listener.service docker.service ffbox-egress.service
+After=network-online.target ffdiscord-listener.service ffbox-docker.service ffbox-egress.service
 Wants=network-online.target ffdiscord-listener.service ffbox-egress.service
+# Requires, not Wants: with no docker there is nothing for this to do but crash-loop launching
+# containers, and a named failure on the gate is easier to read than that.
+Requires=ffbox-docker.service
 
 # A launch failure that repeats is a configuration problem; back off rather than spinning up
 # containers in a loop. These two live in [Unit] — systemd moved them there in v229 and
@@ -29,9 +37,16 @@ StartLimitBurst=5
 Type=simple
 User=@USER@
 Group=@GROUP@
-# ffbox shells out to docker and to sudo zfs; both are granted to this user, not to root.
-SupplementaryGroups=docker
+# NO SupplementaryGroups=docker. It used to be here, and it was the quiet defeat of the whole
+# rootless change: a unit that names the group gets it whether or not the account is still a
+# member, so `gpasswd -d` would have closed the hole for every process on the box EXCEPT the
+# one that launches containers. ffbox reaches the rootless daemon through DOCKER_HOST instead,
+# and needs no group at all.
 Environment=HOME=@HOME@
+# The rootless daemon, in the owner's own runtime directory. Unset, docker would find the ROOT
+# daemon's socket, succeed, and do the work in the wrong place with the wrong images — the
+# failure mode named in design/rootless_docker_design.txt section 7.
+Environment=DOCKER_HOST=unix://@DOCKERSOCK@
 ExecStart=/usr/bin/env python3 @FFWATCH@ run
 EnvironmentFile=-@HOME@/.config/ffbox/secrets.env
 Restart=always

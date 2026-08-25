@@ -1,0 +1,33 @@
+[Unit]
+# The rootless Docker gate. Every ffbox unit that speaks to docker orders after this one, and
+# this one does not finish until the daemon answers.
+#
+# @WAITDOCKER@ and @DOCKERSOCK@ are substituted by 06-services.sh — this repo can be cloned
+# anywhere and the socket path carries the owner's uid. Re-run
+# `sudo sh ffbox/06-services.sh --install` after moving the checkout or changing the owner.
+#
+# WHY A UNIT AND NOT AN ExecStartPre ON EACH. Four copies of the same wait is four places to
+# fix it, and a shared oneshot gives the failure one name in `systemctl status` instead of
+# burying it inside whichever service happened to start first.
+#
+# NOT PartOf ffbox.target. A stop of the pipeline should not un-gate it, and Type=oneshot with
+# RemainAfterExit means the wait is paid once per boot rather than on every dependent start.
+Description=ffbox: wait for the rootless Docker daemon
+After=network.target
+
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=@USER@
+Group=@GROUP@
+Environment=HOME=@HOME@
+ExecStart=/bin/sh @WAITDOCKER@ @DOCKERSOCK@ 90
+# Comfortably past the wait's own deadline, so the script gets to print its diagnosis rather
+# than being killed a second before it explains itself.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

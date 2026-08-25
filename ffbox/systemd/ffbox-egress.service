@@ -1,6 +1,5 @@
 [Unit]
-# The egress filter: the internal network, the SNI proxy on it, and the host firewall rule that
-# stops a run reaching this machine at the bridge gateway.
+# The egress filter: the internal network and the SNI proxy that sits on it.
 #
 # @EGRESS@ is substituted with the absolute path to ffbox/egress/ffbox-egress.sh by
 # 06-services.sh — this repo can be cloned anywhere. Re-run
@@ -11,27 +10,37 @@
 # ffwatch starts a container rather than alongside it. A run that finds no proxy fails in
 # ffbox's preflight, which is safe but is a waste of everybody's afternoon.
 #
-# The container itself carries --restart unless-stopped, so Docker is what keeps it alive minute
-# to minute. This unit exists for the two things Docker does not do: it re-applies the netfilter
-# rule, which no reboot preserves, and it is somewhere for `systemctl status` to answer the
-# question "is the fence up".
-Description=ffbox egress filter (internal network, SNI allowlist, host firewall rule)
-After=docker.service
-Requires=docker.service
+# The container itself carries --restart unless-stopped, so the rootless daemon is what keeps it
+# alive minute to minute. This unit exists to build what is missing at boot and to be somewhere
+# for `systemctl status` to answer the question "is the fence up".
+#
+# RUNS AS @USER@, like every other unit here. Until 2026-08-25 this was the one with no User=,
+# because it inserted an iptables INPUT rule and iptables is not something the ffbox user has —
+# which made it a root process executing a shell script the ffbox user can write. Under the
+# rootless daemon the bridge is inside the rootlesskit network namespace, the host is not
+# reachable across it, and the rule has nothing left to drop. Measured; see
+# design/rootless_docker_design.txt section 5 and the header of ffbox-egress.sh.
+Description=ffbox egress filter (internal network + SNI allowlist)
+After=ffbox-docker.service
+Requires=ffbox-docker.service
 Before=ffwatch.service
 
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-# Root, unlike every other unit here: iptables is not something the ffbox user has, and giving it
-# passwordless iptables would hand a docker-group user a second route to the same place.
 Type=oneshot
 RemainAfterExit=yes
+User=@USER@
+Group=@GROUP@
+Environment=HOME=@HOME@
+# Which daemon the fence gets built in. Unset, docker would find the root daemon's socket and
+# build it somewhere no run will ever be started.
+Environment=DOCKER_HOST=unix://@DOCKERSOCK@
 ExecStart=/bin/sh @EGRESS@ up
-# Deliberately no ExecStop. Taking the rule out when the unit stops would mean `systemctl stop`
-# on a fence quietly opens it; leaving it in place fails closed, and `ffbox-egress.sh down` is
-# there for somebody who means it.
+# Deliberately no ExecStop. Tearing the proxy down when the unit stops would mean `systemctl
+# stop` on a fence quietly opens it; leaving it standing fails closed, and `ffbox-egress.sh
+# down` is there for somebody who means it.
 TimeoutStartSec=180
 
 [Install]

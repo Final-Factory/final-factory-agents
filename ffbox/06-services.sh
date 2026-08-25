@@ -7,6 +7,7 @@
 #                                        /etc/systemd/system, start ffbox.target, enable it
 #   sudo sh ffbox/06-services.sh --install --no-enable
 #                                        install them but leave them stopped
+#   sh ffbox/06-services.sh --check      exit 1 if installing would change anything (no root)
 #
 # WHY THIS IS ITS OWN STAGE. The units are ffbox's, not Discord's: ffwatch is the conversation
 # manager, ffweb is the page over the whole database, and only the listener is Discord-specific.
@@ -25,14 +26,33 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 HOME=${HOME%/}
 UNIT_DIR=/etc/systemd/system
-# --install is meant to be run under sudo, and under sudo $HOME and `id -un` are root's. The
-# units have to describe the user who actually owns the checkout, the docker group and the
-# Claude credential, so recover that identity from SUDO_USER.
+# WHO THE UNITS MUST DESCRIBE. Run as root, $HOME and `id -un` are root's, but the units have to
+# name the user who actually owns the checkout, the docker group and the Claude credential.
+#
+# THREE SOURCES, most explicit first, because SUDO_USER alone is not enough:
+#   FFBOX_RUN_USER  passed by a caller that already knows. ffbox-update.service runs this as
+#                   root from systemd, where there is NO SUDO_USER at all — so the sudo branch
+#                   below never fired and every automatic re-install rendered @USER@=root and
+#                   @HOME@=/root: units pointing at a home with no config, no token and no
+#                   checkout. Latent for as long as unit templates only changed by hand.
+#   SUDO_USER       a human typing `sudo sh ffbox/06-services.sh --install`.
+#   checkout owner  the last resort, and the same answer update_ffbox.sh derives for its git
+#                   calls. If root really does own the checkout this resolves to root, which is
+#                   then correct rather than a fallback.
 RUN_USER=$(id -un)
-if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
-    RUN_USER=$SUDO_USER
-    HOME=$(getent passwd "$RUN_USER" | cut -d: -f6)
-    HOME=${HOME%/}
+if [ "$(id -u)" = 0 ]; then
+    _who=${FFBOX_RUN_USER:-}
+    if [ -z "$_who" ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+        _who=$SUDO_USER
+    fi
+    if [ -z "$_who" ]; then
+        _who=$(stat -c %U "$HERE/../.git" 2>/dev/null || stat -c %U "$HERE/.." 2>/dev/null || echo root)
+    fi
+    if [ -n "$_who" ] && [ "$_who" != root ]; then
+        RUN_USER=$_who
+        HOME=$(getent passwd "$RUN_USER" | cut -d: -f6)
+        HOME=${HOME%/}
+    fi
 fi
 RUN_GROUP=$(id -gn "$RUN_USER")
 FFBOX_CONFIG=$HOME/.config/ffbox
@@ -41,10 +61,12 @@ FFBOX_CONFIG_JSON=$FFBOX_CONFIG/config.json
 
 INSTALL=0
 NO_ENABLE=0
+CHECK=0
 for arg in "$@"; do
     case "$arg" in
         --install)    INSTALL=1 ;;
         --no-enable)  NO_ENABLE=1 ;;
+        --check)      CHECK=1 ;;
         -h|--help)    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)            echo "06-services.sh: unknown option $arg" >&2; exit 2 ;;
     esac
@@ -62,6 +84,10 @@ UPDATE_UNITS="ffbox-update.service ffbox-update.timer"
 # host and off the internet, so it is enabled outside ffbox.target and a stop of the target
 # leaves it standing.
 EGRESS_UNITS="ffbox-egress.service"
+# The rootless Docker gate. First in every loop below, because everything else that touches
+# docker orders after it. Not part of ffbox.target either: a stop of the pipeline should not
+# un-gate it. See design/rootless_docker_design.txt section 6.
+DOCKER_UNITS="ffbox-docker.service"
 
 # The listener watches whatever the config says to watch. Reading it back from the ffwatch block
 # means adding a channel there and re-installing is enough — no second place to edit, and no
@@ -145,8 +171,17 @@ render_units() {
     fi
     _webhost=$(web_bind | cut -d' ' -f1)
     _webport=$(web_bind | cut -d' ' -f2)
+    # The rootless daemon's socket carries the OWNER's uid, not this process's: --install runs
+    # under sudo, so `id -u` here would be 0 and every unit would point at root's runtime
+    # directory, which does not exist. Ask for the uid of the user the units run as.
+    _uid=$(id -u "$RUN_USER" 2>/dev/null || echo "")
+    if [ -z "$_uid" ]; then
+        echo "06-services.sh: cannot resolve a uid for '$RUN_USER'" >&2
+        exit 1
+    fi
+    _dockersock="/run/user/$_uid/docker.sock"
     mkdir -p "$_dest"
-    for u in $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
+    for u in $DOCKER_UNITS $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
         sed -e "s|@FFWATCH@|$HERE/ffwatch.py|g" \
             -e "s|@UPDATE@|$HERE/update_ffbox.sh|g" \
             -e "s|@EGRESS@|$HERE/egress/ffbox-egress.sh|g" \
@@ -159,9 +194,40 @@ render_units() {
             -e "s|@FFDHOME@|$FFDISCORD_HOME|g" \
             -e "s|@WEBHOST@|$_webhost|g" \
             -e "s|@WEBPORT@|$_webport|g" \
+            -e "s|@DOCKERSOCK@|$_dockersock|g" \
+            -e "s|@WAITDOCKER@|$HERE/wait-for-docker.sh|g" \
             "$HERE/systemd/$u" > "$_dest/$u"
     done
 }
+
+# --check answers ONE question, in an exit code: would installing right now change anything.
+#
+# It exists because the rendered units depend on the CONFIG as well as on this checkout — the
+# listener's --channels comes from the ffwatch watch block — so "did any file in git change"
+# cannot answer it. Somebody adding a channel by hand leaves the units stale with no commit to
+# notice, and the symptom is a listener still watching yesterday's channels. The updater runs
+# this on every pass and reinstalls when it says so.
+#
+# No root needed: rendering is free, and only installing writes.
+if [ "$CHECK" = 1 ]; then
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
+    render_units "$TMP"
+    _drift=""
+    for u in $DOCKER_UNITS $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
+        if [ ! -f "$UNIT_DIR/$u" ]; then
+            _drift="$_drift $u(missing)"
+        elif ! cmp -s "$UNIT_DIR/$u" "$TMP/$u"; then
+            _drift="$_drift $u"
+        fi
+    done
+    if [ -n "$_drift" ]; then
+        say "units differ from what this checkout and config render:$_drift"
+        exit 1
+    fi
+    say "units are current"
+    exit 0
+fi
 
 if [ "$INSTALL" = 1 ]; then
     if [ "$(id -u)" != 0 ]; then
@@ -188,7 +254,7 @@ if [ "$INSTALL" = 1 ]; then
     # command line — which is exactly how ffweb stayed on 127.0.0.1 through two correct installs.
     CHANGED=""
     WAS_ACTIVE=""
-    for u in $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
+    for u in $DOCKER_UNITS $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
         cmp -s "$TMP/$u" "$UNIT_DIR/$u" 2>/dev/null || CHANGED="$CHANGED $u"
         case "$u" in
             *.target) continue ;;
@@ -196,7 +262,7 @@ if [ "$INSTALL" = 1 ]; then
         systemctl is-active --quiet "$u" 2>/dev/null && WAS_ACTIVE="$WAS_ACTIVE $u"
     done
 
-    for u in $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
+    for u in $DOCKER_UNITS $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
         install -m 0644 "$TMP/$u" "$UNIT_DIR/$u"
         did "$UNIT_DIR/$u"
     done
@@ -217,9 +283,16 @@ if [ "$INSTALL" = 1 ]; then
         # firing, because a bad commit that stops ffwatch is exactly when the next one matters.
         # Before the pipeline, not after: ffwatch's first sweep can launch a container, and that
         # container has nowhere to resolve a name from until this is up.
+        # BEFORE egress and before the pipeline: both talk to the rootless daemon, and this is
+        # the unit that knows whether the daemon is there at all. A failure here is the one
+        # worth reading, so let it be the first thing that fails.
+        systemctl enable --now ffbox-docker.service \
+            || did "WARNING: ffbox-docker.service failed — the rootless daemon is not answering.
+                    Nothing below this line will work. $HERE/wait-for-docker.sh says why."
+        did "enabled ffbox-docker.service (waits for the rootless Docker socket)"
         systemctl enable --now ffbox-egress.service \
             || did "WARNING: ffbox-egress.service failed — ffbox will refuse to start a run"
-        did "enabled ffbox-egress.service (internal network + SNI allowlist + firewall rule)"
+        did "enabled ffbox-egress.service (internal network + SNI allowlist)"
         systemctl enable --now ffbox-update.timer
         did "enabled ffbox-update.timer (fetch + fast-forward + restart, every 5min)"
         did "  next update check: $(systemctl show ffbox-update.timer -p NextElapseUSecRealtime --value 2>/dev/null)"
@@ -259,7 +332,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 render_units "$TMP"
 STALE=0
-for u in $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
+for u in $DOCKER_UNITS $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
     st=$([ -f "$UNIT_DIR/$u" ] && echo installed || echo 'NOT INSTALLED')
     if [ -f "$UNIT_DIR/$u" ]; then
         st="$st, $(systemctl is-enabled "$u" 2>/dev/null | head -1 || echo unknown)"
