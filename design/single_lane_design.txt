@@ -1,0 +1,535 @@
+Single-lane ffbox design
+========================
+
+Revision 1, 2026-08-25.
+Revision 2, 2026-08-25: sections 14 and 15 added — the file-by-file work list and the order to
+do it in. Three things the first revision missed: 05-discord-setup.sh seeds the retired config
+keys onto every machine, a live config needs its retired keys handled rather than left to
+_deep_merge, and the ff-discord plugin describes lanes in five files. Section 8 gains what
+happens to the AUTOFIX vocabulary, which is not only container machinery.
+
+Scope: remove the lane system. Every run gets the same capability set, which is what the `dev`
+lane has today: Read, Grep, Glob, Edit, Write and bare Bash. The classifier stops choosing a
+lane and keeps only its engagement decision. Cost is bounded by the clocks that already exist,
+by a per-day cap on player-driven turns, and by the concurrency limit.
+
+Why this exists: the lane table answers two questions at once, and only one of them still earns
+its complexity. It decides what capability a run gets, and it decides how much the harness
+trusts the text the prompt was built from. The second question has a cheap answer that needs no
+model at all: turn_trust() looks up Discord's authenticated author.id against a config table.
+The first question is being answered uniformly from now on. What is left after the collapse is
+a dictionary lookup where there used to be a five-way branch and a model call.
+
+The owner accepted the consequence on 2026-08-25: a bug report from a stranger can now cause a
+run that edits code and opens a pull request. A human reads that pull request and decides
+whether it is merged or abandoned. That was always the intended end state of the fix lane; this
+removes the machinery that limited which text could reach it.
+
+
+0. What this must do
+--------------------
+
+  1. ONE CAPABILITY SET. No per-lane tools, no per-lane allow list, no lane column driving
+     behaviour. Every run can read, write and run shell commands.
+
+  2. KEEP THE ENGAGEMENT GATE. A cheap Haiku call, holding no tools, decides whether a message
+     needs the bot at all. It is bypassed for anything already addressed to the bot by an
+     authenticated person.
+
+  3. WATCHED CHANNELS ONLY. A channel with no watch entry produces no events of any kind. No
+     defaulting to a kind, no falling through to a classifier.
+
+  4. BOUND WHAT A STRANGER CAN SPEND. Five turns per rolling 24 hours for player-tier text.
+     Operators are uncapped.
+
+  5. UNITY ALWAYS. Every run holds an editor. The separate Unity ceiling goes away.
+
+  6. NETWORK STAYS AS IT IS. The allowlist keeps the Anthropic endpoints and the Unity
+     licensing and package hosts, and nothing else is added to it.
+
+Explicitly NOT in scope: changing what contains a run. No credential moves into the container,
+the host keeps the refspec, there is still no merge method, and the clone is still destroyed.
+Section 11 lists what that means in practice, because after this change those are carrying all
+of the weight for untrusted text.
+
+
+1. The network, restated
+------------------------
+
+The container cannot be given zero network access while `claude -p` runs inside it. Removing
+api.anthropic.com from the allowlist does not harden the box, it stops every run from doing
+anything. platform.claude.com is the OAuth refresh path and has the same status.
+
+So the allowlist stays exactly as it is: the two Anthropic names, the six Unity licensing hosts
+that unity-license.sh needs to take and return a seat, and the two package hosts that only a
+cold import touches. Nothing is added. The three parts underneath it are unchanged and are what
+actually make "no network" nearly true: an --internal Docker bridge with no default route, one
+neighbour on it running dnsmasq and an nginx SNI reader, and a host netfilter rule dropping
+traffic from ffbox0 to the host itself.
+
+Two things remain reachable through that fence and are worth restating, because after this
+change untrusted text reaches a run that can write files. An agent can write the workspace into
+a prompt to its own Anthropic account. And both credentials in the container, the OAuth token
+and the Unity account password, are for services on the allowlist, so the fence does not protect
+them. Neither is new. Both are the reason section 9 is a prerequisite rather than a follow-up.
+
+
+2. Capability: one set
+----------------------
+
+READ_TOOLS, READ_ALLOWED, WRITE_ALLOWED, LANE_CAPABILITIES and LANE_BY_KIND are deleted from
+ffwatch.py. One constant replaces them:
+
+    CAPABILITIES = {
+        "tools": "Read,Grep,Glob,Edit,Write,Bash",
+        "allowed": ["Bash"],
+        "disallowed": list(TRIPWIRE),
+        "agent": "discord-dev-agent",
+        "permission_mode": "acceptEdits",
+        "unity": True,
+    }
+
+Two entries look droppable and are not.
+
+`"allowed": ["Bash"]` is load-bearing. `--permission-mode acceptEdits` auto-approves edits and
+not Bash, and a `-p` run has nobody to ask, so an empty allow list denies every shell command.
+Full shell access still has to be named on the command line.
+
+`--add-dir /ffbox/attachments` in discord-task.sh stays. Without it the agent cannot open a
+single attachment. Measured on conversation 21, 2026-08-24: both `Read /ffbox/attachments/<file>`
+and `Glob /ffbox/attachments/*` came back permission-denied and the run answered that it could
+not see the image.
+
+TRIPWIRE is the old WRITE_DISALLOWED, kept under a name that says what it is: git push, gh, git
+remote, git fetch, git merge, git rebase, git cherry-pick, git am. It is not a boundary and
+never was, since `sh -c '...'` walks through it. It costs nothing and it is now the only signal
+that an agent reached for a remote, recorded in permission_denials. The four history-importing
+commands stay listed for a second reason: ffbox's harvest requires every commit in
+base_sha..branch to carry ffbox@final-factory.invalid, and all four import commits authored by
+somebody else.
+
+
+3. The engagement gate
+----------------------
+
+The classifier keeps one job and loses the other. It no longer answers "which lane"; it answers
+"does this need the assistant at all".
+
+classify_text() becomes should_engage(), returning a boolean and a reason. It keeps the Haiku
+model, the empty `--tools ""` argument, and the 120-second timeout. CLASSIFIER_SCHEMA drops the
+`type` field and keeps `engage` and `reason`. CLASSIFIER_PROMPT loses the question/change
+definitions and keeps the untrusted-input framing and the closed list of things that mean no ask
+was made: social acknowledgement, two people talking to each other, a restatement of the message
+before it. Everything else engages, and the prompt still says so.
+
+The gate fails open. A classifier that cannot run, exits non-zero, or returns unparseable output
+engages anyway. That is the existing behaviour and the reasoning is unchanged: a gate that fails
+closed silently swallows real bug reports, and a false engage costs one container.
+
+lane_for() is deleted. failed_closed() shrinks to the engage half.
+
+BYPASS. The gate is skipped for anything already addressed to the bot by somebody the box
+trusts. Today that list is emergent, because an operator DM has no watch alias and so falls
+through engage_for() to "mention". It becomes explicit:
+
+    GATE_BYPASS_KINDS = LOCAL_KINDS + ("operator_dm", "directive", "mention")
+
+    shell, web    typed by somebody with a login on this machine
+    operator_dm   a one-to-one DM from a configured operator account
+    directive     an operator message in a channel
+    mention       somebody said the bot's name
+
+For every other kind the two existing steps stay, in order. First the channel's own
+`engage: all|mention` policy, which is config and involves no model. Then, only on an
+`engage: all` channel, the Haiku call.
+
+
+4. Watched channels only
+------------------------
+
+A channel with no watch entry produces nothing. This closes the `unknown` kind, which currently
+falls through to the classifier, and it removes the "bug_report" default that ingest_thread()
+applies to a thread whose alias is not in the config.
+
+One guard at the top of ingest_event(), before dispatch:
+
+  - operator_dm is exempt by construction. A DM has no channel to configure, and ingest_dm()
+    already drops any DM whose author is not in the operator set.
+  - every other event kind is dropped when its channel_id resolves to no watch alias, with a
+    log line naming the channel. Silent drops are how a misconfigured watch block looks exactly
+    like a quiet Discord.
+
+conversation_kind() loses its `unknown` return. ingest_thread() loses `or "bug_report"` and
+refuses a thread with no watch entry instead of guessing.
+
+The sweep already reads only watched aliases and needs no change.
+
+Consequence to accept: an @-mention of the bot in an unconfigured channel is serviced today and
+will be dropped. That is the requirement as written. The log line is what makes it findable when
+somebody asks why the bot ignored them.
+
+
+5. Rate limits by trust tier
+----------------------------
+
+rate_limits is keyed by lane today, and the lane everything is standardising on is the one
+deliberately left uncapped. Re-key it to trust tier:
+
+    "rate_limits": {"player": 5, "operator": None},
+
+rate_limited() changes its query from `WHERE lane=?` to `WHERE trust_tier=?` and its argument
+from the lane to the tier. The window is unchanged: a rolling 24 hours, counted as turns whose
+started_at is within the last day, not a calendar day and not a reset at midnight. A missing or
+falsey limit already reads as no limit, so None for operators needs no special case.
+
+Five is a real constraint on a busy forum, which is the point. It caps how many containers a
+stranger can cause. The clocks cap what each one spends. They are different failure modes and
+both need an answer.
+
+turn_trust() is unchanged. It is a dictionary lookup on Discord's authenticated author.id
+against the configured snowflakes, never a username and never message content, and a turn that
+batches several messages is operator-tier only if every message in it came from an operator.
+
+
+6. Unity always on
+------------------
+
+max_unity_runs is deleted from DEFAULTS and from claim_turns(). running_counts() stops
+partitioning and returns one number. The `unity` capability field is already hardcoded True at
+the job.json site, and test_ffwatch.py already asserts that ffbox is told nothing about Unity,
+so there is no switch left to remove there.
+
+max_concurrent_runs stays at 2 and becomes the only concurrency ceiling. It counted the same
+runs max_unity_runs did, so nothing gets looser.
+
+run.unity stays as a column. It is displayed on the run page and it is history.
+
+
+7. One verdict schema
+---------------------
+
+VERDICT_SCHEMA_QUESTION and VERDICT_SCHEMA_CHANGE merge. Forcing the change schema on a run that
+answered a question would demand `confident` and `files_changed` from a run that touched
+nothing, and keeping both means reintroducing a lane-shaped discriminator to pick between them.
+
+`summary` stays required. The change fields become optional and are meaningful only when the run
+changed files. That is not a judgement call the model makes: the container already skips the
+EditMode suite when the run changed no files, and verification_gate() on the host reads the same
+fact. The filesystem answers "was this a change", which is what the lane used to answer.
+
+The `if lane == "triage"` block that appended the AUTOFIX instructions is deleted with the lane.
+
+Preamble selection already keys off `local` rather than the lane and is untouched. PREAMBLE_SPLIT
+is untouched and matters more now: it is keyed on trust tier and venue, and it is the remaining
+thing that keeps file paths and unreleased content out of a channel players read.
+
+
+8. Triage-to-fix, and the base pin
+----------------------------------
+
+enqueue_autofix() is deleted, along with the AUTOFIX branch that called it. One turn now
+investigates and fixes, which is the whole point of the collapse.
+
+That function was also the only thing that ever cleared a conversation's base_sha. A
+conversation is pinned to the sha it was first cloned from so that turn five does not resume a
+transcript full of evidence gathered against a tree that has moved. Escalating to the fix lane
+was the one moment where reasoning against a stale tree was worse than losing the pin.
+
+With one lane, any turn can be the one that writes code, so the pin now has that problem
+generally. Fix it by clearing base_sha when the previous turn in the conversation changed no
+files. That is the same mechanical signal section 7 uses, and it means a thread that has been
+answering questions re-clones fresh the moment it starts making changes.
+
+THE AUTOFIX VOCABULARY IS NOT ONLY CONTAINER MACHINERY, and this is the part to get right. The
+triage verdicts (AUTOFIX, ESCALATE, NEEDS-INFO, NOT-A-BUG, DUPLICATE, ALREADY-FIXED) live in the
+discord-triage skill, which is read in two places: by a container, where AUTOFIX was the signal
+that enqueued a fix turn, and by a person running /discord-triage in an interactive session,
+where it is a classification they act on themselves.
+
+So AUTOFIX loses its mechanical meaning and keeps its editorial one. A triage turn that finds a
+low-risk fix now makes it, because it has Edit and Write and there is no second turn to hand to.
+The other five verdicts are unaffected. The skill keeps the vocabulary and stops describing
+AUTOFIX as something that causes a separate run; discord-task.sh loses the preamble block that
+told the lane the harness would act on the field.
+
+Not a concern: golden is brought to origin before every clone unless --no-fetch is passed, so
+the base is current even when the pin is held. docs/docker-security-model.md still lists an
+unscheduled golden fetch as gap 4 and is out of date on that point.
+
+
+9. Prerequisite: pushing a branch runs code on the build machine
+---------------------------------------------------------------
+
+Do this before shipping section 2, not after.
+
+The intended flow is that the agent branches, edits, verifies, and hands back; the harness
+publishes the branch and proposes a pull request only when the tests passed; a human then
+decides. There is a step between publishing and deciding that the flow leaves out, and it is
+the one that matters.
+
+FinalFactory's .github/workflows/main.yml is `on: [push, pull_request]` and `runs-on:
+self-hosted`, with secrets.UNITY_LICENSE, UNITY_EMAIL, UNITY_PASSWORD and UNITY_SERIAL at lines
+68 to 71 and GITHUB_TOKEN at 77 and 119. Pushing the branch starts that workflow on our own
+runner with those secrets in scope. CI is not the review. It runs before anybody reads the
+diff.
+
+Two details decide how bad that is.
+
+THE PUSH IS UNCONDITIONAL. In publish(), push_bundle() runs before verification_gate() and
+before the `confident` check. That ordering is deliberate: work is always published so it
+cannot be lost with the clone, and only the proposal to merge is withheld. So gating publication
+on the tests is not what happens today, and it cannot fully be, because the branch is the
+trigger and the branch always goes up.
+
+TESTS PASSING DOES NOT HELP. GitHub runs the workflow definition as it exists on the pushed
+branch, not the one on develop. An agent does not need to write game code that fails. It edits
+main.yml, adds a step that reads the secrets, and writes correct game code beside it. ffverify
+goes green, `confident` is set, the gate opens. The gate is reading the wrong artifact: it
+checks whether the change compiles and tests, and the payload is in the file that decides what
+CI does.
+
+The whole chain needs no network from the container. A forum post, an edit to
+.github/workflows/main.yml, a harvest that runs `git add -A` with no path exclusions, a push by
+the trusted host, and a self-hosted runner. What blocks it today is that player-authored text
+structurally cannot reach Edit or Write, which is exactly what section 2 removes.
+
+Two fixes, both outside the container's reach:
+
+  1. Take the `workflow` scope off the host push token. GitHub rejects a push touching
+     .github/workflows/ from a token without it, so the chain fails closed at push time with a
+     clear error. A credential edit, no code, and nothing in the container can undo it.
+
+  2. Exclude .github/** at harvest, so the edit never reaches the bundle in the first place.
+
+Not a control, though worth doing separately: branch filters keeping ffbox/** out of the CI
+triggers. The filter lives in main.yml on the pushed branch, so an agent that wants CI to run
+deletes the filter that is supposed to stop it. It saves runner time on agent branches and
+should not be counted as protection. If it is added anyway, it has to cover pull_request as
+well as push, because a same-repo pull request also gets secrets.
+
+The owner accepts that a stranger's bug report can produce a branch and a pull request for a
+human to judge. This section is what keeps that branch from executing on our hardware before
+the human sees it.
+
+
+10. Schema, web and migration
+-----------------------------
+
+Schema v9, following the v8 precedent that rewrote the retired `shell` lane:
+
+    UPDATE turn SET lane='dev' WHERE lane IS NOT NULL;
+    UPDATE conversation SET lane='dev' WHERE lane IS NOT NULL;
+
+The columns stay. Dropping a column in SQLite is awkward and the history stays readable as what
+it was. turn.failed_closed and failed_closed_reason keep working, now recording gate failures
+only.
+
+ffweb.py: the /lanes page and lane_aggregates() become one row, so re-point both at trust_tier
+rather than delete them. "What are players costing me against operators" is the question that
+page was really answering, and it is the one that still has two answers. The conversation table's
+lane filter is swapped for trust_tier the same way.
+
+
+11. What is unchanged
+---------------------
+
+Listed because after this change these are carrying all of the weight for untrusted text, and
+because none of them is affected by the collapse.
+
+  - No git or GitHub credential in the container. GH_TOKEN is host-side. There is no
+    authenticated remote in the clone.
+  - The host builds the refspec. push_bundle() pushes refs/ffbox/<branch>:refs/heads/<branch>
+    with a name chosen before the container started and validated against [A-Za-z0-9._/-].
+  - There is no merge method on the GitHub class.
+  - The clone is a ZFS clone, destroyed when the run ends.
+  - The egress fence, per section 1.
+  - The harvest checks: descent from base_sha, every commit authored by ffbox@final-factory.invalid,
+    HEAD not on develop/master/main, and the file-count and bundle-size ceilings.
+  - verification_gate() requires compiled=true, at least one test run and zero failures, judged
+    from a report the container writes to a path it deletes first. Confidence gates the pull
+    request and not the branch, so work is always published and only the proposal to merge is
+    withheld.
+  - The three clocks: 900s agent, 3600s warm-up, 1800s verify, with a 120s floor on the kill
+    grace so the Unity seat is returned.
+  - max_budget_usd at 10.
+
+
+12. Tests
+---------
+
+test_ffwatch.py has 133 references to lanes, but the split is favourable. Every test that pins
+actual containment is lane-independent and survives without edits:
+
+    test_the_agent_commits_its_own_work
+    test_the_clone_is_clean_before_the_agent_runs
+    test_harvest_refuses_a_rewritten_or_forged_range
+    test_a_refused_harvest_is_reported
+    test_the_container_cannot_author_a_message
+    test_github_client_retries_and_cannot_merge
+    test_the_run_is_on_the_filtered_network
+
+test_allow_list_is_scope_not_a_boundary stays. It is still true of TRIPWIRE, and it is still the
+thing people misread.
+
+Deleted: the lane-selection tests, the per-lane capability tests, and
+test_unity_lane_is_capped_at_one.
+
+Added:
+
+  - the gate is bypassed for every kind in GATE_BYPASS_KINDS
+  - a classifier failure engages
+  - an event from a channel with no watch entry is dropped, and an operator DM is not
+  - a sixth player turn in 24 hours is blocked and an operator's is not
+  - two concurrent runs are allowed and a third is queued, with no Unity partition
+
+
+13. Accepted risks
+------------------
+
+Written down so they are decisions rather than discoveries.
+
+A stranger's forum post can cause a run with Edit, Write and bare Bash, in a container holding
+the Anthropic OAuth token and real Unity account credentials. The publish path is unchanged, so
+the worst outcome is a branch and a pull request that a human reads. Section 9 is what keeps
+that branch from executing on the build machine first.
+
+The five-per-day player cap is the only thing limiting how much a determined stranger can spend.
+It is per tier and not per person, so five accounts posting once each fill it as effectively as
+one account posting five times. Per-author accounting is the fix if that ever happens; it is not
+worth building before it does.
+
+Moving the Unity account off an interactive password and onto a license file is still worth
+doing and is still unaffected by any of this.
+
+
+14. Files this touches
+----------------------
+
+Verified against the code on 2026-08-25. Section numbers in brackets point at the reasoning
+above. Line numbers are as of the commit that added this section and drift with every edit —
+the symbol names are the durable half, and the numbers are there to save a grep.
+
+THE HARNESS
+
+  ffwatch.py            Delete READ_TOOLS, READ_ALLOWED, WRITE_ALLOWED, LANE_CAPABILITIES and
+                        LANE_BY_KIND; add CAPABILITIES; rename WRITE_DISALLOWED to TRIPWIRE (2).
+                        Delete lane_for(); reduce classify_text() to should_engage(); trim
+                        CLASSIFIER_SCHEMA and CLASSIFIER_PROMPT to the engagement decision;
+                        shrink failed_closed(); add GATE_BYPASS_KINDS and use it in
+                        create_turn() (3). Guard ingest_event() on a watch entry; drop the
+                        `unknown` return from conversation_kind() and the `or "bug_report"`
+                        default in ingest_thread() (4). Re-key rate_limited() to trust_tier and
+                        set rate_limits to {"player": 5, "operator": None} (5). Delete
+                        max_unity_runs from DEFAULTS and from claim_turns(); make
+                        running_counts() return one number (6). Schema v9 (10).
+
+                        Also: the `agent` key written into job.json at 2311 is DEAD — nothing in
+                        discord-task.sh reads it. The role reaches the model only as prose, in
+                        the prompt line at 2467 ("Use the `{agent}` role..."). Keep the prose,
+                        which now always names discord-dev-agent, and delete the key.
+
+  discord-task.sh       Drop the `lane` read at 123 and the stderr line at 418 that prints it.
+                        Merge VERDICT_SCHEMA_QUESTION and VERDICT_SCHEMA_CHANGE into one
+                        superset (7). Delete the `if lane == "triage"` preamble block at 338 (8).
+
+  ffweb.py              /lanes (1361) and lane_aggregates() (709) re-pointed at trust_tier; the
+                        nav link; the conversation-table filters at 1677, 1715, 1721 and 1742 (10).
+
+  05-discord-setup.sh   MISSED BY REVISION 1. It seeds the config template every machine gets:
+                        drop ("max_unity_runs", 2) at 262 and re-key ("rate_limits", ...) at 266
+                        to the tiers. The "next steps" text at 502-503 describes lane routing and
+                        says a channel not listed falls to the classifier, which section 4
+                        makes false — it now produces nothing. Header comment at 2.
+
+  config on disk        MISSED BY REVISION 1, and the reason it matters is precedent: _deep_merge
+                        recurses into dicts, so a live config's rate_limits block merges with the
+                        new defaults instead of replacing them, leaving {"player": 5, "operator":
+                        null, "answer": 200, "triage": 100, "fix": 3}. The cap still applies and
+                        the stale keys read as though lanes exist. max_unity_runs in a live file
+                        becomes a key nothing reads, silently. This is the same trap the watch
+                        block already sprang on this project. So: name the retired keys in
+                        ffwatch, log each one found and ignore it, rather than letting the merge
+                        quietly carry them.
+
+  tests                 Per section 12.
+
+THE PLUGIN — and note which consumer needs what
+
+  A container does NOT read the published plugin cache. ffwatch mounts
+  plugins/<plugin> from THIS CHECKOUT read-only at /ffbox/plugins/ff-discord
+  (plugins_dir defaults to REPO_ROOT/plugins). So a skill edit reaches containers on the next
+  self-update pull, with no version bump involved. The bump is for the OTHER consumer:
+  interactive Claude Code sessions on dev machines, which read
+  ~/.claude/plugins/cache/. Both need doing; only one is on the critical path for ffbox.
+
+  skills/discord-triage/SKILL.md      "the triage turn is launched read-only, with no write
+                                      tools at all" (16) and the AUTOFIX-enqueues-a-separate-
+                                      fix-turn description (17) are both false afterwards. "max
+                                      3 autofixes per pass" at 99 needs the new number and the
+                                      new key. See section 8 for what the vocabulary becomes.
+
+  skills/discord-triage/reference.md  "it is the only Unity command the lane has" (56) stays
+                                      true in spirit — ffverify is still the only Unity entry
+                                      point — but loses the word lane. "ffwatch caps the `fix`
+                                      lane at three turns per rolling day" (66) becomes five per
+                                      rolling 24 hours for player-tier turns.
+
+  skills/ask-claude/SKILL.md          "the lane's tools named on the command line" and "a
+                                      read-only lane is launched with no write tools at all"
+                                      (16-19). The second is the selling point of that
+                                      paragraph and it goes away; what replaces it is that the
+                                      container still holds no credential and no path to
+                                      Discord.
+
+  agents/discord-answerer.md          Frontmatter `tools:` and the read-only claims stay correct
+  agents/discord-triager.md           for INTERACTIVE use, which is what those files govern.
+                                      ffwatch stops naming either one. Add a line to each saying
+                                      the ffbox container no longer runs it read-only, so nobody
+                                      reads the role as a statement about the container.
+
+  agents/discord-dev-agent.md         Becomes the only role ffwatch names. Check its
+                                      publish/no-merge language still matches sections 9 and 11.
+
+  version bump                        sh bumpVersion.sh ff-discord minor, then commit, push, and
+                                      registerAgents.sh on each machine. Per CLAUDE.md, no bump
+                                      means live interactive sessions keep the old text.
+
+DOCS IN THIS REPO
+
+  docs/docker-security-model.md       Already carries a forward pointer and a prerequisite note
+  ffbox/README.md                     on gap 1. Both describe the running system, so they get
+                                      rewritten when the code lands, not before.
+
+  design/*.txt                        Done 2026-08-25: trusted_ingress sections 8 and 13 and
+                                      discord_persistent sections 7 and 13 are marked superseded
+                                      and point here.
+
+OUTSIDE THIS REPO
+
+  the host push token                 Drop the `workflow` scope (9). A credential change, and
+                                      the one thing on this list that is not a commit.
+
+  FinalFactory .github/               Exclude .github/** at harvest is an ffbox change; keeping
+                                      ffbox/** out of the CI triggers is a change in the game
+                                      repo, and is hygiene rather than a control (9).
+
+
+15. Order of work
+-----------------
+
+  1. The push token loses `workflow` scope, and harvest excludes .github/**. Both land before
+     any capability change, because they are what make section 13's accepted risk the risk that
+     was actually accepted.
+
+  2. The harness: capability (2), gate (3), ingest (4), limits (5), Unity (6), schema (7),
+     autofix and the base pin (8), migration and web (10). One change, since the lane column
+     threads through all of them and a half-collapsed table is worse than either end state.
+
+  3. Tests alongside step 2, not after it. The read-lane fixture in test_ffwatch.py drifted from
+     LANE_CAPABILITIES and asserted a stale claim for months, which is how the same wrong
+     sentence reached three documents. Fixtures that mirror a table need to be built from it.
+
+  4. The plugin, then the version bump. Containers pick the edits up on the next self-update;
+     the bump is what reaches interactive sessions.
+
+  5. README and the security model, rewritten against the code that now exists.

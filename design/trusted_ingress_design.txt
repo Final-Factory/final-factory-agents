@@ -2,6 +2,16 @@ Trusted ingress: who may be told what, and who may be obeyed
 ============================================================
 Draft for review. Proposed as section 23 of discord_persistent_design.txt.
 
+Revision 15, 2026-08-25: sections 8 and 13 are SUPERSEDED by design/single_lane_design.txt.
+The lane system is removed and every run gets the dev capability set, so "which lane does this
+ingress land in" stops being a question. What this document decided that OUTLIVES it, and that
+the new design depends on: trust tier and venue are declared in config and looked up against
+Discord's authenticated author.id, never inferred from message text (sections 3 and 4); the
+engagement gate is a separate decision from capability (section 5) and is the half being kept;
+the split reply is keyed on tier and venue rather than on lane (section 7), which is now the
+only thing keeping repo internals out of a channel players read. Sections 1 through 7 and 9
+through 12 stand.
+
 Revision 1, 2026-08-22.
 Revision 2, 2026-08-22: split replies (section 7), the web page trusted as an operator
 surface rather than as a loopback accident (section 12), operator DMs may start work
@@ -758,6 +768,20 @@ stream, and this is what it streams instead.
 13. Capability, separately from disclosure
 ------------------------------------------
 
+SUPERSEDED, 2026-08-25, by design/single_lane_design.txt sections 2 and 6. Capability stops
+being set per ingress: every run gets Read,Grep,Glob,Edit,Write,Bash. The section's own
+principle is what survives, inverted — disclosure and capability were always independent, and
+the new design keeps the disclosure half (tier, venue, the split reply) while making the
+capability half uniform.
+
+Two specific reversals, so nobody implements from the text below. The per-ingress rows are gone,
+including "operator DM gets WRITE_ALLOWED but no unrestricted Bash" and "player in a private
+channel is read-only". And max_unity_runs, which this section argued to keep and reframe as a
+resource ceiling, is deleted outright: with no way to launch without an editor it counted the
+same runs max_concurrent_runs counts, and a second knob that never diverges from the first is
+not a knob. max_concurrent_runs stays at 2. UNITY ON EVERY LANE, below, is unchanged and is now
+simply true of every run.
+
 Disclosure and capability are set independently, per section 2's second rule.
 
   shell          Bash unrestricted, as it ships today. The person could open a terminal.
@@ -835,7 +859,8 @@ a container that was already alive, not a test that died mid-run. activate_unity
 five times with backoff, so the failure mode is slow rather than broken.
 
 THE TRADE, SAID OUT LOUD, and this part is unchanged. The read-only lanes have no Bash at all
-today: READ_TOOLS is "Read,Grep,Glob", and the main design calls that its strongest containment
+as of this revision, 2026-08-22 (the trade below is what changed that, and READ_TOOLS is
+"Read,Grep,Glob,Bash" from then on): READ_TOOLS is "Read,Grep,Glob", and the main design calls that its strongest containment
 claim, because the lanes fed untrusted player text are contained structurally by the tool list
 rather than by a policy the model is asked to follow. Unity means Bash, because ffverify is a
 command.

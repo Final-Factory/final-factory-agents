@@ -692,10 +692,12 @@ WRITE_ALLOWED = [
 ]
 
 LANE_CAPABILITIES = {
-    # The read-only lanes keep NO Bash — this is the design's strongest containment claim
-    # (section 7: the lanes fed untrusted player text directly are genuinely contained by the
-    # tool list being structural). Since 2026-08-21 the write lanes reach the same place from
-    # the other direction: they have Bash, but nothing the allow list names can reach Discord.
+    # The read-only lanes keep NO Edit and NO Write — this is the design's strongest
+    # containment claim (section 7: the lanes fed untrusted player text directly are genuinely
+    # contained by the tool list being structural). They DO have Bash, narrowed to the two exact
+    # invocations in READ_ALLOWED; see the note above it for why. Since 2026-08-21 the write
+    # lanes reach the same place from the other direction: they have Bash, but nothing the allow
+    # list names can reach Discord.
     # NO LANE POSTS. Every reply is composed on the host out of the run's structured verdict —
     # strictly less capability for the same outcome, and the only arrangement in which the
     # content can be reviewed before it is uploaded. Both preambles say so, so a lane does not

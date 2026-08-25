@@ -365,7 +365,10 @@ Consequences:
   It also said, honestly, that whether concurrent activation worked at all was untested here.
   It has since been tested — four game-ci containers in parallel, no licensing trouble — so
   `max_unity_runs` is a **resource** ceiling (four editors on one box is real CPU and memory),
-  not a licensing one, and raising it is an ordinary config question.
+  not a licensing one, and raising it is an ordinary config question. (`single_lane_design.txt`
+  deletes the knob: with no way to launch without an editor it counts the same runs
+  `max_concurrent_runs` counts, and the lower of two knobs that never diverge is the only one
+  doing anything. Not implemented yet.)
 
   One edge is still worth knowing rather than fearing: the return-licence trap fires on exit for
   an identity every container shares. The likely reason four in parallel is fine is that the
@@ -616,9 +619,16 @@ summary for them; a file left at the old `/ffbox/out/outbox.jsonl` path is logge
 because a write lane holds `Write` and can forge one.
 
 Every lane names its tools on the command line. The answer and triage lanes get
-`Read,Grep,Glob` and no Bash at all, which makes a read-only run *incapable* of writing rather
-than asked not to. If classification cannot complete, the turn runs read-only anyway and the
+`Read,Grep,Glob,Bash` and no `Edit` or `Write`, which makes a read-only run *incapable* of
+writing rather than asked not to. Their Bash is narrowed to exactly two invocations,
+`ffverify` and `ffverify --assemblies FFEditorTests`, spelled out with no trailing glob so
+nothing rides along after an `&&`; they have it because Unity means Bash and a lane asked what
+something actually does should be able to go and look. If classification cannot complete, the turn runs read-only anyway and the
 record says why — a failure to decide never widens capability.
+
+A designed change, `design/single_lane_design.txt` (2026-08-25), removes all of this: one
+capability set for every run, the classifier reduced to its engagement decision, rate limits
+keyed on trust tier instead of lane. It is not implemented, so what follows is still what runs.
 
 **There are four lanes, and `dev` is the one for people this box already trusts.** A prompt
 typed at the shell or into the web page used to take a fifth, `shell`, which differed from

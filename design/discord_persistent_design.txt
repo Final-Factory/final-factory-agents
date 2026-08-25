@@ -2,6 +2,11 @@ ffbox + Discord: persistent conversation design
 ===============================================
 
 Revision 2, 2026-08-21. Supersedes revision 1 entirely.
+Revision 3, 2026-08-25: sections 7 and 13 are SUPERSEDED by design/single_lane_design.txt,
+which removes the lane system entirely. Their bodies are left as written, because they record
+what was built and why; each now opens with a correction block saying what actually shipped and
+what replaces it. Nothing else in this document is affected: conversations, ordering, the
+database, verification, publication and supervision are all lane-independent.
 
 What changed: revision 1 was written before feature 059 was found. 059 is a complete,
 offline-tested, never-deployed Discord-to-Claude pipeline already in the game repo that
@@ -296,6 +301,17 @@ deliberately when a thread escalates to the fix lane, and say so in that turn's 
 7. Capability construction  [correction 1 and 2]
 ------------------------------------------------
 
+SUPERSEDED, 2026-08-25, by design/single_lane_design.txt section 2. Every run will get one
+capability set, Read,Grep,Glob,Edit,Write,Bash, and the lane table goes away. Two corrections to
+the table below before it is retired, because it has been wrong about the shipped system for a
+while: the read lanes DO have Bash, narrowed to two exact `ffverify` invocations, and every lane
+has Unity, so the `unity` column is `yes` throughout and stopped being a lane property in
+August. The deny list also grew `git fetch`, `git merge`, `git rebase`, `git cherry-pick` and
+`git am` on 2026-08-23, when local git was granted. What the section gets RIGHT and what
+survives the collapse is the paragraph below on the two kinds of control: `tools` is structural,
+`disallowed` is an evadable string matcher. That distinction is the reason the collapse is safe
+to make, since it was never the deny list doing the containing.
+
 The classification is turned into the actual process invocation. A read-only run is launched
 with no write tools, so it is incapable of writing. An instruction in a prompt can be argued
 with by a player who writes a clever message; a process launched without Edit cannot.
@@ -539,6 +555,11 @@ Recovery on restart, following jobs.recover():
 
 13. Lanes
 ---------
+
+SUPERSEDED, 2026-08-25, by design/single_lane_design.txt. There is one lane. What the four
+entries below were really tracking is trust tier, which turn_trust() computes from Discord's
+authenticated author.id without a model, and which survives as the key for rate limiting and for
+the split reply. `fix` and its AUTOFIX enqueue are removed: one turn investigates and fixes.
 
   answer  message on ask_claude, player_mention, catchup. Read-only capability set.
           discord-answerer. High volume, low risk.
