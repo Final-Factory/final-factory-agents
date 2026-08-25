@@ -182,7 +182,14 @@ ignored them, and _bot_is_addressed survives only to decide whether to write it.
 5. Rate limits by trust tier
 ----------------------------
 
-rate_limits is keyed by lane today, and the lane everything is standardising on is the one
+SHIPPED 2026-08-25, ahead of the rest: it needed no lane work, because who caused a turn and
+what the turn may do are independent questions. rate_limited() takes a tier and counts
+COALESCE(trust_tier,'player'); DEFAULTS and the 05-discord-setup.sh template both carry
+{"player": 5, "operator": None}; the blocked-turn reason names the tier. A turn with no tier
+recorded counts as a player, because a row written before the column existed would otherwise
+take the uncapped side. The rest of this section is why.
+
+rate_limits was keyed by lane, and the lane everything is standardising on is the one
 deliberately left uncapped. Re-key it to trust tier:
 
     "rate_limits": {"player": 5, "operator": None},
@@ -203,6 +210,11 @@ batches several messages is operator-tier only if every message in it came from 
 
 6. Unity always on
 ------------------
+
+SHIPPED 2026-08-25, with section 5. max_unity_runs is gone from DEFAULTS, from claim_turns()
+and from the setup template; running_counts() returns one number; test_unity_lane_is_capped_at_one
+is deleted. run.unity stays as a column, because an adopted run records what the container
+actually did rather than what it was asked for.
 
 max_unity_runs is deleted from DEFAULTS and from claim_turns(). running_counts() stops
 partitioning and returns one number. The `unity` capability field is already hardcoded True at
@@ -445,13 +457,17 @@ THE HARNESS
   ffweb.py              /lanes (1361) and lane_aggregates() (709) re-pointed at trust_tier; the
                         nav link; the conversation-table filters at 1677, 1715, 1721 and 1742 (10).
 
-  05-discord-setup.sh   MISSED BY REVISION 1. It seeds the config template every machine gets:
-                        drop ("max_unity_runs", 2) at 262 and re-key ("rate_limits", ...) at 266
-                        to the tiers. The "next steps" text at 502-503 describes lane routing and
-                        says a channel not listed falls to the classifier, which section 4
-                        makes false — it now produces nothing. Header comment at 2.
+  05-discord-setup.sh   MISSED BY REVISION 1. Both config keys DONE 2026-08-25: max_unity_runs
+                        dropped, rate_limits re-keyed to the tiers. STILL TO DO: the "next
+                        steps" text at 502-503 describes lane routing and says a channel not
+                        listed falls to the classifier, which section 4 makes false — it now
+                        produces nothing. Header comment at 2.
 
-  config on disk        MISSED BY REVISION 1, and the reason it matters is precedent: _deep_merge
+  config on disk        DECIDED 2026-08-25: no retired-key machinery. load_config()'s existing
+                        `k in DEFAULTS` filter already drops a retired TOP-LEVEL key such as
+                        max_unity_runs, and this box's config was edited by hand instead. The
+                        note below stands as the reason to check a config by hand when a nested
+                        key is retired, rather than as work to do. _deep_merge
                         recurses into dicts, so a live config's rate_limits block merges with the
                         new defaults instead of replacing them, leaving {"player": 5, "operator":
                         null, "answer": 200, "triage": 100, "fix": 3}. The cap still applies and
