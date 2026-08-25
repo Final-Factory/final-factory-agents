@@ -666,7 +666,7 @@ def test_an_operator_dm_is_a_private_venue():
     turn = case.rows("SELECT * FROM turn")[0]
     check("a DM from an operator is an operator turn at a private venue",
           (turn["trust_tier"], turn["venue"]) == ("operator", "private"), turn)
-    check("and a question there takes the read-only answer lane", turn["lane"] == "answer", turn)
+    check("and it takes the one lane there is", turn["lane"] == "dev", turn)
     case.watcher.launch(turn["id"])
     run = case.watcher.db.one("SELECT * FROM run WHERE turn_id=?", (turn["id"],))
     job = json.load(open(os.path.join(os.path.dirname(run["stream_path"]), "job.json"),
@@ -1012,7 +1012,7 @@ def test_the_gate_answers_when_it_is_unsure():
     case.watcher.claim_turns()
     turns = case.rows("SELECT * FROM turn")
     check("a gate that cannot decide still answers", len(turns) == 1, turns)
-    check("and answers read-only", turns[0]["lane"] == "answer", turns[0])
+    check("and it is a dev turn like every other", turns[0]["lane"] == "dev", turns[0])
     check("the message is claimed, not declined",
           case.rows("SELECT * FROM message")[0]["gate"] is None)
 
@@ -1048,7 +1048,7 @@ def test_evidence_and_thread_openings_never_reach_the_gate():
     check("a thread opening makes a turn even when the gate would decline",
           len(turns) == 1, turns)
     check("and it is triage, not the answer lane the gate would have implied",
-          turns[0]["lane"] == "triage", turns[0])
+          turns[0]["lane"] == "dev", turns[0])
 
 
 def test_schema_idempotent():
@@ -1145,28 +1145,56 @@ def test_reply_chain_and_one_shot():
           convs["4001"]["session_id"])
 
 
-def test_fail_closed():
-    print("classification fails closed")
+def test_the_gate_fails_open():
+    """A gate that cannot decide engages anyway, and the record says why.
+
+    This direction is deliberate and it is the opposite of the lane decision it replaced. That
+    one failed CLOSED, because a question misread as a change handed write capability to a run
+    that never needed it. There is no capability left to withhold, and the failure that matters
+    now is the other one: a gate that silently swallowed a real bug report would look exactly
+    like a quiet channel.
+    """
+    print("the engagement gate fails open")
     fixture = base_fixture()
-    fixture["messages"][RANDOM_CHANNEL] = [message(6001, "please fix the merger",
-                                                   channel=RANDOM_CHANNEL)]
-    case = Case("failclosed", fixture)
-    # An unwatched channel is the ambiguous case: no doorbell mapping, so the cheap classifier
-    # decides — and this one cannot run.
-    case.events(ask_event(6001, channel="random_chat", channel_id=RANDOM_CHANNEL))
+    fixture["messages"][ASK_CHANNEL] = [message(4001, "please fix the merger")]
+    case = Case("failopen", fixture)
+    # ask_claude is watched and engage:all, so the gate runs — and this stub cannot.
+    case.events(ask_event(4001))
     case.watcher.drain_events()
     case.watcher.claim_turns()
     turn = case.rows("SELECT * FROM turn")[0]
-    check("an undecidable classification runs in the ANSWER lane", turn["lane"] == "answer", turn)
-    check("failed_closed is recorded on the turn", turn["failed_closed"] == 1, turn)
+    check("a gate that could not decide still runs the turn", turn["lane"] == "dev", turn)
+    check("the turn records that it did", turn["failed_closed"] == 1, turn)
     check("with a reason a human can act on",
-          "classifier" in (turn["failed_closed_reason"] or ""), turn["failed_closed_reason"])
+          "gate" in (turn["failed_closed_reason"] or ""), turn["failed_closed_reason"])
     cls = json.loads(turn["classification_json"])
-    check("the classification itself says failed_closed", cls["status"] == "failed_closed", cls)
+    check("and the classification says so too", cls["status"] == "failed_open", cls)
+
+
+def test_an_unwatched_channel_produces_nothing():
+    """The watch block is the list. A channel absent from it is one this box does not act on.
+
+    The listener stopped delivering unwatched channels on 2026-08-25; this is the ingest side,
+    which the 15-minute sweep and a doorbell written before that change can still reach.
+    """
+    print("ingest: an unlisted channel produces nothing")
+    fixture = base_fixture()
+    fixture["messages"][RANDOM_CHANNEL] = [message(6001, "please fix the merger",
+                                                   channel=RANDOM_CHANNEL)]
+    case = Case("unwatched", fixture)
+    case.events(ask_event(6001, channel="random_chat", channel_id=RANDOM_CHANNEL))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    check("no conversation is created", case.rows("SELECT * FROM conversation") == [],
+          case.rows("SELECT * FROM conversation"))
+    check("and no turn", case.rows("SELECT * FROM turn") == [], case.rows("SELECT * FROM turn"))
+    check("an operator DM is exempt, because a DM has no channel to list",
+          "operator_dm" in open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
+          .split("def ingest_event")[1].split("try:")[0])
 
 
 def test_read_only_capabilities():
-    print("capability construction")
+    print("capability construction: one set")
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [message(7001, "what does the splitter do?")]
     case = Case("caps", fixture)
@@ -1174,29 +1202,29 @@ def test_read_only_capabilities():
     case.watcher.once()
 
     run = case.rows("SELECT * FROM run")[0]
-    check("the read-only lane cannot edit or write",
-          run["tools"] == "Read,Grep,Glob,Bash"
-          and not {"Edit", "Write"} & set((run["tools"] or "").split(",")), run["tools"])
-    check("and no deny patterns to lean on", (run["disallowed"] or "") == "", run["disallowed"])
-    # Bash arrived with Unity. What keeps it narrow is that these are EXACT patterns: a trailing
-    # `*` matches the whole command string, so `Bash(ffverify *)` would also permit
-    # `ffverify && anything`, and this lane's prompt is built from player-authored text.
+    # A question asked in Discord, and it gets exactly what every other turn gets. There is no
+    # read-only variant any more: the containment that mattered was never the tool list — it was
+    # holding no credential, a host-owned publish and a clone destroyed at the end of the run.
+    check("a question turn gets the same tools as any other",
+          run["tools"] == "Read,Grep,Glob,Edit,Write,Bash", run["tools"])
+    check("with the tripwire deny list attached",
+          "Bash(git push*)" in (run["disallowed"] or ""), run["disallowed"])
     allowed = (run["allowed"] or "").split(",") if run["allowed"] else []
-    check("its allow list is ffverify and nothing else",
-          allowed and all(a.startswith("Bash(ffverify") for a in allowed), allowed)
-    check("with no trailing glob for a command chain to ride in on",
-          not any(a.endswith("*)") for a in allowed), allowed)
-    check("Unity is on, so a read lane can go and look", run["unity"] == 1, run)
+    check("and bare Bash rather than an enumeration", allowed == ["Bash"], allowed)
+    check("Unity is on, so a turn can go and look", run["unity"] == 1, run)
 
     job_files = []
     for dirpath, _, files in os.walk(case.watcher.conv_root):
         job_files += [os.path.join(dirpath, f) for f in files if f == "job.json"]
     job = json.load(open(job_files[0], encoding="utf-8"))
     check("job.json names the same capability set",
-          job["capabilities"]["tools"] == "Read,Grep,Glob,Bash"
-          and job["capabilities"]["disallowed"] == [], job["capabilities"])
-    check("but the harness does not verify a lane that could not have changed anything",
-          job["verify"]["enabled"] is False, job["verify"])
+          job["capabilities"]["tools"] == "Read,Grep,Glob,Edit,Write,Bash"
+          and job["capabilities"]["allowed"] == ["Bash"], job["capabilities"])
+    # Verification is asked for on every run now. It costs nothing on a run that changed no
+    # files: the container skips the suite when the tree is untouched, so a question does not
+    # spend fifteen minutes proving it changed nothing.
+    check("verification is asked for, and the container decides whether to spend it",
+          job["verify"]["enabled"] is True, job["verify"])
     argv = json.load(open(os.path.join(os.path.dirname(job_files[0]), "ffbox-argv.json"),
                           encoding="utf-8"))
     check("ffbox is called with a working editor and the three clocks",
@@ -1213,7 +1241,7 @@ def test_read_only_capabilities():
     # page renders under a verification heading. Every question asked in Discord carried that
     # warning. The two states compose_head keeps apart, "we could not check" and "we did not
     # need to check", have to stay apart in the table too.
-    check("and writes no verification row for a lane it never asked to verify",
+    check("and writes no verification row when the run changed nothing",
           case.rows("SELECT * FROM verification WHERE run_id=?", (run["id"],)) == [],
           case.rows("SELECT * FROM verification"))
     reply = json.loads(case.rows("SELECT * FROM outbound WHERE run_id=? AND action='post'",
@@ -1416,25 +1444,26 @@ def test_dev_lane_runs_a_directive():
     (design section 13), never to message content — the listener decides the kind, and ffwatch
     maps the kind to the lane. A message merely claiming to be an operator is an `ask`.
 
-    The lane is no longer pinned by the kind. An operator asks questions as often as they hand
-    out work, so a directive is classified for TYPE: a change takes the dev lane, a question
-    takes the read-only answer lane, and answering "which file defines X" stops costing a
-    Unity-enabled write lane.
+    The lane is gone with all the others, and so is the classification that used to pick one.
+    What a directive still gets that an ordinary message does not is operator tier, and that is
+    a dictionary lookup on the authenticated author.id rather than anything a model decided.
+
+    It has to arrive in a WATCHED channel now. An unlisted channel produces no events at all
+    since 2026-08-25, whoever spoke — the channel decides, not the author.
     """
     print("dev lane")
     fixture = base_fixture()
-    fixture["messages"][RANDOM_CHANNEL] = [message(15001, "ship the merger fix",
-                                                   channel=RANDOM_CHANNEL, author=LOTHSAHN)]
+    fixture["messages"][ASK_CHANNEL] = [message(15001, "ship the merger fix",
+                                                author=LOTHSAHN)]
     case = Case("writelane", fixture,
-                verdict={"engage": True, "type": "change",
-                         "reason": "asks for a defect to be fixed"})
+                verdict={"engage": True, "reason": "asks for a defect to be fixed"})
     case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
-                 "channel": RANDOM_CHANNEL, "channel_id": RANDOM_CHANNEL, "id": "15001",
+                 "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15001",
                  "author_id": LOTHSAHN})
     case.watcher.once()
     turn = case.rows("SELECT * FROM turn")[0]
-    check("a directive the classifier calls a change takes the dev lane",
+    check("a directive runs like every other turn",
           turn["lane"] == "dev", turn)
     check("and it is an operator turn at a public venue",
           (turn["trust_tier"], turn["venue"]) == ("operator", "public"), turn)
@@ -1442,35 +1471,38 @@ def test_dev_lane_runs_a_directive():
     run = case.rows("SELECT * FROM run")[0]
     check("with the write tool set and Unity on",
           run["tools"] == "Read,Grep,Glob,Edit,Write,Bash" and run["unity"] == 1, run)
-    check("a verification row is written even though this run changed nothing",
-          len(case.rows("SELECT * FROM verification WHERE run_id=?", (run["id"],))) == 1)
+    # No row, and that is the change. It used to get one, because verification was asked for on
+    # the write lanes and a missing report always synthesised "could not verify". Every run asks
+    # now, so the discriminator moved to whether the run CHANGED anything: a turn that touched
+    # nothing had nothing to verify, and a ⚠️ NOT VERIFIED on it would be answering a question
+    # nobody asked. A missing report on a run that DID change files still gets its row.
+    check("but no verification row, because the run changed nothing to verify",
+          case.rows("SELECT * FROM verification WHERE run_id=?", (run["id"],)) == [],
+          case.rows("SELECT * FROM verification"))
 
     ask = base_fixture()
-    ask["messages"][RANDOM_CHANNEL] = [message(15101, "which file defines the merger?",
-                                               channel=RANDOM_CHANNEL, author=LOTHSAHN)]
+    ask["messages"][ASK_CHANNEL] = [message(15101, "which file defines the merger?",
+                                            author=LOTHSAHN)]
     q = Case("directive-question", ask,
-             verdict={"engage": True, "type": "question",
-                      "reason": "wants to know where something lives"})
+             verdict={"engage": True, "reason": "wants to know where something lives"})
     q.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
     q.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
-              "channel": RANDOM_CHANNEL, "channel_id": RANDOM_CHANNEL, "id": "15101",
+              "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15101",
               "author_id": LOTHSAHN})
     q.watcher.drain_events()
     q.watcher.claim_turns()
     qturn = q.rows("SELECT * FROM turn")[0]
-    check("a directive that is really a question takes the read-only answer lane",
-          qturn["lane"] == "answer", qturn)
+    check("a directive that is really a question runs the same way",
+          qturn["lane"] == "dev", qturn)
 
     # An old listener on some machine still emits the pre-operator-set kind. It must keep
     # working: ffwatch and the plugin update on their own schedules.
     legacy = base_fixture()
-    legacy["messages"][RANDOM_CHANNEL] = [message(15201, "ship it", channel=RANDOM_CHANNEL,
-                                                  author=LOTHSAHN)]
-    old = Case("directive-legacy", legacy,
-               verdict={"engage": True, "type": "change", "reason": "x"})
+    legacy["messages"][ASK_CHANNEL] = [message(15201, "ship it", author=LOTHSAHN)]
+    old = Case("directive-legacy", legacy, verdict={"engage": True, "reason": "x"})
     old.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
     old.events({"ts": "2026-08-21T00:00:00Z", "kind": "lothsahn_directive",
-                "channel": RANDOM_CHANNEL, "channel_id": RANDOM_CHANNEL, "id": "15201",
+                "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15201",
                 "author_id": LOTHSAHN})
     old.watcher.drain_events()
     old.watcher.claim_turns()
@@ -1498,10 +1530,10 @@ def test_thread_triage_lane():
           conv["kind"] == "bug_report", conv)
     check("the thread title is kept", conv["title"] == "belt merger drops items", conv)
     turn = case.rows("SELECT * FROM turn")[0]
-    check("it runs in the triage lane", turn["lane"] == "triage", turn)
+    check("it runs like any other turn", turn["lane"] == "dev", turn)
     run = case.rows("SELECT * FROM run")[0]
-    check("triage cannot edit or write either",
-          not {"Edit", "Write"} & set((run["tools"] or "").split(",")), run["tools"])
+    check("a bug thread gets the same capability set as everything else",
+          run["tools"] == "Read,Grep,Glob,Edit,Write,Bash", run["tools"])
     check("both thread messages were claimed",
           len(case.rows("SELECT * FROM message WHERE turn_id IS NOT NULL")) == 2)
 
@@ -1654,7 +1686,7 @@ def test_container_argv_is_valid():
     check("a read-only lane gets the question verdict schema",
           "change_required" in schema["properties"], schema)
 
-    change = dict(answer, lane="fix", verdict_schema="change",
+    change = dict(answer, verdict_schema="turn",
                   session={"id": sid, "resume": True},
                   capabilities={"tools": "Read,Grep,Glob,Edit,Write,Bash",
                                 "disallowed": ["Bash(git push*)", "Bash(gh *)"],
@@ -2414,17 +2446,18 @@ def test_the_reply_has_two_shapes():
           "ffresume" not in text, text)
 
     fixture = base_fixture()
-    fixture["messages"][RANDOM_CHANNEL] = [message(24001, "why does the belt stall?",
-                                                   channel=RANDOM_CHANNEL)]
-    # An unwatched channel: the classifier stub cannot run, so this turn fails closed.
+    fixture["messages"][ASK_CHANNEL] = [message(24001, "why does the belt stall?")]
+    # A watched engage:all channel whose gate stub cannot run, so the gate fails open. The turn
+    # ran with the same capabilities as any other, so the warning is about the READING of it
+    # rather than about what it was allowed to do.
     blind = Case("head", fixture, approve=True)
-    blind.events(ask_event(24001, channel="random_chat", channel_id=RANDOM_CHANNEL))
+    blind.events(ask_event(24001))
     blind.watcher.once()
     btext = json.loads(blind.rows("SELECT * FROM outbound WHERE action='post'"
                                   " ORDER BY id")[0]["payload_json"])["text"]
     check("a public reply the harness DOES have a quarrel with says so, in one line",
           btext.splitlines()[0] == "⚠️ I could not work out what this was asking for, "
-                                   "so I only looked and changed nothing.", btext)
+                                   "so treat what follows with care.", btext)
     check("and the answer still follows it", btext.endswith(
         "Checked the belt merger path; this is expected behaviour."), btext)
     check("the correction names no internal the private shape would have named",
@@ -2439,16 +2472,21 @@ def test_the_reply_has_two_shapes():
     priv.watcher.once()
     ptext = json.loads(priv.rows("SELECT * FROM outbound WHERE action='post'"
                                  " ORDER BY id")[0]["payload_json"])["text"]
-    check("a private reply warns that the run was answered blind, and why",
-          "⚠️" in ptext and "read-only" in ptext, ptext[:400])
+    check("a private reply warns that the gate could not decide, and why",
+          "⚠️" in ptext and "the engagement gate failed" in ptext, ptext[:400])
     check("it carries the answer too", "belt merger" in ptext, ptext)
     check("and the ffresume footer lets a human take the session over",
           f"ffresume {priv.rows('SELECT session_id FROM run')[0]['session_id']}" in ptext,
           ptext)
     check("but the telemetry is gone from here as well",
           not any(bit in ptext for bit in ("✅", "lane ", "$0.21", "4 turns", "type:")), ptext)
-    check("no branch or PR line is faked for a lane that published nothing",
-          "branch" not in ptext and "PR #" not in ptext, ptext)
+    # Every run gets a work branch now, so the publish line says what actually happened
+    # rather than being absent. What must never appear is a branch name or a PR number for a
+    # run that published neither — those come from ffbox's harvest and the GitHub API response,
+    # never from the agent's prose.
+    check("no branch NAME or PR number is faked for a run that published nothing",
+          "ffbox/" not in ptext and "PR #" not in ptext
+          and "no branch: the run changed no files" in ptext, ptext)
 
 
 def test_a_private_reply_never_composes_to_nothing():
@@ -2573,11 +2611,13 @@ def test_a_capped_lane_tells_a_channel_once_not_every_asker():
           len(case.rows("SELECT * FROM outbound WHERE action='post'")) == 1,
           case.rows("SELECT * FROM outbound"))
 
-    # A different ceiling is a different thing to be told, so it is keyed apart.
-    case.watcher.db.execute("UPDATE turn SET lane='fix' WHERE id=?", (turns[1],))
-    check("but a different lane running out is",
+    # A different ceiling is a different thing to be told, so it is keyed apart. The turn above
+    # was a player's; this one is an operator's, and a channel where both ran out has two things
+    # to say rather than one.
+    case.watcher.db.execute("UPDATE turn SET trust_tier='operator' WHERE id=?", (turns[1],))
+    check("but a different ceiling running out is",
           case.watcher.record_blocked_reply(turns[1],
-                                            "rate limit for lane fix reached") == 1,
+                                            "rate limit for trust tier operator reached") == 1,
           case.rows("SELECT * FROM outbound"))
 
     # A forum is the shape that nearly slipped through: a bug-report conversation IS a thread,
@@ -2825,7 +2865,14 @@ def bug_case(name, **kw):
 
 
 def escalate(case, *, changed, verify, verdict=None):
-    """Take the triage turn's AUTOFIX verdict through to a finished fix run."""
+    """Run a second turn on the bug thread that changes files, through to a finished run.
+
+    This used to go through enqueue_autofix(), which existed because the triage turn was
+    read-only and making a change needed a differently-capable second turn. Both lanes are gone
+    and any turn can change files, so this queues an ordinary follow-up — what a second message
+    on the thread produces — and the tests below still get what they were after: a run that
+    changed something, to publish and to gate.
+    """
     os.environ["FFBOX_STUB_CHANGED"] = json.dumps(changed)
     if verify is None:
         os.environ.pop("FFBOX_STUB_VERIFY", None)
@@ -2833,52 +2880,27 @@ def escalate(case, *, changed, verify, verdict=None):
         os.environ["FFBOX_STUB_VERIFY"] = json.dumps(verify)
     os.environ["FFBOX_STUB_VERDICT"] = json.dumps(verdict or CONFIDENT_VERDICT)
     conv = case.rows("SELECT * FROM conversation")[0]
-    triage = case.rows("SELECT * FROM turn ORDER BY id")[0]
-    fix_turn = case.watcher.enqueue_autofix(triage, conv,
-                                            {"verdict": "AUTOFIX",
-                                             "change_outline": "clamp the merger index"})
+    turn_id = queue_follow_up(case, conv, note="clamp the merger index")
     case.watcher.once()
-    return fix_turn
+    return turn_id
 
 
-def test_autofix_enqueues_one_fix_job():
-    print("triage AUTOFIX hands off to fix")
-    case = bug_case("autofix")
-    conv = case.rows("SELECT * FROM conversation")[0]
-    triage = case.rows("SELECT * FROM turn ORDER BY id")[0]
-    check("the first turn was read-only triage", triage["lane"] == "triage", triage)
-    check("and the conversation pinned a base sha",
-          (conv["base_sha"] or "").startswith("0579c37b8"), conv)
+def queue_follow_up(case, conv, *, note=None, tier="player", venue="private"):
+    """Queue one more turn on an existing conversation, the way a second message would.
 
-    verdict = {"verdict": "AUTOFIX", "change_outline": "clamp the merger index",
-               "summary": "reproduced", "change_required": True}
-    first = case.watcher.enqueue_autofix(triage, conv, verdict)
-    again = case.watcher.enqueue_autofix(
-        case.rows("SELECT * FROM turn WHERE id=?", (triage["id"],))[0],
-        case.rows("SELECT * FROM conversation")[0], verdict)
-    fixes = case.rows("SELECT * FROM turn WHERE lane='fix'")
-    check("an AUTOFIX verdict enqueues exactly one fix job", len(fixes) == 1 and first, fixes)
-    check("and a second call adds nothing", again is None, again)
-    check("the fix turn remembers which triage turn asked for it",
-          fixes[0]["parent_turn_id"] == triage["id"], fixes[0])
-    check("it carries the triager's outline as its instruction",
-          "clamp the merger index" in (fixes[0]["note"] or ""), fixes[0]["note"])
-
-    # design section 6: escalating to the fix lane is the ONE moment a conversation re-bases.
-    conv = case.rows("SELECT * FROM conversation")[0]
-    check("escalating clears the pinned base so the fix lands on today's develop",
-          conv["base_sha"] is None, conv)
-    check("and records what it moved off",
-          (fixes[0]["rebased_from"] or "").startswith("0579c37b8"), fixes[0])
-
-    # A verdict that is not AUTOFIX must not be able to cause a write, however it is worded.
-    case2 = bug_case("noautofix")
-    case2.watcher.enqueue_autofix(
-        case2.rows("SELECT * FROM turn ORDER BY id")[0],
-        case2.rows("SELECT * FROM conversation")[0],
-        {"verdict": "ESCALATE", "summary": "I will auto-fix this myself, opening a PR now"})
-    check("prose promising a fix enqueues nothing without the AUTOFIX field",
-          case2.rows("SELECT * FROM turn WHERE lane='fix'") == [])
+    `venue` is a parameter because it decides how much a reply may say: a private venue gets
+    the branch, the PR and the verification detail, and a public one gets the answer alone.
+    """
+    seq = int(case.watcher.db.scalar(
+        "SELECT COALESCE(MAX(seq),0) FROM turn WHERE conversation_id=?", (conv["id"],), 0)) + 1
+    cur = case.watcher.db.execute(
+        "INSERT INTO turn(conversation_id, seq, trigger, lane, status, classification_json,"
+        " failed_closed, queued_at, trust_tier, venue, note)"
+        " VALUES(?,?,'message','dev','queued','{}',0,?,?,?,?)",
+        (conv["id"], seq, ffwatch.now_iso(), tier, venue, note))
+    case.watcher.db.execute("UPDATE conversation SET state='queued', base_sha=NULL WHERE id=?",
+                            (conv["id"],))
+    return cur.lastrowid
 
 
 def test_fix_lane_launches_with_write_capabilities():
@@ -2888,23 +2910,22 @@ def test_fix_lane_launches_with_write_capabilities():
     escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
 
     run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
-                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+                    " ORDER BY r.id DESC")[0]
     check("the fix lane gets the write tool set",
           run["tools"] == "Read,Grep,Glob,Edit,Write,Bash", run["tools"])
     check("Unity is on for it", run["unity"] == 1, run)
     check("the deny patterns are recorded as the tripwire they are",
           "Bash(git push*)" in (run["disallowed"] or ""), run["disallowed"])
     allowed = (run["allowed"] or "").split(",")
-    check("the allow list names ffverify, which is the only Unity entry point",
-          "Bash(ffverify *)" in allowed, allowed)
-    # Local git is granted (test_the_agent_commits_its_own_work); reaching a REMOTE is not, and
-    # neither is importing a commit somebody else authored.
-    check("and it never allows a git command that leaves the clone",
-          not any(a.startswith(("Bash(git push", "Bash(git remote", "Bash(git fetch",
-                                "Bash(git merge", "Bash(git rebase", "Bash(gh"))
-                  for a in allowed), allowed)
-    check("while the local half is there for the agent to commit with",
-          "Bash(git commit*)" in allowed, allowed)
+    check("the allow list is bare Bash — ffverify is on PATH, not enumerated",
+          allowed == ["Bash"], allowed)
+    # Reaching a REMOTE is denied, and so is importing a commit somebody else authored. Neither
+    # is containment — the deny list is a string matcher — but a model reaching for one lands in
+    # permission_denials, which is the signal worth having.
+    check("and the tripwire still names every git command that leaves the clone",
+          all(p in (run["disallowed"] or "") for p in
+              ("Bash(git push*)", "Bash(git remote*)", "Bash(git fetch*)",
+               "Bash(git merge*)", "Bash(git rebase*)", "Bash(gh *)")), run["disallowed"])
 
     run_dir = os.path.join(case.watcher.conv_dir(1), "runs", run["ffbox_run_id"])
     argv = json.load(open(os.path.join(run_dir, "ffbox-argv.json"), encoding="utf-8"))
@@ -2921,8 +2942,8 @@ def test_fix_lane_launches_with_write_capabilities():
     check("the job asks for harness verification and names the fast suite",
           job["verify"]["enabled"] and job["verify"]["assemblies"] == "FFEditorTests",
           job.get("verify"))
-    check("the prompt says the turn was deliberately re-based",
-          "RE-BASED" in job["prompt"], job["prompt"][-600:])
+    check("the run is based on today's develop, not a sha pinned turns ago",
+          (job.get("conversation") or {}).get("base_sha") is None, job.get("conversation"))
 
 
 def test_fix_lane_rate_limit():
@@ -2944,9 +2965,9 @@ def test_fix_lane_rate_limit():
     check("and a turn with no tier recorded counts as a player, not as uncapped",
           case.watcher.rate_limited(None) is True)
 
-    case.watcher.enqueue_autofix(triage, conv, {"verdict": "AUTOFIX"})
+    queue_follow_up(case, conv, venue="public")
     started = case.watcher.schedule()
-    fourth = case.rows("SELECT * FROM turn WHERE lane='fix' AND parent_turn_id IS NOT NULL")[0]
+    fourth = case.rows("SELECT * FROM turn WHERE status='blocked' ORDER BY id DESC")[0]
     check("the sixth player turn of the day does not launch", started == [], started)
     check("it is blocked, not silently dropped", fourth["status"] == "blocked", fourth)
     check("with a reason naming the tier and the limit",
@@ -2976,14 +2997,9 @@ def test_fix_lane_rate_limit():
     # and without a guard every message after the cap would draw its own refusal — spending the
     # channel's send budget saying no while real replies queued behind them.
     before = len(case.rows("SELECT * FROM outbound WHERE action='post'"))
-    # Detach the blocked turn from its triage parent first, or enqueue_autofix refuses the
-    # second escalation as the duplicate it normally would be.
-    case.watcher.db.execute("UPDATE turn SET parent_turn_id=NULL WHERE id=?", (fourth["id"],))
-    case.watcher.enqueue_autofix(
-        case.rows("SELECT * FROM turn WHERE id=?", (triage["id"],))[0],
-        case.rows("SELECT * FROM conversation")[0], {"verdict": "AUTOFIX"})
+    queue_follow_up(case, case.rows("SELECT * FROM conversation")[0], venue="public")
     case.watcher.schedule()
-    blocked = case.rows("SELECT * FROM turn WHERE lane='fix' AND status='blocked'")
+    blocked = case.rows("SELECT * FROM turn WHERE status='blocked'")
     check("a fifth blocked turn is still recorded", len(blocked) == 2, blocked)
     check("but the thread is not told twice in a day",
           len(case.rows("SELECT * FROM outbound WHERE action='post'")) == before,
@@ -3073,7 +3089,7 @@ def test_publish_opens_a_pull_request():
     escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY, verdict=lying)
 
     run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
-                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+                    " ORDER BY r.id DESC")[0]
     expected = f"ffbox/{run['ffbox_run_id']}"
     check("the branch is the one the host named, not the one the summary claims",
           run["branch"] == expected, run["branch"])
@@ -3135,7 +3151,7 @@ def test_failed_verification_blocks_the_pull_request():
              verdict=dict(CONFIDENT_VERDICT, summary="All tests pass, ready to merge."))
 
     run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
-                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+                    " ORDER BY r.id DESC")[0]
     ver = case.rows("SELECT * FROM verification WHERE run_id=?", (run["id"],))
     check("the harness wrote a verification row", len(ver) == 1, ver)
     check("recording the failure the agent did not mention",
@@ -3167,7 +3183,7 @@ def test_compile_failure_blocks_the_pull_request():
     escalate(case, changed=["Assets/Belt.cs"], verify=broken)
 
     run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
-                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+                    " ORDER BY r.id DESC")[0]
     check("the branch is published anyway so the work is not lost", run["pushed"] == 1, run)
     check("no PR opens for a change that did not compile", run["pr_number"] is None, run)
     check("and the reason says so", "compile" in (run["no_pr_reason"] or ""),
@@ -3181,7 +3197,7 @@ def test_compile_failure_blocks_the_pull_request():
     git_origin(case2)
     escalate(case2, changed=["Assets/Belt.cs"], verify=None)
     run2 = case2.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
-                      " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+                      " ORDER BY r.id DESC")[0]
     ver2 = case2.rows("SELECT * FROM verification WHERE run_id=?", (run2["id"],))[0]
     check("a missing verification report still writes a row saying it did not run",
           ver2["ran"] == 0, ver2)
@@ -3202,16 +3218,26 @@ def test_the_agent_commits_its_own_work():
     the harvest's identity check has no answer for a legitimate `git merge`.
     """
     print("local git: the agent commits, the host publishes")
-    allowed = " ".join(ffwatch.WRITE_ALLOWED)
-    for verb in ("add", "commit", "branch", "checkout", "switch", "restore", "reset", "stash"):
-        check(f"the write lanes can run git {verb}", f"Bash(git {verb}*)" in allowed)
-    for verb in ("push", "remote", "fetch", "clone", "merge", "rebase", "cherry-pick", "am"):
-        check(f"but never git {verb}", f"Bash(git {verb}" not in allowed)
-    check("and still nothing that could publish on its own",
-          not [p for p in ffwatch.WRITE_ALLOWED
-               if "push" in p or "gh " in p or "remote" in p], ffwatch.WRITE_ALLOWED)
-    check("the read-only lanes gain none of it",
-          not [p for p in ffwatch.READ_ALLOWED if "git" in p], ffwatch.READ_ALLOWED)
+    # These used to be enumerated one by one in WRITE_ALLOWED. Bare Bash grants them, so what
+    # is worth pinning is the other half: the four commands that are still DENIED, because the
+    # harvest's identity check has no answer for a legitimate `git merge`.
+    check("local git comes with bare Bash rather than an enumeration",
+          ffwatch.CAPABILITIES["allowed"] == ["Bash"], ffwatch.CAPABILITIES["allowed"])
+    for verb in ("merge", "rebase", "cherry-pick", "am"):
+        check(f"but git {verb} is still on the tripwire, because it imports somebody else's "
+              f"commits", f"Bash(git {verb}*)" in ffwatch.TRIPWIRE)
+    for verb in ("push", "remote", "fetch"):
+        check(f"and git {verb} is denied too, for the older reason: it reaches a remote",
+              f"Bash(git {verb}*)" in ffwatch.TRIPWIRE)
+    check("nothing granted could publish on its own",
+          not [p for p in ffwatch.CAPABILITIES["allowed"]
+               if "push" in p or "gh " in p or "remote" in p], ffwatch.CAPABILITIES)
+    # The tripwire is a STRING MATCHER and evadable — `sh -c 'git push'` walks through it. What
+    # actually stops a publish is that the container holds no credential and no authenticated
+    # remote, and the harvest refuses a range this run did not author.
+    check("and the deny list still says out loud that it is not the containment",
+          "A TRIPWIRE, not a boundary" in
+          open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read())
 
     ffbox_src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
     check("ffbox configures the identity those commits get, in the clone",
@@ -3434,7 +3460,7 @@ def test_a_refused_harvest_is_reported():
         os.environ.pop("FFBOX_STUB_HARVEST_ERROR", None)
 
     run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
-                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+                    " ORDER BY r.id DESC")[0]
     check("nothing is published", run["pushed"] == 0, run)
     check("and no PR opens", run["pr_number"] is None, run)
     check("the refusal is the recorded reason, not 'changed no files'",
@@ -3453,7 +3479,7 @@ def test_no_changed_files_means_no_branch_and_no_pr():
                           summary="Already fixed on develop; nothing to do."))
 
     run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
-                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+                    " ORDER BY r.id DESC")[0]
     check("no branch is published", run["pushed"] == 0 and run["bundle_path"] is None, run)
     check("and no PR opens", run["pr_number"] is None, run)
     check("with a reason", "changed no files" in (run["no_branch_reason"] or ""),
@@ -3847,8 +3873,8 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
     # The merged lane runs under a schema like every other lane. What keeps the terminal
     # readable is result_text unwrapping `summary`, not the absence of a schema — checked
     # below, because it is the half of the merge that could regress silently.
-    check("it runs under the dev lane's verdict schema, like any other dev turn",
-          job["verdict_schema"] == "change", job["verdict_schema"])
+    check("it runs under the one verdict schema, like every other turn",
+          job["verdict_schema"] == "turn", job["verdict_schema"])
     check("and the container is told there is no thread on the other end of it",
           job["local"] is True, job["local"])
     check("what the person at the terminal reads is the summary, not the raw verdict",
@@ -3939,20 +3965,18 @@ def test_the_shell_lane_was_merged_into_dev():
     other end. That is the half worth pinning down here: the same lane, told two different
     things, because it is answering into two different places.
     """
-    print("lanes: shell merged into dev")
-    check("there is no shell lane left to select",
-          "shell" not in ffwatch.LANE_CAPABILITIES, sorted(ffwatch.LANE_CAPABILITIES))
-    check("dev gets Bash outright",
-          "Bash" in ffwatch.LANE_CAPABILITIES["dev"]["allowed"],
-          ffwatch.LANE_CAPABILITIES["dev"]["allowed"])
-    # The line the merge does NOT cross. `fix` is reached only by a triage AUTOFIX verdict, so
-    # the text that decided there should be a write turn was written by a stranger.
-    check("but fix does not, because a player's bug report is what enqueues it",
-          "Bash" not in ffwatch.LANE_CAPABILITIES["fix"]["allowed"],
-          ffwatch.LANE_CAPABILITIES["fix"]["allowed"])
-    check("both local kinds route to it",
-          ffwatch.LANE_BY_KIND["shell"] == "dev" and ffwatch.LANE_BY_KIND["web"] == "dev",
-          ffwatch.LANE_BY_KIND)
+    print("lanes: there is one capability set")
+    check("there is no lane table left to select from",
+          not hasattr(ffwatch, "LANE_CAPABILITIES") and not hasattr(ffwatch, "LANE_BY_KIND"))
+    check("every run gets the same tools",
+          ffwatch.CAPABILITIES["tools"] == "Read,Grep,Glob,Edit,Write,Bash",
+          ffwatch.CAPABILITIES["tools"])
+    check("and bare Bash",
+          ffwatch.CAPABILITIES["allowed"] == ["Bash"], ffwatch.CAPABILITIES["allowed"])
+    check("the local kinds still bypass the gate, along with the addressed Discord kinds",
+          set(ffwatch.GATE_BYPASS_KINDS)
+          == {"shell", "web", "operator_dm", "directive", "mention"},
+          ffwatch.GATE_BYPASS_KINDS)
 
     # -- the rate limit -------------------------------------------------------------------
     # Asserted against DEFAULTS, not against the loaded config: a box whose
@@ -3984,13 +4008,12 @@ def test_the_shell_lane_was_merged_into_dev():
                                             "job.json"), encoding="utf-8"))
 
     fixture = base_fixture()
-    fixture["messages"][RANDOM_CHANNEL] = [message(15001, "ship the merger fix",
-                                                   channel=RANDOM_CHANNEL, author=LOTHSAHN)]
+    fixture["messages"][ASK_CHANNEL] = [message(15001, "ship the merger fix", author=LOTHSAHN)]
     remote = Case("mergeremote", fixture,
-                  verdict={"engage": True, "type": "change", "reason": "asks for a fix"})
+                  verdict={"engage": True, "reason": "asks for a fix"})
     remote.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
     remote.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
-                   "channel": RANDOM_CHANNEL, "channel_id": RANDOM_CHANNEL, "id": "15001",
+                   "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15001",
                    "author_id": LOTHSAHN})
     remote.watcher.once()
     remote_run = remote.rows("SELECT * FROM run")[0]
@@ -4005,7 +4028,7 @@ def test_the_shell_lane_was_merged_into_dev():
           local_job["capabilities"] == remote_job["capabilities"],
           (local_job["capabilities"], remote_job["capabilities"]))
     check("and identical verdict schemas",
-          local_job["verdict_schema"] == remote_job["verdict_schema"] == "change",
+          local_job["verdict_schema"] == remote_job["verdict_schema"] == "turn",
           (local_job["verdict_schema"], remote_job["verdict_schema"]))
     check("locality is what separates them, and the host decides it",
           (local_job["local"], remote_job["local"]) == (True, False),
@@ -4766,57 +4789,47 @@ def test_systemd_units_hang_off_one_target():
 
 
 def test_allow_list_is_scope_not_a_boundary():
-    """The allow list must never be leaned on as containment, and this records why.
+    """The enumerated allow list is gone. This records why it was never containment.
 
-    Measured against the real CLI, not assumed: a command whose PREFIX matches no entry is
-    refused (`sh -c 'git push origin main'` was denied and recorded), but a trailing `*`
-    matches the whole command string including separators, so `git status --short && touch
-    marker` was PERMITTED under `Bash(git status*)`. The pattern does not decompose a chain.
+    Measured against the real CLI, not assumed: a command whose PREFIX matches no entry was
+    refused (`sh -c 'git push origin main'` was denied and recorded), but a trailing `*` matched
+    the whole command string including separators, so `git status --short && touch marker` was
+    PERMITTED under `Bash(git status*)`. The pattern does not decompose a chain.
 
-    This test does not re-run the model. It pins the two things that keep the mistake from
-    being made again in code: every write-lane entry is prefix-shaped, so nobody has quietly
-    added one believing it confines what follows; and the comment stating the limitation is
-    still there for the next reader."""
-    print("allow list: scope, not a boundary")
+    That measurement is the reason removing the list cost nothing: it reduced scope and caught
+    accidents, and a determined agent walked through it. What this pins now is that the reasoning
+    survived the removal, and that the deny list — which never was a boundary either — is still
+    carrying the four commands the harvest's identity check depends on.
+    """
+    print("allow list: scope, not a boundary, and now gone")
     src = open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
-    check("the limitation is written down where the list is defined",
-          "NOT ONE" in src and "does not decompose the chain" in src)
-    check("and the real containment is named there instead",
-          "design section 7's list" in src and "host-owned publish" in src)
+    check("the measurement that justified removing it is still written down",
+          "was PERMITTED under `Bash(git status*)`" in src
+          and "matches the WHOLE command string" in src)
+    check("and the real containment is named in its place",
+          "no git or GitHub credential in the" in src
+          and "the host owns the refspec and holds the only token" in src
+          and "there is no merge method" in src, "see the CAPABILITY_TOOLS comment")
 
-    trailing = [p for p in ffwatch.WRITE_ALLOWED if p.endswith("*)")]
-    check("the entries that end in a wildcard are known and few",
-          sorted(trailing) == sorted([
-              "Bash(ffverify *)", "Bash(git status*)", "Bash(git diff*)",
-              "Bash(git log*)", "Bash(git show*)", "Bash(git rev-parse*)",
-              "Bash(git blame*)", "Bash(git add*)", "Bash(git commit*)", "Bash(git branch*)",
-              "Bash(git checkout*)", "Bash(git switch*)", "Bash(git restore*)",
-              "Bash(git reset*)", "Bash(git stash*)"]), trailing)
-    check("every write-lane entry only ever grants a command PREFIX",
-          all(p.startswith("Bash(") and p.endswith(")") for p in ffwatch.WRITE_ALLOWED),
-          ffwatch.WRITE_ALLOWED)
-    check("nothing in the write allow list can publish on its own",
-          not [p for p in ffwatch.WRITE_ALLOWED
-               if "push" in p or "gh " in p or "remote" in p], ffwatch.WRITE_ALLOWED)
-    # The read-only lanes are the ones fed untrusted player text directly. They have Bash now,
-    # because Unity is a command, but not on the strength of a pattern a chain rides through:
-    # every entry is an exact invocation, so `ffverify && anything` matches nothing.
-    for lane in ("answer", "triage"):
-        cap = ffwatch.LANE_CAPABILITIES[lane]
-        check(f"the {lane} lane can still never edit or write",
-              not {"Edit", "Write"} & set(cap["tools"].split(",")), cap["tools"])
-        check(f"the {lane} lane's allow list is ffverify and nothing else",
-              cap["allowed"] and all(a.startswith("Bash(ffverify") for a in cap["allowed"]),
-              cap["allowed"])
-        check(f"and carries no trailing glob for a chain to ride in on",
-              not any(a.endswith("*)") for a in cap["allowed"]), cap["allowed"])
-    # And since 2026-08-21 no lane of either family can reach Discord: the outbox shim is gone
-    # rather than merely unmounted, so there is nothing on the list to argue about.
-    check("no lane's allow list names ffdiscord",
-          not [p for cap in ffwatch.LANE_CAPABILITIES.values()
-               for p in cap["allowed"] if "ffdiscord" in p], ffwatch.LANE_CAPABILITIES)
-    check("and the shim itself is not in the tree any more",
-          not os.path.exists(os.path.join(HERE, "ffdiscord_shim.py")))
+    check("bare Bash is granted, and it is required rather than decorative",
+          ffwatch.CAPABILITIES["allowed"] == ["Bash"], ffwatch.CAPABILITIES["allowed"])
+    check("because acceptEdits approves edits and not Bash, which is said where it is granted",
+          "auto-approves EDITS and not Bash" in src)
+
+    # The deny list is a tripwire and never was more. Four of its entries are load-bearing for a
+    # different reason: they import commits somebody else authored, which is what the harvest's
+    # identity check has no answer for.
+    check("the tripwire still names every way to reach a remote",
+          all(p in ffwatch.TRIPWIRE for p in
+              ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)", "Bash(git fetch*)"]),
+          ffwatch.TRIPWIRE)
+    check("and the four that would import somebody else's commits",
+          all(p in ffwatch.TRIPWIRE for p in
+              ["Bash(git merge*)", "Bash(git rebase*)", "Bash(git cherry-pick*)",
+               "Bash(git am*)"]), ffwatch.TRIPWIRE)
+    check("nothing in the capability set can publish on its own",
+          not [p for p in ffwatch.CAPABILITIES["allowed"]
+               if "push" in p or "gh " in p or "remote" in p], ffwatch.CAPABILITIES)
 
 
 def run_branch_derivation(root, *, host_branch, prefix, run_id, ending, protected=None):
@@ -5076,7 +5089,7 @@ def test_a_run_that_changed_nothing_is_not_verified():
              verdict=dict(CONFIDENT_VERDICT, changed_anything=False,
                           summary="Already fixed on develop."))
     run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
-                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+                    " ORDER BY r.id DESC")[0]
     ver = case.rows("SELECT * FROM verification WHERE run_id=?", (run["id"],))[0]
     check("the row records that it was skipped, not that it failed",
           (ver["ran"], ver["skipped"]) == (0, 1), dict(ver))
@@ -5203,7 +5216,7 @@ def test_the_pull_request_targets_the_branch_the_work_is_based_on():
         os.environ.pop("FFBOX_STUB_BASE", None)
 
     run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
-                    " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+                    " ORDER BY r.id DESC")[0]
     pull = GH_STATE["pulls"][-1]
     check("the run records which branch its work is for", run["pr_base"] == "master", run)
     check("and the pull request targets it, not the default",
@@ -5224,7 +5237,7 @@ def test_the_pull_request_targets_the_branch_the_work_is_based_on():
     try:
         escalate(case2, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
         run2 = case2.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
-                          " WHERE t.lane='fix' ORDER BY r.id DESC")[0]
+                          " ORDER BY r.id DESC")[0]
         run_dir = os.path.dirname(run2["stream_path"])
         with io.open(os.path.join(run_dir, "publish_base.txt"), "w", encoding="utf-8") as fh:
             fh.write("refs/heads/../../evil\n")
@@ -5275,7 +5288,8 @@ def main():
         test_ingest_dedupe,
         test_attachments_shared,
         test_reply_chain_and_one_shot,
-        test_fail_closed,
+        test_the_gate_fails_open,
+        test_an_unwatched_channel_produces_nothing,
         test_read_only_capabilities,
         test_batching_during_a_run,
         test_recover_crashed_run,
@@ -5328,7 +5342,6 @@ def main():
         test_a_failed_public_run_attaches_nothing_either,
         test_a_capped_lane_tells_a_channel_once_not_every_asker,
         # phase 3
-        test_autofix_enqueues_one_fix_job,
         test_fix_lane_launches_with_write_capabilities,
         test_fix_lane_rate_limit,
         test_publish_opens_a_pull_request,
