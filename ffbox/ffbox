@@ -385,6 +385,14 @@ FFBOX_GIT_EMAIL=${FFBOX_GIT_EMAIL:-ffbox@final-factory.invalid}
 # either one — but a runaway `git add -A` over a re-imported Library/ is a mistake worth
 # catching before it becomes a 40GB push.
 MAX_CHANGED_FILES=${FFBOX_MAX_CHANGED_FILES:-2000}
+# PATHS THIS PIPELINE NEVER PUBLISHES. A pushed branch is code execution on the build machine:
+# FinalFactory's .github/workflows/main.yml is `on: [push, pull_request]` and `runs-on:
+# self-hosted`, with the Unity account and GITHUB_TOKEN in scope, and GitHub runs the workflow
+# AS IT EXISTS ON THE PUSHED BRANCH rather than the one on develop. So an agent that edits one
+# has its own steps run with real secrets before a human reads the diff, and the verification
+# gate cannot catch it: that gate asks whether the change compiles and passes tests, and a
+# workflow payload does both while the code beside it is perfectly good.
+FORBIDDEN_PATHS_RE=${FFBOX_FORBIDDEN_PATHS_RE:-^\.github/}
 MAX_BUNDLE_BYTES=${FFBOX_MAX_BUNDLE_BYTES:-268435456}
 
 # Branches a run may not END on. The agent is told to make its own branch and told what happens
@@ -735,7 +743,7 @@ if [ -d "$MNT/.git" ]; then
             # Publishable; the host targets its own default branch.
             PUBLISH_BASE_SHA=$BASE_SHA
         fi
-        git -C "$MNT" add -A -- . 2>/dev/null || true
+        git -C "$MNT" add -A -- . ':(exclude).github' 2>/dev/null || true
         # Backstop for a baseline the pre-run restore could not clean. It only ever reaches what
         # is still UNCOMMITTED; anything the agent committed is past saving here, which is why
         # the restore moved to before the run. Tracked paths go back to their HEAD state; paths
@@ -850,6 +858,18 @@ if [ -d "$MNT/.git" ]; then
 
         git -C "$MNT" diff --name-only "${PUBLISH_BASE_SHA}..${BRANCH}" > "$OUT/changed_files.txt" \
             2>/dev/null || true
+        # Checked against the RANGE, not filtered at `git add`, because the agent has `git
+        # commit`: an add-time pathspec exclusion only ever reaches what is still uncommitted.
+        # Both exist — the exclusion above quietly drops an innocent stray edit, and this
+        # refuses the publish outright when a commit carries one, which is the case that would
+        # otherwise reach a runner.
+        if [ "$HARVEST_OK" = 1 ] && [ -s "$OUT/changed_files.txt" ]; then
+            FORBIDDEN=$(grep -E "$FORBIDDEN_PATHS_RE" "$OUT/changed_files.txt" | tr '\n' ' ' || true)
+            if [ -n "$FORBIDDEN" ]; then
+                harvest_failed "the range changes CI configuration, which this pipeline never publishes: $FORBIDDEN"
+                HARVEST_OK=0
+            fi
+        fi
         if [ "$HARVEST_OK" = 1 ] && [ -s "$OUT/changed_files.txt" ] \
            && [ "$(wc -l < "$OUT/changed_files.txt")" -gt "$MAX_CHANGED_FILES" ]; then
             harvest_failed "$(wc -l < "$OUT/changed_files.txt") changed files, over the ceiling of ${MAX_CHANGED_FILES}"
@@ -896,7 +916,7 @@ if [ -d "$MNT/.git" ]; then
         # index alone would silently drop everything the agent had already committed and hand
         # back a patch that looks like a much smaller change than the one it made.
         BASE_SHA=$(cat "$OUT/base_sha.txt" 2>/dev/null || echo "")
-        git -C "$MNT" add -A -- . 2>/dev/null || true
+        git -C "$MNT" add -A -- . ':(exclude).github' 2>/dev/null || true
         git -C "$MNT" diff --cached --binary ${BASE_SHA:+"$BASE_SHA"} > "$OUT/changes.patch" \
             2>/dev/null || true
         git -C "$MNT" reset >/dev/null 2>&1 || true

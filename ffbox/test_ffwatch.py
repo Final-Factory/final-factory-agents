@@ -3343,6 +3343,17 @@ def test_harvest_refuses_a_rewritten_or_forged_range():
           "%ae%n%ce" in src and 'grep -Fxv "$FFBOX_GIT_EMAIL"' in src)
     check("caps the changed files and the bundle bytes",
           "MAX_CHANGED_FILES" in src and "MAX_BUNDLE_BYTES" in src)
+    # A pushed branch is code execution on the build machine: main.yml is on:[push,
+    # pull_request] and runs-on: self-hosted, and GitHub runs the workflow as it exists on the
+    # PUSHED branch. The verification gate cannot catch this — it asks whether the change
+    # compiles and tests, and a workflow payload does both. Checked against the RANGE, because
+    # the agent has `git commit` and an add-time exclusion only reaches uncommitted work.
+    check("refuses to publish a range that touches CI configuration",
+          "FORBIDDEN_PATHS_RE" in src
+          and 'grep -E "$FORBIDDEN_PATHS_RE" "$OUT/changed_files.txt"' in src
+          and "the range changes CI configuration" in src)
+    check("and drops an uncommitted stray edit to one rather than refusing the whole run",
+          src.count("""add -A -- . ':(exclude).github'""") == 2)
     check("and points the work branch at wherever the agent ended",
           'branch -f "$BRANCH" HEAD' in src)
     check("a refusal is written where ffwatch reads it back",
