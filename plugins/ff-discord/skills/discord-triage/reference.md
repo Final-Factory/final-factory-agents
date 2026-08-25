@@ -61,10 +61,15 @@ Second, triage-specific zones:
   every copy of the project shares — `…/AppData/LocalLow/Never Games/finalfactory/` on Windows,
   `~/.config/unity3d/Never Games/finalfactory/` on Linux. Whichever copy ran last clobbers it.
   Trust the MCP job result, or the results file `ffverify` was told to write, and nothing else.
-- **Max 3 autofixes per pass.** Beyond that, ESCALATE the remainder. Bounded blast radius
-  matters more than throughput. On the build server this is enforced rather than advised:
-  ffwatch caps the `fix` lane at three turns per rolling day and blocks the fourth with a
-  reason on the record.
+- **Max 3 autofixes per pass, and check what is left of the day's budget.** Beyond that,
+  ESCALATE the remainder. Bounded blast radius matters more than throughput. On the build
+  server there is a harder ceiling underneath this one, enforced rather than advised: since
+  2026-08-25 ffwatch allows **five turns per rolling 24 hours for anything a player caused**,
+  counted across every kind of turn rather than per lane, and blocks the sixth with a reason on
+  the record. The triage turn you are running now spent one of those five. So three autofixes
+  is the ceiling on a quiet day and may be more than the budget has left; an AUTOFIX that gets
+  blocked helps nobody, so prefer ESCALATE for the marginal ones when the day has been busy.
+  Operator-caused turns are uncapped.
 
 ## AUTOFIX flow — agent steps + close-the-loop templates {#autofix-flow}
 
