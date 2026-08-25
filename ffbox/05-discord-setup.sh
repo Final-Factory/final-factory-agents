@@ -256,14 +256,15 @@ for key, value in (
     ("agent_secs", 900),
     ("warmup_secs", 3600),
     ("kill_grace_secs", 10),
+    # The one concurrency ceiling. max_unity_runs sat here until 2026-08-25 and is gone: every
+    # run takes an editor, so it counted exactly these runs.
     ("max_concurrent_runs", 2),
-    # A CPU and memory ceiling, not a licensing one: four game-ci containers in parallel were
-    # measured with no licensing trouble. See ffbox/README.md.
-    ("max_unity_runs", 2),
     ("catchup_secs", 900),
-    # No `dev` entry: it is the lane an operator directive and a locally typed prompt both
-    # take, and neither is the runaway a busy forum is. See ffwatch.py DEFAULTS.
-    ("rate_limits", {"answer": 200, "triage": 100, "fix": 3}),
+    # Turns per rolling 24 hours, keyed on TRUST TIER — who wrote the text, not which lane it
+    # took. One budget across every kind of turn a player can cause. `operator` is null, which
+    # ffwatch reads as no limit: an operator directive and a locally typed prompt are not the
+    # runaway a busy forum is. See ffwatch.py DEFAULTS.
+    ("rate_limits", {"player": 5, "operator": None}),
     # The page. It is behind a login and served over TLS, but 127.0.0.1 is still the default:
     # it renders raw model thinking, and one hardcoded password is a thin thing to hold a LAN
     # off with. Widening it stays a deliberate edit, made here where it is reviewable.

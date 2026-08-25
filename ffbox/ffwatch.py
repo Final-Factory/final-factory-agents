@@ -242,23 +242,12 @@ DEFAULTS = {
     "kill_grace_secs": 10,
 
     "max_concurrent_runs": 2,
-    # A RESOURCE ceiling, and it did not start out as one. ffbox deliberately does not copy
-    # game-ci's `dbus-uuidgen > /etc/machine-id`, so every container inherits the machine id
-    # baked into the GameCI base image and they ALL look like one machine to Unity's licensing
-    # service. That is what stops an agent loop burning a fresh activation every run. From
-    # there this comment used to reason that two runs at once were a race rather than two
-    # seats, and said outright that concurrent activation under one identity was UNTESTED. It
-    # has since been tested: four game-ci containers in parallel, no licensing trouble. So the
-    # number is about CPU and memory — four editors on one box is a real ceiling — and raising
-    # it is an ordinary config question rather than a licensing-server one. ffbox/README.md
-    # carries the one edge that survives (the return-licence trap fires on exit for the shared
-    # identity).
-    #
-    # Now that there is no way to launch without an editor, this counts the same runs
-    # max_concurrent_runs does and the lower of the two is the ceiling that bites. It is kept
-    # as its own knob because the two limits answer different questions — how many agents, and
-    # how many editors — and the day those diverge is the day the second one earns its keep.
-    "max_unity_runs": 2,
+    # max_unity_runs USED TO BE HERE and was deleted 2026-08-25 (single_lane_design section 6).
+    # It was a resource ceiling on how many editors run at once. Every launch takes an editor
+    # now — there is no way to ask for a run without one — so it counted exactly the runs
+    # max_concurrent_runs counts, and a second knob that can never diverge from the first is not
+    # a knob. max_concurrent_runs above is the one ceiling. A value left in an old config file
+    # is ignored: load_config() keeps only keys that are still in DEFAULTS.
     "catchup_secs": 900,
     "poll_secs": 2,
 
@@ -270,16 +259,23 @@ DEFAULTS = {
     "effort": None,
     "max_budget_usd": 10,
 
-    # Per-lane turns per rolling 24h, for the lanes driven by UNTRUSTED text. `fix` mirrors
-    # the existing "max 3 autofixes per pass".
+    # TURNS PER ROLLING 24 HOURS, KEYED ON TRUST TIER. Not a calendar day and not a reset at
+    # midnight: rate_limited() counts turns started within the last day.
     #
-    # `dev` is deliberately absent, and rate_limited() reads a missing key as no limit. It is
-    # the lane an operator directive and a locally typed prompt both take, and neither is a
-    # runaway risk the way a busy forum is: nobody accidentally types two hundred prompts, and
-    # a person sitting at a terminal watching a prompt refused because "the lane is full today"
-    # is a worse failure than the one the cap prevents. max_concurrent_runs and the three
-    # clocks still bound what it can spend at any moment.
-    "rate_limits": {"answer": 200, "triage": 100, "fix": 3},
+    # Keyed on tier since 2026-08-25, having been keyed on lane. The lane was always a proxy for
+    # the real question, which is who wrote the text the prompt was built from, and turn_trust()
+    # answers that from a dictionary lookup on Discord's authenticated author.id with no model
+    # involved. It is ONE budget across every kind of turn a player can cause, which is a good
+    # deal tighter than the 200 answer + 100 triage + 3 fix it replaces, and deliberately so:
+    # what it bounds is how many containers a stranger can cause, and a question costs the same
+    # container a change does.
+    #
+    # `operator` is None, which rate_limited() reads as no limit. An operator directive and a
+    # locally typed prompt are not a runaway risk the way a busy forum is: nobody accidentally
+    # types two hundred prompts, and a person at a terminal watching a prompt refused because
+    # "the tier is full today" is a worse failure than the one a cap prevents. Concurrency and
+    # the three clocks still bound what they can spend at any moment.
+    "rate_limits": {"player": 5, "operator": None},
 
     # alias -> what this channel IS. kind decides the lane; the listener reports the parent
     # channel's alias on every thread event, so that much needs no second Discord round trip.
@@ -735,9 +731,9 @@ LANE_CAPABILITIES = {
 }
 
 # All four lanes launch. What used to hold the write lanes back was a phase gate; what holds
-# them now is real and stays: max_unity_runs (a CPU and memory ceiling, per the note above, not
-# the licensing race this once claimed), rate_limits["fix"]=3 a day, and the fail-closed
-# classification that never widens capability on a failure to decide.
+# them now is real and stays: max_concurrent_runs, the per-tier rate limit (5 a day for anything
+# a player causes), and the fail-closed classification that never widens capability on a failure
+# to decide.
 
 # The doorbell kind decides the conversation kind; the conversation kind decides the lane
 # (design section 13). Anything that falls through goes to the classifier, which fails closed.
@@ -1414,14 +1410,23 @@ class Watcher:
         """
         return os.path.exists(self.cfg["drain_switch"])
 
-    def rate_limited(self, lane):
-        limit = (self.cfg.get("rate_limits") or {}).get(lane)
+    def rate_limited(self, tier):
+        """Has this trust tier used its turns for the rolling day?
+
+        `tier` is turn_trust()'s answer, not a lane. A missing or falsey limit is NO limit,
+        which is how `operator: null` means uncapped. An unknown or absent tier counts as
+        `player`: the caller passes a column that is NULL on rows written before the tier
+        existed, and guessing the uncapped side there would let old rows launch unbounded.
+        """
+        tier = tier or "player"
+        limit = (self.cfg.get("rate_limits") or {}).get(tier)
         if not limit:
             return False
         since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         used = self.db.scalar(
-            "SELECT COUNT(*) FROM turn WHERE lane=? AND started_at IS NOT NULL AND started_at>=?",
-            (lane, since), 0)
+            "SELECT COUNT(*) FROM turn WHERE COALESCE(trust_tier,'player')=?"
+            " AND started_at IS NOT NULL AND started_at>=?",
+            (tier, since), 0)
         return used >= int(limit)
 
     # ======================================================================================
@@ -2096,12 +2101,15 @@ class Watcher:
     # ======================================================================================
 
     def running_counts(self):
-        """(runs in flight, of which have an editor). Every launch takes one, so these agree;
-        an ADOPTED run can still say 0, because there the column records what the container
-        actually did rather than what it was asked for."""
-        rows = self.db.query(
-            "SELECT r.unity AS unity FROM run r WHERE r.terminal_state IS NULL")
-        return len(rows), sum(1 for r in rows if r["unity"])
+        """How many runs are in flight.
+
+        Returned a second number until 2026-08-25 — how many of them held an editor — which
+        existed only to feed max_unity_runs. Every launch takes an editor, so the two never
+        disagreed except on an ADOPTED run, where run.unity records what the container actually
+        did rather than what it was asked for. The column stays; nothing schedules on it.
+        """
+        return int(self.db.scalar(
+            "SELECT COUNT(*) FROM run WHERE terminal_state IS NULL", (), 0))
 
     def schedule(self):
         """Start what may start. Never blocks; launches run on their own threads."""
@@ -2113,7 +2121,7 @@ class Watcher:
         self._kill_switch_logged = False
         if self.draining():
             if not self._drain_logged:
-                total, _ = self.running_counts()
+                total = self.running_counts()
                 log(f"draining ({self.cfg['drain_switch']}) — launching nothing; "
                     f"{total} run(s) still in flight")
                 self._drain_logged = True
@@ -2125,16 +2133,15 @@ class Watcher:
             " JOIN conversation c ON c.id=t.conversation_id"
             " WHERE t.status='queued' ORDER BY t.queued_at, t.id")
         for turn in queued:
-            total, unity = self.running_counts()
+            total = self.running_counts()
             if total >= int(self.cfg["max_concurrent_runs"]):
                 break
             cap = LANE_CAPABILITIES.get(turn["lane"]) or LANE_CAPABILITIES["answer"]
-            if unity >= int(self.cfg["max_unity_runs"]):
-                continue
             if turn["conv_state"] == "running":
                 continue
-            if self.rate_limited(turn["lane"]):
-                reason = f"rate limit for lane {turn['lane']} reached"
+            if self.rate_limited(turn["trust_tier"]):
+                reason = (f"rate limit for trust tier "
+                          f"{turn['trust_tier'] or 'player'} reached")
                 # finish_turn rather than a bare UPDATE of the turn row: `blocked` is a terminal
                 # state and has to return the conversation to idle like the others, or the
                 # record shows work in flight that is never coming.
@@ -4272,7 +4279,7 @@ class Watcher:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(f"{now_iso()} pid {os.getpid()}\n")
-        total, _ = self.running_counts()
+        total = self.running_counts()
         log(f"draining: {path} written; {total} run(s) in flight")
         if not wait:
             return total
@@ -4281,7 +4288,7 @@ class Watcher:
             return 0
         deadline = time.monotonic() + float(timeout) if timeout else None
         while True:
-            total, _ = self.running_counts()
+            total = self.running_counts()
             if total == 0:
                 log("draining: quiet")
                 return 0
