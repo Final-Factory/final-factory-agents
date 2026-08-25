@@ -475,6 +475,23 @@ path to be wrong.
 10. Tasks
 ---------
 
+ALL SEVEN PHASES SHIPPED 2026-08-25, on Loth2400, in commit "ffbox: the box runs docker without
+being able to become root". What the box reported afterwards:
+
+    FinalFactoryTester groups     FinalFactoryTester sudo
+    /var/run/docker.sock          permission denied
+    -v /etc:/hostetc:ro shadow    Permission denied      (fact a returned 84, as uid 0)
+    rootless daemon               overlay2 on zfs, native overlay diff, cgroup=systemd
+    units                         all five active, none holding gid 997
+    fence                         allowlisted host 405, this host unreachable, internet sealed
+    a real ffbox run              container-written files came back owned by 1015
+    rpool/docker                  10.2G -> 51.3M
+
+Two things the doing of it changed in this document: phase 1's fix had to become regexes rather
+than a pinned wildcard (section 4), and phase 7 ran before phase 6 rather than after (its own
+note below). One thing it added: fact p2, the SupplementaryGroups line, which phase 6 alone
+would not have closed.
+
 Each phase leaves the box working. The order is chosen so that the two phases which change the
 security posture are the first and the last. Tasks marked (root) need a human at a terminal,
 because sudo prompts and this document exists to keep that true.

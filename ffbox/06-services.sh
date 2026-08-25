@@ -27,7 +27,8 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 HOME=${HOME%/}
 UNIT_DIR=/etc/systemd/system
 # WHO THE UNITS MUST DESCRIBE. Run as root, $HOME and `id -un` are root's, but the units have to
-# name the user who actually owns the checkout, the docker group and the Claude credential.
+# name the user who actually owns the checkout, the rootless Docker daemon and the Claude
+# credential. That user's uid is also what @DOCKERSOCK@ is built from.
 #
 # THREE SOURCES, most explicit first, because SUDO_USER alone is not enough:
 #   FFBOX_RUN_USER  passed by a caller that already knows. ffbox-update.service runs this as

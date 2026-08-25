@@ -307,21 +307,40 @@ because the flock is what keeps the next tick from starting.
                         Persistent=true so a machine that was off catches up.
   drain timeout         FFBOX_DRAIN_TIMEOUT, default 7200 (section 4).
 
-PRIVILEGE. The unit runs as root, and every command that touches the owner's files runs
-through `runuser -u @USER@`. The alternative — running as the owner with a NOPASSWD sudoers
-entry for systemctl — adds a permission file to maintain and gains nothing.
+PRIVILEGE. Revised 2026-08-25; this section used to say the opposite and the reasoning was
+wrong. The unit runs as @USER@, unprivileged, and reaches for root exactly twice, through
+`sudo -n systemctl` for `stop ffbox.target` and `start ffbox.target`. 02-zfsSetup.sh grants
+those two invocations by name in /etc/sudoers.d/ffbox and nothing else.
 
-Two things that break if this is done carelessly, both worth naming because both are silent:
+What the old text called an argument against that — "adds a permission file to maintain and
+gains nothing" — had it backwards. The thing that fetches code off the internet every five
+minutes and then executes it is the last process on this box that should begin with root and
+hand privilege away, and the permission file is the artefact that says, in one readable place,
+precisely how much it may take back. Installing a unit is deliberately NOT in it: writing
+/etc/systemd/system defines a unit that runs anything as anyone, which is root by another name.
+A unit-template change waits for a human running `sudo sh ffbox/06-services.sh --install`, and
+the updater says when that is owed.
 
-  * ROOT-OWNED OBJECTS IN .git. If root runs the fetch and merge, new objects land root-owned
-    and every later `git pull` by the owner fails on permissions. Hence runuser for all git.
-  * HOME. `runuser -u USER --` does NOT reset HOME, so git would read root's configuration and
-    miss the owner's ~/.git-credentials — and fact (i) is the only reason the fetch works
-    unattended. HOME is set explicitly, the same way ffwatch.service already does it with
-    `Environment=HOME=@HOME@`.
+`sudo -n`, never bare sudo: a rule that is missing must fail in a log line rather than block
+forever on a password prompt nobody is there to answer.
 
-registerAgents.sh writes into the owner's ~/.claude and must run under the same runuser.
-03-build.sh needs docker, which root has.
+Two things that used to break when this ran as root, kept here because the reasons still shape
+the script:
+
+  * ROOT-OWNED OBJECTS IN .git. When root ran the fetch and merge, new objects landed
+    root-owned and every later `git pull` by the owner failed on permissions. Running as the
+    owner removes the failure mode rather than working around it.
+  * HOME. `runuser -u USER --` does NOT reset HOME, so git read root's configuration and missed
+    the owner's ~/.git-credentials — and fact (i) is the only reason the fetch works
+    unattended. HOME is still set explicitly by the unit, which now simply matches the user it
+    already runs as.
+
+as_owner() keeps a runuser branch for the one path that can still arrive here as root (a human
+running the script by hand under sudo); as the owner it is a straight call.
+
+registerAgents.sh writes into the owner's ~/.claude, which is now simply where it runs.
+03-build.sh needs docker, and since 2026-08-25 that is the ROOTLESS daemon owned by @USER@ —
+root has no ffbox images at all. See design/rootless_docker_design.txt.
 
 THE LOOP RISK. This repository is also where the Discord dev lane's work lands. That is safe
 today because discord-dev-agent opens pull requests and never merges, so nothing reaches
