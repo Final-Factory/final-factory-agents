@@ -8,12 +8,16 @@ stopped having the whole internet.
 Read this before changing anything in `ffbox/ffbox`, `ffbox/ffwatch.py`, `ffbox/discord-task.sh`
 or `ffbox/egress/` that touches capabilities, the harvest, publication, or what a run can reach.
 
-**This describes the system as it runs today.** A designed but unimplemented change,
-`design/single_lane_design.txt` (2026-08-25), removes the lane system and gives every run the
-`dev` capability set. Where that changes something below, this document says so inline. Nothing
-in the containment list has changed and none of it is planned to: the change is about which text
-can reach a write-capable run, not about what contains one. Gap 1 is the exception, and it stops
-being a gap you can schedule.
+**THE LANE SYSTEM IS GONE, as of 2026-08-25** (`design/single_lane_design.txt`). Every run gets
+one capability set: `Read,Grep,Glob,Edit,Write,Bash`, with bare `Bash` on the allow list. So a
+bug report from a stranger can now cause a run that edits code and opens a pull request, which a
+human then reads and merges or abandons. The owner accepted that consequence explicitly.
+
+**Nothing in "What contains it" changed, and that is the point.** The lanes were reducing which
+text could reach a write-capable run; they were never what contained one. Every item in that
+list is still there and still doing the same work. Gap 1 was the exception — it stopped being a
+gap you could schedule the moment player text could reach `Edit` — and the harvest half of it is
+now fixed.
 
 ## The shape
 
@@ -47,20 +51,20 @@ code then acts on.
 
 ## The container is assumed hostile
 
-Prompts on the Discord lanes are built from text written by strangers. Prompt injection is the
+Prompts on the Discord side are built from text written by strangers. Prompt injection is the
 expected case, not the unlucky one. So the design does not ask the agent to behave; it arranges
 for misbehaviour to be unable to reach anything.
 
-That assumption is why the read-only lanes (`answer`, `triage`) get no Edit and no Write, why no
-lane has any path to Discord, and why the reply a player sees is composed on the host out of the
-run's structured verdict rather than uploaded by the container.
+That assumption is why no run has any path to Discord, why the reply a player sees is composed
+on the host out of the run's structured verdict rather than uploaded by the container, and why
+every gate on publication reads a fact the container could not write.
 
-Those lanes do get Bash, which they did not when this was first written. `READ_ALLOWED` names
-exactly two invocations, `ffverify` and `ffverify --assemblies FFEditorTests`, with no trailing
-glob, so nothing can ride along after an `&&`. The reason is that Unity means Bash: a worker asked
-what the actual power draw of something is should be able to go and look rather than infer from
-source and hedge. What contains those lanes is unchanged — no Edit, no Write, no credential, no
-path to Discord, and a clone destroyed at the end of the run.
+It used to be why the `answer` and `triage` lanes had no `Edit` and no `Write`. That was real
+containment while it lasted, and it is worth being honest about what removing it cost: text
+written by a stranger can now reach a run that edits files. What it did not cost is anything on
+the list below — the container still holds no git or GitHub credential, the host still owns the
+refspec, there is still no merge method, and the clone is still destroyed. The worst case was
+always "one bad branch a human has to look at", and it still is.
 
 ## What the container actually holds
 
@@ -77,7 +81,7 @@ reason from it. The accurate claim is that it holds **no git or GitHub credentia
 The container has network access, because the model is remote. An agent with shell can read its
 own environment; what changed on 2026-08-23 is where it can send what it read. Both secrets are
 still exposed to any run and should be scoped accordingly. The Unity password in particular is a
-real account password, and moving that lane to a license file rather than interactive credentials
+real account password, and moving it to a license file rather than interactive credentials
 would still be a genuine improvement — the allowlist does nothing about it.
 
 What is absent, and deliberately: `gh`, any git remote credential, and `ffdiscord`. The container
@@ -162,12 +166,13 @@ gap are unrelated, and closing one does not touch the other.
 
 ## What is not a boundary
 
-**The Bash allow list is not one, and the code says so.** Measured both directions: a command
-whose prefix matches nothing is refused, but a trailing `*` matches the whole command string
-including separators, so `git status --short && touch marker` was permitted under
-`Bash(git status*)`. The list reduces scope and catches accidents. Assume a determined agent has
-arbitrary shell in the container and reason from there. Never add an entry believing the pattern
-confines what follows it.
+**The Bash allow list was not one, and it is now gone.** Measured both directions before it
+went: a command whose prefix matches nothing is refused, but a trailing `*` matches the whole
+command string including separators, so `git status --short && touch marker` was permitted under
+`Bash(git status*)`. It reduced scope and caught accidents; it never confined a determined agent.
+That measurement is why removing it cost nothing. Runs now get bare `Bash` — which has to be
+named on the command line, because `--permission-mode acceptEdits` approves edits and not Bash.
+Assume arbitrary shell in the container and reason from there.
 
 **`--disallowed-tools` is a tripwire.** `sh -c '...'` walks straight through it.
 
@@ -228,7 +233,7 @@ changed is that the harness stopped pretending otherwise and adjusted the invari
 enforces.
 
 **Still absent, and for a specific reason:** `merge`, `rebase`, `cherry-pick` and `am`. All four
-import commits authored by other people, which would defeat the identity check below. If a lane
+import commits authored by other people, which would defeat the identity check below. If a run
 ever needs to integrate another branch, change that check to "not reachable from `origin/*`"
 first, then add the command.
 
@@ -270,10 +275,16 @@ else.
 
 Ranked by what I would fix first.
 
-**1. A pushed branch is code execution on your own hardware.** A PREREQUISITE, not a backlog
-item, once `design/single_lane_design.txt` lands: today player-authored text structurally cannot
-reach `Edit` or `Write`, and that is the only thing holding this shut. See section 9 of that
-design. `FinalFactory`'s
+**1. A pushed branch is code execution on your own hardware — HALF FIXED 2026-08-25.** The
+harvest now refuses to publish a range touching `.github/**` (`FORBIDDEN_PATHS_RE`), checked
+against the commit range rather than filtered at `git add`, because the agent has `git commit`
+and an add-time exclusion only reaches uncommitted work. An innocent stray edit is dropped at
+`add` instead, so it does not fail the whole run.
+
+**Still to do: take the `workflow` scope off the host push token.** That fails the same chain one
+step later, at push time, with an error nobody can edit from inside the container. Until it is
+done, the harvest check is the only thing standing here. The rest of this entry is why it
+matters. `FinalFactory`'s
 `.github/workflows/main.yml` is `on: [push, pull_request]` and `runs-on: self-hosted`, with
 `UNITY_LICENSE`, `UNITY_PASSWORD` and `GITHUB_TOKEN` in scope. The agent controls file contents,
 `ffbox` harvests with `git add -A` and no path exclusions, and the host pushes the result. So an

@@ -118,7 +118,8 @@ also swept `#dev-chat` every `catchup_secs` with no way to say "not that one". E
 }
 ```
 
-`kind` picks the lane (`ask`, `bug_report`, `suggestion`); `forum` is true for a forum channel;
+`kind` says what the channel IS (`ask`, `bug_report`, `suggestion`) — it shapes the prompt, not
+the capabilities; `forum` is true for a forum channel;
 `venue` says whether internals may be spoken there; `engage` is `all` (consider every human
 message) or `mention` (only when the bot is addressed); `ping` allows a reply there to
 @-mention a human. All four fall closed when omitted. ffwatch logs each entry that made it
@@ -377,8 +378,8 @@ Consequences:
   dying mid-run. `activate_unity` retries five times with backoff, so that failure is slow
   rather than fatal.
 
-**Every run gets an editor, and there is no way to ask for one without.** Read lanes included,
-the web prompt box included, `ffbox "..."` included — a worker asked what something's actual
+**Every run gets an editor, and there is no way to ask for one without.** The web prompt box
+included, `ffbox "..."` included — a worker asked what something's actual
 power draw is should be able to go and look rather than infer from source and hedge. The old
 `--no-unity` bought a faster start and is gone; the warm `Library/` every clone inherits is what
 makes that affordable. See `design/trusted_ingress_design.txt` section 13.
@@ -606,40 +607,45 @@ messages, their authors and local paths to already-downloaded attachments — so
 is reading text written by strangers, holds no credential that can speak as the bot.
 
 Inside the container there is **no `ffdiscord` at all** — not the real CLI, and since
-2026-08-21 not the credential-free outbox shim phase 2 shipped either. No lane, read-only or
-write, is given any path to Discord.
+2026-08-21 not the credential-free outbox shim phase 2 shipped either. No run is given any
+path to Discord.
 
 What a turn wants said comes back to the host as data: it goes in the `summary` of the run's
 structured verdict, and the host composes the reply from that. That is what makes the content
 reviewable — an outbound row can be read, edited or dropped before it is uploaded, and
 `approve_before_send` already holds the queue for a human. A container-queued intent, by
-contrast, arrives already decided. The ff-discord skills still say `ffdiscord post`, so both
-lane preambles state plainly that the command does not exist here and the harness posts the
-summary for them; a file left at the old `/ffbox/out/outbox.jsonl` path is logged and ignored,
-because a write lane holds `Write` and can forge one.
+contrast, arrives already decided. The ff-discord skills still say `ffdiscord post`, so the
+preamble states plainly that the command does not exist here and the harness posts the summary;
+a file left at the old `/ffbox/out/outbox.jsonl` path is logged and ignored, because a run holds
+`Write` and can forge one.
 
-Every lane names its tools on the command line. The answer and triage lanes get
-`Read,Grep,Glob,Bash` and no `Edit` or `Write`, which makes a read-only run *incapable* of
-writing rather than asked not to. Their Bash is narrowed to exactly two invocations,
-`ffverify` and `ffverify --assemblies FFEditorTests`, spelled out with no trailing glob so
-nothing rides along after an `&&`; they have it because Unity means Bash and a lane asked what
-something actually does should be able to go and look. If classification cannot complete, the turn runs read-only anyway and the
-record says why — a failure to decide never widens capability.
+**There is one capability set, and every run gets it** (`design/single_lane_design.txt`,
+2026-08-25): `Read,Grep,Glob,Edit,Write,Bash`, with bare `Bash` on the allow list. That last
+part is required rather than decorative — `--permission-mode acceptEdits` approves edits and
+not Bash, and a `-p` run has nobody to ask, so an empty allow list denies every shell command.
 
-A designed change, `design/single_lane_design.txt` (2026-08-25), removes all of this: one
-capability set for every run, the classifier reduced to its engagement decision, rate limits
-keyed on trust tier instead of lane. It is not implemented, so what follows is still what runs.
+There were four lanes until then, and the table was answering two questions at once: what a run
+may do, and how far to trust the text its prompt was built from. Only the second still needs
+deciding, and `turn_trust()` decides it from a dictionary lookup on Discord's authenticated
+`author.id` with no model involved. So trust tier now carries the rate limit (five turns per
+rolling 24 hours for anything a player caused, operators uncapped) and the split reply, and
+capability is uniform.
 
-**There are four lanes, and `dev` is the one for people this box already trusts.** A prompt
-typed at the shell or into the web page used to take a fifth, `shell`, which differed from
-`dev` in exactly two fields; they were merged on 2026-08-23. Both routes in are authenticated —
-an operator directive carrying a Discord-authenticated author id, or somebody with a login
-here — so `dev` gets bare `Bash` rather than the enumerated allow list, and carries no daily
-rate limit. `fix` deliberately does not: it is reached only by a triage AUTOFIX verdict, which
-is to say a stranger's bug report is what decided there should be a write turn at all.
+**A stranger's bug report can therefore produce a branch and a pull request, and a human decides
+whether it merges.** What contains that is what always actually did, none of which changed: no
+git or GitHub credential in the container, a host-owned refspec, no merge method, a clone
+destroyed at the end of the run, a harvest that refuses a range carrying a commit this run did
+not author or a path this pipeline never publishes, and an egress proxy that answers two
+vendors. The deny list (`git push`, `gh`, `git remote`, `git fetch`, and the four commands that
+import somebody else's commits) stays as a tripwire, and was never a boundary: `sh -c 'git
+push'` walks straight through it.
 
-What still separates a locally typed prompt from a Discord one is `is_local_conversation`, not
-the lane, because the question was always whether there is a thread on the other end — and
+The engagement gate survives the collapse and is all the classifier does now — one boolean, on
+Haiku, holding no tools. It fails **open**: a gate that cannot decide runs the turn, because a
+gate that silently swallowed a real bug report would look exactly like a quiet channel.
+
+What separates a locally typed prompt from a Discord one is `is_local_conversation`, not
+anything about capability, because the question was always whether there is a thread on the other end — and
 since 2026-08-23 that is the *only* difference. A local turn gets no `<discord>` fence and no
 outbound row; it is verified, branched, pushed and proposed as a pull request exactly like an
 operator's DM, under the same gates. It used to get none of that, on the reasoning that the
@@ -712,7 +718,7 @@ the skills merely advise:
 - **A reply has two shapes, chosen by the channel's `venue`.** At a **private** venue it
   carries what the HARNESS knows and the agent's prose cannot be trusted for: whether the
   harness's own tests ran and passed, the branch and PR the work landed on, whether the run
-  ended badly and why, why it was demoted to read-only, and the `ffresume` handle. At a
+  ended badly and why, whether the engagement gate failed, and the `ffresume` handle. At a
   **public** venue it is the agent's answer alone. Neither shape carries the state, the run
   id, the lane, the cost, the turn count or the classification — those are on the run row and
   on the web page, which is where somebody who wants them goes looking.
@@ -721,23 +727,23 @@ the skills merely advise:
   fact in a bug thread even when the tests failed and the harness refused to propose anything,
   so a public reply gains exactly one fixed sentence on the runs where the harness's own record
   contradicts it: verification failed, verification was owed and never ran, a pull request was
-  blocked, the work never reached the remote at all, or classification failed closed. Fixed, never interpolated out of the evidence or
+  blocked, the work never reached the remote at all, or the engagement gate failed. Fixed, never interpolated out of the evidence or
   the reason, because branch names and test names are what the public shape exists to keep out.
   A run the harness has no quarrel with says nothing extra. For the same reason a public reply
   only carries `summary` when the run ended `done`: on any other ending that field holds
   whatever could be parsed out of the result, and for an API error it holds the error itself.
   The overflow attachment follows the same rule — withholding the text and attaching the whole
   of it would be no protection at all.
-- **A turn stopped by a lane ceiling still answers, once.** `blocked` is terminal and never
+- **A turn stopped by a rate ceiling still answers, once.** `blocked` is terminal and never
   retried, so a job that hits its daily cap would otherwise keep its 👀 and go quiet forever.
   It gets a fixed one-line reply instead, composed on the host: no run, no container and no
   model call, which is what makes it safe on the path that exists because the box is already at
-  a ceiling. At most one per CHANNEL per lane per day — a blocked turn never sets `started_at`,
+  a ceiling. At most one per CHANNEL per TRUST TIER per day — a blocked turn never sets `started_at`,
   so it does not count towards the ceiling that blocked it, and without that guard every
   message for the rest of the day would draw its own refusal. Per channel and not per
   conversation, because ingest roots a conversation at its reply chain and every fresh question
   in a text channel is a new one — and keyed on the parent channel rather than the reply
-  target, or a forum would give each new bug thread its own refusal. A private venue is also told which lane ran out.
+  target, or a forum would give each new bug thread its own refusal. A private venue is also told which tier ran out.
 - **Reactions go last.** The acknowledgement is queued at turn creation and holds the lowest id
   in its conversation, so sending in id order spent the last slot under a `send_limits` ceiling
   on the tick and left the answer it promised pending. Messages are sent first and reactions
@@ -774,9 +780,9 @@ python3 ffbox/ffwatch.py reject 14 --reason "wrong"    # drop, with a reason on 
 python3 ffbox/ffwatch.py send                          # flush the queue once
 ```
 
-Phase 4 is what is implemented: all four lanes, plus the web UI below. On top of
-phase 2's ingest, fail-closed classification, ceilings and host-side sender, the write
-lanes (`fix`, `dev`) add the three things the harness owns and the agent cannot touch:
+Phase 4 is what is implemented, plus the web UI below. On top of phase 2's ingest, the
+engagement gate, ceilings and host-side sender, every run adds the three things the harness owns
+and the agent cannot touch:
 
 - **Verification.** After the agent process exits, the container task runs `ffverify` —
   `unity-editor -runTests -testPlatform EditMode` on the same GameCI image CI uses, a cold
@@ -784,7 +790,7 @@ lanes (`fix`, `dev`) add the three things the harness owns and the agent cannot 
   Unity's Performance Testing package writes to `$HOME/.config/unity3d/Never Games/finalfactory/`
   on Linux, which every copy of the project shares, and that file is never read. The task
   deletes anything already at the report path first, so an agent that wrote its own
-  `verification.json` mid-turn cannot have it believed. A lane that was never asked to verify
+  `verification.json` mid-turn cannot have it believed. A run that changed no files
   leaves no `verification` row at all — an absent row means "nothing to verify here", and a
   row saying it did not run means the check was owed and is missing, which is what the reply
   reports as `NOT VERIFIED`.
@@ -867,7 +873,7 @@ and `status` says so while it is on.
 
 ### Local git
 
-Since 2026-08-23 the write lanes can run `git add`, `commit`, `branch`, `checkout`, `switch`,
+Since 2026-08-23 a run can use local git — `add`, `commit`, `branch`, `checkout`, `switch`,
 `restore`, `reset` and `stash`, so a run comes back as a readable chain of commits instead of one
 squashed blob. Nothing in that set leaves the clone. `merge`, `rebase` and `cherry-pick` are
 deliberately absent, because all three import commits authored by other people and the harvest
@@ -936,10 +942,10 @@ the certificate, because the standard library can serve TLS but cannot create an
 
 | route | what it is |
 |---|---|
-| `/` | conversations, filtered live by kind, state, verdict and lane as the dropdowns change, plus a title box that narrows to the titles containing a typed word (Enter applies it) and a **show** dropdown that opens on the unread ones, with cost, tokens and the average warm-up and agent time per conversation. The id and the title both open the conversation, and each row has a button that ticks it read |
+| `/` | conversations, filtered live by kind, state, verdict and lane (one value now) as the dropdowns change, plus a title box that narrows to the titles containing a typed word (Enter applies it) and a **show** dropdown that opens on the unread ones, with cost, tokens and the average warm-up and agent time per conversation. The id and the title both open the conversation, and each row has a button that ticks it read |
 | `/conversation/<id>` | one thread: `message`, `turn`, `run` and `verification` rows interleaved in time, with attachments rendered in place. A local conversation also carries a reply box that continues it |
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
-| `/lanes` | cost, tokens and durations per lane |
+| `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
@@ -977,7 +983,7 @@ move off this box later without the database moving with it. Three surfaces do t
 The **prompt box** at the top of `/` runs `ffwatch submit --source web` and queues the same
 turn `ffbox "<prompt>"` does, in the same disposable container. The `--source` is recorded and
 not obeyed: the conversation's kind is `web` rather than `shell`, so the list can tell the page
-apart from a terminal, and everything else the kind decides — the lane, the capability set, the
+apart from a terminal, and everything else the kind decides — the prompt shape, the
 private venue, having no Discord side at all — is deliberately identical. It has **no flag**: signing in is
 the grant. The account table is people who could open a terminal on this box, so a switch in
 front of it only ever meant one of them finding a dead page and a note naming a flag. Every
@@ -1009,7 +1015,7 @@ does not come back every minute; and it gives up after half an hour, so an aband
 hold a signed-in session open forever by poking the server. A conversation with a run **in
 flight**, and that run's own transcript page, tick at ten seconds instead — there is something
 new on them every few seconds (below), and a minute is long enough to feel like nothing is
-happening. The lanes table never reloads, and a *finished* transcript stops: neither moves once
+happening. The tiers table never reloads, and a *finished* transcript stops: neither moves once
 written, and losing your place in one is a cost with no benefit.
 
 **A run's transcript appears as the agent writes it, not when the container exits.** The
