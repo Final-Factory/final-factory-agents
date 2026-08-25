@@ -27,13 +27,19 @@ SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
 
 # The run's network. ffbox-net is a Docker --internal bridge: no default route, so no internet, no
-# LAN, and (with the INPUT rule ffbox/egress/ffbox-egress.sh installs) no reaching this host
-# either. The single thing on it is the egress proxy at FFBOX_DNS, which resolves and connects
+# LAN, and no reaching this host either — under the rootless daemon the bridge lives inside the
+# rootlesskit network namespace, so there is no path to the host to begin with and no firewall
+# rule is involved. The single thing on it is the egress proxy at FFBOX_DNS, which resolves and connects
 # only the names in ffbox/egress/allowlist.txt. Anything else the container tries is refused at
 # the SNI and logged. See docs/docker-security-model.md.
 #
 # `--network bridge` opts out and restores the old unrestricted egress. That is a real choice an
 # operator can make; it is not one an agent inside the container can make.
+#
+# UNFILTERED INCLUDES THIS HOST. Measured 2026-08-25: a container on the default bridge reached
+# this machine's LAN address on port 22, under both daemons. Rootless disables the host
+# LOOPBACK, not the host's own IP. So `--network bridge` is not "the fence minus DNS filtering",
+# it is no fence.
 NETWORK=${FFBOX_NETWORK:-ffbox-net}
 DNS=${FFBOX_DNS:-10.80.0.2}
 EGRESS_NAME=${FFBOX_EGRESS_NAME:-ffbox-egress}
@@ -287,7 +293,8 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 || {
 NETWORK_ARGS=(--network "$NETWORK")
 case "$NETWORK" in
     bridge|host|none)
-        echo "ffbox: WARNING: --network $NETWORK — this run has unfiltered network access" >&2
+        echo "ffbox: WARNING: --network $NETWORK — this run has unfiltered network access," >&2
+        echo "       including to this host itself" >&2
         ;;
     *)
         docker network inspect "$NETWORK" >/dev/null 2>&1 || {

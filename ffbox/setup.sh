@@ -13,8 +13,13 @@
 #   02-zfsSetup.sh      ZFS datasets, the golden checkout, the runs mountpoint, sudoers
 #   03-build.sh         the container image (Unity + Claude Code)
 #   04-warmLibrary.sh   update golden from git, then build its Unity Library/ cache
+#   ../registerAgents.sh  the skills/roles marketplace, and the ffdiscord launcher on PATH
 #   05-discord-setup.sh state dir, schema, config block for the Discord lanes
 #   06-services.sh      the systemd units, installed and started (needs root)
+#
+# registerAgents.sh runs BEFORE 05: it is what puts `ffdiscord` in ~/.local/bin, and 05 calls it
+# to look channel ids up by name. It is also what the containers read their skills from, so a
+# machine that skips it runs agents against whatever plugin version was cached last.
 #
 # The numbers are the running order, and they are in the filenames so that order is visible in
 # an `ls` rather than only in here.
@@ -31,6 +36,63 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$ROOT"
 
+# ------------------------------------------------------------------------------------------------
+# WHOSE MACHINE THIS IS
+#
+# Every stage divides into two kinds. Stages 1, 2 and 6 change the SYSTEM — packages, datasets,
+# /etc/sudoers.d, /etc/systemd/system — and need root. Stages 0, 4 and 5 write under a person's
+# HOME — secrets, the Unity Library in golden, the ffbox config — and must be that person's
+# files, not root's.
+#
+# Run by hand as yourself, that distinction takes care of itself: the system stages sudo, the
+# rest are already yours. Run unattended by ffbox-update.service it does not, because that is
+# root with no SUDO_USER, and every $HOME below would be /root. A setup that "succeeded" would
+# have seeded a config in root's home that no service can read and left the real one untouched.
+#
+# So resolve the owner once, here, most explicit source first, and hand it to the stages that
+# need it — as an argument where they take one, as FFBOX_RUN_USER where they do not, and as a
+# uid to drop to for the HOME-scoped ones.
+# SUDO_USER IS ONLY MEANINGFUL WHEN WE ARE ACTUALLY ROOT. It lingers in the environment of any
+# shell that was itself started under sudo, so an unprivileged run would otherwise adopt whoever
+# last sudo'd in that terminal and try to write their home. Found by running it: this file
+# reached for /home/lothsahn from a FinalFactoryTester shell. The sibling stages guard it the
+# same way, and this is the third time that trap has been worth a comment.
+OWNER=${FFBOX_RUN_USER:-}
+if [ -z "$OWNER" ]; then
+  if [ "$(id -u)" = 0 ]; then
+    [ "${SUDO_USER:-root}" != root ] && OWNER=$SUDO_USER
+    # The checkout's owner: the same answer update_ffbox.sh derives for its git calls.
+    [ -z "$OWNER" ] && OWNER=$(stat -c %U "$ROOT/../.git" 2>/dev/null || echo "")
+  else
+    OWNER=$(id -un)
+  fi
+fi
+[ -n "$OWNER" ] || OWNER=$(id -un)
+id "$OWNER" >/dev/null 2>&1 || { echo "setup.sh: no such user: $OWNER" >&2; exit 1; }
+OWNER_HOME=$(getent passwd "$OWNER" | cut -d: -f6)
+OWNER_HOME=${OWNER_HOME%/}
+export FFBOX_RUN_USER=$OWNER
+
+# Every path below is derived from HOME, so point it at the owner rather than threading the home
+# through a dozen expressions — but ONLY when we are not already them. Running as yourself, an
+# overridden $HOME is a deliberate act (that is how the sandbox tests and FFBOX_SECRETS work),
+# and replacing it with the passwd entry would quietly ignore it.
+if [ "$(id -un)" != "$OWNER" ]; then
+  HOME=$OWNER_HOME
+  export HOME
+fi
+
+# Run a HOME-scoped stage as the owner. Already them: straight through, no runuser needed (and
+# none available to an unprivileged user anyway). Root: drop, and carry HOME, because runuser
+# does not reset it.
+as_owner() {
+  if [ "$(id -un)" = "$OWNER" ]; then
+    "$@"
+  else
+    runuser -u "$OWNER" -- env HOME="$OWNER_HOME" FFBOX_RUN_USER="$OWNER" "$@"
+  fi
+}
+
 SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 
 DO_DOCKER=1
@@ -40,7 +102,12 @@ DO_LIBRARY=1
 DO_DISCORD=1
 DO_SERVICES=1
 DO_TOKEN=1
+DO_AGENTS=1
 ZFS_ARGS=""
+# Auto-detected, and --non-interactive forces it. Nothing here may block on a prompt when there
+# is no one to answer: the self-updater runs this from a systemd oneshot with an 8100s timeout.
+NONINTERACTIVE=0
+{ [ -t 0 ] && [ -t 1 ]; } || NONINTERACTIVE=1
 
 usage() {
   cat <<EOF
@@ -63,7 +130,13 @@ Options (alphabetical):
   --skip-library   Do not update golden or run the Unity import. Use when you only want the
                    datasets and image in place.
   --skip-services  Do not install or start the systemd units.
+  --skip-agents    Do not register or update the skills/roles plugin marketplace.
   --skip-token     Do not offer to run 'claude setup-token'.
+  --non-interactive
+                   Never prompt, and SKIP the stages that need root (Docker, ZFS, installing
+                   the systemd units) rather than wait on a sudo password. What was skipped is
+                   printed at the end. Implied when stdin or stdout is not a terminal. This is
+                   how ffbox-update.service re-runs setup after an update.
   --skip-zfs       Do not touch ZFS; assume the layout already exists.
 
 For finer control over any single stage, run it directly:
@@ -87,6 +160,8 @@ while [ $# -gt 0 ]; do
     --skip-library) DO_LIBRARY=0; shift ;;
     --skip-services) DO_SERVICES=0; shift ;;
     --skip-token)   DO_TOKEN=0; shift ;;
+    --skip-agents)  DO_AGENTS=0; shift ;;
+    --non-interactive) NONINTERACTIVE=1; shift ;;
     --skip-zfs)     DO_ZFS=0; shift ;;
     *)              echo "setup.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -113,7 +188,7 @@ secrets_ready() {
   ) 2>/dev/null
 }
 
-stage "0/6  secrets"
+stage "0/7  secrets"
 
 if [ -e "$SECRETS" ]; then
   skip_msg="$SECRETS already exists — leaving it alone"
@@ -243,61 +318,106 @@ fi
 
 # Docker first: stage 3 cannot build an image without it, and dockerSetup.sh is the one that
 # keeps the layers OFF the boot environment — the zsys trap its own header documents at length.
-if [ "$DO_DOCKER" -eq 1 ]; then
-  stage "1/6  Docker on its own ZFS dataset"
+# WHY THE ROOT STAGES SKIP RATHER THAN TRY. 1, 2 and 6 change the system, so unprivileged they
+# reach for sudo, and with no terminal sudo either fails or sits there. Both are worse than
+# saying so: 1 and 2 are one-time provisioning that is already satisfied on any machine an
+# update is running on, and 6 is the one thing a human still owes (see SKIPPED, at the end).
+needs_root() {   # $1 = stage label, for the message
+  [ "$(id -u)" = 0 ] && return 0
+  if [ "$NONINTERACTIVE" = 1 ] && ! sudo -n true 2>/dev/null; then
+    SKIPPED="$SKIPPED
+  $1"
+    return 1
+  fi
+  return 0
+}
+SKIPPED=""
+
+if [ "$DO_DOCKER" -eq 1 ] && needs_root "sh $ROOT/01-dockerSetup.sh"; then
+  stage "1/7  Docker on its own ZFS dataset"
   sh "$ROOT/01-dockerSetup.sh"
+elif [ "$DO_DOCKER" -eq 1 ]; then
+  stage "1/7  Docker — skipped (needs root, and nothing here can be prompted)"
 else
-  stage "1/6  Docker — skipped (--skip-docker)"
+  stage "1/7  Docker — skipped (--skip-docker)"
 fi
 
-if [ "$DO_ZFS" -eq 1 ]; then
-  stage "2/6  ZFS layout and golden checkout"
+if [ "$DO_ZFS" -eq 1 ] && needs_root "sh $ROOT/02-zfsSetup.sh"; then
+  stage "2/7  ZFS layout and golden checkout"
   # shellcheck disable=SC2086  # ZFS_ARGS is a deliberately word-split option list
   sh "$ROOT/02-zfsSetup.sh" $ZFS_ARGS
+elif [ "$DO_ZFS" -eq 1 ]; then
+  stage "2/7  ZFS layout — skipped (needs root, and nothing here can be prompted)"
 else
-  stage "2/6  ZFS layout — skipped (--skip-zfs)"
+  stage "2/7  ZFS layout — skipped (--skip-zfs)"
 fi
 
 if [ "$DO_BUILD" -eq 1 ]; then
-  stage "3/6  container image"
+  stage "3/7  container image"
   sh "$ROOT/03-build.sh"
 else
-  stage "3/6  container image — skipped (--skip-build)"
+  stage "3/7  container image — skipped (--skip-build)"
 fi
 
 if [ "$DO_LIBRARY" -eq 1 ]; then
-  stage "4/6  update golden and warm its Unity Library (slow)"
-  sh "$ROOT/04-warmLibrary.sh"
+  stage "4/7  update golden and warm its Unity Library (slow)"
+  as_owner sh "$ROOT/04-warmLibrary.sh"
 else
-  stage "4/6  Unity Library — skipped"
+  stage "4/7  Unity Library — skipped"
 fi
 
 # Last, and deliberately not fatal: a machine that only ever runs ffbox by hand still wants
 # stages 1-4, and this stage is the only one that can fail purely because Discord is not
 # configured yet. It writes only under $HOME and starts nothing; the services are stage 6.
-if [ "$DO_DISCORD" -eq 1 ]; then
-  stage "5/6  Discord lanes (state dir, schema, config)"
-  sh "$ROOT/05-discord-setup.sh" || printf 'setup.sh: 05-discord-setup.sh exited non-zero; run it by hand\n' >&2
+# Unprivileged and idempotent by design — it is the same "run it on every machine" bootstrap a
+# human runs by hand, and re-running it is how a plugin version bump reaches this box at all.
+# Not fatal: a marketplace that will not update is a stale skill set, not a broken machine.
+if [ "$DO_AGENTS" -eq 1 ]; then
+  stage "5/7  skills and roles (plugin marketplace, ffdiscord launcher)"
+  as_owner sh "$ROOT/../registerAgents.sh" \
+    || printf 'setup.sh: registerAgents.sh exited non-zero; live sessions keep the cached plugin\n' >&2
 else
-  stage "5/6  Discord lanes — skipped (--skip-discord)"
+  stage "5/7  skills and roles — skipped (--skip-agents)"
+fi
+
+if [ "$DO_DISCORD" -eq 1 ]; then
+  stage "6/7  Discord lanes (state dir, schema, config)"
+  as_owner sh "$ROOT/05-discord-setup.sh" || printf 'setup.sh: 05-discord-setup.sh exited non-zero; run it by hand\n' >&2
+else
+  stage "6/7  Discord lanes — skipped (--skip-discord)"
 fi
 
 # The services, last, because they are what runs everything the stages above put in place.
 # Installing into /etc needs root: this re-invokes through sudo, which may prompt. With no
 # terminal and no passwordless sudo it prints the one command instead of hanging on a prompt.
 if [ "$DO_SERVICES" -eq 1 ]; then
-  stage "6/6  systemd services (ffbox.target: listener + ffwatch + ffweb)"
   if [ "$(id -u)" = 0 ]; then
+    stage "7/7  systemd services (ffbox.target: listener + ffwatch + ffweb)"
     sh "$ROOT/06-services.sh" --install || true
-  elif sudo -n true 2>/dev/null || [ -t 0 ]; then
+  elif [ "$NONINTERACTIVE" = 0 ]; then
+    stage "7/7  systemd services (ffbox.target: listener + ffwatch + ffweb)"
     sudo sh "$ROOT/06-services.sh" --install \
       || printf 'setup.sh: run it yourself: sudo sh %s/06-services.sh --install\n' "$ROOT" >&2
   else
-    printf 'setup.sh: the units need root and there is no terminal to ask on. Run:\n' >&2
-    printf '  sudo sh %s/06-services.sh --install\n' "$ROOT" >&2
+    # Reported, not attempted. Writing /etc/systemd/system is root-equivalent — a unit can run
+    # anything as anyone — so it is deliberately the one thing the unattended updater cannot do,
+    # and --check is how it says whether anything is actually owed.
+    stage "7/7  systemd services — deferred (needs root)"
+    if sh "$ROOT/06-services.sh" --check; then
+      printf '    the installed units already match this checkout and config\n'
+    else
+      SKIPPED="$SKIPPED
+  sudo sh $ROOT/06-services.sh --install"
+    fi
   fi
 else
-  stage "6/6  services — skipped (--skip-services)"
+  stage "7/7  services — skipped (--skip-services)"
+fi
+
+if [ -n "$SKIPPED" ]; then
+  stage "SKIPPED — these need root, and this run had no way to ask for it"
+  printf '%s\n\n' "$SKIPPED"
+  printf '  Run them yourself when convenient. Everything else above is already applied.\n'
 fi
 
 stage "setup complete"
@@ -310,7 +430,7 @@ EOF
 # this is the whole-machine view, so somebody who ran one command and walked away can come back
 # to exactly what is left rather than scrolling for it.
 printf '\n'
-sh "$ROOT/05-discord-setup.sh" --check 2>/dev/null | sed 's/^/  /' || true
+as_owner sh "$ROOT/05-discord-setup.sh" --check 2>/dev/null | sed 's/^/  /' || true
 printf '\n'
 # app_token is the current key and token the pre-2026-08-24 one; both count as configured,
 # because the CLI reads both and this check exists only to decide whether to print the steps.

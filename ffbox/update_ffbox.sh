@@ -2,8 +2,9 @@
 # update_ffbox.sh — fetch, fast-forward and restart ffbox into the new code.
 #
 #   sudo systemctl start ffbox-update.service    the trigger (what the timer also does)
-#   sudo sh ffbox/update_ffbox.sh                the same thing, by hand
-#   sudo sh ffbox/update_ffbox.sh --dry-run      say what would happen; change nothing
+#   sh ffbox/update_ffbox.sh                     the same thing, by hand — as the checkout's
+#                                                owner, NOT under sudo
+#   sh ffbox/update_ffbox.sh --dry-run           say what would happen; change nothing
 #
 # Design: design/self_update_design.txt. The parts that are not obvious from the code:
 #
@@ -24,6 +25,12 @@
 # NO ROLLBACK, by the owner's call. A commit that breaks ffbox takes the box down until the
 # next good commit lands, and the independence above is what makes that recoverable without
 # touching the machine.
+#
+# IT RUNS UNPRIVILEGED. This process fetches code off the internet and then executes it, which
+# makes it the last thing on the box that should hold root. It holds none. The single exception
+# is stopping and starting the services whose code it is replacing: sudo_systemctl below, backed
+# by the narrow FFBOX_UNITS alias 02-zfsSetup.sh writes into /etc/sudoers.d/ffbox. Installing a
+# unit needs a human — see WHAT IT WILL NOT DO, at step 5.
 #
 # POSIX sh, like its siblings.
 set -eu
@@ -71,9 +78,10 @@ LOCK=$CONFIG_DIR/update.lock
 log() { printf '[ffbox-update] %s\n' "$*"; }
 die() { log "ERROR: $*"; exit 1; }
 
-# Every git call runs as the owner, with the owner's HOME. runuser does NOT reset HOME, and
-# without it git reads root's config and misses the owner's ~/.git-credentials — which is the
-# only reason the fetch works unattended at all.
+# Normally a no-op: the unit sets User= to this account, so we ARE the owner and this just
+# pins HOME. It keeps the runuser branch for the one case that still reaches here as root —
+# somebody running the script by hand under sudo out of habit — because git reading root's
+# config would miss the owner's ~/.git-credentials and leave root-owned objects in .git.
 as_owner() {
     if [ "$(id -un)" = "$OWNER" ]; then
         env HOME="$OWNER_HOME" "$@"
@@ -82,6 +90,21 @@ as_owner() {
     fi
 }
 git_() { as_owner git -C "$REPO" "$@"; }
+
+# THE ONLY ELEVATION IN THIS SCRIPT, and -n so it can never sit waiting on a password prompt
+# that nothing will ever answer. A machine whose sudoers rule is missing gets a clear line and
+# a still-running old version, which is a better failure than a timer that hangs for 8100s.
+sudo_systemctl() {
+    if [ "$(id -u)" = 0 ]; then
+        systemctl "$@"
+    elif sudo -n systemctl "$@" 2>/dev/null; then
+        :
+    else
+        log "WARNING: 'sudo -n systemctl $*' was refused. Re-run 02-zfsSetup.sh to install the"
+        log "         FFBOX_UNITS sudoers rule, or run 'sudo systemctl $*' by hand."
+        return 1
+    fi
+}
 
 # ------------------------------------------------------------------------------------------
 # one at a time
@@ -191,7 +214,7 @@ else
 fi
 
 log "stopping ffbox.target"
-systemctl stop ffbox.target || log "WARNING: stop reported a failure; continuing"
+sudo_systemctl stop ffbox.target || log "WARNING: stop reported a failure; continuing"
 
 # ------------------------------------------------------------------------------------------
 # 4. the merge
@@ -200,29 +223,39 @@ git_ merge --ff-only --quiet "$NEW_SHA" || die "fast-forward merge failed"
 log "checkout is now at $(printf %.12s "$(git_ rev-parse HEAD)")"
 
 # ------------------------------------------------------------------------------------------
-# 5. what the diff decides
+# 5. re-run setup
 # ------------------------------------------------------------------------------------------
-# A restart is only right for a pure Python or shell change. The three other cases are real
-# paths in this repository, and each is silent when skipped: the units keep their old text, the
-# containers keep running last week's image, live sessions keep serving the cached plugin.
-CHANGED=$(git_ diff --name-only "$OLD_SHA" "$NEW_SHA")
-changed_match() { printf '%s\n' "$CHANGED" | grep -Eq "$1"; }
-
-if changed_match '^ffbox/systemd/'; then
-    log "unit templates changed — reinstalling them"
-    sh "$REPO/ffbox/06-services.sh" --install --no-enable \
-        || log "WARNING: unit install failed; the old units are still in place"
+# ONE CALL, NOT A LIST OF TRIGGERS. This used to grep the diff for paths that "mean" something —
+# a Dockerfile change means rebuild, a plugins/ change means registerAgents — which is a second,
+# hand-maintained model of what setup.sh already knows, and it is wrong the moment a commit
+# moves a file or adds a stage. Worse, it could only ever react to what CHANGED IN GIT: a config
+# key added by a commit, or a channel somebody added to the watch block by hand, has no diff to
+# match and never got applied.
+#
+# So run the real thing. Every stage is idempotent and no-ops when it is already satisfied:
+# Docker and ZFS are one-time provisioning, the image build is a cached docker build, the Unity
+# warm skips outright when golden already has a Library/, and stage 5 is setdefault the whole
+# way down. On a machine that is already set up this is a few seconds and a lot of "already
+# exists"; on one that is behind, it is exactly the commands a human would have run.
+#
+# WHAT IT WILL NOT DO. --non-interactive makes setup.sh skip the stages that need root — Docker,
+# ZFS, and installing the units into /etc/systemd/system — rather than sit on a sudo prompt with
+# nobody there. It prints what it skipped, and that goes to the journal. So a commit that changes
+# a unit template is fetched, merged and running everywhere except the units, until somebody runs
+# `sudo sh ffbox/06-services.sh --install`. That is the deliberate cost of the updater not
+# holding root: the alternative is a sudoers rule for writing /etc/systemd/system, which is root.
+#
+# Non-fatal in every direction. A setup stage that fails must not stop the restart below — the
+# machine running slightly stale supporting state beats the machine not running.
+log "re-running setup (idempotent; root-only stages are skipped)"
+_setup_out=$(mktemp)
+if sh "$REPO/ffbox/setup.sh" --non-interactive > "$_setup_out" 2>&1; then
+    sed 's/^/    /' "$_setup_out"
+else
+    sed 's/^/    /' "$_setup_out"
+    log "WARNING: setup.sh exited non-zero; continuing into the restart"
 fi
-if changed_match '^ffbox/(Dockerfile|entrypoint\.sh|run-as-user\.sh|import-project\.sh|unity-license\.sh|install-claude\.sh)$'; then
-    log "the image's own files changed — rebuilding ffbox:latest"
-    as_owner sh "$REPO/ffbox/03-build.sh" \
-        || log "WARNING: image build failed; containers will run the previous image"
-fi
-if changed_match '^(plugins/|\.claude-plugin/|\.agents/)'; then
-    log "plugins changed — refreshing the marketplace copies"
-    as_owner sh "$REPO/registerAgents.sh" \
-        || log "WARNING: registerAgents.sh failed; live sessions keep the cached plugin"
-fi
+rm -f "$_setup_out"
 
 # ------------------------------------------------------------------------------------------
 # 6. resume
@@ -231,7 +264,7 @@ fi
 # window, and a start that fails still leaves the machine ready to run.
 lift_drain
 log "starting ffbox.target"
-systemctl start ffbox.target || log "WARNING: start reported a failure"
+sudo_systemctl start ffbox.target || log "WARNING: start reported a failure"
 
 # What is ACTUALLY running, not what we asked for: `start` exits 0 for a Wants= member that
 # died, and the listener is expected to fail on a machine with no bot token.

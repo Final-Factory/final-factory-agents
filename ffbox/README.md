@@ -670,8 +670,19 @@ journalctl -u ffwatch -f
 
 The `.target` suffix is required: a bare `systemctl start ffbox` looks for `ffbox.service`,
 which is not a unit we ship. They run as the invoking user rather than root, which is the
-identity that already holds the docker group, the NOPASSWD `zfs` rules ffbox needs for its
-clones, and the Claude credential. `ffweb` is **not optional** — it comes up with the pipeline,
+identity that already owns the rootless Docker daemon, the NOPASSWD `zfs` rules ffbox needs for
+its clones, and the Claude credential.
+
+ffbox talks to a **rootless** Docker daemon, running inside that user's own systemd instance and
+addressed through `DOCKER_HOST=unix:///run/user/<uid>/docker.sock`. The account is deliberately
+**not** in the `docker` group: membership there is root-equivalent, since any member can
+bind-mount `/` into a container and read or write anything on the machine with no password. The
+units set `DOCKER_HOST` themselves and `/etc/profile.d/ffbox-docker-host.sh` sets it for
+interactive shells; if a `docker` command ever seems to be operating on the wrong images or
+networks, that variable is the first thing to check. `design/rootless_docker_design.txt` has the
+reasoning and the measurements.
+
+`ffweb` is **not optional** — it comes up with the pipeline,
 because a moderation queue nobody can see is not a moderation queue.
 
 | path | contents |

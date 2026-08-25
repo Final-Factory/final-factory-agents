@@ -112,11 +112,23 @@ if [ -z "$POOL" ]; then
 fi
 zpool list -H -o name "$POOL" >/dev/null 2>&1 || die "no such ZFS pool: $POOL"
 
+_SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# WHOSE MACHINE THIS IS, most explicit source first.
+#
 # SUDO_USER is only meaningful when we are actually root — it lingers in the environment of any
 # shell that was itself started under sudo, and trusting it there would silently pick the wrong
-# owner (and write a sudoers rule for a user who never runs ffbox).
+# owner (and write a sudoers rule for a user who never runs ffbox). It is also ABSENT under
+# systemd, which is how ffbox-update.service runs this: root, no sudo, no SUDO_USER. That used
+# to resolve to root. FFBOX_RUN_USER is what a caller that already knows passes; the checkout's
+# owner is the last resort and is the same answer update_ffbox.sh derives for its git calls.
 if [ -z "$OWNER" ]; then
-  if [ "$(id -u)" -eq 0 ]; then OWNER=${SUDO_USER:-root}; else OWNER=$(id -un); fi
+  if [ "$(id -u)" -eq 0 ]; then
+    OWNER=${FFBOX_RUN_USER:-}
+    [ -z "$OWNER" ] && [ "${SUDO_USER:-root}" != root ] && OWNER=$SUDO_USER
+    [ -z "$OWNER" ] && OWNER=$(stat -c %U "$_SELF_DIR/../.git" 2>/dev/null || echo root)
+  else
+    OWNER=$(id -un)
+  fi
 fi
 id "$OWNER" >/dev/null 2>&1 || die "no such user: $OWNER"
 OWNER_GROUP=$(id -gn "$OWNER")
@@ -215,23 +227,89 @@ fi
 # ZFS mounting needs root on Linux no matter what, so ffbox cannot avoid elevation. Scope the
 # grant as tightly as the operations allow: destroy is limited to run-* clones and ffbox-* golden
 # snapshots, so a bug in ffbox — or anything else invoking this rule — cannot destroy golden.
+#
+# "As tightly as the operations allow" means regular expressions, not wildcards. The reasoning
+# is written out in full above the alias itself, because the wildcard form that stood here until
+# 2026-08-25 read as narrow and was not.
 # ---------------------------------------------------------------------------------------------
 SUDOERS_MARKER="# Installed by final-factory-agents/ffbox/zfsSetup.sh"
 # Ownership is detected on this stable substring rather than the full marker: the script has
 # moved paths once already, and a rule written by an older copy is still ours to update.
 SUDOERS_OWNED_BY="zfsSetup.sh"
 
+# Regexes in sudoers arrived in sudo 1.9.10. On anything older the rules below are read as
+# literal argument patterns, match nothing, and every ffbox clone fails at the sudo call. That
+# fails closed rather than open, but a box where no run can start is still broken, so this is
+# checked before the file is written rather than discovered later.
+sudo_regex_ok() {
+  _v=$(sudo --version 2>/dev/null | sed -n '1s/.*version \([0-9][0-9.]*\).*/\1/p')
+  [ -n "$_v" ] || return 1
+  _maj=${_v%%.*}; _rest=${_v#*.}; _min=${_rest%%.*}; _pat=${_rest#*.}
+  case "$_pat" in ''|*[!0-9]*) _pat=0 ;; esac
+  [ "$_maj" -gt 1 ] && return 0
+  [ "$_maj" -lt 1 ] && return 1
+  [ "$_min" -gt 9 ] && return 0
+  [ "$_min" -lt 9 ] && return 1
+  [ "$_pat" -ge 10 ]
+}
+
 sudoers_content() {
   ZFS_BIN=$(command -v zfs)
+  SYSTEMCTL_BIN=$(command -v systemctl || echo /usr/bin/systemctl)
+  # The same character class ffbox enforces on --run-id (see the case statement near ffbox
+  # line 185). It has no '/' in it, which is what stops a mountpoint climbing out of ${RUNS_MNT}.
+  RUNID_RE='[A-Za-z0-9._-]+'
   cat <<EOF
-${SUDOERS_MARKER} — lets ffbox manage its per-run clones.
+${SUDOERS_MARKER} — lets ffbox manage its per-run clones and restart its own services.
 # Regenerate by re-running that script; hand-edits are detected and left alone.
-# Deliberately narrow: destroy can only ever name a run-* clone or an ffbox-* snapshot.
-Cmnd_Alias FFBOX_ZFS = ${ZFS_BIN} snapshot ${GOLDEN_DS}@ffbox-*, \\
-                       ${ZFS_BIN} clone -o * ${GOLDEN_DS}@ffbox-* ${FF_DS}/run-*, \\
-                       ${ZFS_BIN} destroy ${FF_DS}/run-*, \\
-                       ${ZFS_BIN} destroy ${GOLDEN_DS}@ffbox-*
-${OWNER} ALL=(root) NOPASSWD: FFBOX_ZFS
+#
+# WHY THESE ARE REGULAR EXPRESSIONS AND NOT WILDCARDS. sudo matches command arguments as ONE
+# concatenated string, and a '*' in that string matches anything at all, spaces and slashes
+# included. See sudoers(5), "Wildcards in command arguments". So the obvious-looking form this
+# rule used to carry,
+#
+#     ${ZFS_BIN} clone -o * ${GOLDEN_DS}@ffbox-* ${FF_DS}/run-*
+#
+# did NOT mean "any one property". That first '*' swallows the rest of the command line, which
+# makes 'clone -o mountpoint=/etc ...' a permitted invocation. The contents of ${GOLDEN_DS}
+# belong to ${OWNER}, so that is a dataset full of ${OWNER}'s files mounted over /etc, carrying
+# whatever passwd and sudoers they care to write, reached with no password. The same swallowing
+# let extra arguments ride along on snapshot and destroy.
+#
+# An extended regex anchored at both ends cannot do that. Each rule spells out the whole
+# argument string, and the only free part is a run id.
+#
+# Two couplings worth knowing about, because nothing enforces either at runtime:
+#   - ${RUNS_MNT} here must agree with FFBOX_RUNS_MNT in ffbox (its default is the same path).
+#     A mountpoint ffbox passes that this rule does not spell will simply be refused.
+#   - the id class matches ffbox's own --run-id validation. Widening one without the other
+#     either breaks runs or reopens this hole.
+Cmnd_Alias FFBOX_ZFS = ${ZFS_BIN} ^snapshot ${GOLDEN_DS}@ffbox-${RUNID_RE}\$, \\
+                       ${ZFS_BIN} ^clone -o mountpoint=${RUNS_MNT}/run-${RUNID_RE} ${GOLDEN_DS}@ffbox-${RUNID_RE} ${FF_DS}/run-${RUNID_RE}\$, \\
+                       ${ZFS_BIN} ^destroy ${FF_DS}/run-${RUNID_RE}\$, \\
+                       ${ZFS_BIN} ^destroy ${GOLDEN_DS}@ffbox-${RUNID_RE}\$
+
+# The self-updater runs UNPRIVILEGED, as ${OWNER}. The only thing it cannot do as itself is stop
+# and start the services whose code it is replacing. This is that, and NOTHING else.
+#
+# TWO COMMANDS, BOTH FULLY SPELLED OUT. sudo matches the command AND its exact argument list, so
+# 'systemctl start ffbox.target' grants that invocation and no other: not 'start sshd', not
+# 'start' with any other unit, and not bare 'systemctl', which would also spell daemon-reexec,
+# mask and edit. There is no wildcard anywhere in it.
+#
+# NOT GRANTED, deliberately:
+#   installing a unit     writing /etc/systemd/system defines a unit that runs anything as
+#                         anyone, which is root by another name. It stays an interactive
+#                         'sudo sh ffbox/06-services.sh --install'.
+#   ffbox-egress.service  the one ffbox unit with no User=, so it runs as root, and its
+#                         ExecStart is a shell script inside the checkout that ${OWNER} can
+#                         write. A start on it would be a root shell with extra steps.
+#   restart, and the individual services
+#                         the updater stops and starts the target and nothing finer. Granting
+#                         reach it does not use is how a narrow rule stops being narrow.
+Cmnd_Alias FFBOX_UNITS = ${SYSTEMCTL_BIN} stop ffbox.target, \\
+                         ${SYSTEMCTL_BIN} start ffbox.target
+${OWNER} ALL=(root) NOPASSWD: FFBOX_ZFS, FFBOX_UNITS
 EOF
 }
 
@@ -269,6 +347,10 @@ read_sudoers() {
 if [ "$DO_SUDOERS" -eq 0 ]; then
   skip "sudoers rule skipped (--no-sudoers); ffbox will prompt for a password per run"
 else
+  sudo_regex_ok || die "sudo is older than 1.9.10, which is where sudoers learned regular
+         expressions. The rules this script writes would be read as literal text, match
+         nothing, and fail every ffbox clone. Upgrade sudo, or re-run with --no-sudoers and
+         arrange the clone/snapshot/destroy rights yourself."
   tmp=$(mktemp)
   sudoers_content > "$tmp"
   cur=$(mktemp)

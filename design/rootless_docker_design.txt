@@ -162,6 +162,16 @@ root under /home/FinalFactoryTester, exercised, and removed; the root daemon was
   p. 01-dockerSetup.sh ADDS THE OWNER TO THE DOCKER GROUP, at line 533, and warns at 534 that
      the membership is root-equivalent.
 
+  p2. ffwatch.service GRANTS ITSELF THE DOCKER GROUP. Line 33 carried
+
+         SupplementaryGroups=docker
+
+     A unit that names a group gets it whether or not the account is still a member, so
+     `gpasswd -d` would have closed the docker route for every process on this box EXCEPT the
+     one that launches containers. Found while implementing phase 3 on 2026-08-25, not during
+     the survey. It is the reason phase 6 alone was never sufficient, and the reason there is
+     now a test asserting the directive stays gone.
+
   q. NOTHING IN ffbox/ MENTIONS DOCKER_HOST. Every caller finds the daemon by its default
      socket path today.
 
@@ -228,10 +238,18 @@ alone does not provide the session. With lingering already on, the working form 
 
     runuser -u FinalFactoryTester -- env XDG_RUNTIME_DIR=/run/user/1015 \
         DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1015/bus \
-        dockerd-rootless-setuptool.sh install
+        dockerd-rootless-setuptool.sh install --force
 
 which is why lingering has to be enabled before the install rather than after it. setup.sh
 already has an as_owner helper for HOME-scoped work; this needs that plus the two variables.
+
+--force IS REQUIRED HERE, and it is not a shortcut. The setuptool aborts when
+/var/run/docker.sock is WRITABLE, on the assumption that a working rootful docker means you did
+not mean to do this (its line 92). Both halves of that assumption are wrong on this machine: the
+root daemon stays because other accounts use it, and the socket is writable only because the
+owner is still in the docker group, which is what phase 6 removes at the END. The check would
+pass by itself after that, and until then it is asking about a decision already made. --force
+skips that one test and changes nothing else.
 
 
 4. The ZFS sudoers hole
@@ -246,17 +264,33 @@ owns. The sequence is: write /opt/FinalFactory/sudoers as yourself, `sudo zfs sn
 rpool/ff/golden@ffbox-evil`, `sudo zfs clone -o mountpoint=/etc rpool/ff/golden@ffbox-evil
 rpool/ff/run-evil`. Neither sudo call prompts.
 
-The fix is to pin the property, which costs nothing because ffbox already passes exactly one
-form of it. ffbox:523 calls
+PINNING IT WITH A WILDCARD DOES NOT WORK, which revision 1 of this document got wrong. Checked
+against sudoers(5) on 2026-08-25 while implementing it: "Command line arguments are matched as a
+single, concatenated string", and in that string a wildcard matches across word boundaries and
+matches '/' as well. Two consequences. The `-o *` does not mean "one property": it swallows the
+rest of the command line, so extra arguments ride along on all four rules. And a pinned-looking
+`-o mountpoint=${RUNS_MNT}/run-*` would still admit
+`-o mountpoint=/opt/ffruns/run-x/../../../etc`, because the '*' eats the slashes too.
+
+The fix is a regular expression, anchored at both ends. sudoers has supported POSIX extended
+regexes for arguments since sudo 1.9.10, and this machine runs 1.9.15p5. ffbox:523 calls
 
     sudo zfs clone -o mountpoint="$MNT" "$SNAP" "$CLONE"
 
-with MNT=${RUNS_MNT}/run-${RUN_ID} and RUNS_MNT defaulting to /opt/ffruns. So the rule becomes
+with MNT=${RUNS_MNT}/run-${RUN_ID}, so the whole argument string is known and can be spelled
+out. The only free part is a run id, held to [A-Za-z0-9._-]+ — the same class ffbox already
+enforces on --run-id at its line 185. No '/' in that class is what stops a mountpoint climbing
+out of ${RUNS_MNT}.
 
-    ${ZFS_BIN} clone -o mountpoint=${RUNS_MNT}/run-* ${GOLDEN_DS}@ffbox-* ${FF_DS}/run-*
+    Cmnd_Alias FFBOX_ZFS = ${ZFS_BIN} ^snapshot ${GOLDEN_DS}@ffbox-${RE}$, \
+                           ${ZFS_BIN} ^clone -o mountpoint=${RUNS_MNT}/run-${RE} \
+                                             ${GOLDEN_DS}@ffbox-${RE} ${FF_DS}/run-${RE}$, \
+                           ${ZFS_BIN} ^destroy ${FF_DS}/run-${RE}$, \
+                           ${ZFS_BIN} ^destroy ${GOLDEN_DS}@ffbox-${RE}$
 
-The other three commands in FFBOX_ZFS are already tight. `destroy` can only name a run-* clone
-or an ffbox-* snapshot, and a flag such as -r would be an extra argument that does not match.
+Anchoring the other three closes the ride-along at the same time. 02-zfsSetup.sh refuses to
+write the file at all on a sudo older than 1.9.10, where these would be read as literal text,
+match nothing and fail every clone.
 
 This is independent of everything else in this document and should land first. It is a one-line
 change to a hole that exists today, and it does not wait on the daemon move.
@@ -354,7 +388,11 @@ ffbox-egress.service is the one that matters most, because the proxy container c
 8. Files this touches
 ---------------------
 
-  02-zfsSetup.sh          the FFBOX_ZFS mountpoint pin (section 4). Independent of the rest.
+  wait-for-docker.sh      NEW. The bounded wait ffbox-docker.service runs (question b).
+  systemd/ffbox-docker.service
+                          NEW. The gate every docker-using unit orders after.
+  02-zfsSetup.sh          the FFBOX_ZFS regexes and the sudo-version refusal (section 4).
+                          Independent of the rest.
   01-dockerSetup.sh       stop adding to the docker group, and do not remove it either
                           (question c); run the rootless install; report the membership in
                           --status; rewrite the root-equivalence warning at 534, which stops
@@ -362,8 +400,10 @@ ffbox-egress.service is the one that matters most, because the proxy container c
   06-services.sh          DOCKER_HOST and the socket-wait ExecStartPre in the rendered units.
   systemd/ffbox-egress.service    drop the root comment and the iptables rationale; run as the
                           owner; add the socket wait.
-  systemd/ffwatch.service DOCKER_HOST. ffwatch.py runs `docker ps` at line 4040 and launches
-                          every turn through ffbox, which runs `docker run`.
+  systemd/ffwatch.service DOCKER_HOST, the ordering against the gate, and the removal of
+                          SupplementaryGroups=docker (fact p2). ffwatch.py runs `docker ps` at
+                          line 4040 and launches every turn through ffbox, which runs
+                          `docker run`.
   systemd/ffbox-update.service
                           DOCKER_HOST, for its CHILDREN rather than itself: update_ffbox.sh
                           names docker only in a comment, but it re-runs setup.sh, which runs
@@ -406,9 +446,16 @@ path to be wrong.
      A quota is available and not set, matching rpool/docker. If the build cache turns out to
      grow without bound it belongs here, at a size well clear of the 11.4 GB the images need.
 
-  b. WHETHER THE SOCKET WAIT BELONGS IN EACH UNIT OR IN ONE. A single oneshot unit that the
-     others order after is tidier than four copies of the same ExecStartPre, and it is one more
-     unit to install. Leaning towards the shared oneshot.
+  b. WHETHER THE SOCKET WAIT BELONGS IN EACH UNIT OR IN ONE. DECIDED 2026-08-25 while
+     implementing: the shared oneshot. ffbox-docker.service, Type=oneshot with
+     RemainAfterExit=yes, so the wait is paid once per boot rather than on every dependent
+     start, and a failure gets its own name in `systemctl status` instead of being buried
+     inside whichever service happened to start first.
+
+     It waits on the DAEMON, not on the socket file: lingering creates /run/user/<uid> at boot
+     and the socket appears a moment before anything behind it will answer. ffbox/
+     wait-for-docker.sh asks `docker version` in a bounded loop and prints the three things
+     that are usually wrong when it gives up.
 
   c. WHETHER 01-dockerSetup.sh SHOULD REMOVE THE GROUP MEMBERSHIP ITSELF. DECIDED 2026-08-25
      by the owner: no. This is the only ffbox machine, so the removal is one command run once
@@ -508,7 +555,14 @@ because sudo prompts and this document exists to keep that true.
            6.4  test_ffwatch.py: assert nothing under ffbox/ reintroduces a docker-group add or
                 a `sudo docker` call.
 
-  PHASE 7  CLEAN OUT THE ROOT DAEMON. Housekeeping, and only once phase 6 has held.
+  PHASE 7  CLEAN OUT THE ROOT DAEMON. Housekeeping.
+
+           ORDER NOTE, from doing it on 2026-08-25: this ran BEFORE phase 6, not after. Every
+           command here addresses the root daemon, and the docker group membership is what
+           grants that access — after phase 6 the same cleanup needs a password for each call.
+           Phase 5 having passed on a real run is what makes the earlier order safe: the
+           images being deleted are only a fallback for a migration that has already been
+           demonstrated, and phase 6 itself is reversible with gpasswd -a.
 
            7.1  Confirm the devops_postgres_data backup restores (section 7).
            7.2  Remove ffbox's images and the two ffbox networks from the root daemon.

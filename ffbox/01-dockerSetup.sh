@@ -56,9 +56,14 @@ DOCKER_DS=""
 DATA_ROOT="/var/lib/docker"
 DRIVER="overlay2"
 DAEMON_JSON="/etc/docker/daemon.json"
+# The ROOTLESS store, which is ffbox's. Separate from DATA_ROOT above, which belongs to the root
+# daemon that other accounts on this machine still use — nothing is migrated between them.
+ROOTLESS_ROOT="/opt/ffbox_docker"
+ROOTLESS_DS=""
+PROFILE_D="/etc/profile.d/ffbox-docker-host.sh"
 OWNER=""
 DO_INSTALL=1
-DO_GROUP=1
+DO_ROOTLESS=1
 DO_SMOKE=1
 DO_ZSYS=1
 DO_EGRESS=1
@@ -88,13 +93,14 @@ Options (alphabetical):
                     something else. A .bak copy is kept either way.
   --help            Show this message.
   --keep-zsys       Leave zsys installed and leave its autozsys_* snapshots alone.
-  --no-group        Do not add anyone to the docker group.
+  --no-rootless     Do not install the rootless daemon for the owner. The owner is never
+                    added to the docker group either way; see the note below.
   --no-install      Do not install Docker packages; only do the storage setup.
   --no-egress       Do not build or start the egress filter. A machine without it cannot run
                     ffbox at all until 'sh ffbox/egress/ffbox-egress.sh up' has been run, since
                     ffbox refuses to fall back to unfiltered networking on its own.
   --no-smoke        Skip the hello-world smoke test at the end.
-  --owner USER      User to add to the docker group (default: the invoking user).
+  --owner USER      User the rootless daemon is installed for (default: the invoking user).
   --pool NAME       ZFS pool to build in (default: the pool holding /).
   --yes             Do not prompt before destroying autozsys_* snapshots.
 
@@ -116,7 +122,10 @@ while [ $# -gt 0 ]; do
     --help|-h)      usage; exit 0 ;;
     --keep-zsys)    DO_ZSYS=0; shift ;;
     --no-egress)    DO_EGRESS=0; shift ;;
-    --no-group)     DO_GROUP=0; shift ;;
+    --no-rootless)  DO_ROOTLESS=0; shift ;;
+    # Accepted and ignored: this script no longer touches the docker group at all, and a setup
+    # command that still carries the old flag should not die on it.
+    --no-group)     shift ;;
     --no-install)   DO_INSTALL=0; shift ;;
     --no-smoke)     DO_SMOKE=0; shift ;;
     --owner)        OWNER=${2:?--owner needs a user}; shift 2 ;;
@@ -162,23 +171,52 @@ if [ -z "$POOL" ]; then
 fi
 zpool list -H -o name "$POOL" >/dev/null 2>&1 || die "no such ZFS pool: $POOL"
 [ -n "$DOCKER_DS" ] || DOCKER_DS="${POOL}/docker"
+# Under ff/, with golden and the run clones, because it is ffbox's and not the machine's. The
+# NOPASSWD destroy rule names ${POOL}/ff/run-* only, so this dataset is not reachable through it.
+[ -n "$ROOTLESS_DS" ] || ROOTLESS_DS="${POOL}/ff/docker"
 
 case "$DRIVER" in
   overlay2|zfs) ;;
   *) die "--driver must be overlay2 or zfs, not '$DRIVER'" ;;
 esac
 
+# WHOSE MACHINE THIS IS, most explicit source first.
+#
 # SUDO_USER is only meaningful when we are actually root — it lingers in the environment of any
 # shell that was itself started under sudo, and trusting it there would add the wrong account to
-# a group that is effectively root-equivalent.
+# a group that is effectively root-equivalent. It is also ABSENT under systemd, which is how
+# ffbox-update.service runs this: root, no sudo, no SUDO_USER. That used to resolve to root and
+# provision the machine for an account that never runs ffbox. FFBOX_RUN_USER is what a caller
+# that already knows the answer passes; the checkout's owner is the last resort and is the same
+# answer update_ffbox.sh derives for its git calls.
 if [ -z "$OWNER" ]; then
-  if [ "$(id -u)" -eq 0 ]; then OWNER=${SUDO_USER:-root}; else OWNER=$(id -un); fi
+  if [ "$(id -u)" -eq 0 ]; then
+    OWNER=${FFBOX_RUN_USER:-}
+    [ -z "$OWNER" ] && [ "${SUDO_USER:-root}" != root ] && OWNER=$SUDO_USER
+    [ -z "$OWNER" ] && OWNER=$(stat -c %U "$HERE/../.git" 2>/dev/null || echo root)
+  else
+    OWNER=$(id -un)
+  fi
 fi
 id "$OWNER" >/dev/null 2>&1 || die "no such user: $OWNER"
 
 have_ds() { zfs list -H -o name "$1" >/dev/null 2>&1; }
 ds_for()  { df --output=source "$1" 2>/dev/null | tail -1; }
 in_group() { id -nG "$1" 2>/dev/null | tr ' ' '\n' | grep -qx docker; }
+
+# Three states, not two: a socket that answers, an install that exists but is not up, and
+# nothing at all. They have different fixes, so --status says which one it is.
+rootless_state() {
+  _u=$1
+  _i=$(id -u "$_u" 2>/dev/null) || { echo "unknown user"; return; }
+  if [ -S "/run/user/$_i/docker.sock" ]; then
+    echo "socket present at /run/user/$_i/docker.sock"
+  elif [ -r "$(getent passwd "$_u" | cut -d: -f6)/.config/systemd/user/docker.service" ]; then
+    echo "installed but not running (systemctl --user status docker)"
+  else
+    echo "NOT installed (dockerd-rootless-setuptool.sh install)"
+  fi
+}
 
 zsys_installed() { dpkg-query -W -f='${Status}' zsys 2>/dev/null | grep -q '^install ok installed$'; }
 
@@ -202,7 +240,12 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
   printf 'daemon.json:     %s\n' "$([ -r "$DAEMON_JSON" ] && echo present || echo absent)"
   printf 'docker binary:   %s\n' "$(command -v docker 2>/dev/null || echo "not installed")"
   printf 'driver now:      %s (want %s)\n' "${CUR_DRIVER:-daemon not responding}" "$DRIVER"
-  printf 'docker group:    %s\n' "$(in_group "$OWNER" && echo "$OWNER is a member" || echo "$OWNER is NOT a member")"
+  printf 'docker group:    %s\n' "$(in_group "$OWNER" \
+      && echo "$OWNER IS a member — root-equivalent, and no longer needed. Remove it with:
+                 sudo gpasswd -d $OWNER docker" \
+      || echo "$OWNER is not a member (correct)")"
+  printf 'rootless daemon: %s\n' "$(rootless_state "$OWNER")"
+  printf 'lingering:       %s\n' "$(loginctl show-user "$OWNER" -p Linger --value 2>/dev/null || echo unknown)"
   printf 'zsys:            %s\n' "$(zsys_installed && echo 'INSTALLED — will re-snapshot the boot env on every apt run' || echo 'not installed')"
   printf 'autozsys snaps:  %s\n' "$(list_autozsys | wc -l)"
   # The whole point of the exercise: nothing docker-shaped inside the boot environment. A
@@ -507,20 +550,111 @@ NEW_DRIVER=$(printf '%s\n' "$INFO" | sed -n 's/^ *Storage Driver: *//p' | head -
 say "docker is up on $NEW_DRIVER, data root $(ds_for "$DATA_ROOT")"
 
 # ---------------------------------------------------------------------------------------------
-# docker group
+# The rootless daemon
 #
-# Membership is root-equivalent: any member can bind-mount / into a privileged container. That
-# is the standard trade-off for using Docker without sudo, but it should be a stated one.
+# THIS SCRIPT DOES NOT ADD ANYONE TO THE DOCKER GROUP, and that is the point of the section.
+# Membership is root-equivalent — any member can bind-mount / into a container and read or
+# write anything on the box, with no password and no sudo involved — and ffbox is the reason
+# the account would have had it. Measured on 2026-08-25: `docker run -v /etc:/hostetc:ro alpine
+# wc -l < /hostetc/shadow` returned 84 as uid 0, unprompted.
+#
+# ffbox uses a rootless daemon owned by $OWNER instead. It reaches it through DOCKER_HOST, set
+# by the units and by the profile.d line written below. Nothing here needs the group.
+#
+# It does not REMOVE the membership either. That is one command, run once, by a human who can
+# see what is currently talking to the root daemon:
+#
+#     sudo gpasswd -d $OWNER docker
+#
+# Doing it from a script that setup.sh re-runs unattended could cut a live pipeline off from
+# the socket it is using mid-run. See design/rootless_docker_design.txt, question c.
 # ---------------------------------------------------------------------------------------------
-if [ "$DO_GROUP" -eq 0 ]; then
-  skip "docker group membership skipped (--no-group)"
-elif in_group "$OWNER"; then
-  skip "$OWNER is already in the docker group"
+if [ "$DO_ROOTLESS" -eq 0 ]; then
+  skip "rootless daemon skipped (--no-rootless)"
 else
-  say "adding $OWNER to the docker group"
-  as_root usermod -aG docker "$OWNER"
-  warn "docker group membership is root-equivalent — a member can mount / into a
-         privileged container. $OWNER must log out and back in for it to take effect."
+  # Lingering FIRST. dockerd-rootless-setuptool.sh finishes with `systemctl --user enable
+  # docker`, which needs the owner's systemd instance to exist, and without lingering that
+  # instance is only alive while they are logged in — which on a build server is never.
+  if [ "$(loginctl show-user "$OWNER" -p Linger --value 2>/dev/null)" = yes ]; then
+    skip "lingering already enabled for $OWNER"
+  else
+    say "enabling lingering for $OWNER, so their systemd instance survives logout"
+    as_root loginctl enable-linger "$OWNER"
+  fi
+
+  _uid=$(id -u "$OWNER")
+  _sock="/run/user/$_uid/docker.sock"
+
+  if [ -S "$_sock" ]; then
+    skip "rootless daemon already answering at $_sock"
+  elif ! command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1; then
+    warn "dockerd-rootless-setuptool.sh not found — install docker-ce-rootless-extras, then
+         re-run this stage."
+  else
+    say "installing the rootless daemon for $OWNER"
+    # runuser alone does not hand over a systemd user session, and the setuptool needs one.
+    # With lingering on, both of these exist from boot.
+    #
+    # --force, and it is not a shortcut. The setuptool aborts when /var/run/docker.sock is
+    # WRITABLE, on the assumption that a working rootful docker means you did not mean to do
+    # this. Here both halves of that assumption are wrong: the root daemon stays because other
+    # accounts on this machine use it, and the socket is writable only because $OWNER is still
+    # in the docker group — which is the thing this whole exercise removes, at the END, once a
+    # real turn has run against the rootless daemon. The check would pass on its own after
+    # that, and until then it is asking about a decision already made. --force skips that one
+    # test and nothing else; see the guard at dockerd-rootless-setuptool.sh line 92.
+    as_root runuser -u "$OWNER" -- env \
+      XDG_RUNTIME_DIR="/run/user/$_uid" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$_uid/bus" \
+      dockerd-rootless-setuptool.sh install --force \
+      || warn "the rootless install did not complete. Run it as $OWNER from a login shell:
+         dockerd-rootless-setuptool.sh install --force"
+  fi
+
+  # The store, on its own dataset, so the images are not in the boot environment and not in the
+  # home directory quota either. Same reasoning as the root daemon's dataset above.
+  if [ -d "$ROOTLESS_ROOT" ]; then
+    skip "$ROOTLESS_ROOT already exists"
+  else
+    say "creating $ROOTLESS_DS at $ROOTLESS_ROOT"
+    as_root zfs create -o mountpoint="$ROOTLESS_ROOT" "$ROOTLESS_DS"
+  fi
+  as_root chown "$OWNER:$(id -gn "$OWNER")" "$ROOTLESS_ROOT"
+  # overlay2 in a user namespace needs xattr=sa. rpool sets it pool-wide, so this normally just
+  # confirms the inheritance — but a store that silently lacks it fails later and further away.
+  _xattr=$(zfs get -H -o value xattr "$ROOTLESS_DS" 2>/dev/null || echo unknown)
+  [ "$_xattr" = sa ] || warn "$ROOTLESS_DS has xattr=$_xattr, not sa. overlay2 needs sa."
+
+  _cfg=$(getent passwd "$OWNER" | cut -d: -f6)/.config/docker/daemon.json
+  if [ -r "$_cfg" ] && grep -q "$ROOTLESS_ROOT" "$_cfg" 2>/dev/null; then
+    skip "$_cfg already points at $ROOTLESS_ROOT"
+  else
+    say "pointing the rootless daemon's data root at $ROOTLESS_ROOT"
+    as_root runuser -u "$OWNER" -- sh -c "mkdir -p \"\$(dirname '$_cfg')\" &&
+      printf '{\n  \"data-root\": \"%s\"\n}\n' '$ROOTLESS_ROOT' > '$_cfg'"
+  fi
+
+  # THE SOCKET PATH, for anything that is not a systemd unit. Without this an interactive shell
+  # finds the ROOT daemon's default socket, succeeds, and does the work in the wrong place —
+  # the quiet failure mode from design/rootless_docker_design.txt section 7.
+  say "writing $PROFILE_D so interactive shells address the rootless daemon"
+  as_root sh -c "cat > '$PROFILE_D'" <<PROF
+# Installed by final-factory-agents/ffbox/01-dockerSetup.sh — ffbox runs a ROOTLESS Docker
+# daemon owned by $OWNER. Without this, docker(1) finds the root daemon's socket instead and
+# silently operates on the wrong images, networks and containers.
+if [ "\$(id -u)" = "$_uid" ] && [ -z "\${DOCKER_HOST:-}" ]; then
+    DOCKER_HOST="unix://$_sock"
+    export DOCKER_HOST
+fi
+PROF
+  as_root chmod 0644 "$PROFILE_D"
+
+  if in_group "$OWNER"; then
+    warn "$OWNER is STILL in the docker group, which is root-equivalent and no longer needed.
+         Once ffbox has run a turn against the rootless daemon, remove it:
+             sudo gpasswd -d $OWNER docker
+         Processes keep the group until they restart, so restart the units afterwards."
+  fi
 fi
 
 # ---------------------------------------------------------------------------------------------
@@ -552,13 +686,21 @@ fi
 if [ "$DO_SMOKE" -eq 0 ]; then
   skip "smoke test skipped (--no-smoke)"
 else
-  say "running hello-world"
-  if as_root docker run --rm hello-world >/dev/null 2>&1; then
-    say "hello-world ran clean"
-    as_root docker rmi hello-world >/dev/null 2>&1 || true
+  # Against the ROOTLESS daemon, as the owner, because that is the one ffbox will use. A clean
+  # root daemon proves nothing about the socket every unit is pointed at.
+  _uid=$(id -u "$OWNER")
+  _sock="/run/user/$_uid/docker.sock"
+  say "running hello-world on the rootless daemon, as $OWNER"
+  if as_root runuser -u "$OWNER" -- env DOCKER_HOST="unix://$_sock" \
+       docker run --rm hello-world >/dev/null 2>&1; then
+    say "hello-world ran clean on the rootless daemon"
+    as_root runuser -u "$OWNER" -- env DOCKER_HOST="unix://$_sock" \
+      docker rmi hello-world >/dev/null 2>&1 || true
   else
-    warn "hello-world failed. Docker is installed and on the right driver, but could not pull
-         or run. Usually network or registry access. Check: sudo docker run --rm hello-world"
+    warn "hello-world failed on the rootless daemon at $_sock. Check, as $OWNER:
+             systemctl --user status docker
+             DOCKER_HOST=unix://$_sock docker run --rm hello-world
+         If the socket is absent, lingering or the rootless install did not take."
   fi
 fi
 

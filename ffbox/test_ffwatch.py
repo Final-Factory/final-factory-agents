@@ -4551,8 +4551,174 @@ def test_systemd_units_hang_off_one_target():
           "ffweb.service" in target)
     setup = open(os.path.join(HERE, "06-services.sh"), encoding="utf-8").read()
     for token in ("@USER@", "@GROUP@", "@HOME@", "@FFWATCH@", "@FFWEB@", "@CHANNELS_ARG@",
-                  "@WEBHOST@", "@WEBPORT@"):
+                  "@WEBHOST@", "@WEBPORT@", "@DOCKERSOCK@", "@WAITDOCKER@"):
         check(f"setup substitutes {token}", f"s|{token}|" in setup, )
+
+    # THE UPDATER HOLDS NO ROOT. It fetches code off the internet every five minutes and then
+    # executes it, so it runs as the checkout's owner and reaches for sudo exactly once, for the
+    # systemctl verbs 02-zfsSetup grants it by name.
+    upd_unit = open(os.path.join(HERE, "systemd", "ffbox-update.service"),
+                    encoding="utf-8").read()
+    check("the updater unit runs as the owner, not root",
+          "User=@USER@" in upd_unit and "Group=@GROUP@" in upd_unit, upd_unit)
+    upd = open(os.path.join(HERE, "update_ffbox.sh"), encoding="utf-8").read()
+    check("and it never calls bare systemctl for a state change",
+          "\nsystemctl stop" not in upd and "\nsystemctl start" not in upd, )
+    check("it elevates only through the -n helper, which cannot hang on a prompt",
+          "sudo -n systemctl" in upd, )
+    zfs = open(os.path.join(HERE, "02-zfsSetup.sh"), encoding="utf-8").read()
+    # The GRANT ITSELF, not the prose around it: pull the Cmnd_Alias body out and read it.
+    alias_body = zfs.split("Cmnd_Alias FFBOX_UNITS =")[1].split("\n${OWNER}")[0]
+    granted = [c.strip() for c in alias_body.replace("\\\\", "").split(",") if c.strip()]
+    check("the updater is granted exactly two commands",
+          granted == ["${SYSTEMCTL_BIN} stop ffbox.target",
+                      "${SYSTEMCTL_BIN} start ffbox.target"], granted)
+    check("with no wildcard, so no other unit can be named",
+          "*" not in alias_body, alias_body)
+    check("and nothing that writes a unit file, which would be root by another name",
+          not any(w in alias_body for w in ("install", "cp ", "tee", "systemd/system")),
+          alias_body)
+    # ffbox-egress is the one ffbox unit with no User=, so it runs as root off a script in the
+    # checkout. It must never become startable by the account that can edit that script.
+    check("and never ffbox-egress, the one unit that runs as root",
+          "egress" not in alias_body, alias_body)
+
+    # THE ZFS GRANT IS REGEXES, NOT WILDCARDS, and the difference is the whole point. sudo
+    # matches command arguments as one concatenated string in which '*' spans spaces and
+    # slashes, so the `clone -o *` this rule carried until 2026-08-25 permitted
+    # `-o mountpoint=/etc`: a dataset of the owner's own files mounted over /etc, no password.
+    zfs_body = zfs.split("Cmnd_Alias FFBOX_ZFS =")[1].split("\n\n")[0]
+    zfs_rules = [c.strip() for c in zfs_body.replace("\\\\", "").split(",") if c.strip()]
+    check("the zfs grant spells out four commands", len(zfs_rules) == 4, zfs_rules)
+    check("none of them uses a wildcard, which would swallow the rest of the command line",
+          "*" not in zfs_body, zfs_body)
+    check("every one is a regex anchored at both ends",
+          all(r.split(" ", 1)[1].startswith("^") and r.endswith("\\$") for r in zfs_rules),
+          zfs_rules)
+    check("the clone rule pins the mountpoint under the runs directory",
+          any("mountpoint=${RUNS_MNT}/run-" in r for r in zfs_rules), zfs_rules)
+    check("and the free part of every rule is a run id, not an open pattern",
+          all("${RUNID_RE}" in r for r in zfs_rules), zfs_rules)
+
+    # The id class has to be the SAME one ffbox enforces on --run-id. Widening either alone
+    # breaks runs or reopens the hole, and nothing at runtime notices.
+    ffbox_src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    check("the sudoers id class is the one ffbox validates --run-id against",
+          "RUNID_RE='[A-Za-z0-9._-]+'" in zfs and "*[!A-Za-z0-9._-]*" in ffbox_src, )
+    check("and it admits no slash, so a mountpoint cannot climb out of the runs directory",
+          "/" not in "[A-Za-z0-9._-]", )
+
+    # Now the rule as sudo will actually read it, against the invocation ffbox makes and the
+    # ones it must refuse. This is the assertion that would have failed before the fix.
+    clone_re = [r for r in zfs_rules if "^clone" in r][0].split(" ", 1)[1]
+    for token, value in (("${RUNS_MNT}", "/opt/ffruns"), ("${GOLDEN_DS}", "rpool/ff/golden"),
+                         ("${FF_DS}", "rpool/ff"), ("${RUNID_RE}", "[A-Za-z0-9._-]+")):
+        clone_re = clone_re.replace(token, value)
+    clone_re = clone_re.replace("\\$", "$")
+    real = ("clone -o mountpoint=/opt/ffruns/run-d7t2-1a2b "
+            "rpool/ff/golden@ffbox-d7t2-1a2b rpool/ff/run-d7t2-1a2b")
+    check("the rule matches the clone ffbox actually runs", re.match(clone_re, real), clone_re)
+    for hostile, why in (
+            ("clone -o mountpoint=/etc rpool/ff/golden@ffbox-x rpool/ff/run-x",
+             "a mountpoint outside the runs directory"),
+            ("clone -o mountpoint=/opt/ffruns/run-x/../../../etc "
+             "rpool/ff/golden@ffbox-x rpool/ff/run-x",
+             "a mountpoint that climbs out with .."),
+            ("clone -o mountpoint=/opt/ffruns/run-x -o setuid=on "
+             "rpool/ff/golden@ffbox-x rpool/ff/run-x",
+             "a second property riding along"),
+            ("clone -o mountpoint=/opt/ffruns/run-x rpool/ff/golden@ffbox-x "
+             "rpool/ROOT/ubuntu_g210oe",
+             "a clone landing outside the ff dataset")):
+        check(f"and refuses {why}", not re.match(clone_re, hostile), hostile)
+
+    # Regexes need sudo 1.9.10. On an older one these rules match nothing and every run fails,
+    # so the script says so before writing rather than leaving it to be discovered.
+    check("the script refuses to write these rules on a sudo too old to read them",
+          "sudo_regex_ok" in zfs and "sudo_regex_ok || die" in zfs, )
+
+    # ---- ROOTLESS DOCKER -------------------------------------------------------------------
+    # ffbox talks to a rootless daemon owned by the run user. The account is not in the docker
+    # group, because membership there is root-equivalent. Everything below is a way that fact
+    # can be quietly undone. See design/rootless_docker_design.txt.
+    ffwatch_unit = open(os.path.join(unit_dir, "ffwatch.service"), encoding="utf-8").read()
+    # Directives only: the unit explains in a COMMENT why the line is gone, and a naive
+    # substring search would trip on the explanation.
+    ffwatch_directives = "\n".join(l for l in ffwatch_unit.splitlines()
+                                   if not l.lstrip().startswith("#"))
+    check("ffwatch does not name the docker group, which a unit gets whether or not the "
+          "account is still a member", "SupplementaryGroups" not in ffwatch_directives,
+          ffwatch_directives)
+    for name in ("ffwatch.service", "ffbox-update.service", "ffbox-egress.service",
+                 "ffbox-docker.service"):
+        body = open(os.path.join(unit_dir, name), encoding="utf-8").read()
+        check(f"{name} exists and runs as the owner, not root",
+              "User=@USER@" in body, body)
+    for name in ("ffwatch.service", "ffbox-update.service", "ffbox-egress.service"):
+        body = open(os.path.join(unit_dir, name), encoding="utf-8").read()
+        check(f"{name} names the rootless socket, so docker cannot find the root daemon",
+              "Environment=DOCKER_HOST=unix://@DOCKERSOCK@" in body, body)
+
+    gate = open(os.path.join(unit_dir, "ffbox-docker.service"), encoding="utf-8").read()
+    check("the gate is a oneshot that stays satisfied, so the wait is paid once per boot",
+          "Type=oneshot" in gate and "RemainAfterExit=yes" in gate, gate)
+    check("and it waits on the daemon rather than on the socket file, which appears first",
+          "@WAITDOCKER@" in gate, gate)
+    waiter = open(os.path.join(HERE, "wait-for-docker.sh"), encoding="utf-8").read()
+    check("the waiter asks the daemon a question", "docker version" in waiter, )
+    check("and fails rather than waiting forever", "exit 1" in waiter, )
+    for name in ("ffwatch.service", "ffbox-egress.service"):
+        body = open(os.path.join(unit_dir, name), encoding="utf-8").read()
+        check(f"{name} orders after the gate, which system units cannot do against a user unit",
+              "After=" in body and "ffbox-docker.service" in body, body)
+
+    svc = open(os.path.join(HERE, "06-services.sh"), encoding="utf-8").read()
+    check("06-services installs the gate along with the rest",
+          "DOCKER_UNITS=" in svc and "$DOCKER_UNITS $UNIT_NAMES" in svc, )
+    # Every placeholder any template uses, not a list somebody remembers to extend. An
+    # unsubstituted @TOKEN@ reaches systemd as a literal and the unit fails at start.
+    used = set()
+    for fname in os.listdir(unit_dir):
+        used |= set(re.findall(r"@[A-Z_]+@",
+                               open(os.path.join(unit_dir, fname), encoding="utf-8").read()))
+    missing = sorted(t for t in used if f"s|{t}|" not in svc)
+    check("every placeholder in every template has a substitution", not missing, missing)
+    check("and renders the socket from the OWNER's uid, not from whoever ran sudo",
+          'id -u "$RUN_USER"' in svc, )
+
+    # The egress fence lost its root. Nothing in the script may reach for privilege again, and
+    # the `sudo docker` fallback in particular would have addressed the WRONG daemon.
+    egress = open(os.path.join(HERE, "egress", "ffbox-egress.sh"), encoding="utf-8").read()
+    egress_code = "\n".join(l for l in egress.splitlines() if not l.lstrip().startswith("#"))
+    for banned in ("sudo ", "iptables", "as_root", "require_root"):
+        check(f"the egress script no longer calls {banned.strip()}",
+              banned not in egress_code, egress_code)
+    egress_unit = open(os.path.join(unit_dir, "ffbox-egress.service"), encoding="utf-8").read()
+    check("and its unit is no longer the one exception that runs as root",
+          "User=@USER@" in egress_unit, egress_unit)
+
+    # Nothing may put the group back. 01-dockerSetup added it until 2026-08-25, and setup.sh is
+    # re-run unattended by the updater, so a usermod left in place would reopen the hole on a
+    # schedule.
+    for fname in ("01-dockerSetup.sh", "02-zfsSetup.sh", "06-services.sh", "setup.sh",
+                  "update_ffbox.sh", "ffbox", "egress/ffbox-egress.sh"):
+        body = open(os.path.join(HERE, fname), encoding="utf-8").read()
+        code = "\n".join(l for l in body.splitlines() if not l.lstrip().startswith("#"))
+        check(f"{fname} never adds anyone to the docker group",
+              "usermod -aG docker" not in code and "gpasswd -a" not in code, fname)
+        check(f"{fname} never shells out to `sudo docker`", "sudo docker" not in code, fname)
+
+    # The updater re-runs setup rather than keeping a second model of what a diff "means".
+    check("the updater re-runs setup.sh rather than reimplementing it",
+          "ffbox/setup.sh" in upd and "--non-interactive" in upd, )
+    st = open(os.path.join(HERE, "setup.sh"), encoding="utf-8").read()
+    check("setup takes --non-interactive", "--non-interactive) NONINTERACTIVE=1" in st, )
+    check("and skips the root stages rather than prompting for them",
+          "needs_root()" in st and "SKIPPED" in st, )
+    check("setup registers the agent plugins, which is how a skill bump reaches a box",
+          "registerAgents.sh" in st, )
+    check("no channel-name trigger list survives in the updater",
+          "changed_match" not in upd, )
     # The page's bind address is config, not a constant in the unit — but it must DEFAULT to
     # loopback in every path, because the page has no authentication and shows raw model
     # thinking. A default that leaked would leak silently.
