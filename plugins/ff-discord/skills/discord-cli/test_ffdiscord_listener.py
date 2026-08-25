@@ -225,24 +225,21 @@ kind = li.handle_dispatch("READY", {"user": {"id": "999", "username": "ffa", "di
 check("READY captures session state", kind == "ready" and li.session_id == "s1"
       and li.resume_url == "wss://x" and li.connected_ok)
 
-print("mention/reply dispatch (any channel):")
+print("mention/reply dispatch (watched channels only, since 2026-08-25):")
 
 li = fresh_listener()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "700", "id": "p1",
                                        "guild_id": "1", "author": {"id": "42"},
                                        "mentions": [{"id": "999"}]})
 evs = events()
-check("bot @-mention in unwatched channel rings as player_mention",
-      len(evs) == 1 and evs[0]["kind"] == "player_mention" and evs[0]["channel_id"] == "700"
-      and evs[0]["author_id"] == "42")
+check("bot @-mention in an UNWATCHED channel rings nothing", evs == [])
 
 li = fresh_listener()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 19, "channel_id": "701", "id": "p2",
                                        "guild_id": "1", "author": {"id": "42"},
                                        "referenced_message": {"author": {"id": "999"}}})
 evs = events()
-check("reply to bot's own message rings as player_mention (no explicit mention needed)",
-      len(evs) == 1 and evs[0]["kind"] == "player_mention")
+check("nor does a reply to the bot's own message, in an unwatched channel", evs == [])
 
 li = fresh_listener()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "702", "id": "p3",
@@ -260,8 +257,8 @@ li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "704", "id": "p5"
                                        "guild_id": "1", "author": {"id": "600601"},
                                        "mentions": [{"id": "999"}]})
 evs = events()
-check("bot @-mention from a CONFIGURED operator id rings as operator_directive",
-      len(evs) == 1 and evs[0]["kind"] == "operator_directive" and evs[0]["author_id"] == "600601")
+check("nor does an @-mention from a CONFIGURED operator — the channel decides, not the "
+      "author; an operator's routes are a DM or a watched channel", evs == [])
 
 li = fresh_listener()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "111", "id": "p6",
@@ -275,8 +272,7 @@ li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "705", "id": "p7"
                                        "guild_id": "1", "author": {"id": "600601"},
                                        "mentions": [{"id": "999"}]})
 evs = events()
-check("with no operators configured, the same author is just an ordinary player_mention",
-      len(evs) == 1 and evs[0]["kind"] == "player_mention")
+check("and with no operators configured it is still nothing", evs == [])
 
 # -- direct messages ---------------------------------------------------------------------
 # A DM carries no guild_id, and that is the only signal available: MESSAGE_CREATE does not
@@ -322,9 +318,9 @@ for _gone in ('"ask_claude"', '"bug_reports"', '"suggestions"', '"dev_chat"',
               'default="ask_claude'):
     check(f"and {_gone} is not baked in anywhere", _gone not in _src)
 
-# A listener told to watch nothing is not a broken listener: it is the correct state for a box
-# whose channel ids are not filled in yet, and for one that only ever answers when spoken to.
-# Everything addressed TO the bot must still ring, or the daemon is dead weight.
+# A listener told to watch nothing rings for NOTHING in a guild. Since 2026-08-25 that is the
+# whole point rather than a degenerate case: an unlisted channel generates no events, so a
+# listener with an empty watch list is a listener that only answers operator DMs.
 li = L.Listener("tok", {}, tmp.name, operator_ids=("600601",))
 li.bot_id = "999"
 open(tmp.name, "w").close()
@@ -335,14 +331,15 @@ li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "808", "id": "n2"
                                       "guild_id": "g1", "author": {"id": "42"},
                                       "mentions": [{"id": "999"}]})
 evs = events()
-check("an @-mention still rings", len(evs) == 1 and evs[0]["kind"] == "player_mention", evs)
+check("an @-mention rings nothing either, with nothing watched", evs == [], evs)
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "808", "id": "n3",
                                       "guild_id": "g1", "author": {"id": "600601"},
                                       "mentions": [{"id": "999"}]})
-check("an operator directive still rings", events()[-1]["kind"] == "operator_directive")
+check("nor does an operator's @-mention", events() == [])
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "dm9", "id": "n4",
                                       "author": {"id": "600601"}})
-check("and an operator DM still rings", events()[-1]["kind"] == "operator_dm")
+check("but an operator DM still rings — a DM has no channel to list",
+      events()[-1]["kind"] == "operator_dm")
 
 os.unlink(tmp.name)
 

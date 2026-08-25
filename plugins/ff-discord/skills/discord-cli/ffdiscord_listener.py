@@ -9,13 +9,15 @@ Discord Gateway websocket open and appends a single JSON line to
   - a human message lands in a watched text channel   -> kind "message"
   - a new thread appears in a watched forum           -> kind "thread"
   - a human reply lands in such a thread              -> kind "thread_message"
-  - the bot is @-mentioned/replied-to ANYWHERE ELSE by
-    an account in the configured operator set         -> kind "operator_directive"
-  - the bot is @-mentioned/replied-to ANYWHERE ELSE by
-    any other human                                   -> kind "player_mention"
   - an operator sends the bot a DIRECT MESSAGE        -> kind "operator_dm"
     (a DM from anyone else rings nothing at all)
   - the listener (re)started or lost resume state      -> kind "catchup"
+
+A CHANNEL NOT IN THE WATCH LIST GENERATES NOTHING, as of 2026-08-25. An @-mention or a reply
+to the bot in an unlisted channel is logged and dropped, whoever sent it. This used to ring as
+`operator_directive` (from a configured operator id) or `player_mention` (from anybody else),
+which let the bot answer anywhere it could see; the watch block is now the whole list. ffwatch
+still understands both kinds, so an older listener on some other machine keeps working.
 
 The line is a DOORBELL, not the mail. It carries ids only — the consumer still pulls
 through the normal cursor flow (`ffdiscord.py unseen`) or re-reads the specific
@@ -351,16 +353,28 @@ class Listener:
                 # supported surface.
                 return None
 
-            # Not one of the swept channels/threads — only ring if directly addressed.
-            # This is what makes "any channel the bot is in" work without maintaining
-            # a channel list: GUILD_MESSAGES already delivers every channel the bot can
-            # see: we just filter for "was I actually spoken to" everywhere else.
-            if not self._bot_is_addressed(d):
-                return None
-            if author_id in self.operator_ids:
-                self.emit("operator_directive", ch, ch, d.get("id"), author_id)
-            else:
-                self.emit("player_mention", ch, ch, d.get("id"), author_id)
+            # NOT a watched channel, so NOTHING rings — not even a direct @-mention, and not
+            # even from an operator. Changed 2026-08-25 at the owner's instruction: an unlisted
+            # channel generates no events at all.
+            #
+            # This used to fall through to a "was I actually spoken to" test, which let the bot
+            # answer an @-mention in any channel it could see without maintaining a channel
+            # list. That is the opposite of what is wanted now: the watch block in ffwatch's
+            # config is the list, 06-services.sh already passes it here as --channels, and a
+            # channel absent from it should be a channel this box does not act on. GUILD_MESSAGES
+            # still delivers every channel the bot can see; we drop them here instead.
+            #
+            # An operator has two routes that still work: a DM, handled above and unaffected
+            # because a DM has no channel to list, and any watched channel. Discord permissions
+            # are the belt to this braces — a bot that cannot see a channel never gets the
+            # message in the first place.
+            #
+            # Logged rather than dropped silently, and _bot_is_addressed is kept for exactly
+            # this: a mention that goes nowhere is otherwise indistinguishable from a bot that
+            # is down, and "why did it ignore me" needs an answer in the listener log.
+            if self._bot_is_addressed(d):
+                log(f"ignoring an addressed message in unwatched channel {ch} "
+                    f"(author {author_id}); add it to the ffwatch watch block to act on it")
             return None
         if t == "THREAD_CREATE":
             parent = d.get("parent_id")
