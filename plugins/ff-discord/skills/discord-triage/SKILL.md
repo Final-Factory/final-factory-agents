@@ -97,7 +97,9 @@ subagent summary you did not verify is not a verdict.
 **First check every gate and forbidden zone in `reference.md` — if ANY gate fails, the
 verdict is ESCALATE.** No exceptions, no "it's probably fine". Hard preconditions: the Unity
 MCP bridge must be live and pinned (bridge down → ESCALATE and say so), and **max 3 autofixes
-per pass** — bounded blast radius matters more than throughput.
+per pass** — bounded blast radius matters more than throughput. On the build server a player's
+turns share a budget of five per rolling 24 hours, which the triage turn itself draws from, so
+three may be more than is left; see `reference.md` §AUTOFIX gates.
 
 Spawn **one agent per bug** with `isolation: "worktree"` so parallel fixes cannot collide —
 the `discord-triager` agent for the investigation, then an implementing agent for the fix. If
