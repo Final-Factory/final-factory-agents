@@ -1646,7 +1646,10 @@ def test_container_argv_is_valid():
     check("stream-json is paired with --verbose",
           "--output-format" in argv and argv[argv.index("--output-format") + 1] == "stream-json"
           and "--verbose" in argv, argv)
-    check("the read-only lane names exactly READ_TOOLS",
+    # This fixture is hand-built, so it pins the BUILDER — that whatever tool string the host
+    # puts in job.json reaches the command line verbatim. What the host actually puts there is
+    # CAPABILITIES, pinned in test_read_only_capabilities against a real run.
+    check("the tool string in job.json reaches the command line verbatim",
           "--tools" in argv and argv[argv.index("--tools") + 1] == "Read,Grep,Glob,Bash", argv)
     # Without this the agent cannot open a single attachment. cwd is /workspace, and a Read
     # outside the working directory is a permission request that `-p` has nobody to answer —
@@ -1658,14 +1661,15 @@ def test_container_argv_is_valid():
     check("turn 1 opens the session id rather than resuming",
           "--session-id" in argv and argv[argv.index("--session-id") + 1] == sid
           and "--resume" not in argv, argv)
-    check("permissions are never skipped for a Discord lane",
+    check("permissions are never skipped for a Discord turn",
           "--dangerously-skip-permissions" not in argv, argv)
-    # The read-only lanes keep NO Edit and NO Write — the design's strongest containment claim,
-    # and the one that is structural rather than a policy the model is asked to follow. They DO
-    # have Bash, and this pins the shape that makes that safe: EXACT invocations, no trailing
-    # glob, so nothing rides along after an `&&`. This fixture mirrors READ_TOOLS/READ_ALLOWED;
-    # it said "no Bash and so needs no allow list" until 2026-08-25, long after that stopped
-    # being true, which is how the same wrong claim reached three documents.
+    # A HISTORICAL fixture, kept deliberately. It is the shape the read lanes had until
+    # 2026-08-25: no Edit, no Write, and Bash narrowed to exact invocations with no trailing
+    # glob for a chain to ride in on. Nothing produces it any more, and it stays because it
+    # pins the BUILDER rather than the policy — the builder must pass through whatever the host
+    # decided, including a set narrower than today's, or a future narrowing would silently not
+    # take effect. The label said "no Bash and so needs no allow list" until 2026-08-25, long
+    # after that stopped being true, which is how one wrong claim reached three documents.
     tools = argv[argv.index("--tools") + 1]
     granted_read = [argv[i + 1] for i, a in enumerate(argv) if a == "--allowedTools"]
     check("a read-only lane gets no Edit and no Write",
