@@ -361,6 +361,9 @@ class Client:
     def put(self, path):
         return self.request("PUT", path)
 
+    def delete(self, path):
+        return self.request("DELETE", path)
+
     # -- multipart upload (attachments) -------------------------------------------------
 
     def post_multipart(self, path, payload_json, files):
@@ -1113,10 +1116,28 @@ def cmd_edit(client, args):
 
 
 def cmd_react(client, args):
+    """Add — or with --remove, take back — one of the bot's own reactions.
+
+    Both directions are idempotent, which is what lets a caller retry after an ambiguous
+    failure without thinking about it: the PUT is a no-op on a reaction that is already
+    there, and Discord answers the DELETE of a reaction that is not there with 404 /
+    "Unknown Emoji", which is the state the caller asked for and so is not an error here.
+    """
     channel = resolve_channel(client, args.channel)
     emoji = urllib.parse.quote(args.emoji)
-    client.put(f"/channels/{channel}/messages/{args.message}/reactions/{emoji}/@me")
-    print(f"reacted {args.emoji} on {args.message}")
+    path = f"/channels/{channel}/messages/{args.message}/reactions/{emoji}/@me"
+    if not args.remove:
+        client.put(path)
+        print(f"reacted {args.emoji} on {args.message}")
+        return
+    try:
+        client.delete(path)
+    except DiscordError as exc:
+        if exc.status != 404:
+            raise
+        print(f"no {args.emoji} of ours on {args.message} to remove")
+        return
+    print(f"removed {args.emoji} from {args.message}")
 
 
 def cmd_thread_create(client, args):
@@ -1396,10 +1417,12 @@ def build_parser():
     sp.add_argument("--label", help="override the sender label (default \"<Me>'s Claude\")")
     sp.add_argument("--dry-run", action="store_true")
 
-    sp = add("react", cmd_react, "add a reaction to a message")
+    sp = add("react", cmd_react, "add (or --remove) a reaction on a message")
     sp.add_argument("channel")
     sp.add_argument("message")
     sp.add_argument("emoji")
+    sp.add_argument("--remove", action="store_true",
+                    help="take the bot's own reaction back off instead of adding it")
 
     sp = add("thread-create", cmd_thread_create,
              "start a thread on an existing message (long answers go here)")

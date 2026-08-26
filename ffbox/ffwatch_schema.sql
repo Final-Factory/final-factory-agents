@@ -276,7 +276,8 @@ CREATE TABLE IF NOT EXISTS outbound (
     id              INTEGER PRIMARY KEY,
     run_id          INTEGER REFERENCES run(id) ON DELETE SET NULL,
     conversation_id INTEGER REFERENCES conversation(id) ON DELETE CASCADE,
-    action          TEXT NOT NULL,               -- post | react | edit | ask | thread-create
+    action          TEXT NOT NULL,               -- post | react | unreact | edit | ask
+                                                 -- | thread-create
     payload_json    TEXT,
     nonce           TEXT NOT NULL UNIQUE,
     -- 'undeliverable' is the split reply's private half with nowhere to go (design section 7):

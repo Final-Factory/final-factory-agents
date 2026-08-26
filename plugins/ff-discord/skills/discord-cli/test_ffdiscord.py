@@ -229,6 +229,16 @@ class MockDiscord(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def do_DELETE(self):
+        POSTED.append({"path": self.path, "body": None, "method": "DELETE"})
+        # Discord answers the removal of a reaction that is not there with 404 / Unknown
+        # Emoji. Message 404 is the mock's way of asking for that.
+        if "/messages/404/" in self.path:
+            return self._send(404, {"code": 10014, "message": "Unknown Emoji"})
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
 
 PORT = [0]
 
@@ -455,6 +465,19 @@ def main():
     p = run(tmp, "react", "ask_claude", "123", "👀")
     check("url-encodes the emoji", "%F0%9F%91%80" in POSTED[-1]["path"],
           POSTED[-1]["path"])
+    check("adds with a PUT", POSTED[-1].get("method") is None, POSTED[-1])
+    p = run(tmp, "react", "ask_claude", "123", "👀", "--remove")
+    check("--remove deletes the bot's own reaction",
+          POSTED[-1]["method"] == "DELETE" and POSTED[-1]["path"].endswith("/@me"),
+          POSTED[-1])
+    check("--remove keeps the emoji url-encoded", "%F0%9F%91%80" in POSTED[-1]["path"],
+          POSTED[-1]["path"])
+    check("--remove says what it did", "removed" in p.stdout, p.stdout)
+    # The harness retries an ambiguous send, so removing a reaction that is already gone must
+    # be a no-op and not a failure.
+    p = run(tmp, "react", "ask_claude", "404", "👀", "--remove")
+    check("--remove treats a 404 as already removed", p.returncode == 0, p.returncode)
+    check("--remove says nothing was there", "to remove" in p.stdout, p.stdout)
 
     print("thread-create")
     POSTED.clear()

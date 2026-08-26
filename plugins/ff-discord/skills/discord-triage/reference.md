@@ -167,8 +167,11 @@ weirdness, never at the person who misread it.
 - **DUPLICATE** — link the existing issue or thread and say it's already tracked.
 - **ALREADY-FIXED** — say which version/build carries the fix.
 
-React so players can see a report was picked up (👀 on start, ✅ on resolve):
+React so players can see a report was picked up. 👀 means working on it and comes off when
+you are done with it; ✅ is what a resolved report is left wearing:
 
 ```bash
-ffdiscord react <thread_id> <thread_id> 👀
+ffdiscord react <thread_id> <thread_id> 👀             # picked it up
+ffdiscord react <thread_id> <thread_id> 👀 --remove    # done with it
+ffdiscord react <thread_id> <thread_id> ✅             # and it is resolved
 ```
