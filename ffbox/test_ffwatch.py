@@ -178,7 +178,9 @@ elif cmd in ("post", "react", "edit", "ask", "thread-create"):
     with open(ledger_path, "w", encoding="utf-8") as fh:
         json.dump(ledger, fh)
     if cmd == "react":
-        print("reacted %s on %s" % (argv[3], argv[2]))
+        gone = "--remove" in argv
+        print("%s %s %s %s" % ("removed" if gone else "reacted", argv[3],
+                               "from" if gone else "on", argv[2]))
     else:
         print(json.dumps({"id": mid, "content": opt("--text", "")}))
 else:
@@ -1423,6 +1425,73 @@ def test_outbound_is_recorded_before_it_is_sent():
     check("a reply-chain conversation replies to the CHANNEL, not to the root message id",
           payload["channel"] == ASK_CHANNEL, payload["channel"])
     check("NOTHING reached Discord before approval", not sent_calls(case), case.calls())
+
+
+def test_the_acknowledgement_comes_off_when_the_turn_ends():
+    """👀 means WORKING ON IT, so it cannot outlive the turn.
+
+    The mark is queued by create_turn and removed by finish_turn, which is the one place every
+    terminal state passes through. Two shapes, and both are here: a mark that made it to
+    Discord is taken back off with a `react --remove`, and one that has not been attempted yet
+    is dropped where it stands rather than sent and immediately unsent.
+    """
+    print("acknowledgement: on while working, off when the turn ends")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(9400, "does the smelter need power?")]
+    case = Case("ackoff", fixture)
+    case.events(ask_event(9400))
+
+    # By hand rather than once(), because once() joins the run before it sends and this is the
+    # daemon's shape: claim, send, and launch on one pass, so the mark goes out while the
+    # container is still working.
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    case.watcher.send_pending()
+    check("the mark goes out as soon as a turn exists",
+          sent_calls(case, "react") == [["react", ASK_CHANNEL, "9400", ffwatch.ACK_EMOJI]],
+          sent_calls(case, "react"))
+    check("and nothing has been answered yet", not sent_calls(case, "post"), case.calls())
+
+    case.watcher.once()
+    check("the mark comes off when the turn ends",
+          sent_calls(case, "react")[-1]
+          == ["react", ASK_CHANNEL, "9400", ffwatch.ACK_EMOJI, "--remove"],
+          sent_calls(case, "react"))
+    check("it is aimed at the same message the mark went on",
+          len(sent_calls(case, "react")) == 2, sent_calls(case, "react"))
+    rows = case.rows("SELECT action, status, local_id FROM outbound ORDER BY id")
+    check("the removal is a queued outbound row like everything else the bot does",
+          [(r["action"], r["status"]) for r in rows]
+          == [("react", "sent"), ("post", "sent"), ("unreact", "sent")], rows)
+    check("the mark and its removal are tied to the turn that owns them",
+          [r["local_id"] for r in rows] == ["ack:1", None, "ack-off:1"], rows)
+    order = [i for i, c in enumerate(case.calls()) if c and "--help" not in c
+             and (c[0] == "post" or "--remove" in c)]
+    check("the answer lands before the mark comes off",
+          case.calls()[order[0]][0] == "post", [case.calls()[i] for i in order])
+
+    # finish_turn runs once per turn, but recover() and a hand-run `ffwatch send` are both in
+    # the habit of re-driving bookkeeping; a second call must not queue a second removal.
+    case.watcher.clear_ack(1)
+    check("a second finish does not queue a second removal",
+          len(case.rows("SELECT * FROM outbound WHERE action='unreact'")) == 1,
+          case.rows("SELECT action, status FROM outbound"))
+
+    # A turn that ends inside a single pass — every blocked one does — never had the mark on
+    # Discord to remove.
+    quick = base_fixture()
+    quick["messages"][ASK_CHANNEL] = [message(9401, "and the assembler?")]
+    fast = Case("ackfast", quick)
+    fast.events(ask_event(9401))
+    fast.watcher.once()
+    rows = fast.rows("SELECT action, status, reject_reason FROM outbound ORDER BY id")
+    check("an unsent mark is dropped rather than marked and unmarked",
+          [(r["action"], r["status"]) for r in rows] == [("react", "rejected"), ("post", "sent")],
+          rows)
+    check("and the row says why it was never sent",
+          "before the acknowledgement went out" in (rows[0]["reject_reason"] or ""), rows[0])
+    check("nothing put a reaction on Discord at all", not sent_calls(fast, "react"),
+          fast.calls())
 
 
 def test_dry_run():
@@ -4320,8 +4389,12 @@ def test_drain_pauses_launches_without_holding_replies():
     # A run that finished before the drain leaves an outbound row waiting to be sent.
     case.events(ask_event(9300))
     case.watcher.once()
-    check("a normal turn runs and queues its reply",
-          [r["status"] for r in case.rows("SELECT status FROM outbound")] == ["sent", "sent"],
+    check("a normal turn runs and sends its reply",
+          [(r["action"], r["status"])
+           for r in case.rows("SELECT action, status FROM outbound")]
+          # The acknowledgement is dropped rather than sent: one pass claimed, ran and answered
+          # this turn, so the 👀 would have gone out after the answer it promised.
+          == [("react", "rejected"), ("post", "sent")],
           case.rows("SELECT action, status FROM outbound"))
 
     left = case.watcher.drain()
@@ -4336,7 +4409,7 @@ def test_drain_pauses_launches_without_holding_replies():
     check("but nothing launched for it",
           len(case.rows("SELECT * FROM run")) == 1, case.rows("SELECT ffbox_run_id FROM run"))
     check("the drain switch is not the kill switch: sending still works",
-          not case.rows("SELECT * FROM outbound WHERE status NOT IN ('sent','dry')"),
+          not case.rows("SELECT * FROM outbound WHERE status IN ('pending','approved')"),
           case.rows("SELECT action, status FROM outbound"))
 
     check("resume lifts it", case.watcher.resume() is True)
@@ -5320,6 +5393,7 @@ def main():
         test_kill_switch,
         test_transcript_index,
         test_outbound_is_recorded_before_it_is_sent,
+        test_the_acknowledgement_comes_off_when_the_turn_ends,
         test_dry_run,
         test_dev_lane_runs_a_directive,
         test_thread_triage_lane,

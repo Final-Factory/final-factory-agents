@@ -37,7 +37,7 @@ straight out of the file. Only an unambiguous single match is remembered.
 | `read <channel>` | Recent messages. `--after <id>` for everything since. |
 | `thread <thread_id>` | A forum thread end to end, including the opening embed. |
 | `post <channel>` | `--text` (or `-` for stdin), `--reply-to <id>`, `--file`, `--silent`, `--dry-run`. |
-| `edit`, `react` | Amend one of the bot's own messages; add a reaction. |
+| `edit`, `react` | Amend one of the bot's own messages; add a reaction, or take one back off with `react <channel> <id> 👀 --remove`. Removing one that is already gone is a no-op, not an error. |
 | `thread-create <channel> <message_id>` | Open a thread on an existing message. |
 | `download <channel> <message_id> --dir <path>` | Pull a message's attachments. Bug reports carry a runtime log and a save zip. |
 | `ask <target>` | Post a question to `ben`, `lothsahn`, or both in `#dev-chat`, attributed to this machine's operator. |

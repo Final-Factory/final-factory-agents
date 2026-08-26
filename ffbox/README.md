@@ -717,13 +717,22 @@ Every outbound message exists in `ffwatch.db` before it exists in Discord, so a 
 cannot lose a reply. The sender is the only thing that talks to the bot, and it enforces what
 the skills merely advise:
 
-- **👀 the moment the harness commits to answering.** The reaction is queued by
-  `create_turn`, not by the reply, so it lands on the pass that decides to answer rather than
-  after a run that can take a quarter of an hour. For an idle conversation that is a poll; a
-  follow-up posted while a run is still working waits for it to finish, because a second turn
-  on a live conversation forks the session it resumes. It is an acknowledgement and not a
-  verdict: a message the engagement gate declined gets no reaction at all, which makes the
-  absence of one readable, and nothing marks how the run ended. It is never taken off.
+- **👀 for as long as the harness is working on it, and no longer.** The reaction is
+  queued by `create_turn`, not by the reply, so it lands on the pass that decides to answer
+  rather than after a run that can take a quarter of an hour. For an idle conversation that is
+  a poll; a follow-up posted while a run is still working waits for it to finish, because a
+  second turn on a live conversation forks the session it resumes. It says WORKING ON IT and
+  nothing else: a message the engagement gate declined gets no reaction at all, which makes the
+  absence of one readable, and how the run ended is not reacted anywhere.
+- **And off again when the turn ends.** `finish_turn` is the one place all four terminal states
+  pass through, so the mark cannot be left on by an ending nobody thought about, and the answer
+  is then the only thing on the message. A mark that reached Discord is taken back off with a
+  `react --remove` queued like any other outbound row; one that has not been attempted yet —
+  every `blocked` turn, and any run answered inside a single pass — is dropped where it stands
+  instead of being sent and immediately unsent. Which of the two applies is decided by the same
+  compare-and-swap on `attempts` that the sender claims rows with, so a mark in flight is never
+  left stuck on. A turn requeued by `recover()` keeps its 👀: its run crashed and will be
+  retried, so the mark is still true.
 - **A reply has two shapes, chosen by the channel's `venue`.** At a **private** venue it
   carries what the HARNESS knows and the agent's prose cannot be trusted for: whether the
   harness's own tests ran and passed, the branch and PR the work landed on, whether the run
@@ -744,7 +753,7 @@ the skills merely advise:
   The overflow attachment follows the same rule — withholding the text and attaching the whole
   of it would be no protection at all.
 - **A turn stopped by a rate ceiling still answers, once.** `blocked` is terminal and never
-  retried, so a job that hits its daily cap would otherwise keep its 👀 and go quiet forever.
+  retried, so a job that hits its daily cap would otherwise lose its 👀 and go quiet forever.
   It gets a fixed one-line reply instead, composed on the host: no run, no container and no
   model call, which is what makes it safe on the path that exists because the box is already at
   a ceiling. At most one per CHANNEL per TRUST TIER per day — a blocked turn never sets `started_at`,
@@ -753,12 +762,14 @@ the skills merely advise:
   conversation, because ingest roots a conversation at its reply chain and every fresh question
   in a text channel is a new one — and keyed on the parent channel rather than the reply
   target, or a forum would give each new bug thread its own refusal. A private venue is also told which tier ran out.
-- **Reactions go last.** The acknowledgement is queued at turn creation and holds the lowest id
-  in its conversation, so sending in id order spent the last slot under a `send_limits` ceiling
-  on the tick and left the answer it promised pending. Messages are sent first and reactions
-  after; the reaction still counts towards the ceilings, which are the only bound on what
-  reaches Discord at all. Deprioritised, not starved: the two are selected by separate queries,
-  so a backlog of held messages cannot eat the batch and leave the acknowledgement unsent.
+- **Reactions go last, both directions.** The acknowledgement is queued at turn creation and
+  holds the lowest id in its conversation, so sending in id order spent the last slot under a
+  `send_limits` ceiling on the tick and left the answer it promised pending. Messages are sent
+  first and reactions after; a reaction still counts towards the ceilings, which are the only
+  bound on what reaches Discord at all. Its removal is queued alongside the reply and is
+  deprioritised the same way, because taking a mark off is never more urgent than the answer
+  that makes it stale. Deprioritised, not starved: the two groups are selected by separate
+  queries, so a backlog of held messages cannot eat the batch and leave the reactions unsent.
 - **`--silent` on every post.** `ffdiscord post` turns `@name` into a real ping on a whole-word
   match, so an agent quoting `@ben` out of a code comment would ping a person. The only
   exception is an escalation into a channel whose `watch` entry sets `"ping": true`, and that

@@ -135,7 +135,7 @@ reporter (commands + templates: `reference.md` §Escalation messages).
 No issue, no code. Reply in the thread as Max, per [the `max-voice` skill](../max-voice/SKILL.md). Keep it brief
 and warm; these are players, and the reply is the entire experience they get from reporting.
 Per-verdict content guidance + the react commands: `reference.md` §Reply-only verdicts. Add a
-👀 reaction when you start on a report and ✅ when it's resolved.
+👀 reaction when you start on a report, take it off again when you are done with it, and leave ✅ on a resolved one.
 
 ## 6. Advance the cursor and report
 

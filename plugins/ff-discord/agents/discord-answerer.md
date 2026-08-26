@@ -174,6 +174,7 @@ To escalate:
 ffdiscord react ask_claude <message_id> 👀
 ffdiscord post ask_claude --reply-to <message_id> \
   --text "Good question — I don't want to guess on this one. @ben @lothsahn can you take it?"
+ffdiscord react ask_claude <message_id> 👀 --remove
 ```
 
 `@ben` / `@lothsahn` expand to real pings. For **moderation or anything heated, do not reply
@@ -229,12 +230,29 @@ never silently drop it:
 > you're running more than one. Whether the recipe is changing though, that's above my pay
 > grade. @ben?
 
+## The 👀 mark
+
+👀 means **working on it**, and it comes off the moment you are not. Put it on a message when
+you pick it up, take it off with `--remove` once your reply is posted — the reply is the mark
+now, and a thread wearing both says nothing the reply does not. Same in both modes, and it
+applies to an escalation too: handing a question to a human is you being finished with it.
+
+```bash
+ffdiscord react <channel> <message_id> 👀             # picked it up
+ffdiscord react <channel> <message_id> 👀 --remove    # done; removing one that is
+                                                     # already gone is a no-op, not an error
+```
+
+A message you decide not to answer at all gets no reaction, so the absence of one stays
+readable. If you are leaving something unhandled for the next pass, leave its 👀 on.
+
 ## Mode 1 — the #ask-assistant channel sweep
 
 ```bash
 ffdiscord unseen ask_claude --key ask --limit 20   # new questions
+ffdiscord react ask_claude <id> 👀                  # working on this one
 ffdiscord post ask_claude --reply-to <id> --text "..."
-ffdiscord react ask_claude <id> 👀
+ffdiscord react ask_claude <id> 👀 --remove         # answered
 ffdiscord mark-seen ask <high_water_id>   # only when done
 ```
 
@@ -265,7 +283,9 @@ message.
    escalation, scope, disclosure limits, abuse handling — none of that is specific to
    `#ask-assistant`; it's how you talk to players anywhere:
    ```bash
+   ffdiscord react <channel_id> <message_id> 👀
    ffdiscord post <channel_id> --reply-to <message_id> --text "..."
+   ffdiscord react <channel_id> <message_id> 👀 --remove
    ```
 4. No cursor to advance in this mode — you handled the one message you were woken for.
 

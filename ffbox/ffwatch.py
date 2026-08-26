@@ -682,20 +682,39 @@ TRIGGER_BY_KIND = {
 
 TERMINAL_TURN_STATES = ("done", "failed", "timed_out", "blocked")
 
-# Queued the moment the harness commits to answering a message, and never taken off.
-# It is an ACKNOWLEDGEMENT, not a verdict: it says a turn exists for this message, so a
-# message the gate declined carries no reaction at all and the absence of one is
-# readable. The run's own outcome is not reacted anywhere — the reply carries that.
+# Queued the moment the harness commits to answering a message, and taken back off the moment
+# the turn ends. It means WORKING ON IT, not "answered": a message the gate declined carries no
+# reaction at all, a message being worked on carries this, and a message that has been answered
+# carries the reply itself and nothing else. The run's own outcome is not reacted anywhere —
+# leaving the mark on afterwards said only what the reply already says, and left every thread
+# the bot ever touched wearing one.
 ACK_EMOJI = "👀"
+
+
+def ack_local_id(turn_id):
+    """The outbound `local_id` that ties the acknowledgement to its turn.
+
+    Keyed on the TURN and not the conversation: a follow-up posted while a run is working mints
+    a second turn (and a second acknowledgement) on the same conversation before the first has
+    ended, and "the conversation's latest 👀" would then take the new turn's mark off.
+    """
+    return f"ack:{turn_id}"
+
+
+def ack_off_local_id(turn_id):
+    """Marker on the removal, so a turn cannot queue two of them."""
+    return f"ack-off:{turn_id}"
+
 
 # What the sender knows how to put on the wire. Every row is composed by the host, but the
 # check stays: an unknown action is rejected rather than guessed at.
-SENDABLE_ACTIONS = ("post", "react", "edit", "ask", "thread-create")
+SENDABLE_ACTIONS = ("post", "react", "unreact", "edit", "ask", "thread-create")
 
 # Actions that must never be retried after an ambiguous failure. `post` is protected by
-# nonce + enforce_nonce, `react` (a PUT) and `edit` (a PATCH to fixed content) are naturally
-# idempotent — these two are neither. A retried thread-create makes a second thread; a retried
-# ask pings a human twice. One attempt, then rejected with the error kept for a human to read.
+# nonce + enforce_nonce, `react` (a PUT), `unreact` (a DELETE, and ffdiscord swallows the 404
+# of one already gone) and `edit` (a PATCH to fixed content) are naturally idempotent — these
+# two are neither. A retried thread-create makes a second thread; a retried ask pings a human
+# twice. One attempt, then rejected with the error kept for a human to read.
 NON_RETRYABLE_ACTIONS = ("ask", "thread-create")
 
 
@@ -1898,9 +1917,13 @@ class Watcher:
             #
             # The trigger message, matching the reply's reply_to: a burst of three follow-ups
             # is one turn, and marking the last of them marks the batch.
+            #
+            # It comes off again in finish_turn, which is why the row is tagged with the turn:
+            # the mark says a run is in flight, and once the turn is over that is no longer
+            # true whatever it ended as.
             self.record_outbound(None, conv["id"], "react", {
                 "channel": reply_channel(conv), "message": msgs[-1]["discord_id"],
-                "emoji": ACK_EMOJI})
+                "emoji": ACK_EMOJI, "local_id": ack_local_id(turn_id)})
         log(f"turn {turn_id} queued: lane={lane} conversation={conv['id']} "
             f"messages={len(msgs)} tier={tier} venue={venue}")
         return turn_id
@@ -2594,7 +2617,53 @@ class Watcher:
         if row:
             self.db.execute("UPDATE conversation SET state='idle', last_activity_at=?"
                             " WHERE id=?", (now_iso(), row["conversation_id"]))
+        # EVERY terminal state, and only here: this is the one place all four of them pass
+        # through, so the mark cannot be left on by an ending nobody thought about. A turn
+        # requeued by recover() does not come through here — its run crashed and will be
+        # retried, and the mark is still telling the truth.
+        self.clear_ack(turn_id)
         log(f"turn {turn_id} {status}" + (f": {error}" if error else ""))
+
+    def clear_ack(self, turn_id):
+        """Take the 👀 back off, now that this turn is over.
+
+        Two shapes, and which one applies is decided by a compare-and-swap on `attempts`, the
+        same claim the sender uses:
+
+        - The acknowledgement has NOT been attempted yet — a turn that ended within a poll of
+          being created, which is every `blocked` one. It is dropped where it stands instead of
+          being sent and then unsent, so a rate-limited message never flickers. Bumping
+          `attempts` in the same UPDATE is what makes that safe: a sender that already has the
+          row from its SELECT finds its own CAS no longer matches and walks away.
+        - Otherwise it is on the message (or ambiguously so, after a send that failed late), and
+          a removal is queued. `unreact` is a DELETE and ffdiscord treats the 404 of a reaction
+          that is not there as the state asked for, so the ambiguous case costs one no-op call.
+
+        Keyed on the ack row and not on the turn's messages: no ack row means no reaction was
+        ever queued — a local conversation, or a message the gate declined — and there is
+        nothing to take off. That also keeps record_outbound's no-Discord-side guard from
+        firing, since a row only exists where there is a Discord side.
+        """
+        ack = self.db.one("SELECT * FROM outbound WHERE local_id=? ORDER BY id DESC LIMIT 1",
+                          (ack_local_id(turn_id),))
+        if ack is None or ack["status"] == "dry":
+            return 0
+        if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=?",
+                          (ack_off_local_id(turn_id),), 0):
+            return 0
+        cur = self.db.execute(
+            "UPDATE outbound SET status='rejected', reject_reason=?, attempts=attempts+1"
+            " WHERE id=? AND attempts=0 AND status IN ('pending','approved')",
+            ("the turn ended before the acknowledgement went out", ack["id"]))
+        if cur.rowcount == 1:
+            log(f"turn {turn_id} ended before its acknowledgement was sent — dropped "
+                f"outbound {ack['id']} rather than marking and unmarking")
+            return 0
+        payload = json.loads(ack["payload_json"] or "{}")
+        if not payload.get("message") or not payload.get("emoji"):
+            return 0
+        payload["local_id"] = ack_off_local_id(turn_id)
+        return 1 if self.record_outbound(None, ack["conversation_id"], "unreact", payload) else 0
 
     # -- transcript indexing ---------------------------------------------------------------
 
@@ -3490,10 +3559,12 @@ class Watcher:
                 self._kill_switch_logged = True
             return 0
 
-        # MESSAGES FIRST, reactions after. The acknowledgement is queued at turn creation and so
-        # holds the lowest id in its conversation; by plain id order it took the last slot under
-        # a send ceiling and the reply it promised was the row left pending, which is the wrong
-        # one of the two to drop.
+        # MESSAGES FIRST, reactions after — both directions of them. The acknowledgement is
+        # queued at turn creation and so holds the lowest id in its conversation; by plain id
+        # order it took the last slot under a send ceiling and the reply it promised was the row
+        # left pending, which is the wrong one of the two to drop. Its removal is queued
+        # alongside that reply and wants the same treatment for the same reason: taking a mark
+        # off is never more urgent than the answer that makes it stale.
         #
         # TWO QUERIES rather than one ORDER BY, because `limit` is a batch cap and one query
         # would let a backlog eat it: 200 posts held by an unattended approval queue or a
@@ -3502,11 +3573,11 @@ class Watcher:
         # the acknowledgement — the one thing in here that is supposed to land within a poll —
         # would never be looked at. Sending is still bounded, by _send_limited, not by this.
         rows = self.db.query(
-            "SELECT * FROM outbound WHERE status IN ('pending','approved') AND action<>'react'"
-            " ORDER BY id LIMIT ?", (limit,))
+            "SELECT * FROM outbound WHERE status IN ('pending','approved')"
+            " AND action NOT IN ('react','unreact') ORDER BY id LIMIT ?", (limit,))
         rows += self.db.query(
-            "SELECT * FROM outbound WHERE status IN ('pending','approved') AND action='react'"
-            " ORDER BY id LIMIT ?", (limit,))
+            "SELECT * FROM outbound WHERE status IN ('pending','approved')"
+            " AND action IN ('react','unreact') ORDER BY id LIMIT ?", (limit,))
         approve = bool(self.cfg.get("approve_before_send"))
         sent = held = 0
         for row in rows:
@@ -3680,10 +3751,13 @@ class Watcher:
         if not channel:
             raise SendRejected("no channel on the intent")
 
-        if action == "react":
+        if action in ("react", "unreact"):
             if not payload.get("message") or not payload.get("emoji"):
-                raise SendRejected("react needs both a message id and an emoji")
-            return ["react", channel, str(payload["message"]), str(payload["emoji"])], False
+                raise SendRejected(f"{action} needs both a message id and an emoji")
+            args = ["react", channel, str(payload["message"]), str(payload["emoji"])]
+            if action == "unreact":
+                args.append("--remove")
+            return args, False
 
         if action == "thread-create":
             name = (payload.get("name") or "").strip()
