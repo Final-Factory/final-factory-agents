@@ -245,6 +245,8 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
                  sudo gpasswd -d $OWNER docker" \
       || echo "$OWNER is not a member (correct)")"
   printf 'rootless daemon: %s\n' "$(rootless_state "$OWNER")"
+  printf 'rootless store:  %s %s\n' "$ROOTLESS_ROOT" \
+    "$(have_ds "$ROOTLESS_DS" && echo "($ROOTLESS_DS, sync=$(zfs get -H -o value sync "$ROOTLESS_DS"))" || echo "(MISSING)")"
   printf 'lingering:       %s\n' "$(loginctl show-user "$OWNER" -p Linger --value 2>/dev/null || echo unknown)"
   printf 'zsys:            %s\n' "$(zsys_installed && echo 'INSTALLED — will re-snapshot the boot env on every apt run' || echo 'not installed')"
   printf 'autozsys snaps:  %s\n' "$(list_autozsys | wc -l)"
@@ -613,13 +615,31 @@ else
 
   # The store, on its own dataset, so the images are not in the boot environment and not in the
   # home directory quota either. Same reasoning as the root daemon's dataset above.
+  #
+  # sync=disabled: every image layer here is rebuildable from the Dockerfile, and nothing in the
+  # store is state anyone would mourn. What it buys is the image build and `docker pull`, which
+  # are fsync-heavy enough that the ZIL dominates them. The exposure is the ordinary one for the
+  # property — an unclean shutdown can lose the last few seconds of writes, which here means a
+  # half-written layer and a rebuild, not lost work. Do NOT copy this onto a dataset holding the
+  # checkout or anything a run produces.
   if [ -d "$ROOTLESS_ROOT" ]; then
     skip "$ROOTLESS_ROOT already exists"
   else
     say "creating $ROOTLESS_DS at $ROOTLESS_ROOT"
-    as_root zfs create -o mountpoint="$ROOTLESS_ROOT" "$ROOTLESS_DS"
+    as_root zfs create -o mountpoint="$ROOTLESS_ROOT" -o sync=disabled "$ROOTLESS_DS"
   fi
   as_root chown "$OWNER:$(id -gn "$OWNER")" "$ROOTLESS_ROOT"
+  # Applied on re-run too, not just at create: the dataset predates this setting on every machine
+  # provisioned before 2026-08-27, and those are exactly the machines that would never get it.
+  _sync=$(zfs get -H -o value sync "$ROOTLESS_DS" 2>/dev/null || echo unknown)
+  if [ "$_sync" = disabled ]; then
+    skip "$ROOTLESS_DS already has sync=disabled"
+  elif [ "$_sync" = unknown ]; then
+    warn "could not read the sync property of $ROOTLESS_DS"
+  else
+    say "setting sync=disabled on $ROOTLESS_DS (was $_sync)"
+    as_root zfs set sync=disabled "$ROOTLESS_DS"
+  fi
   # overlay2 in a user namespace needs xattr=sa. rpool sets it pool-wide, so this normally just
   # confirms the inheritance — but a store that silently lacks it fails later and further away.
   _xattr=$(zfs get -H -o value xattr "$ROOTLESS_DS" 2>/dev/null || echo unknown)
