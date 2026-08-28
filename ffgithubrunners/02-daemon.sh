@@ -92,6 +92,33 @@ daemon_answers() {
   DOCKER_HOST="unix://$DOCKER_SOCK" docker version >/dev/null 2>&1
 }
 
+# "no" is three different problems with three different fixes, so never print just "no".
+daemon_why() {
+  _e=$(DOCKER_HOST="unix://$DOCKER_SOCK" docker version 2>&1 >/dev/null || true)
+  case "$_e" in
+    *"permission denied"*|*"Permission denied"*)
+        echo "NO — the socket refuses this account (see 'socket group' above)" ;;
+    *"Is the docker daemon running"*|*"No such file"*|*"connection refused"*)
+        echo "NO — nothing is listening; the daemon is down" ;;
+    *)  echo "NO — $(printf '%s' "$_e" | head -1)" ;;
+  esac
+}
+
+# THE ONE THAT COST AN HOUR. dockerd sets the socket's group itself and defaults to --group
+# docker, resolved against the host's /etc/group but applied inside the userns, so it lands on a
+# subgid no host account is in. The directory's 0750 is then irrelevant. The socket's gid must be
+# the container account's own group for the supervisor to reach it at all.
+socket_group_state() {
+  [ -S "$DOCKER_SOCK" ] || { echo "socket absent"; return; }
+  _g=$(stat -c '%g' "$DOCKER_SOCK")
+  _want=$(id -g "$CUSER")
+  if [ "$_g" = "$_want" ]; then
+    echo "gid $_g ($CUSER) — correct"
+  else
+    echo "gid $_g, want $_want ($CUSER). The unit is missing --group 0; re-run this script."
+  fi
+}
+
 # --- --check --------------------------------------------------------------------------------------
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
@@ -100,9 +127,10 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
   printf 'runtime dir:     %s %s\n' "$XDG" "$([ -d "$XDG" ] && echo present || echo "MISSING — lingering is off")"
   printf 'unit installed:  %s\n' "$([ -r "$UNIT_DIR/$UNIT" ] && echo "$UNIT_DIR/$UNIT" || echo MISSING)"
   printf 'socket:          %s %s\n' "$DOCKER_SOCK" \
-    "$([ -S "$DOCKER_SOCK" ] && stat -c '(%U:%G %a)' "$DOCKER_SOCK" || echo MISSING)"
+    "$([ -S "$DOCKER_SOCK" ] && stat -c '(uid %u gid %g, mode %a)' "$DOCKER_SOCK" || echo MISSING)"
+  printf 'socket group:    %s\n' "$(socket_group_state)"
   printf 'data root:       %s %s\n' "$DAEMON_ROOT" "$([ -d "$DAEMON_ROOT" ] && echo present || echo MISSING)"
-  printf 'answers:         %s\n' "$(daemon_answers && echo yes || echo "no")"
+  printf 'answers:         %s\n' "$(daemon_answers && echo yes || daemon_why)"
   printf 'reachable by %s: %s\n' "$OWNER" \
     "$(id -nG "$OWNER" | tr ' ' '\n' | grep -qx "$CUSER" && echo "in the group" || echo "NOT in the $CUSER group")"
   exit 0
@@ -129,9 +157,11 @@ command -v newuidmap >/dev/null 2>&1 \
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
+CGID=$(id -g "$CUSER")
 sed -e "s|@SOCK@|$DOCKER_SOCK|g" \
     -e "s|@DATAROOT@|$DAEMON_ROOT|g" \
     -e "s|@CUSER@|$CUSER|g" \
+    -e "s|@CGID@|$CGID|g" \
     "$HERE/systemd/ffbox-container-dockerd.service" > "$TMP/$UNIT"
 
 if [ -r "$UNIT_DIR/$UNIT" ] && cmp -s "$TMP/$UNIT" "$UNIT_DIR/$UNIT"; then
@@ -174,9 +204,15 @@ if ! sh "$HERE/wait-for-docker.sh" "$DOCKER_SOCK" "$DEADLINE" "$CUSER"; then
   die "the daemon did not come up (status above)"
 fi
 
-# The socket has to be group-readable or the supervisor cannot use it. dockerd creates it 0660
-# owned by the account; the 0750 directory from 01-hostSetup is what keeps everyone else out.
-skip "socket is $(stat -c '%U:%G %a' "$DOCKER_SOCK")"
+# The socket has to carry the container account's own group or the supervisor cannot use it, and
+# only --group 0 produces that through the userns map. The 0750 directory keeps everyone else out.
+if [ "$(stat -c '%g' "$DOCKER_SOCK")" != "$(id -g "$CUSER")" ]; then
+  die "the socket is gid $(stat -c '%g' "$DOCKER_SOCK"), not $CUSER's $(id -g "$CUSER").
+       dockerd was started without --group 0, so its socket landed on a mapped subgid that no
+       account on this host is in. $OWNER cannot reach it. The rendered unit should carry
+       --group 0; check $UNIT_DIR/$UNIT and re-run."
+fi
+skip "socket is gid $(id -g "$CUSER") ($CUSER), mode $(stat -c '%a' "$DOCKER_SOCK")"
 
 VER=$(DOCKER_HOST="unix://$DOCKER_SOCK" docker version --format '{{.Server.Version}}' 2>/dev/null || echo unknown)
 ROOT=$(DOCKER_HOST="unix://$DOCKER_SOCK" docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo unknown)
