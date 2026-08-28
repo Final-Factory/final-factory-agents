@@ -1,5 +1,5 @@
 {
-  "_comment": "Copied to ~/.config/ffgithubrunners/config.json. Every key is optional; anything absent falls back to the default in lib/config.sh, and FFGITHUBRUNNERS_<KEY> in the environment overrides both. See ffgithubrunners/README.md.",
+  "_comment": "Copied to ~/.config/ffbox/githubrunners/config.json. Every key is optional; anything absent falls back to the default in lib/config.sh, and FFGITHUBRUNNERS_<KEY> in the environment overrides both. See ffgithubrunners/README.md.",
 
   "slots": 1,
   "watchdog_minutes": 120,
@@ -10,6 +10,10 @@
 
   "org": "Final-Factory",
   "runner_group_id": 1,
+
+  "_comment_app": "The GitHub App's two ids, written here by 04-github.sh. They identify an App, they do not authenticate as one, so they are configuration rather than secrets. The private key IS the secret and is a file at github-app.pem beside this one, at a fixed path nothing records. Leave these null when using a PAT instead.",
+  "app_id": null,
+  "app_installation_id": null,
 
   "_comment_limits": "memory is a ceiling, not an allocation: the 40g workspace tmpfs plus about 32g for the editor. pids_limit is PROVISIONAL and open item (b) in the design; measure it against a real Unity import before trusting it.",
   "memory": "72g",
