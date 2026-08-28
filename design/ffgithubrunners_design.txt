@@ -353,6 +353,7 @@ installed from there, so no second copy on disk can disagree with git.
       entrypoint.sh                    exec the runner
       unity-license.sh                 activation and the return trap, called by the run: step
       slot.sh                          the supervisor: one slot, one job, teardown
+      wait-for-docker.sh               the gate: After= does not cross into a user manager
       ffgithubrunners                  the CLI
       lib/gh.sh                        PAT or App auth, jitconfig, delete
       lib/config.sh                    defaults, config.json, FFGITHUBRUNNERS_* overrides
