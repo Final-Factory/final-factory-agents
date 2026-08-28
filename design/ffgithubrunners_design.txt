@@ -19,16 +19,16 @@ docs/ci-runner-security-findings.md.
 
   1. One job per container. The container did not exist before the job and does not exist after
      it. Nothing a job writes reaches the next job except through GitHub.
-  2. Nothing worth stealing on the account a job runs as, and no path from a job to the account
-     holding the credentials.
+  2. Nothing worth stealing on the account a job runs as, and no path from a job to the
+     credentials without a container escape followed by a second escalation.
   3. No sudo at run time. Install-time root only, typed by a human.
   4. No writable bind mount out of a container, and no host command run against anything a job
      wrote.
   5. game-ci's behaviour preserved, including the test-results check run, and its licence leak
      fixed.
   6. Reinstallable from git with one command.
-  7. Separate from ffbox: own account, own Docker daemon, own dataset, own image, own units, own
-     folder. No shared code and no shared socket.
+  7. Shares ffbox's two accounts, its Docker daemon and its egress tooling. Own image, own
+     network, own allowlist, own units, own folder.
 
 Not a goal: protecting a job from itself. A job gets namespace-root in its own container.
 
@@ -36,29 +36,43 @@ Not a goal: protecting a job from itself. A job gets namespace-root in its own c
 2. The slot lifecycle
 ---------------------
 
-Four slots. Each keeps one runner registered and idle, as today. A slot takes one job, runs it,
-and its container exits.
+Slots are configurable and default to 1. Each keeps one runner registered and idle. A slot takes
+one job, runs it, and its container exits.
 
     mint JIT config -> docker run --rm -> runner idles
       -> runner takes one job, runs it, deregisters, container exits
       -> remove the container, DELETE the registration
       -> supervisor exits, systemd restarts it
 
-One instance of ffgithubrunners@.service per slot, running as ffghr-super:
+One instance of ffgithubrunners@.service per slot, running as FinalFactoryTester:
 
   1. Mint an installation token from the GitHub App, then POST
      /orgs/Final-Factory/actions/runners/generate-jitconfig with the slot's name, its labels and
      runner_group_id 1. Keep the returned runner id. Back off and retry on API errors.
-  2. `docker run --rm` against ffghr-run's daemon with the flags in section 12, the JIT config
-     and the hook paths in the environment, a --tmpfs workspace, and no bind mounts.
+  2. `docker run --rm` against ffbox-container's daemon with the flags in section 12, the JIT
+     config in the environment, a --tmpfs workspace, and no bind mounts.
   3. Wait for the container to exit, with a watchdog that sends TERM and waits before KILL so the
-     job-completed hook can return the Unity seat. The watchdog defaults to 120 minutes, above
+     job's licence trap can return the Unity seat. The watchdog defaults to 120 minutes, above
      main.yml's timeout-minutes: 90, so a job GitHub still wants is never killed here.
   4. Tee the container's output to /var/log/ffgithubrunners/slot-N.log, rotated. `--rm` would
      otherwise take the log with the container.
   5. Teardown, unconditionally: remove the container if it is still there, then DELETE the
      registration. A clean exit deregisters itself, so this usually returns 404.
   6. Exit 0. systemd restarts the unit and the slot comes back.
+
+Configuration follows ffbox's convention: defaults in code, overlaid with
+~/.config/ffgithubrunners/config.json, then FFGITHUBRUNNERS_* environment overrides. Secrets live
+beside it in ~/.config/ffgithubrunners/secrets.env at mode 0600, as ffbox keeps its own. The home
+is FinalFactoryTester's, the same one ~/.config/ffbox sits in.
+
+    slots             1
+    watchdog_minutes  120
+    image             ffghrunner:latest
+    labels            self-hosted, Linux, X64, ffgithubrunners
+
+The unit template carries WantedBy=ffgithubrunners.target, so changing the slot count means
+enabling ffgithubrunners@1 through @slots and disabling the rest, which 05-services.sh and
+`ffgithubrunners slots N` both do.
 
 The unit sets StartLimitIntervalSec=0 with RestartSec around 5 seconds. With systemd's defaults a
 fast-failing condition burns five restarts in a second and leaves the slot in `failed` until
@@ -72,41 +86,68 @@ a webhook, and no inbound port is opened. Container start is about a second.
 3. Accounts and the daemon
 --------------------------
 
-  ffghr-super   runs the supervisor units. Holds the GitHub App private key at
-                /etc/ffgithubrunners/github-app.pem, mode 0600. Not in sudo, no login shell.
-  ffghr-run     owns the rootless Docker daemon and the namespace every job runs in. Its home is
-                empty: no tokens, no credentials, no sudo, no login shell. A container escape
-                lands here and finds nothing.
+  FinalFactoryTester   runs the supervisor units, and is the same account that runs ffbox and
+                       the human's interactive session. Holds the GitHub App private key at
+                       ~/.config/ffgithubrunners/github-app.pem, mode 0600.
+  ffbox-container      owns the rootless Docker daemon and the namespace every job runs in. Its
+                       home is empty: no tokens, no credentials, no sudo, no login shell. A
+                       container escape lands here and finds nothing.
 
-Neither gets a sudoers entry. Nothing in this design needs one.
+The split that matters is that no workflow code ever runs as FinalFactoryTester. A job runs in a
+container under ffbox-container, with no bind mounts and no socket, so reaching the credentials
+FinalFactoryTester holds takes a container escape and then a second escalation between accounts.
 
-The daemon listens on a stable path, NOT under /run/user:
+Neither account gets a new sudoers entry. Nothing here needs one at run time.
 
-    dockerd-rootless.sh -H unix:///run/ffgithubrunners/docker.sock
+ONE ROOTLESS DAEMON, SHARED WITH FFBOX. It runs under ffbox-container and both systems use it.
+This design brings it up if it is not already there; moving ffbox onto it is an ffbox change.
 
-/run/ffgithubrunners comes from a tmpfiles.d rule, owned ffghr-run:ffghr mode 0750, with
-ffghr-super in the ffghr group. /run/user/<uid> is created by logind at mode 0700 on a tmpfs that
-is recreated per session, so ACLs on it do not persist and it does not exist at all for an
-account that never logs in. Linger is enabled for ffghr-run so its user manager starts at boot.
+It listens on a stable path, NOT under /run/user:
 
-Storage is one dataset:
+    dockerd-rootless.sh -H unix:///run/ffbox-container/docker.sock
 
-    rpool/ffgithubrunners/docker    the daemon's data root, compression=lz4, with a quota so a
-                                    runaway image build cannot fill rpool
+That directory comes from a tmpfiles.d rule, owned ffbox-container:ffbox-container mode 0750, with
+FinalFactoryTester in the ffbox-container group. /run/user/<uid> is created by logind at mode 0700
+on a tmpfs that is recreated per session, so ACLs on it do not persist and it does not exist at
+all for an account that never logs in. Linger is enabled for ffbox-container so its user manager
+starts at boot.
 
-There are no per-job datasets and nothing to clean up on disk. The image is shared read-only and
-the workspace is tmpfs.
+Storage is the daemon's data root, which is shared and not owned by this design. All this adds to
+it is one image. There are no per-job datasets and nothing to clean up on disk: the image is
+shared read-only and the workspace is tmpfs.
 
-Network: a dedicated Docker network on this daemon. A job must reach GitHub, Unity licensing and
-the LFS endpoints, and must reach neither this host nor the LAN. Rootless already puts the bridge
-inside rootlesskit's network namespace, so the host is unreachable. The LAN needs a host nftables
-rule, and because all egress leaves as ffghr-run's uid it can be matched exactly:
+BECAUSE THE DAEMON IS SHARED, EVERYTHING THIS DESIGN DOES TO IT IS NAME-SCOPED. Containers are
+ffghr-*, the image is ffghrunner:latest, the network is its own. The reaper in section 9 touches
+only ffghr-* names, and nothing here ever runs `docker system prune` or any other sweep that
+would reach ffbox's containers or images.
 
-    meta skuid <ffghr-run-uid> ip daddr 192.168.51.0/24 drop
-    meta skuid <ffghr-run-uid> ip daddr <this host's addresses> drop
+EGRESS IS FFBOX'S, NOT A SECOND MECHANISM. ffbox/egress/ffbox-egress.sh already builds exactly
+the fence this needs: an --internal Docker bridge with no default route, so no internet, no LAN
+and no host, whose only neighbour is a proxy doing DNS and SNI filtering against an allowlist.
+Anything not on the list is refused at the SNI and logged. No host firewall rule and no root are
+involved, because under the rootless daemon the bridge lives in rootlesskit's network namespace
+and the host is not on the other side of it.
 
-Acceptance 5 confirms it. The runner talks to broker.actions.githubusercontent.com and a
-pipelinesghubeus* host as well as api.github.com.
+The script parameterises the network, bridge, subnet, proxy IP, container name and allowlist path
+through FFBOX_EGRESS_*, so this runs a second instance of the same script and the same image:
+
+    ffghr-net        --internal bridge, its own subnet
+    ffghr-egress     the proxy, at its own address on that subnet
+    allowlist        ffgithubrunners/egress/allowlist.txt
+
+The container joins ffghr-net with --dns pointed at the proxy and holds no capability to change
+any of it: all of it lives in the daemon's network namespace, not the job's.
+
+TWO INSTANCES RATHER THAN ONE, and the reason is the allowlist rather than the mechanism. ffbox's
+list has no GitHub entry at all, deliberately: its container never pushes, the host does. CI has
+to reach github.com, the Actions broker, LFS, artifact storage and the cache service, and putting
+those on ffbox's list would hand ffbox's containers a reach they do not have today.
+
+The list starts from ffbox's Unity licensing and package entries, plus GitHub. The exact set is
+discovered rather than guessed: run the proxy with FFBOX_EGRESS_MODE=log for a few real jobs and
+read back what was actually asked for. Known so far: the runner talks to
+broker.actions.githubusercontent.com and a pipelinesghubeus* host as well as api.github.com, and
+artifact upload and actions/cache both go to storage hosts that log mode will name.
 
 
 4. The image
@@ -125,7 +166,7 @@ On top of the base:
   - the actions runner tarball at /opt/actions-runner, unconfigured
   - gh, which the base image lacks and main.yml's cache-pruning step needs
   - the /BlankProject scaffolding Unity's serial activation wants
-  - the entrypoint and the two job hooks
+  - the entrypoint, and unity-license.sh at a fixed path the workflow's `run:` step calls
 
 The base already carries git, git-lfs, python3, curl, jq and unity-editor.
 
@@ -156,10 +197,22 @@ artifacts and posts its own results over its own connection.
 6. GitHub identity
 ------------------
 
-A GitHub App installed on the org, private key at /etc/ffgithubrunners/github-app.pem owned by
-ffghr-super, mode 0600. No container ever sees it. The App needs the organization-level
-self-hosted runners permission at write. Stage 5 verifies by actually minting a JIT config, so a
-wrong permission fails at install time rather than at run time.
+Ephemeral runners register a new runner for every job, so something on this box must be able to
+call the GitHub API continuously. That is the only reason a credential is needed here; the
+workflows are unaffected. The current runners were registered once by hand and have been coasting
+on the .credentials files ever since.
+
+Either credential works and lib/gh.sh handles both:
+
+  a fine-grained PAT    with the organization's self-hosted runners permission at write. One
+                        setting to create, and the smallest thing to start with.
+  a GitHub App          installed on the org, same permission. Better hygiene, because
+                        installation tokens expire in an hour and no personal account is in the
+                        loop, at the cost of more setup.
+
+It lives in ~/.config/ffgithubrunners/secrets.env or, for an App, a key file beside it at mode
+0600, owned by FinalFactoryTester. No container ever sees it. Stage 4 verifies by actually minting
+a JIT config, so a wrong permission fails at install time rather than at run time.
 
 JIT config rather than a registration token, so nothing is written to disk: the .credentials and
 .credentials_rsaparams files of the current runners stop existing.
@@ -167,7 +220,7 @@ JIT config rather than a registration token, so nothing is written to disk: the 
 Registration is org-scoped with runner_group_id 1. Final-Factory is on the free plan, where
 Default is the only runner group, and org-wide runners are wanted anyway. Finding F2 is accepted:
 any repository in the org can still reach this box, and what changes is that the code lands in a
-throwaway container as ffghr-run instead of on the host as FinalFactoryTester.
+throwaway container as ffbox-container instead of on the host as FinalFactoryTester.
 
 Labels are the defaults self-hosted, Linux, X64, plus ffgithubrunners, so main.yml routes here
 unchanged. Names are ffghr-loth2400-<slot>-<nonce>, where the nonce is generated locally at mint
@@ -184,13 +237,14 @@ limit this design places on a job. Being the image instead costs nothing.
 What game-ci did, and what does it now:
 
   - Runs the editor in unityci/editor. The container is that image.
-  - Activates and returns the Unity licence. The runner's job hooks:
-    ACTIONS_RUNNER_HOOK_JOB_STARTED activates, ACTIONS_RUNNER_HOOK_JOB_COMPLETED returns, with
-    `trap return_license EXIT INT TERM` inside the hook so a cancelled or crashed job still gives
-    the seat back. game-ci returns the seat in an ordinary step that a cancelled job never
-    reaches, which is how it leaks them. Activation on job assignment rather than container start
-    also means an idle slot holds no seat. If the licence limit is ever hit, the hook exits
-    non-zero and fails the job loudly instead of letting Unity start unlicensed.
+  - Activates and returns the Unity licence. The `run:` step does it, carrying the same
+    UNITY_LICENSE, UNITY_SERIAL, UNITY_EMAIL and UNITY_PASSWORD `env:` block the game-ci step
+    carries today, so the credentials keep flowing exactly as they do now and nothing new holds
+    them. The step installs `trap return_license EXIT INT TERM` before starting Unity, which is
+    what ffbox/unity-license.sh does and what game-ci does not: game-ci returns the seat in an
+    ordinary later step that a cancelled job never reaches, and that is how it leaks them. A seat
+    is held only while the step runs, so an idle slot holds none. If activation fails the step
+    exits non-zero and the job fails loudly rather than letting Unity start unlicensed.
   - Runs the tests. A `run:` step calling `unity-editor -runTests` with the arguments main.yml
     already passes, plus `-logfile /dev/stdout`.
   - Feeds later steps. That `run:` step writes artifactsPath and coveragePath to $GITHUB_OUTPUT,
@@ -211,8 +265,9 @@ composite actions are fine, and main.yml uses only those apart from game-ci itse
 --------------------------
 
 main.yml:65, `uses: game-ci/unity-test-runner@v4`, becomes two `run:` steps per section 7: one
-that runs the tests and sets the two outputs, one with `if: always()` that posts the check run.
-`githubToken` and `checkName` at main.yml:77-78 go with the old step.
+that activates the licence, runs the tests and sets the two outputs, and one with `if: always()`
+that posts the check run. The first carries the same UNITY_* `env:` block the game-ci step has
+today, unchanged. `githubToken` and `checkName` at main.yml:77-78 go with the old step.
 
 Nothing else changes. The checkout keeps its default clean, both cache steps stay, the LFS
 materialisation step stays, and the cache-pruning step keeps working because the image carries gh.
@@ -234,7 +289,8 @@ ffgithubrunners-reap.timer runs every 15 minutes and:
 
   - deletes org runners with the ffgithubrunners label that are offline and whose name carries a
     nonce with no matching container here;
-  - removes ffghr-* containers with no matching supervisor;
+  - removes ffghr-* containers with no matching supervisor, and nothing else on the shared
+    daemon;
   - leaves anything it cannot explain alone, and logs it.
 
 There is nothing else to reap. `--rm` plus a tmpfs workspace leaves nothing behind.
@@ -246,20 +302,22 @@ There is nothing else to reap. `--rm` plus a tmpfs workspace leaves nothing behi
 ffgithubrunners/setup.sh: POSIX sh, set -eu, numbered stages, each independently re-runnable and
 a no-op when already satisfied.
 
-    01-hostSetup.sh   docker and its rootless extras, nftables, uidmap. The two accounts, the
-                      ffghr group, their subuid/subgid ranges, linger for ffghr-run, the
-                      tmpfiles.d rule for /run/ffgithubrunners, and the network rules of
-                      section 3. No sudoers file.
-    02-zfsSetup.sh    rpool/ffgithubrunners and the docker data root, properties and quota.
-    03-daemon.sh      ffghr-run's rootless daemon as a user service on the stable socket, plus
-                      the wait-for-socket gate the other units order behind.
-    04-image.sh       build ffghrunner:latest.
-    05-github.sh      take App id, installation id and key path, verify the App can mint a JIT
-                      config, write /etc/ffgithubrunners/secrets.env.
-    06-services.sh    render ffgithubrunners/systemd/*.template into /etc/systemd/system, enable
-                      and start ffgithubrunners.target.
+    01-hostSetup.sh   docker and its rootless extras, uidmap. The ffbox-container account and
+                      group, its subuid/subgid range, FinalFactoryTester's membership of that
+                      group, linger for ffbox-container, and the tmpfiles.d rule for
+                      /run/ffbox-container. No sudoers file and no firewall rule.
+    02-daemon.sh      ffbox-container's rootless daemon as a user service on the stable socket,
+                      its data root and quota, and the wait-for-socket gate the other units order
+                      behind. A no-op if the daemon is already running.
+    03-image.sh       build ffghrunner:latest, and bring up ffghr-net and ffghr-egress by
+                      calling ffbox/egress/ffbox-egress.sh with this system's FFBOX_EGRESS_*
+                      values.
+    04-github.sh      take App id, installation id and key path, verify the App can mint a JIT
+                      config, write ~/.config/ffgithubrunners/secrets.env.
+    05-services.sh    render ffgithubrunners/systemd/*.template into /etc/systemd/system, enable
+                      ffgithubrunners@1 through @SLOTS, start ffgithubrunners.target.
 
-Stages 1, 2 and 6 need root. Which user the units name resolves as FFGITHUBRUNNERS_RUN_USER, then
+Stages 1 and 5 need root. Which user the units name resolves as FFGITHUBRUNNERS_RUN_USER, then
 SUDO_USER, then the checkout owner: run from a timer as root there is no SUDO_USER, and ffbox has
 already been bitten by units rendered pointing at root's home.
 
@@ -268,19 +326,19 @@ installed from there, so no second copy on disk can disagree with git.
 
     ffgithubrunners/
       setup.sh
-      01-hostSetup.sh  02-zfsSetup.sh  03-daemon.sh  04-image.sh  05-github.sh  06-services.sh
+      01-hostSetup.sh  02-daemon.sh  03-image.sh  04-github.sh  05-services.sh
       Dockerfile
       entrypoint.sh                    exec the runner
-      hooks/job-started.sh             activate the licence
-      hooks/job-completed.sh           return it, with the trap
-      unity-license.sh                 activation and return
+      unity-license.sh                 activation and the return trap, called by the run: step
       ffgithubrunners                  the CLI
-      lib/gh.sh                        App JWT, installation token, jitconfig, delete
+      lib/gh.sh                        PAT or App auth, jitconfig, delete
+      egress/allowlist.txt             this system's allowlist, per section 3
       systemd/ffgithubrunners@.service one slot, restart with backoff
       systemd/ffgithubrunners.target
-      systemd/ffgithubrunners-dockerd.service
+      systemd/ffbox-container-dockerd.service  the shared daemon
       systemd/ffgithubrunners-reap.{service,timer}
       systemd/ffgithubrunners-image.{service,timer}
+      config.json.example              slots, watchdog, image, labels
       secrets.env.example
       README.md
 
@@ -289,13 +347,14 @@ installed from there, so no second copy on disk can disagree with git.
 -------------------------------
 
     ffgithubrunners status              slots, containers, registrations, image tag and age
+    ffgithubrunners slots [N]           show or set the slot count, default 1
     ffgithubrunners slot stop|start N   drain or return one slot
     ffgithubrunners drain               let running jobs finish, start no replacements
     ffgithubrunners image update        rebuild the image with a current runner tarball
     ffgithubrunners reap                run the section 9 sweep now
     ffgithubrunners logs N              the last job's log for one slot
 
-drain is what makes an image update or a slots.conf change safe while jobs are running.
+drain is what makes an image update or a slot-count change safe while jobs are running.
 
 
 12. Security properties
@@ -315,16 +374,27 @@ The flags, per finding F5:
     --read-only where the image tolerates it, with tmpfs for what must be writable
     default seccomp, never seccomp=unconfined
 
---memory also bounds a runaway tmpfs: filling the workspace OOM-kills one container instead of
-destabilising the box.
+Egress is closed by default: the job's network has no route off the box except a proxy that
+refuses any name not on the allowlist, and the job cannot change that because the network lives
+in the daemon's namespace.
+
+--memory IS A CEILING, NOT AN ALLOCATION. Nothing is reserved: a container uses what it uses and
+an idle slot uses almost nothing, so N slots at 72g do not commit N x 72 GB. The limit exists for
+one failure. Workspace tmpfs pages are charged to the container's cgroup and this host has 2 GB of
+swap, so a job that fills the 40 GB workspace while Unity is resident would push the host into
+swap, where things fail rather than slow down. The ceiling turns that into one dead job. 72g is
+the 40 GB workspace plus about 32 GB for the editor, which is what ffbox measures for the same
+work; a legitimate job never comes near it.
 
 CAP_SYS_ADMIN is never added. It hands a job the mount syscall, which is the kernel surface with
 no other mitigation.
 
 What this does not fix: kernel exploitation from the user namespace, which is the one a VM would
 have changed and which patching is the only control for. Repository secrets, which a job receives
-because the workflow asks for them. Runtime bugs in runc, which land on ffghr-run and are the
-reason that account owns nothing. And the org-wide reach of section 6, accepted rather than fixed.
+because the workflow asks for them. Runtime bugs in runc, which land on ffbox-container and are
+the reason that account owns nothing. The org-wide reach of section 6. And finding F1:
+FinalFactoryTester still holds every credential on this box and is still in sudo, so a second
+escalation out of ffbox-container reaches all of it at once.
 
 
 13. Cutover
@@ -362,11 +432,12 @@ running. After it, revert one commit.
      the org page, and a replacement appears.
   4. Kill a container mid-job. The registration is gone within one reap interval, the slot comes
      back, and the Unity seat was returned.
-  5. From inside a container: 192.168.51.0/24 and this host are unreachable, api.github.com is
-     reachable. If this fails, an SNI allowlist is required rather than deferred.
-  6. From inside a container: /run/user/1015/docker.sock and /run/ffgithubrunners/docker.sock are
+  5. From inside a container: 192.168.51.0/24 and this host are unreachable, a host not on the
+     allowlist is refused at the SNI and logged, and api.github.com is reachable.
+  6. From inside a container: /run/ffbox-container/docker.sock and /run/user/1015/docker.sock are
      both unreachable and FinalFactoryTester's home is not readable.
-  7. Reboot. Four slots come back with no hand-holding and ffbox.target comes back independently.
+  7. Reboot. Every configured slot comes back with no hand-holding and ffbox.target comes back
+     independently.
   8. `systemctl stop` a slot five times in ten seconds. It comes back rather than landing in
      `failed`.
   9. Run a PR's worth of jobs with four ffbox runs going at the same time and confirm neither
@@ -376,8 +447,8 @@ running. After it, revert one commit.
 15. Open items
 --------------
 
-  a. The nftables rule of section 3 is untested. Acceptance 5 decides whether an SNI allowlist is
-     needed now.
+  a. The allowlist of section 3 is incomplete. Run the proxy in log mode for a few real jobs to
+     find every host the runner, artifact upload and actions/cache actually use.
   b. --pids-limit needs a number a real Unity import does not trip.
   c. Whether --read-only is tolerable, or whether Unity and the runner want enough scattered
      writable paths that the tmpfs list becomes unmanageable. The runner writes _diag regardless.
@@ -393,3 +464,7 @@ running. After it, revert one commit.
   - Narrowing the runners to one repository. Finding F2 is accepted, per section 6.
   - Performance work beyond the tmpfs workspace. Section 5 has the measurements; if the 108s cache
     restore or the 117s checkout ever matters, revisit with data.
+  - Hardening how the Unity credentials reach the job. They pass through the workflow exactly as
+    they do today, so any job that runs can read them from `env`. Changing that means moving
+    activation out of the step, which needs somewhere other than a repository secret to hold the
+    credential. Deferred deliberately to keep this change small.
