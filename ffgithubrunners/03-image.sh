@@ -90,8 +90,20 @@ egress() {
   sh "$EGRESS_SH" "$@"
 }
 
+# ffbox-egress.sh's own `log` greps for sni= lines, which in ENFORCE mode shows only what was
+# ALLOWED. A name that is not on the list never reaches the SNI stage at all: dnsmasq answers
+# NXDOMAIN and the connection is never made. So an operator whose job failed on a missing host
+# would run the log and see nothing, and conclude nothing was blocked. Show both halves.
 if [ "$EGRESS_LOG" -eq 1 ]; then
   egress log
+  printf '\nrefused at DNS (count, name) — these never reached the SNI stage:\n\n'
+  docker logs "$EGRESS_NAME" 2>&1 \
+    | sed -n 's/.*config \([^ ]*\) is NXDOMAIN.*/\1/p' \
+    | sort | uniq -c | sort -rn \
+    | sed 's/^/  /'
+  printf '\n'
+  printf '  Nothing listed above means nothing was refused. A job that could not reach a host\n'
+  printf '  and left no line here failed for some other reason.\n'
   exit 0
 fi
 

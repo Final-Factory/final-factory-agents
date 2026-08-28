@@ -1,0 +1,18 @@
+{
+  "_comment": "Copied to ~/.config/ffgithubrunners/config.json. Every key is optional; anything absent falls back to the default in lib/config.sh, and FFGITHUBRUNNERS_<KEY> in the environment overrides both. See ffgithubrunners/README.md.",
+
+  "slots": 1,
+  "watchdog_minutes": 120,
+  "image": "ffghrunner:latest",
+
+  "_comment_labels": "Section 13 step 1 of the design: install WITHOUT self-hosted, so nothing routes here by accident while the old runners still serve main.yml. At step 3, add self-hosted back to this list. The code default already includes it, so this line is the cutover-safe override.",
+  "labels": ["Linux", "X64", "ffgithubrunners"],
+
+  "org": "Final-Factory",
+  "runner_group_id": 1,
+
+  "_comment_limits": "memory is a ceiling, not an allocation: the 40g workspace tmpfs plus about 32g for the editor. pids_limit is PROVISIONAL and open item (b) in the design; measure it against a real Unity import before trusting it.",
+  "memory": "72g",
+  "pids_limit": 4096,
+  "workspace_size": "40g"
+}

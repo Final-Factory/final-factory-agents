@@ -138,7 +138,9 @@ would reach ffbox's containers or images.
 EGRESS IS FFBOX'S, NOT A SECOND MECHANISM. ffbox/egress/ffbox-egress.sh already builds exactly
 the fence this needs: an --internal Docker bridge with no default route, so no internet, no LAN
 and no host, whose only neighbour is a proxy doing DNS and SNI filtering against an allowlist.
-Anything not on the list is refused at the SNI and logged. No host firewall rule and no root are
+A name not on the list does not resolve, and a connection whose SNI does not match is refused.
+Both are logged, but by different mechanisms, so read them with `03-image.sh --egress-log` rather
+than ffbox's own `log`, which shows the SNI half only. No host firewall rule and no root are
 involved, because under the rootless daemon the bridge lives in rootlesskit's network namespace
 and the host is not on the other side of it.
 
