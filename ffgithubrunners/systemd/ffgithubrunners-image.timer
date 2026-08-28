@@ -1,0 +1,12 @@
+[Unit]
+Description=ffgithubrunners: rebuild the runner image weekly
+
+[Timer]
+OnCalendar=Sun 04:00
+RandomizedDelaySec=30min
+# Catch up after downtime: a box that was off on Sunday still needs the rebuild, and falling a
+# week behind is how a runner ends up too old to be given jobs.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

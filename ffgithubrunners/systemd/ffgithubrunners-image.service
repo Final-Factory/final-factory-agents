@@ -1,0 +1,14 @@
+[Unit]
+Description=ffgithubrunners: rebuild the runner image
+After=ffgithubrunners-dockerd-wait.service
+Requires=ffgithubrunners-dockerd-wait.service
+
+[Service]
+Type=oneshot
+User=@USER@
+Group=@GROUP@
+Environment=HOME=@HOME@
+ExecStart=/bin/sh @IMAGEUPDATESH@
+# A cold base-image pull is slow. Generous, but bounded: a hung build must not hold the drain
+# flag forever, because every slot is idle while it does.
+TimeoutStartSec=5400

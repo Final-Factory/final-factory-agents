@@ -79,7 +79,8 @@ OWNER_GROUP=$(id -gn "$OWNER")
 
 HOME=$OWNER_HOME . "$HERE/lib/config.sh"
 
-UNITS="ffgithubrunners@.service ffgithubrunners.target ffgithubrunners-dockerd-wait.service ffghr-egress.service"
+UNITS="ffgithubrunners@.service ffgithubrunners.target ffgithubrunners-dockerd-wait.service ffghr-egress.service ffgithubrunners-reap.service ffgithubrunners-reap.timer ffgithubrunners-image.service ffgithubrunners-image.timer"
+TIMERS="ffgithubrunners-reap.timer ffgithubrunners-image.timer"
 
 # --- render ------------------------------------------------------------------------------------
 
@@ -94,6 +95,8 @@ for u in $UNITS; do
       -e "s|@SLOTSH@|$HERE/slot.sh|g" \
       -e "s|@IMAGESH@|$HERE/03-image.sh|g" \
       -e "s|@WAITDOCKER@|$HERE/wait-for-docker.sh|g" \
+      -e "s|@REAPSH@|$HERE/reap.sh|g" \
+      -e "s|@IMAGEUPDATESH@|$HERE/image-update.sh|g" \
       -e "s|@DOCKERSOCK@|$DOCKER_SOCK|g" \
       -e "s|@LOGDIR@|$LOG_DIR|g" \
       -e "s|@CONFIGDIR@|$FFGHR_CONFIG_DIR|g" \
@@ -113,8 +116,14 @@ done
 want_slots=""
 i=1
 while [ "$i" -le "$SLOTS" ]; do want_slots="$want_slots $i"; i=$((i + 1)); done
-enabled_now=$(systemctl list-unit-files 'ffgithubrunners@*.service' --state=enabled --no-legend 2>/dev/null \
-              | sed -n 's/^ffgithubrunners@\([0-9]*\)\.service.*/\1/p' | tr '\n' ' ')
+# ENABLED TEMPLATE INSTANCES ARE SYMLINKS, NOT UNIT FILES. `systemctl list-unit-files
+# 'ffgithubrunners@*.service'` lists the TEMPLATE and never the instances, so it reports nothing
+# however many slots are enabled. Enabling ffgithubrunners@1 creates
+# ffgithubrunners.target.wants/ffgithubrunners@1.service, and that directory is the record.
+# Getting this wrong is not cosmetic: it is also what decides which slots to DISABLE when the
+# slot count goes down, so a wrong answer here means `slots 1` never turns slot 2 off.
+enabled_now=$(ls "$UNIT_DIR/ffgithubrunners.target.wants" 2>/dev/null \
+              | sed -n 's/^ffgithubrunners@\([0-9]*\)\.service$/\1/p' | tr '\n' ' ')
 
 recorded=$(cat "$RECORD" 2>/dev/null || echo "")
 
@@ -132,6 +141,9 @@ if [ "$INSTALL" -eq 0 ]; then
   done
   # `systemctl is-active` PRINTS its answer and ALSO exits non-zero when the answer is not
   # "active", so the obvious `|| echo inactive` prints it twice.
+  for tm in $TIMERS; do
+    printf '  %-42s %s\n' "$tm" "$(systemctl is-active "$tm" 2>/dev/null || true)"
+  done
   printf 'target:       %s\n' "$(systemctl is-active ffgithubrunners.target 2>/dev/null || true)"
   for s in $want_slots; do
     printf '  slot %-3s %s\n' "$s" "$(systemctl is-active "ffgithubrunners@$s.service" 2>/dev/null || true)"
@@ -142,6 +154,8 @@ if [ "$INSTALL" -eq 0 ]; then
       case " $enabled_now " in *" $s "*) ;; *) printf '\n--check: slot %s is not enabled\n' "$s"; exit 1 ;; esac
     done
     printf '\n--check: installed units match this checkout and config\n'
+  elif [ -z "$changed" ] && [ -n "$enabled_now" ]; then
+    printf '\nInstalled units match this checkout. Nothing owed.\n'
   else
     printf '\nTo apply: sudo sh %s/05-services.sh --install\n' "$HERE"
   fi
@@ -177,6 +191,12 @@ systemctl enable ffgithubrunners-dockerd-wait.service ffghr-egress.service >/dev
 systemctl start ffgithubrunners-dockerd-wait.service
 systemctl start ffghr-egress.service
 
+# The timers. The reaper recovers a reboot or a killed supervisor; the weekly image rebuild is the
+# only thing keeping the runner new enough for GitHub to keep giving it jobs.
+for tm in $TIMERS; do
+  systemctl enable --now "$tm" >/dev/null 2>&1 && skip "$tm enabled" || skip "could not enable $tm"
+done
+
 # Enable what should run and disable what should not, so lowering the slot count actually lowers it.
 for s in $enabled_now; do
   case " $want_slots " in
@@ -198,5 +218,8 @@ for s in $want_slots; do
   skip "slot $s: $(systemctl is-active "ffgithubrunners@$s.service" 2>/dev/null || true)"
 done
 printf '\n'
+for tm in $TIMERS; do
+  skip "$tm next: $(systemctl show "$tm" -p NextElapseUSecRealtime --value 2>/dev/null || echo unknown)"
+done
 skip "watch:  journalctl -u 'ffgithubrunners@*' -f"
 skip "a job's own log: $LOG_DIR/slot-N.log"
