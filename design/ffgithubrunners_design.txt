@@ -1,0 +1,718 @@
+ffgithubrunners: single-use GitHub Actions runners in rootless containers
+=========================================================================
+
+Revision 2, 2026-08-27. Replaces revision 1's KVM guest model with rootless containers. Section
+4 records what revision 1 got wrong and why, because the reasoning was not obviously bad and
+will be re-proposed by anyone who reads only the requirements. Revision 1 is kept in the git
+history; nothing else in this file refers to it.
+
+Revision 1, 2026-08-27. Single-use KVM guests. Superseded.
+
+Scope: replace the four hand-installed GitHub Actions runners in /opt/github-actions-runner-N
+with a checked-in, reinstallable harness that runs every CI job in a throwaway rootless
+container. Covers the host layout, the image, the workspace, the slot lifecycle, the GitHub
+identity, what replaces game-ci, the install script, the boundary with ffbox, and what stays
+unsolved. Assumes an empty box: nothing here uninstalls the current runners.
+
+Why this exists: the runners today are unpacked tarballs that a person configured by hand and
+that nothing in git describes. That is two problems wearing one coat. The reinstall problem is
+that rebuilding this machine means remembering what was typed in August. The isolation problem
+is worse: main.yml triggers on [push, pull_request] with `runs-on: self-hosted`, GitHub
+evaluates the workflow file from the pushed branch, and every step outside the game-ci container
+runs directly on this host as FinalFactoryTester. Anyone who can push a branch to any repo in
+the Final-Factory org can read that account's git credential, its Claude token, and its rootless
+Docker socket. The game-ci container is not a boundary, because it wraps one step of a job whose
+other steps the attacker also writes.
+
+
+0. What this must do
+--------------------
+
+  1. ONE JOB PER CONTAINER. A job runs in a container that did not exist before the job and does
+     not exist after it. Nothing a job writes reaches the next job except through GitHub.
+
+  2. NO CREDENTIAL ON THE WORKLOAD ACCOUNT. The account whose namespace a job runs in must hold
+     nothing worth stealing. Separately, the account holding the credential that mints runner
+     registrations must not be reachable from inside a job. See docs/ci-runner-security-findings.md
+     finding F1, which is the reason this is a requirement rather than a nicety.
+
+  3. NO UNATTENDED ROOT. Carried from design/rootless_docker_design.txt section 0. A process with
+     no human at a keyboard must not be able to become root on this host. Install-time root is
+     fine; a human types that. This design needs NO sudo grant at run time at all, which is a
+     stronger position than revision 1 reached.
+
+  4. NOTHING THE HOST WRITES IS READ BACK FROM THE CONTAINER. No writable bind mount out of a
+     job, and no host-side command run against a directory a job wrote. Finding F7 is the live
+     instance of that pattern elsewhere on this box, and this design must not add a second one.
+
+  5. GAME-CI'S USEFUL BEHAVIOUR IS PRESERVED, ITS LICENCE LEAK IS NOT. Section 10. Activation
+     must give the seat back on every exit path including a kill, which is more than game-ci
+     manages today (fact o).
+
+  6. REINSTALLABLE FROM GIT. One command on a bare Ubuntu box with ZFS reproduces the whole
+     thing.
+
+  7. SEPARATE FROM FFBOX. No shared folders, scripts, datasets, systemd units, images, Docker
+     daemons, networks or user accounts, and no import of ffbox code. Both systems now run
+     rootless containers on the same machine, which makes this harder to hold than it was in
+     revision 1 and therefore more worth stating. Section 3.
+
+  8. NO WORSE THAN TODAY ON WALL CLOCK. Fact m says the ram disk is the whole game. Section 15
+     measures it rather than assuming it.
+
+Explicitly NOT a requirement: protecting a job from itself. A job gets namespace-root inside its
+own container and is welcome to it.
+
+
+1. Verified facts
+-----------------
+
+Measured on Loth2400 on 2026-08-27, not assumed.
+
+  a. THE RUNNERS ARE PERSISTENT AND ORG-SCOPED. Four Runner.Listener processes under
+     run-helper.sh, no systemd units, no "ephemeral" key in any .runner. All four register
+     against https://github.com/Final-Factory, the ORG. Credentials sit on disk: .credentials
+     (mode 0664) and .credentials_rsaparams (0600) per runner.
+
+  b. THE HOST IS A DELL POWEREDGE R720. Two Xeon E5-2680 v2, 10 cores each with SMT, 40 logical
+     CPUs. 755 GB RAM. Bare metal.
+
+  c. NUMA IS TWO NODES WITH INTERLEAVED CPU NUMBERING. Even logical CPUs are node 0, odd are
+     node 1; SMT siblings are 20 apart. Node distances 10 local, 20 remote. Recorded because it
+     shaped revision 1; under containers it is background rather than a design input.
+
+  d. VIRTUALBOX WAS TRIED HERE AND REMOVED. 7.0.16 and 7.1.16 both in rc state, a VM directory at
+     ~lothsahn/VirtualBox VMs/RRobin. KVM is present and unused. The owner's account of the
+     VirtualBox era is that guests locked up.
+
+  e. ARC IS UNCAPPED AND SWAP IS 2 GB. zfs_arc_max is 0, so c_max is 377.9 GB, half of RAM. ARC
+     held 26.0 GB while the box was idle, at a 99.1% hit rate. Two gigabytes of swap means
+     memory pressure does not degrade, it fails.
+
+  f. THERE IS ROOM. rpool is 3.62T with 2.14T free.
+
+  g. RUNNER 2.336.0 SUPPORTS WHAT THIS NEEDS. --ephemeral is documented in its own --help as
+     "only take one job and then let the service un-configure the runner after the job
+     finishes". GetJitConfig is in Runner.Listener.dll, JitConfig in Runner.Common.dll.
+
+  h. THE WORKFLOWS ROUTE ON LABELS, NOT NAMES. main.yml and deploy.yml use
+     `runs-on: self-hosted`. determinism-nightly.yml uses `runs-on: [finalfactory-mode2-windows]`
+     and is a Windows runner this design does not touch.
+
+  i. GAME-CI EXPOSES NO ISOLATION CONTROLS. Its declared inputs, read from the worker log on this
+     box, are dockerCpuLimit, dockerMemoryLimit, dockerIsolationMode, chownFilesTo,
+     runAsHostUser, sshAgent, customImage, containerRegistryRepository and
+     containerRegistryImageVersion. Resource caps and file ownership, nothing else.
+
+  j. THE HOST ACCOUNT IS RICH AND DOES EVERYTHING. FinalFactoryTester runs the runners, owns the
+     rootless daemon at /run/user/1015/docker.sock, runs ffbox's containers, holds
+     .git-credentials in plaintext, .claude/.credentials.json and .config/ffbox/secrets.env, is
+     in the sudo group, and is logged into interactively. Finding F1.
+
+  k. _work IS A 40 GB TMPFS. makeRamDisk.sh mounts one per runner.
+
+  l. FFBOX SHARES THIS BOX AND HAS THE SAME RESOURCE SHAPE. max_concurrent_runs defaults to 2,
+     the README documents 8, the owner's target is 4. The owner measures a run at about 32 GB of
+     RAM plus disk, and about 72 GB if it moves to a ram disk. Its containers carry no cpuset.
+     Section 5.3 budgets for eight identical 72 GB Unity workloads, four of each.
+
+  m. THE RAM DISK IS WORTH ABOUT 4x. Build and test on the tmpfs _work runs about 15 minutes
+     against about an hour on ZFS-backed storage. Measured by the owner on this box with ARC
+     already in play, so this is tmpfs against ZFS-plus-cache, not tmpfs against cold disk. It is
+     the largest single performance lever in the system and the memory budget is built on it.
+
+  n. FFBOX'S IMAGE IS THE GAME-CI IMAGE. ffbox/Dockerfile opens
+     `FROM unityci/editor:ubuntu-6000.3.19f1-windows-mono-3.2.2`, the same tag main.yml passes as
+     customImage, with a comment requiring the two be kept in lockstep. The container already IS
+     the Unity environment, so there is no nested-Docker problem to solve. This fact is what
+     revision 1 did not know.
+
+  o. FFBOX ALREADY RETURNS UNITY SEATS CORRECTLY AND GAME-CI DOES NOT. ffbox/unity-license.sh
+     installs `trap return_license EXIT INT TERM`, and its own comment states that game-ci's
+     return_license.sh is an ordinary step which "a cancelled or crashed job never reaches. That
+     is how CI quietly leaks seats." Revision 1 recorded licence churn as a risk this design
+     might create. It is a bug the current setup already has.
+
+  p. THE HOST-READS-CONTAINER-OUTPUT PATTERN IS ALREADY A HOLE HERE. ffbox bind-mounts the
+     workspace read-write and the host runs git in that directory afterwards. Finding F7.
+     Requirement 4 exists so this design does not repeat it.
+
+
+2. The shape
+------------
+
+Four slots. Each slot keeps one runner registered with GitHub and idle, exactly as today. When a
+slot's runner takes a job it runs it, deregisters itself, and its container exits. The
+supervisor removes the container and starts a replacement that registers and goes idle.
+
+Steady state is four runners online waiting for work, which is what the org settings page shows
+today. Ephemeral describes what happens to a runner after its job, not when it is created. There
+is no queued-job detector anywhere in this design, because a runner is always already listening.
+
+    mint JIT config  ->  docker run --rm  ->  runner idles
+      ->  runner takes one job, runs it, deregisters, container exits
+      ->  remove container, DELETE the registration
+      ->  supervisor exits, systemd restarts it
+
+The loop is Restart=always on a unit that handles one job and exits. Nothing polls GitHub,
+nothing receives a webhook, and no inbound port is opened.
+
+Container start is about a second, so the gap between a runner exiting and its replacement going
+online is small enough not to need the busy-triggered replacement that revision 1 planned for.
+
+
+3. The boundary with ffbox
+--------------------------
+
+Requirement 7, and it needs more care now than it did in revision 1. Two systems running
+rootless Unity containers on one box look alike enough that sharing becomes tempting by
+accident.
+
+WHAT IS BORROWED, as ideas only, each reimplemented here:
+
+  - Building the image FROM the exact unityci/editor tag CI uses, so what runs here and what
+    runs in CI are the same Unity (fact n).
+  - Returning the Unity seat from a trap rather than a step (fact o).
+  - Numbered, independently re-runnable install stages with the order in the filenames.
+  - Rendering systemd units from templates in git rather than keeping a second copy on disk.
+  - The principle that an unattended process must not be able to become root.
+
+WHAT IS NOT SHARED, and must never become shared:
+
+  - Folders. ffgithubrunners/ at the repo root, beside ffbox/, never inside it. No file in ffbox/
+    is read, sourced, imported or called by anything here.
+  - THE DOCKER DAEMON. This is the sharpest edge in revision 2 and it did not exist in revision 1.
+    ffbox's rootless daemon is FinalFactoryTester's, at /run/user/1015/docker.sock, data root
+    /opt/ffbox_docker. This design runs its OWN rootless daemon under its own account with its
+    own data root. Reaching for the existing socket would collapse requirement 2, requirement 7
+    and the account split in one move, and it will look like an obvious shortcut. It is not one.
+  - Images. ffbox:latest is ffbox's. ffghrunner:latest is this one's. Both are built FROM the
+    same public unityci/editor tag, which is the shared idea, not a shared artefact.
+  - Networks. Separate Docker networks on separate daemons.
+  - Datasets. rpool/ffgithubrunners/*. ffbox owns rpool/ff/*.
+  - The FinalFactory checkout. ffbox's rpool/ff/golden is mounted at /opt/FinalFactory. This
+    design does not read, clone, snapshot or mount it; section 6 gets its own checkout from
+    GitHub at image build time.
+  - User accounts, systemd units and targets, configuration and secrets, environment prefix
+    (FFGITHUBRUNNERS_*, never FFBOX_*).
+
+THE UNAVOIDABLE OVERLAP is the machine. The ARC cap (5.3), any nftables rules (5.5) and the host
+package set are host-wide; there is one of each. Add plain CPU and memory contention, budgeted in
+5.3. That is coexistence on shared hardware, not shared implementation.
+
+Fact l says an ffbox run and a CI job are the same size and shape. That is a shared design
+concept, which requirement 7 permits, and it is why 5.3 budgets one pool of eight workloads. It
+is NOT an argument for merging the systems, and nothing here reads ffbox's configuration at run
+time to discover its concurrency: the eight-workload figure is written down in 5.3 and changed by
+a human when ffbox changes.
+
+
+4. Why containers, and why revision 1 said otherwise
+----------------------------------------------------
+
+Revision 1 chose KVM guests on two arguments. One was wrong on the facts and the other was
+weaker than it looked.
+
+THE ARGUMENT THAT WAS WRONG. Revision 1 held that a container could not run these jobs without
+nested Docker, because game-ci works by running `docker run unityci/editor`, and that mounting a
+socket in reproduces the hole rootless_docker_design.txt section 1a closed. That is true of a
+job container that then calls game-ci. It is not true of the model ffbox already uses: fact n
+says ffbox's image IS unityci/editor, so the container is the Unity environment and nothing is
+nested. Revision 1 treated "drop game-ci" as an expensive unknown. Fact o says the expensive part
+is already written, works better than the thing it replaces, and fixes a seat leak in the
+process.
+
+THE ARGUMENT THAT WAS WEAK. Revision 1 held that a VM boundary is easier to state than a
+container one. True in general. Less decisive here, because this box already runs a workload with
+bare Bash, reachable by a stranger's Discord message, in a rootless container, and
+design/single_lane_design.txt records the owner accepting that. A second, stronger isolation
+technology for CI is defensible, but it is a marginal improvement over the containment already
+in use, not a categorical one.
+
+WHAT CONTAINERS BUY, beyond removing that mistake:
+
+  - MEMORY BECOMES A CEILING INSTEAD OF A RESERVATION. A guest holds its RAM whether it uses it
+    or not. A container with --memory=72g uses what it uses, and the unused remainder is
+    available to ARC, to the page cache, and to the other seven workloads. On this box that is
+    the difference between committing 576 GB and typically using a good deal less. Section 5.3.
+  - NO BOOT. About a second against about thirty.
+  - NO HYPERVISOR TUNING. Revision 1's whole vCPU, NUMA, interleave and topology section
+    evaporates. CFS and the page cache already do the right thing.
+  - NO ROOT GRANT AT ALL. Revision 1 needed anchored sudoers rules for zfs clone and destroy per
+    job. This design needs none: there is nothing to clone, because the image is shared read-only
+    and the workspace is tmpfs. Requirement 3 is met by having no mechanism rather than by
+    constraining one.
+  - ONE MODEL ON THE BOX instead of two.
+
+WHAT IT COSTS:
+
+  - A WEAKER BOUNDARY. The kernel is shared. Section 14 is honest about which escape classes
+    that changes and which it does not.
+  - THE WORKFLOWS CHANGE. Revision 1 had "no workflow changes" as requirement 4. Section 10 is
+    the replacement work.
+  - IF A FUTURE WORKFLOW NEEDS `docker build`, this puts the nesting problem back. Recorded in 17.
+
+The choice is also more reversible than it looks. Sections 2, 7, 8, 9, 11 and 12 are the harness,
+and they are identical either way. Only "start a slot" and "destroy a slot" differ.
+
+
+5. Host layout
+--------------
+
+5.1 TWO ACCOUNTS, NOT ONE
+
+Finding F1 is that one account on this box runs everything and holds everything. This design does
+not add a third instance of that.
+
+  ffghr-super   runs the supervisor units. Holds the GitHub App private key at
+                /etc/ffgithubrunners/github-app.pem, mode 0600. Not in sudo, not in docker, no
+                login shell. It talks to ffghr-run's daemon socket to start and stop containers.
+
+  ffghr-run     owns the rootless Docker daemon and therefore the namespace every job runs in.
+                Its home is EMPTY: no tokens, no git credential, no ssh key, no sudo, no login
+                shell, nothing in .config. This is the account a container escape lands on, and
+                the whole point of it is that landing there is worth nothing.
+
+ffghr-super reaches the socket through a group, or an ACL on /run/user/<ffghr-run-uid>/docker.sock.
+The direction matters and only works one way: super can drive run's daemon, and a job inside that
+daemon cannot reach super's files.
+
+Neither account gets a sudoers entry. Section 4 explains why none is needed.
+
+5.2 THE CI DOCKER DAEMON
+
+A second rootless daemon, ffghr-run's, entirely separate from ffbox's (section 3). Data root on
+its own dataset:
+
+    rpool/ffgithubrunners            container, mountpoint=none
+    rpool/ffgithubrunners/docker     the daemon's data root, compression=lz4
+
+It holds one image. There are no per-job datasets, no zvols, no clones and nothing to destroy
+after a job, because the image is shared read-only and the workspace is tmpfs.
+
+A quota on the dataset is worth setting so a runaway image build cannot fill rpool and take ffbox
+down with it. That is the only coupling left between the two systems' storage and it runs through
+the pool, not through any shared path.
+
+5.3 MEMORY: LIMITS, NOT RESERVATIONS
+
+Fact e first, because it is the thing that hurts a ZFS host: ARC is uncapped, so c_max is 377.9
+GB. It is small only because the box is idle; under load it climbs, and workloads then allocate
+against memory ARC gives back slowly. Stage 1 writes /etc/modprobe.d/zfs.conf with zfs_arc_max at
+48 GB and rebuilds the initramfs. That is a host-wide setting shared with ffbox, per section 3.
+
+Each CI container gets:
+
+    --memory=72g
+    --tmpfs /work:size=40g,mode=1777
+
+40 GB of that is the ram disk fact m says is worth 45 minutes a job, and the remaining 32 GB
+covers Unity, the runner process and the container's page cache. Fact l is that ffbox measures
+the same Unity work at 32 GB, so the second number has evidence behind it rather than being a
+guess.
+
+tmpfs pages count against the container's memory cgroup, so those are one budget and not two.
+Filling /work to 40 GB while Unity holds 32 leaves nothing, and the cgroup OOM-kills the
+container. That kills one job rather than destabilising the box, which is a better failure mode
+than revision 1's, where the same arithmetic took out a guest.
+
+Budget on this box, 755 GB, at the eight-workload target from fact l:
+
+    ARC (capped)                     48 GB
+    host, ffwatch, ffweb            ~24 GB
+    8 Unity workloads x 72 GB       576 GB   4 ffbox + 4 CI, identical shape
+    headroom                       ~107 GB
+
+THE DIFFERENCE FROM REVISION 1 IS THAT THESE ARE CEILINGS. The sum of the limits fits inside RAM,
+so there is no overcommit and no way for all eight to collectively exceed the machine. But a slot
+sitting idle, or a job whose _work only reaches 15 GB, gives the difference back to ARC and the
+page cache instead of holding it. The worst case is the same as revision 1's guaranteed case, and
+the ordinary case is much better.
+
+Because the limits sum under RAM, the headroom row is genuine slack rather than a safety margin
+being spent. Fact e says there are 2 GB of swap, so it needs to stay genuine.
+
+5.4 CPU
+
+No mask. Every container may use all 40 threads, as ffbox's already do (fact l). No cpuset, no
+cgroup cpuset partition, no isolcpus.
+
+The reason is the workload. A Unity build is spiky: long stretches near idle, then a burst that
+wants everything. Eight of them will not burst together, and partitioning 20 physical cores among
+eight bursty consumers spends most of the day holding cores away from the one workload that could
+use them. Leaving CFS alone means an idle slot's share goes to a busy one for free, with no
+configuration and no coordination between two systems that are otherwise separate.
+
+Fact c is recorded but is not a design input here. Without pinned vCPUs and hard-allocated guest
+memory there is no NUMA placement decision to make: the kernel's own page allocation and
+scheduling handle it, and a container's memory is ordinary process memory that can move.
+
+If measurement ever shows CI starving ffbox or the reverse, the answer is CPUWeight= on the
+slice, not a narrower mask. A mask gives back the idle-borrowing above and guarantees nothing.
+
+5.5 NETWORK
+
+A dedicated Docker network on the CI daemon. A job must reach GitHub, Unity licensing and the LFS
+endpoints, and must reach neither this host nor the LAN.
+
+Rootless gives one of those for free. rootless_docker_design.txt section 5 records the
+measurement: under the ROOT daemon a container on an --internal network could still open 22 and
+445 on the bridge gateway, and under rootless the bridge lives inside the rootlesskit network
+namespace where the host is not on the other side of it at all.
+
+The LAN is the open half. That same document records that a container on an ordinary bridge
+network reaches this host's LAN. Under rootless the traffic leaves through slirp4netns and
+appears to come from the host, which makes a simple host nftables rule less obviously sufficient
+than it was in revision 1's tap-device model.
+
+SO THIS IS A MEASUREMENT, NOT A DESIGN DECISION YET. Stage 1 installs a rule set; stage 6 does not
+declare success until acceptance test 15.5 shows 192.168.51.0/24 unreachable from inside a
+container while api.github.com is reachable. If the rule set cannot achieve that, the SNI
+allowlist pattern becomes required rather than deferred, reimplemented on this daemon per
+requirement 7 rather than shared. ffbox/egress/ffbox-egress.sh has FFBOX_EGRESS_MODE=log for
+discovering such an allowlist, and reading it for the technique is allowed where copying it is
+not.
+
+Worth recording so it is not rediscovered: the runner talks to broker.actions.githubusercontent.com
+and a pipelinesghubeus* host, not only api.github.com. The .runner file has useV2Flow true.
+
+
+6. The image and the workspace
+------------------------------
+
+ONE IMAGE, ffghrunner:latest, built by stage 4 from a Dockerfile in this folder:
+
+    FROM unityci/editor:ubuntu-6000.3.19f1-windows-mono-3.2.2
+
+Same base as CI uses today and as ffbox uses, for the reason ffbox's Dockerfile records: if they
+drift, a green run here stops predicting a green run there. The tag is pinned in one place and
+tracked against UNITY_VERSION in main.yml.
+
+On top of that:
+
+  - the actions runner tarball at /opt/actions-runner, unconfigured
+  - git, git-lfs
+  - the /BlankProject scaffolding Unity's serial activation needs, which the base image does not
+    carry (ffbox hit this and it is not obvious)
+  - the entrypoint from section 7 and the licensing from section 10
+  - A FINALFACTORY CHECKOUT WITH A BUILT UNITY LIBRARY, cloned from GitHub at build time, NOT
+    from /opt/FinalFactory (section 3). A cold Unity import is plausibly 30 to 60 minutes and it
+    belongs in the image rather than in every job.
+
+THE WORKSPACE IS TMPFS AND NOTHING IS BIND-MOUNTED OUT. Requirement 4. The container gets
+`--tmpfs /work:size=40g` and writes everything there. No host directory is mounted writable, no
+host command runs against anything a job produced, and results leave the way GitHub expects them
+to: the runner uploads its own artifacts and posts its own check results over its own connection.
+This is the one place where this design is structurally safer than ffbox's, which bind-mounts a
+workspace the host then runs git in (fact p, finding F7).
+
+THE LIBRARY PROBLEM, and the one piece of cleverness in this document. The baked Library is in the
+image, which is read-only and shared by all four containers. Unity needs to write to it. Copying
+15 GB from the image into tmpfs at container start costs RAM and start-up time on every job.
+
+The intended answer is an overlay assembled by the entrypoint: the image's Library as lowerdir,
+a directory on the container's tmpfs as upperdir and workdir. Reads come from the image, are
+page-cached once, and are shared across all four containers. Writes land in tmpfs at RAM speed.
+Nothing is copied. Unprivileged overlayfs inside a user namespace has been available since kernel
+5.11 and this host runs 6.8.
+
+That needs proving before it is relied on. THE FALLBACK IS A PLAIN COPY into tmpfs at start,
+which costs start-up time and duplicates the Library four times in RAM, and which would push the
+tmpfs allocation up. Open question 17b.
+
+The image is rebuilt by `ffgithubrunners image update`, which pulls the checkout, rebuilds the
+Library and retags. A weekly timer runs it. A stale image is a speed problem, not a correctness
+one: a job whose baked Library is a week old still passes, it just imports more.
+
+
+7. The slot lifecycle
+---------------------
+
+HOST SIDE, one instance of ffgithubrunners@.service per slot, running as ffghr-super:
+
+  1. Read /etc/ffgithubrunners/secrets.env and slots.conf.
+  2. Mint an installation token from the GitHub App, then POST
+     /orgs/Final-Factory/actions/runners/generate-jitconfig with the slot's name, label set and
+     runner group. Keep the returned runner id.
+  3. `docker run --rm` against ffghr-run's daemon, with the flags in 5.3, the network from 5.5,
+     the hardening in 14, the JIT config passed in the environment, and no bind mounts.
+  4. Wait for the container to exit, with a watchdog.
+  5. Teardown, unconditionally: remove the container if it is still there, then DELETE the runner
+     registration.
+  6. Exit 0. systemd restarts the unit and the slot comes back.
+
+CONTAINER SIDE, the entrypoint:
+
+  1. Assemble the Library overlay per section 6.
+  2. Activate the Unity licence and install the return trap, per section 10.
+  3. exec /opt/actions-runner/bin/Runner.Listener run --jitconfig "$JIT".
+  4. The trap returns the seat on every exit path.
+
+The runner deregisters itself on a normal exit, so step 5's DELETE returns 404 on the happy path.
+That is fine and is why it is unconditional.
+
+The watchdog sits ABOVE the workflow's own timeout, not below it. main.yml sets
+timeout-minutes: 90, so the slot watchdog defaults to 120 and a job GitHub is still willing to
+run is never killed by this harness. Per-slot in slots.conf, because the determinism work may
+want longer.
+
+THE JIT CONFIG GOES IN AS AN ENVIRONMENT VARIABLE, and finding F6 says environment secrets are
+readable by anything in the container. That is acceptable here in a way it is not for ffbox's
+Claude token: this credential is single-use, scoped to one job, belongs to the job anyway, and is
+dead the moment the job ends. It is not a standing credential wearing a disguise.
+
+
+8. GitHub identity
+------------------
+
+A GITHUB APP, not a PAT. administration: write on the org, installed on the org. Private key at
+/etc/ffgithubrunners/github-app.pem, owned by ffghr-super, mode 0600. No container ever sees it.
+
+JIT CONFIG, not a registration token. JIT runners are implicitly ephemeral and the config never
+lands on disk, which removes the .credentials and .credentials_rsaparams files of fact a rather
+than reproducing them somewhere new. Finding F3.
+
+NAMES ARE FOR HUMANS. runs-on matches labels, so the per-run name is
+ffghr-loth2400-<slot>-<runid> and changes every job without affecting routing. Encoding the slot
+and run id is what lets the reaper tell an abandoned registration from a live one.
+
+LABELS: the defaults self-hosted, Linux, X64, plus ffgithubrunners. Keeping self-hosted means
+main.yml and deploy.yml keep routing here unchanged.
+
+A RUNNER GROUP scoped to the FinalFactory repository only. Fact a and finding F2: the runners are
+org-wide today, so any repo in the org, including one added later with looser write settings, can
+run code on this box. The group is a field in the same generate-jitconfig call.
+
+
+9. Teardown and reaping
+-----------------------
+
+The happy path deregisters itself. Two paths do not.
+
+A CONTAINER KILLED MID-JOB never calls back, so step 5's DELETE is what removes it. This is why
+the runner id is captured at mint time rather than looked up later.
+
+A SUPERVISOR KILLED MID-JOB, by a reboot or SIGKILL, leaves a registration and possibly a
+container. ffgithubrunners-reap.timer runs every 15 minutes and:
+
+  - lists org runners carrying the ffgithubrunners label and deletes any that are offline and
+    whose name encodes a run id with no matching container on this host;
+  - removes any ffghr-* container on this daemon with no matching supervisor;
+  - leaves anything it cannot explain alone, and logs it.
+
+There is no storage to reap. --rm plus a tmpfs workspace means a dead container leaves nothing
+behind, which is a simplification revision 1 did not have.
+
+GitHub garbage-collects stale registrations eventually. The documented window should be checked
+rather than trusted, and the reaper means it does not matter.
+
+
+10. Replacing game-ci
+---------------------
+
+Requirement 5. This is the workflow-visible half of the change and the part that needs the most
+care, because game-ci does several things and only one of them is hard.
+
+WHAT IT DOES, and what replaces it:
+
+  - Runs the editor in unityci/editor. Replaced by being in that image already (fact n).
+  - Activates and returns the Unity licence. Replaced by the trap pattern of fact o. This is an
+    IMPROVEMENT, not parity: game-ci returns the seat in an ordinary step, so a cancelled or
+    killed job leaks it, and cancelled jobs are exactly what an ephemeral harness produces. The
+    trap catches EXIT, INT and TERM. SIGKILL still cannot be caught by anything in-process, which
+    is why the watchdog in section 7 sends TERM first and waits.
+  - Runs the tests. A `run:` step invoking unity-editor -runTests with the arguments main.yml
+    already passes through, plus -logfile /dev/stdout which it already sets.
+  - Posts check annotations via githubToken. NOT replaced by this design. The results are uploaded
+    as artifacts and the workflow uses a test-reporter action, or the check is dropped. This is
+    the one genuine loss and it should be a decision rather than a discovery.
+  - Coverage options. Passed through to the same Unity arguments.
+
+The workflow edit is one `uses:` step becoming a `run:` step in main.yml, and the same in
+deploy.yml for unity-builder. determinism-nightly.yml is untouched.
+
+THIS IS ALSO THE ANSWER TO REVISION 1'S OPEN QUESTION ON LICENCE CHURN. That revision recorded
+ephemeral runners as a risk to seat management. With the trap it is the opposite: the harness
+returns seats more reliably than the arrangement it replaces.
+
+
+11. The install script
+----------------------
+
+ffgithubrunners/setup.sh: POSIX sh, set -eu, numbered stages with the order in the filenames,
+every stage independently re-runnable and a no-op when already satisfied. The shape is borrowed
+from ffbox per section 3; none of the code is.
+
+    01-hostSetup.sh   docker and its rootless extras, nftables, uidmap. The ffghr-super and
+                      ffghr-run accounts, their subuid/subgid ranges, the socket ACL between
+                      them. The ARC cap and initramfs rebuild. The network rules of 5.5.
+                      No sudoers file, because nothing here needs one.
+    02-zfsSetup.sh    rpool/ffgithubrunners and the docker data root, properties and quota
+                      per 5.2.
+    03-daemon.sh      ffghr-run's rootless daemon as a user service, pointed at that data root,
+                      plus the wait-for-socket gate the units order behind.
+    04-image.sh       build ffghrunner:latest per section 6, clone the checkout, warm the
+                      Library, verify the overlay assumption of 17b.
+    05-github.sh      take App id, installation id and key path; verify the App can mint a JIT
+                      config and see the runner group; write /etc/ffgithubrunners/secrets.env.
+    06-services.sh    render ffgithubrunners/systemd/*.template into /etc/systemd/system, enable
+                      and start ffgithubrunners.target. Root only; --check runs without it.
+
+Stage 4 is the slow one, for the reason ffbox's stage 4 is slow: the Unity import happens once in
+the image and every job after that shares it.
+
+Stages 1, 2 and 6 change the system and need root. Stages 3, 4 and 5 write configuration and the
+image. Resolving who the units should name follows FFGITHUBRUNNERS_RUN_USER, then SUDO_USER, then
+the checkout owner. ffbox's 06-services.sh records why SUDO_USER alone is not enough: run from a
+systemd timer as root there is no SUDO_USER at all, and every automatic re-install rendered the
+units pointing at root's home. Same trap, own implementation.
+
+Templates in ffgithubrunners/systemd/ are the only source, rendered into a throwaway directory
+and installed from there, so no second copy on disk can disagree with git.
+
+    ffgithubrunners/
+      setup.sh
+      01-hostSetup.sh  02-zfsSetup.sh  03-daemon.sh
+      04-image.sh  05-github.sh  06-services.sh
+      Dockerfile
+      entrypoint.sh                    overlay, licence, exec the runner
+      unity-license.sh                 activation and the return trap (own implementation)
+      ffgithubrunners                  the CLI, section 12
+      lib/gh.sh                        App JWT, installation token, jitconfig, delete
+      systemd/ffgithubrunners@.service one slot, Restart=always
+      systemd/ffgithubrunners.target
+      systemd/ffgithubrunners-dockerd.service
+      systemd/ffgithubrunners-reap.{service,timer}
+      systemd/ffgithubrunners-image.{service,timer}
+      secrets.env.example
+      README.md
+
+
+12. The ffgithubrunners command
+-------------------------------
+
+    ffgithubrunners status              slots, containers, registrations, image tag and age
+    ffgithubrunners slot stop|start N   drain or return one slot
+    ffgithubrunners drain               let running jobs finish, start no replacements
+    ffgithubrunners image update        pull, rebuild the Library, retag
+    ffgithubrunners reap                run the section 9 sweep now
+    ffgithubrunners logs N              the last job's container log for one slot
+
+drain matters more than it looks. Updating the image or changing slots.conf while jobs are
+running should not kill them, and draining is how to get to an idle box without watching it.
+
+
+13. What changes in FinalFactory
+--------------------------------
+
+Two `uses:` steps become `run:` steps, per section 10: unity-test-runner in main.yml and
+unity-builder in deploy.yml. `runs-on: self-hosted` is unchanged because routing is by label.
+determinism-nightly.yml is untouched.
+
+The Library restore and save through actions/cache can stay or go. It is now partly redundant,
+because the image carries a warm Library, and it is a cross-branch contamination channel
+(finding F8). Removing it is a reasonable second step and is not required for this design to
+work.
+
+
+14. Security properties
+-----------------------
+
+WHAT THIS FIXES relative to today. A malicious workflow gets namespace-root in a container that
+has no host filesystem mounted, no writable bind mount at all, one single-use GitHub credential
+scoped to one job, a lifetime bounded by the watchdog, and an account underneath it that owns
+nothing. It cannot read .git-credentials, .claude/.credentials.json or ffbox's secrets.env,
+because those belong to FinalFactoryTester and this runs as ffghr-run. It cannot reach ffbox's
+Docker socket, which is a different daemon under a different user. It cannot leave anything for
+the next job. The org-wide runner grant narrows to one repository, and the runner credentials
+stop existing on disk.
+
+THE FLAGS, from finding F5, which ffbox does not currently pass and this design does from the
+start:
+
+    --cap-drop=ALL --security-opt=no-new-privileges
+    --pids-limit=<n> --memory=72g
+    --read-only where the image tolerates it, with tmpfs for what must be writable
+    default seccomp, never seccomp=unconfined
+
+WHAT IT DOES NOT FIX. Section 4 of docs/ci-runner-security-findings.md lists the escape classes.
+Briefly, against this design:
+
+  - Class 1, what you handed over: the JIT config, discussed in section 7. Bounded.
+  - Class 2, data flow across the boundary: removed by requirement 4. This is the class that bit
+    ffbox (F7) and this design has no writable bind mount and no host-side command run against
+    job output.
+  - Class 3, runc and crun bugs: lands the attacker on ffghr-run, which owns nothing. Mitigated
+    by 5.1, not eliminated. Keep docker and runc current.
+  - Class 4, kernel exploitation from the user namespace: NOT mitigated. This is the one a VM
+    would have changed, and choosing containers is choosing to accept it. The control is patching
+    the kernel, and there is no other one.
+  - Repository secrets: a job that legitimately runs still receives UNITY_LICENSE, UNITY_EMAIL,
+    UNITY_PASSWORD, UNITY_SERIAL and a GITHUB_TOKEN because the workflow asks for them. Anyone
+    with write access can print them. Nothing at this layer changes that.
+  - actions/cache: finding F8, unchanged by any of this.
+
+That is the honest trade. Classes 1 to 3 are handled about as well here as they would have been
+under KVM. Class 4 is the price of the decision in section 4.
+
+
+15. Acceptance
+--------------
+
+  1. Build the image, run one container by hand, run the editmode suite in it, and compare wall
+     clock against the same suite on the host. Requirement 8. Fact m means the number to watch is
+     whether _work is really on tmpfs and really being used.
+  2. Confirm the overlay of section 6 works unprivileged in this container on kernel 6.8, and
+     that Unity writes to the Library land in tmpfs rather than the image layer. If not, fall
+     back per 17b and re-measure 1.
+  3. Measure container start to runner-online. Expect a second or two.
+  4. Push a branch. Confirm the job lands, the runner disappears from the org page when it ends,
+     and a replacement appears.
+  5. Kill a container mid-job. Confirm the registration is gone within one reap interval, the
+     slot comes back, and the Unity seat was returned.
+  6. FROM INSIDE A CONTAINER, confirm 192.168.51.0/24 and this host's addresses are unreachable
+     and api.github.com is reachable. This one gates 5.5; if it fails the SNI allowlist is
+     required, not deferred.
+  7. From inside a container, confirm /run/user/1015/docker.sock is not reachable and
+     FinalFactoryTester's home is not readable.
+  8. Reboot the host. Confirm four slots come back with no hand-holding and ffbox.target comes
+     back independently.
+  9. Run a real PR's worth of jobs with four ffbox runs going at the same time. Check that a lone
+     CI job still soaks most of the box and that eight hot workloads divide it without either
+     system starving. If one starves, reach for CPUWeight, never a mask.
+
+
+16. Out of scope
+----------------
+
+  - Removing the existing /opt/github-actions-runner-N installs. Assumes an empty box.
+  - The Windows determinism runner.
+  - actions/cache, per section 13.
+  - Any change to ffbox, per section 3 and requirement 7. That includes the fixes in
+    docs/ci-runner-security-findings.md that apply to ffbox rather than to this system.
+  - Check annotations from the test run, per section 10.
+
+
+17. Open questions
+------------------
+
+  a. THE NETWORK MEASUREMENT IN 5.5, which is the one that could still force real work. Under
+     rootless the host is unreachable for free, but the LAN may not be, and slirp4netns makes a
+     plain host nftables rule less obviously sufficient. Acceptance test 15.6 decides whether an
+     SNI allowlist has to be built in revision 2 or can wait.
+  b. THE LIBRARY OVERLAY IN SECTION 6. Unprivileged overlayfs in a user namespace on kernel 6.8,
+     with the image as lowerdir and tmpfs as upperdir. If it does not work, the fallback is a
+     copy at start, which costs start-up time and four copies of the Library in RAM, and which
+     changes the tmpfs sizing in 5.3.
+  c. PIDS-LIMIT AND THE REAL MEMORY SHAPE. --pids-limit needs a number that a real Unity import
+     does not trip. The 32 GB non-tmpfs half has fact l behind it but has not been measured for a
+     containerised RUNNER as opposed to a containerised agent.
+  d. WHETHER --read-only IS TOLERABLE for this image, or whether Unity and the runner need enough
+     scattered writable paths that the tmpfs list becomes unmanageable.
+  e. WHETHER TO DROP actions/cache FOR Library, per section 13 and finding F8.
+  f. WHETHER FFBOX SHOULD ADOPT A RAM DISK. Fact m is a property of Unity on ZFS, not of this
+     harness, so ffbox's runs are paying the same cost. Out of bounds to act on, and it fits the
+     budget in 5.3 if it happens. Noted so it is a decision rather than a collision.
+  g. IF A FUTURE WORKFLOW NEEDS `docker build`, this design has no answer that does not
+     reintroduce nesting. Revisit the section 4 choice if that day comes rather than bolting a
+     socket in.
