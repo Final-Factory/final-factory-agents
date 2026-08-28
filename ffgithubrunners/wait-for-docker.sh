@@ -21,10 +21,25 @@ export DOCKER_HOST
 
 i=0
 while [ "$i" -lt "$DEADLINE" ]; do
-    if docker version >/dev/null 2>&1; then
+    if err=$(docker version 2>&1 >/dev/null); then
         [ "$i" = 0 ] || printf 'ffgithubrunners: rootless docker answered after %ss\n' "$i"
         exit 0
     fi
+    # A DAEMON THAT IS UP AND UNREACHABLE IS NOT A DAEMON THAT IS STARTING, so do not spend the
+    # deadline waiting for it to fix itself. This is the failure the socket's own group causes:
+    # the directory permits the supervisor, the socket does not, and every second of waiting
+    # after the first is wasted.
+    case "$err" in
+        *"permission denied"*|*"Permission denied"*)
+            printf 'ffgithubrunners: %s exists and refuses this account.\n' "$SOCK" >&2
+            printf '       socket is:   %s\n' "$(ls -ln "$SOCK" 2>/dev/null || echo '(gone)')" >&2
+            printf '       this account is %s, in: %s\n' "$(id -un)" "$(id -nG)" >&2
+            printf '       dockerd sets the socket group itself and defaults to --group docker,\n' >&2
+            printf '       which maps through the userns onto a subgid nobody is in. The unit\n' >&2
+            printf '       must pass --group 0. Re-run: sh ffgithubrunners/02-daemon.sh\n' >&2
+            exit 1
+            ;;
+    esac
     i=$((i + 1))
     sleep 1
 done

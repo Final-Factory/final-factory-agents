@@ -111,10 +111,15 @@ ffbox onto this daemon afterwards, which is what makes it the one rootless daemo
 
 The daemon listens on a stable path, NOT under /run/user:
 
-    dockerd-rootless.sh -H unix:///run/ffbox-container/docker.sock
+    dockerd-rootless.sh -H unix:///run/ffbox-container/docker.sock --group 0
 
 That directory comes from a tmpfiles.d rule, owned ffbox-container:ffbox-container mode 0750, with
-FinalFactoryTester in the ffbox-container group. /run/user/<uid> is created by logind at mode 0700
+FinalFactoryTester in the ffbox-container group.
+
+--group 0 is what makes that membership worth anything. dockerd sets the socket's group itself and
+defaults to --group docker, resolving the name against the host's /etc/group but applying it inside
+the user namespace, where only gid 0 maps back to a real host group. The default lands the socket on
+a subgid no account is in, and the supervisor gets EACCES whatever the directory permits. /run/user/<uid> is created by logind at mode 0700
 on a tmpfs that is recreated per session, so ACLs on it do not persist and it does not exist at
 all for an account that never logs in. Linger is enabled for ffbox-container so its user manager
 starts at boot.

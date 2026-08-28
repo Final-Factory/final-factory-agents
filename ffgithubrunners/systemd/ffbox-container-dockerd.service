@@ -16,13 +16,26 @@
 # NOT under /run/user. -H names a stable path from a tmpfiles.d rule, group-readable by the
 # account that runs the supervisor. /run/user/<uid> is logind's, 0700, on a tmpfs recreated per
 # session, and it does not exist at all for an account that never logs in.
+#
+# --group 0, AND IT IS THE WHOLE ACCOUNT SPLIT. dockerd sets the socket's group itself, and it
+# defaults to --group docker. It resolves that name against the HOST's /etc/group, which the
+# namespace still sees, and then creates the file with that gid INSIDE the namespace, where the
+# map is:
+#
+#     namespace gid 0        -> host gid @CGID@   (@CUSER@'s own group)
+#     namespace gid 1..65536 -> host gid 1410720..
+#
+# So the default lands the socket on host gid 1410720 + docker's gid - 1, a subgid no account on
+# this box is in, and the supervisor gets EACCES no matter what the directory permits. Measured
+# on 2026-08-28: srw-rw---- 1 1020 1411716, with host docker=997. Namespace gid 0 is the only
+# one that maps back to a real host group, so that is the one to ask for.
 Description=Docker Application Container Engine (rootless, @CUSER@)
 Documentation=https://docs.docker.com/go/rootless/
 Requires=dbus.socket
 
 [Service]
 Environment=PATH=/usr/bin:/sbin:/usr/sbin:/usr/local/sbin:/usr/local/bin:/bin
-ExecStart=/usr/bin/dockerd-rootless.sh -H unix://@SOCK@ --data-root @DATAROOT@
+ExecStart=/usr/bin/dockerd-rootless.sh -H unix://@SOCK@ --data-root @DATAROOT@ --group 0
 ExecReload=/bin/kill -s HUP $MAINPID
 TimeoutSec=0
 RestartSec=2
