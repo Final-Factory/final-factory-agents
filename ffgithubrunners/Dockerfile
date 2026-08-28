@@ -32,6 +32,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 # wants; the Unity base does not carry them and the failure without it is a stack trace at
 # startup rather than a missing-package error.
 #
+# THE chown IS LOAD-BEARING, and it is what --cap-drop=ALL costs. GitHub ships the tarball owned
+# by uid 1001, and the container runs as root. Root normally writes through any permission with
+# CAP_DAC_OVERRIDE, but section 12 drops every capability, so root becomes an ordinary "other"
+# against a 0755 directory owned by 1001. Measured: the runner died on start with
+# "Access to the path '/opt/actions-runner/.runner' is denied", and the same container with
+# capabilities intact wrote it fine. Owning the tree is the fix that keeps the flag.
+#
 # Same shape as ffbox/install-claude.sh: never trust the download on its own, verify the RESULT
 # is functional. A truncated tarball fails --version here rather than at 3am in a job.
 RUN set -eux; \
@@ -43,7 +50,8 @@ RUN set -eux; \
     tar xzf runner.tar.gz; \
     rm runner.tar.gz; \
     ./bin/installdependencies.sh; \
-    ./bin/Runner.Listener --version
+    ./bin/Runner.Listener --version; \
+    chown -R root:root /opt/actions-runner
 
 # gh, which the base image lacks and main.yml's cache-pruning step calls. From the release
 # tarball rather than an apt repo, so nothing new signs packages for this image.

@@ -1,0 +1,48 @@
+[Unit]
+# One slot: one job in a throwaway container, then the unit exits and systemd starts a fresh one.
+#
+# @SLOTSH@, @USER@, @GROUP@ and @HOME@ are substituted by 05-services.sh — this repo can be cloned
+# anywhere and the units must not disagree with the checkout they were installed from. Re-run
+# `sudo sh ffgithubrunners/05-services.sh --install` after moving the checkout or changing the owner.
+Description=ffgithubrunners: runner slot %i
+After=network-online.target ffgithubrunners-dockerd-wait.service ffghr-egress.service
+Wants=network-online.target
+Requires=ffgithubrunners-dockerd-wait.service
+PartOf=ffgithubrunners.target
+
+# StartLimitIntervalSec=0 IS DELIBERATE AND IS NOT A TYPO. This unit is SUPPOSED to exit and be
+# restarted, once per job, forever. With systemd's defaults (5 starts per 10s) a fast-failing
+# condition burns the budget in a second and leaves the slot in `failed` until someone runs
+# `systemctl reset-failed` — which is a manual step nobody remembers at 2am, on the exact machine
+# whose whole point is to need no hand-holding. slot.sh sleeps 30s before any unfit-machine exit,
+# so a genuinely broken box does not spin either.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+Environment=HOME=@HOME@
+ExecStart=/bin/sh @SLOTSH@ %i
+Restart=always
+RestartSec=5
+
+# The watchdog inside slot.sh bounds a job; this bounds the STOP. It has to exceed slot.sh's own
+# `docker stop -t 90` grace or systemd would kill the supervisor while it was still waiting for
+# the container's licence trap, and the teardown that releases the registration would never run.
+TimeoutStopSec=150
+
+# Cheap hardening for the supervisor itself. It reads a config, talks to a socket and writes one
+# log file, so it needs very little. NOT NoNewPrivileges or a private /tmp beyond this: the
+# container's isolation is the daemon's business, not systemd's.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@LOGDIR@ @CONFIGDIR@
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=ffgithubrunners.target
