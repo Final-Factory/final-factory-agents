@@ -156,6 +156,9 @@ unset FFGHR_JITCONFIG
 # Container output goes to the FILE, not to this script's stdout. stdout is the journal, and a
 # Unity job log is tens of megabytes; the journal gets this script's own lines instead, which are
 # the ones anyone reads first.
+# A marker per job, so `ffgithubrunners logs` can show THE LAST JOB rather than everything the
+# file has accumulated since logrotate last touched it.
+printf '===== ffghr job %s started %s =====\n' "$CNAME" "$(date -Is)" >> "$LOG_FILE" 2>/dev/null || true
 ( docker logs -f "$CNAME" >> "$LOG_FILE" 2>&1 || true ) &
 LOGGER=$!
 
