@@ -87,7 +87,13 @@ fast-failing condition burns five restarts in a second and leaves the slot in `f
 someone runs `systemctl reset-failed`.
 
 Inside the container the entrypoint sets RUNNER_ALLOW_RUNASROOT=1, which the runner requires
-before it will start as root, and execs `Runner.Listener run --jitconfig "$JIT" --disableupdate`.
+before it will start as root, and execs `Runner.Listener run --jitconfig "$JIT"`. There is no
+--disableupdate: it is a config.sh option, not a run option, and no environment variable replaces
+it. The weekly image rebuild is what keeps the runner current enough to be given jobs.
+
+The image chowns /opt/actions-runner to root. The tarball ships owned by uid 1001, and --cap-drop
+=ALL takes CAP_DAC_OVERRIDE away from root, so without it the runner cannot write its own .runner
+file.
 The container is the boundary, not the uid inside it. Nothing polls GitHub, nothing receives a
 webhook, and no inbound port is opened. Container start is about a second.
 

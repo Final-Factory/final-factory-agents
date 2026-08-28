@@ -24,6 +24,11 @@ export RUNNER_ALLOW_RUNASROOT
 
 cd /opt/actions-runner
 
+# NO --disableupdate. It is a config.sh option, not a `run` option: runner 2.337.0 answers
+# "Unrecognized command-line input arguments for command run: 'disableupdate'" and exits 1. There
+# is no environment variable for it either, so what keeps this runner current enough for GitHub to
+# keep giving it jobs is the weekly image rebuild, not a flag.
+#
 # exec, so the runner is PID 1 and a `docker stop` delivers SIGTERM to it directly rather than to
 # a shell that may or may not forward it.
-exec ./bin/Runner.Listener run --jitconfig "$JIT" --disableupdate
+exec ./bin/Runner.Listener run --jitconfig "$JIT"

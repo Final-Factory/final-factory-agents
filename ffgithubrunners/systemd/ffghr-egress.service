@@ -1,0 +1,21 @@
+[Unit]
+# The one route out of ffghr-net, rebuilt at boot if anything is missing.
+#
+# NOT PartOf ffgithubrunners.target, deliberately: stopping the runners must not take the fence
+# down, because a container that starts while the fence is missing is a container with no filter
+# at all. slot.sh refuses to start in that case, and this unit is what makes the case rare.
+Description=ffgithubrunners: the egress fence for ffghr-net
+After=ffgithubrunners-dockerd-wait.service
+Requires=ffgithubrunners-dockerd-wait.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=@USER@
+Group=@GROUP@
+Environment=HOME=@HOME@
+ExecStart=/bin/sh @IMAGESH@ --egress-only
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
