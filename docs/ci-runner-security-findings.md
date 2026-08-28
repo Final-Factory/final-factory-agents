@@ -65,7 +65,17 @@ The point of the split is that an escape from 2 reaches an account owning nothin
 reachable from inside a workload. `design/ffgithubrunners_design.txt` section 5.1 specifies this
 for the new system; ffbox would need its own equivalent.
 
-**Effort:** medium. Highest value item in this file.
+**PARTLY ADDRESSED, 2026-08-28, for the runners only.** `ffgithubrunners` implements the split for
+CI: workflow code now runs as `ffbox-container` (accounts 2), a system account with no login shell,
+no sudo, no docker group and nothing in its home, in a container with no bind mounts and no socket.
+`FinalFactoryTester` (account 3) runs only the supervisor and holds the GitHub App key.
+
+What is NOT addressed: ffbox still runs its containers under `FinalFactoryTester`'s own daemon, so
+for ffbox this finding stands unchanged. Section 17 of `design/ffgithubrunners_design.txt` is the
+plan for moving it, and the blocker is the bind mount: ffbox's entrypoint drops to the uid owning
+the workspace clone, which works only while one account owns both the clone and the daemon.
+
+**Effort:** medium. Remaining half is the ffbox move.
 
 ### F2. Runners are registered against the org, not a repository
 
@@ -99,7 +109,15 @@ the runners are long-lived.
 disk. Runner 2.336.0 supports it (`GetJitConfig` in `Runner.Listener.dll`). Until then, `chmod
 640 .credentials`.
 
-**Effort:** small now, removed entirely by the new design.
+**FIXED for the new runners, 2026-08-28.** They register per job with `generate-jitconfig` and the
+config reaches the container through the environment, never disk. It is dropped from the
+environment after the entrypoint reads it, though it remains in that process's argv; what the
+design relies on is that it is single-use and dies with the container.
+
+The four old runners still carry `.credentials` files and will until they are deleted at the end of
+the cutover. `chmod 640` on them is still worth doing in the meantime.
+
+**Effort:** small now, removed entirely once the old runners go.
 
 ### F4. A service account that executes untrusted code is in the sudo group
 
@@ -142,6 +160,18 @@ legitimate Unity import is not killed.
 
 **Effort:** small. This is an ffbox change and therefore the owner's call; the new system
 specifies them from the start.
+
+**The new runners carry them, 2026-08-28:** `--cap-drop=ALL`, `--security-opt=no-new-privileges`,
+`--pids-limit`, `--memory`, default seccomp, and a tmpfs workspace instead of a bind mount. Two
+things learned doing it, both worth knowing before adding the same flags to ffbox:
+
+- `--cap-drop=ALL` takes `CAP_DAC_OVERRIDE` away from root, which is how root normally writes
+  through a permission it does not hold. The runner tarball ships owned by uid 1001, so the runner
+  could not create its own `.runner` file until the image chowned the tree. Expect the same class
+  of breakage anywhere a container runs as root against files it does not own.
+- `--memory` and `--pids-limit` are silently ignored without cgroup delegation. Under a rootless
+  daemon in a user manager that comes from `user@.service`'s `Delegate=yes`. Verified by reading
+  `memory.max` and `pids.max` back from inside a container rather than trusting the flags.
 
 ### F6. Secrets enter the container as environment variables
 
@@ -262,15 +292,17 @@ likely ones.
 
 ## Priority
 
-1. **F1**, split the accounts. Everything else is worth less until this is done, and several
-   findings partly resolve themselves once it is.
+1. **F1**, split the accounts. Done for the runners on 2026-08-28; ffbox still owes its half, and
+   section 17 of `design/ffgithubrunners_design.txt` is the plan. Everything else is worth less
+   until that half lands too.
 2. **F7**, trace the git chain and close it. Cheap, needs no vulnerability to exploit, and the
    existing harvest guard does not cover it.
 3. ~~**F2**, scope the runners to one repository.~~ Accepted on 2026-08-28, see F2.
 4. `docker-security-model.md` known gap 1's remaining half: take the `workflow` scope off the
    host push token.
-5. **F5**, add the container flags. **F3**, JIT config or `chmod 640`. **F9**, confirm the
-   network path.
+5. **F5**, add the container flags — done for the new runners, still owed for ffbox. **F3**, JIT
+   config or `chmod 640` — done for the new runners; the four old ones keep their `.credentials`
+   until the cutover deletes them. **F9**, confirm the network path.
 6. **F4**, remove sudo group membership, after F1.
 7. **F6** and **F8**, both investigations rather than changes.
 
