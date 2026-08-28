@@ -87,7 +87,7 @@ Section 3 says "Neither account gets a new sudoers entry. Nothing here needs one
 Section 11's CLI enables and disables system unit instances and starts and stops them.
 *Closed, and no sudoers entry is added.* Split the verbs by what they actually need. `status` and
 `logs` only read. `drain` and `slot stop|start N` become a flag file under
-`~/.config/ffgithubrunners/` that `slot.sh` checks before minting a JIT config: a drained slot sleeps
+`~/.config/ffbox/githubrunners/` that `slot.sh` checks before minting a JIT config: a drained slot sleeps
 and rechecks instead of taking work, so nothing talks to the system manager and the image-update
 timer can drain on its own. Only `slots N` genuinely writes to `/etc/systemd/system`, and it
 re-invokes itself through sudo the way `ffbox/setup.sh` does for 06-services.sh, prompting a human
@@ -284,12 +284,12 @@ Exponential backoff on API errors. Org name comes from config, not a literal. **
 
 **T21. `04-github.sh`.** Take App id, installation id and key path (or a PAT), verify by actually
 minting a JIT config and then deleting the runner it created, and write
-`~/.config/ffgithubrunners/secrets.env` at 0600. Verifying for real is what turns a wrong permission
+`~/.config/ffbox/githubrunners/` at 0600. Verifying for real is what turns a wrong permission
 into an install-time failure instead of a runtime one. **M**
 
 ## Phase E: the supervisor and its units
 
-**T22. `lib/config.sh`.** Defaults in code, overlaid with `~/.config/ffgithubrunners/config.json`,
+**T22. `lib/config.sh`.** Defaults in code, overlaid with `~/.config/ffbox/githubrunners/config.json`,
 then `FFGITHUBRUNNERS_*` overrides. Keys: `slots`, `watchdog_minutes`, `image`, `labels`, plus the
 org, the egress parameters from T8, and the memory and pids limits. ffbox has no JSON config layer
 to copy, so pick the parser deliberately: python3 is guaranteed present, jq is not. **M**

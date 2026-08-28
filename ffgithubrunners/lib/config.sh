@@ -3,7 +3,7 @@
 # Three layers, least specific first, exactly as ffbox does it:
 #
 #   1. the defaults below
-#   2. ~/.config/ffgithubrunners/config.json, if it exists
+#   2. ~/.config/ffbox/githubrunners/config.json, if it exists
 #   3. FFGITHUBRUNNERS_* in the environment
 #
 # The env layer is last so a one-off can override a machine's config without editing it, which is
@@ -20,7 +20,17 @@
 
 # shellcheck shell=sh
 
-FFGHR_CONFIG_DIR=${FFGITHUBRUNNERS_CONFIG_DIR:-$HOME/.config/ffgithubrunners}
+# UNDER ~/.config/ffbox, not a directory of its own. ffwatch.py:134 states the rule: everything
+# ffbox owns on a machine lives under ~/.config/ffbox, and a component gets a subdirectory there
+# the way the Discord CLI has ~/.config/ffbox/discord. ffgithubrunners shares ffbox's two accounts,
+# its daemon and its egress tooling, so it is a part of the same thing rather than a second product.
+#
+# ITS OWN secrets.env, THOUGH, AND NOT ffbox's. ffbox/systemd/ffweb.service reads
+# ~/.config/ffbox/secrets.env as an EnvironmentFile and ffbox passes its own secrets into
+# containers. A GitHub credential that can register org runners does not belong in a file with
+# that blast radius, so it lives one level down where nothing of ffbox's reads it.
+FFBOX_CONFIG_DIR=${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}
+FFGHR_CONFIG_DIR=${FFGITHUBRUNNERS_CONFIG_DIR:-$FFBOX_CONFIG_DIR/githubrunners}
 FFGHR_CONFIG=${FFGITHUBRUNNERS_CONFIG:-$FFGHR_CONFIG_DIR/config.json}
 FFGHR_SECRETS=${FFGITHUBRUNNERS_SECRETS:-$FFGHR_CONFIG_DIR/secrets.env}
 
@@ -88,6 +98,15 @@ _ffghr_set LABELS           labels           'self-hosted,Linux,X64,ffgithubrunn
 _ffghr_set ORG              org              Final-Factory
 # Final-Factory is on the free plan, where Default is the only runner group and its id is 1.
 _ffghr_set RUNNER_GROUP_ID  runner_group_id  1
+
+# The App's two ids are NOT secrets: they identify an App, they do not authenticate as one. The
+# private key is the secret, and it is a file. So the ids live in config.json with the rest of the
+# configuration, and secrets.env holds only a PAT for the machines that use one.
+_ffghr_set APP_ID              app_id              ''
+_ffghr_set APP_INSTALLATION_ID app_installation_id ''
+# Hardcoded rather than configured. 04-github.sh copies whatever key it is given to this path at
+# 0600, so there is one place a key ever lives and nothing has to record where it went.
+_ffghr_set APP_KEY             app_key             "$FFGHR_CONFIG_DIR/github-app.pem"
 
 # --- the container --------------------------------------------------------------------------
 _ffghr_set CONTAINER_USER   container_user   ffbox-container

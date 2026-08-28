@@ -33,6 +33,12 @@ if [ -r "$FFGHR_SECRETS" ]; then
     . "$FFGHR_SECRETS"
 fi
 
+# secrets.env still wins where it names these, so a machine configured before the ids moved into
+# config.json keeps working untouched. Otherwise lib/config.sh's answer is used.
+FFGHR_APP_ID=${FFGHR_APP_ID:-$APP_ID}
+FFGHR_APP_INSTALLATION_ID=${FFGHR_APP_INSTALLATION_ID:-$APP_INSTALLATION_ID}
+FFGHR_APP_KEY=${FFGHR_APP_KEY:-$APP_KEY}
+
 gh_die() { printf 'lib/gh.sh: %s\n' "$*" >&2; return 1; }
 
 # --- authentication ---------------------------------------------------------------------------

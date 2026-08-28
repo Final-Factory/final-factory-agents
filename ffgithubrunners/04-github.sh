@@ -17,9 +17,9 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 CHECK_ONLY=0
 PAT=""
-APP_ID=""
-APP_INSTALL=""
-APP_KEY=""
+ARG_APP_ID=""
+ARG_APP_INSTALL=""
+ARG_APP_KEY=""
 NONINTERACTIVE=0
 { [ -t 0 ] && [ -t 1 ]; } || NONINTERACTIVE=1
 
@@ -52,11 +52,11 @@ EOF
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --app-id)          APP_ID=${2:?--app-id needs a value}; shift 2 ;;
+    --app-id)          ARG_APP_ID=${2:?--app-id needs a value}; shift 2 ;;
     --check)           CHECK_ONLY=1; shift ;;
     --help|-h)         usage; exit 0 ;;
-    --installation-id) APP_INSTALL=${2:?--installation-id needs a value}; shift 2 ;;
-    --key)             APP_KEY=${2:?--key needs a path}; shift 2 ;;
+    --installation-id) ARG_APP_INSTALL=${2:?--installation-id needs a value}; shift 2 ;;
+    --key)             ARG_APP_KEY=${2:?--key needs a path}; shift 2 ;;
     --non-interactive) NONINTERACTIVE=1; shift ;;
     --pat)             PAT=${2:?--pat needs a token}; shift 2 ;;
     *)                 echo "04-github.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
@@ -72,6 +72,22 @@ die()  { printf '04-github.sh: %s\n' "$*" >&2; exit 1; }
 mkdir -p "$FFGHR_CONFIG_DIR"
 chmod 0700 "$FFGHR_CONFIG_DIR" 2>/dev/null || true
 
+# MIGRATION from ~/.config/ffgithubrunners, which is where this lived before the config moved
+# under ~/.config/ffbox with the rest of what ffbox owns on a machine. Moved rather than copied:
+# two config directories, one of them stale, is worse than either.
+OLD_DIR="$HOME/.config/ffgithubrunners"
+if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$FFGHR_CONFIG_DIR" ]; then
+  say "moving $OLD_DIR to $FFGHR_CONFIG_DIR"
+  for f in config.json secrets.env github-app.pem .installation-token; do
+    if [ -e "$OLD_DIR/$f" ] && [ ! -e "$FFGHR_CONFIG_DIR/$f" ]; then
+      mv "$OLD_DIR/$f" "$FFGHR_CONFIG_DIR/$f"
+      skip "moved $f"
+    fi
+  done
+  rmdir "$OLD_DIR" 2>/dev/null && skip "removed $OLD_DIR" \
+    || skip "$OLD_DIR still has files in it; look before deleting it"
+fi
+
 # Drop the template in place whatever else happens, so a machine that gets no further still has
 # the instructions on disk rather than only in this script's help.
 if [ ! -e "$FFGHR_SECRETS" ]; then
@@ -82,6 +98,25 @@ if [ ! -e "$FFGHR_CONFIG" ]; then
   install -m 0644 "$HERE/config.json.example" "$FFGHR_CONFIG"
   say "created $FFGHR_CONFIG from the template"
 fi
+
+# Set one key in config.json. python3 rather than sed, because a JSON file edited by line is a
+# JSON file that eventually is not one. This reflows the file; the _comment keys survive, which is
+# where the explanations live.
+set_config() {
+  _k=$1; _v=$2
+  KEY="$_k" VAL="$_v" CFG="$FFGHR_CONFIG" python3 - <<'PY'
+import json, os
+path, key, val = os.environ["CFG"], os.environ["KEY"], os.environ["VAL"]
+with open(path) as fh:
+    cfg = json.load(fh)
+cfg[key] = int(val) if val.isdigit() else val
+tmp = path + ".tmp"
+with open(tmp, "w") as fh:
+    json.dump(cfg, fh, indent=2)
+    fh.write("\n")
+os.replace(tmp, path)
+PY
+}
 
 # Rewrite one KEY=value in place. Temp file next to the target so the replacement is a
 # same-filesystem rename, and created under umask 077 so the token is never briefly readable.
@@ -103,31 +138,63 @@ if [ "$CHECK_ONLY" -eq 0 ]; then
   if [ -n "$PAT" ]; then
     set_secret FFGHR_GITHUB_TOKEN "$PAT"
     say "recorded a PAT in $FFGHR_SECRETS"
-  elif [ -n "$APP_ID" ] || [ -n "$APP_INSTALL" ] || [ -n "$APP_KEY" ]; then
-    [ -n "$APP_ID" ]      || die "--app-id is required with the App options"
-    [ -n "$APP_INSTALL" ] || die "--installation-id is required with the App options"
-    [ -n "$APP_KEY" ]     || die "--key is required with the App options"
-    [ -r "$APP_KEY" ]     || die "cannot read the key at $APP_KEY"
+  elif [ -n "$ARG_APP_ID" ] || [ -n "$ARG_APP_INSTALL" ] || [ -n "$ARG_APP_KEY" ]; then
+    [ -n "$ARG_APP_ID" ]      || die "--app-id is required with the App options"
+    [ -n "$ARG_APP_INSTALL" ] || die "--installation-id is required with the App options"
+    [ -n "$ARG_APP_KEY" ]     || die "--key is required with the App options"
+    [ -r "$ARG_APP_KEY" ]     || die "cannot read the key at $ARG_APP_KEY"
 
-    DEST="$FFGHR_CONFIG_DIR/github-app.pem"
-    if [ "$(readlink -f "$APP_KEY")" != "$(readlink -f "$DEST" 2>/dev/null || echo)" ]; then
-      ( umask 077; cp "$APP_KEY" "$DEST" )
-      chmod 0600 "$DEST"
-      say "copied the App key to $DEST (mode 600)"
+    # One place a key ever lives, so nothing has to record where it went. APP_KEY from
+    # lib/config.sh is this same path.
+    if [ "$(readlink -f "$ARG_APP_KEY")" != "$(readlink -f "$APP_KEY" 2>/dev/null || echo)" ]; then
+      ( umask 077; cp "$ARG_APP_KEY" "$APP_KEY" )
+      chmod 0600 "$APP_KEY"
+      say "copied the App key to $APP_KEY (mode 600)"
     fi
     # A key that is not a key fails here rather than inside a JWT signature at 3am.
-    openssl rsa -in "$DEST" -noout -check >/dev/null 2>&1 \
-      || openssl pkey -in "$DEST" -noout >/dev/null 2>&1 \
-      || die "$DEST is not a readable private key"
+    openssl rsa -in "$APP_KEY" -noout -check >/dev/null 2>&1 \
+      || openssl pkey -in "$APP_KEY" -noout >/dev/null 2>&1 \
+      || die "$APP_KEY is not a readable private key"
 
-    set_secret FFGHR_APP_ID "$APP_ID"
-    set_secret FFGHR_APP_INSTALLATION_ID "$APP_INSTALL"
-    set_secret FFGHR_APP_KEY "$DEST"
-    say "recorded App $APP_ID, installation $APP_INSTALL"
+    # The two ids go in config.json, not secrets.env: they identify an App, they do not
+    # authenticate as one. The key is the secret, and it is a file.
+    set_config app_id "$ARG_APP_ID"
+    set_config app_installation_id "$ARG_APP_INSTALL"
+    APP_ID=$ARG_APP_ID
+    APP_INSTALLATION_ID=$ARG_APP_INSTALL
+    say "recorded App $ARG_APP_ID, installation $ARG_APP_INSTALL in $FFGHR_CONFIG"
+  fi
+
+  # Anything left in secrets.env from before the ids moved into config.json. The lines are always
+  # stripped, because gh.sh lets secrets.env win and a stale id shadowing the real one is a very
+  # quiet way to fail. The VALUES are only carried across when this run was not given better ones.
+  if grep -q '^FFGHR_APP_' "$FFGHR_SECRETS" 2>/dev/null; then
+    if [ -z "$ARG_APP_ID" ]; then
+      _sid=$(sed -n 's/^FFGHR_APP_ID=//p' "$FFGHR_SECRETS" | head -1)
+      _sin=$(sed -n 's/^FFGHR_APP_INSTALLATION_ID=//p' "$FFGHR_SECRETS" | head -1)
+      [ -z "$_sid" ] || { set_config app_id "$_sid"; APP_ID=$_sid; }
+      [ -z "$_sin" ] || { set_config app_installation_id "$_sin"; APP_INSTALLATION_ID=$_sin; }
+      say "moved the App ids out of secrets.env and into $FFGHR_CONFIG"
+    else
+      say "dropped the stale App ids in secrets.env; the arguments to this run win"
+    fi
+    _tmp="${FFGHR_SECRETS}.tmp.$$"
+    ( umask 077; grep -v '^FFGHR_APP_' "$FFGHR_SECRETS" > "$_tmp" )
+    mv "$_tmp" "$FFGHR_SECRETS"
+    chmod 0600 "$FFGHR_SECRETS"
   fi
 fi
 
 # --- verify, by doing the real thing -------------------------------------------------------------------
+
+# RE-READ THE CONFIG FIRST. lib/config.sh was sourced at the top, before this script had seeded
+# config.json from the template and before the migration moved an existing one into place, so
+# everything it resolved came from the defaults in code. That is not cosmetic: LABELS defaults to
+# the set INCLUDING self-hosted, and the probe below would register a runner carrying it, which is
+# the one thing section 13 step 1 of the design says must not happen while the old runners are
+# still serving main.yml.
+# shellcheck disable=SC1090
+. "$HERE/lib/config.sh"
 
 . "$HERE/lib/gh.sh"
 

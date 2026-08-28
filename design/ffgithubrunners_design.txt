@@ -63,9 +63,14 @@ slot.sh with the slot number as its argument:
   6. Exit 0. systemd restarts the unit and the slot comes back.
 
 Configuration follows ffbox's convention: defaults in code, overlaid with
-~/.config/ffgithubrunners/config.json, then FFGITHUBRUNNERS_* environment overrides. Secrets live
-beside it in ~/.config/ffgithubrunners/secrets.env at mode 0600, as ffbox keeps its own. The home
-is FinalFactoryTester's, the same one ~/.config/ffbox sits in.
+~/.config/ffbox/githubrunners/config.json, then FFGITHUBRUNNERS_* environment overrides.
+Everything ffbox owns on a machine lives under ~/.config/ffbox, and this is a component of it
+rather than a second product, so it takes a subdirectory there the way the Discord CLI does.
+
+Its own secrets.env at 0600 sits beside that config, NOT in ffbox's ~/.config/ffbox/secrets.env,
+which is an EnvironmentFile for ffbox's units and reaches ffbox's containers. Using a GitHub App
+that file stays empty: the App's two ids are configuration and live in config.json, and its
+private key is github-app.pem beside them, at a fixed path nothing has to record.
 
     slots             1
     watchdog_minutes  120
@@ -92,7 +97,7 @@ webhook, and no inbound port is opened. Container start is about a second.
 
   FinalFactoryTester   runs the supervisor units, and is the same account that runs ffbox and
                        the human's interactive session. Holds the GitHub App private key at
-                       ~/.config/ffgithubrunners/github-app.pem, mode 0600.
+                       ~/.config/ffbox/githubrunners/github-app.pem, mode 0600.
   ffbox-container      owns the rootless Docker daemon and the namespace every job runs in. Its
                        home is empty: no tokens, no credentials, no sudo, no login shell. A
                        container escape lands here and finds nothing.
@@ -235,8 +240,11 @@ Either credential works and lib/gh.sh handles both:
                         installation tokens expire in an hour and no personal account is in the
                         loop, at the cost of more setup.
 
-It lives in ~/.config/ffgithubrunners/secrets.env or, for an App, a key file beside it at mode
-0600, owned by FinalFactoryTester. No container ever sees it. Stage 4 verifies by actually minting
+It lives in ~/.config/ffbox/githubrunners/, as secrets.env for a PAT or a key file for an App,
+mode 0600, owned by FinalFactoryTester. Either needs one organization permission, "Self-hosted
+runners", at write. That covers registering and removing runners and nothing else: it grants no
+access to code, and jobs read the repo with the GITHUB_TOKEN Actions mints per run, which
+main.yml already caps at contents: read. No container ever sees it. Stage 4 verifies by actually minting
 a JIT config, so a wrong permission fails at install time rather than at run time.
 
 JIT config rather than a registration token, so nothing is written to disk: the .credentials and
@@ -342,7 +350,8 @@ a no-op when already satisfied.
                       calling ffbox/egress/ffbox-egress.sh with this system's FFBOX_EGRESS_*
                       values.
     04-github.sh      take App id, installation id and key path, verify the App can mint a JIT
-                      config, write ~/.config/ffgithubrunners/secrets.env.
+                      config, record the ids in config.json and the key at github-app.pem. Takes
+                      no arguments once configured.
     05-services.sh    render ffgithubrunners/systemd/*.template into /etc/systemd/system, enable
                       ffgithubrunners@1 through @SLOTS, start ffgithubrunners.target.
 
@@ -389,7 +398,7 @@ installed from there, so no second copy on disk can disagree with git.
 
 drain is what makes an image update or a slot-count change safe while jobs are running.
 
-drain and slot stop|start write a flag file under ~/.config/ffgithubrunners/ which slot.sh checks
+drain and slot stop|start write a flag file under ~/.config/ffbox/githubrunners/ which slot.sh checks
 before it mints a JIT config, so a drained slot stays running and idle rather than being stopped.
 Nothing there talks to the system manager, which is why the image timer can drain on its own and
 why no account needs a sudoers entry. slots N is the exception: it enables and disables unit
