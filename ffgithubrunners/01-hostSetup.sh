@@ -161,7 +161,26 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
   printf 'logrotate rule:   %s\n' "$([ -r "$LOGROTATE" ] && echo present || echo MISSING)"
   printf 'uidmap:           %s\n' "$(command -v newuidmap >/dev/null 2>&1 && echo present || echo MISSING)"
   printf 'rootless extras:  %s\n' "$(command -v dockerd-rootless.sh >/dev/null 2>&1 && echo present || echo MISSING)"
-  exit 0
+
+  # Exit non-zero if anything above is not in place, so --check is a gate and not just a report.
+  _ok=0
+  have_user "$CUSER"                             || _ok=1
+  in_group "$OWNER" "$CUSER"                     || _ok=1
+  [ -n "$(subid_range /etc/subuid "$CUSER")" ]   || _ok=1
+  [ -n "$(subid_range /etc/subgid "$CUSER")" ]   || _ok=1
+  linger_on "$CUSER"                             || _ok=1
+  [ -r "$TMPFILES" ]                             || _ok=1
+  [ -d "$DAEMON_ROOT" ]                          || _ok=1
+  [ -d "$LOG_DIR" ]                              || _ok=1
+  [ -r "$LOGROTATE" ]                            || _ok=1
+  command -v newuidmap >/dev/null 2>&1           || _ok=1
+  command -v dockerd-rootless.sh >/dev/null 2>&1 || _ok=1
+  if [ "$_ok" -eq 0 ]; then
+    printf '\n--check: the host is provisioned\n'
+  else
+    printf '\n--check: something above is missing\n'
+  fi
+  exit "$_ok"
 fi
 
 # --- packages -------------------------------------------------------------------------------------
