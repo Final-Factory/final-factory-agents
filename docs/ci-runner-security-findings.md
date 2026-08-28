@@ -74,9 +74,17 @@ in the org can therefore use `runs-on: self-hosted` and land on this box, includ
 added later with looser write settings than FinalFactory has.
 
 **Fix.** A runner group scoped to the FinalFactory repository, or repo-level registration. In
-the new design this is a field in the `generate-jitconfig` call.
+the new design this would be a field in the `generate-jitconfig` call.
 
-**Effort:** settings.
+**ACCEPTED, NOT FIXED, on 2026-08-28.** Final-Factory is on the GitHub free plan, where `Default`
+is the only runner group available, and org-wide runners are wanted regardless. Registration
+stays org-scoped. `design/ffgithubrunners_design.txt` section 8 records the decision and section
+14 records what it means: the reach is unchanged, so any repository in the org still routes work
+to this box. What changes is where that work lands, which under that design is a throwaway
+container as `ffghr-run` rather than the host as `FinalFactoryTester`. The remaining control is
+who can create repositories in the org and who holds write access to them.
+
+**Effort:** settings, if it is ever revisited.
 
 ### F3. Runner registration credentials sit on disk, one of them world-readable
 
@@ -258,7 +266,7 @@ likely ones.
    findings partly resolve themselves once it is.
 2. **F7**, trace the git chain and close it. Cheap, needs no vulnerability to exploit, and the
    existing harvest guard does not cover it.
-3. **F2**, scope the runners to one repository. Settings-only.
+3. ~~**F2**, scope the runners to one repository.~~ Accepted on 2026-08-28, see F2.
 4. `docker-security-model.md` known gap 1's remaining half: take the `workflow` scope off the
    host push token.
 5. **F5**, add the container flags. **F3**, JIT config or `chmod 640`. **F9**, confirm the
