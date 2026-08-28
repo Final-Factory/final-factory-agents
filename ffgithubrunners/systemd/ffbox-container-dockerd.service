@@ -1,0 +1,42 @@
+[Unit]
+# The rootless Docker daemon that every job's container runs in, owned by an account that owns
+# nothing else. Installed into @CUSER@'s USER systemd instance, which lingering starts at boot.
+#
+# @SOCK@, @DATAROOT@ and @CUSER@ are substituted by 02-daemon.sh: this repo can be cloned
+# anywhere and the paths come from lib/config.sh. Re-run `sh ffgithubrunners/02-daemon.sh` after
+# changing either.
+#
+# WHY THE USER MANAGER AND NOT A SYSTEM UNIT WITH User=. Rootless Docker gets its cgroup subtree
+# by delegation, and user@.service carries Delegate=yes already. That delegation is what makes
+# --memory and --pids-limit mean anything: without it dockerd accepts both flags and enforces
+# neither, so a job that fills the workspace tmpfs would still take the host into swap and the
+# ceiling in section 12 of the design would be decoration. Confirmed on this box: cgroup2fs, and
+# `systemctl show user@<uid>.service -p Delegate` says yes.
+#
+# NOT under /run/user. -H names a stable path from a tmpfiles.d rule, group-readable by the
+# account that runs the supervisor. /run/user/<uid> is logind's, 0700, on a tmpfs recreated per
+# session, and it does not exist at all for an account that never logs in.
+Description=Docker Application Container Engine (rootless, @CUSER@)
+Documentation=https://docs.docker.com/go/rootless/
+Requires=dbus.socket
+
+[Service]
+Environment=PATH=/usr/bin:/sbin:/usr/sbin:/usr/local/sbin:/usr/local/bin:/bin
+ExecStart=/usr/bin/dockerd-rootless.sh -H unix://@SOCK@ --data-root @DATAROOT@
+ExecReload=/bin/kill -s HUP $MAINPID
+TimeoutSec=0
+RestartSec=2
+Restart=always
+StartLimitBurst=3
+StartLimitInterval=60s
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+Delegate=yes
+Type=notify
+NotifyAccess=all
+KillMode=mixed
+
+[Install]
+WantedBy=default.target
