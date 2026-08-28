@@ -90,10 +90,12 @@ egress() {
   sh "$EGRESS_SH" "$@"
 }
 
-# ffbox-egress.sh's own `log` greps for sni= lines, which in ENFORCE mode shows only what was
-# ALLOWED. A name that is not on the list never reaches the SNI stage at all: dnsmasq answers
-# NXDOMAIN and the connection is never made. So an operator whose job failed on a missing host
-# would run the log and see nothing, and conclude nothing was blocked. Show both halves.
+# ffbox-egress.sh's own `log` greps for sni= lines, and so misses one of the two ways a name is
+# refused. A name whose SUFFIX matches nothing on the list gets NXDOMAIN from dnsmasq and never
+# opens a connection, so it leaves no sni= line at all; only a name that resolved and was then
+# turned away by nginx appears there, as upstream=127.0.0.1:9. An operator whose job failed on a
+# missing host would run the log, see nothing, and conclude nothing was blocked. Show both.
+# docs/egress.md has the full decision path.
 if [ "$EGRESS_LOG" -eq 1 ]; then
   egress log
   printf '\nrefused at DNS (count, name) — these never reached the SNI stage:\n\n'

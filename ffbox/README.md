@@ -866,6 +866,11 @@ sh ffbox/egress/ffbox-egress.sh status    # what is up, and which daemon it was 
 sh ffbox/egress/ffbox-egress.sh log       # every destination asked for, allowed and DENIED
 ```
 
+`log` shows the SNI half only. A name whose suffix matches nothing on the list is refused earlier,
+at DNS, and leaves no `sni=` line at all — which is the most common failure and the one that looks
+like an empty log. `docs/egress.md` has the full decision path, the two instances of this filter
+now running on the box, and how to read both halves.
+
 `01-dockerSetup.sh` builds and starts it; `ffbox-egress.service` rebuilds whatever is missing at
 boot, enabled outside `ffbox.target` so stopping the pipeline does not take the fence down.
 
