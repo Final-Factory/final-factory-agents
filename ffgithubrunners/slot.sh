@@ -131,9 +131,16 @@ unset JIT MINT
 # runner writes into the image's writable layer instead, everything still works, and the entire
 # speed argument for the ram disk quietly evaporates. Both come from $WORK_FOLDER for that reason.
 log "starting $CNAME (workspace tmpfs $WORKSPACE_SIZE at $WORK_FOLDER)"
+# LABELS SO THE REAPER CAN TELL AN ORPHAN FROM A LIVE JOB. A supervisor killed with SIGKILL
+# leaves its container RUNNING and its registration ONLINE, which is indistinguishable from a job
+# in progress unless the container says who is looking after it. The pid is checked against a
+# cmdline, not on its own, because pids are recycled.
 docker run -d \
     --name "$CNAME" \
     --hostname "$CNAME" \
+    --label ffghr.supervisor.pid="$$" \
+    --label ffghr.slot="$SLOT" \
+    --label ffghr.runner.id="$RUNNER_ID" \
     --network "$EGRESS_NET" --dns "$EGRESS_IP" \
     --tmpfs "$WORK_FOLDER:size=$WORKSPACE_SIZE,mode=1777,exec" \
     --cap-drop=ALL \
