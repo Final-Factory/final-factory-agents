@@ -1,0 +1,68 @@
+# ffgithubrunners egress allowlist — the ONLY hostnames a job may reach.
+#
+# One name per line. A bare name matches exactly; a leading "*." matches any subdomain of it (and
+# not the bare domain — list that separately if it is needed). Blank lines and # comments are
+# ignored. Anything absent is refused at the SNI, with the attempt logged.
+#
+# THIS IS NOT ffbox's LIST, and the difference is the point. ffbox's has no GitHub entry at all,
+# deliberately: its container never pushes, the host does. CI has to reach github.com, the Actions
+# broker, LFS, artifact storage and the cache service, and putting those on ffbox's list would
+# hand ffbox's containers a reach they do not have today. Two instances of the same script, two
+# lists.
+#
+# Nothing Anthropic is here. A job runs a workflow, not an agent.
+#
+# HOW TO ADD SOMETHING. Do not guess. Put the proxy in log mode for a few real jobs —
+#     FFBOX_EGRESS_MODE=log sh ffgithubrunners/03-image.sh --egress-only
+# — which permits everything and records every destination, then read the SNIs back out:
+#     sh ffgithubrunners/03-image.sh --egress-log
+# Add what the jobs actually asked for, restart in enforce mode, and confirm nothing new appears.
+#
+# THE IMAGE BUILD IS NOT BEHIND THIS FENCE. `docker build` uses the daemon's default network, so
+# pulling the base image, the runner tarball and gh is unfiltered. Nothing build-time belongs
+# here, and a failing build is never a reason to add a line.
+
+# --- GitHub: the runner itself ------------------------------------------------------------------
+# The runner long-polls the Actions broker for work and reports back through the pipelines
+# service. Both live under actions.githubusercontent.com, on hostnames that carry a shard number
+# (broker., pipelinesghubeus<N>.), which is why this one is a wildcard rather than a list.
+api.github.com
+github.com
+*.actions.githubusercontent.com
+
+# --- GitHub: what a job downloads ---------------------------------------------------------------
+# codeload is actions/checkout fetching the repository; objects. is release assets and the
+# JavaScript actions the runner unpacks. raw. is not used by main.yml today and is deliberately
+# absent.
+codeload.github.com
+objects.githubusercontent.com
+
+# --- Git LFS --------------------------------------------------------------------------------------
+# UNCONFIRMED, and open item (a) is what confirms it. GitHub hands LFS objects out through a
+# signed redirect whose host has changed more than once. Watch a real `git lfs pull` in log mode
+# before trusting either of these.
+github-cloud.s3.amazonaws.com
+*.githubusercontent.com
+
+# --- actions/cache and actions/upload-artifact ----------------------------------------------------
+# UNCONFIRMED. Both go to storage the Actions service names at run time, and on github.com that
+# has been Azure blob storage. main.yml restores a Library cache on every job and uploads two
+# artifacts on every job, so if these are wrong nothing subtle happens: the cache step fails.
+*.blob.core.windows.net
+
+# --- Unity licensing --------------------------------------------------------------------------------
+# What unity-license.sh needs to activate a seat and hand it back. accounts/id/api are the login
+# leg of the -username/-password flow, which is how a Personal serial activates at all.
+license.unity3d.com
+activation.unity3d.com
+api.unity.com
+id.unity.com
+accounts.unity3d.com
+core.cloud.unity3d.com
+public-cdn.cloud.unity3d.com
+
+# --- Unity Package Manager ----------------------------------------------------------------------------
+# A job restores Library/ from the actions cache, so UPM should resolve from that and never come
+# here. Listed because the cost of being wrong is a failed import well into a 90-minute job.
+packages.unity.com
+cdn.packages.unity.com
