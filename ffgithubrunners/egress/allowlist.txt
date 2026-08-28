@@ -12,6 +12,9 @@
 #
 # Nothing Anthropic is here. A job runs a workflow, not an agent.
 #
+# docs/egress.md is the reference: how a name is decided, the two ways one is refused, and why a
+# refused host can leave no trace in the SNI log.
+#
 # HOW TO ADD SOMETHING. Do not guess. Put the proxy in log mode for a few real jobs —
 #     FFBOX_EGRESS_MODE=log sh ffgithubrunners/03-image.sh --egress-only
 # — which permits everything and records every destination, then read the SNIs back out:
