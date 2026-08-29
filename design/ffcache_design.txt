@@ -230,14 +230,36 @@ What the step does:
      current behaviour rather than a tightening.
   3. Extract into $GITHUB_WORKSPACE with --no-same-owner --no-same-permissions.
   4. Sanitize the restored .git — section 11.
-  5. Write the entry name used to /ffghr/out/used, so the host can bump the LRU clock for a job
+  5. Normalise the remote — see below, and it is the difference between this design working and
+     silently doing nothing.
+  6. Write the entry name used to /ffghr/out/used, so the host can bump the LRU clock for a job
      that restores and never saves.
 
-Then actions/checkout does the git update. It is built for a pre-existing repository on a
-persistent self-hosted workspace: it verifies the remote, fetches, and `git checkout --force`s
-the wanted sha; on a remote mismatch it deletes the directory and re-clones, which is the right
-failure mode for a corrupt entry. THIS IS THE ONE LOAD-BEARING ASSUMPTION NOT VERIFIED HERE.
-Section 14.
+Then actions/checkout does the git update, and its contract is now read out of its source rather
+than assumed (src/git-directory-helper.ts, read 2026-08-29). It reuses an existing repository
+unless one of these holds, in which case it DELETES THE CONTENTS of the workspace and re-clones:
+
+  - .git is absent, or
+  - `git config remote.origin.url` differs from the URL it computed, or
+  - `git submodule status` fails, or
+  - clean is on and `git clean -ffdx` or `git reset` fails.
+
+With `clean: false` the last is unreachable and this repository has no .gitmodules, so ONE
+condition decides it: the remote URL, compared as an exact string.
+
+AND IT DOES NOT MATCH BY DEFAULT. src/url-helper.ts getFetchUrl returns
+`${serviceUrl.origin}/${owner}/${name}` — no `.git` suffix — while an ordinary clone's remote has
+one: /opt/FinalFactory's is https://github.com/Final-Factory/FinalFactory.git. An archive seeded
+from golden would lose every time, and lose SILENTLY: the restore does its forty seconds of work,
+checkout deletes the lot, and the job merely looks cold. So the restore sets the remote itself,
+
+    git -C "$GITHUB_WORKSPACE" remote set-url origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+
+which is exactly the string getFetchUrl builds. Confirmed in the runner image: a workspace
+restored from a `.git`-suffixed archive comes out carrying the suffix-free URL.
+
+What is still unproven is only the live half — that checkout, given a matching URL, really does
+fetch rather than clone. Section 14.
 
 The LFS materialisation step at main.yml:33-58 needs no change and earns its keep twice. With
 .git/lfs in the archive `git lfs pull` finds its objects locally and costs nothing, and the
@@ -254,9 +276,16 @@ new one for free.
         run: |
           ... inline ...
 
-NOT `if: success()`. A branch whose tests fail should keep its warm workspace: the expensive
-thing is the import, not the verdict. Today's `if: success()` at main.yml:158 means a branch
-that fails re-imports from cold on every push until it goes green.
+THE CONDITION IS `if: (success() || failure()) && github.event_name == 'push'`, AND THE FIRST
+HALF IS NOT DECORATION. An `if:` expression with no status function implies `success()`, so
+`if: github.event_name == 'push'` on its own would still skip the step whenever the editor step
+failed — reproducing exactly the behaviour being removed. A branch whose tests fail should keep
+its warm workspace: the expensive thing is the import, not the verdict, and today's
+`if: success()` at main.yml:158 is why a failing branch re-imports from cold on every push until
+it goes green.
+
+`always()` is wrong for the other reason: it fires on cancellation too, and tarring twenty
+gigabytes while the watchdog is killing the container helps nobody.
 
 `if: github.event_name == 'push'` is the containment control. A pull_request run restores but
 never writes, which is GitHub's own cache-write scoping, and it also stops PR refs (`123/merge`
@@ -510,9 +539,11 @@ when the mounts are absent.
 14. Acceptance
 --------------
 
-  - actions/checkout@v7 reuses a restored .git rather than deleting it, with clean: false. This
-    is the assumption everything else rests on and it is unverified. Prove it on ffghr-smoke,
-    against a seeded entry, before step 8.
+  - actions/checkout@v7 reuses a restored .git rather than deleting it, with clean: false. The
+    CONDITIONS are settled from the action's source (section 7) and the only one that can decide
+    it here — the remote URL — is now set explicitly by the restore. What is unproven is the live
+    behaviour: that a real job logs a fetch rather than "Deleting the contents of". Prove it on
+    ffghr-smoke against a seeded entry before main.yml is pushed.
   - A cold job (empty cache) succeeds and produces an entry.
   - A warm job restores, and checkout reports a fetch rather than a clone.
   - Restore with /ffcache absent, with no matching entry, and with a truncated archive: all three
