@@ -19,6 +19,20 @@ FAILING job, which is what `(success() || failure())` exists for.
 
 **T21 is answered: yes.** Conditions from the action's source, live behaviour from the run.
 
+**Run 2 (`33280391580` / `33280391579`) with the checkStat fix**, and the Test Runner went green
+end to end — restore, reused checkout, LFS, and a 295s editor step that activated, compiled and
+ran the suite:
+
+| phase | baseline (12 jobs) | run 1 | run 2 |
+|---|---|---|---|
+| checkout | 117s | 130s | **6s** |
+| LFS materialise | 21s | 16s | 16s |
+| cache restore | 108s | 37s | 38s |
+| **total** | **246s** | 183s | **60s** |
+
+T25's headline measurement is done. What is still owed there is a cold restore (open item a) and a
+teardown timed under three concurrent promotions (open item d).
+
 **Three bugs it found, all fixed:**
 
 1. `core.checkStat` — `git checkout --detach` took **124 of the checkout step's 130 seconds**
