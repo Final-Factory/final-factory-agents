@@ -153,10 +153,16 @@ deregistered itself, and a replacement slot came up.
 
 Two things that run did NOT prove.
 
-**Unity activation.** That step made no network connection at all — the proxy logged no `sni=`
-line for any Unity host. The step was `continue-on-error`, so the job went green regardless. This
-is the largest untested surface left and `main.yml` should not move until a real activation
-succeeds and returns its seat.
+**Unity activation** was proved on the second attempt, once `unity-license.sh` learned to decode
+the serial out of `UNITY_LICENSE` and, crucially, once the image was REBUILT to contain that fix.
+The step log reads: serial decoded, `activating (attempt 1/5)`, `activated`, `returning the Unity
+seat`, with `status=200` traffic to `license.`, `activation.`, `core.cloud.` and
+`public-cdn.cloud.unity3d.com`.
+
+The run also refused `download.packages.unity.com`, now added. It is the worked example of the
+second refusal path in `docs/egress.md`: the bare `packages.unity.com` entry let dnsmasq resolve
+the subdomain by suffix, so it reached nginx, whose match is exact, and hit the deny sink with a
+logged `sni=` line.
 
 **Where a job's output goes.** `logs N` shows the runner's lifecycle, not the job's steps: the
 runner streams step output to GitHub and only its own lines reach stdout. Read a job in the GitHub
@@ -164,12 +170,14 @@ UI. The local log is for the runner's health.
 
 ## Known open items
 
-- **(a)** MOSTLY CLOSED 2026-08-29. GitHub, LFS and the cache/artifact hosts are confirmed from a
-  real job; `github-cloud.s3.amazonaws.com` was a wrong guess and is removed. The Unity hosts are
-  still unexercised, and `api.github.com` has not been seen because the smoke workflow has no step
-  that calls `gh`.
+- **(a)** CLOSED for everything a smoke job exercises, 2026-08-29. GitHub, LFS, cache/artifact and
+  Unity licensing are all confirmed from real jobs; `github-cloud.s3.amazonaws.com` was a wrong
+  guess and is removed; `download.packages.unity.com` was a real refusal and is added. Still
+  unexercised: `api.github.com` (no step calls `gh`) and a cold UPM resolve, which only a real
+  import reaches.
 - **(b)** `--pids-limit` has never been measured against a real Unity import.
 - **(c)** Whether `--read-only` is tolerable is untested; the runner writes `_diag` regardless.
-- **(d)** Whether the watchdog's TERM reaches the Unity licence trap. PID 1 in the container is
-  `Runner.Listener` and the trap is two processes below it, so a watchdog kill may leak a seat.
-  Needs a real Unity job to settle.
+- **(d)** Whether the WATCHDOG's TERM reaches the Unity licence trap. Still open. What 2026-08-29
+  proved is only the easy half: the trap fires on a normal step exit and returns the seat. A
+  watchdog kill is the untested path, because PID 1 is `Runner.Listener` and the trap is two
+  processes below it. Settling it needs a job killed mid-activation, which is T49.
