@@ -536,6 +536,25 @@ running. After it, revert one commit.
      Removed github-cloud.s3.amazonaws.com, which nothing used. Added download.packages.unity.com,
      which was refused. Still unexercised: api.github.com and a cold UPM resolve.
   b. --pids-limit needs a number a real Unity import does not trip.
+  e. CONCURRENT UNITY JOBS CANNOT ACTIVATE, which blocks slots > 1. Every container built from
+     this image carries the SAME /etc/machine-id: measured 2026-08-29, two fresh containers both
+     report 576562626572264761624c65526f7578, baked into the layer by the unityci/editor base.
+     Unity's licensing service therefore sees all three slots as ONE machine, a Personal licence
+     holds one seat per machine, and the second concurrent activation gets "Found 0 entitlement
+     groups and 0 free entitlements" and exit 198. Observed live: one job held a seat from
+     23:00:49 to 23:01:03 and another began activating at 23:00:51.
+
+     GAME-CI DID NOT HAVE THIS PROBLEM. Its entrypoint runs `dbus-uuidgen > /etc/machine-id`
+     whenever the serial starts with F, so each of the four parallel containers presented as a
+     brand-new machine. ffbox/entrypoint.sh:11-15 records that ffbox deliberately does NOT copy
+     that, because an agent loop re-running constantly would burn an activation every time.
+     Nothing in this image, unity-license.sh or entrypoint.sh does it, and nothing replaced it.
+
+     ffbox's reasoning does not carry over here: a slot container is single-use, dies after one
+     job, and unity-license.sh returns the seat from its trap, so the churn is bounded by job
+     count rather than by a loop. Copying game-ci's line is the obvious fix and wants checking
+     against the licence's activation ceiling first. The alternatives are serialising the editor
+     across slots with a host lock, or running one slot.
 
   d. Whether the watchdog's TERM reaches the licence trap. PID 1 in the container is
      Runner.Listener and the trap is two processes below it, so the seat may not come back on a
