@@ -504,6 +504,20 @@ is proven, so: land sections 1-11, let develop build an entry, prove the extract
 then delete the import. `ffgithubrunners cache seed` should tar golden's existing warm Library
 into the default-branch entry so the first CI job is not cold either.
 
+SEEDING READS A ZFS SNAPSHOT, NOT THE LIVE TREE, and that is not fastidiousness. Golden is a
+working checkout that ffbox, the updater and a person all write to, and a five-minute tar across a
+live .git is a race it will eventually lose. The first attempt died on
+
+    tar: ./.git: file changed as we read it
+
+because a commit landed while it read; GNU tar exits 1, the .part is discarded, and five minutes
+are gone. `zfs snapshot rpool/ff/golden@ffbox-<name>` is atomic and the snapshot is readable at
+`/opt/FinalFactory/.zfs/snapshot/<name>`, which removes the race rather than narrowing it. The
+name must start with `ffbox-` to satisfy the existing NOPASSWD rule in /etc/sudoers.d/ffbox, so
+this needs no new privilege. The golden lock is still taken, but now only across the snapshot
+itself — a second rather than five minutes — because a snapshot taken mid-import would capture a
+half-built Library, which is 04-warmLibrary.sh:89-91's own reason for holding it.
+
 WHILE HERE, a factual error to fix. update_ffbox.sh justifies its unconditional setup.sh call by
 saying "the Unity warm skips outright when golden already has a Library/". It does not:
 04-warmLibrary.sh logs "Library/ already present ... re-importing to pick up the changes just
