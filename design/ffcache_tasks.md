@@ -60,8 +60,17 @@ final measurements once the checkStat fix has a run behind it.
 
 **Never edit `slot.sh` (or anything it sources) in place while slots are running.** `sh` reads a
 script lazily by byte offset, so rewriting the file underneath a running shell can make it execute
-garbage. Three slots survived it here, which was luck rather than design. Run
-`ffgithubrunners drain`, wait for the containers to go, edit, then `resume`.
+garbage. Three slots survived it here, which was luck rather than design. Write the new text to a
+temp file and `mv` it over: rename replaces the directory entry while the running shell keeps its
+fd on the old inode, which is safe where an in-place rewrite is not. `ffgithubrunners drain` works
+too and is what to use when the edit has to take effect immediately.
+
+**And a rename does not make the change TAKE EFFECT.** `lib/config.sh` is sourced once at slot
+start, so a supervisor already running keeps the definitions it read then. The LRU sidecar fix was
+written at 19:10:01; slot 3 had started at 19:01:16 and went on logging the EPERM it was meant to
+cure until its next recycle, while slot 2 (19:13:00) had it immediately. Slots self-correct one
+job at a time, so this is usually fine — but do not read one stale slot's log as the fix having
+failed.
 
 **A unit-template change does not reach systemd on its own.** Editing
 `systemd/ffgithubrunners@.service` in the checkout changes nothing until
