@@ -60,7 +60,7 @@ ffgithubrunners slot stop|start N   idle one slot, or return it
 ffgithubrunners drain | resume      let running jobs finish, start no replacements
 ffgithubrunners image update        rebuild with a current runner tarball
 ffgithubrunners reap                sweep orphans now
-ffgithubrunners logs [N]            the last job's log for one slot
+ffgithubrunners logs [N]            the RUNNER's log for one slot (not the job's output)
 ```
 
 Only `slots N` needs privilege, and it asks for it: it enables and disables systemd unit instances.
@@ -79,7 +79,7 @@ sudoers entry.
   secrets.env          empty on an App install; only a PAT goes here
   drain, slot-N.stop   the flag files behind drain and slot stop
 
-/var/log/ffgithubrunners/slot-N.log    what a job printed, rotated daily
+/var/log/ffgithubrunners/slot-N.log    the runner's own lifecycle lines, rotated daily
 /opt/ffbox_container_docker            the daemon's store, its own dataset, 64G quota
 /run/ffbox-container/docker.sock       the daemon, 0750 dir, group-readable by the supervisor
 ```
@@ -122,7 +122,7 @@ real job reach for them, and that is open item (a).
 ```sh
 ffgithubrunners status                          almost always says it
 journalctl -u 'ffgithubrunners@*' -f            the supervisor's own view
-ffgithubrunners logs 1                          what the job printed
+ffgithubrunners logs 1                          the runner's lifecycle, NOT the job's steps
 sh ffgithubrunners/03-image.sh --egress-log     what the fence allowed and refused
 sh ffgithubrunners/01-hostSetup.sh --check      the host, as a gate
 sh ffgithubrunners/02-daemon.sh --check         the daemon, and whether it is reachable
@@ -144,9 +144,30 @@ manual `reset-failed`. If you see one, the reason is in the journal and is worth
 `image update` that was killed between draining and its cleanup trap leaves the flag set, and the
 flag records the pid and time that set it.
 
+## What a real job proved, and what it did not
+
+The `ffghr-smoke` workflow ran on 2026-08-29 and **succeeded** in 3m44s: `actions/checkout@v7`
+with `lfs: true`, git-lfs smudging 3190 files, `actions/cache/restore` and `upload-artifact`, all
+through the fence in enforce mode with **nothing refused**. Teardown was clean, the runner
+deregistered itself, and a replacement slot came up.
+
+Two things that run did NOT prove.
+
+**Unity activation.** That step made no network connection at all — the proxy logged no `sni=`
+line for any Unity host. The step was `continue-on-error`, so the job went green regardless. This
+is the largest untested surface left and `main.yml` should not move until a real activation
+succeeds and returns its seat.
+
+**Where a job's output goes.** `logs N` shows the runner's lifecycle, not the job's steps: the
+runner streams step output to GitHub and only its own lines reach stdout. Read a job in the GitHub
+UI. The local log is for the runner's health.
+
 ## Known open items
 
-- **(a)** The allowlist is incomplete. LFS and the cache/artifact hosts are unconfirmed.
+- **(a)** MOSTLY CLOSED 2026-08-29. GitHub, LFS and the cache/artifact hosts are confirmed from a
+  real job; `github-cloud.s3.amazonaws.com` was a wrong guess and is removed. The Unity hosts are
+  still unexercised, and `api.github.com` has not been seen because the smoke workflow has no step
+  that calls `gh`.
 - **(b)** `--pids-limit` has never been measured against a real Unity import.
 - **(c)** Whether `--read-only` is tolerable is untested; the runner writes `_diag` regardless.
 - **(d)** Whether the watchdog's TERM reaches the Unity licence trap. PID 1 in the container is
