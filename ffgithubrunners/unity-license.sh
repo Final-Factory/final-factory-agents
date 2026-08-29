@@ -69,16 +69,62 @@ activate_unity() {
     return 1
 }
 
+# THE ULF-TO-SERIAL DECODE, which is what game-ci does and what this script did not.
+#
+# Final Factory activates on a PERSONAL licence, so main.yml's secret is UNITY_LICENSE — the
+# contents of a .ulf file — and UNITY_SERIAL is empty. Activation itself is an online serial
+# activation and needs a 27-character serial, which is carried base64-encoded in the .ulf's
+# DeveloperData field. game-ci decodes it; ffbox/04-warmLibrary.sh:146 decodes it; this did not,
+# so it demanded a serial CI never sets and bailed before making a single network call.
+#
+# Measured on 2026-08-29: the smoke job's licence step exited 78 with "missing Unity credentials:
+# UNITY_SERIAL" and the egress proxy logged no Unity connection at all.
+#
+# UNITY_LICENSE is the contents (a CI secret); UNITY_LICENSE_FILE is a path (how ffbox holds it).
+# Both are accepted, contents first, because that is what a workflow passes.
+decode_serial_from_ulf() {
+    local ulf=""
+    if [ -n "${UNITY_LICENSE:-}" ]; then
+        ulf=$UNITY_LICENSE
+    elif [ -n "${UNITY_LICENSE_FILE:-}" ] && [ -r "${UNITY_LICENSE_FILE}" ]; then
+        ulf=$(cat "$UNITY_LICENSE_FILE")
+    else
+        return 1
+    fi
+
+    local serial
+    serial=$(printf '%s' "$ulf" \
+             | sed -n 's/.*<DeveloperData Value="\([^"]*\)".*/\1/p' \
+             | head -1 | base64 -d 2>/dev/null | cut -c5-)
+    if [ ${#serial} -ne 27 ]; then
+        log "WARNING: decoded a ${#serial}-character serial from the licence; expected 27"
+        return 1
+    fi
+    UNITY_SERIAL=$serial
+    export UNITY_SERIAL
+    log "decoded a serial from UNITY_LICENSE (ending ...${serial: -4})"
+    return 0
+}
+
 # Activate, or fail the job. A job that starts Unity unlicensed does not fail: it runs, produces
 # nothing usable, and the reason is buried 4000 lines into an editor log. Fail here instead.
 ensure_unity_license() {
     local missing="" v
+
+    # No serial, but a licence to decode one out of: do what game-ci does.
+    if [ -z "${UNITY_SERIAL:-}" ]; then
+        decode_serial_from_ulf || true
+    fi
+
     for v in UNITY_SERIAL UNITY_EMAIL UNITY_PASSWORD; do
         [ -n "${!v:-}" ] || missing="${missing} ${v}"
     done
     if [ -n "$missing" ]; then
         log "ERROR: missing Unity credentials:${missing}"
         log "       these come from the workflow's env: block, out of repository secrets"
+        log "       UNITY_SERIAL may be empty on purpose: on a Personal licence the serial is"
+        log "       carried inside UNITY_LICENSE, and this script decodes it. If UNITY_SERIAL is"
+        log "       still missing here, UNITY_LICENSE was empty or not a readable .ulf."
         exit 78
     fi
     if ! activate_unity; then
