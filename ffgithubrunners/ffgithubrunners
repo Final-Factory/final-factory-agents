@@ -293,7 +293,7 @@ cmd_cache() {
                # Same exclusions as the save step in main.yml. Kept in step by hand, which is a
                # real cost; if they drift, the archive is merely bigger, never wrong.
                if tar -cf "$_tmp" -C "$_readfrom" \
-                       --exclude=./Temp --exclude=./Logs --exclude=./UserSettings \
+                       --exclude=./Temp --exclude=./UserSettings \
                        --exclude='./*-artifacts' \
                        --exclude=./Library/UnityLockfile --exclude=./Library/EditorInstance.json \
                        --exclude=./.git/index.lock --exclude=./.git/hooks \
