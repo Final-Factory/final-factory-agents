@@ -1,0 +1,91 @@
+# ffgithubrunners egress allowlist — the ONLY hostnames a job may reach.
+#
+# One name per line. A bare name matches exactly; a leading "*." matches any subdomain of it (and
+# not the bare domain — list that separately if it is needed). Blank lines and # comments are
+# ignored. Anything absent is refused at the SNI, with the attempt logged.
+#
+# THIS IS NOT ffbox's LIST, and the difference is the point. ffbox's has no GitHub entry at all,
+# deliberately: its container never pushes, the host does. CI has to reach github.com, the Actions
+# broker, LFS, artifact storage and the cache service, and putting those on ffbox's list would
+# hand ffbox's containers a reach they do not have today. Two instances of the same script, two
+# lists.
+#
+# Nothing Anthropic is here. A job runs a workflow, not an agent.
+#
+# docs/egress.md is the reference: how a name is decided, the two ways one is refused, and why a
+# refused host can leave no trace in the SNI log.
+#
+# HOW TO ADD SOMETHING. Do not guess. Put the proxy in log mode for a few real jobs —
+#     FFBOX_EGRESS_MODE=log sh ffgithubrunners/03-image.sh --egress-only
+# — which permits everything and records every destination, then read the SNIs back out:
+#     sh ffgithubrunners/03-image.sh --egress-log
+# Add what the jobs actually asked for, restart in enforce mode, and confirm nothing new appears.
+#
+# THE IMAGE BUILD IS NOT BEHIND THIS FENCE. `docker build` uses the daemon's default network, so
+# pulling the base image, the runner tarball and gh is unfiltered. Nothing build-time belongs
+# here, and a failing build is never a reason to add a line.
+
+# --- GitHub: the runner itself ------------------------------------------------------------------
+# CONFIRMED by a real job on 2026-08-29. The wildcard earned itself: one job touched seven
+# distinct hosts under it — broker., pipelinesghubeus14., token., run., launch.,
+# results-receiver. and run-actions-3-azure-eastus. — which no hand-written list would have
+# anticipated. Do not try to enumerate these.
+github.com
+*.actions.githubusercontent.com
+
+# NOT yet seen from a job. main.yml's cache-pruning step calls gh, which needs it; the smoke
+# workflow has no such step, so this stays on the list unconfirmed.
+api.github.com
+
+# --- GitHub: what a job downloads ---------------------------------------------------------------
+# codeload CONFIRMED 2026-08-29: actions/checkout fetches the repository through it. objects. is
+# release assets and the JavaScript actions the runner unpacks; not seen separately because
+# *.githubusercontent.com below already covers it. raw. is not used by main.yml and stays absent.
+codeload.github.com
+objects.githubusercontent.com
+
+# --- Git LFS --------------------------------------------------------------------------------------
+# CONFIRMED 2026-08-29: actions/checkout with lfs: true smudges through git-lfs filter-process,
+# and the objects came from github-cloud.githubusercontent.com. github-cloud.s3.amazonaws.com was
+# a guess and went untouched, so it is gone: an allowlist entry nothing uses is only extra reach.
+#
+# Still a wildcard rather than the one observed host. GitHub has moved LFS storage before, and one
+# job is thin evidence that the shard name is stable. Narrow it to github-cloud. once a few more
+# jobs agree.
+*.githubusercontent.com
+
+# --- actions/cache and actions/upload-artifact ----------------------------------------------------
+# CONFIRMED 2026-08-29: upload-artifact went to productionresultssa5.blob.core.windows.net. The
+# shard number is why this stays a wildcard. main.yml restores a Library cache and uploads two
+# artifacts on every job, so if this were wrong the failure would be loud rather than subtle.
+*.blob.core.windows.net
+
+# --- Unity licensing --------------------------------------------------------------------------------
+# CONFIRMED 2026-08-29 by a real activation that succeeded on the first attempt and returned its
+# seat. Four of these carried traffic: license.unity3d.com, activation.unity3d.com,
+# core.cloud.unity3d.com and public-cdn.cloud.unity3d.com. The accounts/id/api entries are the
+# login leg of the -username/-password flow and stay listed even though this activation did not
+# need them.
+#
+# What unity-license.sh needs to activate a seat and hand it back.
+license.unity3d.com
+activation.unity3d.com
+api.unity.com
+id.unity.com
+accounts.unity3d.com
+core.cloud.unity3d.com
+public-cdn.cloud.unity3d.com
+
+# --- Unity Package Manager ----------------------------------------------------------------------------
+# A job restores Library/ from the actions cache, so UPM should resolve from that and never come
+# here. Listed because the cost of being wrong is a failed import well into a 90-minute job.
+#
+# download.packages.unity.com was REFUSED on 2026-08-29 and added as a result. It is also a worked
+# example of the second refusal path in docs/egress.md: the bare entry `packages.unity.com` made
+# dnsmasq resolve the subdomain by suffix, so it reached nginx, whose match is exact, and landed in
+# the deny sink with a logged sni= line. A name with no matching suffix would have died at DNS with
+# no sni= line at all. The activation still succeeded, so this was not fatal here — but a cold UPM
+# resolve in a real import is exactly where it would be.
+packages.unity.com
+cdn.packages.unity.com
+download.packages.unity.com

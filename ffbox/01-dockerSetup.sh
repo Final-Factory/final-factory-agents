@@ -663,7 +663,7 @@ else
 # daemon owned by $OWNER. Without this, docker(1) finds the root daemon's socket instead and
 # silently operates on the wrong images, networks and containers.
 if [ "\$(id -u)" = "$_uid" ] && [ -z "\${DOCKER_HOST:-}" ]; then
-    DOCKER_HOST="unix://$_sock"
+    DOCKER_HOST="unix://${FFBOX_DOCKER_SOCK:-/run/ffbox-container/docker.sock}"
     export DOCKER_HOST
 fi
 PROF

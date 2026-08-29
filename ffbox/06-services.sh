@@ -213,7 +213,18 @@ render_units() {
         echo "06-services.sh: cannot resolve a uid for '$RUN_USER'" >&2
         exit 1
     fi
-    _dockersock="/run/user/$_uid/docker.sock"
+    # THE SHARED DAEMON, NOT THE OWNER'S OWN. ffbox used to run its containers on a rootless
+    # daemon belonging to $RUN_USER at /run/user/<uid>/docker.sock. It now uses the one
+    # ffgithubrunners brought up under ffbox-container, so both systems run on one daemon under
+    # an account that owns nothing. See section 17 of design/ffgithubrunners_design.txt.
+    #
+    # FFBOX_DOCKER_SOCK overrides it for a machine that has not migrated.
+    _dockersock=${FFBOX_DOCKER_SOCK:-/run/ffbox-container/docker.sock}
+    if [ ! -S "$_dockersock" ] && [ -S "/run/user/$_uid/docker.sock" ]; then
+        say "WARNING: $_dockersock is absent but /run/user/$_uid/docker.sock exists."
+        say "         Rendering units for the shared daemon anyway; run 02-daemon.sh to bring it up,"
+        say "         or set FFBOX_DOCKER_SOCK to pin this machine to the old one."
+    fi
     mkdir -p "$_dest"
     for u in $DOCKER_UNITS $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
         sed -e "s|@FFWATCH@|$HERE/ffwatch.py|g" \

@@ -1,0 +1,11 @@
+[Unit]
+Description=ffgithubrunners: sweep every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+# A reboot is the case this exists for, so do not skip the boot run.
+Persistent=false
+
+[Install]
+WantedBy=timers.target
