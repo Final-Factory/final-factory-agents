@@ -7,6 +7,30 @@ and most tasks inside a phase can be done in any order.
 Effort sizes: **S** under an hour, **M** an afternoon, **L** a day or more, **?** the shape is not
 known until something is measured.
 
+## Status, 2026-08-29
+
+**Done and committed.** T1-T16, and T21 as far as it can be answered without a live job.
+
+- Phases A and B (T1-T12) — `ffgithubrunners` commit "ffcache phases A and B". Tested against a
+  sandbox cache directory and, for the mounts and the uid map, against the real image.
+- Phase C (T13-T16) — FinalFactory commit "ffcache phase C". **Committed, deliberately not
+  pushed:** with no `/opt/ffcache` the steps no-op correctly, but every job would then pay a
+  42-minute cold import instead of the warm restore `actions/cache` gives today. It goes out after
+  provisioning and seeding, not before.
+- T21 — the CONDITIONS are settled from `actions/checkout`'s source and one of them turned out to
+  be a trap; see gap 8. The live half is still owed.
+
+**Blocked on root.** `01-hostSetup.sh` cannot run: `zfs create` and `chown` to another account
+need privilege, and sudo here is password-gated for everything outside the narrow NOPASSWD list in
+`/etc/sudoers.d/ffbox`. One command:
+
+    sudo sh /opt/final-factory-agents-2/ffgithubrunners/01-hostSetup.sh
+
+then `ffgithubrunners cache seed`, then T21 on ffghr-smoke, then push phase C.
+
+**Not started.** T17-T20 (phase D, retiring the warm cron) and T22-T25 (proving), both of which
+need a provisioned cache first.
+
 ## What already exists, and what does not
 
 - **`slot.sh` mounts nothing today.** The `docker run` at `slot.sh:145-161` has `--tmpfs` and no
@@ -34,8 +58,8 @@ known until something is measured.
 
 ## Design gaps, and how they were closed
 
-Cross-checking the design against the tree turned up seven. Six are settled and folded into the
-task they affect. One is empirical and is T21.
+Cross-checking the design against the tree turned up seven, and implementing it turned up two
+more. Eight are settled and folded into the task they affect. One is empirical and is T21.
 
 1. **The size table was measured on a full clone.** `/opt/FinalFactory` is golden, cloned at full
    depth; CI is depth-1, so `.git/objects` is a single-commit pack rather than golden's 1.3 G of
@@ -55,8 +79,22 @@ task they affect. One is empirical and is T21.
 6. **The golden extract has to hold the golden lock.** `04-warmLibrary.sh:89-91` already takes it
    for the import; an extract has the identical hazard (a run snapshotting golden mid-write) and
    the identical fix. Folded into T18.
-7. **Not closed: does `actions/checkout@v7` reuse a restored `.git`?** Everything downstream of
-   T21 depends on it. It is first in the running order for that reason.
+7. **Mostly closed: does `actions/checkout@v7` reuse a restored `.git`?** Its source settles the
+   conditions (`src/git-directory-helper.ts`): it recreates the directory only if `.git` is
+   absent, the remote URL differs, `git submodule status` fails, or a clean/reset fails. With
+   `clean: false` the last is unreachable and this repository has no `.gitmodules`, so only the
+   URL decides. The live confirmation is still owed and is T21.
+8. **New, and it would have silently wasted the whole design.** `getFetchUrl`
+   (`src/url-helper.ts`) builds `${origin}/${owner}/${name}` with NO `.git` suffix, and an
+   ordinary clone's remote HAS one — `/opt/FinalFactory`'s is
+   `https://github.com/Final-Factory/FinalFactory.git`. A mismatch does not merely skip the reuse:
+   it DELETES THE CONTENTS of the workspace, restored Library included, and the job just looks
+   cold. The restore step now sets the remote to `$GITHUB_SERVER_URL/$GITHUB_REPOSITORY` itself.
+   Folded into T13.
+9. **`if:` with no status function implies `success()`.** `if: github.event_name == 'push'` alone
+   would have skipped the save whenever the editor step failed — reproducing the exact behaviour
+   the design set out to remove. The condition is
+   `(success() || failure()) && github.event_name == 'push'`. Folded into T16.
 
 ---
 
