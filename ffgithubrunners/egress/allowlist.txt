@@ -61,12 +61,13 @@ objects.githubusercontent.com
 *.blob.core.windows.net
 
 # --- Unity licensing --------------------------------------------------------------------------------
-# STILL UNCONFIRMED after the 2026-08-29 smoke run. The licence step in that job never opened a
-# connection at all — no sni= line for any host below — so nothing here has been exercised. It is
-# the largest untested surface left, and main.yml cannot move until a real activation succeeds.
+# CONFIRMED 2026-08-29 by a real activation that succeeded on the first attempt and returned its
+# seat. Four of these carried traffic: license.unity3d.com, activation.unity3d.com,
+# core.cloud.unity3d.com and public-cdn.cloud.unity3d.com. The accounts/id/api entries are the
+# login leg of the -username/-password flow and stay listed even though this activation did not
+# need them.
 #
-# What unity-license.sh needs to activate a seat and hand it back. accounts/id/api are the login
-# leg of the -username/-password flow, which is how a Personal serial activates at all.
+# What unity-license.sh needs to activate a seat and hand it back.
 license.unity3d.com
 activation.unity3d.com
 api.unity.com
@@ -78,5 +79,13 @@ public-cdn.cloud.unity3d.com
 # --- Unity Package Manager ----------------------------------------------------------------------------
 # A job restores Library/ from the actions cache, so UPM should resolve from that and never come
 # here. Listed because the cost of being wrong is a failed import well into a 90-minute job.
+#
+# download.packages.unity.com was REFUSED on 2026-08-29 and added as a result. It is also a worked
+# example of the second refusal path in docs/egress.md: the bare entry `packages.unity.com` made
+# dnsmasq resolve the subdomain by suffix, so it reached nginx, whose match is exact, and landed in
+# the deny sink with a logged sni= line. A name with no matching suffix would have died at DNS with
+# no sni= line at all. The activation still succeeded, so this was not fatal here — but a cold UPM
+# resolve in a real import is exactly where it would be.
 packages.unity.com
 cdn.packages.unity.com
+download.packages.unity.com

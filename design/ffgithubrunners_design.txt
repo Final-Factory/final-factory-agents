@@ -504,8 +504,12 @@ running. After it, revert one commit.
 15. Open items
 --------------
 
-  a. The allowlist of section 3 is incomplete. Run the proxy in log mode for a few real jobs to
-     find every host the runner, artifact upload and actions/cache actually use.
+  a. CLOSED for what a smoke job reaches, 2026-08-29, and by watching enforce mode rather than log
+     mode: the refusals show up as NXDOMAIN or deny-sink lines either way. Confirmed from real
+     jobs: github.com, codeload, seven hosts under *.actions.githubusercontent.com, LFS at
+     github-cloud.githubusercontent.com, artifacts at *.blob.core.windows.net, and Unity licensing.
+     Removed github-cloud.s3.amazonaws.com, which nothing used. Added download.packages.unity.com,
+     which was refused. Still unexercised: api.github.com and a cold UPM resolve.
   b. --pids-limit needs a number a real Unity import does not trip.
 
   d. Whether the watchdog's TERM reaches the licence trap. PID 1 in the container is
