@@ -155,6 +155,134 @@ _ffghr_set LOG_DIR          log_dir          /var/log/ffgithubrunners
 _ffghr_set DAEMON_ROOT      daemon_root      /opt/ffbox_container_docker
 _ffghr_set DAEMON_QUOTA     daemon_quota     64G
 
+# --- the workspace cache ------------------------------------------------------------------------
+# design/ffcache_design.txt. One tar per branch under $CACHE_DIR/entries, mounted read-only into
+# every job; a job writes a candidate into its own $CACHE_DIR/staging/slot-N and the SUPERVISOR
+# decides whether that becomes an entry.
+#
+# AN EMPTY cache_dir DISABLES THE WHOLE FEATURE, and that is the point of it being a knob: it
+# restores section 5 of the runner design exactly — no bind mounts, nothing a job writes reaching
+# the next job. Every consumer gates on ffghr_cache_ready, so an unprovisioned machine runs jobs
+# with no cache and no error rather than failing.
+_ffghr_set CACHE_DIR        cache_dir        /opt/ffcache
+_ffghr_set CACHE_KEEP       cache_keep       10
+# Ten entries at ~16G, plus three slots staging up to 16G each while they run: 208G worst case.
+# Not a round number picked for looking round.
+_ffghr_set CACHE_QUOTA      cache_quota      250G
+
+FFGHR_CACHE_ENTRIES=${CACHE_DIR:+$CACHE_DIR/entries}
+FFGHR_CACHE_STAGING=${CACHE_DIR:+$CACHE_DIR/staging}
+FFGHR_CACHE_LOCK=${CACHE_DIR:+$CACHE_DIR/.prune.lock}
+
+ffghr_cache_ready() {
+    [ -n "$CACHE_DIR" ] || return 1
+    [ -d "$FFGHR_CACHE_ENTRIES" ] && [ -d "$FFGHR_CACHE_STAGING" ]
+}
+
+ffghr_cache_stage_dir() { printf '%s/slot-%s\n' "$FFGHR_CACHE_STAGING" "$1"; }
+
+# THE ONE REGEX, AND IT IS THE WHOLE PATH-TRAVERSAL DEFENCE. A job proposes a name; this decides
+# whether that string is a name at all. It lives here rather than being written out in slot.sh and
+# reap.sh separately, because two copies of a security check is one copy too many.
+#
+#   <sanitized branch>@<scope>.tar
+#
+# The branch field cannot contain '@': main.yml sanitizes with s/[^a-zA-Z0-9._-]/-/g, so the split
+# on the FIRST '@' is unambiguous. '--' would not do — feature/foo--bar keeps its dashes.
+ffghr_cache_name_ok() {
+    case "${1:-}" in
+        ""|*..*|*/*|.*) return 1 ;;
+    esac
+    printf '%s' "$1" | grep -qE '^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+\.tar$'
+}
+
+ffghr_cache_branch_of() { printf '%s' "${1%%@*}"; }
+
+# Run a cache mutation under the one lock in the system. Three slots can finish together and
+# reap.sh can fire in the middle of it; the read path never takes this, because promotion is a
+# rename and a reader cannot observe a partial entry.
+ffghr_cache_with_lock() {
+    [ -n "$FFGHR_CACHE_LOCK" ] || return 1
+    (
+        flock -w 120 9 || { printf 'ffcache: could not take %s within 120s\n' "$FFGHR_CACHE_LOCK" >&2; exit 1; }
+        "$@"
+    ) 9>>"$FFGHR_CACHE_LOCK"
+}
+
+# Bump an entry's LRU clock. The name came from a job, so it is validated exactly like a promotion
+# candidate before anything is touched.
+ffghr_cache_touch() {
+    ffghr_cache_name_ok "${1:-}" || return 1
+    [ -f "$FFGHR_CACHE_ENTRIES/$1" ] || return 1
+    touch -- "$FFGHR_CACHE_ENTRIES/$1"
+}
+
+# Keep the $CACHE_KEEP newest entries by mtime, delete the rest. Call under the lock.
+# Prints one line per deletion so the caller can log what actually changed.
+ffghr_cache_prune() {
+    [ -d "$FFGHR_CACHE_ENTRIES" ] || return 0
+    _keep=${CACHE_KEEP:-10}
+    case "$_keep" in ''|*[!0-9]*) _keep=10 ;; esac
+    # -maxdepth 1 so a directory somebody drops in here is never walked into. Newest first by
+    # mtime, then everything past the keep count goes.
+    find "$FFGHR_CACHE_ENTRIES" -maxdepth 1 -type f -name '*@*.tar' -printf '%T@ %p\n' 2>/dev/null \
+        | sort -rn | tail -n +$((_keep + 1)) | cut -d' ' -f2- \
+        | while IFS= read -r _f; do
+              [ -n "$_f" ] || continue
+              rm -f -- "$_f" && printf 'pruned %s\n' "$(basename -- "$_f")"
+          done
+    unset _keep
+}
+
+# Promote whatever one slot left in its staging directory. Call under the lock.
+# $1 = staging directory. Prints what it did; returns 0 even when there was nothing to do, because
+# a job that did not ask for a save is the normal case and not a failure.
+ffghr_cache_promote() {
+    _stage=${1:?ffghr_cache_promote needs a staging directory}
+    [ -d "$_stage" ] || { unset _stage; return 0; }
+
+    # The LRU bump first, so a job that restored and then failed before saving still counts as a
+    # use. Unconditional and idempotent: a job that also saved simply touches its entry twice.
+    if [ -f "$_stage/used" ]; then
+        _used=$(head -c 256 "$_stage/used" 2>/dev/null | tr -d '\r\n')
+        if ffghr_cache_touch "$_used"; then
+            printf 'bumped %s\n' "$_used"
+        else
+            printf 'ignored an unusable used marker\n'
+        fi
+        unset _used
+    fi
+
+    [ -f "$_stage/ffcache.tar" ] && [ -f "$_stage/ffcache.name" ] || { unset _stage; return 0; }
+
+    _name=$(head -c 256 "$_stage/ffcache.name" 2>/dev/null | tr -d '\r\n')
+    if ! ffghr_cache_name_ok "$_name"; then
+        printf 'REJECTED a proposed entry name\n'
+        unset _stage _name
+        return 0
+    fi
+
+    # Rule 2, one entry per branch, and it deletes across scopes on purpose: an editor upgrade
+    # replaces a branch's entry rather than accumulating beside it.
+    _branch=$(ffghr_cache_branch_of "$_name")
+    for _old in "$FFGHR_CACHE_ENTRIES/$_branch"@*.tar; do
+        [ -f "$_old" ] || continue
+        [ "$(basename -- "$_old")" = "$_name" ] || printf 'replaced %s\n' "$(basename -- "$_old")"
+        rm -f -- "$_old"
+    done
+
+    # rename(2) within one dataset: atomic and instantaneous, which is what keeps every lock off
+    # the read path.
+    if mv -f -- "$_stage/ffcache.tar" "$FFGHR_CACHE_ENTRIES/$_name"; then
+        touch -- "$FFGHR_CACHE_ENTRIES/$_name"
+        printf 'promoted %s (%s)\n' "$_name" "$(du -h "$FFGHR_CACHE_ENTRIES/$_name" 2>/dev/null | cut -f1)"
+    else
+        printf 'WARNING: could not promote %s\n' "$_name"
+    fi
+    unset _stage _name _branch _old
+    return 0
+}
+
 # The flag files behind `drain` and `slot stop|start`, per section 11. slot.sh checks these
 # before it mints a JIT config; nothing here talks to the system manager, which is why no
 # account needs a sudoers entry.

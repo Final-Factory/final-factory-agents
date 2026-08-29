@@ -35,6 +35,9 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 POOL=""
 DAEMON_DS=""
+# Derived from $POOL below, the same way DAEMON_DS is. Empty on a machine without ZFS, and empty
+# on purpose when cache_dir is empty.
+CACHE_DS=""
 DO_INSTALL=1
 CHECK_ONLY=0
 OWNER=""
@@ -133,6 +136,7 @@ if command -v zfs >/dev/null 2>&1; then
   fi
   # Under ff/ with ffbox's own store, because it is this pair of systems' and not the machine's.
   [ -n "$DAEMON_DS" ] || [ -z "$POOL" ] || DAEMON_DS="${POOL}/ff/container-docker"
+  [ -n "$CACHE_DS" ] || [ -z "$POOL" ] || [ -z "$CACHE_DIR" ] || CACHE_DS="${POOL}/ff/ffcache"
 fi
 
 # --- --check ------------------------------------------------------------------------------------
@@ -156,6 +160,19 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
   printf 'tmpfiles rule:    %s\n' "$([ -r "$TMPFILES" ] && echo present || echo MISSING)"
   printf 'daemon store:     %s %s\n' "$DAEMON_ROOT" \
     "$(have_ds "${DAEMON_DS:-none}" && echo "($DAEMON_DS, sync=$(zfs get -H -o value sync "$DAEMON_DS"), quota=$(zfs get -H -o value quota "$DAEMON_DS"))" || echo "(MISSING)")"
+  if [ -n "$CACHE_DIR" ]; then
+    printf 'workspace cache:  %s %s\n' "$CACHE_DIR" \
+      "$(have_ds "${CACHE_DS:-none}" && echo "($CACHE_DS, recordsize=$(zfs get -H -o value recordsize "$CACHE_DS"), quota=$(zfs get -H -o value quota "$CACHE_DS"))" || echo "(no dataset)")"
+    printf '  entries:        %s %s\n' \
+      "$([ -d "$CACHE_DIR/entries" ] && stat -c '(%U:%G %a)' "$CACHE_DIR/entries" || echo MISSING)" \
+      "$([ -d "$CACHE_DIR/entries" ] && echo "$(find "$CACHE_DIR/entries" -maxdepth 1 -type f -name '*@*.tar' 2>/dev/null | wc -l) entries, $(du -sh "$CACHE_DIR/entries" 2>/dev/null | cut -f1)" || echo '')"
+    printf '  staging:        %s\n' \
+      "$([ -d "$CACHE_DIR/staging" ] && stat -c '(%U:%G %a)' "$CACHE_DIR/staging" || echo MISSING)"
+    printf '  prune lock:     %s\n' \
+      "$([ -f "$CACHE_DIR/.prune.lock" ] && stat -c '(%U:%G %a)' "$CACHE_DIR/.prune.lock" || echo MISSING)"
+  else
+    printf 'workspace cache:  disabled (cache_dir is empty)\n'
+  fi
   printf 'log dir:          %s %s\n' "$LOG_DIR" \
     "$([ -d "$LOG_DIR" ] && stat -c '(%U:%G %a)' "$LOG_DIR" || echo MISSING)"
   printf 'logrotate rule:   %s\n' "$([ -r "$LOGROTATE" ] && echo present || echo MISSING)"
@@ -171,6 +188,11 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
   linger_on "$CUSER"                             || _ok=1
   [ -r "$TMPFILES" ]                             || _ok=1
   [ -d "$DAEMON_ROOT" ]                          || _ok=1
+  if [ -n "$CACHE_DIR" ]; then
+    [ -d "$CACHE_DIR/entries" ]                  || _ok=1
+    [ -d "$CACHE_DIR/staging" ]                  || _ok=1
+    [ -f "$CACHE_DIR/.prune.lock" ]              || _ok=1
+  fi
   [ -d "$LOG_DIR" ]                              || _ok=1
   [ -r "$LOGROTATE" ]                            || _ok=1
   command -v newuidmap >/dev/null 2>&1           || _ok=1
@@ -308,6 +330,67 @@ if [ -n "$DAEMON_DS" ] && have_ds "$DAEMON_DS"; then
 fi
 as_root chown "$CUSER:$CUSER" "$DAEMON_ROOT"
 as_root chmod 0700 "$DAEMON_ROOT"
+
+# --- the workspace cache ---------------------------------------------------------------------------------
+
+# design/ffcache_design.txt. Skipped entirely when cache_dir is empty, which is the switch that
+# keeps a machine on the no-bind-mounts arrangement of section 5 of the runner design.
+if [ -z "$CACHE_DIR" ]; then
+  skip "workspace cache disabled (cache_dir is empty)"
+else
+  if [ -z "$CACHE_DS" ]; then
+    warn "no ZFS pool found — creating $CACHE_DIR as an ordinary directory, with no quota and no
+         recordsize tuning. Entries are multi-gigabyte sequential files; on this machine that is
+         not what was intended."
+    as_root mkdir -p "$CACHE_DIR"
+  elif have_ds "$CACHE_DS"; then
+    skip "$CACHE_DS exists at $CACHE_DIR"
+  else
+    # recordsize=1M because every object in here is one large sequential archive and the pool is a
+    # mirror of spinning disks, where 128K records on a 16G file is a lot of avoidable IO.
+    # sync=disabled and atime=off for the same reason the daemon store has them: this is a cache,
+    # losing it to an unclean shutdown costs one cold job, and nothing here is state anyone mourns.
+    say "creating $CACHE_DS at $CACHE_DIR (recordsize=1M, quota $CACHE_QUOTA)"
+    as_root zfs create -o mountpoint="$CACHE_DIR" -o recordsize=1M -o compression=lz4 \
+                       -o atime=off -o sync=disabled -o quota="$CACHE_QUOTA" "$CACHE_DS"
+  fi
+
+  # Applied every run, not only at create, exactly as the daemon store does above.
+  if [ -n "$CACHE_DS" ] && have_ds "$CACHE_DS"; then
+    [ "$(zfs get -H -o value quota "$CACHE_DS")" = "$(printf '%s' "$CACHE_QUOTA")" ] \
+      || { say "setting quota=$CACHE_QUOTA on $CACHE_DS"; as_root zfs set quota="$CACHE_QUOTA" "$CACHE_DS"; }
+    [ "$(zfs get -H -o value sync "$CACHE_DS")" = disabled ] \
+      || { say "setting sync=disabled on $CACHE_DS"; as_root zfs set sync=disabled "$CACHE_DS"; }
+  fi
+
+  # THE SETGID BIT ON staging/ IS THE WHOLE MECHANISM, and it is not decoration. A job writes into
+  # its staging directory as host uid $(id -u "$CUSER") — namespace root in the rootless daemon maps
+  # to the daemon's own account — and NOTHING HERE CAN chown: the supervisor has no CAP_CHOWN. So
+  # group inheritance is the only way a directory the supervisor creates is writable by the job.
+  # slot.sh then creates slot-N inside it at 0770 and the group comes along.
+  #
+  # entries/ is group-writable for the mirror-image reason: the supervisor must be able to unlink
+  # archives that the job created and therefore owns. The job cannot write there in spite of the
+  # mode, because it is mounted :ro and the kernel checks that before it checks permissions.
+  as_root mkdir -p "$CACHE_DIR/entries" "$CACHE_DIR/staging"
+  as_root chmod 0755 "$CACHE_DIR"
+  as_root chown "$OWNER:$CUSER" "$CACHE_DIR/entries" "$CACHE_DIR/staging"
+  as_root chmod 2770 "$CACHE_DIR/entries"
+  as_root chmod 2775 "$CACHE_DIR/staging"
+
+  # The one lock in the system, and it has to exist before anything wants to take it: $CACHE_DIR is
+  # root-owned 0755, so the supervisor cannot create a file here itself.
+  if [ -f "$CACHE_DIR/.prune.lock" ]; then
+    skip "$CACHE_DIR/.prune.lock exists"
+  else
+    say "creating $CACHE_DIR/.prune.lock"
+    as_root touch "$CACHE_DIR/.prune.lock"
+  fi
+  as_root chown "$OWNER:$CUSER" "$CACHE_DIR/.prune.lock"
+  as_root chmod 0664 "$CACHE_DIR/.prune.lock"
+
+  skip "workspace cache at $CACHE_DIR ($(find "$CACHE_DIR/entries" -maxdepth 1 -type f -name '*@*.tar' 2>/dev/null | wc -l) entries)"
+fi
 
 # --- the log directory -----------------------------------------------------------------------------------
 

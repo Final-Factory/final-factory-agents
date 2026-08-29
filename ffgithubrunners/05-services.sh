@@ -100,6 +100,7 @@ for u in $UNITS; do
       -e "s|@DOCKERSOCK@|$DOCKER_SOCK|g" \
       -e "s|@LOGDIR@|$LOG_DIR|g" \
       -e "s|@CONFIGDIR@|$FFGHR_CONFIG_DIR|g" \
+      -e "s|@CACHEDIR@|${CACHE_DIR:-/nonexistent}|g" \
       "$HERE/systemd/$u" > "$TMP/$u"
   # An unsubstituted placeholder produces a unit that starts and does the wrong thing quietly.
   if grep -q '@[A-Z]*@' "$TMP/$u"; then
