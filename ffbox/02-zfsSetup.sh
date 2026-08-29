@@ -139,6 +139,21 @@ GOLDEN_DS="${FF_DS}/golden"
 # ---------------------------------------------------------------------------------------------
 # --check
 # ---------------------------------------------------------------------------------------------
+# OWNERSHIP ON THE SHARED DAEMON. Golden and every clone of it must be owned by the CONTAINER
+# account, not by the owner, because a rootless daemon shows a host uid outside its own subuid map
+# as 65534 and ffbox/entrypoint.sh cannot map that to anything. Owned by ffbox-container, golden
+# appears as root inside the container, which is exactly how it behaved on the old daemon.
+#
+# Group write and setgid are what keep the OWNER able to work: update-golden.sh runs git in golden
+# and 04-warmLibrary.sh extracts Library into it, both as the owner, who reaches them through the
+# ffbox-container group.
+#
+#   sudo chown -R ffbox-container:ffbox-container /opt/FinalFactory
+#   sudo chmod -R g+w /opt/FinalFactory
+#   sudo find /opt/FinalFactory -type d -exec chmod g+s {} +
+#
+# See section 17 of design/ffgithubrunners_design.txt.
+
 have_ds() { zfs list -H -o name "$1" >/dev/null 2>&1; }
 
 if [ "$CHECK_ONLY" -eq 1 ]; then

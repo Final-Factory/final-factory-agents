@@ -47,6 +47,28 @@ gid=$(stat -c '%g' "$WORKSPACE")
 TASK=${FFBOX_ENTRY:-/ffbox/run-as-user.sh}
 [ -r "$TASK" ] || { echo "ffbox: no such task script: $TASK" >&2; exit 1; }
 
+# UNMAPPED MEANS THE DAEMON AND THE WORKSPACE DISAGREE ABOUT WHO OWNS IT. 65534 is what a
+# rootless daemon shows for a host uid outside its own subuid map. It happens when the workspace
+# belongs to one account and the daemon to another — the exact state of a machine half-migrated
+# onto the shared daemon. Carrying on would run `useradd -u 65534`, which either fails or invents
+# a user that owns nothing, and the run would fail much later for a reason that looks unrelated.
+#
+# Measured on 2026-08-29: golden owned by FinalFactoryTester reads as 0:0 on that account's own
+# daemon and as 65534:65534 on ffbox-container's.
+if [ "$uid" -eq 65534 ] || [ "$gid" -eq 65534 ]; then
+    cat >&2 <<'MSG'
+ffbox: the workspace is owned by a uid this daemon cannot map (65534/nobody).
+
+  The daemon and the workspace belong to different accounts. On the shared daemon the workspace
+  must be owned by the container account, so that it appears as root inside:
+
+      sudo chown -R ffbox-container:ffbox-container /opt/FinalFactory
+
+  See section 17 of design/ffgithubrunners_design.txt.
+MSG
+    exit 1
+fi
+
 # A root-owned workspace means no mapping to do — just run.
 if [ "$uid" -eq 0 ]; then
     exec bash "$TASK"
