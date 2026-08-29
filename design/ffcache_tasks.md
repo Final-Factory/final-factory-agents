@@ -20,6 +20,11 @@ known until something is measured.
 - T21 — the CONDITIONS are settled from `actions/checkout`'s source and one of them turned out to
   be a trap; see gap 8. The live half is still owed.
 
+**Measured on the first live run, 2026-08-29.** Restore of the full 23.5 GB workspace: **37s**
+(22:57:46 -> 22:58:23), with a second job restoring concurrently. Against section 5's twelve-job
+baseline of checkout 117s + LFS 21s + cache restore 108s = 246s, that is 209s saved per job. The
+design's extrapolated estimate was 39s. Open item (b) is closed for the restore side.
+
 **Blocked on root.** `01-hostSetup.sh` cannot run: `zfs create` and `chown` to another account
 need privilege, and sudo here is password-gated for everything outside the narrow NOPASSWD list in
 `/etc/sudoers.d/ffbox`. One command:
@@ -28,8 +33,19 @@ need privilege, and sudo here is password-gated for everything outside the narro
 
 then `ffgithubrunners cache seed`, then T21 on ffghr-smoke, then push phase C.
 
-**Not started.** T17-T20 (phase D, retiring the warm cron) and T22-T25 (proving), both of which
-need a provisioned cache first.
+**Phase D done, 2026-08-29.** T17-T20. `04-warmLibrary.sh` no longer opens the project in Unity:
+it extracts `./Library` from the default branch's entry and moves it into place. T17 measured
+against the real 22 G entry: **41s** to extract 59,405 files (2.9 G on disk, 8.6 G apparent),
+with `.git` and the worktree correctly left in the archive. That replaces a 30-60 minute editor
+import, and more to the point it replaces running arbitrary repository code as uid 1015 every
+five minutes.
+
+Still owed for phase D: golden has never actually been warmed from an entry, because the only
+entry is `ffghr-smoke@` and the rule is default-branch-only. One CI job on `master` creates
+`master@6000.3.19f1.tar` and then the path is live. Until then the script logs what is missing and
+exits 0, verified.
+
+**Not started.** T22-T25 (proving).
 
 ## Two operational hazards, learned the hard way
 
