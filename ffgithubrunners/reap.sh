@@ -128,4 +128,64 @@ printf '%s\n' "$RUNNERS" | while IFS=' ' read -r id status name labels; do
     fi
 done
 
+# --- the workspace cache -------------------------------------------------------------------------
+#
+# Two jobs, and only two. design/ffcache_design.txt sections 8 and 9.
+#
+# THIS DOES NOT PROMOTE. A staging directory left by a supervisor that was SIGKILLed may well hold
+# a perfectly good archive, and promoting it would be a small win. It is still the wrong thing for
+# a reaper to do: this file's rule is that it collects garbage and never creates state, and
+# promoting on behalf of a job whose teardown never ran is creating state from something nobody
+# watched finish. slot.sh promotes; reap.sh sweeps.
+#
+# What it does do is bound the cache when slots stop exiting cleanly, which is the failure the
+# fifteen-minute timer exists for.
+
+# A staging directory belongs to a slot number, and the supervisor for that slot is a `slot.sh N`
+# in the process table. Same shape as supervisor_alive above, matching the slot rather than a pid,
+# because a staging directory carries no label to record one.
+slot_supervisor_alive() {   # $1 = slot number
+    for _p in /proc/[0-9]*; do
+        [ -r "$_p/cmdline" ] || continue
+        case "$(tr '\0' ' ' < "$_p/cmdline" 2>/dev/null)" in
+            *"slot.sh $1 "*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+if ! ffghr_cache_ready; then
+    skip "workspace cache not provisioned or disabled; nothing to sweep"
+else
+    say "workspace cache"
+    for d in "$FFGHR_CACHE_STAGING"/slot-*; do
+        [ -d "$d" ] || continue
+        n=${d##*/slot-}
+        case "$n" in
+            ''|*[!0-9]*) act "$d is not a slot staging directory; leaving it alone"; continue ;;
+        esac
+        if slot_supervisor_alive "$n"; then
+            skip "staging for slot $n belongs to a live supervisor; leaving it"
+            continue
+        fi
+        if [ "$DRY" = 1 ]; then
+            act "would clear stale staging $d (no live supervisor for slot $n)"
+            continue
+        fi
+        rm -rf "$d" && act "cleared stale staging for slot $n" \
+                    || act "WARNING: could not clear $d"
+    done
+
+    _before=$(find "$FFGHR_CACHE_ENTRIES" -maxdepth 1 -type f -name '*@*.tar' 2>/dev/null | wc -l)
+    if [ "$DRY" = 1 ]; then
+        [ "$_before" -le "${CACHE_KEEP:-10}" ] \
+            && skip "$_before entries, keep is ${CACHE_KEEP:-10}; nothing to prune" \
+            || act "would prune $((_before - ${CACHE_KEEP:-10})) of $_before entries"
+    else
+        ffghr_cache_with_lock ffghr_cache_prune 2>&1 \
+            | while IFS= read -r _line; do act "$_line"; done || true
+        skip "$(find "$FFGHR_CACHE_ENTRIES" -maxdepth 1 -type f -name '*@*.tar' 2>/dev/null | wc -l) entries, $(du -sh "$FFGHR_CACHE_ENTRIES" 2>/dev/null | cut -f1) (keep ${CACHE_KEEP:-10})"
+    fi
+fi
+
 say "sweep complete"

@@ -38,7 +38,14 @@ TimeoutStopSec=150
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=@LOGDIR@ @CONFIGDIR@
+# THE '-' ON THE CACHE PATH IS NOT OPTIONAL. ReadWritePaths on a path that does not exist makes
+# the unit FAIL TO START, and the workspace cache is provisioned by 01-hostSetup.sh, which a
+# machine may not have re-run yet. The '-' prefix makes it "grant this if it is there", so a slot
+# on an unprovisioned box starts and simply runs jobs with no cache.
+#
+# Without this line at all, ProtectSystem=strict leaves /opt/ffcache read-only to the supervisor
+# and every promotion fails on a read-only filesystem, naming the path but not the cause.
+ReadWritePaths=@LOGDIR@ @CONFIGDIR@ -@CACHEDIR@
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes

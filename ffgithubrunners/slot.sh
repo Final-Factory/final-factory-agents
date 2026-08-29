@@ -4,9 +4,14 @@
 #   mint a JIT config -> docker run -> the runner takes ONE job -> the container exits
 #     -> remove the container, DELETE the registration -> exit 0 -> systemd starts us again
 #
-# The container did not exist before the job and does not exist after it. Nothing a job writes
-# reaches the next job except through GitHub: no bind mounts, no socket, and a tmpfs workspace
-# that dies with the container.
+# The container did not exist before the job and does not exist after it. No socket, and a tmpfs
+# workspace that dies with the container.
+#
+# ONE THING DOES CROSS: the workspace cache. A job reads $CACHE_DIR/entries READ-ONLY and may drop
+# one candidate archive in its own staging directory; THIS SCRIPT decides whether that becomes an
+# entry, under a validated name. A job cannot delete or alter an existing entry, cannot reach
+# another slot's staging, and cannot write anywhere else on the host. design/ffcache_design.txt
+# section 11 states what that costs; an empty cache_dir turns it off entirely.
 #
 # Run by ffgithubrunners@<slot>.service as the supervisor account. Takes the slot number as its
 # one argument. Everything else comes from lib/config.sh.
@@ -32,6 +37,7 @@ log() { printf '[slot %s] %s\n' "$SLOT" "$*"; }
 # --- state that teardown needs, set as we go -----------------------------------------------------
 RUNNER_ID=""
 CNAME=""
+STAGE=""
 
 # TEARDOWN RUNS ON EVERY EXIT PATH, and that is the whole point of it being a trap. A clean exit
 # deregisters itself, so the DELETE below usually returns 404; a container killed mid-job does
@@ -43,6 +49,20 @@ teardown() {
     if [ -n "$CNAME" ] && docker inspect "$CNAME" >/dev/null 2>&1; then
         log "removing container $CNAME"
         docker rm -f "$CNAME" >/dev/null 2>&1 || log "WARNING: could not remove $CNAME"
+    fi
+
+    # THE WORKSPACE CACHE, and it happens here because here is where the container is definitely
+    # gone and nothing is still writing into staging. design/ffcache_design.txt section 8.
+    #
+    # EVERY PART OF THIS IS BEST-EFFORT AND NONE OF IT MAY ABORT teardown. The registration delete
+    # below is the important half: a cache that fails to promote costs one cold job, a registration
+    # that never gets deleted is an orphan on the org page. `|| true` on both, deliberately.
+    if [ -n "$STAGE" ]; then
+        ffghr_cache_with_lock ffghr_cache_promote "$STAGE" 2>&1 \
+            | while IFS= read -r _line; do log "cache: $_line"; done || true
+        ffghr_cache_with_lock ffghr_cache_prune 2>&1 \
+            | while IFS= read -r _line; do log "cache: $_line"; done || true
+        rm -rf "$STAGE" 2>/dev/null || true
     fi
 
     if [ -n "$RUNNER_ID" ]; then
@@ -135,7 +155,35 @@ CAP_ADD_ARGS=""
 for _cap in $(printf '%s' "$CAP_ADD" | tr ',' ' '); do
     CAP_ADD_ARGS="$CAP_ADD_ARGS --cap-add=$_cap"
 done
-# shellcheck disable=SC2086  # CAP_ADD_ARGS is a deliberately word-split option list
+# shellcheck disable=SC2086  # CAP_ADD_ARGS and CACHE_ARGS are deliberately word-split option lists
+
+# THE WORKSPACE CACHE MOUNTS. Two of them, and the asymmetry is the design:
+#
+#   /ffcache     entries, READ-ONLY. The job restores from it and cannot alter what is there.
+#   /ffghr/out   this slot's drop box, read-write. The job proposes a candidate; teardown decides.
+#
+# STAGING IS CREATED HERE, BEFORE THE RUN, AND NEVER ONLY CLEANED UP AFTER IT. A teardown that did
+# not complete — SIGKILL, a reboot — would otherwise leave the next job on this slot reading a dead
+# job's drop box and promoting its archive under its name. Creating it fresh up front is the one
+# ordering that cannot get that wrong.
+#
+# 0770 and the group comes from staging/'s setgid bit: the job writes as the daemon's own uid and
+# nothing here can chown. See 01-hostSetup.sh.
+CACHE_ARGS=""
+if ffghr_cache_ready; then
+    STAGE=$(ffghr_cache_stage_dir "$SLOT")
+    rm -rf "$STAGE" 2>/dev/null || true
+    if mkdir -p "$STAGE" 2>/dev/null && chmod 0770 "$STAGE" 2>/dev/null; then
+        CACHE_ARGS="-v $FFGHR_CACHE_ENTRIES:/ffcache:ro -v $STAGE:/ffghr/out"
+        log "cache: $(find "$FFGHR_CACHE_ENTRIES" -maxdepth 1 -type f -name '*@*.tar' 2>/dev/null | wc -l) entries at $FFGHR_CACHE_ENTRIES, staging $STAGE"
+    else
+        # Not fatal, and never fatal. A job with no cache is a slow job, not a failed one.
+        log "WARNING: could not prepare $STAGE; running this job without the cache"
+        STAGE=""
+    fi
+else
+    log "cache: not provisioned or disabled; running without it"
+fi
 
 log "starting $CNAME (workspace tmpfs $WORKSPACE_SIZE at $WORK_FOLDER, caps +$CAP_ADD)"
 # LABELS SO THE REAPER CAN TELL AN ORPHAN FROM A LIVE JOB. A supervisor killed with SIGKILL
@@ -150,6 +198,7 @@ docker run -d \
     --label ffghr.runner.id="$RUNNER_ID" \
     --network "$EGRESS_NET" --dns "$EGRESS_IP" \
     --tmpfs "$WORK_FOLDER:size=$WORKSPACE_SIZE,mode=1777,exec" \
+    $CACHE_ARGS \
     --cap-drop=ALL \
     $CAP_ADD_ARGS \
     --security-opt=no-new-privileges \

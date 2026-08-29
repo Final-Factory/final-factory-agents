@@ -8,6 +8,9 @@
 #   ffgithubrunners image update        rebuild with a current runner tarball
 #   ffgithubrunners reap                run the sweep now
 #   ffgithubrunners logs [N]            the last job's log for one slot
+#   ffgithubrunners cache [list]        the workspace cache: entries, sizes, ages
+#   ffgithubrunners cache seed [REF]    seed it from golden, so the first job is not cold
+#   ffgithubrunners cache clear         delete every entry
 #
 # WHAT NEEDS PRIVILEGE AND WHAT DOES NOT. drain, resume and slot stop|start write a flag file that
 # slot.sh checks before it mints a JIT config, so a drained slot idles rather than being stopped
@@ -22,7 +25,7 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 say()  { printf '==> %s\n' "$*"; }
 die()  { printf 'ffgithubrunners: %s\n' "$*" >&2; exit 1; }
 
- usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; }
+ usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # --- status ---------------------------------------------------------------------------------------
 
@@ -70,6 +73,28 @@ cmd_status() {
         printf '  slot %-3s unit %-10s%s %s\n' "$_i" "${_unit:-unknown}" "$_stop" "${_c:-no container}"
         _i=$((_i + 1))
     done
+
+    printf '\nworkspace cache\n'
+    if [ -z "$CACHE_DIR" ]; then
+        printf '  disabled (cache_dir is empty)\n'
+    elif ! ffghr_cache_ready; then
+        printf '  %s NOT PROVISIONED — run: sudo sh ffgithubrunners/01-hostSetup.sh\n' "$CACHE_DIR"
+    else
+        printf '  %s  %s used, keep %s\n' "$CACHE_DIR" \
+            "$(du -sh "$FFGHR_CACHE_ENTRIES" 2>/dev/null | cut -f1)" "$CACHE_KEEP"
+        _n=0
+        # Newest first, which is the order the prune works in, so what is about to be evicted is
+        # at the bottom where someone looking for it will find it.
+        find "$FFGHR_CACHE_ENTRIES" -maxdepth 1 -type f -name '*@*.tar' -printf '%T@ %p\n' 2>/dev/null \
+            | sort -rn | cut -d' ' -f2- \
+            | while IFS= read -r _e; do
+                  printf '    %-46s %6s  used %s\n' "$(basename -- "$_e")" \
+                      "$(du -h "$_e" 2>/dev/null | cut -f1)" \
+                      "$(date -d "@$(stat -c %Y "$_e")" '+%Y-%m-%d %H:%M' 2>/dev/null)"
+              done
+        _n=$(find "$FFGHR_CACHE_ENTRIES" -maxdepth 1 -type f -name '*@*.tar' 2>/dev/null | wc -l)
+        [ "$_n" -gt 0 ] || printf '    (empty — the next job on every branch will be cold)\n'
+    fi
 
     printf '\nregistrations on %s\n' "$ORG"
     if . "$HERE/lib/gh.sh" 2>/dev/null && _r=$(gh_list_runners 2>/dev/null); then
@@ -162,6 +187,74 @@ cmd_logs() {
     fi
 }
 
+# --- cache -------------------------------------------------------------------------------------------
+
+cmd_cache() {
+    [ -n "$CACHE_DIR" ] || die "the workspace cache is disabled (cache_dir is empty)"
+    case "${1:-list}" in
+        list)  ffghr_cache_ready || die "$CACHE_DIR is not provisioned; run 01-hostSetup.sh"
+               cmd_status | sed -n '/^workspace cache$/,/^$/p' ;;
+
+        clear) ffghr_cache_ready || die "$CACHE_DIR is not provisioned; run 01-hostSetup.sh"
+               _n=$(find "$FFGHR_CACHE_ENTRIES" -maxdepth 1 -type f -name '*@*.tar' 2>/dev/null | wc -l)
+               ffghr_cache_with_lock sh -c 'rm -f "$1"/*@*.tar' _ "$FFGHR_CACHE_ENTRIES" \
+                   && say "deleted $_n entries" || die "could not clear $FFGHR_CACHE_ENTRIES" ;;
+
+        # SEED IS WHAT STOPS THE FIRST JOB ON A NEW MACHINE BEING COLD, and it is also the only
+        # entry that exists before CI has ever run — which is what phase D of the task list needs
+        # in order to prove the golden extract. It tars ffbox's golden checkout, which is already
+        # warm, already on this machine, and trusted in a way no job's archive is.
+        #
+        # The scope comes from the checkout's own ProjectVersion.txt rather than from a second copy
+        # of the editor version kept in step by hand.
+        seed)  ffghr_cache_ready || die "$CACHE_DIR is not provisioned; run 01-hostSetup.sh"
+               _src=${FFGHR_GOLDEN:-/opt/FinalFactory}
+               [ -d "$_src/.git" ] || die "$_src is not a git checkout (set FFGHR_GOLDEN)"
+               [ -d "$_src/Library" ] || die "$_src has no Library/; there is nothing warm to seed from"
+               _pv="$_src/ProjectSettings/ProjectVersion.txt"
+               [ -r "$_pv" ] || die "cannot read $_pv"
+               _scope=$(sed -n 's/^m_EditorVersion: *//p' "$_pv" | head -1 | tr -d '\r')
+               [ -n "$_scope" ] || die "no m_EditorVersion in $_pv"
+               # NOT ${2:-$(git ...)}. This script is `set -e`, git rev-parse exits 128 on a
+               # checkout with no commits or a detached HEAD, and the status of a command
+               # substitution IS the status of the assignment — so the plain form kills the whole
+               # CLI with 128 and prints nothing. Found by seeding a fresh repo.
+               _ref=${2:-}
+               if [ -z "$_ref" ]; then
+                   _ref=$(git -C "$_src" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+               fi
+               [ -n "$_ref" ] && [ "$_ref" != HEAD ] \
+                   || die "cannot work out a branch name for $_src (detached HEAD or no commits).
+       Pass one: ffgithubrunners cache seed <branch>"
+               _branch=$(printf '%s' "$_ref" | sed 's/[^a-zA-Z0-9._-]/-/g')
+               _name="$_branch@$_scope.tar"
+               ffghr_cache_name_ok "$_name" || die "'$_ref' does not sanitize to a usable entry name"
+
+               say "seeding $_name from $_src (this reads ~20 GB and takes a couple of minutes)"
+               _tmp="$FFGHR_CACHE_ENTRIES/.seed.$$.part"
+               # Same exclusions as the save step in main.yml. Kept in step by hand, which is a
+               # real cost; if they drift, the archive is merely bigger, never wrong.
+               if tar -cf "$_tmp" -C "$_src" \
+                       --exclude=./Temp --exclude=./Logs --exclude=./UserSettings \
+                       --exclude='./*-artifacts' \
+                       --exclude=./Library/UnityLockfile --exclude=./Library/EditorInstance.json \
+                       --exclude=./.git/index.lock --exclude=./.git/hooks \
+                       . ; then
+                   ffghr_cache_with_lock sh -c '
+                       rm -f "$1"/"$2"@*.tar
+                       mv -f "$3" "$1/$4" && touch "$1/$4"
+                   ' _ "$FFGHR_CACHE_ENTRIES" "$_branch" "$_tmp" "$_name" \
+                       && say "seeded $_name ($(du -h "$FFGHR_CACHE_ENTRIES/$_name" 2>/dev/null | cut -f1))" \
+                       || { rm -f "$_tmp"; die "could not install the seed archive"; }
+               else
+                   rm -f "$_tmp"
+                   die "tar failed; nothing was installed"
+               fi ;;
+
+        *)     die "usage: ffgithubrunners cache [list|seed [REF]|clear]" ;;
+    esac
+}
+
 # --- dispatch ---------------------------------------------------------------------------------------
 
 case "${1:-status}" in
@@ -175,6 +268,7 @@ case "${1:-status}" in
                 [ "${1:-}" = update ] || die "usage: ffgithubrunners image update"
                 shift; exec sh "$HERE/image-update.sh" "$@" ;;
     logs)       shift; cmd_logs "$@" ;;
+    cache)      shift; cmd_cache "$@" ;;
     -h|--help|help) usage ;;
     *)          die "unknown command '$1'. Try: ffgithubrunners --help" ;;
 esac
