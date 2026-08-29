@@ -162,7 +162,7 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
     "$(have_ds "${DAEMON_DS:-none}" && echo "($DAEMON_DS, sync=$(zfs get -H -o value sync "$DAEMON_DS"), quota=$(zfs get -H -o value quota "$DAEMON_DS"))" || echo "(MISSING)")"
   if [ -n "$CACHE_DIR" ]; then
     printf 'workspace cache:  %s %s\n' "$CACHE_DIR" \
-      "$(have_ds "${CACHE_DS:-none}" && echo "($CACHE_DS, recordsize=$(zfs get -H -o value recordsize "$CACHE_DS"), quota=$(zfs get -H -o value quota "$CACHE_DS"))" || echo "(no dataset)")"
+      "$(have_ds "${CACHE_DS:-none}" && echo "($CACHE_DS, recordsize=$(zfs get -H -o value recordsize "$CACHE_DS"), sync=$(zfs get -H -o value sync "$CACHE_DS"), quota=$(zfs get -H -o value quota "$CACHE_DS"))" || echo "(no dataset)")"
     printf '  entries:        %s %s\n' \
       "$([ -d "$CACHE_DIR/entries" ] && stat -c '(%U:%G %a)' "$CACHE_DIR/entries" || echo MISSING)" \
       "$([ -d "$CACHE_DIR/entries" ] && echo "$(find "$CACHE_DIR/entries" -maxdepth 1 -type f -name '*@*.tar' 2>/dev/null | wc -l) entries, $(du -sh "$CACHE_DIR/entries" 2>/dev/null | cut -f1)" || echo '')"
@@ -348,19 +348,23 @@ else
   else
     # recordsize=1M because every object in here is one large sequential archive and the pool is a
     # mirror of spinning disks, where 128K records on a 16G file is a lot of avoidable IO.
-    # sync=disabled and atime=off for the same reason the daemon store has them: this is a cache,
-    # losing it to an unclean shutdown costs one cold job, and nothing here is state anyone mourns.
-    say "creating $CACHE_DS at $CACHE_DIR (recordsize=1M, quota $CACHE_QUOTA)"
+    # atime=off because nothing reads it and the LRU clock is mtime on the entry, not atime.
+    # sync comes from $CACHE_SYNC and defaults to standard, NOT to the daemon store's disabled —
+    # see lib/config.sh for the measurement that says it costs nothing here.
+    say "creating $CACHE_DS at $CACHE_DIR (recordsize=1M, sync=$CACHE_SYNC, quota $CACHE_QUOTA)"
     as_root zfs create -o mountpoint="$CACHE_DIR" -o recordsize=1M -o compression=lz4 \
-                       -o atime=off -o sync=disabled -o quota="$CACHE_QUOTA" "$CACHE_DS"
+                       -o atime=off -o sync="$CACHE_SYNC" -o quota="$CACHE_QUOTA" "$CACHE_DS"
   fi
 
   # Applied every run, not only at create, exactly as the daemon store does above.
   if [ -n "$CACHE_DS" ] && have_ds "$CACHE_DS"; then
     [ "$(zfs get -H -o value quota "$CACHE_DS")" = "$(printf '%s' "$CACHE_QUOTA")" ] \
       || { say "setting quota=$CACHE_QUOTA on $CACHE_DS"; as_root zfs set quota="$CACHE_QUOTA" "$CACHE_DS"; }
-    [ "$(zfs get -H -o value sync "$CACHE_DS")" = disabled ] \
-      || { say "setting sync=disabled on $CACHE_DS"; as_root zfs set sync=disabled "$CACHE_DS"; }
+    # Enforces the CONFIGURED value, not a hardcoded one. The previous form pinned
+    # sync=disabled and would have silently reverted an operator who set it by hand on the next
+    # run of this script, which is a worse failure than never setting it at all.
+    [ "$(zfs get -H -o value sync "$CACHE_DS")" = "$CACHE_SYNC" ] \
+      || { say "setting sync=$CACHE_SYNC on $CACHE_DS"; as_root zfs set sync="$CACHE_SYNC" "$CACHE_DS"; }
   fi
 
   # THE SETGID BIT ON staging/ IS THE WHOLE MECHANISM, and it is not decoration. A job writes into

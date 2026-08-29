@@ -18,5 +18,11 @@
   "_comment_limits": "memory is a ceiling, not an allocation: the 40g workspace tmpfs plus about 32g for the editor. pids_limit is PROVISIONAL and open item (b) in the design; measure it against a real Unity import before trusting it.",
   "memory": "72g",
   "pids_limit": 4096,
-  "workspace_size": "40g"
+  "workspace_size": "40g",
+
+  "_comment_cache": "The host workspace cache, design/ffcache_design.txt. cache_dir empty disables it entirely and restores the no-bind-mounts arrangement. cache_quota 250G is ten 16G entries plus three slots staging 16G each, not a round number. cache_sync is standard rather than the daemon store's disabled: sync only governs fsync/O_SYNC, and the save path issues none (measured: tar does 1684 write() and zero fsync), so the safer default is free here even though it would be expensive for docker.",
+  "cache_dir": "/opt/ffcache",
+  "cache_keep": 10,
+  "cache_quota": "250G",
+  "cache_sync": "standard"
 }
