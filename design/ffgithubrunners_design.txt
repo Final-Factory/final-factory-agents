@@ -279,7 +279,10 @@ What game-ci did, and what does it now:
   - Activates and returns the Unity licence. The `run:` step does it, carrying the same
     UNITY_LICENSE, UNITY_SERIAL, UNITY_EMAIL and UNITY_PASSWORD `env:` block the game-ci step
     carries today, so the credentials keep flowing exactly as they do now and nothing new holds
-    them. The step installs `trap return_license EXIT INT TERM` before starting Unity, which is
+    them. UNITY_SERIAL is EMPTY on this project: it is a Personal licence, so the serial is
+    carried base64-encoded in UNITY_LICENSE's DeveloperData field and unity-license.sh decodes it
+    the way game-ci and ffbox/04-warmLibrary.sh both do. Activation is an online serial
+    activation either way. The step installs `trap return_license EXIT INT TERM` before starting Unity, which is
     what ffbox/unity-license.sh does and what game-ci does not: game-ci returns the seat in an
     ordinary later step that a cancelled job never reaches, and that is how it leaks them. A seat
     is held only while the step runs, so an idle slot holds none. If activation fails the step
