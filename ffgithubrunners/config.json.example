@@ -5,7 +5,7 @@
   "watchdog_minutes": 120,
   "image": "ffghrunner:latest",
 
-  "_comment_labels": "Section 13 step 1 of the design: install WITHOUT self-hosted, so nothing routes here by accident while the old runners still serve main.yml. At step 3, add self-hosted back to this list. The code default already includes it, so this line is the cutover-safe override.",
+  "_comment_labels": "No self-hosted, permanently. main.yml routes with runs-on: ffgithubrunners, a label only these runners carry, and deploy.yml stays on the legacy runners via self-hosted, which only they carry. The two sets never overlap and neither needs relabelling.",
   "labels": ["Linux", "X64", "ffgithubrunners"],
 
   "org": "Final-Factory",

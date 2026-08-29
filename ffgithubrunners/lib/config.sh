@@ -89,10 +89,11 @@ _ffghr_set SLOTS            slots            1
 _ffghr_set WATCHDOG_MINUTES watchdog_minutes 120
 _ffghr_set IMAGE            image            ffghrunner:latest
 
-# The design's default set. Section 13 step 1 installs WITHOUT self-hosted so nothing routes here
-# by accident while the old runners are still serving main.yml, which is why config.json.example
-# ships the shorter list; step 3 is where self-hosted comes back.
-_ffghr_set LABELS           labels           'self-hosted,Linux,X64,ffgithubrunners'
+# NO self-hosted, permanently. It was going to come back at cutover, but routing main.yml with
+# `runs-on: ffgithubrunners` is better: that label is carried only by these runners and
+# self-hosted only by the four legacy ones, so the two harnesses stay separable with no label
+# surgery, and deploy.yml keeps landing on the old runners without being pinned by hand.
+_ffghr_set LABELS           labels           'Linux,X64,ffgithubrunners'
 
 # --- GitHub ---------------------------------------------------------------------------------
 _ffghr_set ORG              org              Final-Factory

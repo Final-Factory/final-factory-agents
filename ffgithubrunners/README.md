@@ -91,18 +91,21 @@ reaches ffbox's containers.
 
 ## The current state of this machine
 
-The slots carry `Linux`, `X64` and `ffgithubrunners` and **not** `self-hosted`, so `main.yml` does
-not route to them and the four old runners still serve every job. That is section 13 step 1 of the
-design and it is the correct resting state until the new path has been proven side by side.
-`ffgithubrunners status` says so in as many words.
+The slots carry `Linux`, `X64` and `ffgithubrunners` and **not** `self-hosted`. That is permanent,
+not a cutover state: `ffgithubrunners` is carried only by these runners and `self-hosted` only by
+the four legacy ones, so the two sets never overlap and neither needs relabelling.
 
-To go further, follow section 13: add a second job on a branch with
-`runs-on: [self-hosted, ffgithubrunners]`, run both harnesses on the same commit, and only then
-apply section 8 to the real job and add `self-hosted` back to the labels.
+Until `main.yml` is merged with `runs-on: ffgithubrunners`, nothing routes here and the old runners
+serve every job. `ffgithubrunners status` says so in as many words.
 
-`deploy.yml` is the loose end. It passes no `customImage`, so game-ci picks a per-platform image and
-its StandaloneOSX leg needs a Mac module this image does not have. Pin it to the old runners before
-the cutover, or keep them until it is dealt with.
+**The cutover is one commit to `main.yml`**, and its two halves cannot be separated: the new steps
+call `/opt/ffghr/unity-license.sh`, which exists only inside the container, so they fail
+immediately on the old runners. The `runs-on` line and the steps land together or not at all.
+
+`deploy.yml` needs no edit. It asks for `self-hosted`, which only the legacy runners carry, so it
+keeps landing on them. Those runners stay until `deploy.yml` is dealt with separately: it passes no
+`customImage`, so game-ci picks a per-platform image and its StandaloneOSX leg needs a Mac module
+this image does not have.
 
 ## The egress allowlist
 
