@@ -26,11 +26,12 @@ In .github/workflows/main.yml, three things that go together:
             `gh cache list` piped through inline python, then `gh cache delete` per id
 
 Those are the only `gh` calls in the file (lines 168 and 192) and the only thing needing
-`permissions: actions: write` at :9. Both go with them.
+`permissions: actions: write` at :9. Both go with them. `checks: write` at :10 STAYS — the
+post-check-run step at :119-127 needs it.
 
 On the host it also replaces ffbox/04-warmLibrary.sh and its trigger. Section 12.
 
-Unchanged: the LFS materialisation step (:33-56), the editor step, the check run, the log dump
+Unchanged: the LFS materialisation step (:33-58), the editor step, the check run, the log dump
 and the two artifact uploads. The checkout at :30-32 changes in exactly one respect — section 7.
 
 
@@ -55,9 +56,17 @@ ZFS stores after lz4):
     Library            8.6 G     4.4 G   59,405
     total             22   G    16   G
 
+THOSE NUMBERS ARE FROM GOLDEN, WHICH IS A FULL CLONE, AND A CI WORKSPACE IS NOT. main.yml sets
+no `fetch-depth`, so actions/checkout defaults to 1 and the job's `.git/objects` is a single-commit
+pack rather than golden's 1.3 G of full history. `.git/lfs` is unaffected: HEAD's LFS payload is
+~5.7 GB across 3,190 files, which is essentially all of the 4.9 G store, and every one of those
+objects has to be present either way. So a CI archive is roughly 21 G rather than 22 G — the
+difference is the history, and the history is the small part. Open item (b) settles it against a
+real archive.
+
 One archive covers all three costs. Measured for Library alone (9,280,010,240-byte archive,
 3.8 G on disk after lz4): 26.94s to write from tmpfs, 17.42s to read back into tmpfs with the
-archive in ARC. Extrapolated linearly to 22 G that is roughly 64s to save and 41s to restore.
+archive in ARC. Extrapolated linearly to 21 G that is roughly 61s to save and 39s to restore.
 The extrapolation is not measured and will not be exactly linear, but 41s against 246s is a
 margin wide enough not to need a good estimate.
 
@@ -131,6 +140,10 @@ on the branch field ALONE, so an editor upgrade replaces a branch's entry rather
 accumulating beside it, and the restore refuses an entry whose scope does not match its own
 UNITY_VERSION — a PackageCache built by a different editor is worse than none.
 
+The consequence, stated so nobody reports it as a fault: an editor upgrade costs ONE cold job per
+branch. No entry matches the new scope, the fallbacks in section 7 also require a scope match, and
+the first job on each branch after the bump imports from nothing.
+
 Three rules, enforced by the host, in this order:
 
   1. ALWAYS A SINGLE TARBALL. One file per entry, no directories, no sidecar payloads.
@@ -138,7 +151,9 @@ Three rules, enforced by the host, in this order:
      `<branch>@*.tar`, whatever its scope.
   3. THE LAST CACHE_KEEP ENTRIES SURVIVE, default 10, by the LRU clock in section 9.
 
-Ten entries at 16 G on disk is 160 G. rpool has 2.1 T free; the dataset quota is 250G.
+Ten entries at 16 G on disk is 160 G, plus three slots staging up to 16 G each while they run:
+208 G worst case. rpool has 2.1 T free; the dataset quota is 250G, which is that worst case with
+room rather than a number picked for looking round.
 
 
 6. The mounts
@@ -191,6 +206,13 @@ contradicts section 8 of the runner design ("the checkout keeps its default clea
 updating. It is safe for the same reason the ram disk is safe: the workspace is a fresh tmpfs per
 container, so there is nothing to clean that this job did not itself put there.
 
+The "Sanitize branch name for cache key" step at main.yml:59-61 STAYS UNCHANGED and now feeds
+both the restore and the save. It has to run before the restore, so it moves to the top of the
+job — it touches nothing and depends on nothing.
+
+A pull_request run, including one from a fork, restores like any other and never saves (section
+8). Reading the cache is not a privilege; writing it is.
+
 What the step does:
 
   1. NO /ffcache -> print one line and exit 0. THE RESTORE MUST NEVER FAIL THE JOB. An
@@ -217,7 +239,7 @@ the wanted sha; on a remote mismatch it deletes the directory and re-clones, whi
 failure mode for a corrupt entry. THIS IS THE ONE LOAD-BEARING ASSUMPTION NOT VERIFIED HERE.
 Section 14.
 
-The LFS materialisation step at main.yml:33-56 needs no change and earns its keep twice. With
+The LFS materialisation step at main.yml:33-58 needs no change and earns its keep twice. With
 .git/lfs in the archive `git lfs pull` finds its objects locally and costs nothing, and the
 pointer scan after it is exactly the guard against a cached tree whose smudge went wrong — the
 one new failure mode this design introduces. It was written for the old problem and covers the
@@ -240,9 +262,17 @@ that fails re-imports from cold on every push until it goes green.
 never writes, which is GitHub's own cache-write scoping, and it also stops PR refs (`123/merge`
 sanitizes to `123-merge`) churning the ten slots that are meant to hold real branches.
 
+The archive is rooted at the workspace and nowhere else: `tar -cf ... -C "$GITHUB_WORKSPACE" .`
+to write and `tar -xf ... -C "$GITHUB_WORKSPACE"` to read, so entry paths are `./...` and an
+archive cannot depend on where the workspace happens to live.
+
 The step writes /ffghr/out/ffcache.tar.part, renames it to ffcache.tar, and writes the intended
 entry name to /ffghr/out/ffcache.name. A job killed mid-archive leaves only the .part, which the
 host ignores and discards with the staging directory.
+
+slot.sh wipes and recreates $CACHE_DIR/staging/slot-$SLOT at 0770 BEFORE the run at slot.sh:145,
+never after: a teardown that does not complete must not leave the next job reading a dead job's
+drop box, and re-creating it up front is the one ordering that cannot get that wrong.
 
 The host half runs in slot.sh's existing teardown trap (slot.sh:39), after the container is
 removed so nothing is still writing, under flock on $CACHE_DIR/.prune.lock:
@@ -273,9 +303,14 @@ into a failed slot.
 ----------------
 
 The entry's own mtime, touched on promotion and touched by the host when a job reports a restore
-through /ffghr/out/used. That is what makes rule 3 "the last ten branches USED" rather than "the
-last ten written": a branch that restores the cache and then fails, or that runs a job which does
-not save, stays in the ten.
+through /ffghr/out/used. /ffghr/out/used IS VALIDATED BY THE SAME REGEX AS ffcache.name and is
+otherwise ignored — it is a name the job proposes, exactly like the other one. Processing it is
+idempotent and unconditional: a job that both restored and saved touches its entry twice, which
+costs nothing and removes a case from the code.
+
+That is what makes rule 3 "the last ten branches USED" rather than "the last ten written": a
+branch that restores the cache and then fails, or that runs a job which does not save, stays in
+the ten.
 
 reap.sh runs the same prune under the same lock every fifteen minutes
 (systemd/ffgithubrunners-reap.timer), so a machine whose slots stop exiting cleanly cannot grow
@@ -409,6 +444,18 @@ WHAT REPLACES IT. Golden stops being warmed by an editor and starts being warmed
 
     tar -xf $CACHE_DIR/entries/<default branch>@<scope>.tar -C /opt/FinalFactory Library
 
+Three details that make it correct rather than merely short. It runs INSIDE THE GOLDEN LOCK that
+04-warmLibrary.sh already takes at :89-91, because a run that snapshots golden mid-extract clones
+a half-written Library for exactly the reason the existing comment gives about a half-built
+import. The scope comes from ProjectSettings/ProjectVersion.txt (`m_EditorVersion: 6000.3.19f1`),
+which is the checkout's own answer rather than a second copy of the version to keep in step. And
+the extract replaces Library wholesale — remove, then extract — rather than merging into whatever
+was there.
+
+What the script LOSES is as much of the point as what it gains: no UNITY_EMAIL, UNITY_PASSWORD or
+UNITY_SERIAL, no secrets file to read, no licence to activate or return, no image to have built,
+no 30-60 minute window to drain around. 04-warmLibrary.sh becomes lock, update-golden, extract.
+
 Data movement, not code execution. No container, no licence, no editor, nothing to escape from.
 04-warmLibrary.sh's import is deleted, stage 4 of setup.sh becomes the extract, and the
 five-minute path stops launching Unity entirely. ffbox runs still clone a golden that carries a
@@ -431,8 +478,8 @@ into the default-branch entry so the first CI job is not cold either.
 WHILE HERE, a factual error to fix. update_ffbox.sh justifies its unconditional setup.sh call by
 saying "the Unity warm skips outright when golden already has a Library/". It does not:
 04-warmLibrary.sh logs "Library/ already present ... re-importing to pick up the changes just
-pulled" and falls through with no exit. Every update opens the editor. ~/ffbox-runs/warm-* holds
-eleven such runs between 2026-08-16 and 2026-08-28.
+pulled" and falls through with no exit. Every update opens the editor. ~/ffbox-runs/ holds twelve
+warm-* directories between 2026-08-16 and 2026-08-28, eleven of them with an import.log.
 
 
 13. Cutover
@@ -482,13 +529,24 @@ when the mounts are absent.
 
   (a) A genuinely cold restore has not been measured. Every read in section 2 came out of a 755 G
       ARC. The number for a machine with less RAM, or right after a reboot, is unknown.
-  (b) The 22 G extrapolation in section 2 is linear from a 9.28 G measurement. Measure the real
-      archive once one exists.
+  (b) Both size numbers in section 2 are inferred: the ~21 G CI archive from a full-clone golden,
+      and the 64s/41s timings linearly from a 9.28 G measurement. Measure the real archive and
+      the real timings once one exists.
   (c) Drift ACROSS branches is unmeasured. Section 12's evidence is golden drifting over TIME on
       one branch: after three days, one asset re-imported, 29s of recompile, 31s of domain
       reload. A feature branch may differ from the default branch by more than three days of
       develop does, and that is the number that decides how much the fallback in section 7 buys.
-  (d) Whether the archive should exclude Library/PackageCache (1.6 G) and let UPM re-resolve. It
+  (d) TimeoutStopSec=150 on ffgithubrunners@.service now has to cover promotion and the prune as
+      well as `docker stop -t 90`. The rename is instantaneous and the prune is a handful of
+      unlinks, but ZFS frees a 16 G file's blocks asynchronously and that has not been timed under
+      three concurrent teardowns.
+  (e) .git growth across repeated restores. Each job fetches into a .git it inherited, and nothing
+      ever packs or prunes it. Whether that matters within a ten-entry lifetime is unknown; `git
+      gc --auto` on restore is the obvious answer if it does.
+  (f) The cache is per-host by construction. A second build server keeps its own, warms
+      independently, and shares nothing. That is probably right — the archives are large and the
+      link between machines is not — but it is a choice, not an accident.
+  (g) Whether the archive should exclude Library/PackageCache (1.6 G) and let UPM re-resolve. It
       would shrink entries meaningfully and re-resolving is an online operation the allowlist
       already covers, but it trades disk for a network dependency in every job.
 
