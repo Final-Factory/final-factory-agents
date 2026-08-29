@@ -1,0 +1,242 @@
+ffbox unified runners: one pool, one codebase, two kinds of work
+================================================================
+
+2026-08-29.
+
+ffbox and ffgithubrunners are the same machine twice. Both run a disposable container built from
+unityci/editor, both activate a Unity licence and hand the seat back, both sit behind an
+--internal Docker network whose only neighbour is an SNI-filtering proxy, and after
+ffgithubrunners_design section 17 both run on one rootless daemon under one account. What differs
+is the program the container execs, where its files come from, and where its results go.
+
+This merges them. One image, one supervisor, one slot pool, two modes. It assumes the GitHub
+cache actions are gone and a local Library cache has replaced them, which is what makes the merge
+worth doing: without actions/cache, a CI job needs a warm Library from somewhere on this box, and
+ffbox already has one.
+
+
+1. What gets built
+------------------
+
+  1. One image. Unity, the Unity scaffolding, the licence script, Claude Code, and the Actions
+     runner, in one place instead of two 11 GB images that share a base and cannot share layers.
+  2. One supervisor. slot.sh grows a mode; ffbox's run path becomes the second mode rather than a
+     separate program.
+  3. One warm Library, golden's, reaching both kinds of work by the same mechanism: a ZFS clone,
+     which is instant and costs nothing until written.
+  4. Two egress fences, unchanged. One codebase does not mean one allowlist; see section 6.
+  5. ffbox stops running host-side git in a tree a container wrote, which is finding F7.
+
+Not a goal: making the two modes look identical. They are not. The design is one system with a
+mode switch, not a pretence that a CI job and an agent run are the same thing.
+
+
+2. The two modes
+----------------
+
+    ci       the container execs Runner.Listener and takes one GitHub Actions job.
+             Results leave through GitHub. Nothing on this box reads what it wrote.
+
+    agent    the container execs claude -p against a prompt. Results leave as a git bundle the
+             host applies in a clean checkout.
+
+Mode is decided by the supervisor before the container starts and never changes inside it. It
+selects the entrypoint, the mounts, the network and the environment. Everything else is shared.
+
+
+3. The workspace, which is the whole of the difference
+------------------------------------------------------
+
+SUPERSEDED IN PART by design/ffcache_design.txt, written the same day and now implemented. This
+section proposed a ZFS clone of golden with only <clone>/Library bind-mounted into a CI job.
+ffcache does the same job by a different route: one tar per branch under /opt/ffcache, mounted
+read-only, restored by an inline step before the checkout, and measured at 37s for the whole
+23.5 GB workspace against a 246s baseline. It restores .git as well, so the checkout becomes an
+incremental fetch rather than a clone, which the clone-of-Library idea could not do.
+
+Read this section as the requirement — CI needs a warm workspace from this box, not from Azure —
+and ffcache as the answer. The rest of this design stands.
+
+Both modes get a ZFS clone of golden, made the way ffbox already makes one: snapshot under a lock,
+then `zfs clone -o mountpoint=`. Instant, roughly zero bytes, and copy-on-write from there.
+
+What differs is what is mounted where.
+
+    agent    the whole clone is the workspace, mounted read-write. That is ffbox today.
+
+    ci       the workspace is a tmpfs, and ONLY <clone>/Library is bind-mounted into it at
+             <workspace>/Library, read-write.
+
+THE SPLIT MOUNT IS THE POINT. A CI job runs actions/checkout, which wants to own the repository,
+and giving it a pre-populated one brings back the failure main.yml:26 documents at length: a file
+left as an LFS pointer by an earlier smudge is considered unmodified by git, so `checkout --force`
+never rewrites it and Unity silently skips the DLL. A tmpfs workspace makes every checkout a fresh
+one, which is what the current ffgithubrunners does and why that bug is currently absent.
+
+Mounting only Library keeps that property and still skips a cold import. Measured on 2026-08-29:
+a cold editmode run took 53 minutes, of which 37 was asset import, against a warm figure of about
+eight. Library is 4.4 GB in golden.
+
+Nothing about this needs Library to be its own dataset. The clone carries the whole checkout and
+the bind mount names the subdirectory; the rest of the clone is never read and never written.
+
+
+4. The image
+------------
+
+One Dockerfile, one tag, built from the same unityci/editor tag main.yml names. On top of it:
+
+  - the Unity scaffolding: /BlankProject, and unity-license.sh at a fixed path
+  - Claude Code, for agent mode
+  - the Actions runner at /opt/actions-runner, chowned to root, and gh
+  - both entrypoints, and a small dispatcher that picks one from FFBOX_MODE
+
+It is larger than either image is now and smaller than the two together, and it ends the fork
+described in section 8.
+
+The runner tarball is the only part with a version that GitHub enforces, so the weekly rebuild
+stays, and it now rebuilds one image instead of two.
+
+
+5. The supervisor
+-----------------
+
+One slot.sh, one systemd template, one pool. A slot in ci mode does what it does today: mint a JIT
+config, run, tear down, exit, be restarted. A slot in agent mode waits for local work instead.
+
+SLOTS ARE STATICALLY ASSIGNED A MODE. ci_slots and agent_slots in config.json, each rendering its
+own unit instances. A slot cannot usefully switch modes on demand: a ci slot is registered with
+GitHub and idling in a long poll, and it would have to deregister to become an agent slot, which
+is a race against being handed a job. A static split is predictable and its failure modes are
+legible; the dynamic version is a later refinement if the capacity actually binds.
+
+Teardown, the watchdog, the drain flags and the reaper are unchanged and now serve both modes. The
+reaper's container labels gain the mode, so an operator reading `docker ps` can see what a slot is
+doing without opening a log.
+
+
+6. Egress: two fences, one script
+---------------------------------
+
+TWO NETWORKS AND TWO ALLOWLISTS, SELECTED BY MODE. This is the one place the merge deliberately
+stops.
+
+    ci      ffghr-net, 10.81.0.0/24: GitHub, Unity licensing and packages, artifact storage.
+    agent   ffbox-net, 10.80.0.0/24: Anthropic, Unity licensing and packages.
+
+A single merged list would hand every container the union: an agent run able to reach GitHub, and
+a CI job, which is arbitrary code from a pushed branch, able to reach the model endpoint. Neither
+is needed and both are worth avoiding. One script already parameterises everything through
+FFBOX_EGRESS_*, so two instances is one codebase, not two.
+
+With the cache actions removed, ci still needs *.blob.core.windows.net for upload-artifact, which
+main.yml keeps. If artifacts ever move to a local mechanism too, that entry goes.
+
+
+7. Results, and finding F7
+--------------------------
+
+ci needs nothing here: the runner uploads its own artifacts over its own connection and the host
+never reads the workspace.
+
+agent is where the work is. Today the host runs `git -C "$MNT"` against the clone after the
+container exits, so a container that wrote .git/hooks or .git/config chooses what the host then
+executes. The fix is to stop running git there at all:
+
+  - inside the container, at the end of a run, produce a bundle of the commits the run made and
+    write it to the output directory;
+  - on the host, apply the bundle in a clean checkout that no container has touched.
+
+A bundle is inert: git verifies it and it carries no hooks and no config. This closes F7
+structurally rather than by remembering to pass -c core.hooksPath=/dev/null, and it is the only
+part of the merge that changes what ffbox does rather than how it is packaged.
+
+
+8. unity-license.sh
+-------------------
+
+One copy. The two have already diverged: ffbox's requires UNITY_SERIAL and decodes the .ulf in
+04-warmLibrary.sh before ever calling it, while ffgithubrunners' decodes internally. That fork
+produced a real failure on 2026-08-29, where the CI copy demanded a serial that CI never sets.
+
+The merged script decodes internally, accepts UNITY_LICENSE contents or UNITY_LICENSE_FILE, and
+both callers use it unchanged.
+
+
+9. Accounts, unchanged
+----------------------
+
+  FinalFactoryTester   runs the supervisor and holds every credential: the GitHub App key, the
+                       Claude token, the push token.
+  ffbox-container      owns the daemon and runs every container. Empty home, no sudo, no login
+                       shell.
+
+The merge does not widen this. What it does widen is what one image can do if a container escapes
+into it, since that image now carries both Claude Code and the Actions runner. The mitigation is
+unchanged and is the reason the split exists: an escape lands on an account that owns nothing, and
+the credentials are on the other one.
+
+The ZFS clone and destroy stay on FinalFactoryTester's existing NOPASSWD entries. No new ones.
+
+
+10. Layout
+----------
+
+Everything moves under ffbox/. ffgithubrunners/ stops existing.
+
+    ffbox/
+      setup.sh                       stages, now including the runner ones
+      Dockerfile                     the one image
+      entrypoint.sh                  dispatches on FFBOX_MODE
+      entrypoint-ci.sh               exec Runner.Listener
+      entrypoint-agent.sh            exec claude -p            (today's run-as-user.sh)
+      unity-license.sh               one copy, decoding internally
+      slot.sh                        the supervisor, both modes
+      lib/gh.sh  lib/config.sh
+      egress/allowlist-ci.txt        GitHub, Unity
+      egress/allowlist-agent.txt     Anthropic, Unity
+      systemd/                       one slot template, one target, the timers
+
+
+11. Migration order
+-------------------
+
+Each step leaves a working machine, and none of them is reversible only by luck.
+
+  1. The local Library cache lands, and main.yml drops actions/cache. Nothing else changes.
+  2. ffbox moves onto ffbox-container's daemon. Section 17 of the ffgithubrunners design. This is
+     the step that makes layer sharing possible and the one with the real risk, because it is
+     where ffbox's bind mount meets a daemon that maps uids differently.
+  3. unity-license.sh becomes one file, used by both.
+  4. One image, still driven by two supervisors. Nothing behavioural changes; the images merge.
+  5. agent mode moves to the bundle handover, closing F7.
+  6. slot.sh grows the mode switch, and ffbox's run path becomes agent mode.
+  7. ffgithubrunners/ is deleted and its units are renamed.
+
+Steps 1 to 4 are packaging and are safe to do while CI runs. Steps 5 and 6 change what ffbox does
+and want their own week.
+
+
+12. What this does not fix
+--------------------------
+
+  - Finding F8, cache poisoning across branches, becomes ffbox's problem too once both restore
+    from the same warm Library. Today a poisoned Library breaks a CI job; afterwards it can also
+    break a run that commits code. Whether golden is trustworthy is now a question with two
+    consumers.
+  - Kernel exploitation from the user namespace, which is unchanged and which patching is the
+    only control for.
+  - The org-wide reach of the runner registration, accepted in finding F2.
+  - Repository secrets, which a CI job receives because the workflow asks for them.
+
+
+13. Decisions still open
+------------------------
+
+  a. Whether agent mode should also stop bind-mounting entirely. The bundle handover of section 7
+     removes the host-side git risk but leaves the container writing a host-visible clone. Going
+     further means the container producing everything as data, which is cleaner and slower.
+  b. How many slots of each mode, and whether a CI job should be able to preempt an agent run. A
+     push waits for a slot; an agent run holds one for an hour.
+  c. Whether upload-artifact stays. If artifacts go local too, ci loses its last dependency on
+     storage outside this box.

@@ -1,0 +1,13 @@
+[Unit]
+# Everything ffgithubrunners runs, in one handle. `systemctl stop ffgithubrunners.target` is the
+# rollback in section 13 of the design: it stops every slot and leaves the old runners serving
+# main.yml, with nothing else on the machine touched.
+#
+# The daemon gate and the egress fence are deliberately NOT PartOf this target. Stopping the
+# runners should not take the fence down, and the daemon is shared with ffbox.
+Description=ffgithubrunners: single-use GitHub Actions runners
+Wants=ffgithubrunners-dockerd-wait.service ffghr-egress.service
+After=ffgithubrunners-dockerd-wait.service ffghr-egress.service
+
+[Install]
+WantedBy=multi-user.target

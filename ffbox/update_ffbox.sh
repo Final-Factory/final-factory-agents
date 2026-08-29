@@ -233,9 +233,15 @@ log "checkout is now at $(printf %.12s "$(git_ rev-parse HEAD)")"
 # match and never got applied.
 #
 # So run the real thing. Every stage is idempotent and no-ops when it is already satisfied:
-# Docker and ZFS are one-time provisioning, the image build is a cached docker build, the Unity
-# warm skips outright when golden already has a Library/, and stage 5 is setdefault the whole
-# way down. On a machine that is already set up this is a few seconds and a lot of "already
+# Docker and ZFS are one-time provisioning, the image build is a cached docker build, the warm
+# step extracts CI's Library/ and skips when golden's is already newer, and stage 5 is setdefault
+# the whole way down.
+#
+# THAT CLAIM USED TO BE FALSE and it is worth recording why. It said the warm "skips outright when
+# golden already has a Library/". 04-warmLibrary.sh logged "already present ... re-importing to
+# pick up the changes just pulled" and fell through with no exit, so every commit opened the
+# editor: ~/ffbox-runs held twelve warm-* directories between 2026-08-16 and 2026-08-28. Since the
+# warm became an extract there is no editor to open and the skip is a real one. On a machine that is already set up this is a few seconds and a lot of "already
 # exists"; on one that is behind, it is exactly the commands a human would have run.
 #
 # WHAT IT WILL NOT DO. --non-interactive makes setup.sh skip the stages that need root — Docker,

@@ -1,0 +1,28 @@
+{
+  "_comment": "Copied to ~/.config/ffbox/githubrunners/config.json. Every key is optional; anything absent falls back to the default in lib/config.sh, and FFGITHUBRUNNERS_<KEY> in the environment overrides both. See ffgithubrunners/README.md.",
+
+  "slots": 1,
+  "watchdog_minutes": 120,
+  "image": "ffghrunner:latest",
+
+  "_comment_labels": "No self-hosted, permanently. main.yml routes with runs-on: ffgithubrunners, a label only these runners carry, and deploy.yml stays on the legacy runners via self-hosted, which only they carry. The two sets never overlap and neither needs relabelling.",
+  "labels": ["Linux", "X64", "ffgithubrunners"],
+
+  "org": "Final-Factory",
+  "runner_group_id": 1,
+
+  "_comment_app": "The GitHub App's two ids, written here by 04-github.sh. They identify an App, they do not authenticate as one, so they are configuration rather than secrets. The private key IS the secret and is a file at github-app.pem beside this one, at a fixed path nothing records. Leave these null when using a PAT instead.",
+  "app_id": null,
+  "app_installation_id": null,
+
+  "_comment_limits": "memory is a ceiling, not an allocation: the 40g workspace tmpfs plus about 32g for the editor. pids_limit is PROVISIONAL and open item (b) in the design; measure it against a real Unity import before trusting it.",
+  "memory": "72g",
+  "pids_limit": 4096,
+  "workspace_size": "40g",
+
+  "_comment_cache": "The host workspace cache, design/ffcache_design.txt. cache_dir empty disables it entirely and restores the no-bind-mounts arrangement. cache_quota 250G is ten 16G entries plus three slots staging 16G each, not a round number. cache_sync is standard rather than the daemon store's disabled: sync only governs fsync/O_SYNC, and the save path issues none (measured: tar does 1684 write() and zero fsync), so the safer default is free here even though it would be expensive for docker.",
+  "cache_dir": "/opt/ffcache",
+  "cache_keep": 10,
+  "cache_quota": "250G",
+  "cache_sync": "standard"
+}

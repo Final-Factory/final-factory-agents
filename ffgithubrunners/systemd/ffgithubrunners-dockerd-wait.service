@@ -1,0 +1,26 @@
+[Unit]
+# The gate. ffgithubrunners' units are SYSTEM units running as the supervisor's account, while the
+# daemon lives in ffbox-container's own systemd instance. After= and Wants= do not cross the
+# system/user boundary, so at boot a slot would start before the socket it needs exists.
+#
+# WHY A UNIT AND NOT AN ExecStartPre ON EACH. Several copies of the same wait is several places to
+# fix it, and a shared oneshot gives the failure one name in `systemctl status` instead of burying
+# it inside whichever slot happened to start first.
+Description=ffgithubrunners: wait for ffbox-container's rootless Docker
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=@USER@
+Group=@GROUP@
+Environment=HOME=@HOME@
+ExecStart=/bin/sh @WAITDOCKER@ @DOCKERSOCK@ 90 @CUSER@
+# Past the wait's own deadline, so the script gets to print its diagnosis rather than being killed
+# a second before it explains itself.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
