@@ -98,6 +98,26 @@ High process CPU does not rule out any of them — Unity keeps burning cores (Bu
 (Compile-wedge proven 2026-07-31: a 6+ minute "compile" cleared instantly on `stop`, domain reload
 finished within seconds.)
 
+## Sidestep all of this: attach to a BUILT PLAYER (feature 068)
+
+Everything below — the occlusion freeze, the `Step()` pump and its caps, the bridge-timeout traps,
+the focus rules around screenshots — is the price of driving an EDITOR. A windowed built player has
+none of it: measured **141 fps fully occluded** (against the editor's ~2), so frames just run.
+
+Launch it with `-ffAgentControl true` and it publishes `session-{pid}.json` (port + bearer token)
+under `<persistentDataPath>/AgentControl/`; from there an outside process drives the same bounded
+`ffauto` vocabulary over loopback HTTP — `POST /v1/command` instead of `execute_code`, a blocking
+`GET /v1/chain/{id}?timeoutMs=…` (`ff-agent … --wait`) instead of pump-and-poll, `GET
+/v1/snapshot/<scope>` instead of `observe.state`, and `GET /v1/screenshot` for a real game frame
+with the overlay UI in it. **127.0.0.1, never `localhost`** — Mono's `HttpListener` answers a
+`localhost` Host header with 400.
+
+The recipe, the tier difference (a shipped player is `player-safe`; dev fixtures answer
+`capability_denied`) and the cleanup rules live in the **playtest** skill, "Attach to a BUILT
+PLAYER". Come back here when the question genuinely needs editor internals — inspecting ECS state
+that no `ffauto` scope exposes, driving uGUI by reflection, or reproducing something that only
+happens in the editor.
+
 ## Control channels
 
 1. **`execute_code` — the primary surface.** Compiles via Roslyn on macOS AND Windows

@@ -63,6 +63,54 @@ plus `Seed` or `SaveName` (a COPY of any dev save, or a `claude_*` save) and opt
 auto-enters play and the session starts/stops itself. **Delete the config file when done — a
 leftover auto-plays on the next editor boot.**
 
+## Attach to a BUILT PLAYER instead — no pumping at all (feature 068)
+
+**Prefer this whenever the hypothesis does not need editor internals.** The occlusion tax above is
+an EDITOR problem: an occluded editor runs ~2 fps and its player loop is frozen between `Step()`
+calls, which is why the pump-and-poll loop exists. A windowed built player measured **141 fps
+fully occluded** on the same machine, so attached play has no pump, no `Step()` cap, no
+bridge-timeout risk, and no "did the frame actually run" doubt. It is also the SHIPPING target:
+what you observe is what a player gets.
+
+Boot one with the channel on (the automation bootstrap gives it a world — the v1 vocabulary has no
+menu verbs, so the channel cannot start a game itself):
+
+```sh
+"<build>/finalfactory.app/Contents/MacOS/finalfactory" -ffAgentControl true -screen-fullscreen 0 \
+  -ffAutomationRole host -ffAutomationTargetClients 1 \
+  -ffAutomationDeterminismAudit false -ffAutomationWriteReport false \
+  -ffAutomationLabel my-playtest &
+```
+
+⚠️ `-ffAutomationDeterminismAudit false` REQUIRES `-ffAutomationWriteReport false`, or the session
+dies on "Determinism report publication failed". ⚠️ Windowed, never `-batchmode`: a headless player
+renders no frames, so `/v1/screenshot` answers 409 `no_frame_available`.
+
+The game publishes `session-{pid}.json` (port + bearer token) under
+`<persistentDataPath>/AgentControl/`. Drive it with `ff-agent` if the kit is on the machine
+(`Tools/AgentKit/<platform>/ff-agent`), otherwise `curl` — same HTTP surface, and
+`contracts/agent-channel-http.md` in the 068 spec is the contract either way. **127.0.0.1, never
+`localhost`**: Mono's `HttpListener` answers a `localhost` Host header with 400.
+
+| editor path | built-player path |
+|---|---|
+| `execute_code` → `TryExecute("ffauto:…")` | `POST /v1/command` `{"actor":"local-player","chain":["ffauto:…"]}` |
+| pump ≤600 `Step()` calls, then `ffauto:wait.status\|N`, repeat | `ff-agent … --wait`, i.e. `GET /v1/chain/{id}?timeoutMs=30000` — the game blocks server-side and answers when the chain settles |
+| `observe.state\|<scope>` via `execute_code` | `GET /v1/snapshot/<scope>` (10/s, then 429 + `Retry-After`) |
+| `manage_camera` game-view capture, focus traps | `GET /v1/screenshot` (2/s) — a real game frame, overlay UI included |
+| `read_console` for errors | `GET /v1/journal` — the same session journal, already structured |
+
+**The tier is narrower than the editor's.** A shipped player grants `player-safe`: the dev
+fixtures (`inventory.add`, `spawn.*`, `desync.inject`, `visualepisode.*`) come back `rejected` with
+`"reason":"capability_denied"`. `GET /v1/help` lists exactly what this actor may run — trust it
+over memory. Pass `-ffAgentControlDev true` for the full set when a playtest genuinely needs a
+fixture.
+
+**Cleanup (SC-006) is different too, and simpler**: `DELETE /v1/session` detaches without ending
+the game (the player keeps playing; other peers see the agent-driven marker clear), and stopping
+the player removes its discovery file. There is no `.ff-local-automation.json` to delete unless you
+wrote one, no play mode to exit, and no `isPaused` to undo.
+
 ## The drive → observe → judge loop
 
 1. **Drive** with the real-input commands: `pointer.*` (world clicks; placement needs
