@@ -130,7 +130,14 @@ unset JIT MINT
 # THE TMPFS TARGET MUST EQUAL THE work_folder PASSED TO generate-jitconfig. If they differ the
 # runner writes into the image's writable layer instead, everything still works, and the entire
 # speed argument for the ram disk quietly evaporates. Both come from $WORK_FOLDER for that reason.
-log "starting $CNAME (workspace tmpfs $WORKSPACE_SIZE at $WORK_FOLDER)"
+# Drop everything, then add back only what Unity's package extraction needs. See lib/config.sh.
+CAP_ADD_ARGS=""
+for _cap in $(printf '%s' "$CAP_ADD" | tr ',' ' '); do
+    CAP_ADD_ARGS="$CAP_ADD_ARGS --cap-add=$_cap"
+done
+# shellcheck disable=SC2086  # CAP_ADD_ARGS is a deliberately word-split option list
+
+log "starting $CNAME (workspace tmpfs $WORKSPACE_SIZE at $WORK_FOLDER, caps +$CAP_ADD)"
 # LABELS SO THE REAPER CAN TELL AN ORPHAN FROM A LIVE JOB. A supervisor killed with SIGKILL
 # leaves its container RUNNING and its registration ONLINE, which is indistinguishable from a job
 # in progress unless the container says who is looking after it. The pid is checked against a
@@ -144,6 +151,7 @@ docker run -d \
     --network "$EGRESS_NET" --dns "$EGRESS_IP" \
     --tmpfs "$WORK_FOLDER:size=$WORKSPACE_SIZE,mode=1777,exec" \
     --cap-drop=ALL \
+    $CAP_ADD_ARGS \
     --security-opt=no-new-privileges \
     --pids-limit "$PIDS_LIMIT" \
     --memory "$MEMORY" \

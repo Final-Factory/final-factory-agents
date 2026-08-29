@@ -122,6 +122,24 @@ _ffghr_set MEMORY           memory           72g
 # low kills a legitimate job during asset import.
 _ffghr_set PIDS_LIMIT       pids_limit       4096
 
+# THE THREE CAPABILITIES --cap-drop=ALL TAKES THAT UNITY ACTUALLY NEEDS.
+#
+# Measured on 2026-08-29 by a real editmode run, which failed with
+#   com.unity.jobs: TAR_ENTRY_ERROR: EPERM: operation not permitted, fchown
+# after activating and resolving packages for 39 seconds. UPM extracts package tarballs as root
+# and preserves the ownership recorded in them, which is a chown, then a chmod on the file it just
+# gave away, then writes into directories it just gave away. That is CHOWN, then FOWNER, then
+# DAC_OVERRIDE, and each was found by adding the previous one and hitting the next wall.
+#
+# game-ci never hit this because Docker's DEFAULT capability set includes all three; section 12's
+# --cap-drop=ALL is what removed them.
+#
+# What stays dropped is the set that matters: SYS_ADMIN above all (the mount syscall, the kernel
+# surface with no other mitigation), plus NET_RAW, MKNOD, SYS_PTRACE, SYS_MODULE and the rest.
+# These three are filesystem-permission capabilities inside a container whose filesystem is
+# already entirely the job's own, and none of them is a step toward leaving it.
+_ffghr_set CAP_ADD          cap_add          'CHOWN,FOWNER,DAC_OVERRIDE'
+
 # --- egress, per section 3 --------------------------------------------------------------------
 # ffbox is on 10.80.0.0/24. These must not overlap it: both fences live in the same daemon.
 _ffghr_set EGRESS_NET       egress_net       ffghr-net
