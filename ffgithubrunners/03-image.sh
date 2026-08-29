@@ -124,7 +124,9 @@ else
 
   say "building $IMAGE (this pulls the Unity base image; it is slow the first time)"
   # shellcheck disable=SC2086  # NO_CACHE and BUILD_ARGS are deliberately word-split option lists
-  docker build $NO_CACHE $BUILD_ARGS -t "$IMAGE" "$HERE" \
+  # ONE Dockerfile, in ffbox/. The runner image and the ffbox image are the same image built from
+  # the same source; only the tag and the daemon differ until section 17 merges those too.
+  docker build $NO_CACHE $BUILD_ARGS -t "$IMAGE" "$REPO/ffbox" \
     || die "the runner image did not build"
   skip "$IMAGE is $(docker image inspect "$IMAGE" --format '{{.Size}}' | awk '{printf "%.1f GB", $1/1073741824}'), runner $(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.finalfactory.runner-version"}}')"
 fi

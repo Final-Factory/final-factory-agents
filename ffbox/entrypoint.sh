@@ -15,6 +15,22 @@
 # machine ID stable so repeat runs look like one machine. See run-as-user.sh for the other half.
 set -euo pipefail
 
+# --- mode ------------------------------------------------------------------------------------
+#
+# TWO KINDS OF WORK, ONE IMAGE. agent is everything this entrypoint did before and stays the
+# default, so nothing that does not set FFBOX_MODE changes behaviour at all. ci skips the whole
+# uid dance below: a CI job has no bind-mounted workspace to match ownership with, its workspace
+# is a tmpfs the container owns outright, and the runner refuses to start as anything but the
+# user it was told about.
+#
+# The mode is chosen by the supervisor before the container starts and cannot be changed from
+# inside it. See design/ffbox_unified_runners_design.txt section 2.
+case "${FFBOX_MODE:-agent}" in
+    agent) ;;
+    ci)    exec /ffbox/entrypoint-ci.sh ;;
+    *)     echo "ffbox: FFBOX_MODE must be 'agent' or 'ci', got '${FFBOX_MODE}'" >&2; exit 2 ;;
+esac
+
 WORKSPACE=${FFBOX_WORKSPACE:-/workspace}
 
 if [ ! -d "$WORKSPACE" ]; then

@@ -226,6 +226,7 @@ docker run -d \
     --security-opt=no-new-privileges \
     --pids-limit "$PIDS_LIMIT" \
     --memory "$MEMORY" \
+    -e FFBOX_MODE=ci \
     -e FFGHR_JITCONFIG \
     "$IMAGE" >/dev/null \
     || fail_unfit "docker run failed for $CNAME"
