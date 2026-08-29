@@ -1,0 +1,698 @@
+ffcache — a host-local Unity Library cache for the ffgithubrunners harness
+=========================================================================
+
+Replaces actions/cache in .github/workflows/main.yml with a cache that lives on the runner
+host, at /opt/ffcache, holding the N most recently used branches (N configurable, default 10).
+
+Written 2026-08-29. Companion to design/ffgithubrunners_design.txt; every section number
+below in the form "section N" refers to that document.
+
+
+1. What is being replaced
+-------------------------
+
+Three things in main.yml, all of which go away together:
+
+  main.yml:62-68    actions/cache/restore@v6, path Library, key
+                    Library-<projectPath>-<UNITY_VERSION>-<branch>-<run_id>, with restore-keys
+                    falling back to the branch prefix and then to the version prefix.
+  main.yml:157-161  actions/cache/save@v6, same key, `if: success()`.
+  main.yml:162-193  "Delete old caches, keeping only the most recent per branch" — 32 lines of
+                    `gh cache list` piped through inline python, then `gh cache delete` per id.
+
+Those are the only `gh` invocations in main.yml (grep for "gh " over the file: lines 168 and
+192 and nothing else), and the only thing that needs `permissions: actions: write`
+(main.yml:9). Both can go with them.
+
+Nothing else changes: checkout, LFS materialisation, the editor step, the check run, the log
+dump and the two artifact uploads are untouched.
+
+
+2. Why bother
+-------------
+
+Section 5 measured twelve recent jobs: checkout 117s, LFS 21s, cache restore 108s, tests 456s.
+Cache restore is the second-largest fixed cost in a job and it is entirely network and CPU
+spent moving a blob that already exists on the machine that wants it — every job on this box
+downloads and decompresses the same ~4 GB from Azure. Section 16 deferred this explicitly
+("if the 108s cache restore ... ever matters, revisit with data"). This is the data.
+
+Measured on this host 2026-08-29, against /opt/FinalFactory/Library (59,405 files, 8.8 GB
+apparent, 4.4 GB on disk under lz4):
+
+  cp -a, ZFS -> tmpfs (restoring a directory TREE)      364.73 s
+  tar -cf, tmpfs -> ZFS (saving one archive)             26.94 s
+  tar -xf, ZFS -> tmpfs, ARC-warm (restoring it)         17.42 s
+
+The archive is 9,280,010,240 bytes apparent, 3.8 GB on disk after lz4.
+
+
+3. The load-bearing finding: archives, not trees
+------------------------------------------------
+
+rpool is a mirror of sda4 and sdb4 behind a PERC H710, and `lsblk -d -o NAME,ROTA` reports
+ROTA=1 for both. They are spinning disks.
+
+That single fact decides the format. A directory-tree cache means 59,405 small file creates
+and 59,405 seeks against a HDD mirror, and the measurement above is what that costs: 365
+seconds, more than three times WORSE than the 108s GitHub cache it would be replacing. The
+obvious design is the wrong one, and it is wrong by a factor of twenty relative to the
+alternative.
+
+One tar file per entry turns the same data into a single sequential stream: 27s to write, 17s
+to read back. The 59k-small-files problem still exists but now happens only in tmpfs, where
+it is free.
+
+Two consequences worth stating:
+
+  - The archive is NOT compressed by tar. ZFS compresses the dataset instead (lz4 gives
+    2.4:1 here, 9.3 GB -> 3.8 GB), in kernel threads rather than in the job, and the ARC
+    then caches the compressed form.
+  - This host has 755 GB of RAM with 644 GB free. Ten entries at 3.8 GB is 38 GB, so in
+    practice the whole cache is ARC-resident and the 17.42s warm number is the realistic
+    one, not a best case. A genuinely cold read is bounded by mirror sequential throughput
+    on 3.8 GB and has not been measured — see open item (a).
+
+Rejected on the same evidence: rsync-based delta saves. rsync is not in the image (verified:
+`command -v rsync` inside ffghrunner:latest is empty; flock, tar, cp and find are present,
+zstd and pigz are not), and a delta save only helps a tree-shaped cache, which section 3
+has just ruled out.
+
+
+4. Shape: two mounts, and the supervisor owns every host write
+--------------------------------------------------------------
+
+Section 5 says "Nothing is bind-mounted", and section 12 rests part of its argument on it.
+A local cache cannot honour that literally — a cache that does not outlive the container is
+not a cache. The question is how much of the property survives.
+
+The answer is: all of it except the cache itself, by giving the job a READ-ONLY view of the
+cache and a per-slot WRITE-ONLY drop box, and having slot.sh do every mutation of shared
+state.
+
+    docker run ... \
+        -v $CACHE_DIR/entries:/ffcache:ro \
+        -v $CACHE_DIR/staging/slot-$SLOT:/ffcache-out \
+
+  restore  the job reads /ffcache/<key>.tar directly. No supervisor involvement, no lock.
+  save     the job writes /ffcache-out/payload.tar and /ffcache-out/key. That is all it can do.
+  promote  slot.sh, in its existing teardown trap, validates the key, renames payload.tar to
+           $CACHE_DIR/entries/<key>.tar, touches the LRU marker, prunes to $CACHE_KEEP and
+           wipes the staging directory.
+
+Because entries are single files and promotion is rename(2) within one dataset, promotion is
+atomic and instantaneous, a reader never observes a partial entry, and no flock is needed on
+the read path at all. The only lock in the system is a supervisor-side flock around the
+prune, because three slots are enabled on this host (~/.config/ffbox/githubrunners/config.json
+has "slots": 3).
+
+What a job can still do, stated plainly: propose one archive under any key name it likes,
+including `master`. It cannot delete an entry, cannot modify an existing entry, cannot write
+anywhere else on the host, and cannot escape the entries directory by naming (the key is
+validated against ^[A-Za-z0-9._-]+$ with `..` rejected, supervisor-side). Section 8 argues
+about whether that residue matters.
+
+
+5. On-disk layout, permissions and the uid map
+----------------------------------------------
+
+    /opt/ffcache/                    own dataset, 0755, traversable by the daemon account
+      entries/                       FinalFactoryTester:ffbox-container, 2770
+        Library-.-6000.3.19f1-master.tar
+        Library-.-6000.3.19f1-master.used     empty file; its mtime is the LRU timestamp
+      staging/                       FinalFactoryTester:ffbox-container, 2775 (setgid)
+        slot-1/ slot-2/ slot-3/      created 0770 per job, wiped after
+      .prune.lock                    flock target for the prune
+
+The dataset, following the pattern 01-hostSetup.sh:297-307 already uses for the daemon store:
+
+    zfs create -o mountpoint=/opt/ffcache -o recordsize=1M -o compression=lz4 \
+               -o atime=off -o sync=disabled -o quota=$CACHE_QUOTA <pool>/ff/ffcache
+
+recordsize=1M because every object in it is a multi-GB sequential file; sync=disabled because
+it is a cache and losing it to a crash costs one cold job; the quota because a job writes
+into staging and nothing else bounds it. A machine without ZFS gets a plain directory, exactly
+as 01-hostSetup.sh:285-289 already handles for the daemon root.
+
+THE UID MAP IS WHY THE MODES ABOVE LOOK ODD, and it was verified live on 2026-08-29 rather
+than reasoned about. A probe container run against the real daemon with the real flag set
+(--cap-drop=ALL plus CHOWN, FOWNER, DAC_OVERRIDE, --security-opt=no-new-privileges) and a
+bind-mounted host directory reported `uid=0(root)` inside, and every file it created appeared
+on the host owned by uid 1020 — ffbox-container, the rootless daemon's own account. flock on
+the bind mount worked. So:
+
+  - The job writes into staging as host uid 1020. Nothing here can chown (the supervisor has
+    no CAP_CHOWN), so the group bit is the whole mechanism: staging/ is setgid to
+    ffbox-container, slot-N inherits that group, and uid 1020 writes through group rwx.
+    FinalFactoryTester is a member of ffbox-container (`id` confirms group 1020), so it can
+    unlink what the job left even though it does not own it.
+  - entries/ is group-rwx for the same reason on the supervisor's side. The job cannot write
+    there in spite of the mode, because the MOUNT is ro and the kernel enforces that before
+    permissions are consulted.
+  - The mount SOURCE must be traversable by uid 1020. The same probe against a path under a
+    0700 directory failed with `error while creating mount source path ... permission denied`,
+    which is what that failure looks like if the modes above are ever loosened by mistake.
+
+
+6. The container side: .github/scripts/ffcache.sh
+-------------------------------------------------
+
+In the game repo, not in the image, so a change to caching lands in the same commit as the
+workflow that uses it and needs no image rebuild. main.yml becomes:
+
+      - name: Restore Unity Library from the host cache
+        run: |
+          .github/scripts/ffcache.sh restore \
+            "${{ matrix.projectPath }}/Library" \
+            "Library-${{ matrix.projectPath }}-${{ env.UNITY_VERSION }}-${{ steps.branch.outputs.name }}" \
+            "Library-${{ matrix.projectPath }}-${{ env.UNITY_VERSION }}-"
+
+      - name: Stage Unity Library for the host cache
+        if: success()
+        run: |
+          .github/scripts/ffcache.sh save \
+            "${{ matrix.projectPath }}/Library" \
+            "Library-${{ matrix.projectPath }}-${{ env.UNITY_VERSION }}-${{ steps.branch.outputs.name }}"
+
+The "Sanitize branch name for cache key" step at main.yml:59-61 stays as it is; the key shape
+is deliberately the same one the GitHub cache used, minus the run-id segment, which existed
+only because GitHub cache entries are immutable and ours are overwritten in place.
+
+  restore <path> <key> <fallback-prefix>
+      No /ffcache directory -> print a line saying the host cache is unavailable and exit 0.
+      That is what keeps main.yml working unchanged on any runner that is not one of these,
+      and what makes the cutover reversible.
+      Take /ffcache/<key>.tar if it exists. Otherwise take the /ffcache/<fallback-prefix>*.tar
+      whose .used marker is newest — the local equivalent of the second restore-key today,
+      which is what gives a brand-new branch a warm start from whatever ran last.
+      Extract with tar -xf into the project directory.
+      Write the entry name it used to /ffcache-out/used, so the supervisor can bump the LRU
+      marker on a job that restores but never saves.
+      If tar fails (an entry pruned out from under it, a truncated archive), delete the partial
+      Library, warn, and exit 0. A cold build is slow, not broken.
+
+  save <path> <key>
+      No /ffcache-out -> exit 0, same reasoning.
+      tar -cf /ffcache-out/payload.tar.part, then rename to payload.tar. The supervisor
+      promotes only payload.tar, so a job killed mid-archive leaves a .part that is ignored
+      and discarded with the staging directory.
+      Write the key to /ffcache-out/key.
+
+There is no `if: success()` on restore and no cleanup step: the workspace is tmpfs and dies
+with the container.
+
+
+7. The supervisor side: slot.sh, and the knobs
+-----------------------------------------------
+
+lib/config.sh gains three, in the existing default-then-json-then-env form:
+
+    _ffghr_set CACHE_DIR    cache_dir    /opt/ffcache     empty string disables the whole
+                                                          feature and restores section 5's
+                                                          "nothing is bind-mounted" exactly
+    _ffghr_set CACHE_KEEP   cache_keep   10               how many entries survive a prune
+    _ffghr_set CACHE_QUOTA  cache_quota  200G             the dataset quota
+
+slot.sh:
+
+  - before `docker run` (slot.sh:145): rm -rf and re-create $CACHE_DIR/staging/slot-$SLOT at
+    0770, and add the two -v arguments to the existing run block. Both are skipped entirely
+    when CACHE_DIR is empty or the directory is missing, so a machine that has not run
+    01-hostSetup.sh since this landed keeps working with no cache.
+  - in teardown() (slot.sh:39): promote, bump, prune, wipe — after the container is removed,
+    so nothing is still writing into staging. Every step is best-effort and logged; a cache
+    that fails to promote must never turn a passing job into a failed slot.
+
+Promotion, in full:
+
+    key=$(cat $STAGE/key)                          # or $STAGE/used for a bump-only job
+    case $key in *..*|*/*|"") reject ;; esac
+    printf %s "$key" | grep -qE '^[A-Za-z0-9._-]+$' || reject
+    mv  $STAGE/payload.tar $CACHE_DIR/entries/$key.tar
+    touch $CACHE_DIR/entries/$key.used
+
+Prune, under flock $CACHE_DIR/.prune.lock, so three slots finishing together cannot race:
+list entries/*.tar, order by the mtime of the matching .used marker (falling back to the
+archive's own mtime if the marker is missing), and delete everything past $CACHE_KEEP, marker
+included.
+
+The marker file rather than the archive's mtime is what makes it "10 last USED branches"
+rather than "10 last written". A branch that restores the cache and then fails its tests
+never writes an archive, and without the marker it would age out despite being in active use.
+
+reap.sh runs every 15 minutes (systemd/ffgithubrunners-reap.timer) and is the natural place
+for a belt-and-braces prune, so a machine cannot grow unbounded if slots stop exiting cleanly.
+Same function, same lock.
+
+05-services.sh must substitute a @CACHEDIR@ placeholder into ffgithubrunners@.service and add
+it to ReadWritePaths — the unit sets ProtectSystem=strict, so without that line the supervisor
+sees /opt/ffcache read-only and every promotion fails.
+
+`ffgithubrunners status` should print the cache directory, the entry count, the total size and
+the oldest entry's age. `ffgithubrunners cache list|clear` is optional and cheap.
+
+
+8. What this costs in security terms
+------------------------------------
+
+Section 12's claim was that a job "cannot leave anything for the next job". After this, that
+becomes: a job can leave exactly one tar archive, under a name it chooses, in a directory
+whose contents the next job extracts into its Unity project.
+
+That is a genuine change and it should not be dressed up. Library contains ScriptAssemblies,
+BurstCache and PackageCache — compiled code that the next editor process loads. A job that
+poisons an entry executes in the next job on that key.
+
+Three things bound it.
+
+  - The same vector exists TODAY. actions/cache is written by the job, restored by the next
+    job on the same branch, and Unity loads it the same way. Moving the blob from Azure to
+    /opt/ffcache does not create the class of attack.
+  - What is genuinely new is scope. GitHub scopes cache writes: a feature branch can read
+    master's entry but cannot write it. Here a job can propose an entry under any key,
+    master included. That is the one real regression, and it is the price of not having the
+    supervisor able to independently verify which branch a job is running.
+  - What is NOT new is host reach. The job gets one read-only mount and one per-slot drop box.
+    It cannot delete or alter an existing entry, cannot touch another slot's staging, cannot
+    write outside $CACHE_DIR, and has no more capability than it had yesterday.
+
+Two guards worth taking, both one line:
+
+  - Skip both restore and save when the run is a pull_request from a fork
+    (github.event.pull_request.head.repo.fork). Such a run cannot read the repository secrets
+    it needs to activate Unity anyway, so it can only ever poison, never benefit.
+  - Keep cache_dir empty on any machine where the trust argument does not hold. The feature is
+    off by default in the sense that a machine that never provisions /opt/ffcache never gets a
+    mount.
+
+Egress: with actions/cache gone, main.yml no longer talks to the cache service, though
+*.blob.core.windows.net stays on the allowlist for upload-artifact
+(egress/allowlist.txt:57-61) and api.github.com stays for the check run
+(.github/scripts/post-check-run.py:128). The allowlist does not shrink.
+
+
+9. Work
+-------
+
+  1. 01-hostSetup.sh: create the dataset, entries/, staging/, the modes in section 5, and the
+     --check output for them.
+  2. lib/config.sh: CACHE_DIR, CACHE_KEEP, CACHE_QUOTA; config.json.example alongside.
+  3. slot.sh: staging setup and the two -v arguments; promote/bump/prune/wipe in teardown.
+  4. 05-services.sh + systemd/ffgithubrunners@.service: @CACHEDIR@ in ReadWritePaths.
+  5. reap.sh: the same prune, under the same lock.
+  6. ffgithubrunners status: a cache section.
+  7. FinalFactory .github/scripts/ffcache.sh, plus the main.yml edit: delete lines 62-68,
+     157-193 and the `actions: write` permission, add the two steps in section 6.
+  8. Measure a real job cold and warm, and put the numbers next to section 5's twelve-job
+     baseline.
+
+Steps 1-6 are harness-side and land first; they are inert until step 7, because ffcache.sh
+exits 0 when the mounts are absent and main.yml keeps using actions/cache until it is edited.
+Unlike the runs-on cutover, the two halves CAN be separated, and should be.
+
+
+10. Open items
+--------------
+
+  (a) A genuinely cold restore has not been measured. Every read in section 2 came out of a
+      755 GB ARC. The number that matters for a machine with less RAM, or right after a
+      reboot, is unknown.
+  (b) Unity's own behaviour with a restored Library from a DIFFERENT branch is assumed to be
+      what it is today, because the fallback key mirrors today's second restore-key. If a
+      cross-branch restore is in fact worse than a cold import, that is already true and this
+      design does not change it.
+  (c) Whether promotion belongs in slot.sh's teardown or in a separate one-shot unit. Teardown
+      is simpler and is where the container's lifetime already ends; the argument against is
+      that TimeoutStopSec=150 now also has to cover a rename and a prune, which are fast but
+      not free.
+
+
+11. Saving before the tests run (Ben, 2026-08-29)
+-------------------------------------------------
+
+The proposal: launch the editor once to import and compile, save the cache from that state,
+and only then launch it again to run the tests — so that no test code can influence what gets
+banked.
+
+It is implementable and it buys something real, but not the thing it is aimed at.
+
+WHAT IT DOES NOT BUY: freedom from repository code. Opening the project IS running the
+repository's code. Compiling the assemblies runs the ILPostProcessors that
+com.unity.entities 1.4.7 and com.unity.burst 1.8.29 install over every assembly
+(Packages/manifest.json:20-23), and the domain reload that follows runs every
+[InitializeOnLoad] static constructor in the project — 27 files under Assets/ match, of which
+Assets/Editor/DevCommandWatcher.cs:25-29 is a plain unconditional example, a repo-owned editor
+class whose static constructor runs on every reload in batchmode. Two more files implement
+AssetPostprocessor/ScriptedImporter behaviour. All of that executes with the same privileges,
+in the same container, before a single test method is invoked. An attacker moves the payload
+from a test into a static constructor and the split has cost them nothing.
+
+Nor is the artifact any cleaner in principle: what is being cached is Library/ScriptAssemblies
+and Library/BurstCache, which ARE the compiled repository code. There is no version of this
+cache that does not contain code the repository controls.
+
+WHAT IT DOES BUY, and it is worth having on its own merits:
+
+  - A branch whose tests fail keeps a warm cache. Today actions/cache/save carries
+    `if: success()` (main.yml:157-158), so a branch that fails its tests re-imports from cold
+    on every push until it goes green. Saving after import instead means the expensive part is
+    banked whatever the tests then do.
+  - A test run that crashes, OOMs or is killed by the watchdog cannot bank a half-written
+    Library, because the archive was taken from an editor that had already exited cleanly.
+  - The archive is taken with no editor holding Library/*.db open, which removes a torn-state
+    risk the single-launch version has to think about.
+
+WHAT IT COSTS: a second editor startup and domain reload on every job, warm. That is not
+measured, and it plausibly eats a large part of the 90s the cache change wins back. Section 5
+of the runner design measured the whole editor step at 456s but did not separate import from
+tests, so there is no baseline to subtract from either.
+
+Shape, if taken:
+
+    . /opt/ffghr/unity-license.sh; ensure_unity_license      # once, both launches
+    unity-editor -projectPath . -quit -logfile /dev/stdout   # import + compile, then exit
+    .github/scripts/ffcache.sh save "./Library" "$KEY"       # stage it
+    unity-editor -projectPath . -runTests ...                # as today
+
+Both launches sit inside the existing "Activate Unity and run tests" step so the licence trap
+still spans them and the seat is returned once. The staging drop box does not care when in the
+job it is written; slot.sh promotes whatever is there at teardown, so no supervisor change is
+needed. The `if: success()` on the save step comes OFF — banking a failing branch's import is
+the point.
+
+IF THE GOAL IS ACTUALLY TO STOP UNTRUSTED CODE WRITING THE CACHE, the control that works is
+restricting which refs may promote an entry, not moving the save earlier in the job: promote
+only for `push` events, never for `pull_request`, which is GitHub's own cache-write scoping and
+closes the one regression named in section 8. It costs nothing and is one condition on the save
+step. On this repository the two overlap heavily — every branch push comes from someone who
+already holds a runner and the Unity credentials — so the honest reason to take the split is
+cache coverage, not containment.
+
+
+12. Baking the Library into the image instead (Ben, 2026-08-29)
+---------------------------------------------------------------
+
+Two questions, and they separate cleanly.
+
+IS A TARBALL INERT? At rest, yes, and that is a real improvement over a directory tree: nothing
+executes a tar file, and the host never traverses 59,405 attacker-named paths. The extraction is
+contained too — it happens inside the throwaway container, into the tmpfs workspace, so even a
+malicious archive (traversal, symlinks, setuid bits) reaches only a filesystem that dies with
+the job. Extract with --no-same-owner --no-same-permissions and that is the end of it.
+
+But the archive is not the payload's destination. Library/ScriptAssemblies IS the compiled
+repository code, and Library/BurstCache is compiled native code; the next editor process loads
+both on its first domain reload. The execution is not avoided, it is deferred by one job. That
+is exactly as true of actions/cache today, which is why section 8 says this design does not
+create the class of attack — but "it is only a tarball" is not what makes it acceptable.
+
+DOES THAT MAKE THE IMAGE A GOOD HOME FOR IT? It is a better one than /opt/ffcache, and on the
+security axis it is strictly better than anything in sections 4-8:
+
+  - No bind mount at all. Section 5's "Nothing is bind-mounted" survives intact, and section 12
+    of the runner design needs no amendment.
+  - No job can write it. That closes the one residue section 8 could not: a job proposing an
+    entry under the key `master`. The image is built out of band, by the operator or the timer,
+    from an input the job does not control.
+  - The machinery exists: 03-image.sh, image-update.sh, `ffgithubrunners image update`, and the
+    weekly ffgithubrunners-image.timer at Sun 04:00.
+
+The size objection does not survive contact with the numbers. ffghrunner:latest is 11.8 GB
+today and rpool/ff/container-docker holds 8.40G against a 64G quota, so a Library layer — 9.3 GB
+apparent, 3.8 GB after compression — fits several generations over with room to spare. The
+per-job cost is a wash: extracting a tar from an image layer is the same sequential read off the
+same pool as extracting it from a bind mount.
+
+WHAT IT COSTS is the per-branch property, and the question is whether that property is worth
+anything. Measured from ffbox's own warm-import history (~/ffbox-runs/warm-*/import.log,
+durations derived from the directory timestamp against the log's mtime):
+
+    warm-20260816-042233   42 minutes    the one cold import
+    warm-20260822-035202    1 minute     6 days later
+    warm-20260825-043920    3 minutes    3 days later
+    warm-20260825-044508    1 minute
+    warm-20260828-115519    1 minute     3 days later
+    ... every subsequent run 1 minute
+
+The 3-minute one is the informative one. Its Asset Pipeline Refresh reports:
+
+    Total: 81.334 seconds - Initiated by InitialRefreshV2(ForceSynchronousImport)
+        Imports: total=1 (actual=1, local cache=0, cache server=0)
+        Scripting: domain reloads=1, compile time=29043 ms
+    Domain Reload Profiling: 30947ms
+
+After three days of drift, ONE asset re-imported. The eighty seconds were script compilation and
+a domain reload, not asset import. Library/Artifacts — 2.2 GB of the 4.4 GB, and the thing that
+costs 42 minutes to build cold — barely moved.
+
+So the per-branch cache is buying much less than it looks like it is. What matters is having a
+Library at all (42 minutes versus 1-3), not having THIS BRANCH's Library. A weekly image
+baseline is stale in a way that costs a script recompile, which the job pays anyway.
+
+Caveat on that inference: golden tracks one branch, so this measures drift over TIME, not drift
+ACROSS branches. A CI job checks out an arbitrary feature branch, which may differ from the
+baked baseline by more than three days of develop does. Nothing here measures that, and it is
+the number that decides whether the image alone is enough.
+
+HOW IT WOULD BE BUILT, and the wrinkle. Do NOT run the import inside a `docker build` RUN step:
+Unity activation is an online serial activation and would put a licence transaction, and
+possibly its artifacts, into a cached image layer. Instead:
+
+  1. a bake step runs the import in a normal hardened container against a checkout of develop,
+     exactly as ffbox's import-project.sh does, and writes library.tar to a host path
+  2. the next `docker build` COPYs that tar into the image
+  3. the job extracts it if no better source exists
+
+Step 1 is the same work section 6's save step does, moved from every CI job to one operator-run
+build. Note what that also fixes: it moves the "importing the project is running the project"
+execution off FinalFactoryTester's daemon (where ffbox's 04-warmLibrary.sh does it today, as
+namespace-root mapping to host uid 1015) and onto ffbox-container's, the account that owns
+nothing. It is a partial answer to F1's outstanding half, arrived at sideways.
+
+RECOMMENDATION. Take the image baseline as the floor and decide about /opt/ffcache afterwards,
+with data. The image alone removes the bind mount, removes every write path a job has, and by
+the numbers above may well be enough on its own; the host cache is then an optimisation to add
+only if a real feature-branch job measurably needs more than a recompile. Building the host
+cache first and the image baseline second gets the two in the wrong order — the safe mechanism
+should be the one that is load-bearing.
+
+
+13. The workspace cache (Ben's design, 2026-08-29) — SUPERSEDES SECTIONS 4-7
+----------------------------------------------------------------------------
+
+Sections 4-7 cache Library only, restored after actions/checkout. This section caches the WHOLE
+workspace — worktree, .git including .git/lfs, and Library — restored BEFORE actions/checkout,
+which then does an incremental fetch on top. It subsumes the earlier design and is what should
+be built.
+
+Yes, ffbox has the output mount this borrows: 04-warmLibrary.sh passes `-v "$OUT:/ffbox/out"`
+with `FFBOX_ENTRY` reading it as `FFBOX_OUT`, and import-project.sh writes import.log there.
+ffgithubrunners has no equivalent today — slot.sh mounts nothing — so this adds one.
+
+13.1 Why it is worth more than the Library-only version
+-------------------------------------------------------
+
+Section 5 of the runner design measured, across twelve jobs: checkout 117s, LFS 21s, cache
+restore 108s. All three are the same thing — materialising a project that already exists on this
+machine — and one archive replaces all three.
+
+Measured on this checkout, apparent bytes (what tar moves) against on-disk bytes (what ZFS
+stores after lz4):
+
+                    apparent   on disk
+    .git               6.1 G     5.6 G     of which .git/lfs 4.9 G / 4.3 G
+    worktree           7.2 G     5.6 G     26,679 files, 3,190 of them LFS-tracked
+    Library            8.6 G     4.4 G     59,405 files
+    total             22   G    16   G
+
+Extrapolating from the Library-only measurements in section 2 (9.28 GB apparent: 27.0s to write,
+17.4s to read back), a 22 GB archive is roughly 64s to save and 41s to restore. NOT MEASURED —
+the ratio is assumed linear, which it will not exactly be. But 41s against 246s is a wide enough
+margin that the estimate does not need to be good.
+
+Ten entries at 16 GB is 160 GB on disk. rpool has 2.1 T free, so the quota wants to be 250G
+rather than section 5's 200G.
+
+No new tmpfs pressure: checkout, LFS smudge and cache restore already put all 22 GB apparent
+into the workspace today, so the 40g workspace and the 72g ceiling are unchanged.
+
+13.2 The entry, and the name
+-----------------------------
+
+One tar per branch, and the name carries the branch first so the host can parse it without
+knowing anything else:
+
+    <sanitized branch>@<scope>.tar          e.g.  develop@6000.3.19f1.tar
+
+THE DELIMITER IS `@` AND THAT IS NOT ARBITRARY. main.yml:59-61 sanitizes with
+`sed 's/[^a-zA-Z0-9._-]/-/g'`, so a sanitized branch cannot contain `@` — the host splits on the
+FIRST `@` and the branch field is unambiguous. `--` would not do: `feature/foo--bar` sanitizes to
+`feature-foo--bar` and keeps its dashes. Verified against `user@host` -> `user-host`.
+
+The scope is the Unity version. It is metadata, not identity: the host's "one per branch" rule
+keys on the branch field ALONE, so a Unity upgrade replaces a branch's entry rather than
+accumulating beside it. The restore step refuses an entry whose scope does not match its own
+UNITY_VERSION and goes cold instead, because a PackageCache built by a different editor is worse
+than none.
+
+13.3 The two mounts
+--------------------
+
+    docker run ... \
+        -v $CACHE_DIR/entries:/ffcache:ro \
+        -v $CACHE_DIR/staging/slot-$SLOT:/ffghr/out \
+
+`/ffghr/out` is a general output mount, deliberately, not a cache-specific one: it gives
+ffgithubrunners the debugging channel ffbox has had all along, and the cache tarball is simply
+one well-known filename in it. Everything about permissions, the setgid group, the uid-1020 map
+and the ro mount being the real enforcement is section 5 unchanged.
+
+13.4 Restore, and where the script has to live
+-----------------------------------------------
+
+    - name: Restore the workspace from the host cache
+      run: /opt/ffghr/ffcache.sh restore "$GITHUB_WORKSPACE" "$BRANCH" "$UNITY_VERSION"
+    - uses: actions/checkout@v7
+      with:
+        lfs: true
+        clean: false          # <-- REQUIRED, see below
+
+RESTORE RUNS BEFORE CHECKOUT, which forces the script into the IMAGE rather than into
+.github/scripts/. There is nothing checked out yet to run it from. The cost is that changing the
+restore logic now needs an image rebuild (`ffgithubrunners image update`, or the Sunday timer),
+so the script must stay dumb: find a file, extract it, sanitize, exit. Every policy decision —
+which entries exist, how many survive, which branch owns which — stays on the host, where it can
+be changed without rebuilding anything.
+
+`clean: false` IS LOAD-BEARING AND IS NOT AN OPTIMISATION. `.gitignore:4` ignores `/[Ll]ibrary/`,
+and actions/checkout's default `clean: true` runs `git clean -ffdx`, which deletes ignored files.
+Restoring before a cleaning checkout would hand the clean step a warm Library to delete. This
+contradicts section 8 of the runner design ("the checkout keeps its default clean") and that line
+needs updating. It is safe here for the reason the ram disk is safe: the workspace is a fresh
+tmpfs per container, so there is nothing to clean that this job did not itself put there.
+
+What the script does:
+
+  1. No /ffcache -> print one line and exit 0. Same escape hatch as everywhere else; the job
+     falls back to a plain cold checkout and works.
+  2. Choose an entry: `<branch>@<scope>.tar` if it exists. Otherwise the DEFAULT BRANCH's entry
+     at the same scope. Otherwise the newest entry at that scope. Otherwise nothing.
+  3. Extract into $GITHUB_WORKSPACE with --no-same-owner --no-same-permissions.
+  4. Sanitize the restored .git (13.6).
+  5. Write the entry name it used to /ffghr/out/used, so the host can bump the LRU on a job that
+     restores and never saves.
+  6. On any tar failure: delete the partial tree, warn, exit 0. Cold is slow, not broken.
+
+STEP 2 DEVIATES FROM THE BRIEF, WHICH SAID BRANCH ONLY. Branch-only means a brand-new branch pays
+a full clone plus a 42-minute cold import, and section 12 measured what a stale-but-present
+Library actually costs: after three days of drift, ONE asset re-imported and 80 seconds of
+recompile. A cross-branch restore is very probably cheap and a cold import certainly is not.
+Today's restore-keys already do exactly this fallback, so branch-only would be a regression
+against current behaviour, not a tightening.
+
+Then actions/checkout does the git update. It is built for a pre-existing repository on a
+persistent self-hosted workspace: it verifies the remote, fetches, and `git checkout --force`s
+the wanted sha; on a remote mismatch it deletes the directory and re-clones, which is the right
+failure mode for a corrupt entry. THIS IS THE ONE LOAD-BEARING ASSUMPTION NOT VERIFIED HERE and
+it is what the ffghr-smoke workflow should prove first.
+
+The "Materialize Git LFS content" step (main.yml:26-56) stays exactly as it is. With .git/lfs in
+the archive, `git lfs pull` finds its objects locally and costs nothing — and the pointer scan
+after it is precisely the guard against a cached tree whose smudge went wrong, which is the new
+failure mode this design introduces. It was written for the old one and covers this one for free.
+
+13.5 Save, and what the host does
+----------------------------------
+
+    - name: Stage the workspace for the host cache
+      if: github.event_name == 'push'
+      run: /opt/ffghr/ffcache.sh save "$GITHUB_WORKSPACE" "$BRANCH" "$UNITY_VERSION"
+
+Not `if: success()`. Section 11's argument stands: a branch whose tests fail should keep its warm
+workspace, because the expensive thing is the import, not the verdict.
+
+`if: github.event_name == 'push'` is the containment control from section 11. A pull_request run
+never writes an entry — which also stops PR refs (`123/merge` sanitizes to `123-merge`) from
+churning the ten slots that are supposed to hold real branches.
+
+The script writes `/ffghr/out/ffcache.tar.part`, renames it to `/ffghr/out/ffcache.tar`, and
+writes the intended name to `/ffghr/out/ffcache.name`. A job killed mid-archive leaves only the
+.part, which the host ignores. Excluded from the archive: `Temp/`, `Logs/`,
+`Library/UnityLockfile`, `Library/EditorInstance.json`, `.git/index.lock`, `.git/hooks/`, and the
+`*-artifacts/` directories the test step creates.
+
+The host half, in slot.sh's existing teardown trap, after the container is removed and under
+flock on $CACHE_DIR/.prune.lock:
+
+    name=$(cat $STAGE/ffcache.name)
+    printf %s "$name" | grep -qE '^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+\.tar$' || reject
+    branch=${name%%@*}
+    rm -f $CACHE_DIR/entries/$branch@*.tar          # one per branch, any scope
+    mv    $STAGE/ffcache.tar $CACHE_DIR/entries/$name
+    # then: keep the $CACHE_KEEP newest by mtime, delete the rest
+    rm -rf $STAGE
+
+Three rules, in order, exactly as briefed: always a single tarball; one entry per branch; the
+last CACHE_KEEP entries survive. The regex is the whole path-traversal defence — the job names
+the file, the host decides whether that name is a name. mtime is the LRU clock and `touch` on a
+restore-only job (via /ffghr/out/used) is what makes it "last used" rather than "last written".
+
+reap.sh keeps the same prune under the same lock, so a machine whose slots stop exiting cleanly
+still cannot grow past CACHE_KEEP.
+
+13.6 What a cached .git costs, and the sanitize step
+-----------------------------------------------------
+
+This is the one genuinely new risk the workspace cache adds over the Library-only version, and
+it is finding F7 arriving through a different door. A previous job controls `.git/config` and
+`.git/hooks/` in the archive, and git executes both: hooks on ordinary operations, and
+`core.fsmonitor`, `core.pager` and `diff.external` as named commands that `git status` alone can
+fire.
+
+In ffgithubrunners this does not escalate — everything runs in the throwaway container at the
+same trust level as the job that wrote the archive, which is the same statement section 8 makes
+about a poisoned Library. It is a persistence channel, not a privilege boundary.
+
+It is NOT harmless if ffbox ever consumes these archives, because there the host runs git in the
+workspace afterwards (F7, `ffbox/ffbox:789`), and a hook would run as FinalFactoryTester.
+
+So the restore step sanitizes unconditionally, and it is three lines:
+
+    rm -rf .git/hooks && mkdir -p .git/hooks
+    for k in core.fsmonitor core.pager core.hooksPath diff.external filter.lfs.process \
+             filter.lfs.smudge filter.lfs.clean; do git config --local --unset-all "$k" || :; done
+    git -c core.hooksPath=/dev/null -c core.fsmonitor=false ...   # every in-container git call
+
+`.git/hooks/` is excluded from the archive as well, so the removal is belt to the exclusion's
+braces. The lfs filter keys are on the list because they are the same mechanism — a named
+command git runs — and actions/checkout rewrites them anyway.
+
+13.7 Seeding, and the ffbox convergence
+----------------------------------------
+
+An empty cache means the first job on a machine pays a full clone and a 42-minute cold import,
+once. `ffgithubrunners cache seed` should tar ffbox's golden checkout — which is already warm,
+already at the default branch, and already on this machine — into
+`<default branch>@<version>.tar`. It costs one tar and removes the cold case entirely.
+
+Which points at where this ends up. ffbox's 04-warmLibrary.sh already produces exactly this
+artifact, on a schedule, from a trusted input. If it published into $CACHE_DIR instead of only
+leaving Library/ behind in golden, CI jobs would become pure CONSUMERS of the cache and the save
+path could be dropped altogether — no job would ever write shared state, which is the property
+section 12 wanted from the image and gets here without baking a 22 GB layer into an 11.8 GB
+image. That is a larger change than this section and is not proposed here, but it is the shape
+this converges on and neither half should be built in a way that forecloses it.
+
+13.8 Work, revised
+-------------------
+
+Sections 9.1-9.6 stand, with these changes:
+
+  - The mount pair is /ffcache:ro plus /ffghr/out (13.3), not the Library-only pair.
+  - ffcache.sh moves into the IMAGE at /opt/ffghr/ffcache.sh, so the Dockerfile COPY line and
+    the image rebuild are now part of the work. The game repo gets no script at all.
+  - main.yml: delete lines 62-68, 157-193 and `actions: write` at line 9; add `clean: false` to
+    the checkout at line 22; add the restore step BEFORE it and the save step after the editor.
+  - CACHE_QUOTA default 250G, not 200G.
+  - Prove first, on ffghr-smoke: that actions/checkout@v7 reuses a restored .git rather than
+    deleting it. Everything else in this section is downstream of that.
