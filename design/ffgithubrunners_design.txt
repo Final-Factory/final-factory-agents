@@ -431,7 +431,8 @@ disk.
 
 The flags, per finding F5:
 
-    --cap-drop=ALL --security-opt=no-new-privileges
+    --cap-drop=ALL --cap-add=CHOWN --cap-add=FOWNER --cap-add=DAC_OVERRIDE
+    --security-opt=no-new-privileges
     --pids-limit=<n> --memory=72g
     --read-only where the image tolerates it, with tmpfs for what must be writable
     default seccomp, never seccomp=unconfined
@@ -447,6 +448,22 @@ swap, so a job that fills the 40 GB workspace while Unity is resident would push
 swap, where things fail rather than slow down. The ceiling turns that into one dead job. 72g is
 the 40 GB workspace plus about 32 GB for the editor, which is what ffbox measures for the same
 work; a legitimate job never comes near it.
+
+THE THREE CAPABILITIES ADDED BACK ARE WHAT UNITY NEEDS, AND WERE FOUND BY RUNNING IT. A real
+editmode job on 2026-08-29 activated, started the editor, resolved packages for 39 seconds and
+then failed with
+
+    com.unity.jobs: TAR_ENTRY_ERROR: EPERM: operation not permitted, fchown
+
+UPM extracts package tarballs as root and preserves the ownership recorded in them: a chown, then
+a chmod on the file it just gave away, then a write into a directory it just gave away. CHOWN,
+FOWNER, DAC_OVERRIDE, each found by adding the previous one and hitting the next wall. Docker's
+default capability set includes all three, which is why game-ci never met this.
+
+They are filesystem-permission capabilities inside a container whose filesystem is already
+entirely the job's own, and none is a step toward leaving it. The same class of problem took the
+runner's own .runner file earlier, which the image fixed by chowning /opt/actions-runner to root
+rather than by adding DAC_OVERRIDE.
 
 CAP_SYS_ADMIN is never added. It hands a job the mount syscall, which is the kernel surface with
 no other mitigation.
