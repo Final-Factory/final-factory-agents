@@ -31,6 +31,21 @@ then `ffgithubrunners cache seed`, then T21 on ffghr-smoke, then push phase C.
 **Not started.** T17-T20 (phase D, retiring the warm cron) and T22-T25 (proving), both of which
 need a provisioned cache first.
 
+## Two operational hazards, learned the hard way
+
+**Never edit `slot.sh` (or anything it sources) in place while slots are running.** `sh` reads a
+script lazily by byte offset, so rewriting the file underneath a running shell can make it execute
+garbage. Three slots survived it here, which was luck rather than design. Run
+`ffgithubrunners drain`, wait for the containers to go, edit, then `resume`.
+
+**A unit-template change does not reach systemd on its own.** Editing
+`systemd/ffgithubrunners@.service` in the checkout changes nothing until
+`sudo sh ffgithubrunners/05-services.sh --install` renders and reloads it; `--check` reports
+"units differ from this checkout" meanwhile. The symptom when it is forgotten is precise and
+misleading-looking: every slot logs `could not prepare /opt/ffcache/staging/slot-N`, because
+`ProtectSystem=strict` still has `/opt/ffcache` read-only. Same trap ffbox's README documents for
+`06-services.sh`.
+
 ## What already exists, and what does not
 
 - **`slot.sh` mounts nothing today.** The `docker run` at `slot.sh:145-161` has `--tmpfs` and no
@@ -162,6 +177,10 @@ Directory, entry count, total size, free against quota, and the entries themselv
 with their ages. This is what someone reads first when a job was unexpectedly cold.
 
 **T12. `ffgithubrunners cache list|clear|seed`.** **M**
+`seed` tars a ZFS SNAPSHOT of golden, not the live tree — golden is a working checkout and a
+five-minute tar over a live `.git` loses the race (it did, on the first attempt: `tar: ./.git:
+file changed as we read it`, exit 1, archive discarded). `zfs snapshot rpool/ff/golden@ffbox-<n>`
+needs no new privilege: the `ffbox-` prefix is what the existing NOPASSWD rule permits.
 `list` is T11's block on its own. `clear` empties `entries/` under the lock. `seed` tars golden into
 `<default branch>@<scope>.tar`, reading the scope from
 `/opt/FinalFactory/ProjectSettings/ProjectVersion.txt` (`m_EditorVersion`) rather than from a

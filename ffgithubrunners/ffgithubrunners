@@ -230,11 +230,69 @@ cmd_cache() {
                _name="$_branch@$_scope.tar"
                ffghr_cache_name_ok "$_name" || die "'$_ref' does not sanitize to a usable entry name"
 
-               say "seeding $_name from $_src (this reads ~20 GB and takes a couple of minutes)"
+               # TAR A SNAPSHOT, NEVER THE LIVE TREE. Golden is a working checkout that ffbox,
+               # an updater and a person all write to, and a five-minute tar over a live .git is a
+               # race it will eventually lose: the first attempt at this died on
+               #   tar: ./.git: file changed as we read it
+               # because a commit landed while it read. GNU tar exits 1 on that, the archive is
+               # discarded, and five minutes are gone. A ZFS snapshot is an atomic point-in-time
+               # view and removes the race entirely rather than narrowing it.
+               #
+               # THE GOLDEN LOCK IS STILL TAKEN, but now only across the snapshot rather than the
+               # whole read: a snapshot taken mid-import would capture a half-built Library, which
+               # is 04-warmLibrary.sh:89-91's own stated reason for holding it. Held for a second
+               # instead of five minutes.
+               _glock=${FFBOX_GOLDEN_LOCK:-$FFBOX_CONFIG_DIR/golden.lock}
+               _ds=$(df --output=source "$_src" 2>/dev/null | tail -1)
+               _snap=""
+               _readfrom="$_src"
+
+               take_golden_lock() {
+                   if [ -e "$_glock" ]; then
+                       exec 8>>"$_glock" || die "cannot open $_glock"
+                       say "waiting for the golden lock ($_glock)"
+                       flock -s -w 3600 8 || die "could not take a shared lock on $_glock within an hour"
+                   else
+                       say "WARNING: $_glock does not exist; proceeding without it"
+                   fi
+               }
+               drop_golden_lock() { exec 8>&- 2>/dev/null || true; }
+               # The snapshot outlives the lock, so it has to be cleaned up on every exit path.
+               drop_snapshot() {
+                   [ -n "$_snap" ] || return 0
+                   sudo -n zfs destroy "$_ds@$_snap" 2>/dev/null \
+                       || say "WARNING: could not destroy $_ds@$_snap; remove it by hand"
+                   _snap=""
+               }
+
+               case "$_ds" in
+                   */*)
+                       # The name has to satisfy the NOPASSWD rule in /etc/sudoers.d/ffbox, which
+                       # only permits snapshots of golden named ffbox-<something>. Nothing here
+                       # needs a password or a new sudoers entry.
+                       _snap="ffbox-ffcache-seed-$$"
+                       take_golden_lock
+                       if sudo -n zfs snapshot "$_ds@$_snap" 2>/dev/null; then
+                           drop_golden_lock
+                           trap 'drop_snapshot' EXIT INT TERM
+                           _readfrom="$_src/.zfs/snapshot/$_snap"
+                           [ -d "$_readfrom" ] || die "snapshot $_ds@$_snap is not visible at $_readfrom"
+                           say "reading from snapshot $_ds@$_snap"
+                       else
+                           _snap=""
+                           say "WARNING: could not snapshot $_ds; reading the live tree instead.
+       Do not commit to $_src while this runs."
+                       fi ;;
+                   *)  take_golden_lock
+                       say "WARNING: $_src is not on a ZFS dataset; reading the live tree.
+       Do not commit to $_src while this runs." ;;
+               esac
+
+               say "seeding $_name from $_readfrom (~20 GB, a few minutes)"
                _tmp="$FFGHR_CACHE_ENTRIES/.seed.$$.part"
                # Same exclusions as the save step in main.yml. Kept in step by hand, which is a
                # real cost; if they drift, the archive is merely bigger, never wrong.
-               if tar -cf "$_tmp" -C "$_src" \
+               if tar -cf "$_tmp" -C "$_readfrom" \
                        --exclude=./Temp --exclude=./Logs --exclude=./UserSettings \
                        --exclude='./*-artifacts' \
                        --exclude=./Library/UnityLockfile --exclude=./Library/EditorInstance.json \
