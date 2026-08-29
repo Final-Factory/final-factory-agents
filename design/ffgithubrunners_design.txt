@@ -261,8 +261,10 @@ Default is the only runner group, and org-wide runners are wanted anyway. Findin
 any repository in the org can still reach this box, and what changes is that the code lands in a
 throwaway container as ffbox-container instead of on the host as FinalFactoryTester.
 
-Labels are the defaults self-hosted, Linux, X64, plus ffgithubrunners, so main.yml routes here
-unchanged. Names are ffghr-loth2400-<slot>-<nonce>, where the nonce is generated locally at mint
+Labels are Linux, X64 and ffgithubrunners, and deliberately NOT self-hosted. main.yml names
+`runs-on: ffgithubrunners`, a label only these runners carry, while deploy.yml keeps
+`runs-on: self-hosted`, which only the four legacy runners carry. The two sets never overlap, so
+neither needs relabelling and deploy.yml needs no pinning. Names are ffghr-loth2400-<slot>-<nonce>, where the nonce is generated locally at mint
 time; the reaper matches on it.
 
 
@@ -318,8 +320,11 @@ materialisation step stays, and the cache-pruning step keeps working because the
 The Editor log dump searches game-ci's container paths but has $HOME/.config/unity3d/Editor.log
 last in its list, so it still finds the log; the dead paths can go when someone is in there.
 
-`runs-on: self-hosted` is unchanged, because routing is by label. deploy.yml and
-determinism-nightly.yml are untouched.
+`runs-on: self-hosted` becomes `runs-on: ffgithubrunners`, in the same commit as the steps: they
+call /opt/ffghr/unity-license.sh, which exists only inside the container, so on the old runners
+they would fail on the first push. The Editor log dump loses game-ci's two dead container paths.
+deploy.yml and determinism-nightly.yml are untouched, and deploy.yml needs no pinning because
+self-hosted is carried only by the legacy runners.
 
 
 9. Teardown and reaping
@@ -462,17 +467,20 @@ host, and the new runners cannot be proven without a workflow that uses them. Th
 through.
 
   1. Install with the self-hosted label removed, so a new slot carries only ffgithubrunners, Linux
-     and X64 and nothing routes to it by accident. The old runners keep serving main.yml.
+     and X64 and nothing routes to it by accident. The old runners keep serving main.yml. This is
+     now the permanent label set, not a temporary one.
   2. On a branch, add a second job with `runs-on: [self-hosted, ffgithubrunners]` and the steps
      from section 8. Both harnesses then run the same commit side by side.
-  3. When the new path is boring, delete the temporary job, apply section 8 to the real one, and
-     add self-hosted back to the slot labels.
+  3. When the new path is boring, delete the temporary job and apply section 8 to the real one.
+     Section 8 changes main.yml's runs-on to ffgithubrunners in the SAME commit as its steps,
+     because those steps call /opt/ffghr/unity-license.sh, which exists only inside the container:
+     the steps on the old runners would fail immediately. No label is added to anything.
   4. Stop and unregister /opt/github-actions-runner-N, and only then delete them.
 
-deploy.yml is the loose end. It passes no customImage, so game-ci picks a per-platform image and
-its StandaloneOSX leg needs a Mac module ffghrunner:latest does not have. Give deploy.yml an
-explicit runs-on naming the old runners before step 3, or keep the old runners until deploy.yml is
-dealt with.
+deploy.yml passes no customImage, so game-ci picks a per-platform image and its StandaloneOSX leg
+needs a Mac module ffghrunner:latest does not have. It needs no edit: it asks for self-hosted,
+which only the legacy runners carry. Those runners therefore stay until deploy.yml is dealt with
+separately, and step 4 below applies to main.yml's traffic rather than to the machines.
 
 Before step 3 the rollback is `systemctl stop ffgithubrunners.target`, with the old harness still
 running. After it, revert one commit.
