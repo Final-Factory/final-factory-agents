@@ -90,7 +90,7 @@ cmd_status() {
             | while IFS= read -r _e; do
                   printf '    %-46s %6s  used %s\n' "$(basename -- "$_e")" \
                       "$(du -h "$_e" 2>/dev/null | cut -f1)" \
-                      "$(date -d "@$(stat -c %Y "$_e")" '+%Y-%m-%d %H:%M' 2>/dev/null)"
+                      "$(date -d "@$(stat -c %Y "$_e.used" 2>/dev/null || stat -c %Y "$_e")" '+%Y-%m-%d %H:%M' 2>/dev/null)"
               done
         _n=$(find "$FFGHR_CACHE_ENTRIES" -maxdepth 1 -type f -name '*@*.tar' 2>/dev/null | wc -l)
         [ "$_n" -gt 0 ] || printf '    (empty — the next job on every branch will be cold)\n'

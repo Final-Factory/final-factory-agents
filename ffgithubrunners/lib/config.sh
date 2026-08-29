@@ -225,10 +225,25 @@ ffghr_cache_with_lock() {
 
 # Bump an entry's LRU clock. The name came from a job, so it is validated exactly like a promotion
 # candidate before anything is touched.
+#
+# THE CLOCK IS A SIDECAR FILE, NOT THE ARCHIVE'S OWN mtime, AND THAT IS NOT A REFINEMENT.
+# An archive is written by the JOB, so on the host it is owned by uid 1020 with the container's
+# 0644. `touch` on a file you do not own needs WRITE permission on it, and group is r--, so the
+# supervisor gets EPERM: measured on the first real promotion,
+#   touch: cannot touch '.../ffghr-smoke@6000.3.19f1.tar': Permission denied
+# Nothing here can chown or chmod it either, both of which also require ownership. Every entry
+# from now on is job-owned, so the LRU would silently degrade to "last WRITTEN" and a branch that
+# restores without saving would age out despite being in daily use.
+#
+# The sidecar is created by the SUPERVISOR in a directory the supervisor owns, so it always works,
+# and it says what it means: the archive's mtime is when it was built, the marker's is when it was
+# last used.
+ffghr_cache_marker() { printf '%s.used\n' "$FFGHR_CACHE_ENTRIES/$1"; }
+
 ffghr_cache_touch() {
     ffghr_cache_name_ok "${1:-}" || return 1
     [ -f "$FFGHR_CACHE_ENTRIES/$1" ] || return 1
-    touch -- "$FFGHR_CACHE_ENTRIES/$1"
+    touch -- "$(ffghr_cache_marker "$1")"
 }
 
 # Keep the $CACHE_KEEP newest entries by mtime, delete the rest. Call under the lock.
@@ -239,12 +254,20 @@ ffghr_cache_prune() {
     case "$_keep" in ''|*[!0-9]*) _keep=10 ;; esac
     # -maxdepth 1 so a directory somebody drops in here is never walked into. Newest first by
     # mtime, then everything past the keep count goes.
-    find "$FFGHR_CACHE_ENTRIES" -maxdepth 1 -type f -name '*@*.tar' -printf '%T@ %p\n' 2>/dev/null \
-        | sort -rn | tail -n +$((_keep + 1)) | cut -d' ' -f2- \
+    # Ordered by the MARKER's mtime where there is one, falling back to the archive's own for an
+    # entry nothing has restored since it was written. `rm` needs write on the DIRECTORY, not on
+    # the file, so deleting a job-owned archive works where touching it does not.
+    for _f in "$FFGHR_CACHE_ENTRIES"/*@*.tar; do
+        [ -f "$_f" ] || continue
+        _m="$_f.used"
+        [ -f "$_m" ] || _m="$_f"
+        printf '%s %s\n' "$(stat -c %Y "$_m" 2>/dev/null || echo 0)" "$_f"
+    done | sort -rn | tail -n +$((_keep + 1)) | cut -d' ' -f2- \
         | while IFS= read -r _f; do
               [ -n "$_f" ] || continue
-              rm -f -- "$_f" && printf 'pruned %s\n' "$(basename -- "$_f")"
+              rm -f -- "$_f" "$_f.used" && printf 'pruned %s\n' "$(basename -- "$_f")"
           done
+    unset _f _m
     unset _keep
 }
 
@@ -282,13 +305,13 @@ ffghr_cache_promote() {
     for _old in "$FFGHR_CACHE_ENTRIES/$_branch"@*.tar; do
         [ -f "$_old" ] || continue
         [ "$(basename -- "$_old")" = "$_name" ] || printf 'replaced %s\n' "$(basename -- "$_old")"
-        rm -f -- "$_old"
+        rm -f -- "$_old" "$_old.used"
     done
 
     # rename(2) within one dataset: atomic and instantaneous, which is what keeps every lock off
     # the read path.
     if mv -f -- "$_stage/ffcache.tar" "$FFGHR_CACHE_ENTRIES/$_name"; then
-        touch -- "$FFGHR_CACHE_ENTRIES/$_name"
+        touch -- "$(ffghr_cache_marker "$_name")"
         printf 'promoted %s (%s)\n' "$_name" "$(du -h "$FFGHR_CACHE_ENTRIES/$_name" 2>/dev/null | cut -f1)"
     else
         printf 'WARNING: could not promote %s\n' "$_name"
