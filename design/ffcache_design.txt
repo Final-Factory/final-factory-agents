@@ -117,12 +117,27 @@ BEFORE actions/checkout, which then does an incremental fetch instead of a clone
 
 Excluded, always:
 
-    Temp/  Logs/  UserSettings/  *-artifacts/
+    Temp/  UserSettings/  *-artifacts/
     Library/UnityLockfile  Library/EditorInstance.json
     .git/index.lock  .git/hooks/
 
 `.git/hooks/` is excluded for the reason in section 11: git executes it, and an archive is
 written by one job and extracted by the next.
+
+Logs/ IS NOT EXCLUDED, though it looks like it should be: `Logs/Packages-Update.log` is TRACKED,
+and dropping it from the archive makes the restored worktree dirty against its own index for no
+benefit. .gitignore's `/[Ll]ogs/` does not apply to a file that was already tracked when it was
+added. Verified with `git ls-files Logs`. Temp/ and UserSettings/ have no tracked files and stay
+excluded.
+
+AND THE RESTORE MUST SET core.checkStat=minimal. tar gives every restored file a new inode and
+ctime; git's index caches st_ino and st_ctime, so the first command touching the index distrusts
+all of it and re-hashes the whole worktree. Measured in the first live run: `git checkout
+--detach` inside actions/checkout took 124 of that step's 130 seconds, while the fetch after it
+took 1s. Same archive, same command, with core.checkStat=minimal set: 0.05s. It compares mtime,
+size and mode and skips ino/ctime — exactly the difference a tarball introduces. What it gives up
+is detecting a file modified within the same second at the same size, which a fresh-tmpfs
+workspace nothing edits behind git's back does not present.
 
 
 5. The entry: naming and the three rules
