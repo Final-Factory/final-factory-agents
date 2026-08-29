@@ -47,6 +47,16 @@ selects the entrypoint, the mounts, the network and the environment. Everything 
 3. The workspace, which is the whole of the difference
 ------------------------------------------------------
 
+SUPERSEDED IN PART by design/ffcache_design.txt, written the same day and now implemented. This
+section proposed a ZFS clone of golden with only <clone>/Library bind-mounted into a CI job.
+ffcache does the same job by a different route: one tar per branch under /opt/ffcache, mounted
+read-only, restored by an inline step before the checkout, and measured at 37s for the whole
+23.5 GB workspace against a 246s baseline. It restores .git as well, so the checkout becomes an
+incremental fetch rather than a clone, which the clone-of-Library idea could not do.
+
+Read this section as the requirement — CI needs a warm workspace from this box, not from Azure —
+and ffcache as the answer. The rest of this design stands.
+
 Both modes get a ZFS clone of golden, made the way ffbox already makes one: snapshot under a lock,
 then `zfs clone -o mountpoint=`. Instant, roughly zero bytes, and copy-on-write from there.
 
