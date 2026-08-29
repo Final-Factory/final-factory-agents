@@ -170,6 +170,20 @@ _ffghr_set CACHE_KEEP       cache_keep       10
 # Not a round number picked for looking round.
 _ffghr_set CACHE_QUOTA      cache_quota      250G
 
+# sync=standard, NOT disabled, and the difference from the daemon store is deliberate.
+#
+# `sync` governs only how ZFS handles SYNCHRONOUS write requests — fsync, fdatasync, O_SYNC,
+# O_DSYNC. Measured with strace on the actual save path: tar issues 1,684 write() calls and ZERO
+# fsync/fdatasync/sync/syncfs/msync/sync_file_range, and the promote is a single renameat2. With
+# nothing asking for durability there is nothing for the ZIL to commit, so standard and disabled
+# do identical IO here and the safer default is free.
+#
+# The daemon store keeps sync=disabled because there the justification is real: docker build and
+# docker pull ARE fsync-heavy, and on a mirror of spinning disks with no SLOG the ZIL dominates
+# them. That reasoning does not transfer to one big sequential tar, and this dataset had the
+# property only because it was copied from that block.
+_ffghr_set CACHE_SYNC       cache_sync       standard
+
 FFGHR_CACHE_ENTRIES=${CACHE_DIR:+$CACHE_DIR/entries}
 FFGHR_CACHE_STAGING=${CACHE_DIR:+$CACHE_DIR/staging}
 FFGHR_CACHE_LOCK=${CACHE_DIR:+$CACHE_DIR/.prune.lock}

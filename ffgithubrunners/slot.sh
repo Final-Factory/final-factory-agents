@@ -173,14 +173,36 @@ CACHE_ARGS=""
 if ffghr_cache_ready; then
     STAGE=$(ffghr_cache_stage_dir "$SLOT")
     rm -rf "$STAGE" 2>/dev/null || true
-    if mkdir -p "$STAGE" 2>/dev/null && chmod 0770 "$STAGE" 2>/dev/null; then
+    # THE MODE COMES FROM THE UMASK, NOT FROM A chmod, AND THAT IS NOT A STYLE CHOICE.
+    #
+    # `mkdir -p "$STAGE" && chmod 0770 "$STAGE"` fails here with EPERM, and the chain is worth
+    # writing down because every link looks harmless:
+    #
+    #   1. staging/ is setgid (2775) on purpose, so slot-N inherits group ffbox-container.
+    #   2. mkdir under the service's UMask=0022 therefore leaves slot-N at 2755 — group r-x,
+    #      NO WRITE, so the job (host uid 1020) cannot write its drop box.
+    #   3. GNU chmod PRESERVES a directory's setgid bit for a numeric mode unless you write an
+    #      extra leading zero. `chmod 0770 dir` requests 02770; only `chmod 00770` requests 0770.
+    #      Measured: 0770 -> drwxrws---, 00770 -> drwxrwx---.
+    #   4. The unit sets RestrictSUIDSGID=yes, whose seccomp filter denies any chmod that SETS
+    #      S_ISGID. So step 3 is refused with "Operation not permitted" on a directory this
+    #      account owns, which is a confusing enough sentence to lose an hour to.
+    #
+    # umask 007 gets the mode right in the mkdir itself: 0777 & ~007 = 0770, and the kernel adds
+    # the setgid from the parent. Same 2770 result, one syscall, and nothing for the seccomp
+    # filter to object to because the SYSCALL ARGUMENT never carries S_ISGID.
+    #
+    # The error is captured rather than discarded for the same reason: "could not prepare" on its
+    # own says nothing, and the errno says which of the four links broke.
+    if _err=$( umask 007; mkdir -p "$STAGE" 2>&1 ); then
         CACHE_ARGS="-v $FFGHR_CACHE_ENTRIES:/ffcache:ro -v $STAGE:/ffghr/out"
         log "cache: $(find "$FFGHR_CACHE_ENTRIES" -maxdepth 1 -type f -name '*@*.tar' 2>/dev/null | wc -l) entries at $FFGHR_CACHE_ENTRIES, staging $STAGE"
     else
         # Not fatal, and never fatal. A job with no cache is a slow job, not a failed one.
-        log "WARNING: could not prepare $STAGE; running this job without the cache"
+        log "WARNING: could not prepare $STAGE (${_err:-no error text}); running without the cache"
         STAGE=""
     fi
+    unset _err
 else
     log "cache: not provisioned or disabled; running without it"
 fi
