@@ -7,45 +7,40 @@ and most tasks inside a phase can be done in any order.
 Effort sizes: **S** under an hour, **M** an afternoon, **L** a day or more, **?** the shape is not
 known until something is measured.
 
-## Status, 2026-08-29
+## Status, 2026-08-29 (after the first live runs)
 
-**Done and committed.** T1-T16, and T21 as far as it can be answered without a live job.
+**Done, committed, and proven on real jobs.** T1-T16 and T21.
 
-- Phases A and B (T1-T12) — `ffgithubrunners` commit "ffcache phases A and B". Tested against a
-  sandbox cache directory and, for the mounts and the uid map, against the real image.
-- Phase C (T13-T16) — FinalFactory commit "ffcache phase C". **Committed, deliberately not
-  pushed:** with no `/opt/ffcache` the steps no-op correctly, but every job would then pay a
-  42-minute cold import instead of the warm restore `actions/cache` gives today. It goes out after
-  provisioning and seeding, not before.
-- T21 — the CONDITIONS are settled from `actions/checkout`'s source and one of them turned out to
-  be a trap; see gap 8. The live half is still owed.
+The first live run (`33279828227` smoke, `33279828197` Test Runner) confirmed the whole path:
+restore 37s for 23.5 GB, checkout REUSED the restored .git (fetch pulled 2.78 MB where a re-clone
+is ~7 GB), save staged 23.68 GB, the supervisor promoted it atomically at teardown and wiped
+staging, and `/ffcache` asserted read-only from inside the container. The save also ran on a
+FAILING job, which is what `(success() || failure())` exists for.
 
-**Measured on the first live run, 2026-08-29.** Restore of the full 23.5 GB workspace: **37s**
-(22:57:46 -> 22:58:23), with a second job restoring concurrently. Against section 5's twelve-job
-baseline of checkout 117s + LFS 21s + cache restore 108s = 246s, that is 209s saved per job. The
-design's extrapolated estimate was 39s. Open item (b) is closed for the restore side.
+**T21 is answered: yes.** Conditions from the action's source, live behaviour from the run.
 
-**Blocked on root.** `01-hostSetup.sh` cannot run: `zfs create` and `chown` to another account
-need privilege, and sudo here is password-gated for everything outside the narrow NOPASSWD list in
-`/etc/sudoers.d/ffbox`. One command:
+**Three bugs it found, all fixed:**
 
-    sudo sh /opt/final-factory-agents-2/ffgithubrunners/01-hostSetup.sh
+1. `core.checkStat` — `git checkout --detach` took **124 of the checkout step's 130 seconds**
+   because tar renews every inode and ctime and git re-hashes the whole worktree. With
+   `core.checkStat=minimal`: 0.05s on the same archive. Gap 10.
+2. The LRU clock could not work as designed. The archive is job-owned (uid 1020, 0644), so the
+   supervisor's `touch` gets EPERM; it cannot chown or chmod it either. `mv`/`rm` were fine, so
+   this failed silently in the way that matters later, not now. Moved to a supervisor-owned
+   `<entry>.tar.used` sidecar. Gap 11.
+3. `Logs/` was excluded from the archive but `Logs/Packages-Update.log` is TRACKED, so the
+   restored worktree was gratuitously dirty. Exclusion dropped.
 
-then `ffgithubrunners cache seed`, then T21 on ffghr-smoke, then push phase C.
+**Not a bug in this design:** the Test Runner failed with `Found 0 entitlement groups and 0 free
+entitlements`. The ffghr-smoke workflow's licence round trip held a Unity seat from 23:00:49 to
+23:01:03 and main.yml began activating at 23:00:51. Both workflows trigger on this branch and run
+concurrently. That step had already served its purpose and is deleted.
 
-**Phase D done, 2026-08-29.** T17-T20. `04-warmLibrary.sh` no longer opens the project in Unity:
-it extracts `./Library` from the default branch's entry and moves it into place. T17 measured
-against the real 22 G entry: **41s** to extract 59,405 files (2.9 G on disk, 8.6 G apparent),
-with `.git` and the worktree correctly left in the archive. That replaces a 30-60 minute editor
-import, and more to the point it replaces running arbitrary repository code as uid 1015 every
-five minutes.
+**Phase D landed separately** as `e93c260` — `04-warmLibrary.sh` now extracts CI's Library instead
+of opening the project in Unity, so no editor runs outside a hardened container. T17-T20.
 
-Still owed for phase D: golden has never actually been warmed from an entry, because the only
-entry is `ffghr-smoke@` and the rule is default-branch-only. One CI job on `master` creates
-`master@6000.3.19f1.tar` and then the path is live. Until then the script logs what is missing and
-exits 0, verified.
-
-**Not started.** T22-T25 (proving).
+**Remaining:** T22-T25 — the failure-path matrix, rejection and eviction, concurrency, and the
+final measurements once the checkStat fix has a run behind it.
 
 ## Two operational hazards, learned the hard way
 
