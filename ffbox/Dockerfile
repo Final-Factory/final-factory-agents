@@ -78,8 +78,8 @@ RUN set -eux; \
     rm -rf /tmp/gh.tar.gz "/tmp/gh_${GH_VERSION}_linux_amd64"; \
     gh --version
 
-COPY entrypoint.sh entrypoint-ci.sh run-as-user.sh import-project.sh unity-license.sh /ffbox/
-RUN chmod +x /ffbox/entrypoint.sh /ffbox/entrypoint-ci.sh /ffbox/run-as-user.sh /ffbox/import-project.sh
+COPY entrypoint.sh entrypoint-ci.sh run-as-user.sh import-project.sh unity-license.sh restore-workspace.sh /ffbox/
+RUN chmod +x /ffbox/entrypoint.sh /ffbox/entrypoint-ci.sh /ffbox/run-as-user.sh /ffbox/import-project.sh /ffbox/restore-workspace.sh
 
 # BOTH PATHS, and the second one is not redundant. main.yml is already pushed with
 # `. /opt/ffghr/unity-license.sh`, and changing a workflow file needs a token scope this box

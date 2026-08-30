@@ -6,7 +6,7 @@
 #
 #   ffbox-egress:latest   the proxy image. ffbox's, but ffbox built it onto the OTHER daemon, and
 #                         ffbox-egress.sh fails closed rather than building it.
-#   ffghrunner:latest     the runner. See Dockerfile.
+#   ffbox:latest          the one image, for both agent runs and CI. See ffbox/Dockerfile.
 #   ffghr-net             an --internal bridge, no default route, its own subnet.
 #   ffghr-egress          the proxy, on both that and a routed uplink.
 #
@@ -129,9 +129,6 @@ else
   # the same source; only the tag and the daemon differ until section 17 merges those too.
   docker build $NO_CACHE $BUILD_ARGS -t "$IMAGE" "$FFBOX" \
     || die "the runner image did not build"
-  # The other half of the pair; see the same note in ffbox/03-build.sh.
-  docker tag "$IMAGE" "${FFBOX_IMAGE:-ffbox:latest}" 2>/dev/null \
-    && skip "tagged ${FFBOX_IMAGE:-ffbox:latest} (one image, two tags)"
   skip "$IMAGE is $(docker image inspect "$IMAGE" --format '{{.Size}}' | awk '{printf "%.1f GB", $1/1073741824}'), runner $(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.finalfactory.runner-version"}}')"
 fi
 
