@@ -15,6 +15,11 @@ load-bearing for future runs even where the original defect is fixed.
 - [Wrapper-script traps: dwell sizing, phase-1 timeout, detached launch](#wrapper-script-traps) (039)
 - [Quarantined-testcase gate flake: the flip rule](#quarantine-flip-rule) (pre-011, recipe retained)
 - [Cross-machine: proven runs + known limits](#cross-machine) (021/038/045)
+- [Long-lived paired editor: restart between legs](#long-lived-editor)
+- [Fresh-world proof does not cover old saves](#fresh-vs-old-saves)
+- [Audit scripts must be Git-bash-portable (BEAST)](#git-bash-portable)
+- [Never run the two editors' fast suites concurrently](#no-concurrent-fast-suites)
+- [Burst is OFF by design on paired automation runs](#burst-off-by-design)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -158,6 +163,53 @@ WITHOUT `MayAgree:true` and its divergence is flaky — the flip rule (`Determin
 T013) hard-fails an agreeing quarantined run-pair. Triage: grep the editor log for
 `[determinism] (PASS|FAIL|QUARANTINED)` lines in that run's window. `MayAgree:true` is the
 flaky-tolerant escape hatch.
+
+## Long-lived paired editor: restart between legs {#long-lived-editor}
+
+A paired-audit editor left running ~8 hours across many legs was observed at ~40 GB heap, and at
+that size it timed out the audit's own fast-test gate (the suite simply never finished within
+the wait budget). Restart both editors between legs on a long audit session rather than reusing
+one across the whole day — don't spend time diagnosing a "flaky" fast-test gate before checking
+the editor's own memory footprint.
+
+## Fresh-world proof does not cover old saves {#fresh-vs-old-saves}
+
+A paired proof run on a FRESH world only exercises the fresh-world code path. Any change that
+touches a LOAD path (save format, load-time migration, a component that gets populated
+differently on load vs on create) needs a SEPARATE old-save fixture arm in the same audit —
+"NO DIVERGENCE on a fresh world" says nothing about whether an existing save still loads and
+stays in sync.
+
+## Audit scripts must be Git-bash-portable (BEAST) {#git-bash-portable}
+
+Several audit scripts already carry macOS-only tool calls (`shasum`, `stat -f`) that fail under
+Git Bash on the Windows BEAST box, which needs `sha256sum`/`stat -c` instead. Before adding or
+sweeping audit scripts, grep new/changed ones for mac-only tool names and add the portable
+fallback (`command -v sha256sum >/dev/null && sha256sum ... || shasum ...`, same pattern for
+`stat`) rather than discovering the break on the Windows machine.
+
+## Never run the two editors' fast suites concurrently {#no-concurrent-fast-suites}
+
+(062 fix, e.g. `scripts/audit/run_construction_audit.sh:123-128` and the same pattern repeated
+across every `run_*_audit.sh`.) The host and clone editors' fast EditMode suites share the
+`DeterminismAudit` write path — running them concurrently corrupts each other's output. Every
+paired-recompile call now goes through `determinism_audit_lib.sh`'s `da_recompile_editor_pair`,
+which runs the two suites SEQUENTIALLY, not concurrently. Don't hand-roll a parallel recompile
+of both editors to save time — that's the exact regression 062 fixed.
+
+## Burst is OFF by design on paired automation runs {#burst-off-by-design}
+
+`LocalMultiplayerAutomationLauncher` deliberately disables
+`BurstCompiler.Options.EnableBurstCompilation`/`EnableBurstCompileSynchronously` for every local
+automation editor session just before entering play mode, and logs `[LocalMultiplayerAutomation]
+Disabled Burst compilation for this local automation editor session.`
+(`Documentation/Unity-MCP-Setup.md:163-168`, `Documentation/Runtime-Desync-Detection.md:158-163`).
+This is symmetric across both peers and editor-local only — production/standalone AOT Burst
+settings are untouched. Seeing Burst come up OFF right as a paired automation run starts is
+expected, not a probe failure or something to "fix". This is separate from
+`editor-preflight.sh`'s check, which validates the PERSISTENT editor setting is enabled before
+automation starts (catching a stale prior-session disable) — the automation launcher's own
+runtime disable happens afterward and is intentional.
 
 ## Cross-machine: proven runs + known limits {#cross-machine}
 

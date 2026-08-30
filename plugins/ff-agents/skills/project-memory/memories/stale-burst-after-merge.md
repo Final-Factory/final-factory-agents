@@ -118,6 +118,14 @@ Fix: wipe `Library/BurstCache/JIT` with the editor closed, restart, let the back
 drain (see above). Result here: 0 Burst/CS entries across all 77 console entries, and 2460
 tests green with synchronous Burst on.
 
+## A standalone Burst crash stack with only a method name: reproduce with Burst OFF
+
+A crash reported from a Burst-compiled job frequently gives a stack trace with just a native
+method name and no managed frames to work from — Burst strips the C# call context. **How to
+apply:** reproduce in the editor with `BurstCompiler.Options.EnableBurstCompilation = false` so
+the SAME code path runs managed instead; the full managed stack trace then names the actual
+line, which the Burst-native stack could not.
+
 ## How to apply
 
 If Burst-job NREs or BC1054s appear right after a big merge/rebase and the same code passes on

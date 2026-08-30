@@ -216,6 +216,14 @@ Two adjacent traps from the same incident:
   POLL `ps -axo pid,command | grep -c "[M]acOS/Unity -projectPath <path>$"` until it reads
   ZERO, and only then launch — a fixed sleep is not a substitute (bit three times 2026-08-15).
   (And path-verify EVERY remote kill — `MacOS/Unity` also matches the licensing client.)
+- **The guard's own regex can miss a running editor** (062, fixed `ac44d6384`):
+  `scripts/launch-editor.sh`'s pre-launch check used to match
+  `MacOS/Unity -projectPath ${PROJECT}$`, anchored on end-of-string — an editor launched with
+  trailing args (e.g. `-logFile <path>`, used for a clone/second checkout) has a cmdline that
+  CONTINUES past the project path, so the anchor never matched and a second editor launched on
+  the same project. Fixed to match `-projectPath ${PROJECT}( |$)` (trailing space OR
+  end-of-string). If you ever hand-roll a similar `pgrep -f -projectPath` guard, use the same
+  pattern.
 - **Post-checkout stale assemblies look "ready":** after a `git checkout <older-rev>` under an
   editor whose Library was built at tip, `editor_status` reports ready and types shared by both
   revisions resolve — proving nothing. Verify the loaded assemblies with a symbol that exists
@@ -252,6 +260,23 @@ Windows, `--instance host:port` is IGNORED by command routing in 1.0.0-beta.2 (v
 2026-07-21, two servers up): with exactly one connected server your command runs there no
 matter what port you pass; with several, any `--instance` form — valid or bogus — refuses
 with a "multiple instances" error, as does omitting the flag (safe: it never guesses).
+
+### A long-uptime Steam client can wedge play-mode entry (~26h uptime)
+
+A Steam client left running ~26 hours can wedge `SteamAPI_Init` (symptom: "fatal stalled
+cross-thread pipe") and kill the host editor right at play-mode entry — this reads like an
+editor crash but the editor itself is fine. Restart the Steam client (not the editor) first if
+play mode dies at entry after a long-lived session; only chase editor/bridge recovery if a
+Steam restart doesn't clear it.
+
+### A fresh editor boot with no scene looks wedged, not hung
+
+`launch-editor.sh` deliberately deletes `Library/LastSceneManagerSetup.txt` so the editor boots
+with NO scene open (a boot-modal guard — see the `open -n`/scene-modified traps above). Entering
+play mode on that empty project is NOT a hang: it produces a real, running ~26-entity empty
+world that looks wedged under `EditorApplication.Step()` because nothing in it ever changes.
+Open the boot scene (`main.unity`) explicitly before entering play mode — full detail and the
+matching symptom in the project-memory `playmode-needs-main-scene` entry.
 
 ## Running tests
 
@@ -302,6 +327,15 @@ and lets Burst errors hide behind it.
 
 If you turned Burst on, say so in your report — it is a persistent editor setting, and the user
 may have switched it off deliberately.
+
+**A NEW `[BurstCompile]` entry point needs a forced synchronous compile, not just a green fast
+suite.** The editor compiles Burst lazily — an entry point that no test happens to schedule
+during a fast-suite run can sit un-compiled indefinitely, so "fast suite green" is not evidence
+it Burst-compiles at all. After adding one, force
+`Unity.Burst.BurstCompiler.Options.EnableBurstCompileSynchronously = true`, trigger the code
+path, and re-grep `Editor.log`/`read_console` for `BC`/Burst errors before trusting it. Note
+player BUILDS compile every entry point unconditionally (the editor does not) — a `BC1016` class
+error can pass every editor-side check and only surface on an actual build machine.
 
 **Never read `…/AppData/LocalLow/Never Games/finalfactory/TestResults.xml`** (or
 `PerformanceTestResults.json`). The Unity Performance Testing package

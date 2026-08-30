@@ -23,3 +23,9 @@ the active scene first**.
 selected. **How to apply:** verify/load `main.unity` before `manage_editor play`; a healthy
 boot logs `System Start Controller finished loading...` and `ItemConfig` becomes queryable
 across `World.All`. Now also documented in the [[drive-game]] skill's Standard workflow.
+
+**A different-looking symptom, same root cause**: a FRESHLY LAUNCHED editor (via
+`launch-editor.sh`, which deliberately deletes `Library/LastSceneManagerSetup.txt` so it boots
+with NO scene open) does not hang outright — instead play mode produces an empty ~26-entity
+world that LOOKS wedged when stepped via `EditorApplication.Step()` (nothing advances, nothing
+errors). Open `main.unity` explicitly before entering play mode on a fresh boot, same as above.
