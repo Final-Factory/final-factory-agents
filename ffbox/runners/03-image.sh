@@ -129,6 +129,9 @@ else
   # the same source; only the tag and the daemon differ until section 17 merges those too.
   docker build $NO_CACHE $BUILD_ARGS -t "$IMAGE" "$FFBOX" \
     || die "the runner image did not build"
+  # The other half of the pair; see the same note in ffbox/03-build.sh.
+  docker tag "$IMAGE" "${FFBOX_IMAGE:-ffbox:latest}" 2>/dev/null \
+    && skip "tagged ${FFBOX_IMAGE:-ffbox:latest} (one image, two tags)"
   skip "$IMAGE is $(docker image inspect "$IMAGE" --format '{{.Size}}' | awk '{printf "%.1f GB", $1/1073741824}'), runner $(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.finalfactory.runner-version"}}')"
 fi
 
