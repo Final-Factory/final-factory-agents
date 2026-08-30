@@ -6,6 +6,7 @@ load-bearing for future runs even where the original defect is fixed.
 ## TOC
 
 - [Full-window rule: never diagnose from a partial window](#full-window-rule) (052)
+- [A built player pair is the proof instrument for presentation leaks](#built-pair-proof) (055 R25)
 - ["Missing report(s)" is NOT a stuck editor](#missing-reports) (045)
 - [Divergence triage: check command TIMING first](#command-timing) (042)
 - [TestcaseFilter: targeted mode-3 investigation](#testcasefilter)
@@ -18,6 +19,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Long-lived paired editor: restart between legs](#long-lived-editor)
 - [Fresh-world proof does not cover old saves](#fresh-vs-old-saves)
 - [Audit scripts must be Git-bash-portable (BEAST)](#git-bash-portable)
+- [`run_enemy_audit.sh` never builds; macOS needs Homebrew bash](#enemy-audit-build-and-bash) (055 R29)
 - [Never run the two editors' fast suites concurrently](#no-concurrent-fast-suites)
 - [Burst is OFF by design on paired automation runs](#burst-off-by-design)
 
@@ -33,6 +35,32 @@ and a re-diff found `combat` mismatches at e2 hb9-14. **Always extract and diff 
 hashes from BOTH `*-report.log` files over the FULL window before believing any diagnosis** —
 and remember an epoch window in which no ops actually fired proves nothing about the surface
 ("clean" windows are only evidence when the ops that could disagree actually ran).
+
+**The same trap has a per-FIELD axis, not just per-heartbeat** (feature 055, R26/R28,
+2026-08-30). A top-line verdict like `differing fields: combined movers vision` or a bare
+"PASS"/"NO DIVERGENCE" does not tell you whether OTHER fields on the same surface would also
+disagree if you looked — R26 and R28 both closed their fix only after an **independent
+per-field re-fold of every surface over every shared heartbeat** (not just the one the
+comparator flagged) found zero mismatching fields elsewhere; R28's re-fold is what proved
+`movers`/`vision`/`combined` were the ONLY three differing fields out of 23 surfaces, ruling out
+a second live cause. A fix that only silences the field the comparator happened to print is
+unproven — re-fold every field, not just the named one, before calling a fix complete.
+
+## A built player pair is the proof instrument for presentation leaks {#built-pair-proof}
+
+(Feature 055, R25, 2026-08-30.) The Step()-pumped editor pair advances at most one heartbeat per
+`EditorApplication.Step()` call and therefore renders roughly one frame per heartbeat — it ran a
+2114-heartbeat CombatLifecycle scenario with a live presentation→simulation leak (a rail mirror
+reading a player's per-render-frame presentation velocity) and reported **NO DIVERGENCE**, because
+the bug needs MANY render frames between heartbeats to manifest (the owning peer's local-input
+write and a remote peer's NetworkVariable-smoothed write only diverge over real frame timing). A
+fresh macOS standalone player pair built from the same tree, run through the identical scenario at
+real frame rates with Burst ON, forked immediately and reproduced the exact production hashes.
+**Any suspected controller-group/presentation-sourced field (`FleetCommanderSystem`-style leaks,
+per-frame mirrors, anything reading a `LinearMotion`/transform field that a player writes from
+input) is not cleared by an editor-pair NO DIVERGENCE** — build and run
+`run_build_multiplayer_audit.sh` before trusting the surface, and treat a built-pair fork that an
+editor pair cannot reproduce as confirmation of the presentation-leak class, not a flaky harness.
 
 ## "Missing report(s)" is NOT a stuck editor {#missing-reports}
 
@@ -187,6 +215,23 @@ Git Bash on the Windows BEAST box, which needs `sha256sum`/`stat -c` instead. Be
 sweeping audit scripts, grep new/changed ones for mac-only tool names and add the portable
 fallback (`command -v sha256sum >/dev/null && sha256sum ... || shasum ...`, same pattern for
 `stat`) rather than discovering the break on the Windows machine.
+
+## `run_enemy_audit.sh` never builds; macOS needs Homebrew bash {#enemy-audit-build-and-bash}
+
+(Feature 055 R29, 2026-08-30.) `scripts/audit/run_enemy_audit.sh:99` (`run_player_pair`) always
+calls `run_build_multiplayer_audit.sh` with `--skip-build` — this script never builds a player
+itself, and exits 2 (preflight failure) if none exists. Build one first:
+`run_build_multiplayer_audit.sh --label <x>` (editor CLOSED, `Temp/UnityLockfile` removed if the
+editor was killed rather than quit), THEN run the enemy arm against it. A `--skip-build` reuse of
+a build that has already hosted one paired session fails its own manifest sha256 check (the
+session mutates the `.app`) — a build can be reused for a SECOND arm, a third needs a fresh build.
+
+`scripts/audit/run_determinism_testcases.sh` does not parse under macOS's system `/bin/bash` 3.2
+(`line 435: syntax error near unexpected token 'str'`) — install a modern bash (`brew install
+bash`) and invoke explicitly: `PATH="/opt/homebrew/bin:$PATH" /opt/homebrew/bin/bash
+./scripts/audit/run_determinism_testcases.sh …`. Distinct from the BEAST Git-bash-portability
+trap above (that one is about Windows Git Bash lacking GNU tool variants); this one is macOS
+shipping an 18-years-stale bash by default.
 
 ## Never run the two editors' fast suites concurrently {#no-concurrent-fast-suites}
 
