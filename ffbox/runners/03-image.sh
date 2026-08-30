@@ -20,7 +20,8 @@
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO=$(CDPATH= cd -- "$HERE/.." && pwd)
+# ffbox/, one level up: this lives at ffbox/runners/ since the two systems became one tree.
+FFBOX=$(CDPATH= cd -- "$HERE/.." && pwd)
 
 DO_IMAGE=1
 DO_EGRESS=1
@@ -31,7 +32,7 @@ GH_VERSION=""
 
 usage() {
   cat <<EOF
-Usage: sh ffgithubrunners/03-image.sh [options]
+Usage: sh ffbox/runners/03-image.sh [options]
 
 Builds the runner image and brings up its egress fence, both on ffbox-container's daemon.
 Idempotent — re-run any time.
@@ -72,7 +73,7 @@ die()  { printf '03-image.sh: %s\n' "$*" >&2; exit 1; }
 
 . "$HERE/lib/config.sh"
 
-EGRESS_SH="$REPO/ffbox/egress/ffbox-egress.sh"
+EGRESS_SH="$FFBOX/egress/ffbox-egress.sh"
 [ -x "$EGRESS_SH" ] || die "$EGRESS_SH is missing. This design shares ffbox's egress tooling; a
        checkout without ffbox/ cannot build the fence."
 
@@ -126,7 +127,7 @@ else
   # shellcheck disable=SC2086  # NO_CACHE and BUILD_ARGS are deliberately word-split option lists
   # ONE Dockerfile, in ffbox/. The runner image and the ffbox image are the same image built from
   # the same source; only the tag and the daemon differ until section 17 merges those too.
-  docker build $NO_CACHE $BUILD_ARGS -t "$IMAGE" "$REPO/ffbox" \
+  docker build $NO_CACHE $BUILD_ARGS -t "$IMAGE" "$FFBOX" \
     || die "the runner image did not build"
   skip "$IMAGE is $(docker image inspect "$IMAGE" --format '{{.Size}}' | awk '{printf "%.1f GB", $1/1073741824}'), runner $(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.finalfactory.runner-version"}}')"
 fi
@@ -143,7 +144,7 @@ if docker image inspect "$EGRESS_IMAGE" >/dev/null 2>&1; then
   skip "$EGRESS_IMAGE is present on this daemon"
 else
   say "building $EGRESS_IMAGE from ffbox/egress/"
-  docker build -t "$EGRESS_IMAGE" "$REPO/ffbox/egress" || die "the egress image did not build"
+  docker build -t "$EGRESS_IMAGE" "$FFBOX/egress" || die "the egress image did not build"
 fi
 
 # --- the fence -------------------------------------------------------------------------------------

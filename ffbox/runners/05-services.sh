@@ -1,9 +1,9 @@
 #!/bin/sh
 # 05-services.sh — install the systemd units and bring the slots up.
 #
-#   sudo sh ffgithubrunners/05-services.sh --install
-#   sh ffgithubrunners/05-services.sh --check      exit 1 if installing would change anything
-#   sh ffgithubrunners/05-services.sh              report what is installed and running
+#   sudo sh ffbox/runners/05-services.sh --install
+#   sh ffbox/runners/05-services.sh --check      exit 1 if installing would change anything
+#   sh ffbox/runners/05-services.sh              report what is installed and running
 #
 # THE TEMPLATES IN systemd/ ARE THE ONLY SOURCE. They are rendered into a throwaway directory and
 # installed from there, so no second copy on disk can disagree with git. Every path in a unit comes
@@ -27,9 +27,9 @@ OWNER=""
 
 usage() {
   cat <<EOF
-Usage: sudo sh ffgithubrunners/05-services.sh --install [options]
+Usage: sudo sh ffbox/runners/05-services.sh --install [options]
 
-Renders ffgithubrunners/systemd/*.service into ${UNIT_DIR} and enables one slot per configured
+Renders ffbox/runners/systemd/*.service into ${UNIT_DIR} and enables one slot per configured
 slot. Idempotent — re-run any time.
 
 Options (alphabetical):

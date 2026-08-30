@@ -3,7 +3,7 @@
 #
 # @SLOTSH@, @USER@, @GROUP@ and @HOME@ are substituted by 05-services.sh — this repo can be cloned
 # anywhere and the units must not disagree with the checkout they were installed from. Re-run
-# `sudo sh ffgithubrunners/05-services.sh --install` after moving the checkout or changing the owner.
+# `sudo sh ffbox/runners/05-services.sh --install` after moving the checkout or changing the owner.
 Description=ffgithubrunners: runner slot %i
 After=network-online.target ffgithubrunners-dockerd-wait.service ffghr-egress.service
 Wants=network-online.target

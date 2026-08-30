@@ -24,7 +24,7 @@ OWNER=""
 
 usage() {
   cat <<EOF
-Usage: sh ffgithubrunners/02-daemon.sh [options]
+Usage: sh ffbox/runners/02-daemon.sh [options]
 
 Installs and starts the rootless Docker daemon for the container account, on the stable socket
 from lib/config.sh. Idempotent — re-run any time.

@@ -25,7 +25,7 @@ NONINTERACTIVE=0
 
 usage() {
   cat <<EOF
-Usage: sh ffgithubrunners/04-github.sh [options]
+Usage: sh ffbox/runners/04-github.sh [options]
 
 Records the GitHub credential and proves it can mint a JIT config. Idempotent — re-run any time.
 

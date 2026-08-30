@@ -43,7 +43,7 @@ never a gap, only a thing worth knowing before someone debugs a failing build.
 **G1. There is no supervisor script in the tree.** Section 2 specifies the mint / run / wait /
 teardown loop in six steps, section 10's file list has nowhere to put it, and
 `ffgithubrunners@.service` needs an `ExecStart`.
-*Closed:* `ffgithubrunners/slot.sh`, POSIX sh, taking the slot number as its one argument and
+*Closed:* `ffbox/runners/slot.sh`, POSIX sh, taking the slot number as its one argument and
 sourcing `lib/gh.sh` and `lib/config.sh`. T23 to T25.
 
 **G2. There is no check-run poster either.** Section 7 requires a step that parses the NUnit XML and
@@ -59,7 +59,7 @@ a saved `editmode-results.xml` without pushing anything. T38.
 has no equivalent. `ffbox-egress.sh` does start the proxy with `--restart unless-stopped`, so a
 reboot is probably covered, but nothing recreates it after a `docker rm` and nothing orders it after
 the daemon.
-*Closed:* `ffgithubrunners/systemd/ffghr-egress.service`, mirroring ffbox's, which no longer needs
+*Closed:* `ffbox/runners/systemd/ffghr-egress.service`, mirroring ffbox's, which no longer needs
 root. T13.
 
 **G4. Two rootless daemons, not one, for as long as ffbox stays where it is.** Section 3 says the
@@ -315,7 +315,7 @@ exit 0 so systemd restarts the slot. Teardown must run on every exit path, so a 
 trailing block. **M**
 
 **T26. `systemd/ffgithubrunners@.service` and `ffgithubrunners.target`.** `User=FinalFactoryTester`,
-`ExecStart=/bin/sh <checkout>/ffgithubrunners/slot.sh %i`, `Restart=always`, `RestartSec=5`,
+`ExecStart=/bin/sh <checkout>/ffbox/runners/slot.sh %i`, `Restart=always`, `RestartSec=5`,
 **`StartLimitIntervalSec=0`** with the reason in a comment: with systemd's defaults a fast-failing
 condition burns five restarts in a second and leaves the slot `failed` until someone runs
 `reset-failed`. `WantedBy=ffgithubrunners.target` on the template. After the daemon gate and the
@@ -369,7 +369,7 @@ non-interactive handling and its closing list of what was skipped and why. **M**
 **T34. `config.json.example` and `secrets.env.example`.** All comments and empty values, so the
 copy carries nothing sensitive. **S**
 
-**T35. `ffgithubrunners/README.md`.** What it is, install, the CLI, the cutover state the machine is
+**T35. `ffbox/runners/README.md`.** What it is, install, the CLI, the cutover state the machine is
 currently in, and how to change the allowlist. **M**
 
 **T36. Update `docs/ci-runner-security-findings.md`.** F1 becomes partly addressed for this system

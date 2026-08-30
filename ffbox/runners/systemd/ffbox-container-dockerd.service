@@ -3,7 +3,7 @@
 # nothing else. Installed into @CUSER@'s USER systemd instance, which lingering starts at boot.
 #
 # @SOCK@, @DATAROOT@ and @CUSER@ are substituted by 02-daemon.sh: this repo can be cloned
-# anywhere and the paths come from lib/config.sh. Re-run `sh ffgithubrunners/02-daemon.sh` after
+# anywhere and the paths come from lib/config.sh. Re-run `sh ffbox/runners/02-daemon.sh` after
 # changing either.
 #
 # WHY THE USER MANAGER AND NOT A SYSTEM UNIT WITH User=. Rootless Docker gets its cgroup subtree

@@ -21,7 +21,7 @@ route out is a proxy that refuses any name not on an allowlist.
 ## Install
 
 ```sh
-sh ffgithubrunners/setup.sh
+sh ffbox/runners/setup.sh
 ```
 
 Five stages, each independently re-runnable and each a no-op when already satisfied. Stages 1, 2
@@ -40,7 +40,7 @@ recommended path:
    (the latter is in the URL of the installation's configure page).
 
 ```sh
-sh ffgithubrunners/04-github.sh --app-id ID --installation-id ID --key ./downloaded.pem
+sh ffbox/runners/04-github.sh --app-id ID --installation-id ID --key ./downloaded.pem
 ```
 
 It copies the key to `~/.config/ffbox/githubrunners/github-app.pem` at 0600, records the two ids in
@@ -126,10 +126,10 @@ real job reach for them, and that is open item (a).
 ffgithubrunners status                          almost always says it
 journalctl -u 'ffgithubrunners@*' -f            the supervisor's own view
 ffgithubrunners logs 1                          the runner's lifecycle, NOT the job's steps
-sh ffgithubrunners/03-image.sh --egress-log     what the fence allowed and refused
-sh ffgithubrunners/01-hostSetup.sh --check      the host, as a gate
-sh ffgithubrunners/02-daemon.sh --check         the daemon, and whether it is reachable
-sh ffgithubrunners/05-services.sh --check       whether the units match this checkout
+sh ffbox/runners/03-image.sh --egress-log     what the fence allowed and refused
+sh ffbox/runners/01-hostSetup.sh --check      the host, as a gate
+sh ffbox/runners/02-daemon.sh --check         the daemon, and whether it is reachable
+sh ffbox/runners/05-services.sh --check       whether the units match this checkout
 ```
 
 Three failures worth recognising on sight.

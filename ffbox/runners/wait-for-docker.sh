@@ -36,7 +36,7 @@ while [ "$i" -lt "$DEADLINE" ]; do
             printf '       this account is %s, in: %s\n' "$(id -un)" "$(id -nG)" >&2
             printf '       dockerd sets the socket group itself and defaults to --group docker,\n' >&2
             printf '       which maps through the userns onto a subgid nobody is in. The unit\n' >&2
-            printf '       must pass --group 0. Re-run: sh ffgithubrunners/02-daemon.sh\n' >&2
+            printf '       must pass --group 0. Re-run: sh ffbox/runners/02-daemon.sh\n' >&2
             exit 1
             ;;
     esac
@@ -48,6 +48,6 @@ printf 'ffgithubrunners: no rootless docker at %s after %ss.\n' "$SOCK" "$DEADLI
 printf '       lingering off?     loginctl show-user %s -p Linger\n' "$CUSER" >&2
 printf '       daemon down?       sudo -u %s XDG_RUNTIME_DIR=/run/user/%s systemctl --user status docker\n' \
        "$CUSER" "$(id -u "$CUSER" 2>/dev/null || echo '<uid>')" >&2
-printf '       never installed?   sh ffgithubrunners/02-daemon.sh\n' >&2
+printf '       never installed?   sh ffbox/runners/02-daemon.sh\n' >&2
 printf '       cannot reach it?   groups | grep %s   (new session needed after usermod -aG)\n' "$CUSER" >&2
 exit 1

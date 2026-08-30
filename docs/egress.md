@@ -37,8 +37,8 @@ Both come from `ffbox/egress/ffbox-egress.sh`, which parameterises every name th
 | network        | `ffbox-net`, 10.80.0.0/24    | `ffghr-net`, 10.81.0.0/24           |
 | bridge         | `ffbox0`                     | `ffghr0`                            |
 | proxy          | `ffbox-egress` at 10.80.0.2  | `ffghr-egress` at 10.81.0.2         |
-| allowlist      | `ffbox/egress/allowlist.txt` | `ffgithubrunners/egress/allowlist.txt` |
-| brought up by  | `ffbox/01-dockerSetup.sh`    | `ffgithubrunners/03-image.sh`       |
+| allowlist      | `ffbox/egress/allowlist.txt` | `ffbox/runners/egress/allowlist.txt` |
+| brought up by  | `ffbox/01-dockerSetup.sh`    | `ffbox/runners/03-image.sh`       |
 | what it allows | Anthropic, Unity             | GitHub, Unity                       |
 
 Two lists rather than one, and the reason is the lists rather than the mechanism. ffbox's has no
@@ -91,7 +91,7 @@ and **nothing at all** for the most common failure, which is a host you simply f
 Read both halves:
 
 ```bash
-sh ffgithubrunners/03-image.sh --egress-log     # allowed, deny-sink, AND the NXDOMAIN names
+sh ffbox/runners/03-image.sh --egress-log     # allowed, deny-sink, AND the NXDOMAIN names
 sh ffbox/egress/ffbox-egress.sh log             # the sni= half only
 ```
 
@@ -109,10 +109,10 @@ it was going.
 
 ```bash
 # ffgithubrunners
-FFBOX_EGRESS_MODE=log sh ffgithubrunners/03-image.sh --egress-only
+FFBOX_EGRESS_MODE=log sh ffbox/runners/03-image.sh --egress-only
 # ... run some real jobs ...
-sh ffgithubrunners/03-image.sh --egress-log
-sh ffgithubrunners/03-image.sh --egress-only     # back to enforce
+sh ffbox/runners/03-image.sh --egress-log
+sh ffbox/runners/03-image.sh --egress-only     # back to enforce
 ```
 
 ```bash
@@ -127,7 +127,7 @@ sudo systemctl start ffbox-egress
 Log mode is a way to discover a list, never a resting state. `status` says so while it is on.
 
 Open item (a) in `design/ffgithubrunners_design.txt` is exactly this job, not yet done: the LFS and
-artifact/cache storage hosts in `ffgithubrunners/egress/allowlist.txt` are marked UNCONFIRMED
+artifact/cache storage hosts in `ffbox/runners/egress/allowlist.txt` are marked UNCONFIRMED
 because nobody has watched a real job reach for them.
 
 ## Editing versus rebuilding
@@ -147,12 +147,12 @@ Changing `entrypoint.sh` or the `Dockerfile` needs the image rebuilt and the con
 on running the old one:
 
 ```bash
-sh ffgithubrunners/03-image.sh --egress-only    # rebuilds and recreates
+sh ffbox/runners/03-image.sh --egress-only    # rebuilds and recreates
 ```
 
 ## The knobs
 
-`ffbox-egress.sh` reads all of these from the environment. `ffgithubrunners/03-image.sh` sets them
+`ffbox-egress.sh` reads all of these from the environment. `ffbox/runners/03-image.sh` sets them
 from `lib/config.sh`, so the proxy's address and the `--dns` a job joins with come from one place
 and cannot drift apart.
 

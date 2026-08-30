@@ -161,7 +161,7 @@ through FFBOX_EGRESS_*, so this runs a second instance of the same script and th
     ffghr-net        --internal bridge, its own subnet
     ffghr-egress-net the routed uplink, the proxy alone on it
     ffghr-egress     the proxy, at its own address on that subnet
-    allowlist        ffgithubrunners/egress/allowlist.txt
+    allowlist        ffbox/runners/egress/allowlist.txt
 
 The proxy image is ffbox's, but ffbox built it onto the other daemon, so 03-image.sh builds
 ffbox-egress:latest under ffbox-container before bringing the fence up. ffghr-egress.service keeps
@@ -348,7 +348,7 @@ There is nothing else to reap. `--rm` plus a tmpfs workspace leaves nothing behi
 10. Install
 -----------
 
-ffgithubrunners/setup.sh: POSIX sh, set -eu, numbered stages, each independently re-runnable and
+ffbox/runners/setup.sh: POSIX sh, set -eu, numbered stages, each independently re-runnable and
 a no-op when already satisfied.
 
     01-hostSetup.sh   docker and its rootless extras, uidmap. The ffbox-container account and
@@ -366,14 +366,14 @@ a no-op when already satisfied.
     04-github.sh      take App id, installation id and key path, verify the App can mint a JIT
                       config, record the ids in config.json and the key at github-app.pem. Takes
                       no arguments once configured.
-    05-services.sh    render ffgithubrunners/systemd/*.template into /etc/systemd/system, enable
+    05-services.sh    render ffbox/runners/systemd/*.template into /etc/systemd/system, enable
                       ffgithubrunners@1 through @SLOTS, start ffgithubrunners.target.
 
 Stages 1 and 5 need root. Which user the units name resolves as FFGITHUBRUNNERS_RUN_USER, then
 SUDO_USER, then the checkout owner: run from a timer as root there is no SUDO_USER, and ffbox has
 already been bitten by units rendered pointing at root's home.
 
-Templates in ffgithubrunners/systemd/ are the only source, rendered into a throwaway directory and
+Templates in ffbox/runners/systemd/ are the only source, rendered into a throwaway directory and
 installed from there, so no second copy on disk can disagree with git.
 
     ffgithubrunners/

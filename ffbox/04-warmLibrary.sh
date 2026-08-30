@@ -165,7 +165,7 @@ ENTRY="$ENTRIES/$SAFE_BRANCH@$SCOPE.tar"
 
 if [ ! -d "$ENTRIES" ]; then
     log "no cache at $ENTRIES — leaving Library/ as it is"
-    log "  (provision it with: sudo sh $HERE/../ffgithubrunners/01-hostSetup.sh)"
+    log "  (provision it with: sudo sh $HERE/../ffbox/runners/01-hostSetup.sh)"
     exit 0
 fi
 if [ -z "$SCOPE" ]; then
