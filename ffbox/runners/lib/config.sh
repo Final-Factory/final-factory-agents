@@ -187,6 +187,23 @@ _ffghr_set CACHE_QUOTA      cache_quota      250G
 # property only because it was copied from that block.
 _ffghr_set CACHE_SYNC       cache_sync       standard
 
+# HOW STALE AN ENTRY MAY GET BEFORE A JOB IS ASKED TO REPLACE IT.
+#
+# Saving is the expensive half and it does not scale: three slots each writing a ~22 GB archive at
+# the end of their run put three concurrent sequential writes on one 5400 RPM mirror, measured at
+# 98% utilisation with the disk as the bottleneck. Restoring is nearly free by comparison, because
+# reads come out of ARC on a 755 GB box.
+#
+# Six hours rather than one, and the design's own measurement is why: section 12 found that a
+# stale-but-present Library costs one re-imported asset and eighty seconds of recompile after
+# THREE DAYS of drift. At six hours the restore is indistinguishable from fresh and most pushes
+# skip the archive entirely.
+_ffghr_set CACHE_MAX_AGE_HOURS cache_max_age_hours 6
+
+# Host-only, never mounted into a container: which entry each slot has been granted, so two slots
+# on the same branch cannot both be told to archive it.
+FFGHR_CACHE_CLAIMS=${CACHE_DIR:+$CACHE_DIR/claims}
+
 FFGHR_CACHE_ENTRIES=${CACHE_DIR:+$CACHE_DIR/entries}
 FFGHR_CACHE_STAGING=${CACHE_DIR:+$CACHE_DIR/staging}
 FFGHR_CACHE_LOCK=${CACHE_DIR:+$CACHE_DIR/.prune.lock}
@@ -241,6 +258,47 @@ ffghr_cache_with_lock() {
 # The sidecar is created by the SUPERVISOR in a directory the supervisor owns, so it always works,
 # and it says what it means: the archive's mtime is when it was built, the marker's is when it was
 # last used.
+# ffghr_cache_should_archive <entry name> <slot> -> 0 grant, 1 deny.
+#
+# Runs UNDER THE CACHE LOCK, so two slots that started together on the same branch cannot both be
+# told to archive it. That is the whole point: the save is the expensive half and it does not
+# scale, so exactly one job per entry per interval does it.
+#
+# A claim is what makes the grant survive the decision. Without one, the second slot would look at
+# the same still-stale entry a second later and grant itself too — the entry only becomes fresh
+# when the first job finishes, tens of minutes later.
+ffghr_cache_should_archive() {
+    _name=$1; _slot=$2
+    _entry="$FFGHR_CACHE_ENTRIES/$_name"
+    _claim="$FFGHR_CACHE_CLAIMS/$_name"
+    _now=$(date +%s)
+    _max=$(( ${CACHE_MAX_AGE_HOURS:-6} * 3600 ))
+    mkdir -p "$FFGHR_CACHE_CLAIMS" 2>/dev/null || return 1
+
+    # A claim older than the watchdog belongs to a job that is gone; teardown removes them, but a
+    # supervisor killed with SIGKILL leaves one behind and nothing else would ever clear it.
+    if [ -f "$_claim" ]; then
+        _age=$(( _now - $(stat -c %Y "$_claim" 2>/dev/null || echo 0) ))
+        if [ "$_age" -lt $(( ${WATCHDOG_MINUTES:-120} * 60 )) ]; then
+            return 1
+        fi
+        rm -f "$_claim" 2>/dev/null || true
+    fi
+
+    if [ -f "$_entry" ]; then
+        _eage=$(( _now - $(stat -c %Y "$_entry" 2>/dev/null || echo 0) ))
+        [ "$_eage" -ge "$_max" ] || return 1
+    fi
+
+    printf 'slot=%s pid=%s at=%s\n' "$_slot" "$$" "$(date -Is)" > "$_claim" 2>/dev/null || return 1
+    return 0
+}
+
+ffghr_cache_release_claim() {
+    [ -n "${1:-}" ] && [ -n "$FFGHR_CACHE_CLAIMS" ] || return 0
+    rm -f "$FFGHR_CACHE_CLAIMS/$1" 2>/dev/null || true
+}
+
 ffghr_cache_marker() { printf '%s.used\n' "$FFGHR_CACHE_ENTRIES/$1"; }
 
 ffghr_cache_touch() {

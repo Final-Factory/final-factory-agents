@@ -44,6 +44,10 @@ STAGE=""
 # not, which is why the id is captured at mint time and the DELETE is unconditional.
 teardown() {
     _rc=$?
+    # The claim outlives the decision on purpose, so a second slot cannot grant itself the same
+    # entry while this job is still working. It has to come back here on EVERY exit path, or one
+    # crashed run stops that branch being archived until the claim ages past the watchdog.
+    [ -z "${CACHE_CLAIM:-}" ] || ffghr_cache_release_claim "$CACHE_CLAIM"
     trap - EXIT INT TERM
 
     if [ -n "$CNAME" ] && docker inspect "$CNAME" >/dev/null 2>&1; then
@@ -246,6 +250,40 @@ LOGGER=$!
 
 # Above main.yml's timeout-minutes: 90, so a job GitHub still wants is never killed here. This
 # exists for a container that is wedged rather than for one that is slow.
+# THE JOB DECLARES, THE HOST GRANTS, AND NOBODY WAITS. The job writes branch.info as one of its
+# first steps; this loop is already awake every five seconds for the watchdog, so it decides while
+# the tests run — tens of minutes of slack — and drops cache.request into the same staging
+# directory. By the time the job reaches its archive step the answer is already there.
+#
+# Deciding here rather than at container start is forced: slot.sh mints a JIT config and launches
+# the container BEFORE GitHub hands it a job, so the branch does not exist yet.
+CACHE_DECIDED=0
+CACHE_CLAIM=""
+
+decide_cache_archive() {
+    [ "$CACHE_DECIDED" = 0 ] || return 0
+    [ -n "${STAGE:-}" ] && [ -r "$STAGE/branch.info" ] || return 0
+
+    _want=$(head -1 "$STAGE/branch.info" 2>/dev/null | tr -d ' \r\n')
+    [ -n "$_want" ] || return 0
+    CACHE_DECIDED=1
+
+    case "$_want" in *.tar) ;; *) _want="$_want.tar" ;; esac
+    if ! ffghr_cache_name_ok "$_want"; then
+        log "cache: the job asked for '$_want', which is not a usable entry name; not archiving"
+        return 0
+    fi
+
+    if ffghr_cache_with_lock ffghr_cache_should_archive "$_want" "$SLOT"; then
+        CACHE_CLAIM=$_want
+        : > "$STAGE/cache.request" 2>/dev/null \
+            && log "cache: $_want is due; asked the job to archive it" \
+            || log "cache: could not write the request into $STAGE"
+    else
+        log "cache: $_want is fresh or claimed by another slot; not archiving this run"
+    fi
+}
+
 DEADLINE=$(( $(date +%s) + WATCHDOG_MINUTES * 60 ))
 KILLED=0
 
@@ -261,6 +299,7 @@ while [ "$(docker inspect -f '{{.State.Running}}' "$CNAME" 2>/dev/null)" = true 
         KILLED=1
         break
     fi
+    decide_cache_archive
     sleep 5
 done
 
