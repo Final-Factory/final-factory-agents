@@ -603,6 +603,11 @@ if [ -d "$MNT/.git" ]; then
     # need to know exactly which commit this run reasoned against.
     git -C "$MNT" rev-parse HEAD > "$OUT/base_sha.txt" 2>/dev/null || rm -f "$OUT/base_sha.txt"
 
+    # Read now, while the clone is still exactly what golden was and no container has run. This is
+    # the one value sanitize_clone_git needs to rebuild a config from, and taking it here rather
+    # than afterwards is the difference between a known-good value and one the run chose.
+    TRUSTED_ORIGIN_URL=$(git -C "$MNT" config --local --get remote.origin.url 2>/dev/null || echo "")
+
     # The work branch, created at the pinned base sha. `checkout -B` on the commit HEAD already
     # points at is a pure ref move: no file in the working tree is touched, so Library/ stays
     # warm and Unity has nothing to re-import (design section 17).
@@ -759,6 +764,54 @@ esac
 
 # --- harvest ---------------------------------------------------------------------------------------
 # Do this before cleanup destroys the clone, or the work evaporates with it.
+
+# THE CONTAINER HAS WRITTEN THIS TREE AND THE HOST IS ABOUT TO RUN git IN IT. That is finding F7
+# in docs/ci-runner-security-findings.md, and it needs no vulnerability to exploit: git executes
+# what .git tells it to. .git/hooks/post-commit, post-checkout and pre-push all run on ordinary
+# commands, and .git/config names commands too — core.fsmonitor fires on `status`, plus core.pager,
+# diff.external and filter.*.clean. `--no-verify` on the harvest commit suppresses pre-commit and
+# commit-msg and none of the rest. FORBIDDEN_PATHS_RE does not help either: it is checked against
+# the commit range, and neither .git/hooks nor .git/config is ever part of a commit.
+#
+# So the host does not read either of them. Both are replaced with known-good content first.
+#
+# A WHITELIST, NOT A BLACKLIST, and that is the whole point. Filtering dangerous keys out of the
+# run's config means keeping a list of every key git can execute and adding to it forever. Writing
+# the config from scratch means the run cannot define ANY key, including ones nobody has thought
+# of. The only value carried across is the origin URL, captured before the container started.
+#
+# Replacing the config is safe here specifically because git-lfs is configured in the SYSTEM
+# config on this box, not per-repository — verified: filter.lfs.clean/smudge/process/required all
+# come from `git config --system`. If that ever changes, `git add` would start storing LFS payloads
+# instead of pointers, so check it before assuming this still holds.
+sanitize_clone_git() {
+    [ -d "$MNT/.git" ] || return 0
+
+    # Hooks: keep them for inspection, but out of the path git looks in.
+    if [ -d "$MNT/.git/hooks" ]; then
+        rm -rf "$MNT/.git/hooks.quarantined" 2>/dev/null || true
+        mv "$MNT/.git/hooks" "$MNT/.git/hooks.quarantined" 2>/dev/null || true
+    fi
+    mkdir -p "$MNT/.git/hooks"
+
+    if [ -f "$MNT/.git/config" ]; then
+        mv "$MNT/.git/config" "$MNT/.git/config.quarantined" 2>/dev/null || true
+    fi
+    {
+        printf '[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n'
+        printf '\tbare = false\n\tlogallrefupdates = true\n'
+        if [ -n "${TRUSTED_ORIGIN_URL:-}" ]; then
+            printf '[remote "origin"]\n\turl = %s\n' "$TRUSTED_ORIGIN_URL"
+            printf '\tfetch = +refs/heads/*:refs/remotes/origin/*\n'
+        fi
+    } > "$MNT/.git/config"
+
+    if ! cmp -s "$MNT/.git/config" "$MNT/.git/config.quarantined" 2>/dev/null; then
+        echo "[ffbox] sanitized the clone's .git before touching it (F7)"
+    fi
+}
+sanitize_clone_git
+
 if [ -d "$MNT/.git" ]; then
     git -C "$MNT" status --porcelain > "$OUT/status.txt" 2>/dev/null || true
 
