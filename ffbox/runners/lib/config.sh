@@ -194,11 +194,12 @@ _ffghr_set CACHE_SYNC       cache_sync       standard
 # 98% utilisation with the disk as the bottleneck. Restoring is nearly free by comparison, because
 # reads come out of ARC on a 755 GB box.
 #
-# Six hours rather than one, and the design's own measurement is why: section 12 found that a
-# stale-but-present Library costs one re-imported asset and eighty seconds of recompile after
-# THREE DAYS of drift. At six hours the restore is indistinguishable from fresh and most pushes
-# skip the archive entirely.
-_ffghr_set CACHE_MAX_AGE_HOURS cache_max_age_hours 6
+# One hour. The ceiling could be far higher on the evidence — section 12 measured a
+# stale-but-present Library costing one re-imported asset and eighty seconds of recompile after
+# THREE DAYS of drift — so this is deliberately conservative: it keeps entries close to current
+# while still collapsing a burst of pushes into a single archive, which is what the disk cares
+# about. Raise it if the save is still the thing that hurts.
+_ffghr_set CACHE_MAX_AGE_HOURS cache_max_age_hours 1
 
 # Host-only, never mounted into a container: which entry each slot has been granted, so two slots
 # on the same branch cannot both be told to archive it.
