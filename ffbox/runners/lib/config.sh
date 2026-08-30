@@ -87,7 +87,10 @@ _ffghr_set() {
 # --- what a slot is -------------------------------------------------------------------------
 _ffghr_set SLOTS            slots            1
 _ffghr_set WATCHDOG_MINUTES watchdog_minutes 120
-_ffghr_set IMAGE            image            ffghrunner:latest
+# ONE NAME. ffbox and the runners are the same image built from ffbox/Dockerfile; a second tag
+# was only ever another name for it, and two names meant two builds that drifted apart on every
+# rebuild. Pin CI to a different build by overriding this key, not by keeping a second tag alive.
+_ffghr_set IMAGE            image            ffbox:latest
 
 # NO self-hosted, permanently. It was going to come back at cutover, but routing main.yml with
 # `runs-on: ffgithubrunners` is better: that label is carried only by these runners and
