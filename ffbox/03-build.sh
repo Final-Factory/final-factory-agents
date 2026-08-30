@@ -24,6 +24,13 @@ docker build \
     -t "$TAG" \
     .
 
+# ONE IMAGE, TWO TAGS. ffbox and the CI runners build from this same Dockerfile; if each build
+# script only tagged its own name the two would drift apart on every rebuild — measured on
+# 2026-08-29, ffbox:latest 74b0815107e9 against ffghrunner:latest 5c4527331ac9, same source. Tag
+# both here so whichever built last is what both use.
+RUNNER_TAG=${FFGHR_IMAGE:-ffghrunner:latest}
+docker tag "$TAG" "$RUNNER_TAG" && echo "tagged: $RUNNER_TAG"
+
 echo
 echo "Built $TAG."
 echo "  'sh ffbox/setup.sh' handles the secrets file and the Unity Library warm-up."
