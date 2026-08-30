@@ -69,9 +69,24 @@ MSG
     exit 1
 fi
 
-# A root-owned workspace means no mapping to do — just run.
+# A ROOT-OWNED WORKSPACE STILL MEANS DROPPING PRIVILEGE, and it did not used to.
+#
+# The shortcut here used to `exec bash "$TASK"` as root, on the grounds that there was no
+# ownership to match. That is true and it is not the only reason the dance exists: Claude Code
+# refuses --dangerously-skip-permissions when it is running as root, so run-as-user.sh died with
+# "cannot be used with root/sudo privileges for security reasons" and the run produced nothing.
+#
+# This is not new and the shared daemon did not cause it. The workspace mapped to uid 0 on the old
+# daemon too, for the mirror-image reason: it was owned by the account that owned that daemon.
+# design/ffcache_design.txt section 12 records the same observation from the other side.
+#
+# So: pick an ordinary uid and drop to it, keeping GROUP 0. The workspace and the output mount are
+# both 2775 and both group-owned by the container account, which is gid 0 in here, so group
+# membership is what carries write access across. Nothing else changes — the same setpriv, the
+# same PID-1 reasoning, the same trap.
 if [ "$uid" -eq 0 ]; then
-    exec bash "$TASK"
+    uid=1000
+    gid=0
 fi
 
 if ! getent group "$gid" >/dev/null; then
@@ -86,6 +101,10 @@ if [ -z "$user" ]; then
     useradd -u "$uid" -g "$gid" -m -d /home/ffbox -s /bin/bash ffbox
 fi
 
+# Unity writes its licence and cache under HOME, so HOME has to be this user's. The activation
+# would otherwise fail in a way that reads as a licensing problem.
+
+
 home=$(getent passwd "$uid" | cut -d: -f6) || true
 [ -n "$home" ] || home=/home/ffbox
 mkdir -p "$home"
@@ -97,4 +116,16 @@ chown "$uid:$gid" "$home"
 # setpriv replaces the process image instead.
 export HOME="$home"
 export USER="$user"
+
+# GIT INSIDE THE CONTAINER NEEDS THE SAME EXEMPTION THE HOST DOES. The workspace belongs to the
+# container account, which is uid 0 in here, and we have just dropped to 1000 — so git refuses
+# with "detected dubious ownership" and the run reports "/workspace (not a git repo)" while
+# looking otherwise healthy. An agent that cannot read the repo cannot do its job, and nothing
+# about the failure says so.
+#
+# Through the environment rather than a config file: it names the one directory, it applies to
+# every git the task runs, and it leaves nothing behind in an image layer or a home directory.
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=safe.directory
+export GIT_CONFIG_VALUE_0="$WORKSPACE"
 exec setpriv --reuid="$user" --regid="$gid" --init-groups bash "$TASK"

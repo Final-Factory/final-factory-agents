@@ -18,6 +18,16 @@
 set -euo pipefail
 
 # --- configuration (override via environment) ------------------------------------------------
+# WHICH DAEMON, SET HERE RATHER THAN INHERITED. ffbox runs on the shared rootless daemon that
+# ffbox-container owns, alongside the CI runners. Leaving this to the environment does not work:
+# `docker` falls back to the CURRENT CONTEXT when DOCKER_HOST is unset, and this account's context
+# is still `rootless` -> unix:///run/user/1015/docker.sock. The profile.d line only reaches a login
+# shell, so anything non-interactive — a systemd unit, ffwatch, a script — silently used the old
+# daemon. Measured on 2026-08-29: the run reached the old daemon, where the clone's owning uid
+# 1020 is not in the map, and the container refused with "owned by a uid this daemon cannot map".
+DOCKER_HOST=${DOCKER_HOST:-unix://${FFBOX_DOCKER_SOCK:-/run/ffbox-container/docker.sock}}
+export DOCKER_HOST
+
 IMAGE=${FFBOX_IMAGE:-ffbox:latest}
 GOLDEN_DS=${FFBOX_GOLDEN_DS:-rpool/ff/golden}
 GOLDEN_MNT=${FFBOX_GOLDEN_MNT:-/opt/FinalFactory}
@@ -322,6 +332,23 @@ MNT="${RUNS_MNT}/run-${RUN_ID}"
 OUT="${RESULTS}/${RUN_ID}"
 
 mkdir -p "$OUT"
+
+# THE OUTPUT MOUNT HAS TO BE REACHABLE BY THE CONTAINER'S ROOT, and on the shared daemon that is a
+# different account. The container runs as namespace root, which maps to ffbox-container on the
+# host; this directory belongs to the invoking user, whose uid is NOT in that daemon's map. It
+# shows up inside as 65534, and capabilities in a user namespace do not extend to files owned by
+# an unmapped uid — so even root WITH CAP_DAC_OVERRIDE is refused. Measured on 2026-08-29: caps
+# a80425fb, DAC_OVERRIDE set, and `touch /ffbox/out/probe` still denied.
+#
+# The GROUP is the way through, and it needs no privilege: chgrp to a group we are already in.
+# ffbox-container maps to gid 0 inside the container, so group-write is write. setgid so anything
+# the run leaves behind keeps the group.
+if getent group ffbox-container >/dev/null 2>&1; then
+    chgrp ffbox-container "$OUT" 2>/dev/null && chmod 2775 "$OUT" 2>/dev/null || {
+        echo "[ffbox] WARNING: could not give $OUT to the ffbox-container group;" >&2
+        echo "[ffbox]          the container may not be able to write its output." >&2
+    }
+fi
 if [ -n "${PROMPT// }" ]; then
     printf '%s' "$PROMPT" > "$OUT/prompt.txt"
 fi
@@ -538,6 +565,19 @@ exec {GOLDEN_FD}>&-
 sudo zfs clone -o mountpoint="$MNT" "$SNAP" "$CLONE"
 CLONE_MADE=1
 echo "[ffbox] workspace: $MNT (clone of $SNAP)"
+
+# HOST-SIDE GIT NEEDS PERMISSION TO LOOK AT A TREE IT DOES NOT OWN. Golden and its clones belong
+# to ffbox-container so that a container on the shared daemon sees them as root; git, running here
+# as the owner, then refuses with "detected dubious ownership" and every git call in the harvest
+# fails with it.
+#
+# Passed through the environment rather than written to ~/.gitconfig: it applies to every git in
+# this process tree and to nothing else, it names the exact two directories rather than `*`, and
+# it leaves no state behind if this run is killed.
+GIT_CONFIG_COUNT=2
+GIT_CONFIG_KEY_0=safe.directory;   GIT_CONFIG_VALUE_0=$GOLDEN_MNT
+GIT_CONFIG_KEY_1=safe.directory;   GIT_CONFIG_VALUE_1=$MNT
+export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1
 
 # --- base ref ------------------------------------------------------------------------------------
 # Golden tracks master; the Discord lanes want develop. Checking out in the clone costs a ref
