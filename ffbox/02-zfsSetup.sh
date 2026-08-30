@@ -148,6 +148,13 @@ GOLDEN_DS="${FF_DS}/golden"
 # and 04-warmLibrary.sh extracts Library into it, both as the owner, who reaches them through the
 # ffbox-container group.
 #
+# The owner also needs git to accept a tree it does not own, in GLOBAL config — `-c` and
+# GIT_CONFIG_* are ignored for safe.directory by design. Both paths, because fetching FROM golden
+# checks its git-dir rather than its worktree:
+#
+#   git config --global --add safe.directory /opt/FinalFactory
+#   git config --global --add safe.directory /opt/FinalFactory/.git
+#
 #   sudo chown -R ffbox-container:ffbox-container /opt/FinalFactory
 #   sudo chmod -R g+w /opt/FinalFactory
 #   sudo find /opt/FinalFactory -type d -exec chmod g+s {} +
