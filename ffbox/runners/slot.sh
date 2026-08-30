@@ -300,7 +300,12 @@ while [ "$(docker inspect -f '{{.State.Running}}' "$CNAME" 2>/dev/null)" = true 
         break
     fi
     decide_cache_archive
-    sleep 5
+    # FIFTEEN SECONDS, NOT FIVE. This loop only has to notice two things: a container that has
+    # exited, and a branch.info the job wrote near its start. The job then runs for tens of
+    # minutes before it needs the answer, so the extra latency is invisible, and three slots each
+    # waking twelve times a minute to run `docker inspect` is work nobody asked for. The watchdog
+    # deadline is measured in hours; 15s of granularity on it means nothing.
+    sleep 15
 done
 
 wait "$LOGGER" 2>/dev/null || true
