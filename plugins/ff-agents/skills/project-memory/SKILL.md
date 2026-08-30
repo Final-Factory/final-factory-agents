@@ -23,7 +23,8 @@ worktrees and apply to ALL branches.
 - [ffbox installs as ONE service](memories/ffbox-installs-as-one-service.md) — every ffbox machine gets all of it (harness + Discord pipeline + ffweb) via `sh ffbox/setup.sh`, which installs AND starts `ffbox.target`; the `--skip-*` flags are re-run controls, not a menu, and a setup script must never stop one step short of running
 - [Write status reports in simpler, plainer language](memories/feedback-simple-report-language.md) — Ben wants the TL;DR-first shape and full detail kept, but carried by plain words and short sentences; run ids and codenames go in parentheses or bullets, never woven into dense prose
 - [launch-editor.sh brings editors up Burst-DISABLED](memories/launch-editor-burst-off.md) — observed 3x 2026-08-22/23; always editor-preflight after a relaunch, enable + drain to a stable zero (two readings 60s apart) before paired work
-- [Headless leg died mid-task: corrective resume](memories/headless-leg-corrective-resume.md) — pull the sid from the leg log, rewrite the prompt file with a corrective nudge, run-leg.sh <leg> <sid> <model>; context survives sleep-deaths and end-turn-to-wait deaths
+- [Headless leg died mid-task: corrective resume](memories/headless-leg-corrective-resume.md) — pull the sid from the leg log, rewrite the prompt file with a corrective nudge, run-leg.sh <leg> <sid> <model>; context survives sleep-deaths and end-turn-to-wait deaths; PREVENTION — a headless leg ends at its final message, never wait on a Monitor/background task, foreground bounded waits only
+- [code-review-sonnet synthesis retries: workaround](memories/code-review-sonnet-synthesis-retry-workaround.md) — if the synthesis stage exhausts 5/5 retries on its `decisions` schema, don't chase the schema (it's a per-session generated script, not a repo file, and does declare the field) — synthesize by hand from `journal.jsonl` instead
 
 ## Unity MCP bridge
 
@@ -37,7 +38,7 @@ worktrees and apply to ALL branches.
 
 ## Editor & play mode traps
 
-- [Play mode needs main scene](memories/playmode-needs-main-scene.md) — entering play mode hangs forever unless Assets/Scenes/main.unity is the active scene; check editor_state.active_scene first
+- [Play mode needs main scene](memories/playmode-needs-main-scene.md) — entering play mode hangs forever unless Assets/Scenes/main.unity is the active scene; check editor_state.active_scene first; a FRESH editor boot with no scene open instead looks wedged as an empty ~26-entity world under EditorApplication.Step()
 - [No external edits to open Unity scenes](memories/no-external-edits-to-open-unity-scenes.md) — Write/Edit on an open .unity/.prefab raises a modal reload dialog that blocks the main thread and hangs the MCP bridge; edit via SerializedObject + SaveScene instead
 - [Unity keyword-remap shader crash](memories/unity-keyword-remap-shader-crash.md) — known Unity engine bug crashing import worker on ParticlesUnlit fallback keyword remap
 - [wsay voice notifications](memories/wsay-voice-notifications.md) — global hooks speak via wsay when Claude finishes (Stop) or needs input (Notification); don't disable
@@ -45,7 +46,10 @@ worktrees and apply to ALL branches.
 
 ## ECS / Burst / baking
 
-- [Stale Burst after merge](memories/stale-burst-after-merge.md) — check `EnableBurstCompilation` before EVERY test run (Burst off = a green suite that never exercised the Burst compile, plus ~10x slower); Burst compiles ASYNCHRONOUSLY: a clean console right after `refresh_unity` proves nothing, wait for `BurstLoader.BurstProgressId` to go idle before reading results; post-merge Burst NREs or BC1054s (even ones blaming files that never mention the type) = stale `Library/BurstCache/JIT`, not a source bug
+- [Stale Burst after merge](memories/stale-burst-after-merge.md) — check `EnableBurstCompilation` before EVERY test run (Burst off = a green suite that never exercised the Burst compile, plus ~10x slower); Burst compiles ASYNCHRONOUSLY: a clean console right after `refresh_unity` proves nothing, wait for `BurstLoader.BurstProgressId` to go idle before reading results; post-merge Burst NREs or BC1054s (even ones blaming files that never mention the type) = stale `Library/BurstCache/JIT`, not a source bug; a standalone crash stack with only a method name → reproduce with Burst OFF for the full managed stack
+- [Bursted job layout vs domain reload](memories/bursted-job-layout-not-domain-reload-invalidated.md) — a job struct-layout change surfacing as `UNKNOWN_OBJECT_TYPE ... has not been assigned` (distinct symptom from stale-burst-after-merge's NRE/BC1054) needs the `EnableBurstCompilation` off/on TOGGLE, not just a domain reload; a nested `ComponentLookup` job field must never be `default`, even when unused
+- [ECS exception class matching](memories/ecs-exception-class-matching.md) — match the exception CLASS before theorizing: ECB append on a missing buffer → `InvalidOperationException "Buffer does not exist"`; `SetComponent`/`GetComponentData`/lookup indexer on a missing component → `ArgumentException`
+- [Short-circuit hoist unguards a lookup](memories/short-circuit-hoist-unguards-lookup.md) — hoisting a read out of a `&&` can silently remove the guard it depended on (T044j → WanderSystem AncientGuardian crash); check whether the short-circuit was load-bearing before hoisting
 - [Test-assembly systems need [DisableAutoCreation]](memories/test-assembly-systems-need-disableautocreation.md) — unmarked SystemBase/ISystem in Assets/Tests auto-creates into live play mode (static entities accumulate render-only drift the fingerprints can't see); always mark; diff LtW vs LocalTransform to detect
 - [FFSystems/Player namespace collision](memories/ffsystems-player-namespace-collision.md) — systems in FFSystems/Player/ MUST use namespace `FFSystems.Players` (plural); `FFSystems.Player` collides with the Player component type and breaks all of FFSystems
 - [ItemEntities baking pipeline](memories/itementities-baking-pipeline.md) — Resources/ItemEntities/*.prefab bake via EntityPrefabContainerBaker; author companion entities with CreateAdditionalEntity(ManualOverride) → in LinkedEntityGroup, remapped on Instantiate
@@ -58,6 +62,11 @@ worktrees and apply to ALL branches.
 
 - [French percent = Arabic sign](memories/french-percent-arabic-sign.md) — Unity's Mono culture data gives fr `PercentSymbol` = U+066A ٪ (no font has the glyph); fixed by CultureSetup.cs, plus the Mono Clone()-shares-NumberFormatInfo gotcha
 - [TextLocalization duplicate gotcha](memories/textlocalization-duplicate-gotcha.md) — TextLocalization caches live TMP text as its key, so duplicating it on a label (Checkbox prefabs already have it) locks that label to one language; never put it on proper-noun labels
+
+## Testing & tooling gotchas
+
+- [Mirror implementations need a golden fixture](memories/mirror-implementation-golden-fixture.md) — a report-only set (or any logic) reimplemented in more than one language (C#/shell/python) drifts silently without a shared golden fixture pinned in every mirror, plus a test that they agree
+- [`cmd | tee log || true` clobbers PIPESTATUS](memories/shell-tee-pipestatus.md) — the exit code is always 0 regardless of `cmd`'s real result; use `set +e`/`set -e` around the pipe instead
 
 ## Gameplay diagnosis & live-test recipes
 
