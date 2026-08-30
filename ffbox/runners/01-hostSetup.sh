@@ -161,6 +161,8 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
   printf 'daemon store:     %s %s\n' "$DAEMON_ROOT" \
     "$(have_ds "${DAEMON_DS:-none}" && echo "($DAEMON_DS, sync=$(zfs get -H -o value sync "$DAEMON_DS"), quota=$(zfs get -H -o value quota "$DAEMON_DS"))" || echo "(MISSING)")"
   if [ -n "$CACHE_DIR" ]; then
+    printf 'cache root:       %s\n' \
+      "$([ -d "$CACHE_DIR" ] && stat -c '%U:%G %a' "$CACHE_DIR" || echo MISSING)"
     printf 'workspace cache:  %s %s\n' "$CACHE_DIR" \
       "$(have_ds "${CACHE_DS:-none}" && echo "($CACHE_DS, recordsize=$(zfs get -H -o value recordsize "$CACHE_DS"), sync=$(zfs get -H -o value sync "$CACHE_DS"), quota=$(zfs get -H -o value quota "$CACHE_DS"))" || echo "(no dataset)")"
     printf '  entries:        %s %s\n' \
@@ -377,6 +379,12 @@ else
   # archives that the job created and therefore owns. The job cannot write there in spite of the
   # mode, because it is mounted :ro and the kernel checks that before it checks permissions.
   as_root mkdir -p "$CACHE_DIR/entries" "$CACHE_DIR/staging"
+  # THE CACHE ROOT BELONGS TO THE OWNER, not to root. `zfs create` leaves a new mountpoint
+  # root-owned, so every operation on the directory ITSELF — adding a sibling, fixing a mode,
+  # clearing it out — needed privilege the supervisor does not have and should not acquire.
+  # entries/ and staging/ below already carry the owner and the container group; the root was the
+  # one piece still demanding sudo to touch.
+  as_root chown "$OWNER:$(id -gn "$OWNER")" "$CACHE_DIR"
   as_root chmod 0755 "$CACHE_DIR"
   as_root chown "$OWNER:$CUSER" "$CACHE_DIR/entries" "$CACHE_DIR/staging"
   as_root chmod 2770 "$CACHE_DIR/entries"
