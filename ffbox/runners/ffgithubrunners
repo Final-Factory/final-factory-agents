@@ -78,7 +78,7 @@ cmd_status() {
     if [ -z "$CACHE_DIR" ]; then
         printf '  disabled (cache_dir is empty)\n'
     elif ! ffghr_cache_ready; then
-        printf '  %s NOT PROVISIONED — run: sudo sh ffgithubrunners/01-hostSetup.sh\n' "$CACHE_DIR"
+        printf '  %s NOT PROVISIONED — run: sudo sh ffbox/runners/01-hostSetup.sh\n' "$CACHE_DIR"
     else
         printf '  %s  %s used, keep %s\n' "$CACHE_DIR" \
             "$(du -sh "$FFGHR_CACHE_ENTRIES" 2>/dev/null | cut -f1)" "$CACHE_KEEP"

@@ -101,6 +101,23 @@ stays, and it now rebuilds one image instead of two.
 5. The supervisor
 -----------------
 
+NOT DONE, AND ON THE EVIDENCE IT SHOULD NOT BE. Written before steps 2 to 5 were implemented; what
+those turned up is that the two dispatch models do not meet.
+
+A CI slot registers with GitHub and idles in a long poll: GitHub pushes work to it. An agent run is
+launched, as a subprocess, by ffwatch.py, which owns the conversation state, the ceilings and the
+lane rules that decide whether a run may start at all. There is no queue for a slot to poll, and
+building one means moving that decision out of ffwatch and into a slot loop.
+
+The static split this section recommends then delivers nothing: two fixed sets of slots, each
+serving one kind of work, is what exists today with more machinery. The dynamic version has the
+deregister race described below and would share capacity, but only by rebuilding how every ffbox
+run is dispatched — including the Discord pipeline.
+
+What the merge was actually for has already been had: one image with a mode switch (FFBOX_MODE),
+one licence script, one daemon, one tree. The supervisors stay separate because they supervise
+different things.
+
 One slot.sh, one systemd template, one pool. A slot in ci mode does what it does today: mint a JIT
 config, run, tear down, exit, be restarted. A slot in agent mode waits for local work instead.
 
@@ -183,6 +200,14 @@ The ZFS clone and destroy stay on FinalFactoryTester's existing NOPASSWD entries
 ----------
 
 Everything moves under ffbox/. ffgithubrunners/ stops existing.
+
+DONE 2026-08-29, as ffbox/runners/ rather than as the flat tree drawn below, and the difference is
+worth stating. The flat version needs the two setup.sh merged into one stage list, the five runner
+stages renumbered around ffbox's six, and both egress allowlists renamed. That is a large diff
+across a live system for an organisational gain. A subdirectory achieves what the merge was for —
+one tree, one image, one licence script, ffgithubrunners/ gone — and leaves the stage scripts
+where their numbering still means something. Revisit the flat layout if the two stage lists ever
+need to interleave.
 
     ffbox/
       setup.sh                       stages, now including the runner ones

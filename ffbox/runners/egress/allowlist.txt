@@ -16,9 +16,9 @@
 # refused host can leave no trace in the SNI log.
 #
 # HOW TO ADD SOMETHING. Do not guess. Put the proxy in log mode for a few real jobs —
-#     FFBOX_EGRESS_MODE=log sh ffgithubrunners/03-image.sh --egress-only
+#     FFBOX_EGRESS_MODE=log sh ffbox/runners/03-image.sh --egress-only
 # — which permits everything and records every destination, then read the SNIs back out:
-#     sh ffgithubrunners/03-image.sh --egress-log
+#     sh ffbox/runners/03-image.sh --egress-log
 # Add what the jobs actually asked for, restart in enforce mode, and confirm nothing new appears.
 #
 # THE IMAGE BUILD IS NOT BEHIND THIS FENCE. `docker build` uses the daemon's default network, so

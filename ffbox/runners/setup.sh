@@ -33,7 +33,7 @@ GITHUB_ARGS=""
 
 usage() {
   cat <<EOF
-Usage: sh ffgithubrunners/setup.sh [options]
+Usage: sh ffbox/runners/setup.sh [options]
 
 Bootstraps this machine for ffgithubrunners. Idempotent — re-run any time.
 

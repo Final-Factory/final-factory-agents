@@ -74,7 +74,7 @@ failed.
 
 **A unit-template change does not reach systemd on its own.** Editing
 `systemd/ffgithubrunners@.service` in the checkout changes nothing until
-`sudo sh ffgithubrunners/05-services.sh --install` renders and reloads it; `--check` reports
+`sudo sh ffbox/runners/05-services.sh --install` renders and reloads it; `--check` reports
 "units differ from this checkout" meanwhile. The symptom when it is forgotten is precise and
 misleading-looking: every slot logs `could not prepare /opt/ffcache/staging/slot-N`, because
 `ProtectSystem=strict` still has `/opt/ffcache` read-only. Same trap ffbox's README documents for
