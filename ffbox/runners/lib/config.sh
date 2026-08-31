@@ -194,12 +194,12 @@ _ffghr_set CACHE_SYNC       cache_sync       standard
 # 98% utilisation with the disk as the bottleneck. Restoring is nearly free by comparison, because
 # reads come out of ARC on a 755 GB box.
 #
-# One hour. The ceiling could be far higher on the evidence — section 12 measured a
+# Four hours. The ceiling could be higher still on the evidence — section 12 measured a
 # stale-but-present Library costing one re-imported asset and eighty seconds of recompile after
-# THREE DAYS of drift — so this is deliberately conservative: it keeps entries close to current
-# while still collapsing a burst of pushes into a single archive, which is what the disk cares
-# about. Raise it if the save is still the thing that hurts.
-_ffghr_set CACHE_MAX_AGE_HOURS cache_max_age_hours 1
+# THREE DAYS of drift — so this remains conservative: entries stay close enough to current that a
+# restore is cheap, while a busy afternoon of pushes collapses into one archive per entry rather
+# than one per hour, which is what the disk cares about. Raise it if the save still hurts.
+_ffghr_set CACHE_MAX_AGE_HOURS cache_max_age_hours 4
 
 # Host-only, never mounted into a container: which entry each slot has been granted, so two slots
 # on the same branch cannot both be told to archive it.
@@ -273,7 +273,7 @@ ffghr_cache_should_archive() {
     _entry="$FFGHR_CACHE_ENTRIES/$_name"
     _claim="$FFGHR_CACHE_CLAIMS/$_name"
     _now=$(date +%s)
-    _max=$(( ${CACHE_MAX_AGE_HOURS:-6} * 3600 ))
+    _max=$(( ${CACHE_MAX_AGE_HOURS:-4} * 3600 ))
     mkdir -p "$FFGHR_CACHE_CLAIMS" 2>/dev/null || return 1
 
     # A claim older than the watchdog belongs to a job that is gone; teardown removes them, but a
