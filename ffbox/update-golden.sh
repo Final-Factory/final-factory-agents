@@ -1,5 +1,11 @@
 #!/bin/sh
 #
+# NOTHING IN THE PIPELINE CALLS THIS ANY MORE. ffbox used to run it before snapshotting golden;
+# runs now restore from CI's workspace cache and fetch from the local git mirror, so golden is not
+# on the path at all. /opt/FinalFactory stays on the box as a checkout to edit Final Factory by
+# hand, and this remains the right way to bring THAT up to date -- it verifies LFS pointers, which
+# a bare `git pull` does not.
+#
 # update-golden.sh — bring the golden checkout to origin, exactly one updater at a time.
 #
 #   sh update-golden.sh              take the golden lock, update golden, release

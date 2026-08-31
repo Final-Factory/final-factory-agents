@@ -12,7 +12,6 @@
 #   01-dockerSetup.sh   Docker on its own ZFS dataset, overlay2 driver
 #   02-zfsSetup.sh      ZFS datasets, the golden checkout, the runs mountpoint, sudoers
 #   03-build.sh         the container image (Unity + Claude Code)
-#   04-warmLibrary.sh   update golden from git, then build its Unity Library/ cache
 #   ../registerAgents.sh  the skills/roles marketplace, and the ffdiscord launcher on PATH
 #   05-discord-setup.sh state dir, schema, config block for the Discord lanes
 #   06-services.sh      the systemd units, installed and started (needs root)
@@ -98,7 +97,6 @@ SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 DO_DOCKER=1
 DO_ZFS=1
 DO_BUILD=1
-DO_LIBRARY=1
 DO_DISCORD=1
 DO_SERVICES=1
 DO_TOKEN=1
@@ -127,8 +125,6 @@ Options (alphabetical):
   --skip-build     Do not rebuild the container image.
   --skip-discord   Do not provision the Discord lanes (state dir, config, systemd units).
   --skip-docker    Do not touch Docker; assume it is installed and configured.
-  --skip-library   Do not update golden or run the Unity import. Use when you only want the
-                   datasets and image in place.
   --skip-services  Do not install or start the systemd units.
   --skip-agents    Do not register or update the skills/roles plugin marketplace.
   --skip-token     Do not offer to run 'claude setup-token'.
@@ -143,7 +139,6 @@ For finer control over any single stage, run it directly:
   sh ffbox/01-dockerSetup.sh --help
   sh ffbox/02-zfsSetup.sh --help
   sh ffbox/03-build.sh
-  sh ffbox/04-warmLibrary.sh --help
   sh ffbox/05-discord-setup.sh --help
   sh ffbox/06-services.sh --help
 EOF
@@ -157,7 +152,6 @@ while [ $# -gt 0 ]; do
     --skip-build)   DO_BUILD=0; shift ;;
     --skip-discord) DO_DISCORD=0; shift ;;
     --skip-docker)  DO_DOCKER=0; shift ;;
-    --skip-library) DO_LIBRARY=0; shift ;;
     --skip-services) DO_SERVICES=0; shift ;;
     --skip-token)   DO_TOKEN=0; shift ;;
     --skip-agents)  DO_AGENTS=0; shift ;;
@@ -300,21 +294,9 @@ mint_claude_token() {
 
 mint_claude_token
 
-if [ "$DO_LIBRARY" -eq 1 ] && ! secrets_ready; then
-  cat >&2 <<EOF
-
-setup.sh: $SECRETS is not filled in yet, so stage 3 (the Unity import) will be skipped.
-          Stages 1 and 2 still run.
-
-  1. \$EDITOR $SECRETS
-     - UNITY_EMAIL / UNITY_PASSWORD    (required even for a Personal license)
-     - UNITY_SERIAL, or UNITY_LICENSE_FILE pointing at a .ulf
-     - CLAUDE_CODE_OAUTH_TOKEN         (setup.sh offers to mint this for you)
-  2. sh $ROOT/04-warmLibrary.sh
-
-EOF
-  DO_LIBRARY=0
-fi
+# THE UNITY IMPORT STAGE IS GONE, so nothing here depends on secrets being filled in yet. It used
+# to warn and skip when they were not; setup now completes regardless and secrets are only needed
+# when a run actually starts.
 
 # Docker first: stage 3 cannot build an image without it, and dockerSetup.sh is the one that
 # keeps the layers OFF the boot environment — the zsys trap its own header documents at length.
@@ -359,12 +341,13 @@ else
   stage "3/7  container image — skipped (--skip-build)"
 fi
 
-if [ "$DO_LIBRARY" -eq 1 ]; then
-  stage "4/7  update golden and warm its Unity Library (slow)"
-  as_owner sh "$ROOT/04-warmLibrary.sh"
-else
-  stage "4/7  Unity Library — skipped"
-fi
+# STAGE GONE, NOT SKIPPED. This ran 04-warmLibrary.sh: bring golden to origin, then open the
+# project in Unity so every later ZFS clone inherited a warm Library. Runs no longer clone golden
+# -- they restore CI's workspace tar, which already contains that Library, and fetch the commits
+# since from the local git mirror. There is nothing left to warm.
+#
+# What replaced it needs no stage: CI fills /opt/ffcache, and ffbox/runners/03-image.sh brings up
+# the mirror.
 
 # Last, and deliberately not fatal: a machine that only ever runs ffbox by hand still wants
 # stages 1-4, and this stage is the only one that can fail purely because Discord is not

@@ -50,7 +50,6 @@ slow one, 30-60 minutes, and it happens once.
 | `01-dockerSetup.sh` | 1 — installs Docker onto its own ZFS dataset with overlay2, and builds the egress filter | yes |
 | `02-zfsSetup.sh` | 2 — `<pool>/ff` datasets, the golden checkout, the ffbox sudoers rule | yes |
 | `03-build.sh` | 3 — builds `ffbox:latest` from the GameCI image CI uses | no |
-| `04-warmLibrary.sh` | 4 — updates golden and builds its Unity `Library/` cache | no |
 | `05-discord-setup.sh` | 5 — state dir, database, config block for the Discord lanes | no (refuses sudo) |
 | `06-services.sh` | 6 — renders the units from `systemd/`, installs and starts `ffbox.target`, enables `ffbox-update.timer` and `ffbox-egress.service` | yes |
 
@@ -445,32 +444,30 @@ Cmnd_Alias FFBOX_ZFS = /usr/sbin/zfs snapshot <pool>/ff/golden@ffbox-*, \
 Builds `ffbox:latest`. Uses `--pull=false` because the ~11GB base is already local; pull
 explicitly when moving to a new Unity version.
 
-### Stage 3 — `04-warmLibrary.sh`
+### The workspace: CI's cache, not a golden clone
 
-Updates golden and builds its Unity `Library/`. This is the slow step — 30–60 minutes cold — and
-it is the reason the whole layout exists: pay it once in golden, and every later run clones the
-warm cache for free.
+There is no warm-Library stage any more, and no golden clone. A run restores the tar CI already
+writes — a whole finished workspace, `Library/` included — and fetches the commits since from the
+local git mirror at `/opt/ffcache/mirror/FinalFactory.git`.
 
-```bash
-sh ffbox/04-warmLibrary.sh                 # fetch, fast-forward, git lfs pull, then import
-sh ffbox/04-warmLibrary.sh --skip-update   # import what is already checked out
+```
+/opt/ffcache/entries/<branch>@<unity version>.tar   written by CI, read-only to a run
+/opt/ffcache/mirror/FinalFactory.git                 every branch, plus its LFS objects
 ```
 
-It holds the golden lock for its **whole** run, not just the git part. Unity writes `Library/` for
-up to an hour, and a run that snapshots golden in the middle of that clones a half-built import
-cache along with an inherited `Library/UnityLockfile` — worse than a torn worktree, because Unity
-may trust a corrupt artifact database rather than reject it. It also sets the drain flag, so
-ffwatch queues turns instead of launching runs that would sit on the lock for an hour; the drain
-is a courtesy and the lock is the guarantee, which is why it does not wait for in-flight runs to
-finish (they took their snapshots already and work from clones that are now independent of
-golden). `ffbox --direct` never consults ffwatch, so that one does block on the lock, which is the
-right answer: it wants a consistent golden, and one exists when the import lands.
+Nothing reads `/opt/FinalFactory`. It stays on the box as a checkout to edit Final Factory by
+hand; `update-golden.sh` is still the right way to bring **that** up to date, and is no longer
+called by anything automatically.
 
-It refuses to run if golden has local changes. Golden must stay pristine — every run clones it,
-so a stray edit here silently propagates into every future run. It also re-verifies LFS content
-after pulling, for the reason `main.yml` documents at length: a file left as a pointer by a failed
-smudge is considered *unmodified* by git, so nothing ever rewrites it, and Unity then skips the
-affected DLLs and fails with a confusing `CS0246`.
+What this costs: extracting a 15 GB entry takes about 190 seconds, against a near-instant
+copy-on-write clone. That is the price of not depending on golden — it is disk bandwidth, and ZFS
+block cloning would give it back if the pool ever enables that feature. A run's warmup budget is
+an hour.
+
+What it buys: no Unity import on the host, ever. The old stage opened the project in Unity every
+five minutes as the account holding the credentials, which is finding F1's outstanding half. It
+also needed no `sudo`; the narrow NOPASSWD rules for `zfs snapshot|clone|destroy` are dead and can
+be removed from sudoers.
 
 ### Stage 1 — `01-dockerSetup.sh`
 
@@ -566,7 +563,7 @@ git -C /opt/FinalFactory apply ~/ffbox-runs/<run-id>/changes.patch
 
 ## Running something other than a prompt
 
-`FFBOX_ENTRY` has always let a caller swap the container task — that is how `04-warmLibrary.sh`
+`FFBOX_ENTRY` has always let a caller swap the container task — that is how `--task`
 does its Unity import. The flags below make it usable from outside this directory, and are what
 `ffwatch` (below) drives.
 
@@ -1240,9 +1237,11 @@ what would fail if the SAN were ever dropped.
 
 ## Known gaps
 
-- **Golden's `Library/` goes stale.** `04-warmLibrary.sh` refreshes it, but nothing schedules that.
-  A run whose clone is far behind golden's last import pays for the delta. Running it from cron,
-  or after a significant merge, is the obvious fix.
+- **A run's `Library/` is only as fresh as the last CI cache entry.** CI writes one per branch at
+  most hourly, so a run can inherit an import a little behind the tip and pay for the delta. That
+  is the same trade golden made, without the host-side Unity.
+- **`ffghr-gitmirror` is load-bearing for runs too.** With no golden to fall back on, a run whose
+  mirror fetch fails refuses to start rather than working from a stale tar.
 - **`ff-agents` plugins are not installed in the image.** Claude runs without the Final Factory
   skills and roles. Adding `registerAgents.sh` to the Dockerfile (or bind-mounting the plugin
   cache) is the obvious next step.
