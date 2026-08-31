@@ -78,6 +78,50 @@ RUN set -eux; \
     rm -rf /tmp/gh.tar.gz "/tmp/gh_${GH_VERSION}_linux_amd64"; \
     gh --version
 
+# THE ACTION ARCHIVE CACHE — the reason a job can stop reaching codeload.github.com at all.
+#
+# A runner does not only fetch the REPOSITORY from GitHub; before step one it downloads the CODE
+# FOR EACH ACTION the workflow names. Measured in the SNI log: codeload.github.com is hit at job
+# start, before any checkout step, on every job including mode2Freshness, which checks out almost
+# nothing. Leave that need in place and no amount of moving the repository fetch to the host takes
+# github.com off the allowlist.
+#
+# ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE (confirmed present in runner 2.337.0's assemblies) points the
+# runner at a local directory instead. Layout is fixed by ActionManager.cs:
+#
+#     <cache>/<owner>_<repo>/<resolved sha>.tar.gz
+#
+# owner/repo with the separator replaced by '_', and the file named for the RESOLVED COMMIT SHA —
+# which is why main.yml pins the actions by SHA rather than by tag. A tag would still resolve to
+# whatever GitHub says today, miss this cache the moment the tag moves, and silently go back to
+# downloading. A miss is not fatal: the runner falls through to the normal download path, so a
+# stale entry here degrades to today's behaviour rather than breaking a job.
+#
+# Resolution itself is NOT a download. The runner gets the resolved SHA from the Actions service
+# over *.actions.githubusercontent.com, which stays allowlisted; only the archive fetch is what
+# this removes.
+#
+# BUILD-TIME, and deliberately: `docker build` runs on the daemon's default network, outside the
+# egress fence, so pulling these here costs the job nothing at runtime.
+ARG ACTION_CHECKOUT_SHA=3d3c42e5aac5ba805825da76410c181273ba90b1
+ARG ACTION_UPLOAD_ARTIFACT_SHA=043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+
+RUN set -eux; \
+    cache=/opt/ffghr/action-cache; \
+    for spec in \
+        "actions/checkout:${ACTION_CHECKOUT_SHA}" \
+        "actions/upload-artifact:${ACTION_UPLOAD_ARTIFACT_SHA}" \
+    ; do \
+        repo="${spec%:*}"; sha="${spec#*:}"; \
+        dir="${cache}/$(echo "$repo" | tr '/' '_')"; \
+        mkdir -p "$dir"; \
+        curl -fsSL -o "${dir}/${sha}.tar.gz" "https://codeload.github.com/${repo}/tar.gz/${sha}"; \
+        tar tzf "${dir}/${sha}.tar.gz" >/dev/null; \
+    done; \
+    chown -R root:root "$cache"; \
+    chmod -R a+rX "$cache"; \
+    find "$cache" -type f -printf '%p %s bytes\n'
+
 COPY entrypoint.sh entrypoint-ci.sh run-as-user.sh import-project.sh unity-license.sh restore-workspace.sh /ffbox/
 RUN chmod +x /ffbox/entrypoint.sh /ffbox/entrypoint-ci.sh /ffbox/run-as-user.sh /ffbox/import-project.sh /ffbox/restore-workspace.sh
 
