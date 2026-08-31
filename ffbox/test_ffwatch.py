@@ -4193,6 +4193,23 @@ def test_the_selector_narrows_a_choice_it_cannot_widen():
           moved["routed_by"] == "model" and "barge" in (moved["routed_reason"] or ""),
           dict(moved))
 
+    # WHAT THE SELECTOR IS ACTUALLY SHOWN. It used to be handed "450103s", which makes the
+    # single most important fact about a candidate — how long ago it was — a division it has to
+    # get right before it can use it, and the individual messages carried no time at all. Being
+    # far apart is half of what makes two things different discussions.
+    case, first, second, _ = two_live_conversations("sel-render", None)
+    cands = case.watcher.cluster_candidates(ASK_CHANNEL, sflake(8 * 3600, 3),
+                                            alias="ask_claude")
+    rendered = case.watcher.render_candidates(cands, at=sflake and ffwatch.snowflake_secs(
+        sflake(8 * 3600, 3)))
+    check("ages are rendered in units a reader uses, not raw seconds",
+          "hours" in rendered and "s before" not in rendered.replace("before", ""),
+          rendered)
+    check("and every quoted message carries its own age",
+          rendered.count("before the new message") >= len(cands) + 1, rendered)
+    check("the raw seconds count is gone entirely",
+          not re.search(r"\b\d{5,}s\b", rendered), rendered)
+
     # "This belongs in none of them" is a REAL answer and must not read as "could not decide".
     # Both used to come back as None, so a selector saying a message starts something new left
     # it in the conversation it had just said it does not belong to.

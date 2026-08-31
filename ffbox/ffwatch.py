@@ -638,6 +638,24 @@ def snowflake_secs(value):
 # means the selector could not be believed and the deterministic answer stands.
 SPLIT_OUT = "split-out"
 
+
+def human_gap(secs):
+    """"5.2 days", not "450103s".
+
+    The selector was shown raw seconds, which makes the single most important fact about a
+    candidate — how long ago it was — a division the model has to perform correctly before it
+    can use it. It read 450103s next to a plausible-looking conversation and had no reason to
+    treat that as five days rather than five minutes.
+    """
+    secs = abs(float(secs or 0))
+    if secs < 90:
+        return f"{int(secs)} seconds"
+    if secs < 5400:
+        return f"{secs / 60:.0f} minutes"
+    if secs < 172800:
+        return f"{secs / 3600:.1f} hours"
+    return f"{secs / 86400:.1f} days"
+
 SELECTOR_SCHEMA = {
     "type": "object",
     "required": ["continues", "reason"],
@@ -660,10 +678,25 @@ order.
 Answer with the id of the conversation the new message continues, or null if it starts
 something new.
 
-LEAN TOWARDS CONTINUING. An extra topic in a conversation costs very little. Losing the thing a
-message refers back to costs the reader the whole meaning of it: "okay, let's try that" with no
-antecedent is unanswerable. Answer null only when the message clearly stands on its own and has
-nothing to do with any candidate.
+Judge on TWO things together.
+
+WHAT IT SAYS. A message that refers back to something — a pronoun with no antecedent, an answer
+to a question, a correction, "that one", "yeah" — continues whatever it refers to. A message
+that introduces its own subject and would read perfectly well with nothing above it does not.
+
+WHEN IT WAS SAID. Each candidate is labelled with how long before this message it was last
+active. Hours mean very little: people step away and come back. Days are real evidence that
+whatever was happening has finished, and a message arriving days later that does not clearly
+refer back to a candidate is almost always a new topic, however plausible the subject looks.
+A quiet channel is not evidence of continuity — it only means nobody else has spoken.
+
+When the two disagree, what it SAYS wins: an unmistakable "yeah, do that" a week later is still
+a continuation.
+
+Otherwise lean towards continuing. An extra topic in a conversation costs very little, and
+losing the thing a message refers back to costs the reader its whole meaning — "okay, let's try
+that" with no antecedent is unanswerable. Answer null when the message stands on its own, or
+when the only candidates are days old and it does not plainly refer to one.
 
 <candidates>
 {candidates}
@@ -2110,8 +2143,13 @@ class Watcher:
                "author": {"username": newest["author_name"]}}
         return self.model_selection(msg, cands, alias=alias)
 
-    def render_candidates(self, cands):
-        """Each candidate as an id, a title and a couple of lines of its most recent exchange.
+    def render_candidates(self, cands, at=None):
+        """Each candidate: its id, title, HOW LONG AGO it was, and its last exchange with ages.
+
+        The age is the point. A conversation five days stale and one five minutes stale read
+        identically to the selector before this, because the gap was rendered as a raw seconds
+        count and the individual messages carried no time at all. Being far apart is half of
+        what makes two things different discussions, and the model could not see it.
 
         Capped hard: a long pasted log in one candidate must not push the actual question out of
         the prompt.
@@ -2119,14 +2157,18 @@ class Watcher:
         out = []
         for row, gap, intervening in cands:
             recent = self.db.query(
-                "SELECT author_name, content FROM message WHERE conversation_id=?"
+                "SELECT author_name, content, discord_id FROM message WHERE conversation_id=?"
                 " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT 2", (row["id"],))
             lines = [f"id: {row['id']}",
                      f"title: {(row['title'] or '')[:120]}",
-                     f"last activity: {int(gap)}s before this message, "
-                     f"{intervening} other message(s) in between"]
+                     f"last active: {human_gap(gap)} before the new message",
+                     f"other messages in the channel since: {intervening}"]
             for m in reversed(recent):
-                lines.append(f"  {m['author_name']}: {(m['content'] or '').strip()[:200]}")
+                when = snowflake_secs(m["discord_id"])
+                age = (f" ({human_gap(at - when)} before the new message)"
+                       if at is not None and when is not None else "")
+                lines.append(f"  {m['author_name']}{age}: "
+                             f"{(m['content'] or '').strip()[:200]}")
             out.append("\n".join(lines))
         return "\n\n".join(out)
 
@@ -2139,8 +2181,14 @@ class Watcher:
         bounded, and can never widen it.
         """
         offered = {row["id"] for row, _, _ in cands}
+        at = snowflake_secs(msg.get("id")) if msg.get("id") else None
+        if at is None and cands:
+            # No id to date the new message by (a batch rendered from stored rows). Take the
+            # newest candidate's own clock so the ages below are still relative to something.
+            at = max(filter(None, (snowflake_secs(r["in_watermark_id"]) for r, _, _ in cands)),
+                     default=None)
         prompt = SELECTOR_PROMPT.format(
-            candidates=self.render_candidates(cands),
+            candidates=self.render_candidates(cands, at=at),
             message=f"{(msg.get('author') or {}).get('username') or 'someone'}: "
                     f"{(msg.get('content') or '').strip()[:1500]}")
         parsed, error = run_classifier(self.cfg, prompt, SELECTOR_SCHEMA, what="selector")
