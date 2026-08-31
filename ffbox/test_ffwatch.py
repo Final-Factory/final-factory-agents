@@ -3893,6 +3893,25 @@ def test_messages_cluster_into_one_conversation():
     check("the first opens it, the rest are certain continuations",
           routed == ["new", "certain", "certain"], routed)
 
+    # A RE-SWEEP MUST NOT RE-ROUTE. The sweep re-reads the whole window every catchup_secs,
+    # and routing an already-ingested message again re-runs the candidate query and writes
+    # another S4-band line to the journal — inflating the one number that says whether a model
+    # selector is worth having. Seen on the build server: three messages re-routed every
+    # fifteen minutes.
+    logged = []
+    real_log = ffwatch.log
+    ffwatch.log = lambda m: logged.append(m)
+    try:
+        for i in ids:
+            case.events(ask_event(i))
+        case.watcher.drain_events()
+    finally:
+        ffwatch.log = real_log
+    check("re-ingesting the same messages routes nothing again",
+          not [m for m in logged if "S4 band" in m], logged)
+    check("and changes nothing", len(case.rows("SELECT * FROM message")) == 3
+          and len(convs_of(case)) == 1)
+
     # --- Ben's case 2: answered two days later, in a channel where nothing happened ---------
     late = sflake(2 * 86400, 4)
     fixture["messages"][ASK_CHANNEL].append(message(late, "yeah that works"))

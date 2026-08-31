@@ -2184,6 +2184,18 @@ class Watcher:
         alias = ev.get("channel")
         conv_kind = self.conversation_kind(ev.get("kind"), alias)
 
+        # ALREADY OURS. The sweep re-reads every watched channel every catchup_secs, so most of
+        # what arrives here has been ingested already; message.discord_id UNIQUE makes the
+        # insert a no-op, but routing it again is not free and it is not harmless. It re-runs
+        # the candidate query for every message in the window on every pass, and it writes an
+        # S4-band line to the journal each time — which is the one number the decision to build
+        # a model selector is supposed to rest on. Measured on the build server: the same three
+        # messages re-routed at 02:19, 02:34 and 02:49.
+        known = self.db.one("SELECT conversation_id FROM message WHERE discord_id=?",
+                            (message_id,))
+        if known:
+            return known["conversation_id"]
+
         # Does this continue something already here? S1-S3, deterministic, no model.
         existing, routed_by, reason = self.select_conversation(msg, channel_id, alias=alias)
         if existing is not None:
