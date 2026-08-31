@@ -154,6 +154,20 @@ days because nothing has scrolled past it. A busy channel ages one out in minute
 plenty has. The rule tracks what a person reading the channel can still see, which is the
 standard the section 3 cases are judged against.
 
+WHAT THE DISJUNCTION COSTS, found in implementation and worth stating before somebody
+rediscovers it as a bug. idle_msgs counts channel messages that are not this conversation's
+own, so while a channel holds ONE conversation its traffic IS that conversation and nothing has
+ever scrolled past it. A long gap alone does not open a second one either, because the OR
+rescues it on the intervening test. So under S1-S3 ALONE a quiet channel merges everything up
+to max_candidate_secs, and idle_msgs only bites once two conversations already coexist there.
+
+That is the "cluster broadly, then split" shape doing what it says rather than a fault in it —
+S4 is what creates the second conversation, on content, which is the only signal that can — but
+it does mean PHASE C ON ITS OWN OVER-MERGES A QUIET CHANNEL, and section 11's advice to run it
+alone for a while should be read with that in mind. A box running phase C without phase E for
+any length of time wants a smaller max_candidate_secs, which is the only deterministic bound
+left on how far a single conversation can spread.
+
 Bounded so the candidate set cannot grow without limit: nothing older than max_candidate_secs
 is ever a candidate, and the set is capped at max_candidates by recency. A conversation that
 fails both tests is materialised as state='closed' on the pass that notices, which is all that
