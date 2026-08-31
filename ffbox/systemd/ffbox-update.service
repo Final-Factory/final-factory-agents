@@ -35,7 +35,7 @@ Group=@GROUP@
 Environment=HOME=@HOME@
 Environment=FFBOX_UPDATE_REPO=@REPO@
 # For its CHILDREN rather than for itself: update_ffbox.sh never calls docker, but it re-runs
-# setup.sh, which runs 03-build.sh and 04-warmLibrary.sh, and both do. An unset DOCKER_HOST
+# setup.sh, which runs 03-build.sh, and it does. An unset DOCKER_HOST
 # there would rebuild the image on the root daemon, where nothing would ever use it.
 Environment=DOCKER_HOST=unix://@DOCKERSOCK@
 ExecStart=/bin/sh @UPDATE@
