@@ -342,3 +342,47 @@ Adding a `uses:` to `main.yml` without adding it to the image cache now FAILS th
 one, because `codeload.github.com` is refused. That is the intended trade — a loud failure rather
 than a quiet reach — but it is the failure to expect, and the fix is to add the SHA to the ARG list
 in `ffbox/Dockerfile` and rebuild.
+
+## The CI allowlist has no GitHub host but the Actions runtime (2026-08-31)
+
+Twelve entries, from eighteen with two unsafe wildcards. `github.com`,
+`api.github.com`, `codeload.github.com`, `objects.githubusercontent.com` and
+`github-cloud.githubusercontent.com` are all gone — every one of them because a job stopped
+**needing** it, not because it was filtered.
+
+That distinction is the whole point. An SNI fence cannot restrict `github.com` to one repository:
+the repo is in the URL path, inside the TLS. Measured from a live runner while those entries were
+still listed, `api.github.com/repos/torvalds/linux` answered 200 and `api.github.com/gists`
+answered 200. Narrowing was never going to fix that; removal was.
+
+| Was reached for | Now comes from |
+|---|---|
+| the repository | `ffghr-gitmirror` — git daemon on ffghr-net, redirected by `url.<mirror>.insteadOf` |
+| LFS objects | the download-only batch server beside it |
+| action tarballs | the image's `ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE` |
+| the check run | the supervisor, with the host's App token |
+| the nightly gate | `ubuntu-latest`, off this fence entirely |
+
+Verified on a real job: Succeeded, and its complete SNI trace is the Actions runtime, Unity, UPM
+and one blob shard. No refusals in the deny sink.
+
+**ffghr-gitmirror is now load-bearing.** There is no fallback: if it is down, every job fails
+immediately and loudly. That is deliberate — a silent fallback to GitHub is exactly what hid the
+mirror serving only `master` for a day — but it is a new single point of failure. It runs
+`--restart unless-stopped` and `03-image.sh` brings it up.
+
+### The mirror is the git source, not a copy of golden
+
+It fetches GitHub directly with the host's stored credential and keeps its own LFS objects under
+`<repo>/lfs/objects`. Nothing in the runner path reads `/opt/FinalFactory`.
+
+An earlier version had it fetching *from* golden, which kept golden load-bearing and was also
+silently wrong: golden is a working checkout with one local branch, so `refs/heads/*` mirrored
+`master` and nothing else, and every job on `develop` or a feature branch fell back to GitHub. It
+surfaced as `not our ref e03e807…` in the git daemon log — `develop` HEAD — while jobs kept
+passing.
+
+Not the GitHub App token: that installation is org-scoped for runner administration and
+`/installation/repositories` reports 0 repositories, so a fetch with it answers "Repository not
+found". Granting the App **Contents: Read** here would be a real tightening — short-lived and
+read-only instead of a long-lived host credential — and is the obvious follow-up.
