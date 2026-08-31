@@ -43,6 +43,7 @@ import errno
 import fcntl
 import getpass
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -1636,6 +1637,45 @@ class Watcher:
         self.db.init_schema()
         return self.state_dir
 
+    def share_with_container(self, path):
+        """Make a tree the container can actually READ AND WRITE.
+
+        The container runs as a different uid — namespace root, which maps to ffbox-container
+        on the host — so a file the daemon writes 0600 as itself is invisible to the run. The
+        group is the way through and needs no privilege, because this account is already in it;
+        ffbox does exactly this for the output mount (`chgrp ffbox-container` + `chmod 2775`,
+        setgid so new files inherit the group).
+
+        THE CLAUDE CONFIG DIR NEVER GOT IT, and that is what broke session resume. `claude`
+        wrote conversation 29's transcript 0600 as uid 1015 on 2026-08-26; the container that
+        tried to resume it ran as 1411719 and could not open it, so `--resume <id>` answered
+        "No conversation found with session ID" and the run died at error_during_execution
+        having done nothing. Two turns failed that way before anybody looked at the mode bits.
+
+        It stayed hidden because every Discord message used to open its own conversation, so
+        every turn was seq 1 and nothing ever resumed. Clustering made second turns ordinary.
+        """
+        import grp
+        try:
+            gid = grp.getgrnam("ffbox-container").gr_gid
+        except KeyError:
+            return          # not an ffbox machine; the tests and a dev box land here
+        for root, dirs, files in os.walk(path):
+            for name in [root] + [os.path.join(root, d) for d in dirs]:
+                try:
+                    if os.stat(name).st_gid != gid:
+                        os.chown(name, -1, gid)
+                    os.chmod(name, 0o2775)
+                except OSError:
+                    pass
+            for name in (os.path.join(root, f) for f in files):
+                try:
+                    if os.stat(name).st_gid != gid:
+                        os.chown(name, -1, gid)
+                    os.chmod(name, os.stat(name).st_mode | 0o060)
+                except OSError:
+                    pass
+
     def conv_dir(self, conv_id):
         return os.path.join(self.conv_root, str(conv_id))
 
@@ -3208,6 +3248,10 @@ class Watcher:
         att_dir = os.path.join(conv_dir, "attachments")
         for d in (run_dir, claude_dir, att_dir):
             os.makedirs(d, exist_ok=True)
+        # EVERY LAUNCH, not just the first: `claude` inside the container writes the transcript
+        # with its own umask, and the next run may be a different uid again if the image is
+        # rebuilt. Cheap — these trees hold a handful of files.
+        self.share_with_container(claude_dir)
 
         job = self.build_job(turn, conv, run_id, att_dir)
         job_path = os.path.join(run_dir, "job.json")

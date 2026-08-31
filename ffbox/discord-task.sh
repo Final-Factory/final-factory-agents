@@ -91,18 +91,20 @@ mkdir -p "$CLAUDE_CONFIG_DIR"
 # 7715b1ac its eleven allow entries were ssh to two named machines, scp, kill/pkill/pgrep,
 # `/Users/<someone>/...` paths and `sh scripts/*`. A run's capabilities are ffwatch's to decide
 # (CAPABILITIES), not something it inherits from whatever that file happened to contain at the
-# sha it checked out. Trust would let a run gain capability because somebody committed a local
-# config tweak, which is exactly the drift naming the set in one place exists to prevent.
+# sha it checked out.
 #
-# Measured 2026-08-24, so nobody has to re-derive it:
-#   * Trust gates ONLY permissions.allow. HOOKS RUN EITHER WAY — an untrusted workspace still
-#     fired its SessionStart hook. Nothing else is being lost while this stays untrusted.
+# Measured 2026-08-24, and RE-CONFIRMED 2026-08-31 after trust was briefly and wrongly blamed
+# for a resume failure that was really a file mode (see ffwatch's share_with_container):
+#   * Trust gates ONLY permissions.allow. HOOKS RUN EITHER WAY, and --resume WORKS UNTRUSTED —
+#     verified directly, an untrusted directory resumes a session by id perfectly well.
 #   * Of those eleven, only `scripts/*` would have meant anything in here. The ssh/scp entries
 #     are inert: ffbox-net is a Docker --internal bridge, so `ssh <host>` gets "Network is
 #     unreachable" and there is no ~/.ssh to authenticate with anyway.
-# None of this is what contains a run — see ffwatch.py's "A TRIPWIRE, not a boundary". It is
-# what keeps permission_denials meaningful and job.json the single answer to "what can this run
-# do".
+#
+# --setting-sources user below makes the question moot in any case, and is what keeps this
+# working when the workspace stops being a ZFS clone of a trusted checkout and becomes a fresh
+# `git clone` from GitHub: the checkout's settings are then not READ at all rather than read
+# and ignored, so nothing depends on a trust flag a fresh directory would not have.
 log "workspace trust: not granted, deliberately — this run's capabilities come from job.json,"
 log "                 not from .claude/settings.json in the checkout (see the note above)"
 
@@ -367,6 +369,11 @@ if job.get("plugin_dir"):
     argv += ["--plugin-dir", job["plugin_dir"]]
 
 argv += [
+    # THE CHECKOUT'S OWN CONFIG IS NEVER A SOURCE OF CAPABILITY. `user` here is
+    # $CLAUDE_CONFIG_DIR, which is /ffbox/claude — ffwatch's, not the repository's. Omitting
+    # `project` and `local` is what keeps the game repo's .claude/settings.json out now that
+    # the workspace is trusted, and it is stricter than untrusted ever was.
+    "--setting-sources", "user",
     "--tools", caps.get("tools", "Read,Grep,Glob"),
     "--permission-mode", caps.get("permission_mode", "acceptEdits"),
     # THE ATTACHMENTS DIRECTORY HAS TO BE NAMED HERE OR THE AGENT CANNOT OPEN A SINGLE ONE.
