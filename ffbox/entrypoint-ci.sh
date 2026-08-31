@@ -28,6 +28,32 @@ export RUNNER_ALLOW_RUNASROOT
 ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/ffghr/action-cache
 export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE
 
+# FETCH THE REPOSITORY FROM THE LOCAL MIRROR, NOT FROM github.com.
+#
+# insteadOf rewrites the URL at fetch time, so actions/checkout goes on computing the GitHub URL it
+# always computed and git quietly dials the mirror on ffghr-net instead. Nothing in the workflow
+# has to know. Measured: a 40-commit delta lands in 1 second against the mirror.
+#
+# SYSTEM CONFIG because the runner, its actions and the job's own steps are separate processes and
+# this has to apply to all of them; --system is also the only level git treats as protected.
+#
+# THIS IS NOT THE BOUNDARY and is not meant to be. The job runs as root here and could unset it in
+# a line. What makes GitHub unreachable is github.com leaving the egress allowlist; this only
+# removes the NEED, which is the half that has to come first. While that entry is still present a
+# job whose redirect fails simply fetches from GitHub as it always did.
+#
+# LFS IS DELIBERATELY LEFT POINTING AT GITHUB. git-lfs derives its endpoint from the remote URL and
+# has nowhere to go with a git:// one, so pinning lfs.url keeps it working while the git objects
+# come from the mirror. In practice the restored tarball already carries .git/lfs and LFS churn is
+# near zero -- zero objects across the last fifty commits on master -- so this should be a no-op
+# that never opens a connection. Whether it actually is wants measuring before github.com goes.
+if [ -n "${FFGHR_GIT_MIRROR:-}" ] && [ -n "${FFGHR_GIT_ORIGIN:-}" ]; then
+    git config --system "url.${FFGHR_GIT_MIRROR}.insteadOf" "${FFGHR_GIT_ORIGIN}" || :
+    git config --system "url.${FFGHR_GIT_MIRROR}.insteadOf" "${FFGHR_GIT_ORIGIN}.git" --add || :
+    git config --system lfs.url "${FFGHR_GIT_ORIGIN}.git/info/lfs" || :
+    echo "[ffghr] git fetches redirected to ${FFGHR_GIT_MIRROR}"
+fi
+
 cd /opt/actions-runner
 
 # NO --disableupdate. It is a config.sh option, not a `run` option: runner 2.337.0 answers
