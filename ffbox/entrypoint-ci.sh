@@ -22,6 +22,12 @@ unset FFGHR_JITCONFIG
 RUNNER_ALLOW_RUNASROOT=1
 export RUNNER_ALLOW_RUNASROOT
 
+# Point the runner at the actions baked into the image (see the Dockerfile block that builds it)
+# so it does not download them from codeload.github.com before step one. A miss here is not fatal:
+# the runner falls through to its normal download path, which is exactly today's behaviour.
+ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/ffghr/action-cache
+export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE
+
 cd /opt/actions-runner
 
 # NO --disableupdate. It is a config.sh option, not a `run` option: runner 2.337.0 answers
