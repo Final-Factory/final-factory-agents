@@ -1209,6 +1209,40 @@ CLASSIFIER_SYSTEM_PROMPT = (
 )
 
 
+# Where a per-user install puts things, which a systemd unit's PATH does not include. The daemon
+# on the build server runs with PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin
+# and `claude` lives in ~/.local/bin.
+EXTRA_BIN_DIRS = (os.path.expanduser("~/.local/bin"), "/usr/local/bin")
+
+
+def classifier_path(cfg):
+    """PATH for the sandboxed call: the daemon's, plus where a per-user install puts things."""
+    parts = [d for d in (os.environ.get("PATH") or "/usr/bin:/bin").split(os.pathsep) if d]
+    for extra in EXTRA_BIN_DIRS:
+        if extra not in parts and os.path.isdir(extra):
+            parts.append(extra)
+    return os.pathsep.join(parts)
+
+
+def classifier_bin(cfg):
+    """The model CLI, resolved to an ABSOLUTE path rather than left to PATH.
+
+    The sandbox hands the child a scrubbed environment, and a scrubbed PATH is not the shell's:
+    under systemd it is whatever the unit inherited, which on this build server does not include
+    ~/.local/bin. A bare "claude" there is FileNotFoundError, and the sandbox is exactly the
+    thing that made it one — the old call inherited the daemon's whole environment, which was
+    no better, only less obvious.
+
+    Nothing noticed for as long as it did because the only watched channel is mention-only, so
+    should_engage is short-circuited before it and the gate has never actually run here. The
+    conversation selector was the first thing to try.
+    """
+    configured = cfg.get("claude_bin") or "claude"
+    if os.sep in configured or (os.altsep and os.altsep in configured):
+        return configured
+    return shutil.which(configured, path=classifier_path(cfg)) or configured
+
+
 def classifier_dir(cfg):
     """An empty directory to run the classifier in, so there is no CLAUDE.md and no repository
     for it to discover. Created once, left empty, never written to by anything else."""
@@ -1224,7 +1258,7 @@ def classifier_invocation(cfg, prompt, schema):
     as long as every future edit remembers all of it — so there is one function to audit and no
     second call site that can quietly forget --safe-mode.
     """
-    argv = [cfg.get("claude_bin") or "claude", "-p",
+    argv = [classifier_bin(cfg), "-p",
             "--model", cfg["classifier_model"],
             "--output-format", "json",
             "--json-schema", json.dumps(schema),
@@ -1240,7 +1274,7 @@ def classifier_invocation(cfg, prompt, schema):
     # holding. HOME has to stay because the OAuth credential lives there, which is the residual
     # this cannot close: a flag set is a policy boundary and not a kernel one. The only real
     # boundary is a process boundary (design/conversation_clustering_design.txt 6.4).
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    env = {"PATH": classifier_path(cfg),
            "HOME": os.environ.get("HOME", "/")}
     for passthrough in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "LANG", "LC_ALL"):
         if os.environ.get(passthrough):
@@ -1256,6 +1290,11 @@ def run_classifier(cfg, prompt, schema, what="gate"):
     Never raises. Every caller decides for itself what a failure means; this only reports it.
     """
     argv, env, cwd, stdin = classifier_invocation(cfg, prompt, schema)
+    if os.sep not in argv[0]:
+        # Resolution failed, so this is about to be FileNotFoundError with a one-word message
+        # that says nothing about why. Say where we looked instead.
+        return None, (f"{what}: {argv[0]!r} is not on the PATH this daemon can see "
+                      f"({classifier_path(cfg)}); set claude_bin to an absolute path")
     try:
         proc = subprocess.run(argv, input=stdin, env=env, cwd=cwd, capture_output=True,
                               text=True, encoding="utf-8", errors="replace",
