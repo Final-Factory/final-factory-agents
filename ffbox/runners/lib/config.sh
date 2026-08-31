@@ -158,6 +158,19 @@ _ffghr_set CAP_ADD          cap_add          'CHOWN,FOWNER,DAC_OVERRIDE'
 
 # --- egress, per section 3 --------------------------------------------------------------------
 # ffbox is on 10.80.0.0/24. These must not overlap it: both fences live in the same daemon.
+# THE LOCAL GIT MIRROR. Where a job fetches the repository instead of github.com. MIRROR_URL is a
+# git:// address on ffghr-net because that network is --internal: under the rootless daemon the real
+# host is not reachable from it at all, so the mirror has to be a container like the proxy is.
+# GOLDEN_MNT is the upstream of the mirror rather than GitHub, so the credentials stay in one place.
+_ffghr_set MIRROR_DIR       mirror_dir       /opt/ffcache/mirror
+_ffghr_set MIRROR_REPO      mirror_repo      FinalFactory.git
+_ffghr_set MIRROR_IP        mirror_ip        10.81.0.250
+_ffghr_set MIRROR_NAME      mirror_name      ffghr-gitmirror
+_ffghr_set MIRROR_IMAGE     mirror_image     ffghr-gitmirror:latest
+_ffghr_set MIRROR_URL       mirror_url       git://10.81.0.250/FinalFactory.git
+_ffghr_set MIRROR_ORIGIN    mirror_origin    https://github.com/Final-Factory/FinalFactory
+_ffghr_set GOLDEN_MNT       golden_mnt       /opt/FinalFactory
+
 _ffghr_set EGRESS_NET       egress_net       ffghr-net
 _ffghr_set EGRESS_UPLINK    egress_uplink    ffghr-egress-net
 _ffghr_set EGRESS_BRIDGE    egress_bridge    ffghr0

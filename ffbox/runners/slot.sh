@@ -196,6 +196,7 @@ NONCE=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
 CNAME="ffghr-$HOST-$SLOT-$NONCE"
 
 . "$HERE/lib/gh.sh"
+. "$HERE/lib/mirror.sh"
 
 log "minting a JIT config for $CNAME"
 MINT=$(gh_mint_jitconfig "$CNAME") || fail_unfit "could not mint a JIT config; see above"
@@ -298,6 +299,8 @@ docker run -d \
     --pids-limit "$PIDS_LIMIT" \
     --memory "$MEMORY" \
     -e FFBOX_MODE=ci \
+    -e FFGHR_GIT_MIRROR="$MIRROR_URL" \
+    -e FFGHR_GIT_ORIGIN="$MIRROR_ORIGIN" \
     -e FFGHR_JITCONFIG \
     "$IMAGE" >/dev/null \
     || fail_unfit "docker run failed for $CNAME"
@@ -390,6 +393,14 @@ while [ "$(docker inspect -f '{{.State.Running}}' "$CNAME" 2>/dev/null)" = true 
         break
     fi
     decide_cache_archive
+    # The job asks for the commit it needs before its restore step, which takes about forty
+    # seconds, so this poll has slack and the answer is normally waiting by the time the checkout
+    # runs. Never fatal: while github.com is still allowlisted a job that gets no answer just
+    # fetches from GitHub as before.
+    if [ -n "${STAGE:-}" ]; then
+        ffghr_mirror_serve_request "$STAGE" 2>&1 \
+            | while IFS= read -r _line; do log "mirror: $_line"; done || true
+    fi
     # FIFTEEN SECONDS ONCE THERE IS A JOB, NOT FIVE. From then on this loop only has to notice two
     # things: a container that has exited, and a branch.info the job wrote near its start. The job
     # then runs for tens of minutes before it needs the answer, so the extra latency is invisible,
