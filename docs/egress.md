@@ -262,3 +262,35 @@ Measured on 2026-08-28: GitHub and Unity licensing reachable; pypi.org, api.anth
 registry-1.docker.io refused; the LAN, this host at 192.168.51.10, its SSH port and a direct dial to
 1.1.1.1 all unreachable; both docker sockets and FinalFactoryTester's home absent from the
 container.
+
+## What the Actions runtime endpoints do and do not scope
+
+`*.actions.githubusercontent.com` and the pinned `productionresultssa*` blob shards are **not**
+scoped to this repository by anything in this fence, and it is worth being precise about why,
+because the opposite is an easy thing to assume.
+
+Those hostnames are **multi-tenant GitHub services**. The same `results-receiver`, `broker` and
+`pipelines*` endpoints serve every repository on GitHub. What confines a job's uploads to our
+artifact store is the **credential** the runner presents — a JIT config and an
+`ACTIONS_RUNTIME_TOKEN` that GitHub issues for this job, in this repo. The hostname contributes
+nothing to that.
+
+So the reasoning "artifacts land in our own private repo, therefore retrieving them needs repo
+read, therefore this is not an exfiltration channel" is only true of the DEFAULT path. Code that
+brings its own long-lived credential for a repository it controls can use these same hostnames to
+upload there. It is high effort — minting one normally needs `api.github.com`, so the credential
+has to be embedded in advance and survive expiry — but it is not closed.
+
+Two consequences worth keeping:
+
+- It strengthens the case for removing `api.github.com`, which is the ordinary way to mint such a
+  credential.
+- It is the ONE hole that a SNI fence cannot close at any level of narrowing, because the repo
+  identity is not in the hostname and not in the request path either — the Actions protocol
+  carries opaque plan and job GUIDs. Even full TLS interception with URL filtering does not fix
+  it by path matching.
+
+The only mechanism that would: terminate TLS and validate the **JWT claims** on outbound Actions
+requests, checking `repository` against `Final-Factory/FinalFactory` and rejecting anything else.
+That is the sole thing MITM buys here that narrowing cannot. It is also a decrypting proxy holding
+every credential on the box, so it is a real trade rather than a free win.
