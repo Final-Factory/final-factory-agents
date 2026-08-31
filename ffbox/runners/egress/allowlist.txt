@@ -49,10 +49,17 @@ objects.githubusercontent.com
 # and the objects came from github-cloud.githubusercontent.com. github-cloud.s3.amazonaws.com was
 # a guess and went untouched, so it is gone: an allowlist entry nothing uses is only extra reach.
 #
-# Still a wildcard rather than the one observed host. GitHub has moved LFS storage before, and one
-# job is thin evidence that the shard name is stable. Narrow it to github-cloud. once a few more
-# jobs agree.
-*.githubusercontent.com
+# NARROWED 2026-08-31, which is what "once a few more jobs agree" was waiting for. Over 27 hours
+# of real jobs the bare wildcard earned exactly two names that *.actions.githubusercontent.com
+# above does not already cover:
+#
+#   github-cloud.githubusercontent.com    LFS objects. Kept, below.
+#   copilot-proxy.githubusercontent.com   Reached 9 times and ALLOWED. Nothing in main.yml asks
+#                                         for it. Dropped: an allowlist entry nothing needs is
+#                                         only extra reach, and this one accepts requests.
+#
+# So the wildcard bought one wanted host and one unwanted one. Two exact entries instead.
+github-cloud.githubusercontent.com
 
 # --- actions/cache and actions/upload-artifact ----------------------------------------------------
 # CONFIRMED 2026-08-29: upload-artifact went to productionresultssa5.blob.core.windows.net. Sixteen
