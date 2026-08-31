@@ -64,8 +64,15 @@ else
     log "ffdiscord: absent, as intended — the host composes and posts this turn's reply"
 fi
 
-ensure_unity_license
-
+# NO LICENCE IS ACQUIRED HERE. It used to be, unconditionally, before the agent had even
+# started — and returning it costs a second full editor launch on the way out. Measured on
+# conversation 29 turn 4 (2026-08-31), a plain "are you there?" question: the agent finished at
+# 03:53:08 and the reply did not reach Discord until 03:55:20, and all of that was a Unity
+# licence round trip for a run that changed no files and skipped the suite.
+#
+# Licensing is now the job of whatever actually launches the editor — the verify block below,
+# and ffverify itself for an agent that runs it mid-turn. A question pays nothing, which is
+# what makes the bot feel like a bot rather than a build.
 cd "$WORKSPACE" || exit 1
 
 # What the workspace looked like before the agent existed, and the only reason it is read here
@@ -527,7 +534,14 @@ run_changed_anything() {
     ! git -C "$WORKSPACE" diff --quiet "$PRE_AGENT_HEAD" HEAD 2>/dev/null
 }
 
+# TIMED, because "the agent answered two minutes ago and Discord is still quiet" needs an
+# answer from the record rather than from a guess. On 2026-08-31 that window was 2m09s on a
+# question that changed nothing, and working out where it went cost an afternoon of wrong
+# theories — the licence round trip (3s), the egress allowlist (untouched), the model's exit
+# (telemetry already disabled) — before anything was measured. Now the run says.
+CHANGED_START=$(date +%s)
 if [ "$VERIFY_ENABLED" = 1 ] && ! run_changed_anything; then
+    log "changed-file check took $(($(date +%s) - CHANGED_START))s"
     log "verification skipped: this run changed no files"
     python3 -c "
 import json, sys
@@ -538,6 +552,7 @@ json.dump({'ran': False, 'skipped': True, 'compiled': None, 'evidence':
     VERIFY_ENABLED=0
 fi
 
+log "post-agent bookkeeping so far: $(($(date +%s) - AGENT_END))s since the agent exited"
 VERIFY_START=$AGENT_END
 VERIFY_END=$AGENT_END
 if [ "$VERIFY_ENABLED" = 1 ]; then
@@ -550,6 +565,8 @@ except Exception:
 print(v.get('assemblies') or '')
 " "$JOB_FILE" 2>/dev/null || echo "")
 
+    # HERE, not at the top of the task: we now know the suite is actually going to run.
+    ensure_unity_license
     if ! command -v ffverify >/dev/null 2>&1; then
         log "ERROR: no ffverify on PATH; this lane cannot be verified"
         python3 -c "

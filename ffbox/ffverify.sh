@@ -56,6 +56,19 @@ TAG=
 ASSEMBLIES=${FFVERIFY_ASSEMBLIES-FFEditorTests}
 UNITY=${FFVERIFY_UNITY:-unity-editor}
 
+# THIS SCRIPT LAUNCHES THE EDITOR, SO THIS SCRIPT GETS THE LICENCE. discord-task.sh used to
+# acquire one at the top of every run whether or not anything Unity-shaped happened, which made
+# a question that changed no files pay two editor launches — one to activate, one for the trap
+# to return — after the agent had already answered.
+#
+# Sourcing unity-license.sh installs its own EXIT trap, so an agent-invoked ffverify returns
+# what it took, and a run that never calls this never holds a seat at all. ensure_unity_license
+# is a no-op when the environment already has what it needs, so the harness call after the
+# agent exits costs nothing extra.
+if [ -r /ffbox/unity-license.sh ] && ! declare -F ensure_unity_license >/dev/null 2>&1; then
+    . /ffbox/unity-license.sh
+fi
+
 usage() {
     cat <<'EOF'
 Usage: ffverify [--out DIR] [--tag TAG] [--project DIR] [--assemblies "A;B"]
@@ -104,6 +117,11 @@ fi
 ASM_ARGS=()
 if [ -n "$ASSEMBLIES" ]; then
     ASM_ARGS=(-assemblyNames "$ASSEMBLIES")
+fi
+
+# The seat, taken as late as possible and only by a caller that is really about to use it.
+if declare -F ensure_unity_license >/dev/null 2>&1; then
+    ensure_unity_license
 fi
 
 STARTED=$(date +%s)

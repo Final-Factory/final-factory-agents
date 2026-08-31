@@ -566,6 +566,23 @@ sudo zfs clone -o mountpoint="$MNT" "$SNAP" "$CLONE"
 CLONE_MADE=1
 echo "[ffbox] workspace: $MNT (clone of $SNAP)"
 
+# A ZFS CLONE IS A DIFFERENT DATASET, SO EVERY FILE'S st_dev CHANGES. Git records dev and inode
+# in the index, so the first `git status` in a clone disagrees with the index about all 26,677
+# tracked files and re-hashes the entire worktree. Measured on a real clone of golden on
+# 2026-08-31: 5.7s cold against 0.084s warm, from the host with the page cache already hot —
+# in the container, cold, with the LFS filters attached, it is the dominant cost of answering a
+# question that changed nothing.
+#
+# core.checkStat=minimal compares size and mtime and ignores dev/inode/ctime, which is exactly
+# the set a clone perturbs and none of the set that tells us a file really changed. This is the
+# same finding ffcache recorded for the tar path (design/ffcache_tasks.md: 124 of 130 seconds,
+# 0.05s with the flag); the ZFS path reaches it by a different route and never got the fix.
+#
+# Written into the clone's own config, which the container's git reads. sanitize_clone_git()
+# rewrites this file from scratch before the HOST runs git in it, and sets the same key there.
+git -C "$MNT" config core.checkStat minimal 2>/dev/null || true
+git -C "$MNT" config core.untrackedCache true 2>/dev/null || true
+
 # HOST-SIDE GIT NEEDS PERMISSION TO LOOK AT A TREE IT DOES NOT OWN. Golden and its clones belong
 # to ffbox-container so that a container on the shared daemon sees them as root; git, running here
 # as the owner, then refuses with "detected dubious ownership" and every git call in the harvest
@@ -800,6 +817,10 @@ sanitize_clone_git() {
     {
         printf '[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n'
         printf '\tbare = false\n\tlogallrefupdates = true\n'
+        # The harvest's own git runs against a clone whose st_dev differs from golden's, so it
+        # pays the same full re-hash the container just paid. Neither key names a command, so
+        # both are safe in a config written from scratch — that is what the whitelist is for.
+        printf '\tcheckStat = minimal\n\tuntrackedCache = true\n'
         if [ -n "${TRUSTED_ORIGIN_URL:-}" ]; then
             printf '[remote "origin"]\n\turl = %s\n' "$TRUSTED_ORIGIN_URL"
             printf '\tfetch = +refs/heads/*:refs/remotes/origin/*\n'
