@@ -32,20 +32,86 @@ esac
 log() { printf '[ffbox-egress] %s\n' "$*"; }
 
 # --- parse ---------------------------------------------------------------------------------------
+# THREE ENTRY FORMS:
+#
+#   example.com          exact
+#   *.example.com        any subdomain of it (not the bare domain — list that separately)
+#   ~<regex> <suffix>    nginx matches <regex>; dnsmasq resolves <suffix> by suffix
+#
+# THE THIRD EXISTS BECAUSE TWO WILDCARDS THAT LOOK ALIKE ARE NOT THE SAME RISK, and the difference
+# is who can claim a name under them.
+#
+#   *.actions.githubusercontent.com   SAFE. GitHub owns that DNS zone, so every name under it is
+#                                     GitHub's. The wildcard cannot be made to point somewhere else.
+#   *.blob.core.windows.net           NOT SAFE. Azure storage account names are claimed
+#                                     first-come by any customer with a free account. That wildcard
+#                                     permits an attacker's own bucket: an open, unauthenticated,
+#                                     high-bandwidth exfiltration channel that has nothing to do
+#                                     with the vendor it was written for.
+#
+# The rule: a wildcard over a namespace THE VENDOR controls is fine. A wildcard over a namespace
+# THEIR CUSTOMERS control is an open door. Pin the second kind to the shape of the names actually
+# observed, which is what a regex entry is for.
+#
+# The suffix still goes to dnsmasq deliberately. A non-matching name then RESOLVES here and is
+# refused by nginx, which puts it in the SNI log with the name it asked for. NXDOMAIN would refuse
+# it just as well and tell us nothing about who tried.
+#
 # Refused rather than sanitised: a name with a stray character in it is a typo or an injection
 # attempt, and either way the operator wants to hear about it instead of getting a config that
 # silently means something else.
-NAMES=$(sed 's/#.*//' "$LIST" | tr -d ' \t\r' | grep -v '^$' || true)
-[ -n "$NAMES" ] || { echo "ffbox-egress: $LIST has no entries; refusing to start wide open" >&2; exit 2; }
+DNS_SUFFIXES=$CONF/.dns-suffixes
+NGINX_MAP=$CONF/.nginx-map
+ENTRIES=$CONF/.entries
+: > "$DNS_SUFFIXES"
+: > "$NGINX_MAP"
+COUNT=0
 
-for n in $NAMES; do
-    case "$n" in
-        *[!A-Za-z0-9.*-]*|*'*'*[!A-Za-z0-9.-]*|.*|*.)
-            echo "ffbox-egress: bad allowlist entry '$n'" >&2; exit 2 ;;
-        '*.'*) [ "${n#\*.}" != "$n" ] || { echo "ffbox-egress: bad wildcard '$n'" >&2; exit 2; } ;;
-        *'*'*)  echo "ffbox-egress: '*' is only allowed as a leading '*.' in '$n'" >&2; exit 2 ;;
+bad() { echo "ffbox-egress: $*" >&2; exit 2; }
+
+sed 's/#.*//' "$LIST" | tr -d '\r' > "$ENTRIES"
+
+while IFS= read -r line; do
+    # Unquoted on purpose: word splitting IS the trim and the field split.
+    # shellcheck disable=SC2086
+    set -- $line
+    [ $# -gt 0 ] || continue
+    case "$1" in
+        '~'*)
+            [ $# -eq 2 ] || bad "a ~regex entry needs a DNS suffix as its second field: '$line'"
+            _re=$1
+            _sfx=$2
+            # nginx takes the regex as a quoted string, so a quote or a semicolon inside it would
+            # end the token early and inject config. Neither belongs in a hostname regex.
+            case "$_re" in *['";']*) bad "a ~regex entry may not contain a quote or semicolon: '$_re'" ;; esac
+            case "$_sfx" in
+                *[!A-Za-z0-9.-]*|.*|*.) bad "bad DNS suffix '$_sfx' on '$line'" ;;
+            esac
+            echo "$_sfx" >> "$DNS_SUFFIXES"
+            # Braces are nginx block syntax, so a regex containing {1,2} must be quoted. Verified
+            # against this image: unquoted it fails with `unexpected "{"`.
+            printf '        %-52s $ssl_preread_server_name:443;\n' "\"$_re\"" >> "$NGINX_MAP"
+            ;;
+        *)
+            [ $# -eq 1 ] || bad "unexpected second field on '$line' (only ~regex entries take one)"
+            n=$1
+            case "$n" in
+                *[!A-Za-z0-9.*-]*|*'*'*[!A-Za-z0-9.-]*|.*|*.)
+                    bad "bad allowlist entry '$n'" ;;
+                '*.'*) [ "${n#\*.}" != "$n" ] || bad "bad wildcard '$n'" ;;
+                *'*'*) bad "'*' is only allowed as a leading '*.' in '$n'" ;;
+            esac
+            echo "${n#\*.}" >> "$DNS_SUFFIXES"
+            case "$n" in
+                '*.'*) printf '        %-52s $ssl_preread_server_name:443;\n' "$n" >> "$NGINX_MAP" ;;
+                *)     printf '        %-52s %s:443;\n' "$n" "$n" >> "$NGINX_MAP" ;;
+            esac
+            ;;
     esac
-done
+    COUNT=$((COUNT + 1))
+done < "$ENTRIES"
+
+[ "$COUNT" -gt 0 ] || { echo "ffbox-egress: $LIST has no entries; refusing to start wide open" >&2; exit 2; }
 
 # --- dnsmasq -------------------------------------------------------------------------------------
 # bind-interfaces + listen-address is load-bearing: a default dnsmasq binds 0.0.0.0:53, which in
@@ -66,9 +132,9 @@ done
     # already had. With `local=` the same query is NODATA, which is what an IPv4-only answer is
     # supposed to look like. Measured: without it, `nslookup api.anthropic.com` exits non-zero
     # inside a run even though curl to the same host works.
-    for n in $NAMES; do
-        printf 'local=/%s/\n' "${n#\*.}"
-        printf 'address=/%s/%s\n' "${n#\*.}" "$IP"
+    sort -u "$DNS_SUFFIXES" | while IFS= read -r s; do
+        printf 'local=/%s/\n' "$s"
+        printf 'address=/%s/%s\n' "$s" "$IP"
     done
     if [ "$MODE" = log ]; then
         # Log mode resolves EVERYTHING here so that every attempted destination shows up in the
@@ -82,8 +148,8 @@ done
 } > "$CONF/dnsmasq.conf"
 
 # --- nginx ---------------------------------------------------------------------------------------
-# Exact entries map to a literal host:443 so the map itself is the decision. Wildcards have to
-# carry the requested name through, which is why they map to the variable.
+# Exact entries map to a literal host:443 so the map itself is the decision. Wildcards and regexes
+# have to carry the requested name through, which is why they map to the variable.
 #
 # The deny sink is a closed port on loopback: an unlisted name gets a connection that opens and
 # then dies, logged with the name it asked for. That beats an empty upstream, which nginx reports
@@ -108,16 +174,11 @@ NGX
     map $ssl_preread_server_name $ffbox_upstream {
         hostnames;
 NGX
-    for n in $NAMES; do
-        case "$n" in
-            '*.'*) printf '        %-40s $ssl_preread_server_name:443;\n' "$n" ;;
-            *)     printf '        %-40s %s:443;\n' "$n" "$n" ;;
-        esac
-    done
+    cat "$NGINX_MAP"
     if [ "$MODE" = log ]; then
-        echo '        default                                  $ssl_preread_server_name:443;'
+        echo '        default                                              $ssl_preread_server_name:443;'
     else
-        echo '        default                                  127.0.0.1:9;'
+        echo '        default                                              127.0.0.1:9;'
     fi
     cat <<'NGX'
     }
@@ -139,7 +200,7 @@ NGX
 nginx -t -c "$CONF/nginx.conf"
 
 log "mode=$MODE ip=$IP resolver=$RESOLVER"
-log "allowing: $(echo "$NAMES" | tr '\n' ' ')"
+log "allowing $COUNT entries over: $(sort -u "$DNS_SUFFIXES" | tr '\n' ' ')"
 [ "$MODE" = enforce ] || log "LOG MODE — everything is permitted and recorded. Not a posture to leave a machine in."
 
 # dnsmasq backgrounds itself by default; -k keeps it in the foreground, which is what we want for

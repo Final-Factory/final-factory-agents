@@ -100,6 +100,52 @@ The fourth row is worth knowing too. A wildcard is a suffix match with no depth 
 fails against a host the proxy allowed, the failure is the client's, usually TLS certificate
 validation, and not the fence.
 
+## Entry forms, and which wildcards are safe
+
+Three forms:
+
+| Form | Meaning |
+|---|---|
+| `example.com` | exact |
+| `*.example.com` | any subdomain (not the bare domain — list that separately) |
+| `~<regex> <suffix>` | nginx matches `<regex>`; dnsmasq resolves `<suffix>` by suffix |
+
+**A wildcard is only as safe as the namespace under it.** The question to ask is: *who can put a
+name there?*
+
+- `*.actions.githubusercontent.com` — **safe.** GitHub owns that DNS zone. Every name under it is
+  GitHub's, and no third party can add one.
+- `*.blob.core.windows.net` — **not safe.** Azure storage account names are claimed first-come by
+  anyone with a free account. That wildcard permits `<attacker>.blob.core.windows.net`: an open,
+  unauthenticated, high-bandwidth path out of the fence.
+
+Vendor-controlled namespace, fine. Customer-controlled namespace, an open door. The second kind
+gets a regex pinned to the shape of the names actually observed:
+
+```
+~^productionresultssa[0-9]{1,2}\.blob\.core\.windows\.net$   blob.core.windows.net
+```
+
+Measured on 2026-08-31, the same name against each list:
+
+```
+old  sni=evilexfil.blob.core.windows.net upstream=evilexfil.blob.core.windows.net:443   ALLOW
+new  sni=evilexfil.blob.core.windows.net upstream=127.0.0.1:9                           DENY
+```
+
+The old fence *permitted* it. It failed only because nobody had registered that account name —
+which is not a control, it is luck. Pick a name someone owns and it goes straight through. Beware
+this when testing: a name that does not exist is blocked by DNS whichever list is loaded, so it
+proves nothing. Read `upstream=` in the log, not the client's error.
+
+The suffix still goes to dnsmasq on purpose. A non-matching name resolves here and is refused by
+nginx, so the attempt lands in the SNI log with the name it asked for. NXDOMAIN would refuse it
+just as well and tell you nothing about who tried.
+
+Braces are nginx block syntax, so the generator quotes the regex; unquoted, `{1,2}` fails with
+`unexpected "{"`. A regex containing `"` or `;` is refused outright — it would end the token early
+and inject config.
+
 ## Adding a host
 
 Do not guess. Put the proxy in log mode, run the real workload, and read back what it actually
