@@ -1,11 +1,12 @@
-# 055 liveness-witness and comparison-surface lessons (R31–R34b)
+# 055 liveness-witness and comparison-surface lessons (R31–R35)
 
-**Feature:** 055 combat-mover-vision (2026-08-30, `specs/055-combat-mover-vision/tasks.md`)
+**Feature:** 055 combat-mover-vision (2026-08-30/31, `specs/055-combat-mover-vision/tasks.md`)
 
-Six lessons from the same feature about verification signals that need a second look before you
+Eleven lessons from the same feature about verification signals that need a second look before you
 trust them — a liveness check declared vacuous when it wasn't, a comparison query that silently
-narrowed its own population, unsaved host-only state that only forks on a reload (not a join), and
-a KD-tree whose ORDER-noise looked like SET-noise. Read this alongside
+narrowed its own population, unsaved host-only state that only forks on a reload (not a join), a
+KD-tree whose ORDER-noise looked like SET-noise, and — once that fork was diagnosed — the R35 fix
+and the four verification lessons that came with it. Read this alongside
 [[join-load-route-provisioning-desync-class]] (arrival-route provisioning forks in the game code) —
 some of these are audit/harness bugs, others are game-code bugs the audit surfaced; group-read
 before trusting an exit code, a comparison surface, or a "the scenario didn't cover it" verdict.
@@ -86,3 +87,57 @@ sorted/unordered content). Order-noise is a constant background signal on any ar
 and will fire on nearly every heartbeat; SET-noise — a genuinely different neighbour SET, not just a
 reshuffled one — is what actually predicts a fork. Diffing only the combined digest conflates the two
 and hides the signal in the noise.
+
+## Close an archetype-order fork at the BUILD input, not by serializing the hot job (R35, `c84065bd7`)
+
+`KnnSourceOrder.cs` (`Assets/Scripts/FFComponents/Knn/KnnSourceOrder.cs`) fixes the R34b fork with a
+canonical 256-bit key (`KnnSourceOrderKey`, four `ulong` words, `KnnSourceOrder.cs:68-73`) over
+simulation identity: tier 1 `DeterministicCombatObjectId`, tier 2 `PendingCombatIdentity` birth
+provenance, tier 3 `(Placeable.ItemIdentifier, GridTile)`, tier 4 a raw-pose fallback. `KnnSystem.cs:488`'s
+`SortSourcesJob` (a bounded ~255-element **serial** `IJob`, not `IJobParallelFor`) sorts the gathered
+sources by this key before the tree build; `UnitOverlapPreventionSystem.cs:191` then sums neighbour
+slots `[1, Count)` ranked by the SAME key (`KnnSourceOrder.Rank64`). Both the tree-build gather and the
+repel consumer keep their existing PARALLEL schedules — the fix imposes order at the data feeding the
+hot job, not inside it. **This is the positive-example half of the standing rule**: never serialize a
+hot-path job to close an ordering bug; make its INPUT canonical instead.
+
+## Name the non-injective residue of an ordering key instead of hiding it (R35)
+
+Tier 4 of `KnnSourceOrderKey` (raw `LocalToWorld.Position` bits) is explicitly documented as NOT
+injective — two sources with no identity at all at one exact pose are indistinguishable to the key.
+Rather than treat this as a solved case, the audit surfaces it directly: the roster instrument reports
+a `tier4Src` counter, and `KnnSourceOrderDeterminismTest.PositionOnlyTierCannotSeparateCoincidentSources`
+(`Assets/Tests/Knn/KnnSourceOrderDeterminismTest.cs:383-397`) pins the residue by asserting two same-pose
+position-only keys compare equal; every live fixture then asserts `tier4Src == "0"`. **Rule**: when an
+ordering key still has a theoretical tie case, name that population as an explicit, asserted-empty
+instrument field — don't just fix the common case and call the fork closed.
+
+## Flip an instrument's assertion direction when its observable becomes canonical (R35)
+
+`KnnSourceRosterInstrumentTest.SequenceDigest_FollowsTheCanonicalBuildOrderNotCreationOrder`
+(`Assets/Tests/Multiplayer/KnnSourceRosterInstrumentTest.cs:161-181`) used to assert `enemySrcSeq`/
+`fleetSrcSeq` DIFFERED under creation-order noise — 1605/1605 heartbeats disagreeing pre-fix, proof the
+digest was watching non-canonical KD-tree build order. Post-R35 that build order IS canonical, so the
+same test now asserts EQUALITY (0 differences) and treats any mismatch as a regression (either the
+`tier4Src` residue firing, or a producer that reintroduced order-dependence). **Rule**: an instrument's
+assertion direction is a contract about what the current implementation means — when a fix changes the
+underlying invariant, re-derive and flip the assertion rather than leaving a stale "must differ" check
+that now silently proves nothing.
+
+## Forbid cross-seam key reuse even when the identity facts are identical (R35)
+
+`CombatMoverProviderCatalogTest.C3SurfacesNeverCrossIntoTheLegacyFloatPathOrLocalToWorld`
+(`Assets/Tests/Combat/CombatMoverProviderCatalogTest.cs:1636`) forbids the legacy float vision path
+from naming any C3 symbol, including `DeterministicSpatialKey` — even though `KnnSourceOrder` needed to
+rebuild the SAME identity facts (combat id, provenance, grid tile) that C3's key already encodes. R35
+deliberately wrote a second, independent key rather than importing C3's. **Rule**: two paths needing the
+same identity facts are not license to share one symbol across an architectural seam the tests
+deliberately keep separate — rebuild the facts on the side that owns them.
+
+## A hot-path perf delta smaller than run-to-run variance is only a pooled-statistic claim (R35)
+
+R35's KnnSystem cost increase — **+0.011 ms/hb mean (+8.3%), +0.014 ms median (+10.8%)** — was measured
+over 300 warm-up + 600 timed heartbeats × 5 passes = 3000 timed samples per side, Burst confirmed on
+(`BurstCompiler.IsEnabled=True`), at a fixed census (`specs/055-combat-mover-vision/tasks.md:5533-5541`).
+**Rule**: at this scale a single before/after run is noise — only report a hot-path delta this small
+when it's a pooled statistic across many timed samples, not a one-shot comparison.
