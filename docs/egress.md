@@ -294,3 +294,51 @@ The only mechanism that would: terminate TLS and validate the **JWT claims** on 
 requests, checking `repository` against `Final-Factory/FinalFactory` and rejecting anything else.
 That is the sole thing MITM buys here that narrowing cannot. It is also a decrypting proxy holding
 every credential on the box, so it is a real trade rather than a free win.
+
+## Removing the need instead of narrowing the reach (2026-08-31)
+
+The CI allowlist went from 18 entries with two dangerous wildcards to 15 with none. Two of those
+came off because a job stopped needing them, which is a different and better thing than filtering
+them.
+
+**The action archive cache.** A runner downloads the CODE FOR EACH ACTION before step one. That is
+what `codeload.github.com` was carrying — not the repository fetch, which is what this file used to
+claim. The image now ships those archives at
+`/opt/ffghr/action-cache/<owner>_<repo>/<resolved sha>.tar.gz` with
+`ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE` pointing at it, and `main.yml` pins its actions by SHA
+because the cache is keyed by the resolved SHA. Resolution still happens, over
+`*.actions.githubusercontent.com`; only the download is gone.
+
+**The local git mirror.** `ffghr-gitmirror` serves a read-only bare mirror over `git://` on
+ffghr-net, and the runner image sets `url.<mirror>.insteadOf` in system git config so
+`actions/checkout` dials it without knowing. The mirror is refreshed on demand: the job writes
+`fetch.request` before its restore step and the supervisor answers within its 15s poll, because a
+slot launches before GitHub gives it a job and a push triggers CI within seconds.
+
+This is the answer to "can we restrict the fence to our own repository", which an SNI proxy cannot
+do — the repo lives in the URL path, inside the TLS. There is no repository but ours at the other
+end of that daemon, so the restriction is a property of what exists rather than a rule anyone
+maintains.
+
+**The check run.** `post-check-run.py` now writes its payload to the drop box and the supervisor
+posts it. That step was the only thing in an editmode job that used `api.github.com`.
+
+Measured on a live job with all three in place: it reached Unity licensing — past its checkout —
+having touched no `github.com`, no `codeload.github.com`, no `api.github.com` and no
+`objects.githubusercontent.com`. Only the Actions runtime and Unity.
+
+### What is still allowlisted, and what each is waiting on
+
+| Entry | Why it is still here |
+|---|---|
+| `github.com` | `lfs.url` points at it, and a cold job with no cache entry has no other source for LFS objects. Idle in practice — zero LFS objects changed across the last fifty commits — but idle is not unused. Removing it turns "someone committed a PNG" into a confusing CI failure weeks later. Needs LFS served locally first. |
+| `github-cloud.githubusercontent.com` | The LFS object store itself. Same story. |
+| `api.github.com` | `mode2Freshness`'s two `gh api` calls. Moving that job to `ubuntu-latest` would remove the last need — it wants no Unity, no cache and no repository to speak of. |
+| `*.actions.githubusercontent.com` | The runner's own life support, and not closeable by any fence. See the section above on what these do and do not scope. |
+
+### The new failure mode
+
+Adding a `uses:` to `main.yml` without adding it to the image cache now FAILS the job before step
+one, because `codeload.github.com` is refused. That is the intended trade — a loud failure rather
+than a quiet reach — but it is the failure to expect, and the fix is to add the SHA to the ARG list
+in `ffbox/Dockerfile` and rebuild.
