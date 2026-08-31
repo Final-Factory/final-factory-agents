@@ -53,10 +53,16 @@ UNITY_SCOPE=${FFBOX_UNITY_SCOPE:-}
 # relying on it: mounted rw,nosuid,nodev with NO noexec, and execution works through the bind
 # mount into the container.
 #
-# THE TRADE: /dev/shm has no per-run cap, so a runaway run competes for memory with everything
-# else including CI. The guard below refuses to start rather than filling it. A dedicated tmpfs
-# with its own size= would be tidier and is one fstab line, but it needs root and this does not.
+# BOUNDED PER RUN WHERE IT CAN BE. /dev/shm is not unlimited -- it is the kernel default of half
+# of RAM, 378 GB here -- but that is a bound on ALL of it at once, not on one run, so a single
+# runaway workspace could still take memory from CI and everything else.
+#
+# CI does not have that problem because Docker creates its workspace with size=41943040k and
+# Docker has the privilege to. ffbox cannot: mount refuses an unprivileged caller. So this tries a
+# per-run tmpfs first and falls back to a plain directory on /dev/shm, where the free-space check
+# below is all there is. See docs/ffbox-workspace.md for the one sudoers line that enables it.
 RUNS_MNT=${FFBOX_RUNS_MNT:-/dev/shm/ffbox-runs}
+WORKSPACE_SIZE=${FFBOX_WORKSPACE_SIZE:-40g}
 SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
 
@@ -422,11 +428,18 @@ cleanup() {
 
     if [ "$KEEP" = 1 ]; then
         echo "[ffbox] --keep: workspace left at $MNT" >&2
-        echo "[ffbox]         remove it with: rm -rf $MNT" >&2
+        if [ "${WS_MOUNTED:-0}" = 1 ]; then
+            echo "[ffbox]         it is a tmpfs: sudo umount $MNT && rm -rf $MNT" >&2
+        else
+            echo "[ffbox]         remove it with: rm -rf $MNT" >&2
+        fi
     else
         # A plain directory now, not a ZFS clone, so this needs no sudo at all. The narrow
         # NOPASSWD rules that existed for `zfs snapshot|clone|destroy` are dead with it and can
         # be dropped from sudoers.
+        # Unmount before removing, or rm -rf walks into a live tmpfs and the mount is leaked --
+        # which on a ramdrive means the memory is leaked too, until reboot.
+        [ "${WS_MOUNTED:-0}" = 1 ] && sudo -n umount "$MNT" 2>/dev/null
         [ -n "${WS_MADE:-}" ] && rm -rf "$MNT" 2>/dev/null
     fi
     return $rc
@@ -562,6 +575,26 @@ echo "[ffbox] run $RUN_ID"
 # container never sees; the run cannot write back into an entry that later runs restore from.
 mkdir -p "$MNT" || { echo "ffbox: could not create $MNT" >&2; exit 69; }
 WS_MADE=1
+
+# A PER-RUN HARD CAP, when the host allows it. Same shape CI gets from Docker: the workspace is
+# its own tmpfs with its own size=, so a run that tries to write more than its budget gets ENOSPC
+# and dies, instead of taking memory from every other thing on the box.
+#
+# gid is ffbox-container so the container -- which runs as namespace root, host uid 1020 -- can
+# write it without the chgrp dance a plain directory needs.
+WS_MOUNTED=0
+_ffbox_gid=$(getent group ffbox-container 2>/dev/null | cut -d: -f3)
+if [ -n "$_ffbox_gid" ] && sudo -n mount -t tmpfs \
+        -o "size=${WORKSPACE_SIZE},mode=2775,uid=$(id -u),gid=${_ffbox_gid}" \
+        tmpfs "$MNT" 2>/dev/null; then
+    WS_MOUNTED=1
+    echo "[ffbox] workspace capped at $WORKSPACE_SIZE (own tmpfs)"
+else
+    # Not an error. Without the sudoers rule this is a directory on /dev/shm: still a ramdrive,
+    # still fast, just sharing the 378 GB pool with everything else rather than owning a slice.
+    echo "[ffbox] workspace uncapped (plain dir on $(df -P "$MNT" 2>/dev/null | awk 'NR==2{print $6}'));" >&2
+    echo "[ffbox]   see docs/ffbox-workspace.md to bound it per run" >&2
+fi
 
 # setgid + group-write, and this is load-bearing. The container runs as namespace root, which is
 # host uid 1020 (ffbox-container); files written here as this account show up in there as an
