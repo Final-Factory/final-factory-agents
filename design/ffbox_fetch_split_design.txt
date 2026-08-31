@@ -163,3 +163,87 @@ No host tmpfs to provision: the workspace is the container's own --tmpfs, as CI'
   b. Whether a fetch that fails should fail the run or fall through to the cache entry as it
      stands. Falling through is a run against a slightly old tree; failing is no run at all.
   c. What ffwatch actually needs from golden, which decides whether the bare mirror survives.
+
+
+================================================================================================
+11. The CI half: a partial drop, requested by the workflow
+================================================================================================
+
+The agent transition above drops GitHub wholesale. CI cannot do that, and the reason is
+measured rather than assumed. One real "Test in editmode" job, 2026-08-30 20:00:11 to 20:11:19,
+every SNI through ffghr-egress in order:
+
+    20:00:14  codeload.github.com          actions/checkout
+    20:00:15  github.com  x3               checkout + LFS
+    20:00:16  api.github.com               checkout
+    20:00:52  github.com                   the last git-facing call of the entire job
+    20:01:24  packages.unity.com           UPM
+    20:01:27  license.unity3d.com          activation
+    20:02:28  results-receiver             step result
+      ...     5m34s with no GitHub at all  THE TESTS
+    20:08:20  api.github.com               post-check-run
+    20:08:36  results-receiver             step result
+    20:09:34  results-receiver             step result
+    20:10:48  results-receiver  x4         artifact upload + job completion
+    20:10:52  broker                       job done
+    20:11:19  pipelinesghubeus14           runner deregistering, AFTER the job ended
+
+Two things fall out of that.
+
+A FULL DROP IS IMPOSSIBLE. The runner streams step results for its whole life and reports the
+job's verdict last of all. Cut results-receiver and broker at any point and the job hangs, times
+out, and is marked failed — losing the test results it just spent the run computing. The last
+GitHub call happens 27 seconds after the job completes.
+
+A PARTIAL DROP IS CLEAN. github.com and codeload.github.com are touched only in the first 52
+seconds of a 10m34s job and never again. The git surface — clone, push, fetch another repo — is
+finished before Unity even starts. That is the surface worth dropping, and dropping it costs the
+job nothing.
+
+So the split for CI is not "GitHub" against "no GitHub". It is:
+
+    DROPPED   github.com, codeload.github.com, objects.githubusercontent.com,
+              github-cloud.githubusercontent.com, api.github.com
+    KEPT      *.actions.githubusercontent.com, *.blob.core.windows.net
+              (plus Unity and UPM, which were never GitHub's to begin with)
+
+MECHANISM. The allowlist cannot be narrowed in place: one ffghr-egress serves all three slots, so
+editing its list would drop GitHub for the two jobs running beside this one. The drop has to be
+per-container, which means it is a network change, not a config change — the same transition the
+agent uses, with a different second network:
+
+    ffghr-net           wide:   git + Actions runtime + Unity + UPM
+    ffghr-runtime-net   narrow: Actions runtime + Unity + UPM, no git surface
+
+Dual-home at launch with --dns at the wide proxy; on request, disconnect ffghr-net and repoint
+/etc/resolv.conf at the narrow proxy. Per-container, and one-way: the container has no docker
+socket (see slot.sh's docker run), --cap-drop=ALL and --security-opt=no-new-privileges, so
+nothing inside it can rejoin a network. The runner is ephemeral by construction — a JIT config
+from generate-jitconfig, one job, then the container exits and slot.sh mints a fresh one — so
+"released it" and "container is gone" are the same event.
+
+THE SIGNAL. main.yml already writes branch.info to /ffghr/out and the host already polls that
+directory every 15s to answer cache.request. A github.drop file on the same channel, written by a
+new step between "Materialize Git LFS content" and "Activate Unity and run tests", needs no new
+mechanism at all. That step boundary is exactly where repository code starts running.
+
+api.github.com IS THE ONE WRINKLE. The post-check-run step at 20:08:20 needs it, after the tests.
+Either it stays on the narrow list — weakening the drop, though with permissions: contents: read
+the token cannot push anyway — or the check run moves to the host, which already holds a GitHub
+App installation token. The host is the better answer and is not much work; the narrow list is
+the answer if this ships before that.
+
+WHAT THIS IS NOT. It is fail-open. A workflow that omits the step keeps its access for the whole
+job, so this is not a boundary against a hostile workflow file — a PR can edit main.yml. It
+defends against hostile code that an HONEST workflow runs: the 818 tests, their dependencies, the
+ILPostProcessors com.unity.entities and com.unity.burst install, every [InitializeOnLoad] static
+constructor in the tree. That is the large surface here and the realistic one.
+
+Nor does it close exfiltration. A job still uploads artifacts to blob storage and still writes
+step logs, both readable by anyone with repo read. Dropping the git surface stops a stolen
+credential being used against the repository; it does not stop data leaving.
+
+The payoff is honestly smaller for CI than for the agent. The agent holds credentials that can
+push; CI's GITHUB_TOKEN is contents: read, checks: write, actions: read, so the prize it protects
+is modest. It is worth doing because it is nearly free once the agent transition exists — the
+same two-network dance, one extra proxy — not because CI is where the exposure is.
