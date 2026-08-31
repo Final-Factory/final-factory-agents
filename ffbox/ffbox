@@ -29,9 +29,20 @@ DOCKER_HOST=${DOCKER_HOST:-unix://${FFBOX_DOCKER_SOCK:-/run/ffbox-container/dock
 export DOCKER_HOST
 
 IMAGE=${FFBOX_IMAGE:-ffbox:latest}
-GOLDEN_DS=${FFBOX_GOLDEN_DS:-rpool/ff/golden}
-GOLDEN_MNT=${FFBOX_GOLDEN_MNT:-/opt/FinalFactory}
-RUNS_DS=${FFBOX_RUNS_DS:-rpool/ff}
+# THE WORKSPACE COMES FROM CI'S CACHE, NOT FROM GOLDEN. A run used to be a ZFS clone of
+# /opt/FinalFactory, which meant golden had to exist, be current, and carry a warm Library that
+# 04-warmLibrary.sh built for it. All three are gone: the tar CI already writes is a whole
+# workspace including that Library, and the local git mirror supplies the commits since.
+#
+# /opt/FinalFactory stays on this box as a place to edit Final Factory by hand. Nothing here
+# reads it any more.
+# Named only so the "apply with" hint at the end can point somewhere useful. ffbox does not read
+# this path any more; it stays on the box as a place to edit Final Factory by hand.
+DEV_CHECKOUT=${FFBOX_DEV_CHECKOUT:-/opt/FinalFactory}
+CACHE_DIR=${FFBOX_CACHE_DIR:-/opt/ffcache}
+CACHE_ENTRIES=${FFBOX_CACHE_ENTRIES:-$CACHE_DIR/entries}
+MIRROR_REPO_PATH=${FFBOX_MIRROR_REPO:-$CACHE_DIR/mirror/FinalFactory.git}
+UNITY_SCOPE=${FFBOX_UNITY_SCOPE:-}
 RUNS_MNT=${FFBOX_RUNS_MNT:-/opt/ffruns}
 SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
@@ -96,7 +107,7 @@ Options:
                        Skips the database, the ceilings and the web page. For bootstrapping a
                        machine and for debugging the container itself.
   --keep               Leave the ZFS clone and its mountpoint in place for inspection.
-                       Destroy it yourself with: sudo zfs destroy <dataset>
+                       Remove it yourself with: rm -rf <workspace>
   --no-fetch           Clone golden exactly as it is instead of bringing it to origin first.
                        Also FFBOX_SKIP_FETCH=1. Without this the run fails rather than
                        silently reasoning against a checkout of unknown age.
@@ -238,7 +249,7 @@ fi
 #
 # Executor mode (--task or --job-file present) never routes: that IS the run ffwatch asked for,
 # and routing it would recurse. --direct forces the old behaviour for bootstrapping and for
-# debugging the container itself, and is what warmLibrary.sh and import-project.sh use.
+# debugging the container itself.
 FFBOX_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 FFWATCH_PY=${FFWATCH_PY:-$FFBOX_DIR/ffwatch.py}
 if [ "$DIRECT" = 0 ] && [ -z "$TASK" ] && [ -z "$JOB_FILE" ] && [ -r "$FFWATCH_PY" ]; then
@@ -323,11 +334,12 @@ case "$NETWORK" in
         ;;
 esac
 
-[ -d "$GOLDEN_MNT" ] || { echo "ffbox: golden checkout missing at $GOLDEN_MNT" >&2; exit 69; }
+[ -d "$CACHE_ENTRIES" ] || {
+    echo "ffbox: no workspace cache at $CACHE_ENTRIES" >&2
+    echo "       CI fills it; provision it with ffbox/runners/01-hostSetup.sh" >&2
+    exit 69; }
 
 RUN_ID=${RUN_ID_OVERRIDE:-$(date +%Y%m%d-%H%M%S)-$$}
-SNAP="${GOLDEN_DS}@ffbox-${RUN_ID}"
-CLONE="${RUNS_DS}/run-${RUN_ID}"
 MNT="${RUNS_MNT}/run-${RUN_ID}"
 OUT="${RESULTS}/${RUN_ID}"
 
@@ -396,12 +408,13 @@ cleanup() {
     fi
 
     if [ "$KEEP" = 1 ]; then
-        echo "[ffbox] --keep: clone left at $MNT (dataset $CLONE)" >&2
-        echo "[ffbox]         destroy with: sudo zfs destroy $CLONE && sudo zfs destroy $SNAP" >&2
+        echo "[ffbox] --keep: workspace left at $MNT" >&2
+        echo "[ffbox]         remove it with: rm -rf $MNT" >&2
     else
-        # Order matters: a snapshot cannot be destroyed while a clone still depends on it.
-        [ -n "${CLONE_MADE:-}" ] && sudo zfs destroy "$CLONE" 2>/dev/null
-        [ -n "${SNAP_MADE:-}" ]  && sudo zfs destroy "$SNAP"  2>/dev/null
+        # A plain directory now, not a ZFS clone, so this needs no sudo at all. The narrow
+        # NOPASSWD rules that existed for `zfs snapshot|clone|destroy` are dead with it and can
+        # be dropped from sudoers.
+        [ -n "${WS_MADE:-}" ] && rm -rf "$MNT" 2>/dev/null
     fi
     return $rc
 }
@@ -516,55 +529,90 @@ harvest_failed() {
 
 echo "[ffbox] run $RUN_ID"
 
-# --- golden: update and snapshot, as ONE critical section ------------------------------------
-# THE LOCK SPANS BOTH, and that is the whole point of it. `zfs snapshot` is atomic in the
-# crash-consistent sense, not the application-consistent one: fired while another run is
-# half-way through `git pull`, it captures golden exactly as it is at that instant — some files
-# at the new commit, some at the old, and quite possibly a live .git/index.lock. The clone
-# inherits all of it, and the first thing this script does with a clone is run git in it
-# (rev-parse HEAD, checkout -B). The lucky outcome is that git refuses and the run dies here.
-# The unlucky one is a working tree that never existed as a commit anywhere, harvested into a
-# patch whose recorded base_sha does not describe it.
+# --- workspace: CI's cache tar, then the commits since, from the local mirror -----------------
 #
-# It blocks with NO timeout. A timeout would make mutual exclusion contingent on a guess, and
-# the moment a pull ran longer than the guess we would be back to snapshotting mid-write. A run
-# that arrives during an update wants that update's result, so waiting is the right answer, and
-# the wait is bounded in practice by a no-op fetch per run ahead of us. flock lives on the open
-# file description: if we die holding it, including on SIGKILL, the kernel releases it. No stale
-# lock, no PID file, no recovery path to get wrong.
+# WHAT THIS REPLACED. A run used to be a ZFS clone of golden: flock, update-golden.sh, zfs
+# snapshot, zfs clone. That needed /opt/FinalFactory to exist, to be current, and to carry a warm
+# Library that 04-warmLibrary.sh built by opening the project in Unity every five minutes. All of
+# it is gone. CI already writes a tar of a whole finished workspace -- worktree, .git and that
+# same Library -- and the local git mirror has the commits since.
 #
-# Released the moment the snapshot exists. `zfs clone` derives from a snapshot that is already
-# immutable and cannot be torn, so the expensive half of the launch runs unlocked and the
-# container run — an hour of it — holds nothing.
-GOLDEN_LOCK=${FFBOX_GOLDEN_LOCK:-${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/golden.lock}
-mkdir -p "$(dirname "$GOLDEN_LOCK")"
-exec {GOLDEN_FD}>"$GOLDEN_LOCK"
-flock "$GOLDEN_FD"
+# THE COST, MEASURED, because it is not free: extracting a 15 GB entry takes about 220 seconds
+# against a near-instant copy-on-write clone. That is the price of not depending on golden, and it
+# is disk bandwidth rather than anything cleverness fixes -- ZFS block cloning would give it back
+# but the pool has that feature disabled. A run's warmup budget is an hour, so it fits.
+#
+# NO SUDO, and that is a real reduction rather than a side effect: with no snapshot and no clone,
+# the narrow NOPASSWD rules for zfs snapshot/clone/destroy have nothing left to authorise.
+#
+# THE AGENT ONLY EVER READS THE CACHE. Extraction happens here, on the host, from a directory the
+# container never sees; the run cannot write back into an entry that later runs restore from.
+mkdir -p "$MNT" || { echo "ffbox: could not create $MNT" >&2; exit 69; }
+WS_MADE=1
 
+# setgid + group-write, and this is load-bearing. The container runs as namespace root, which is
+# host uid 1020 (ffbox-container); files written here as this account show up in there as an
+# unmapped 65534, so ONLY the group bit makes the workspace writable. Host gid 1020 maps to gid 0
+# inside, so group-write is root-write there. Verified before relying on it: without g+w the
+# container can read the tree and change nothing in it.
+if getent group ffbox-container >/dev/null 2>&1; then
+    chgrp ffbox-container "$MNT" 2>/dev/null || true
+    chmod 2775 "$MNT" 2>/dev/null || true
+fi
+
+# Which entry. The branch asked for, then the default branch, then whatever ran most recently at
+# this editor version -- the same ladder main.yml's restore uses, so both modes agree on what a
+# usable entry is.
+[ -n "$UNITY_SCOPE" ] || UNITY_SCOPE=$(
+    git -C "$MIRROR_REPO_PATH" show "refs/heads/master:ProjectSettings/ProjectVersion.txt" 2>/dev/null \
+      | sed -n 's/^m_EditorVersion: *//p' | tr -d ' \r')
+ENTRY=
+_want_branch=${REF:-master}
+_safe_branch=$(printf '%s' "$_want_branch" | sed 's|^origin/||; s/[^a-zA-Z0-9._-]/-/g')
+for _cand in "$_safe_branch" master; do
+    [ -n "$_cand" ] || continue
+    if [ -f "$CACHE_ENTRIES/$_cand@$UNITY_SCOPE.tar" ]; then
+        ENTRY="$CACHE_ENTRIES/$_cand@$UNITY_SCOPE.tar"; break
+    fi
+done
+[ -n "$ENTRY" ] || ENTRY=$(find "$CACHE_ENTRIES" -maxdepth 1 -type f -name '*.tar' -printf '%T@ %p\n' 2>/dev/null \
+                            | sort -rn | head -1 | cut -d' ' -f2-)
+[ -n "$ENTRY" ] || {
+    echo "ffbox: no usable cache entry in $CACHE_ENTRIES" >&2
+    echo "       one CI job on master creates one." >&2
+    exit 69; }
+
+echo "[ffbox] restoring $(basename "$ENTRY") ($(du -h "$ENTRY" 2>/dev/null | cut -f1)) into $MNT"
+_t0=$(date +%s)
+tar -xf "$ENTRY" -C "$MNT" --no-same-owner --no-same-permissions || {
+    echo "ffbox: could not extract $ENTRY" >&2; exit 69; }
+# The archive's modes are the CI container's, so nothing is group-writable until this runs.
+chmod -R g+w "$MNT" 2>/dev/null || true
+echo "[ffbox] restored in $(( $(date +%s) - _t0 ))s"
+
+[ -d "$MNT/.git" ] || { echo "ffbox: the cache entry has no .git; refusing to run" >&2; exit 69; }
+
+# --- bring it to the tip, from the mirror ------------------------------------------------------
+# The mirror is a local path here, so this is a file copy of a few objects rather than a network
+# fetch, and it needs no credential. Fetching every head into origin/* leaves the --ref resolution
+# below exactly as it was when this was a golden clone.
 if [ "$SKIP_FETCH" = 1 ]; then
-    echo "[ffbox] --no-fetch: cloning golden as it stands" >&2
-elif [ -x "$FFBOX_DIR/update-golden.sh" ]; then
-    # Fail the run rather than clone a checkout of unknown freshness. A run whose base is
-    # silently a day old produces a patch against code nobody is on any more, which is a worse
-    # and much quieter failure than this one. --no-fetch is the deliberate way to opt out.
-    "$FFBOX_DIR/update-golden.sh" --locked || {
-        echo "ffbox: golden could not be brought to origin; refusing to clone it." >&2
-        echo "       Fix $GOLDEN_MNT, or pass --no-fetch to run against it as it stands." >&2
-        exit 69
-    }
+    echo "[ffbox] --no-fetch: using the cache entry as it stands" >&2
+elif [ -d "$MIRROR_REPO_PATH" ]; then
+    git -C "$MNT" fetch --quiet --prune "$MIRROR_REPO_PATH" '+refs/heads/*:refs/remotes/origin/*' 2>/dev/null || {
+        echo "ffbox: could not fetch from the mirror at $MIRROR_REPO_PATH" >&2
+        echo "       Fix it, or pass --no-fetch to run against the cache entry as it stands." >&2
+        exit 69; }
 else
-    echo "ffbox: $FFBOX_DIR/update-golden.sh is missing or not executable" >&2
+    echo "ffbox: no git mirror at $MIRROR_REPO_PATH" >&2
+    echo "       Provision it with ffbox/runners/03-image.sh, or pass --no-fetch." >&2
     exit 69
 fi
 
-echo "[ffbox] snapshotting $GOLDEN_DS"
-sudo zfs snapshot "$SNAP"
-SNAP_MADE=1
-exec {GOLDEN_FD}>&-
+# Golden tracked master, so a run with no --ref used to land on master. Keep that.
+[ -n "$REF" ] || REF=master
 
-sudo zfs clone -o mountpoint="$MNT" "$SNAP" "$CLONE"
-CLONE_MADE=1
-echo "[ffbox] workspace: $MNT (clone of $SNAP)"
+echo "[ffbox] workspace: $MNT (from $(basename "$ENTRY"))"
 
 # A ZFS CLONE IS A DIFFERENT DATASET, SO EVERY FILE'S st_dev CHANGES. Git records dev and inode
 # in the index, so the first `git status` in a clone disagrees with the index about all 26,677
@@ -591,10 +639,9 @@ git -C "$MNT" config core.untrackedCache true 2>/dev/null || true
 # Passed through the environment rather than written to ~/.gitconfig: it applies to every git in
 # this process tree and to nothing else, it names the exact two directories rather than `*`, and
 # it leaves no state behind if this run is killed.
-GIT_CONFIG_COUNT=2
-GIT_CONFIG_KEY_0=safe.directory;   GIT_CONFIG_VALUE_0=$GOLDEN_MNT
-GIT_CONFIG_KEY_1=safe.directory;   GIT_CONFIG_VALUE_1=$MNT
-export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1
+GIT_CONFIG_COUNT=1
+GIT_CONFIG_KEY_0=safe.directory;   GIT_CONFIG_VALUE_0=$MNT
+export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 
 # --- base ref ------------------------------------------------------------------------------------
 # Golden tracks master; the Discord lanes want develop. Checking out in the clone costs a ref
@@ -1046,7 +1093,7 @@ if [ -d "$MNT/.git" ]; then
     if [ -s "$OUT/changes.patch" ]; then
         files=$(wc -l < "$OUT/status.txt")
         echo "[ffbox] harvested changes to $files file(s): $OUT/changes.patch"
-        echo "[ffbox] apply with: git -C $GOLDEN_MNT apply $OUT/changes.patch"
+        echo "[ffbox] apply with: git -C $DEV_CHECKOUT apply $OUT/changes.patch"
     else
         [ -n "$BRANCH" ] || echo "[ffbox] no file changes in this run"
         rm -f "$OUT/changes.patch"

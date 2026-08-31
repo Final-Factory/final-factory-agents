@@ -2,7 +2,7 @@
 #
 # Unity activation and, more importantly, the return of the seat. SOURCED, never executed.
 #
-# ONE COPY, FOUR CALLERS. ffbox's run-as-user.sh, import-project.sh and discord-task.sh source it
+# ONE COPY, THREE CALLERS. ffbox's run-as-user.sh and discord-task.sh source it
 # at /ffbox/unity-license.sh; main.yml's test step sources it at /opt/ffghr/unity-license.sh. The
 # image installs it at BOTH paths and both are load-bearing: main.yml is already pushed naming the
 # second, and changing a workflow file needs a token scope this box deliberately lacks.

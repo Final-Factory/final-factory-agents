@@ -47,7 +47,7 @@ uid=$(stat -c '%u' "$WORKSPACE")
 gid=$(stat -c '%g' "$WORKSPACE")
 
 # Which task this container runs: the one-shot Claude prompt by default, or the Library import
-# when 04-warmLibrary.sh sets FFBOX_ENTRY. Both drop privileges the same way and share the Unity
+# when --task or --job sets FFBOX_ENTRY. Both drop privileges the same way and share the Unity
 # licensing in unity-license.sh.
 TASK=${FFBOX_ENTRY:-/ffbox/run-as-user.sh}
 [ -r "$TASK" ] || { echo "ffbox: no such task script: $TASK" >&2; exit 1; }

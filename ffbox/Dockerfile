@@ -122,8 +122,8 @@ RUN set -eux; \
     chmod -R a+rX "$cache"; \
     find "$cache" -type f -printf '%p %s bytes\n'
 
-COPY entrypoint.sh entrypoint-ci.sh run-as-user.sh import-project.sh unity-license.sh restore-workspace.sh /ffbox/
-RUN chmod +x /ffbox/entrypoint.sh /ffbox/entrypoint-ci.sh /ffbox/run-as-user.sh /ffbox/import-project.sh /ffbox/restore-workspace.sh
+COPY entrypoint.sh entrypoint-ci.sh run-as-user.sh unity-license.sh restore-workspace.sh /ffbox/
+RUN chmod +x /ffbox/entrypoint.sh /ffbox/entrypoint-ci.sh /ffbox/run-as-user.sh /ffbox/restore-workspace.sh
 
 # BOTH PATHS, and the second one is not redundant. main.yml is already pushed with
 # `. /opt/ffghr/unity-license.sh`, and changing a workflow file needs a token scope this box
