@@ -48,52 +48,57 @@ already written and produces exactly the files the host needs in `/ffbox/out` �
 can be a plain Docker `--tmpfs` with its own `size=`, identical to CI, with no sudoers rule at
 all. That is the tidier end state; the sudoers line is the cheaper one.
 
-## Status: complete behind `--workspace tmpfs`, not yet the default
+## Status: live, and the only path
 
-All four pieces are built and tested. The default is still `clone`, so live runs are unchanged
-until a real agent run says otherwise.
+The ramdrive is the default and the clone path is deleted. `ffbox` went from 1256 lines to 814.
 
-| | |
-|---|---|
-| `entrypoint.sh` | restores an empty workspace as root, then drops privilege |
-| `restore-workspace.sh` | extract, mirror fetch, ref, `.git` config sanitise, `core.checkStat`, branch, identity, `base_sha` |
-| `run-as-user.sh` | harvest then licence return, in one trap |
-| `ffbox` | `--tmpfs` + `/ffcache` + `/ffmirror` read-only + 14 env vars; `harvest_from_out` |
-
-Measured: empty tmpfs to restored workspace in **36s**, 22.1 G of a 40 G cap, delta fetched, HEAD
-on the mirror tip. A 23 GB workspace hands back a **5 KB** bundle.
+Proven on a real run: the agent created and committed a file, the harvest bundled it, the host
+verified 1 changed file in 1 commit, and the bundle independently yields the right commit and
+content. The ownership on disk shows the split — files the container wrote are `1411719`, the two
+the host re-derived are `FinalFactoryTester`.
 
 ### The host re-derives, it does not read and believe
 
-`harvest-workspace.sh` runs the checks in-container and writes `branch.txt`, `changed_files.txt`
+`harvest-workspace.sh` runs its checks in-container and writes `branch.txt`, `changed_files.txt`
 and the rest. A run that skipped or lied about those would be taken at its word if the host merely
 read them — so the host uses the container's files for **intent** (which branch, which base) and
-`work.bundle` for **fact**. git verifies the prerequisite; every commit, author and path is read
-back out of the bundle.
-
-Verified against honest and dishonest input:
+`work.bundle` for **fact**.
 
 | input | result |
 |---|---|
-| honest bundle | verified, 1 file, 1 commit |
+| honest bundle | verified |
 | `branch.txt` says `master` | refused — protected branch |
 | `changed_files.txt` understates the range | **ignored**, rewritten from the bundle |
 | `publish_base_sha` not in the mirror | refused — does not descend from its base |
-| no bundle | clean "no branch, no PR" |
 | bundle really contains `.github/` | refused — CI configuration |
 | bundle really carries another author | refused — identity this run does not own |
+| host cannot write its own derivation | **refused** — see bug 4 below |
 
-### What F7 becomes
+### F7 is gone, not mitigated
 
-`sanitize_clone_git` is skipped entirely under tmpfs rather than run. It exists because the host
-runs git in a tree the container wrote, and git executes what `.git` tells it to. There is no such
-tree: the host reads inert files and a bundle. The hazard is **deleted**, not mitigated.
+`sanitize_clone_git` is deleted. It existed because the host ran git in a tree the container wrote,
+and git executes what `.git` tells it to. There is no such tree: the host reads inert files and a
+bundle git itself verifies.
 
-### The gate before flipping the default
+### Four bugs the component tests missed
 
-One real `--workspace tmpfs` run — Unity activation, a Claude session, a harvest with something
-actually changed. Every piece is measured; the composed path has not run once.
+Every one of these was found by running the thing, not by testing its parts.
 
-Known and accepted: on SIGKILL (OOM, `docker kill`, host crash) no trap fires, so the run's work is
-lost with the tmpfs. `docker stop`'s SIGTERM is fine — that is what ffbox sends, with a 120s grace
-shared with the Unity licence return, harvest first because it is the fast half.
+1. **`base_sha` never reached the harvest.** The restore wrote a file; the harvest read an
+   environment variable the host cannot set, because it launches the container before the
+   workspace exists. My component test passed it by hand.
+2. **tmpfs `gid`.** A bind mount carries host ownership through the rootless map; a tmpfs Docker
+   *creates* does not — the `gid=` is taken in the container's namespace, where the host's 1020 is
+   not a group at all.
+3. **Ownership read after the restore instead of before.** `tar` as root applies the archive's
+   ownership to the *target directory*, so the `chown` that followed was root-to-root and the
+   agent could not write a file outside `.git`.
+4. **The host could not write its own derivation** — and silently read the container's copy
+   instead, defeating the whole re-derivation. `umask 002` in the harvest, and a failed write is
+   now fatal.
+
+### Accepted limitation
+
+On SIGKILL (OOM, `docker kill`, host crash) no trap fires and the run's work is lost with the
+tmpfs. `docker stop`'s SIGTERM is fine — that is what ffbox sends, with a 120s grace shared with
+the Unity licence return, harvest first because it is the fast half.
