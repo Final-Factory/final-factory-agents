@@ -17,7 +17,7 @@
 # jobs. A container is the only thing they can reach.
 FROM alpine:3.20
 
-RUN apk add --no-cache git git-daemon
+RUN apk add --no-cache git git-daemon python3
 
 # SAFE.DIRECTORY, IN SYSTEM CONFIG, AND IT HAS TO BE SYSTEM CONFIG.
 #
@@ -36,11 +36,13 @@ RUN git config --system --add safe.directory '*'
 # that, rather than a blank refusal that looks like the daemon is down.
 # --export-all instead of per-repo git-daemon-export-ok files: there is exactly one repository under
 # base-path and it is bind-mounted read-only.
-ENTRYPOINT ["git", "daemon", \
-            "--reuseaddr", \
-            "--informative-errors", \
-            "--base-path=/srv", \
-            "--export-all", \
-            "--listen=0.0.0.0", \
-            "--port=9418", \
-            "/srv"]
+# The LFS half. git-lfs speaks its own HTTP batch protocol and had nowhere to go but GitHub, which
+# was the last thing keeping github.com and github-cloud.githubusercontent.com on the CI allowlist.
+# Download only -- an upload batch is refused for every object -- so a job cannot write into the
+# store that every later job trusts.
+COPY lfs-server.py /usr/local/bin/lfs-server.py
+COPY entrypoint.sh /usr/local/bin/mirror-entrypoint
+RUN chmod +x /usr/local/bin/lfs-server.py /usr/local/bin/mirror-entrypoint
+
+EXPOSE 9418 8080
+ENTRYPOINT ["/usr/local/bin/mirror-entrypoint"]

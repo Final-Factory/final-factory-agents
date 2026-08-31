@@ -52,6 +52,18 @@ ffghr_mirror_fetch() {
         git -C "$_repo" fetch --quiet --prune origin '+refs/heads/*:refs/heads/*' 2>/dev/null \
         || { echo "mirror fetch failed"; return 1; }
 
+    # LFS TOO, and this is what makes github.com removable rather than merely unused.
+    #
+    # The mirror serves golden's LFS object store. Golden materialises LFS for whatever it has
+    # checked out, so master is covered -- but a feature branch that adds an image has objects
+    # golden has never fetched, and without this the first commit touching a PNG would fail a job
+    # with no way to recover. `git lfs fetch` for a commit that adds nothing is a cheap no-op.
+    if [ -n "$_want" ] && [ -n "${GOLDEN_MNT:-}" ] && [ -d "$GOLDEN_MNT/.git" ]; then
+        timeout "$FFGHR_MIRROR_FETCH_TIMEOUT" \
+            git -C "$GOLDEN_MNT" lfs fetch origin "$_want" >/dev/null 2>&1 \
+            || echo "WARNING: LFS fetch for ${_want%${_want#???????}} failed; new binaries may be missing"
+    fi
+
     if [ -n "$_want" ] && ! git -C "$_repo" cat-file -e "${_want}^{commit}" 2>/dev/null; then
         echo "fetched, but ${_want%${_want#???????}} is still not in the mirror"
         return 1
