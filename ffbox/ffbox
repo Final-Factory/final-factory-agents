@@ -43,7 +43,20 @@ CACHE_DIR=${FFBOX_CACHE_DIR:-/opt/ffcache}
 CACHE_ENTRIES=${FFBOX_CACHE_ENTRIES:-$CACHE_DIR/entries}
 MIRROR_REPO_PATH=${FFBOX_MIRROR_REPO:-$CACHE_DIR/mirror/FinalFactory.git}
 UNITY_SCOPE=${FFBOX_UNITY_SCOPE:-}
-RUNS_MNT=${FFBOX_RUNS_MNT:-/opt/ffruns}
+# A RAMDRIVE, LIKE THE CI RUNNERS USE, and the difference is not marginal. The same 22 GB entry
+# extracts in 35s here against 193s on the ZFS mirror -- 89,664 files, and it is the WRITES that
+# cost, not the reads: the tar itself comes off disk in 12s at 1.7 GB/s. CI has always had this
+# (--tmpfs on the job container); the agent path was the one still writing a whole workspace to
+# spinning disk on every run.
+#
+# /dev/shm because it is already a 378 GB tmpfs and needs no provisioning or root. Checked before
+# relying on it: mounted rw,nosuid,nodev with NO noexec, and execution works through the bind
+# mount into the container.
+#
+# THE TRADE: /dev/shm has no per-run cap, so a runaway run competes for memory with everything
+# else including CI. The guard below refuses to start rather than filling it. A dedicated tmpfs
+# with its own size= would be tidier and is one fstab line, but it needs root and this does not.
+RUNS_MNT=${FFBOX_RUNS_MNT:-/dev/shm/ffbox-runs}
 SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
 
@@ -537,10 +550,10 @@ echo "[ffbox] run $RUN_ID"
 # it is gone. CI already writes a tar of a whole finished workspace -- worktree, .git and that
 # same Library -- and the local git mirror has the commits since.
 #
-# THE COST, MEASURED, because it is not free: extracting a 15 GB entry takes about 220 seconds
-# against a near-instant copy-on-write clone. That is the price of not depending on golden, and it
-# is disk bandwidth rather than anything cleverness fixes -- ZFS block cloning would give it back
-# but the pool has that feature disabled. A run's warmup budget is an hour, so it fits.
+# THE COST, MEASURED: about 35 seconds to restore a 22 GB entry onto the ramdrive, against a
+# near-instant copy-on-write clone. Not free, but the same order as the ZFS clone it replaced and
+# far from the 193 seconds the same extract takes on the spinning mirror -- which is what this
+# path did before the workspace moved to /dev/shm.
 #
 # NO SUDO, and that is a real reduction rather than a side effect: with no snapshot and no clone,
 # the narrow NOPASSWD rules for zfs snapshot/clone/destroy have nothing left to authorise.
@@ -581,6 +594,23 @@ done
     echo "ffbox: no usable cache entry in $CACHE_ENTRIES" >&2
     echo "       one CI job on master creates one." >&2
     exit 69; }
+
+# REFUSE RATHER THAN FILL THE RAMDRIVE. The workspace lives in memory, so running out is not a
+# failed run -- it is memory taken from CI jobs and everything else on the box. Half the headroom
+# again on top of the entry covers what the run itself then writes.
+_entry_bytes=$(stat -c %s "$ENTRY" 2>/dev/null || echo 0)
+# `df -P --output=avail` is not a thing -- the two options are mutually exclusive and df exits
+# non-zero, which made this compute 0 and refuse EVERY run. Caught by running it.
+_avail_kb=$(df -Pk "$MNT" 2>/dev/null | awk 'NR==2 {print $4}')
+[ -n "$_avail_kb" ] || _avail_kb=0
+_avail_bytes=$(( _avail_kb * 1024 ))
+_need_bytes=$(( _entry_bytes + _entry_bytes / 2 ))
+if [ "$_entry_bytes" -gt 0 ] && [ "$_avail_bytes" -lt "$_need_bytes" ]; then
+    echo "ffbox: $(dirname "$MNT") has $(( _avail_bytes / 1024 / 1024 / 1024 ))G free;" >&2
+    echo "       restoring $(basename "$ENTRY") wants about $(( _need_bytes / 1024 / 1024 / 1024 ))G." >&2
+    echo "       Wait for a run to finish, or point FFBOX_RUNS_MNT at a bigger filesystem." >&2
+    exit 69
+fi
 
 echo "[ffbox] restoring $(basename "$ENTRY") ($(du -h "$ENTRY" 2>/dev/null | cut -f1)) into $MNT"
 _t0=$(date +%s)
