@@ -48,8 +48,16 @@ ffghr_mirror_fetch() {
             git -C "$GOLDEN_MNT" fetch --quiet --prune origin 2>/dev/null \
             || echo "WARNING: golden fetch failed; the mirror may be behind"
     fi
+    # FROM GOLDEN'S REMOTE-TRACKING REFS, NOT ITS LOCAL BRANCHES. golden is a working checkout: it
+    # has exactly one local branch, master, and every other branch lives under refs/remotes/origin.
+    # Fetching refs/heads/* from it therefore mirrored master and nothing else, so every job on
+    # develop or a feature branch asked the mirror for a commit it did not have and quietly fell
+    # back to github.com. Found because git daemon logged
+    # "not our ref e03e807..." while the jobs still passed -- which is exactly what the additive
+    # phase is for, and exactly the failure that would have become a broken build the moment
+    # github.com came off the allowlist.
     timeout "$FFGHR_MIRROR_FETCH_TIMEOUT" \
-        git -C "$_repo" fetch --quiet --prune origin '+refs/heads/*:refs/heads/*' 2>/dev/null \
+        git -C "$_repo" fetch --quiet --prune origin '+refs/remotes/origin/*:refs/heads/*' 2>/dev/null \
         || { echo "mirror fetch failed"; return 1; }
 
     # LFS TOO, and this is what makes github.com removable rather than merely unused.
