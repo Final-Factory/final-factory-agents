@@ -47,3 +47,39 @@ The reason the workspace has to be host-visible at all is that the harvest runs 
 already written and produces exactly the files the host needs in `/ffbox/out` — and the workspace
 can be a plain Docker `--tmpfs` with its own `size=`, identical to CI, with no sudoers rule at
 all. That is the tidier end state; the sudoers line is the cheaper one.
+
+## Status: the container half is done, the host half is not
+
+Moving the workspace onto a per-run ramdrive is two halves. The first is finished and in the
+image; the second is not started, and until it is, `ffbox` still prepares a host-visible workspace
+on `/dev/shm` and nothing below is reached.
+
+**Done, tested, additive.** All of it is guarded on the workspace arriving *empty*, which only
+happens with `--tmpfs`, so the current path runs exactly as before.
+
+| | |
+|---|---|
+| `entrypoint.sh` | restores an empty workspace as root, then drops privilege |
+| `restore-workspace.sh` | extracts the entry, fetches the delta from a read-only mirror mount, resolves the ref, sanitises `.git` config, sets `core.checkStat` |
+| `run-as-user.sh` | harvests to `/ffbox/out`, then returns the licence, in one trap |
+| image | carries `harvest-workspace.sh` and a system `safe.directory` for `/ffmirror` |
+
+Measured: empty tmpfs to restored workspace in **36s**, delta fetched, HEAD on the mirror tip,
+22.1 G used of a 40 G cap.
+
+**Not done: the host half.** `ffbox` has ~347 lines after its `docker run` that harvest by running
+19 git commands against the host-visible workspace. Those have to become reads of the files
+`harvest-workspace.sh` already writes, plus the host re-deriving its checks from `work.bundle` —
+that re-derivation is the point, because a run that skipped its own checks would otherwise be
+taken at its word.
+
+There are also ~15 setup-side git calls before the container (branch creation, identity) that move
+into `restore-workspace.sh`.
+
+**Why it stopped here.** That region decides what gets published from an agent run. Validating a
+rewrite of it needs a real end-to-end run — Unity activation, a Claude session, a harvest with
+something actually changed — not a component test. A half-migrated harvest is the one failure mode
+worth avoiding outright: it would publish, and publish wrongly.
+
+The boundary is clean. Nothing is half-applied, and the container half is inert until `ffbox`
+passes `--tmpfs` and a cache entry.
