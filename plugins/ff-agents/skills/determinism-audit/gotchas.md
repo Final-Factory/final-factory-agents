@@ -20,6 +20,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Fresh-world proof does not cover old saves](#fresh-vs-old-saves)
 - [Audit scripts must be Git-bash-portable (BEAST)](#git-bash-portable)
 - [`run_enemy_audit.sh` never builds; macOS needs Homebrew bash](#enemy-audit-build-and-bash) (055 R29)
+- [Wait for a running BEAST sweep before bundle-syncing](#beast-sweep-wait) (055)
 - [Never run the two editors' fast suites concurrently](#no-concurrent-fast-suites)
 - [Burst is OFF by design on paired automation runs](#burst-off-by-design)
 
@@ -232,6 +233,20 @@ bash`) and invoke explicitly: `PATH="/opt/homebrew/bin:$PATH" /opt/homebrew/bin/
 ./scripts/audit/run_determinism_testcases.sh …`. Distinct from the BEAST Git-bash-portability
 trap above (that one is about Windows Git Bash lacking GNU tool variants); this one is macOS
 shipping an 18-years-stale bash by default.
+
+Its own `--skip-build` is a SEPARATE flag from `run_build_multiplayer_audit.sh`'s above, with its
+own manifest: `validate_build_manifest()` (`run_determinism_testcases.sh:339-347`) fails loudly
+(`ERROR: --skip-build requires a build manifest at $BUILD_MANIFEST`) unless a prior run of THIS
+script already wrote one. Run it WITHOUT `--skip-build` first so it builds and records its own
+manifest; only pass `--skip-build` on a later reuse against the same artifact.
+
+## Wait for a running BEAST sweep before bundle-syncing {#beast-sweep-wait}
+
+(055, `specs/055-combat-mover-vision/plan.md:200-203`.) BEAST runs sweeps of paired arms as a
+standing background job; a leg that syncs a new build/bundle onto the box, or launches its own
+paired run, while a sweep is still in progress races that sweep's own build/state. Check
+`beast-sweep-status.ps1` reports **Ready** before bundle-syncing or starting a new arm there —
+it is a machine-local script on the BEAST box itself, not checked into this repo.
 
 ## Never run the two editors' fast suites concurrently {#no-concurrent-fast-suites}
 

@@ -1,8 +1,8 @@
 # Join/load-route provisioning is a desync class of its own
 
-**Feature:** 055 combat-mover-vision, rounds R22–R28 (2026-08-29/30, `specs/055-combat-mover-vision/tasks.md`)
+**Feature:** 055 combat-mover-vision, rounds R22–R31 (2026-08-29/30, `specs/055-combat-mover-vision/tasks.md`)
 
-Six distinct forks in one feature all reduced to the same shape: a player-owned or
+Seven distinct forks in one feature all reduced to the same shape: a player-owned or
 load-time-installed component/id was provisioned on SOME arrival routes (fresh spawn, load, join)
 but not others, or provisioned identically-but-differently-timed across peers. Each is its own bug
 class; group-read this file before touching anything that installs per-player state, mints
@@ -105,3 +105,37 @@ instead of running. **Rule**: any pass whose job is to backfill/repair data on a
 ask "am I the host's own load, or am I applying someone else's already-resolved snapshot?" before
 writing — the second case must always decline, because the host's state (healed or not) is already
 the agreed answer.
+
+**The mint doesn't have to live in a named migration SYSTEM (R31).** `SaveGameManager.RestoreProjectiles`
+migrates any saved in-flight record whose `RailSchemaVersion` is 0 (`SaveGameManager.cs:1533-1541`),
+and that migration calls `AllocateLegacyProjectileEmitterId` (`SaveGameManager.cs:1637-1694`), which
+mints a `CombatObjectId` and advances `NextObjectId` on the world sequence — the same allocator-offset
+shape as case 6, but the write sits in `SaveGameManager` itself, not in a system with its own
+`AppliesRemoteAuthoritativeWorld` flag, so the R28 sweep missed it. Fix: thread the same `isHost ==
+false` signal down `LoadGameAsync -> RecreateEntities -> RestoreProjectiles` and, on a
+remote-authoritative apply, install nothing for a schema-0 record — `ProjectileSystem`'s rail-less
+backstop seeds it on the next heartbeat from the same durable float pair the authoritative peer used,
+so both peers converge on identical code instead of two expressions that happen to agree. **Rule**:
+the R28/R29 decline sweep must cover every LOAD-PATH WRITER of `[Save]`d state that can mint an id or
+rewrite a flag — not just the systems named "migration" or "restoration". Grep `SaveGameManager.cs`'s
+own load path, not only `FFSystems`, for anything that allocates on a schema/version check.
+
+## 7. Equal `Src` counts with unequal `Links` means cold INPUT, not a cold index (R30)
+
+A joining client's movers/vision comparison surface can show identical source counts on both peers
+but a diverging link count — the earlier cases in this file are about a cold ALLOCATOR or a
+cold/declined WRITER, but this shape is a cold READER. `PlayerSimulationObject` is not `[Save]`d, so
+every world apply re-instantiates it from the player prefab at `LocalTransform.Identity`
+(`PlayerSimulationObject.cs:79-80`); the only system that ever places it,
+`PlayerSimulationObjectPositionSystem`, is heartbeat-cadenced in `FFFixedPreTransformGroup`, while the
+legacy `KnnSystem` runs a whole group earlier (`FFFixedEarlyGroup`, `OrderFirst`) and gathers its
+source points from `LocalToWorld`. The first heartbeat of a freshly applied world therefore indexes
+the player at the origin — and because `AssignVisionJob` breaks out of the neighbour walk at the
+first point beyond `Range`, that reads as a disappearance, not an inaccuracy: host `fleetLinks=15` vs
+client `fleetLinks=0` at heartbeat 1, equal from heartbeat 2 on. A long-running peer never sees it,
+because its player object was placed hundreds of heartbeats ago. Fix (`LegacyKnnLoadPathWarmup.cs`,
+new): run one warm-up pass immediately after a load, before the first fixed pass, so the legacy index
+is built from placed positions on heartbeat 1 instead of prefab-spawn defaults. **Tell**: `Src` counts
+agree (nothing was skipped building the index) but `Links` disagree at heartbeat 1 only, self-healing
+by heartbeat 2 — that shape is a not-`[Save]`d, prefab-spawned entity feeding an early-group consumer
+before its own positioning system has run, not a missing/duplicate index entry.
