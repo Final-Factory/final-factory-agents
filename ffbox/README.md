@@ -459,10 +459,17 @@ Nothing reads `/opt/FinalFactory`. It stays on the box as a checkout to edit Fin
 hand; `update-golden.sh` is still the right way to bring **that** up to date, and is no longer
 called by anything automatically.
 
-What this costs: extracting a 15 GB entry takes about 190 seconds, against a near-instant
-copy-on-write clone. That is the price of not depending on golden — it is disk bandwidth, and ZFS
-block cloning would give it back if the pool ever enables that feature. A run's warmup budget is
-an hour.
+The workspace is a **ramdrive**, under `/dev/shm/ffbox-runs` — the same shape CI's job containers
+have always had. That is worth about 5x: the same 22 GB entry restores in **35s** there against
+**193s** on the ZFS mirror. It is the writes that cost, 89,664 of them; the reads were never the
+problem, the tar comes off disk in 12s at 1.7 GB/s.
+
+`/dev/shm` is already a 378 GB tmpfs, needs no provisioning or root, and is mounted without
+`noexec` — checked, including that execution works through the bind mount into the container. The
+trade is that it has no per-run cap, so ffbox refuses to start rather than filling it; a dedicated
+tmpfs with its own `size=` would be tidier and is one fstab line, but needs root.
+
+Override with `FFBOX_RUNS_MNT` to put workspaces on disk instead.
 
 What it buys: no Unity import on the host, ever. The old stage opened the project in Unity every
 five minutes as the account holding the credentials, which is finding F1's outstanding half. It
