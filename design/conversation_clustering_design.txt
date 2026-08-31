@@ -146,8 +146,15 @@ without being wrong, which is the structure Ben asked for: cluster broadly, then
 Deterministic, generous, no model. A conversation in channel C stays a candidate for a new
 message M while EITHER test passes:
 
-    elapsed:      M.timestamp - last_activity_at  <=  idle_secs
-    intervening:  messages in C since last_activity_at  <=  idle_msgs
+    fresh:    gap <= idle_secs
+    rescued:  gap <= idle_rescue_secs  AND  intervening <= idle_msgs
+
+THE RESCUE HAS A REACH OF ITS OWN, and revision 5 did not give it one. It inherited
+max_candidate_secs, so "nothing scrolled past" kept a WEEK-old conversation on offer, and on
+2026-08-31 a live message joined one 5.2 days older than it with nothing in between. "Still on
+screen" was always the argument for the rescue and it stops being true long before a week;
+idle_rescue_secs (two days) covers the case it exists for, somebody answering after a weekend,
+and nothing past that is a continuation anybody would recognise.
 
 OR, not AND, and that is the whole point. A quiet channel keeps a conversation reachable for
 days because nothing has scrolled past it. A busy channel ages one out in minutes because
@@ -193,6 +200,12 @@ In order. First match wins, and the early rules cost nothing.
   S4. EVERYTHING ELSE -> routed_by 'model'. Ask the model: given these candidate conversations,
       does M continue one of them, and which. It answers with an offered id or with "new". See
       section 5.
+
+"NEW" IS A REAL ANSWER AND MUST SPLIT THE MESSAGE OUT. The first implementation returned it as
+None, which resettle read as "leave it where it is" — identical to the selector being
+unavailable. So a selector saying "this starts something new" left the message in the one
+conversation it had just said it does not belong to. It now answers SPLIT_OUT, and resettle
+opens a conversation anchored on the oldest of the messages being moved.
 
 The fifth value, 'recent', is not a rule. It is what the S4 BAND is recorded as when no model
 has spoken for it: the provisional answer ingest writes (4.3), and the fallback when the model

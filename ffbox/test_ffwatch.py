@@ -3924,6 +3924,43 @@ def test_messages_cluster_into_one_conversation():
     check("recorded as the S4 band with no model behind it",
           row["routed_by"] == "recent", dict(row))
 
+    # --- the rescue has a reach of its own ------------------------------------------------
+    #
+    # Seen live on 2026-08-31 and reported by Ben: a new, unrelated message joined a
+    # conversation 5.2 DAYS older than it, because nothing had been posted in between. The
+    # intervening rescue had no time bound of its own and inherited max_candidate_secs, so
+    # "nothing scrolled past" kept a week-old conversation on offer. It stops being a
+    # continuation anybody would recognise long before that.
+    quiet = base_fixture()
+    old_msg, new_msg = sflake(0, 1), sflake(int(5.2 * 86400), 2)
+    quiet["messages"][ASK_CHANNEL] = [message(old_msg, "how do mass drivers work?"),
+                                      message(new_msg, "unrelated: the barge is too slow")]
+    case5 = Case("cluster-reach", quiet, verdict={"engage": True, "reason": "r"})
+    case5.events(ask_event(old_msg))
+    case5.watcher.drain_events()
+    case5.watcher.claim_turns()
+    case5.events(ask_event(new_msg))
+    case5.watcher.drain_events()
+    check("a message 5.2 days later does NOT join, even with nothing in between",
+          len(convs_of(case5)) == 2, convs_of(case5))
+    landed = case5.rows("SELECT * FROM message WHERE discord_id=?", (new_msg,))[0]
+    check("it opens its own conversation instead",
+          landed["routed_by"] == "new", dict(landed))
+
+    # But the case the rescue exists for still works: a weekend, then an answer.
+    weekend = base_fixture()
+    q, a2 = sflake(0, 1), sflake(2 * 86400 - 60, 2)
+    weekend["messages"][ASK_CHANNEL] = [message(q, "should I lower barge speed 10%?"),
+                                        message(a2, "yeah that works")]
+    case6 = Case("cluster-weekend", weekend, verdict={"engage": True, "reason": "r"})
+    case6.events(ask_event(q))
+    case6.watcher.drain_events()
+    case6.watcher.claim_turns()
+    case6.events(ask_event(a2))
+    case6.watcher.drain_events()
+    check("but just under two days, with nothing in between, still joins",
+          len(convs_of(case6)) == 1, convs_of(case6))
+
     # --- the mirror image: an OLD conversation buried under a newer one --------------------
     #
     # WHAT THE DISJUNCTION COSTS, stated plainly because it surprised the implementation.
@@ -4155,6 +4192,21 @@ def test_the_selector_narrows_a_choice_it_cannot_widen():
     check("and recorded as the model's decision, with its reason",
           moved["routed_by"] == "model" and "barge" in (moved["routed_reason"] or ""),
           dict(moved))
+
+    # "This belongs in none of them" is a REAL answer and must not read as "could not decide".
+    # Both used to come back as None, so a selector saying a message starts something new left
+    # it in the conversation it had just said it does not belong to.
+    case, first, second, _ = two_live_conversations("sel-split", None)
+    case.watcher.model_selection = lambda msg, cands, alias=None: (
+        ffwatch.SPLIT_OUT, "a new topic entirely")
+    before = {c["id"] for c in case.rows("SELECT * FROM conversation")}
+    case.watcher.claim_turns()
+    split = case.rows("SELECT * FROM message ORDER BY CAST(discord_id AS INTEGER)")[-1]
+    check("a split-out verdict moves the message to a conversation of its own",
+          split["conversation_id"] not in before,
+          (split["conversation_id"], sorted(before)))
+    check("and it is not left in the one the selector rejected",
+          split["conversation_id"] != second, dict(split))
 
     # An id that was never offered cannot widen anything.
     case, first, second, _ = two_live_conversations("sel-bogus", None)
