@@ -225,7 +225,7 @@ log "checkout is now at $(printf %.12s "$(git_ rev-parse HEAD)")"
 # ------------------------------------------------------------------------------------------
 # 5. re-run setup
 # ------------------------------------------------------------------------------------------
-# ONE CALL, NOT A LIST OF TRIGGERS. This used to grep the diff for paths that "mean" something —
+# TWO CALLS, NOT A LIST OF TRIGGERS. This used to grep the diff for paths that "mean" something —
 # a Dockerfile change means rebuild, a plugins/ change means registerAgents — which is a second,
 # hand-maintained model of what setup.sh already knows, and it is wrong the moment a commit
 # moves a file or adds a stage. Worse, it could only ever react to what CHANGED IN GIT: a config
@@ -262,6 +262,40 @@ else
     log "WARNING: setup.sh exited non-zero; continuing into the restart"
 fi
 rm -f "$_setup_out"
+
+# THE RUNNERS' SETUP IS A SECOND REAL THING, and it is here for the same reason the first one is:
+# ffgithubrunners lives in this tree, its non-root stages are idempotent, and without this call a
+# commit that changes the CI egress allowlist, the runner networks or the git mirror is fetched,
+# merged, and then not applied to anything until a human remembers. The image itself is already
+# covered — 03-build.sh above builds the one image both systems share — so what this adds is the
+# fence and the mirror.
+#
+# --skip-image-build because 03-build.sh above has just built that exact tag from that exact
+# Dockerfile; a second cached build changes nothing and costs a minute and a half with ffbox
+# stopped. If ffbox's build ever moves off this daemon or off this tag, drop the flag — a missing
+# image is not silent, slot.sh's preflight names it.
+#
+# --skip-github because stage 4 verifies the credential by minting a real JIT config and deleting
+# the runner it created. That is the right check when a human is setting a machine up and pointless
+# noise on the org's runner list once per commit; the credential does not change with a push.
+#
+# NOTHING HERE MAY DISTURB A RUNNING JOB. ffgithubrunners is NOT drained above — only ffbox is —
+# so a CI job may well be in flight while this runs. That is what the fingerprint guards in
+# ffbox-egress.sh and 03-image.sh are for: `up` on an unchanged fence or mirror leaves the
+# container alone rather than recreating it under a job that is mid-fetch. If either ever goes
+# back to an unconditional recreate, this call has to go with it.
+if [ -x "$REPO/ffbox/runners/setup.sh" ] || [ -r "$REPO/ffbox/runners/setup.sh" ]; then
+    log "re-running the runners' setup (idempotent; root-only stages are skipped)"
+    _rsetup_out=$(mktemp)
+    if sh "$REPO/ffbox/runners/setup.sh" --non-interactive --skip-github --skip-image-build \
+            > "$_rsetup_out" 2>&1; then
+        sed 's/^/    /' "$_rsetup_out"
+    else
+        sed 's/^/    /' "$_rsetup_out"
+        log "WARNING: runners/setup.sh exited non-zero; continuing into the restart"
+    fi
+    rm -f "$_rsetup_out"
+fi
 
 # ------------------------------------------------------------------------------------------
 # 6. resume

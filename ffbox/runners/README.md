@@ -213,6 +213,32 @@ the SNI log.
 The LFS and cache/artifact storage entries are still marked UNCONFIRMED. Nobody has yet watched a
 real job reach for them, and that is open item (a).
 
+## How a change reaches this machine
+
+`ffbox-update.timer` fetches `origin/master` every five minutes, and on anything new it merges and
+then re-runs both setups — `ffbox/setup.sh` and `ffbox/runners/setup.sh`, both `--non-interactive`.
+So most of this system deploys itself: **push, and within five minutes**
+
+- the image is rebuilt (`03-build.sh` builds the one tag both systems share, so a change to
+  `Dockerfile`, `entrypoint-ci.sh` or `unity-license.sh` is live),
+- the egress fence and the git mirror are brought back into line with the allowlist and images in
+  git — and left alone when nothing they depend on changed, so a job mid-fetch is not cut off,
+- a slot that is WAITING notices `slot.sh` or `lib/config.sh` changed under it and exits, and
+  systemd starts it again on the new code within seconds. A slot with a container keeps the old
+  code until its job ends, which is the same window it always had.
+
+Two things it will not do, both because it holds no root:
+
+- **install or change a unit.** A commit that edits `systemd/`, or a `slots N` that needs another
+  instance enabled, is merged and then owed: `sudo sh ffbox/runners/05-services.sh --install`. The
+  journal says so every time until somebody runs it, and `05-services.sh --check` exits 1 while it
+  is owed.
+- **provision the host or the daemon** (stages 1 and 2). Same shape, same message.
+
+`ffgithubrunners image update` is a different thing from the rebuild above and is still worth
+running: it asks GitHub for the LATEST runner release and rebuilds with that, which is what keeps
+the runner new enough to be given jobs at all. Its weekly timer does it unattended.
+
 ## When something is wrong
 
 ```sh

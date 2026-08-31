@@ -25,6 +25,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DO_HOST=1
 DO_DAEMON=1
 DO_IMAGE=1
+IMAGE_ARGS=""
 DO_GITHUB=1
 DO_SERVICES=1
 NONINTERACTIVE=0
@@ -50,6 +51,10 @@ Options (alphabetical):
   --skip-github         Do not touch the GitHub credential.
   --skip-host           Do not touch the account, the socket dir or the store.
   --skip-image          Do not build the image or bring up the fence.
+  --skip-image-build    Bring up the fence, the networks and the mirror, but do NOT rebuild the
+                        image. For a caller that has just built it: ffbox/03-build.sh builds the
+                        same tag from the same Dockerfile, so on this machine the second build is
+                        a cached no-op that still costs a minute and a half.
   --skip-services       Do not install or start the systemd units.
 
 For finer control over any single stage, run it directly — each takes --help.
@@ -68,6 +73,7 @@ while [ $# -gt 0 ]; do
     --skip-github)     DO_GITHUB=0; shift ;;
     --skip-host)       DO_HOST=0; shift ;;
     --skip-image)      DO_IMAGE=0; shift ;;
+    --skip-image-build) IMAGE_ARGS="--egress-only"; shift ;;
     --skip-services)   DO_SERVICES=0; shift ;;
     *)                 echo "setup.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -123,7 +129,8 @@ fi
 # say so, which is the right outcome: they cannot do anything useful without it.
 if [ "$DO_IMAGE" -eq 1 ]; then
   stage "3/5  the runner image and its egress fence (slow on a cold pull)"
-  sh "$ROOT/03-image.sh" || printf 'setup.sh: 03-image.sh exited non-zero\n' >&2
+  # shellcheck disable=SC2086  # IMAGE_ARGS is empty or one option, deliberately unquoted
+  sh "$ROOT/03-image.sh" $IMAGE_ARGS || printf 'setup.sh: 03-image.sh exited non-zero\n' >&2
 else
   stage "3/5  image — skipped (--skip-image)"
 fi

@@ -34,6 +34,9 @@
 #
 # Environment: FFBOX_EGRESS_MODE=log permits everything and records it. For discovering an
 # allowlist on a new Unity version, never as a resting state.
+#              FFBOX_EGRESS_FORCE=1 recreates the proxy even when nothing it depends on changed.
+#              `up` is otherwise a no-op on an unchanged fence, so that it can be called by the
+#              updater without taking egress away from a job that is mid-fetch.
 set -eu
 
 NET=${FFBOX_EGRESS_NET:-ffbox-net}
@@ -87,10 +90,39 @@ ensure_networks() {
     fi
 }
 
+# WHAT THE RUNNING PROXY WOULD HAVE TO CHANGE FOR, in one string. Everything that decides what
+# this container does: the image it runs, the mode it runs in, and the contents of the allowlist —
+# which is bind-mounted, so its CONTENTS matter and its path does not.
+proxy_fingerprint() {
+    printf '%s %s %s' \
+        "$(docker_ image inspect "$IMAGE" --format '{{.Id}}' 2>/dev/null || echo none)" \
+        "$MODE" \
+        "$(sha256sum "$ALLOWLIST" 2>/dev/null | cut -c1-64)"
+}
+
 start_proxy() {
     docker_ image inspect "$IMAGE" >/dev/null 2>&1 \
         || die "image $IMAGE is not built. Run: sh $HERE/../01-dockerSetup.sh  (or docker build -t $IMAGE $HERE)"
     [ -r "$ALLOWLIST" ] || die "cannot read $ALLOWLIST"
+
+    # UP IS A NO-OP WHEN NOTHING HAS CHANGED, and that is what makes it safe to call from an
+    # automatic updater. `rm -f` and recreate takes the fence down for a couple of seconds, and a
+    # job or a run that is mid-fetch when that happens fails for a reason nobody will connect to
+    # "someone pushed a commit". The old unconditional recreate was fine when a human ran this and
+    # is not fine on a five-minute timer.
+    #
+    # The fingerprint lives on the container as a LABEL rather than in a file on the host: it then
+    # cannot disagree with the thing it describes, and a container someone started by hand simply
+    # has no label and gets recreated.
+    _want=$(proxy_fingerprint)
+    _have=$(docker_ inspect -f '{{index .Config.Labels "ffbox.egress.fingerprint"}}' "$NAME" 2>/dev/null || echo "")
+    if [ "${FFBOX_EGRESS_FORCE:-0}" != 1 ] \
+       && [ "$(docker_ inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = true ] \
+       && [ -n "$_have" ] && [ "$_have" = "$_want" ]; then
+        say "$NAME is already up with this image, mode and allowlist — leaving it alone"
+        return 0
+    fi
+    [ -z "$_have" ] || [ "$_have" = "$_want" ] || say "the image, mode or allowlist changed; recreating $NAME"
 
     docker_ rm -f "$NAME" >/dev/null 2>&1 || true
 
@@ -106,6 +138,7 @@ start_proxy() {
         --hostname ffbox-egress \
         --network "$NET" --ip "$IP" \
         --restart unless-stopped \
+        --label ffbox.egress.fingerprint="$_want" \
         --read-only --tmpfs /var/run --tmpfs /var/cache/nginx --tmpfs /tmp \
         --cap-drop ALL --cap-add NET_BIND_SERVICE --cap-add SETUID --cap-add SETGID \
         --security-opt no-new-privileges \

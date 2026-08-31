@@ -178,6 +178,22 @@ if [ -d "$MIRROR_DIR/$MIRROR_REPO" ]; then
       || say "WARNING: the mirror image did not build; jobs will fetch from github.com"
   fi
   if docker image inspect "$MIRROR_IMAGE" >/dev/null 2>&1; then
+    # LEFT ALONE WHEN IT IS ALREADY SERVING THIS IMAGE, for the same reason the fence is: a
+    # recreate takes the mirror away for a second, and a job mid-fetch through it fails for a
+    # reason nobody will connect to a commit landing. The container records the image id it was
+    # created from, so that comparison needs nothing kept on the side.
+    _mwant=$(docker image inspect "$MIRROR_IMAGE" --format '{{.Id}}' 2>/dev/null || echo none)
+    _mhave=$(docker inspect -f '{{.Image}}' "$MIRROR_NAME" 2>/dev/null || echo "")
+    _mrun=$(docker inspect -f '{{.State.Running}}' "$MIRROR_NAME" 2>/dev/null || echo false)
+    if [ "$_mrun" = true ] && [ "$_mhave" = "$_mwant" ]; then
+      skip "$MIRROR_NAME is already up on this image at $MIRROR_IP"
+      skip "jobs fetch the repository from $MIRROR_URL"
+      _mskip=1
+    else
+      _mskip=0
+    fi
+  fi
+  if docker image inspect "$MIRROR_IMAGE" >/dev/null 2>&1 && [ "${_mskip:-0}" = 0 ]; then
     docker rm -f "$MIRROR_NAME" >/dev/null 2>&1 || true
     say "bringing up $MIRROR_NAME at $MIRROR_IP"
     docker run -d --name "$MIRROR_NAME" --hostname "$MIRROR_NAME" \
