@@ -212,3 +212,116 @@ for r in (json.load(sys.stdin).get("runners") or []):
     done
     return 0
 }
+
+# gh_post_check_run STAGE -- post the check run a job left in its drop box.
+#
+# WHY THE HOST DOES THIS AT ALL. post-check-run.py used to POST to api.github.com from inside the
+# container, and that single step was the ONLY thing in an editmode job that needed api.github.com
+# -- measured across 27 hours of jobs, every api.github.com hit belonged either to this step or to
+# mode2-ci-freshness.sh's gh calls. Neither the runner nor any action touches it. Moving this one
+# call out here is what lets api.github.com come off the CI allowlist, and with it the ability to
+# read any repository in the org or open a gist with a stolen credential.
+#
+# THE PAYLOAD COMES FROM THE JOB AND IS THEREFORE UNTRUSTED. This host token is a GitHub App
+# installation token -- far stronger than the job's own contents:read GITHUB_TOKEN -- so relaying
+# whatever the container wrote would hand the job a privilege upgrade and be strictly worse than
+# what it replaced. Everything below is about not doing that:
+#
+#   - the API PATH is built here, never taken from the file
+#   - the repository must look like <our org>/<name>; a job cannot aim this at another org
+#   - only the keys a check run actually uses survive; anything else is dropped, not rejected,
+#     so a future field added by the workflow degrades to a missing field rather than no report
+#   - head_sha must be 40 hex characters
+#   - the file is size-capped before it is parsed
+#
+# What is deliberately NOT prevented: a job posting a check run that lies about its own results.
+# It could already do that with checks:write, so no privilege is gained here. The residual this
+# DOES add is that a job in one org repository could post a check run against another repository
+# in the same org. The runner is org-scoped, so that is inside its blast radius either way.
+#
+# NEVER FATAL. A missing file is the normal case (most jobs are not editmode). A malformed one is
+# a warning. Reporting has never been allowed to fail a build and must not start here.
+GH_CHECKRUN_MAX_BYTES=${GH_CHECKRUN_MAX_BYTES:-1048576}
+
+gh_post_check_run() {
+    _stage=${1:-}
+    [ -n "$_stage" ] || return 0
+    _f="$_stage/checkrun.json"
+    [ -f "$_f" ] || return 0
+
+    _sz=$(wc -c < "$_f" 2>/dev/null || echo 0)
+    if [ "$_sz" -gt "$GH_CHECKRUN_MAX_BYTES" ] || [ "$_sz" -le 0 ]; then
+        printf 'lib/gh.sh: checkrun.json is %s bytes; refusing to relay it\n' "$_sz" >&2
+        return 0
+    fi
+
+    _clean=$(ORG="$ORG" python3 - "$_f" <<'PY' 2>/dev/null
+import json, os, re, sys
+ALLOWED = {"name", "head_sha", "status", "conclusion", "started_at", "completed_at", "output"}
+OUT_ALLOWED = {"title", "summary", "text", "annotations"}
+ANN_ALLOWED = {"path", "start_line", "end_line", "annotation_level", "message", "title",
+               "raw_details", "start_column", "end_column"}
+CONCLUSIONS = {"success", "failure", "neutral", "cancelled", "timed_out", "action_required", "skipped"}
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+if not isinstance(d, dict):
+    sys.exit(1)
+
+repo = d.get("repository") or ""
+org = os.environ.get("ORG", "")
+if not re.fullmatch(re.escape(org) + r"/[A-Za-z0-9._-]{1,100}", str(repo)):
+    sys.exit(1)
+if not re.fullmatch(r"[0-9a-f]{40}", str(d.get("head_sha", ""))):
+    sys.exit(1)
+
+out = {k: v for k, v in d.items() if k in ALLOWED}
+out["status"] = "completed"
+if out.get("conclusion") not in CONCLUSIONS:
+    out["conclusion"] = "neutral"
+if not isinstance(out.get("name"), str) or not out["name"]:
+    sys.exit(1)
+out["name"] = out["name"][:255]
+
+o = out.get("output")
+if isinstance(o, dict):
+    o = {k: v for k, v in o.items() if k in OUT_ALLOWED}
+    anns = o.get("annotations")
+    if isinstance(anns, list):
+        cleaned = []
+        for a in anns[:50]:
+            if not isinstance(a, dict):
+                continue
+            a = {k: v for k, v in a.items() if k in ANN_ALLOWED}
+            if isinstance(a.get("path"), str) and isinstance(a.get("message"), str):
+                cleaned.append(a)
+        o["annotations"] = cleaned
+    else:
+        o.pop("annotations", None)
+    for k in ("title", "summary", "text"):
+        if k in o and not isinstance(o[k], str):
+            o.pop(k)
+    out["output"] = o
+else:
+    out.pop("output", None)
+
+print(json.dumps({"repository": repo, "payload": out}))
+PY
+    ) || {
+        printf 'lib/gh.sh: checkrun.json failed validation; not relaying it\n' >&2
+        return 0
+    }
+    [ -n "$_clean" ] || return 0
+
+    _repo=$(printf '%s' "$_clean" | python3 -c 'import json,sys; print(json.load(sys.stdin)["repository"])' 2>/dev/null) || return 0
+    _body=$(printf '%s' "$_clean" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["payload"]))' 2>/dev/null) || return 0
+    [ -n "$_repo" ] && [ -n "$_body" ] || return 0
+
+    if gh_api POST "/repos/$_repo/check-runs" "$_body" >/dev/null; then
+        printf 'lib/gh.sh: posted the check run for %s\n' "$_repo"
+    else
+        printf 'lib/gh.sh: could not post the check run (status %s)\n' "${GH_LAST_STATUS:-?}" >&2
+    fi
+    return 0
+}

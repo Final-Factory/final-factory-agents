@@ -62,6 +62,13 @@ teardown() {
     # below is the important half: a cache that fails to promote costs one cold job, a registration
     # that never gets deleted is an orphan on the org page. `|| true` on both, deliberately.
     if [ -n "$STAGE" ]; then
+        # FIRST, because it is the only part of teardown anybody is waiting to see. The job wrote
+        # a check-run payload instead of POSTing it, so that api.github.com could come off the CI
+        # allowlist -- measured: that one step was the only thing in an editmode job that used it.
+        # Validated hard inside gh_post_check_run: this token is far stronger than the job's own.
+        gh_post_check_run "$STAGE" 2>&1 \
+            | while IFS= read -r _line; do log "$_line"; done || true
+
         ffghr_cache_with_lock ffghr_cache_promote "$STAGE" 2>&1 \
             | while IFS= read -r _line; do log "cache: $_line"; done || true
         ffghr_cache_with_lock ffghr_cache_prune 2>&1 \
