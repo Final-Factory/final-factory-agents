@@ -202,6 +202,7 @@ if [ -d "$MIRROR_DIR/$MIRROR_REPO" ]; then
       --read-only --tmpfs /tmp \
       --cap-drop ALL --security-opt no-new-privileges \
       -v "$MIRROR_DIR:/srv:ro" \
+      -v "$MIRROR_LFS_DIR:/srv-lfs:ro" \
       "$MIRROR_IMAGE" >/dev/null \
       && skip "jobs fetch the repository from $MIRROR_URL" \
       || say "WARNING: $MIRROR_NAME did not start; jobs will fetch from github.com"

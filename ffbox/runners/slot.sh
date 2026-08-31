@@ -346,6 +346,7 @@ docker run -d \
     -e FFBOX_MODE=ci \
     -e FFGHR_GIT_MIRROR="$MIRROR_URL" \
     -e FFGHR_GIT_ORIGIN="$MIRROR_ORIGIN" \
+    -e FFGHR_LFS_URL="$MIRROR_LFS_URL" \
     -e FFGHR_JITCONFIG \
     "$IMAGE" >/dev/null \
     || fail_unfit "docker run failed for $CNAME"

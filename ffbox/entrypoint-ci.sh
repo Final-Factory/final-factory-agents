@@ -83,7 +83,16 @@ export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE
 if [ -n "${FFGHR_GIT_MIRROR:-}" ] && [ -n "${FFGHR_GIT_ORIGIN:-}" ]; then
     git config --system "url.${FFGHR_GIT_MIRROR}.insteadOf" "${FFGHR_GIT_ORIGIN}" || :
     git config --system "url.${FFGHR_GIT_MIRROR}.insteadOf" "${FFGHR_GIT_ORIGIN}.git" --add || :
-    git config --system lfs.url "${FFGHR_GIT_ORIGIN}.git/info/lfs" || :
+    # LFS AT THE MIRROR TOO. git-lfs speaks its own HTTP batch protocol and cannot derive an
+    # endpoint from a git:// URL, so this was the last thing pinning github.com to the allowlist --
+    # idle on almost every job, because a restored tarball already carries .git/lfs, and fatal on
+    # the two cases that matter: a cold job with no cache entry, and the first commit that touches
+    # an image. The mirror serves those objects download-only.
+    if [ -n "${FFGHR_LFS_URL:-}" ]; then
+        git config --system lfs.url "${FFGHR_LFS_URL}" || :
+    else
+        git config --system lfs.url "${FFGHR_GIT_ORIGIN}.git/info/lfs" || :
+    fi
     echo "[ffghr] git fetches redirected to ${FFGHR_GIT_MIRROR}"
 fi
 
