@@ -122,9 +122,10 @@ def build_fixture(root):
        "'triage','AUTOFIX',NULL,NULL,'2026-08-20T10:00:00Z','2026-08-20T12:00:00Z')",
        (f"Crash on load {XSS}",))
     ex("INSERT INTO conversation(id, channel_id, thread_id, kind, title, state, is_thread,"
-       " lane, verdict, created_at, last_activity_at)"
+       " lane, verdict, created_at, last_activity_at, closed_at, close_reason)"
        " VALUES(2,'chan','thread-2','ask','How do mass drivers work?','closed',1,'answer',"
-       "'ANSWERED','2026-08-19T10:00:00Z','2026-08-19T11:00:00Z')")
+       "'ANSWERED','2026-08-19T10:00:00Z','2026-08-19T11:00:00Z','2026-08-19T12:00:00Z',"
+       "'idle')")
     ex("INSERT INTO conversation(id, channel_id, thread_id, kind, title, state, is_thread,"
        " lane, created_at, last_activity_at)"
        " VALUES(3,'chan','thread-3','suggestion','Add conveyor colours','running',1,'answer',"
@@ -289,6 +290,7 @@ class Server:
             Server._session_seq += 1
             session_path = os.path.join(TMPROOT, f"sessions-{Server._session_seq}.json")
         self.session_path = session_path
+        self.db_path = db_path
         self.app = ffweb.App(db_path, blobs, state, ffwatch_py,
                              enable_actions=enable_actions, quiet=True, origins=origins,
                              scheme=scheme,
@@ -331,6 +333,16 @@ class Server:
         if code == 303 and raw:
             self.cookie = raw.split(";", 1)[0]
         return code, raw
+
+    def db(self, sql, params=()):
+        """Write to the fixture directly. Only tests do this: ffweb's own connections are
+        mode=ro with query_only=1, and ffwatch is the sole writer at runtime."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            with conn:
+                conn.execute(sql, params)
+        finally:
+            conn.close()
 
     def get(self, path, headers=None):
         req = urllib.request.Request(self.base + path, headers=self._with_cookie(headers))
@@ -512,6 +524,45 @@ def test_every_route_serves():
         check("an unknown path is 404", code == 404)
         code, _h, body = srv.get("/conversation/999")
         check("an unknown conversation is 404", code == 404)
+    finally:
+        srv.stop()
+
+
+def test_the_page_shows_how_clustering_decided():
+    """Clustering moves messages between conversations, so the page has to say what it did.
+
+    Three things, all invisible before: why a conversation stopped taking new messages, where a
+    session rotated underneath one that stayed open, and which rule put a given message where it
+    is. "The agent seems to have forgotten what we said in turn 3" needs an answer on the page
+    rather than in somebody's head.
+    """
+    print("the page explains the clustering")
+    srv = serve()
+    try:
+        _c, _h, body = srv.get("/conversation/2")
+        page = text_of(body)
+        check("a closed conversation says WHY it closed", "idle" in page, page[:600])
+
+        _c, _h, body = srv.get("/conversation/1")
+        page = text_of(body)
+        check("an open one does not claim to be closed", "close_reason" not in page)
+
+        # The seam, and the routing note, on rows that carry them.
+        srv.db("UPDATE conversation SET rotated_at_seq=4, session_generation=2 WHERE id=1")
+        srv.db("UPDATE message SET routed_by='model', routed_reason='it means the barge'"
+               " WHERE id=1")
+        _c, _h, body = srv.get("/conversation/1")
+        page = text_of(body)
+        check("a rotated session says where the seam is", "rotated at turn 4" in page,
+              page[:900])
+        check("and a message the selector placed says so, with its reason",
+              "selector" in page and "it means the barge" in page, page[:1200])
+
+        srv.db("UPDATE message SET routed_by='certain', routed_reason='20s after it'"
+               " WHERE id=1")
+        _c, _h, body = srv.get("/conversation/1")
+        check("an ordinary continuation says nothing — only the interesting ones do",
+              "20s after it" not in text_of(body))
     finally:
         srv.stop()
 
@@ -2054,6 +2105,7 @@ def main():
     print("ffweb — web UI")
     tests = [
         test_every_route_serves,
+        test_the_page_shows_how_clustering_decided,
         test_timeline_reads_as_a_conversation,
         test_filters_actually_filter,
         test_the_title_filter,

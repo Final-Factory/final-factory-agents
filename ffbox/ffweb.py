@@ -1164,6 +1164,15 @@ class FfwatchActions:
         """
         return self._run(["submit", "--conversation", str(int(conversation_id)), "--", prompt])
 
+    def close(self, ids):
+        """End conversations — `ffwatch close`.
+
+        Out through the subprocess like every other write. THIS FILE CANNOT WRITE AT ALL: every
+        connection it opens is mode=ro with PRAGMA query_only=1, and ffwatch is the sole writer.
+        An UPDATE issued from here would not merely duplicate a decision, it would fail.
+        """
+        return self._run(["close"] + [str(i) for i in ids])
+
     def read(self, ids, read=True):
         """Tick conversations off, or put them back — `ffwatch read` / `ffwatch unread`.
 
@@ -1455,6 +1464,24 @@ class FFWebHandler(BaseHTTPRequestHandler):
                 return self._redirect("/?sent=1")
             # A failure still says everything it knows. This one does NOT clear itself.
             return self._redirect("/?msg=" + urllib.parse.quote("failed: " + short(out, 300)))
+
+        if path == "/actions/close":
+            # End a conversation by hand. Behind the same session and Origin checks as every
+            # other action, and it only ever writes the three clustering columns.
+            raw_id = (form.get("conversation") or [""])[0].strip()
+            if not raw_id.isdigit():
+                return self._error(400, "closing needs a conversation to close")
+            conv = app.db.one("SELECT id, kind, state, is_thread FROM conversation WHERE id = ?",
+                              (int(raw_id),))
+            if conv is None:
+                return self._error(404, "no such conversation")
+            if conv["state"] in ("running", "queued"):
+                return self._error(409, f"conversation {conv['id']} has work in flight; "
+                                        f"it closes on its own when that ends")
+            ok, out = app.actions.close([conv["id"]])
+            note = "closed" if ok else ("failed: " + short(out, 300))
+            return self._redirect(f"/conversation/{conv['id']}?msg="
+                                  + urllib.parse.quote(note))
 
         if path == "/actions/reply":
             # Continuing a conversation, which is the same grant as starting one and behind the
@@ -1817,12 +1844,28 @@ class App:
         agg = conversation_aggregates(self.db, conv_id).get(conv_id)
 
         head = ["<h1>", esc(short(conv["title"] or conv["thread_id"], 140)), "</h1>"]
+        # `closed` says a conversation stopped being a candidate for new messages, and the
+        # reason is the first thing to look at when the clustering feels wrong: 'idle' means it
+        # was buried or went quiet, 'stale' means it aged past max_candidate_secs, 'manual'
+        # means somebody here decided.
+        state_cell = pill(conv["state"])
+        if conv["state"] == "closed" and conv["close_reason"]:
+            state_cell = Raw(str(pill(conv["state"])) + " <span class=\"muted\">"
+                             + esc(conv["close_reason"]) + "</span>")
+        session_cell = conv["session_id"] or "—"
+        if conv["rotated_at_seq"]:
+            # A silent session boundary is what "the agent forgot what we said in turn 3" looks
+            # like from the outside, so it is named here rather than left to be deduced.
+            session_cell = Raw(esc(str(session_cell)) + " <span class=\"muted\">gen "
+                               + esc(conv["session_generation"]) + ", rotated at turn "
+                               + esc(conv["rotated_at_seq"]) + "</span>")
         head.append(table(
             ["kind", "state", "lane", "verdict", "thread", "session", "base", "issue", "PR"],
-            [[conv["kind"] or "—", pill(conv["state"]), conv["lane"] or "—",
-              conv["verdict"] or "—", conv["thread_id"], conv["session_id"] or "—",
+            [[conv["kind"] or "—", state_cell, conv["lane"] or "—",
+              conv["verdict"] or "—", conv["thread_id"], session_cell,
               (conv["base_sha"] or "—")[:12], conv["github_issue"] or "—",
               conv["github_pr"] or "—"]]))
+        head.append(self._close_button(conv))
         head.append(table(AGG_HEADERS, [agg_cells(agg)]))
 
         in_flight = self._in_flight(conv_id)
@@ -1837,6 +1880,27 @@ class App:
         return page(conv["title"] or f"conversation {conv_id}",
                     head + note + [self._reply_box(conv, in_flight)] + body,
                     refresh="live" if in_flight else True)
+
+    def _close_button(self, conv):
+        """End a conversation by hand, for what a person can see and the rules cannot.
+
+        A POST for the same reason the read tick is: a GET that changes something is a change
+        any page on the internet can trigger with an <img>, and the Origin check only runs on
+        POST. Reopening is deliberately not offered here — an explicit Discord reply already
+        does it, and that is the signal that should.
+        """
+        if conv["kind"] in LOCAL_KINDS or conv["is_thread"]:
+            return ""
+        if conv["state"] == "closed":
+            return ("<p class=\"note\">Closed"
+                    + (" — " + esc(conv["close_reason"]) if conv["close_reason"] else "")
+                    + ". A reply in Discord reopens it.</p>")
+        if conv["state"] in ("running", "queued"):
+            return ""
+        return ("<form method=\"post\" action=\"/actions/close\">"
+                "<input type=\"hidden\" name=\"conversation\" value="
+                + attr(conv["id"]) + ">"
+                "<button type=\"submit\">close this conversation</button></form>")
 
     def _reply_box(self, conv, in_flight):
         """Say something else to THIS conversation, rather than starting another one.
@@ -1882,6 +1946,21 @@ class App:
             "SELECT COUNT(*) AS n FROM run r JOIN turn t ON t.id = r.turn_id"
             " WHERE t.conversation_id = ? AND r.terminal_state IS NULL", (conv_id,))
         return bool(row and row["n"])
+
+    @staticmethod
+    def _routed_note(row):
+        """WHICH RULE PUT THIS MESSAGE HERE. Only worth showing when it was not obvious.
+
+        A message that opened its conversation or plainly continued one says nothing; the two
+        worth being able to see are the model's decisions and the ones nothing decided.
+        """
+        by = (row["routed_by"] if "routed_by" in row.keys() else None)
+        if by not in ("model", "recent"):
+            return ""
+        label = "selector" if by == "model" else "most recent"
+        why = (row["routed_reason"] if "routed_reason" in row.keys() else "") or ""
+        return (" <span class=\"muted\">[" + esc(label)
+                + (": " + esc(short(why, 90)) if why else "") + "]</span>")
 
     def _timeline(self, conv_id):
         """THE CONVERSATION, not the machinery that carried it.
@@ -2010,6 +2089,7 @@ class App:
         origin = "" if kind in LOCAL_KINDS else f" · discord {row['discord_id']}"
         out = ["<div class=\"item ", cls, "\"><div class=\"meta\">",
                esc(f"{row['direction']} · {who}{bot} · {row['created_at'] or ''}{origin}"),
+               self._routed_note(row),
                "</div>"]
         if row["content"]:
             out.append("<pre>" + esc(row["content"]) + "</pre>")

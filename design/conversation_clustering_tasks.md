@@ -8,6 +8,61 @@ order and most tasks inside a phase can be done in any order.
 Effort sizes: **S** under an hour, **M** an afternoon, **L** a day or more, **?** the shape is
 not known until something is measured.
 
+## Status, 2026-08-31 — implemented
+
+**Done: T1-T14, T16-T38, T40, T43.** Phases 0 and A through H, less the four noted below.
+Suites: ffwatch 880 checks passing (the 3 egress failures predate this work and come from
+`e8add8c`, which rewrote `ffbox/egress/entrypoint.sh`), ffweb all green, ffdiscord all green,
+listener 54 green and back to zero network calls.
+
+**Three things the implementation corrected in the design.**
+
+*Timing reads the SNOWFLAKE, not `last_activity_at`.* That column is INGEST time. The twelve
+#dev-chat rows this exists to fix hold 2024 messages and carry 2026 ingest stamps, so judging
+"how long ago" by it would make every backfilled conversation look seconds old and a sweep of a
+quiet channel would keep it that way. A Discord id carries its own millisecond in its top 42
+bits, so `snowflake_secs` is exact and needs no round trip.
+
+*`idle_msgs` cannot fire while a channel holds one conversation*, because its traffic IS that
+conversation and nothing has scrolled past. A gap alone does not open a second one either — the
+OR rescues it. So the deterministic rules merge a quiet channel up to `max_candidate_secs`, and
+S4 is what splits it. That is "cluster broadly, then split" working, but it means phase C alone
+over-merges and a box running without the selector wants a smaller `max_candidate_secs`. Written
+into the design at section 4.1.
+
+*A conversation must never be closed while it still holds an unanswered message.* Found by a
+test: `claim_turns` skips a closed conversation, so closing one with an unclaimed message meant
+that message was never answered and nothing said why. The sweep reaches it unaided — it reads a
+window spanning weeks, the early messages open conversations and the later ones age those out as
+stale, all before `claim_turns` runs once. `close_conversation` now refuses over pending work.
+
+**Two bugs found in the existing suite, both fixed.** The classifier stub read its answer from
+`$FFWATCH_CLASSIFIER_JSON`, which the new env scrub correctly strips — it reads a file beside
+itself now. And `Case` overrode the kill switch but not the drain switch, so the suite read the
+MACHINE's `~/.config/ffbox/draining`, which a live ffwatch's self-updater writes and removes:
+tests passed or failed depending on what the service happened to be doing.
+
+**Not done, and why.**
+
+- **T15** (close stale rows once, on migration). The lazy path already closes a stale
+  conversation the moment anything looks at its channel, and closing rows at every start is a
+  data rewrite on a path whose own comment says such things belong in a reviewed script. What it
+  would buy is cosmetic: 25 dead conversations on the web page read `idle` until their channel
+  moves again.
+- **T39** (dim a zero-turn conversation). Cosmetic; the list already carries a `turns` column
+  showing 0.
+- **T41** (how often S4 actually fires). A runtime measurement, not code. The log line is in
+  (`cluster: message ... is in the S4 band`) and `routed_by='recent'` records it per message;
+  the number needs live traffic.
+- **T42** (one live thread, end to end). Needs a real thread in a real Discord channel. The
+  sweep and listener halves are covered offline, but no thread has ever been ingested on this
+  box, so the path is still unproven in production.
+
+**Before this reaches the running service.** ff-discord is bumped to 1.11.0, which is what
+delivers the CLI's `--after` and the listener's thread map. `sh registerAgents.sh` on the box,
+then restart the listener. The live ffwatch runs from `/opt/final-factory-agents`, a different
+checkout from the one this was written in.
+
 ## What the database actually looks like today
 
 Measured 2026-08-30. 29 conversations; **every one with a Discord origin holds exactly one
