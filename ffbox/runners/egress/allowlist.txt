@@ -38,11 +38,24 @@ github.com
 api.github.com
 
 # --- GitHub: what a job downloads ---------------------------------------------------------------
-# codeload CONFIRMED 2026-08-29: actions/checkout fetches the repository through it. objects. is
-# release assets and the JavaScript actions the runner unpacks; not seen separately because
-# *.githubusercontent.com below already covers it. raw. is not used by main.yml and stays absent.
-codeload.github.com
-objects.githubusercontent.com
+# REMOVED 2026-08-31: codeload.github.com and objects.githubusercontent.com.
+#
+# codeload was never the repository fetch, which is what its old comment here claimed. It was the
+# runner downloading the CODE FOR EACH ACTION before step one -- visible on every job including
+# mode2Freshness, which checks out almost nothing. The image now carries those archives
+# (ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE) and a real job no longer touches codeload at all.
+#
+# objects. carried no traffic in 27 hours of jobs.
+#
+# SAFE BECAUSE main.yml IS THE ONLY WORKFLOW BEHIND THIS FENCE. activation.yml is on
+# ubuntu-latest, deploy.yml on self-hosted, determinism-nightly.yml on finalfactory-mode2-windows.
+# main.yml's two jobs use actions/checkout and actions/upload-artifact and nothing else, both
+# pinned by SHA and both in the image cache.
+#
+# THE FOOTGUN, since this is now a thing that can break a build: adding a new `uses:` to main.yml
+# without adding it to the cache in ffbox/Dockerfile means the runner tries to download it, is
+# refused here, and the job fails before step one. That is the intended trade -- a loud failure
+# rather than a quiet reach -- but it is the failure to expect.
 
 # --- Git LFS --------------------------------------------------------------------------------------
 # CONFIRMED 2026-08-29: actions/checkout with lfs: true smudges through git-lfs filter-process,
