@@ -15,6 +15,39 @@ set -eu
 JIT=$FFGHR_JITCONFIG
 unset FFGHR_JITCONFIG
 
+# THE UNITY MACHINE ID, WRITTEN BEFORE ANYTHING ELSE STARTS.
+#
+# Unity's licensing service identifies a machine by /etc/machine-id, and game-ci's base image pins
+# it to one constant for every container it builds (images/ubuntu/base/Dockerfile:73, "Support
+# forward compatibility for unity activation"). That is right for a .ulf licence file, which is
+# bound to a machine; it is wrong for the personal SERIAL activation this project does, where two
+# containers presenting the same id are one machine holding one entitlement, and the second
+# concurrent activation dies with "Found 0 entitlement groups and 0 free entitlements", exit 198.
+#
+# game-ci's own action undoes the pin for exactly this case — unity-test-runner v4,
+# dist/platforms/ubuntu/entrypoint.sh:3-7, `dbus-uuidgen > /etc/machine-id` when the serial starts
+# with F. main.yml no longer runs that action, so this is where it has to happen instead.
+#
+# THE VALUE COMES FROM THE SUPERVISOR AND IS DERIVED FROM THE SLOT, not randomized here. An
+# activation registers a machine and only -returnlicense gives it back, so a random id per
+# container makes every leaked seat permanent; a per-slot id bounds the licence's registrations at
+# the slot count and lets the next job on that slot reuse its entitlement. lib/config.sh's machine
+# id section has the whole argument.
+#
+# VALIDATED AGAIN HERE because this runs as root and writes a file the whole container trusts.
+# Anything that is not 32 hex characters is ignored, loudly, and the image's own id stands.
+if [ -n "${FFGHR_MACHINE_ID:-}" ]; then
+    if printf '%s' "$FFGHR_MACHINE_ID" | grep -qE '^[0-9a-f]{32}$'; then
+        printf '%s\n' "$FFGHR_MACHINE_ID" > /etc/machine-id
+        mkdir -p /var/lib/dbus
+        ln -sf /etc/machine-id /var/lib/dbus/machine-id
+        echo "[ffghr] machine id set to $FFGHR_MACHINE_ID"
+    else
+        echo "[ffghr] WARNING: FFGHR_MACHINE_ID is not 32 hex characters; keeping the image's" >&2
+    fi
+fi
+unset FFGHR_MACHINE_ID
+
 # The runner refuses to start as root unless this is set. It is set because the CONTAINER is the
 # boundary, not the uid inside it: the job gets namespace-root either way, and the account
 # underneath on the host owns nothing. Dropping to a non-root user here would buy nothing and

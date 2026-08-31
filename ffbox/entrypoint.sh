@@ -8,11 +8,16 @@
 # extraction) could neither read nor clean them up. This mirrors what game-ci's entrypoint does
 # under runAsHostUser:true — which is exactly how .github/workflows/main.yml already runs.
 #
-# Deliberately NOT copied from game-ci: their entrypoint runs `dbus-uuidgen > /etc/machine-id`
-# when the serial starts with F (a personal license), so every container looks like a brand-new
-# machine to Unity's licensing service. That is fine for CI running a few times a day and ruinous
-# for an agent loop — it would burn a fresh activation seat on every single run. We keep the
+# Deliberately NOT copied from game-ci IN THIS LANE: their entrypoint runs
+# `dbus-uuidgen > /etc/machine-id` when the serial starts with F (a personal license), so every
+# container looks like a brand-new machine to Unity's licensing service. That is ruinous for an
+# agent loop — it would burn a fresh activation seat on every single run. The agent lane keeps the
 # machine ID stable so repeat runs look like one machine. See run-as-user.sh for the other half.
+#
+# THE CI LANE DOES OVERRIDE IT, because there the stable id is what stops two jobs activating at
+# once, and the supervisor derives one id PER SLOT rather than a fresh one per run — so the licence
+# still sees a small fixed set of machines rather than one per job. entrypoint-ci.sh, and the
+# machine id section of ffbox/runners/lib/config.sh.
 set -euo pipefail
 
 # --- mode ------------------------------------------------------------------------------------

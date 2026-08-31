@@ -107,15 +107,59 @@ cost of that same race.
 `ffgithubrunners slots N` changes the ceiling, needs root, and takes effect when
 `05-services.sh --install` enables or disables the unit instances behind it.
 
-Two things to know before raising `slots` much:
+One thing to know before raising `slots` much: **the cache quota is sized for three slots staging
+at once.** 250G is ten 16G entries plus three 16G staging directories; six slots on six different
+branches could ask for more than that.
 
-- **Concurrent Unity jobs cannot activate.** Open item (e): every container built from this image
-  carries the same `/etc/machine-id`, so Unity's licensing service sees all slots as one machine
-  and a Personal licence holds one seat per machine. The second concurrent activation fails with
-  exit 198. Until that is fixed, a high ceiling helps jobs that do not start the editor and does
-  nothing for the ones that do.
-- **The cache quota is sized for three slots staging at once.** 250G is ten 16G entries plus three
-  16G staging directories; six slots on six different branches could ask for more than that.
+## Unity, and the machine id
+
+Unity's licensing service identifies a machine by `/etc/machine-id`, and game-ci's base image pins
+it to one constant for every container it ever builds:
+
+```
+images/ubuntu/base/Dockerfile:73
+  # Support forward compatibility for unity activation
+  RUN echo "576562626572264761624c65526f7578" > /etc/machine-id && ...
+```
+
+That hex decodes to `Webber&GabLeRoux`. Pinning it is right for a `.ulf` licence FILE, which is
+bound to a machine: one downloaded licence then works in every container. It is wrong for the
+personal SERIAL activation this project does, where the seat is bound per machine — two containers
+presenting one id are one machine holding one entitlement, and the second concurrent activation
+dies with `Found 0 entitlement groups and 0 free entitlements` and exit 198.
+
+game-ci's own ACTION undoes the pin for exactly this case, in
+`unity-test-runner@v4 dist/platforms/ubuntu/entrypoint.sh`:
+
+```sh
+# Ensure machine ID is randomized for personal license activation
+if [[ "$UNITY_SERIAL" = F* ]]; then
+  dbus-uuidgen > /etc/machine-id && ... ln -sf /etc/machine-id /var/lib/dbus/machine-id
+fi
+```
+
+`main.yml` no longer runs that action — it sources `unity-license.sh` directly — so nothing was
+doing it any more. `entrypoint-ci.sh` does it now, from a value the supervisor passes in.
+
+**Derived from the slot, not random.** An activation registers a machine with Unity and only
+`-returnlicense` gives it back, so a job that is SIGKILLed leaks one. A fresh random id per
+container makes every leak permanent, because that machine never comes back; an id derived from
+the slot means the licence sees at most `slots` machines ever, and the next job on that slot
+presents the same id and reuses its entitlement — which is why sequential jobs work today on the
+pinned id in spite of leaks.
+
+```
+machine_id  per-slot   the default: sha256 of the host name and the slot, first 32 hex
+            image      leave the image's constant alone (what ffbox's agent lane does)
+            <32 hex>   that exact id
+```
+
+**This lands only on an image rebuild** — `ffgithubrunners image update`, or the weekly timer —
+because `entrypoint-ci.sh` is baked in.
+
+What this does NOT change is the licence's own ceiling on how many machines may hold a seat at
+once. A Personal licence is a small number; if the sixth concurrent Unity job reports no free
+entitlements while the first five are running, that is the licence talking, not this.
 
 ## Where things are
 

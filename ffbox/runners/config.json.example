@@ -22,6 +22,9 @@
   "pids_limit": 4096,
   "workspace_size": "40g",
 
+  "_comment_machine_id": "Unity identifies a machine by /etc/machine-id, and game-ci's base image pins it to one constant so a .ulf licence file keeps working in every container. That is wrong for a personal SERIAL activation, where the seat is bound per machine and the second concurrent activation gets 'Found 0 entitlement groups and 0 free entitlements'. per-slot derives a stable id per slot: concurrency works, and because the id survives the container, a seat leaked by a SIGKILLed job is reclaimed by the next job on that slot instead of being lost forever the way game-ci's per-container random id would lose it. 'image' restores the pinned constant. Takes effect on an image rebuild.",
+  "machine_id": "per-slot",
+
   "_comment_cache": "The host workspace cache, design/ffcache_design.txt. cache_dir empty disables it entirely and restores the no-bind-mounts arrangement. cache_quota 250G is ten 16G entries plus three slots staging 16G each, so a machine that raises slots well above three wants to raise it too, not a round number. cache_sync is standard rather than the daemon store's disabled: sync only governs fsync/O_SYNC, and the save path issues none (measured: tar does 1684 write() and zero fsync), so the safer default is free here even though it would be expensive for docker.",
   "cache_dir": "/opt/ffcache",
   "cache_keep": 10,

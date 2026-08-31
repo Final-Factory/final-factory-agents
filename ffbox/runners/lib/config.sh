@@ -156,6 +156,67 @@ _ffghr_set PIDS_LIMIT       pids_limit       4096
 # already entirely the job's own, and none of them is a step toward leaving it.
 _ffghr_set CAP_ADD          cap_add          'CHOWN,FOWNER,DAC_OVERRIDE'
 
+# --- the Unity machine id -----------------------------------------------------------------------
+#
+# WHAT UNITY'S LICENSING SERVICE THINKS THIS MACHINE IS, and the reason two Unity jobs could not
+# run at once. game-ci's base image PINS /etc/machine-id to one constant for every container it
+# ever builds:
+#
+#   images/ubuntu/base/Dockerfile:73
+#     # Support forward compatibility for unity activation
+#     RUN echo "576562626572264761624c65526f7578" > /etc/machine-id && ... /var/lib/dbus/machine-id
+#
+# (that hex is "Webber&GabLeRoux"). A .ulf licence file is bound to a machine, so pinning the id is
+# what lets one downloaded licence keep working in every container. Their ACTION then undoes it for
+# a personal SERIAL activation, which is bound per machine rather than per file —
+# unity-test-runner v4, dist/platforms/ubuntu/entrypoint.sh:3-7, identical in unity-builder:
+#
+#     # Ensure machine ID is randomized for personal license activation
+#     if [[ "$UNITY_SERIAL" = F* ]]; then
+#       dbus-uuidgen > /etc/machine-id && ... ln -sf /etc/machine-id /var/lib/dbus/machine-id
+#     fi
+#
+# main.yml no longer runs that action — it sources unity-license.sh directly — so nothing was
+# doing this any more, every container presented as the same machine, and the second concurrent
+# activation got "Found 0 entitlement groups and 0 free entitlements" and exit 198. Design open
+# item (e).
+#
+# PER SLOT, NOT PER CONTAINER, and that is a deliberate improvement on game-ci's line. An
+# activation registers a machine with Unity and only -returnlicense gives it back, so a job that
+# is SIGKILLed leaks one. With a fresh random id per container every leak is permanent, because
+# that machine never comes back. With an id derived from the slot, the licence sees at most $SLOTS
+# machines ever, and the next job on that slot presents the same one and reuses its entitlement —
+# which is exactly why sequential jobs work today on the pinned id despite leaks.
+#
+#   per-slot   the default: sha256 of the host name and the slot, first 32 hex
+#   image      leave the image's baked-in constant alone. What ffbox's own agent lane does, and
+#              the way back if this turns out to interact badly with the licence.
+#   <32 hex>   that exact id, for a machine that needs to present a specific one.
+_ffghr_set MACHINE_ID       machine_id       per-slot
+
+# Prints the id for a slot, or returns 1 when nothing should be overridden. The container's
+# entrypoint validates this again before it writes anything: it is the thing that runs as root.
+ffghr_machine_id() {
+    _slot=${1:?ffghr_machine_id needs a slot}
+    case "$MACHINE_ID" in
+        ''|image|none)
+            return 1 ;;
+        per-slot)
+            _mhost=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo host)
+            printf 'ffghr-%s-slot-%s' "$_mhost" "$_slot" | sha256sum | cut -c1-32
+            unset _mhost ;;
+        *)
+            # An id that is not 32 hex characters is not a machine id, and systemd, dbus and Unity
+            # disagree about which of them says so. Refuse it here instead.
+            if printf '%s' "$MACHINE_ID" | grep -qE '^[0-9a-f]{32}$'; then
+                printf '%s\n' "$MACHINE_ID"
+            else
+                printf 'ffgithubrunners: machine_id must be per-slot, image, or 32 hex characters\n' >&2
+                return 1
+            fi ;;
+    esac
+}
+
 # --- egress, per section 3 --------------------------------------------------------------------
 # ffbox is on 10.80.0.0/24. These must not overlap it: both fences live in the same daemon.
 # THE LOCAL GIT MIRROR. Where a job fetches the repository instead of github.com. MIRROR_URL is a

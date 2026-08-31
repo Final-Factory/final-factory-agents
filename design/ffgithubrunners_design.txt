@@ -569,25 +569,46 @@ running. After it, revert one commit.
      Removed github-cloud.s3.amazonaws.com, which nothing used. Added download.packages.unity.com,
      which was refused. Still unexercised: api.github.com and a cold UPM resolve.
   b. --pids-limit needs a number a real Unity import does not trip.
-  e. CONCURRENT UNITY JOBS CANNOT ACTIVATE, which blocks slots > 1. Every container built from
-     this image carries the SAME /etc/machine-id: measured 2026-08-29, two fresh containers both
-     report 576562626572264761624c65526f7578, baked into the layer by the unityci/editor base.
-     Unity's licensing service therefore sees all three slots as ONE machine, a Personal licence
-     holds one seat per machine, and the second concurrent activation gets "Found 0 entitlement
-     groups and 0 free entitlements" and exit 198. Observed live: one job held a seat from
-     23:00:49 to 23:01:03 and another began activating at 23:00:51.
+  e. FIXED 2026-08-31, per slot rather than per container. Every container built from this image
+     carried the SAME /etc/machine-id: measured 2026-08-29, two fresh containers both report
+     576562626572264761624c65526f7578, baked into the layer by the unityci/editor base. Unity's
+     licensing service therefore saw all three slots as ONE machine, a Personal licence holds one
+     seat per machine, and the second concurrent activation got "Found 0 entitlement groups and 0
+     free entitlements" and exit 198. Observed live: one job held a seat from 23:00:49 to 23:01:03
+     and another began activating at 23:00:51.
 
-     GAME-CI DID NOT HAVE THIS PROBLEM. Its entrypoint runs `dbus-uuidgen > /etc/machine-id`
-     whenever the serial starts with F, so each of the four parallel containers presented as a
-     brand-new machine. ffbox/entrypoint.sh:11-15 records that ffbox deliberately does NOT copy
-     that, because an agent loop re-running constantly would burn an activation every time.
-     Nothing in this image, unity-license.sh or entrypoint.sh does it, and nothing replaced it.
+     BOTH HALVES OF GAME-CI'S ANSWER, now read from the source rather than from memory. The pin is
+     deliberate and belongs to the IMAGE — game-ci/docker images/ubuntu/base/Dockerfile:73, "Support
+     forward compatibility for unity activation", and the hex decodes to "Webber&GabLeRoux". It is
+     right for a .ulf licence FILE, which is bound to a machine, so one downloaded licence works in
+     every container. The ACTION then undoes it for a personal SERIAL activation —
+     unity-test-runner v4 dist/platforms/ubuntu/entrypoint.sh:3-7, identical in unity-builder:
 
-     ffbox's reasoning does not carry over here: a slot container is single-use, dies after one
-     job, and unity-license.sh returns the seat from its trap, so the churn is bounded by job
-     count rather than by a loop. Copying game-ci's line is the obvious fix and wants checking
-     against the licence's activation ceiling first. The alternatives are serialising the editor
-     across slots with a host lock, or running one slot.
+         # Ensure machine ID is randomized for personal license activation
+         if [[ "$UNITY_SERIAL" = F* ]]; then
+           dbus-uuidgen > /etc/machine-id && ... ln -sf /etc/machine-id /var/lib/dbus/machine-id
+         fi
+
+     main.yml stopped running that action when it dropped the docker action for a direct
+     unity-license.sh call, and nothing replaced it. Our .ulf is bound to a real 2018 machine, not
+     to the pinned container id, so the file-licence path was never available to us either; the
+     serial activation is what we do and it is what needs a distinct machine.
+
+     WHAT WE DO INSTEAD OF RANDOMIZING. entrypoint-ci.sh writes an id the supervisor derives from
+     the SLOT (sha256 of host and slot number, first 32 hex; machine_id in config.json, 'image'
+     restores the pin). An activation registers a machine and only -returnlicense gives it back, so
+     a job that is SIGKILLed leaks one: with game-ci's per-container random id every leak is
+     permanent, because that machine never comes back, while a per-slot id bounds the licence's
+     registrations at the slot count and lets the next job on that slot reuse its entitlement.
+     That reuse is not a guess — it is why sequential jobs work today on the pinned id despite
+     whatever the watchdog has leaked.
+
+     ffbox's agent lane keeps the pinned id, and for its own reason: a loop re-running constantly
+     would burn an activation every time. Open item (d) — whether the watchdog's TERM reaches the
+     licence trap — is now the only thing that leaks a seat, and it leaks a REUSABLE one.
+
+     Still unmeasured: how many machines this Personal licence will hold seats for at once. Six
+     slots do not create six entitlements if the licence only grants two.
 
   d. Whether the watchdog's TERM reaches the licence trap. PID 1 in the container is
      Runner.Listener and the trap is two processes below it, so the seat may not come back on a
