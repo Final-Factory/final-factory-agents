@@ -119,6 +119,27 @@ done
 # a tarball introduces.
 git -C "$WORKSPACE" config --local core.checkStat minimal 2>/dev/null || true
 
+# THE BRANCH AND THE IDENTITY, which the host used to set before handing over the workspace. They
+# move in here with everything else: there is no host-visible tree left to set them on.
+#
+# The identity is not decoration -- harvest-workspace.sh checks every commit in the range against
+# it, so a run whose commits carry someone else's name is caught rather than published.
+git -C "$WORKSPACE" config --local user.name  "${FFBOX_GIT_NAME:-ffbox}" 2>/dev/null || true
+git -C "$WORKSPACE" config --local user.email "${FFBOX_GIT_EMAIL:-ffbox@final-factory.invalid}" 2>/dev/null || true
+
+if [ -n "${FFBOX_BRANCH:-}" ]; then
+    git -C "$WORKSPACE" check-ref-format --branch "$FFBOX_BRANCH" >/dev/null 2>&1 \
+        || die "refusing to create a branch named '$FFBOX_BRANCH'"
+    git -C "$WORKSPACE" checkout -q -B "$FFBOX_BRANCH" \
+        || die "could not create branch $FFBOX_BRANCH"
+    log "on branch $FFBOX_BRANCH"
+fi
+
+# What the run started from, recorded before the agent can move HEAD. harvest-workspace.sh needs it
+# to know where the published range begins, and taking it here rather than at the end is the
+# difference between a known-good value and one the run chose.
+git -C "$WORKSPACE" rev-parse HEAD > "${FFBOX_OUT:-/ffbox/out}/base_sha.txt" 2>/dev/null || true
+
 # Whoever runs next is not root; the tmpfs is 1777 but the extracted tree is not.
 chmod -R a+rwX "$WORKSPACE/.git" 2>/dev/null || true
 log "done"

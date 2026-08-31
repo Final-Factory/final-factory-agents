@@ -86,6 +86,12 @@ if v is not None and not isinstance(v, (dict, list)):
     print(v)
 ' "$FFBOX_CONFIG_JSON" "$1" 2>/dev/null
 }
+# clone: the host prepares a directory and bind-mounts it -- today's path, and still the default
+#        because the harvest below still runs git against it.
+# tmpfs: the container gets an empty capped ramdrive and fills it itself. Everything the container
+#        needs for that is built and tested; what is not yet done is the harvest reading
+#        /ffbox/out instead of running git on a host path. See docs/ffbox-workspace.md.
+WORKSPACE_MODE=${FFBOX_WORKSPACE_MODE:-clone}
 WORKSPACE_SIZE=${FFBOX_WORKSPACE_SIZE:-$(_ffbox_cfg workspace_size)}
 [ -n "$WORKSPACE_SIZE" ] || WORKSPACE_SIZE=40g
 SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
@@ -152,7 +158,11 @@ Options:
                        machine and for debugging the container itself.
   --keep               Leave the ZFS clone and its mountpoint in place for inspection.
                        Remove it yourself with: rm -rf <workspace>
-  --no-fetch           Clone golden exactly as it is instead of bringing it to origin first.
+  --workspace MODE     clone (default) or tmpfs. tmpfs gives the container an empty capped
+                       ramdrive it fills itself, so no workspace exists on a host path and the
+                       kernel frees it when the run ends. Not yet the default: the harvest still
+                       reads the workspace from the host. See docs/ffbox-workspace.md.
+  --no-fetch           Use the cache entry as it stands instead of fetching the tip from the mirror.
                        Also FFBOX_SKIP_FETCH=1. Without this the run fails rather than
                        silently reasoning against a checkout of unknown age.
   --json               Emit Claude's stream-json output instead of plain text.
@@ -217,6 +227,9 @@ while [ $# -gt 0 ]; do
         --prompt-file)    PROMPT_FILE=${2:?--prompt-file needs a path}; shift 2 ;;
         --direct)         DIRECT=1; shift ;;
         --keep)           KEEP=1; shift ;;
+        --workspace)      WORKSPACE_MODE=${2:?--workspace needs clone or tmpfs}; shift 2
+                          case "$WORKSPACE_MODE" in clone|tmpfs) ;;
+                            *) echo "ffbox: --workspace takes clone or tmpfs" >&2; exit 2 ;; esac ;;
         --no-fetch)       SKIP_FETCH=1; shift ;;
         --json)           OUTPUT_FORMAT=stream-json; shift ;;
         --image)          IMAGE=${2:?--image needs a name}; shift 2 ;;
@@ -598,6 +611,10 @@ echo "[ffbox] run $RUN_ID"
 #
 # THE AGENT ONLY EVER READS THE CACHE. Extraction happens here, on the host, from a directory the
 # container never sees; the run cannot write back into an entry that later runs restore from.
+if [ "$WORKSPACE_MODE" = tmpfs ]; then
+    # The container makes its own workspace and fills it. Nothing here, and nothing on a host path.
+    WS_MADE=""
+else
 mkdir -p "$MNT" || { echo "ffbox: could not create $MNT" >&2; exit 69; }
 WS_MADE=1
 
@@ -631,6 +648,8 @@ if getent group ffbox-container >/dev/null 2>&1; then
     chmod 2775 "$MNT" 2>/dev/null || true
 fi
 
+fi
+
 # Which entry. The branch asked for, then the default branch, then whatever ran most recently at
 # this editor version -- the same ladder main.yml's restore uses, so both modes agree on what a
 # usable entry is.
@@ -656,6 +675,7 @@ done
 # REFUSE RATHER THAN FILL THE RAMDRIVE. The workspace lives in memory, so running out is not a
 # failed run -- it is memory taken from CI jobs and everything else on the box. Half the headroom
 # again on top of the entry covers what the run itself then writes.
+if [ "$WORKSPACE_MODE" != tmpfs ]; then
 _entry_bytes=$(stat -c %s "$ENTRY" 2>/dev/null || echo 0)
 # `df -P --output=avail` is not a thing -- the two options are mutually exclusive and df exits
 # non-zero, which made this compute 0 and refuse EVERY run. Caught by running it.
@@ -697,10 +717,50 @@ else
     exit 69
 fi
 
+fi
+
 # Golden tracked master, so a run with no --ref used to land on master. Keep that.
 [ -n "$REF" ] || REF=master
 
-echo "[ffbox] workspace: $MNT (from $(basename "$ENTRY"))"
+# --- how the workspace reaches the container ---------------------------------------------------
+#
+# TMPFS: the container gets an empty ramdrive with its own size=, fills it itself from the cache
+# entry and the mirror, and harvests to /ffbox/out before it exits. Nothing about the workspace
+# exists on a host path, the kernel frees it when the container goes, and the host never runs git
+# in a tree a container wrote -- which deletes finding F7's hazard rather than mitigating it.
+#
+# CLONE: the host-prepared directory above, bind-mounted. Still the default until the harvest
+# reads /ffbox/out instead of running git against $MNT.
+if [ "$WORKSPACE_MODE" = tmpfs ]; then
+    _ffbox_gid=$(getent group ffbox-container 2>/dev/null | cut -d: -f3)
+    # exec, because Docker's tmpfs default is noexec and Unity, git hooks and node all run from
+    # the workspace. uid 1000/gid 0 is what entrypoint.sh drops to and expects to own the tree.
+    WORKSPACE_ARGS=(
+        --tmpfs "/workspace:size=${WORKSPACE_SIZE},exec,mode=0755,uid=1000,gid=${_ffbox_gid:-0}"
+        -v "$CACHE_ENTRIES:/ffcache:ro"
+        -v "$MIRROR_REPO_PATH:/ffmirror:ro"
+    )
+    WORKSPACE_ENV=(
+        -e "FFBOX_CACHE_ENTRY=/ffcache/$(basename "$ENTRY")"
+        -e "FFBOX_MIRROR=/ffmirror"
+        -e "FFBOX_REF=$REF"
+        -e "FFBOX_BRANCH=$BRANCH"
+        -e "FFBOX_BRANCH_PREFIX=$BRANCH_PREFIX"
+        -e "FFBOX_BASE_REFS=$BASE_REFS"
+        -e "FFBOX_RUN_ID=$RUN_ID"
+        -e "FFBOX_GIT_NAME=$FFBOX_GIT_NAME"
+        -e "FFBOX_GIT_EMAIL=$FFBOX_GIT_EMAIL"
+    )
+else
+    WORKSPACE_ARGS=(-v "$MNT:/workspace")
+    WORKSPACE_ENV=()
+fi
+
+if [ "$WORKSPACE_MODE" = tmpfs ]; then
+    echo "[ffbox] workspace: container ramdrive, ${WORKSPACE_SIZE} cap, from $(basename "$ENTRY")"
+else
+    echo "[ffbox] workspace: $MNT (from $(basename "$ENTRY"))"
+fi
 
 # A ZFS CLONE IS A DIFFERENT DATASET, SO EVERY FILE'S st_dev CHANGES. Git records dev and inode
 # in the index, so the first `git status` in a clone disagrees with the index about all 26,677
@@ -849,7 +909,7 @@ docker run --rm \
     --name "ffbox-${RUN_ID}" \
     --hostname ffbox \
     "${NETWORK_ARGS[@]}" \
-    -v "$MNT:/workspace" \
+    "${WORKSPACE_ARGS[@]}" \
     -v "$OUT:/ffbox/out" \
     "${PROMPT_MOUNT[@]}" \
     "${DOCKER_MOUNTS[@]}" \
@@ -859,6 +919,7 @@ docker run --rm \
     -e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
     -e DISABLE_AUTOUPDATER=1 \
     -e FFBOX_OUTPUT_FORMAT="$OUTPUT_FORMAT" \
+    "${WORKSPACE_ENV[@]}" \
     "$IMAGE" &
 DOCKER_PID=$!
 
