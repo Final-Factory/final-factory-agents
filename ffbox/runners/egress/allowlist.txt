@@ -55,10 +55,24 @@ objects.githubusercontent.com
 *.githubusercontent.com
 
 # --- actions/cache and actions/upload-artifact ----------------------------------------------------
-# CONFIRMED 2026-08-29: upload-artifact went to productionresultssa5.blob.core.windows.net. The
-# shard number is why this stays a wildcard. main.yml restores a Library cache and uploads two
-# artifacts on every job, so if this were wrong the failure would be loud rather than subtle.
-*.blob.core.windows.net
+# CONFIRMED 2026-08-29: upload-artifact went to productionresultssa5.blob.core.windows.net. Sixteen
+# distinct shards have been seen since — sa0, 2, 4-14, 16-18 — which is why this cannot be a list.
+# main.yml restores a Library cache and uploads two artifacts on every job, so if this were wrong
+# the failure would be loud rather than subtle.
+#
+# A REGEX AND NOT `*.blob.core.windows.net`, and this is the most important line in the file.
+# blob.core.windows.net is a MULTI-TENANT namespace: an Azure storage account name is claimed
+# first-come by anyone with a free account. The wildcard therefore permitted `<attacker>.blob.
+# core.windows.net` — an open, unauthenticated, high-bandwidth path out of the fence that had
+# nothing to do with GitHub and would not have been closed by any amount of GitHub filtering.
+#
+# Contrast *.actions.githubusercontent.com and *.githubusercontent.com above, which stay wildcards
+# and are fine as wildcards: GitHub owns those DNS zones, so no third party can put a name under
+# them. Vendor-controlled namespace, safe. Customer-controlled namespace, not.
+#
+# Non-matching names under the suffix still resolve here and are refused by nginx, so an attempt
+# lands in the SNI log with the name it asked for. See docs/egress.md.
+~^productionresultssa[0-9]{1,2}\.blob\.core\.windows\.net$   blob.core.windows.net
 
 # --- Unity licensing --------------------------------------------------------------------------------
 # CONFIRMED 2026-08-29 by a real activation that succeeded on the first attempt and returned its
