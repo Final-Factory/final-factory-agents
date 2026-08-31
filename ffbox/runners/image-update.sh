@@ -17,6 +17,8 @@
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# ffbox/, one level up, where the one Dockerfile lives. Same line as 03-image.sh.
+FFBOX=$(CDPATH= cd -- "$HERE/.." && pwd)
 
 RUNNER_VERSION=""
 NO_DRAIN=0
@@ -75,13 +77,21 @@ if [ "$NO_DRAIN" = 0 ]; then
     fi
 fi
 
+# THE DOCKERFILE IS IN ffbox/, NOT HERE, and this script had its own copy of the build command
+# that still said otherwise. From 2026-08-23 to 2026-08-31 every weekly rebuild died on
+#   sed: can't read .../ffbox/runners/Dockerfile: No such file or directory
+# and left ffgithubrunners-image.service in `failed`, which is a silent way to stop being given
+# jobs: a runner that falls below GitHub's minimum version is simply never scheduled.
+#
+# So the build is DELEGATED rather than repeated. 03-image.sh already knows where the Dockerfile
+# is, what to tag and what to pass; two copies of that is what drifted in the first place.
 say "pulling the base image"
-BASE=$(sed -n 's/^ARG UNITY_IMAGE=//p' "$HERE/Dockerfile" | head -1)
-[ -n "$BASE" ] || die "could not read UNITY_IMAGE from the Dockerfile"
+BASE=$(sed -n 's/^ARG UNITY_IMAGE=//p' "$FFBOX/Dockerfile" | head -1)
+[ -n "$BASE" ] || die "could not read UNITY_IMAGE from $FFBOX/Dockerfile"
 docker pull "$BASE" || die "could not pull $BASE"
 
 say "building $IMAGE with runner $RUNNER_VERSION"
-docker build --build-arg "RUNNER_VERSION=$RUNNER_VERSION" -t "$IMAGE" "$HERE" \
+sh "$HERE/03-image.sh" --image-only --runner "$RUNNER_VERSION" \
     || die "the build failed; the previous $IMAGE is untouched"
 
 NEW_RUNNER=$(docker image inspect "$IMAGE" \
