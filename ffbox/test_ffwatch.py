@@ -4423,6 +4423,67 @@ def test_a_thread_in_an_ordinary_channel_is_swept():
           case.rows("SELECT conversation_id, discord_id FROM message"))
 
 
+def test_a_container_sees_only_its_own_conversation():
+    """One conversation's session transcript is not another's to read.
+
+    The mounts are per-conversation and always have been, but nothing pinned it, and it is
+    exactly the kind of thing an optimisation quietly undoes — one shared CLAUDE_CONFIG_DIR
+    across every run looks like an obvious saving until you notice a stranger's bug report can
+    resume an operator's session by id.
+
+    It matters more since the resume path started being used: transcripts are now group-readable
+    so the container's uid can open them (share_with_container), so the DIRECTORY BOUNDARY is
+    what keeps them apart rather than the file mode.
+    """
+    print("a container is mounted only its own conversation")
+    fixture = base_fixture()
+    a, b = sflake(0, 1), sflake(30 * 86400, 2)
+    fixture["messages"][ASK_CHANNEL] = [message(a, "first conversation"),
+                                        message(b, "much later, a second one")]
+    case = Case("isolation", fixture, verdict={"engage": True, "reason": "r"})
+    case.events(ask_event(a), ask_event(b))
+    case.watcher.drain_events()
+    convs = case.rows("SELECT * FROM conversation ORDER BY id")
+    check("two conversations, so there is something to keep apart", len(convs) == 2, convs)
+
+    mounts = {}
+    real = ffwatch.subprocess.run
+    def capture(cmd, *a, **kw):
+        if isinstance(cmd, list) and "--mount" in cmd:
+            mounts[kw.get("_id")] = [cmd[i + 1] for i, x in enumerate(cmd) if x == "--mount"]
+        return real(cmd, *a, **kw)
+    for conv in convs:
+        case.watcher.claim_turns()
+    turns = case.rows("SELECT * FROM turn ORDER BY id")
+    seen = []
+    for turn in turns:
+        conv = case.rows("SELECT * FROM conversation WHERE id=?",
+                         (turn["conversation_id"],))[0]
+        run_dir = os.path.join(case.watcher.conv_dir(conv["id"]), "runs", "r")
+        os.makedirs(run_dir, exist_ok=True)
+        job = case.watcher.build_job(turn, conv, "r", os.path.join(
+            case.watcher.conv_dir(conv["id"]), "attachments"))
+        seen.append((conv["id"], case.watcher.conv_dir(conv["id"]),
+                     job["session"]["id"]))
+
+    check("each conversation has its own directory under conversations/",
+          len({d for _, d, _ in seen}) == len(seen), seen)
+    check("and its own session id, derived from its own thread",
+          len({sid for _, _, sid in seen}) == len(seen), seen)
+    for cid, d, _ in seen:
+        check(f"conversation {cid}'s claude dir is inside its own directory",
+              os.path.join(d, "claude").startswith(d + os.sep), d)
+    check("no conversation's directory contains another's",
+          not any(x != y and x.startswith(y + os.sep) for _, x, _ in seen
+                  for _, y, _ in seen), [d for _, d, _ in seen])
+
+    # The mount the container is given is that directory and nothing above it. A mount of
+    # `conversations/` would hand every run every transcript on the box.
+    src = ffwatch.inspect.getsource(ffwatch.Watcher.launch)
+    check("the claude mount is the conversation's own dir, not the conversations root",
+          "claude_dir}:/ffbox/claude" in src and "conv_root" not in src, "launch() mounts")
+
+
 def test_the_classifier_runs_in_a_sandbox():
     """The gate reads text written by strangers and runs ON THE HOST, as the account that owns
     the Docker socket, the zfs rules, GH_TOKEN and the Claude credential.
@@ -6203,6 +6264,7 @@ def main():
         test_the_selector_narrows_a_choice_it_cannot_widen,
         test_a_long_conversation_rotates_its_session_not_itself,
         test_a_thread_in_an_ordinary_channel_is_swept,
+        test_a_container_sees_only_its_own_conversation,
         test_the_classifier_runs_in_a_sandbox,
         test_destructive_docker_calls_name_the_container,
         test_the_run_is_on_the_filtered_network,
