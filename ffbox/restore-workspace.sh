@@ -53,7 +53,9 @@ fi
 
 log "restoring $(basename "$ENTRY") ($(du -h "$ENTRY" 2>/dev/null | cut -f1))"
 _t0=$(date +%s)
-tar -xf "$ENTRY" -C "$WORKSPACE" || die "the archive did not extract"
+# --no-same-owner: the archive records a CI container's uids, which mean nothing here, and
+# letting tar apply them also rewrites the workspace directory's own ownership.
+tar -xf "$ENTRY" -C "$WORKSPACE" --no-same-owner || die "the archive did not extract"
 log "extracted in $(( $(date +%s) - _t0 ))s"
 
 [ -d "$WORKSPACE/.git" ] || die "the archive contained no .git"

@@ -8,7 +8,7 @@
 # web page as everything else. --direct opts out; --task/--job-file IS executor mode.
 #
 #   ffbox "make the belt merger respect item priority"
-#   ffbox --keep --prompt-file ./task.md
+#   ffbox --prompt-file ./task.md
 #   ffbox --task ffbox/discord-task.sh --job-file job.json --run-id d7t2-1a2b   (ffwatch)
 #
 # Each run gets its own ZFS clone of the golden checkout, bind-mounted into a container built on
@@ -61,7 +61,6 @@ UNITY_SCOPE=${FFBOX_UNITY_SCOPE:-}
 # Docker has the privilege to. ffbox cannot: mount refuses an unprivileged caller. So this tries a
 # per-run tmpfs first and falls back to a plain directory on /dev/shm, where the free-space check
 # below is all there is. See docs/ffbox-workspace.md for the one sudoers line that enables it.
-RUNS_MNT=${FFBOX_RUNS_MNT:-/dev/shm/ffbox-runs}
 
 # ONE SETTING FOR BOTH SIDES. The CI runners size their job ramdrive from workspace_size, and this
 # is the same number for an agent run -- there is no reason for a box to hold two answers to "how
@@ -86,12 +85,6 @@ if v is not None and not isinstance(v, (dict, list)):
     print(v)
 ' "$FFBOX_CONFIG_JSON" "$1" 2>/dev/null
 }
-# clone: the host prepares a directory and bind-mounts it -- today's path, and still the default
-#        because the harvest below still runs git against it.
-# tmpfs: the container gets an empty capped ramdrive and fills it itself. Everything the container
-#        needs for that is built and tested; what is not yet done is the harvest reading
-#        /ffbox/out instead of running git on a host path. See docs/ffbox-workspace.md.
-WORKSPACE_MODE=${FFBOX_WORKSPACE_MODE:-clone}
 WORKSPACE_SIZE=${FFBOX_WORKSPACE_SIZE:-$(_ffbox_cfg workspace_size)}
 [ -n "$WORKSPACE_SIZE" ] || WORKSPACE_SIZE=40g
 SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
@@ -153,15 +146,12 @@ usage() {
 
 Options:
   --prompt-file FILE   Read the prompt from FILE instead of the command line.
-  --direct             Do not route the prompt through ffwatch; clone and run right here.
+  --direct             Do not route the prompt through ffwatch; run right here.
                        Skips the database, the ceilings and the web page. For bootstrapping a
                        machine and for debugging the container itself.
-  --keep               Leave the ZFS clone and its mountpoint in place for inspection.
-                       Remove it yourself with: rm -rf <workspace>
-  --workspace MODE     clone (default) or tmpfs. tmpfs gives the container an empty capped
-                       ramdrive it fills itself, so no workspace exists on a host path and the
-                       kernel frees it when the run ends. Not yet the default: the harvest still
-                       reads the workspace from the host. See docs/ffbox-workspace.md.
+  --keep               Kept for callers that still pass it; there is nothing left to keep. The
+                       workspace is a ramdrive inside the container and the kernel frees it when
+                       the run ends. The run's output is under <results>/<run id> regardless.
   --no-fetch           Use the cache entry as it stands instead of fetching the tip from the mirror.
                        Also FFBOX_SKIP_FETCH=1. Without this the run fails rather than
                        silently reasoning against a checkout of unknown age.
@@ -170,7 +160,7 @@ Options:
   --network NAME       Docker network for the run (default: ffbox-net, the filtered one). Use
                        "bridge" for unrestricted egress — it is the old behaviour, and it hands
                        whatever runs in there the whole internet and this machine's LAN.
-  --ref REF            Check the workspace out at REF after cloning (a branch, tag or sha;
+  --ref REF            Check the workspace out at REF after restoring (a branch, tag or sha;
                        "develop" resolves to origin/develop when no local branch matches).
                        The resolved sha is written to <results>/base_sha.txt.
   --branch NAME        Create NAME at the checked-out commit before the container starts, and
@@ -227,9 +217,6 @@ while [ $# -gt 0 ]; do
         --prompt-file)    PROMPT_FILE=${2:?--prompt-file needs a path}; shift 2 ;;
         --direct)         DIRECT=1; shift ;;
         --keep)           KEEP=1; shift ;;
-        --workspace)      WORKSPACE_MODE=${2:?--workspace needs clone or tmpfs}; shift 2
-                          case "$WORKSPACE_MODE" in clone|tmpfs) ;;
-                            *) echo "ffbox: --workspace takes clone or tmpfs" >&2; exit 2 ;; esac ;;
         --no-fetch)       SKIP_FETCH=1; shift ;;
         --json)           OUTPUT_FORMAT=stream-json; shift ;;
         --image)          IMAGE=${2:?--image needs a name}; shift 2 ;;
@@ -397,7 +384,6 @@ esac
     exit 69; }
 
 RUN_ID=${RUN_ID_OVERRIDE:-$(date +%Y%m%d-%H%M%S)-$$}
-MNT="${RUNS_MNT}/run-${RUN_ID}"
 OUT="${RESULTS}/${RUN_ID}"
 
 mkdir -p "$OUT"
@@ -465,20 +451,10 @@ cleanup() {
     fi
 
     if [ "$KEEP" = 1 ]; then
-        echo "[ffbox] --keep: workspace left at $MNT" >&2
-        if [ "${WS_MOUNTED:-0}" = 1 ]; then
-            echo "[ffbox]         it is a tmpfs: sudo umount $MNT && rm -rf $MNT" >&2
-        else
-            echo "[ffbox]         remove it with: rm -rf $MNT" >&2
-        fi
+        echo "[ffbox] --keep: nothing to keep — the workspace was a container ramdrive" >&2
+        echo "[ffbox]         the run's output is at $OUT" >&2
     else
-        # A plain directory now, not a ZFS clone, so this needs no sudo at all. The narrow
-        # NOPASSWD rules that existed for `zfs snapshot|clone|destroy` are dead with it and can
-        # be dropped from sudoers.
-        # Unmount before removing, or rm -rf walks into a live tmpfs and the mount is leaked --
-        # which on a ramdrive means the memory is leaked too, until reboot.
-        [ "${WS_MOUNTED:-0}" = 1 ] && sudo -n umount "$MNT" 2>/dev/null
-        [ -n "${WS_MADE:-}" ] && rm -rf "$MNT" 2>/dev/null
+        : # the kernel freed the workspace when the container exited
     fi
     return $rc
 }
@@ -516,71 +492,7 @@ MAX_BUNDLE_BYTES=${FFBOX_MAX_BUNDLE_BYTES:-268435456}
 # outcome everybody wants; what is refused is finishing the run on the shared branch.
 PROTECTED_BRANCHES=${FFBOX_PROTECTED_BRANCHES:-develop master main}
 
-# Splits `git status --porcelain -z` into two NUL-separated pathspec files: paths that exist in
-# HEAD, and paths that do not. Called twice — once to clean the clone before the agent sees it,
-# once at harvest as a backstop for whatever the clean could not reach.
-#
-# A rename carries a SECOND NUL-terminated field (the original path) which must be consumed or
-# every later entry is read one field out of step.
-split_status_z() {
-    python3 - "$1" "$2" "$3" <<'PYBASE'
-import sys
 
-fields = open(sys.argv[1], "rb").read().split(b"\0")
-tracked, untracked = [], []
-i = 0
-while i < len(fields):
-    entry = fields[i]
-    i += 1
-    if len(entry) < 4:
-        continue
-    code, path = entry[:2], entry[3:]
-    if b"R" in code or b"C" in code:
-        # The original path of a rename/copy. It is tracked in HEAD, and it has to be consumed
-        # here or every following entry is read one field out of step.
-        if i < len(fields):
-            tracked.append(fields[i])
-            i += 1
-    (untracked if code == b"??" else tracked).append(path)
-open(sys.argv[2], "wb").write(b"\0".join(tracked) + (b"\0" if tracked else b""))
-open(sys.argv[3], "wb").write(b"\0".join(untracked) + (b"\0" if untracked else b""))
-PYBASE
-}
-
-# WHICH BRANCH THIS WORK IS FOR, decided by where it actually sits in the history rather than by
-# anything the agent says about it. A fix for the released build is based on origin/master and a
-# change for the next version on origin/develop; the agent chooses by choosing what it branches
-# from, and this reads that choice back out of the commit graph.
-#
-# The rule is: among the candidate bases that are ANCESTORS of the work, take the one furthest
-# down the history — the most specific. A branch off develop has both develop and master behind
-# it (master is merged into develop), and develop is the descendant of the two, so develop wins.
-# A branch off master has only master behind it, because develop carries commits the branch does
-# not. Ties keep the earlier candidate, which is why the harness passes develop first.
-#
-# Ancestry is required, not merely preferred: the published range is base..work and the host
-# pushes it as a fast-forward. A branch that descends from nothing we know about is a range
-# nobody can describe, which is the same refusal an agent that reset below its base gets.
-#
-# Prints "<name> <sha>", or nothing at all when no candidate qualifies.
-resolve_publish_base() {
-    _tip=$1
-    _best_name= _best_sha=
-    for _name in $BASE_REFS; do
-        _sha=$(git -C "$MNT" rev-parse --verify --quiet "origin/${_name}^{commit}" 2>/dev/null) \
-            || _sha=$(git -C "$MNT" rev-parse --verify --quiet "${_name}^{commit}" 2>/dev/null) \
-            || continue
-        [ -n "$_sha" ] || continue
-        git -C "$MNT" merge-base --is-ancestor "$_sha" "$_tip" 2>/dev/null || continue
-        if [ -z "$_best_sha" ]; then
-            _best_name=$_name _best_sha=$_sha
-        elif [ "$_best_sha" != "$_sha" ] \
-             && git -C "$MNT" merge-base --is-ancestor "$_best_sha" "$_sha" 2>/dev/null; then
-            _best_name=$_name _best_sha=$_sha
-        fi
-    done
-    [ -z "$_best_sha" ] || printf '%s %s\n' "$_best_name" "$_best_sha"
-}
 
 # Refuse to publish, and say why in a file ffwatch reads back as the run's no_branch_reason.
 # Without this the host cannot tell "the harvest broke" from "the run changed nothing", and
@@ -611,45 +523,6 @@ echo "[ffbox] run $RUN_ID"
 #
 # THE AGENT ONLY EVER READS THE CACHE. Extraction happens here, on the host, from a directory the
 # container never sees; the run cannot write back into an entry that later runs restore from.
-if [ "$WORKSPACE_MODE" = tmpfs ]; then
-    # The container makes its own workspace and fills it. Nothing here, and nothing on a host path.
-    WS_MADE=""
-else
-mkdir -p "$MNT" || { echo "ffbox: could not create $MNT" >&2; exit 69; }
-WS_MADE=1
-
-# A PER-RUN HARD CAP, when the host allows it. Same shape CI gets from Docker: the workspace is
-# its own tmpfs with its own size=, so a run that tries to write more than its budget gets ENOSPC
-# and dies, instead of taking memory from every other thing on the box.
-#
-# gid is ffbox-container so the container -- which runs as namespace root, host uid 1020 -- can
-# write it without the chgrp dance a plain directory needs.
-WS_MOUNTED=0
-_ffbox_gid=$(getent group ffbox-container 2>/dev/null | cut -d: -f3)
-if [ -n "$_ffbox_gid" ] && sudo -n mount -t tmpfs \
-        -o "size=${WORKSPACE_SIZE},mode=2775,uid=$(id -u),gid=${_ffbox_gid}" \
-        tmpfs "$MNT" 2>/dev/null; then
-    WS_MOUNTED=1
-    echo "[ffbox] workspace capped at $WORKSPACE_SIZE (own tmpfs)"
-else
-    # Not an error. Without the sudoers rule this is a directory on /dev/shm: still a ramdrive,
-    # still fast, just sharing the 378 GB pool with everything else rather than owning a slice.
-    echo "[ffbox] workspace uncapped (plain dir on $(df -P "$MNT" 2>/dev/null | awk 'NR==2{print $6}'));" >&2
-    echo "[ffbox]   see docs/ffbox-workspace.md to bound it per run" >&2
-fi
-
-# setgid + group-write, and this is load-bearing. The container runs as namespace root, which is
-# host uid 1020 (ffbox-container); files written here as this account show up in there as an
-# unmapped 65534, so ONLY the group bit makes the workspace writable. Host gid 1020 maps to gid 0
-# inside, so group-write is root-write there. Verified before relying on it: without g+w the
-# container can read the tree and change nothing in it.
-if getent group ffbox-container >/dev/null 2>&1; then
-    chgrp ffbox-container "$MNT" 2>/dev/null || true
-    chmod 2775 "$MNT" 2>/dev/null || true
-fi
-
-fi
-
 # Which entry. The branch asked for, then the default branch, then whatever ran most recently at
 # this editor version -- the same ladder main.yml's restore uses, so both modes agree on what a
 # usable entry is.
@@ -675,50 +548,6 @@ done
 # REFUSE RATHER THAN FILL THE RAMDRIVE. The workspace lives in memory, so running out is not a
 # failed run -- it is memory taken from CI jobs and everything else on the box. Half the headroom
 # again on top of the entry covers what the run itself then writes.
-if [ "$WORKSPACE_MODE" != tmpfs ]; then
-_entry_bytes=$(stat -c %s "$ENTRY" 2>/dev/null || echo 0)
-# `df -P --output=avail` is not a thing -- the two options are mutually exclusive and df exits
-# non-zero, which made this compute 0 and refuse EVERY run. Caught by running it.
-_avail_kb=$(df -Pk "$MNT" 2>/dev/null | awk 'NR==2 {print $4}')
-[ -n "$_avail_kb" ] || _avail_kb=0
-_avail_bytes=$(( _avail_kb * 1024 ))
-_need_bytes=$(( _entry_bytes + _entry_bytes / 2 ))
-if [ "$_entry_bytes" -gt 0 ] && [ "$_avail_bytes" -lt "$_need_bytes" ]; then
-    echo "ffbox: $(dirname "$MNT") has $(( _avail_bytes / 1024 / 1024 / 1024 ))G free;" >&2
-    echo "       restoring $(basename "$ENTRY") wants about $(( _need_bytes / 1024 / 1024 / 1024 ))G." >&2
-    echo "       Wait for a run to finish, or point FFBOX_RUNS_MNT at a bigger filesystem." >&2
-    exit 69
-fi
-
-echo "[ffbox] restoring $(basename "$ENTRY") ($(du -h "$ENTRY" 2>/dev/null | cut -f1)) into $MNT"
-_t0=$(date +%s)
-tar -xf "$ENTRY" -C "$MNT" --no-same-owner --no-same-permissions || {
-    echo "ffbox: could not extract $ENTRY" >&2; exit 69; }
-# The archive's modes are the CI container's, so nothing is group-writable until this runs.
-chmod -R g+w "$MNT" 2>/dev/null || true
-echo "[ffbox] restored in $(( $(date +%s) - _t0 ))s"
-
-[ -d "$MNT/.git" ] || { echo "ffbox: the cache entry has no .git; refusing to run" >&2; exit 69; }
-
-# --- bring it to the tip, from the mirror ------------------------------------------------------
-# The mirror is a local path here, so this is a file copy of a few objects rather than a network
-# fetch, and it needs no credential. Fetching every head into origin/* leaves the --ref resolution
-# below exactly as it was when this was a golden clone.
-if [ "$SKIP_FETCH" = 1 ]; then
-    echo "[ffbox] --no-fetch: using the cache entry as it stands" >&2
-elif [ -d "$MIRROR_REPO_PATH" ]; then
-    git -C "$MNT" fetch --quiet --prune "$MIRROR_REPO_PATH" '+refs/heads/*:refs/remotes/origin/*' 2>/dev/null || {
-        echo "ffbox: could not fetch from the mirror at $MIRROR_REPO_PATH" >&2
-        echo "       Fix it, or pass --no-fetch to run against the cache entry as it stands." >&2
-        exit 69; }
-else
-    echo "ffbox: no git mirror at $MIRROR_REPO_PATH" >&2
-    echo "       Provision it with ffbox/runners/03-image.sh, or pass --no-fetch." >&2
-    exit 69
-fi
-
-fi
-
 # Golden tracked master, so a run with no --ref used to land on master. Keep that.
 [ -n "$REF" ] || REF=master
 
@@ -730,37 +559,32 @@ fi
 # in a tree a container wrote -- which deletes finding F7's hazard rather than mitigating it.
 #
 # CLONE: the host-prepared directory above, bind-mounted. Still the default until the harvest
-# reads /ffbox/out instead of running git against $MNT.
-if [ "$WORKSPACE_MODE" = tmpfs ]; then
-    _ffbox_gid=$(getent group ffbox-container 2>/dev/null | cut -d: -f3)
-    # exec, because Docker's tmpfs default is noexec and Unity, git hooks and node all run from
-    # the workspace. uid 1000/gid 0 is what entrypoint.sh drops to and expects to own the tree.
-    WORKSPACE_ARGS=(
-        --tmpfs "/workspace:size=${WORKSPACE_SIZE},exec,mode=0755,uid=1000,gid=${_ffbox_gid:-0}"
-        -v "$CACHE_ENTRIES:/ffcache:ro"
-        -v "$MIRROR_REPO_PATH:/ffmirror:ro"
-    )
-    WORKSPACE_ENV=(
-        -e "FFBOX_CACHE_ENTRY=/ffcache/$(basename "$ENTRY")"
-        -e "FFBOX_MIRROR=/ffmirror"
-        -e "FFBOX_REF=$REF"
-        -e "FFBOX_BRANCH=$BRANCH"
-        -e "FFBOX_BRANCH_PREFIX=$BRANCH_PREFIX"
-        -e "FFBOX_BASE_REFS=$BASE_REFS"
-        -e "FFBOX_RUN_ID=$RUN_ID"
-        -e "FFBOX_GIT_NAME=$FFBOX_GIT_NAME"
-        -e "FFBOX_GIT_EMAIL=$FFBOX_GIT_EMAIL"
-    )
-else
-    WORKSPACE_ARGS=(-v "$MNT:/workspace")
-    WORKSPACE_ENV=()
-fi
-
-if [ "$WORKSPACE_MODE" = tmpfs ]; then
-    echo "[ffbox] workspace: container ramdrive, ${WORKSPACE_SIZE} cap, from $(basename "$ENTRY")"
-else
-    echo "[ffbox] workspace: $MNT (from $(basename "$ENTRY"))"
-fi
+# exec, because Docker's tmpfs default is noexec and Unity, git hooks and node all run from the
+# workspace.
+#
+# gid=0, NOT the host's ffbox-container gid. A bind mount carries host ownership through the
+# rootless map, so host gid 1020 shows up as gid 0 inside; a tmpfs Docker CREATES does not -- the
+# gid= is taken in the container's namespace, and 1020 is not a group in there at all. Passing it
+# left the tree owned by an unknown group, the agent could not write a single file outside .git,
+# and it reported the workspace as root-owned. entrypoint.sh drops to uid 1000 keeping GROUP 0,
+# which is exactly what this hands it. Found on the second real run.
+WORKSPACE_ARGS=(
+    --tmpfs "/workspace:size=${WORKSPACE_SIZE},exec,mode=0755,uid=1000,gid=0"
+    -v "$CACHE_ENTRIES:/ffcache:ro"
+    -v "$MIRROR_REPO_PATH:/ffmirror:ro"
+)
+WORKSPACE_ENV=(
+    -e "FFBOX_CACHE_ENTRY=/ffcache/$(basename "$ENTRY")"
+    -e "FFBOX_MIRROR=/ffmirror"
+    -e "FFBOX_REF=$REF"
+    -e "FFBOX_BRANCH=$BRANCH"
+    -e "FFBOX_BRANCH_PREFIX=$BRANCH_PREFIX"
+    -e "FFBOX_BASE_REFS=$BASE_REFS"
+    -e "FFBOX_RUN_ID=$RUN_ID"
+    -e "FFBOX_GIT_NAME=$FFBOX_GIT_NAME"
+    -e "FFBOX_GIT_EMAIL=$FFBOX_GIT_EMAIL"
+)
+echo "[ffbox] workspace: container ramdrive, ${WORKSPACE_SIZE} cap, from $(basename "$ENTRY")"
 
 # A ZFS CLONE IS A DIFFERENT DATASET, SO EVERY FILE'S st_dev CHANGES. Git records dev and inode
 # in the index, so the first `git status` in a clone disagrees with the index about all 26,677
@@ -774,127 +598,20 @@ fi
 # same finding ffcache recorded for the tar path (design/ffcache_tasks.md: 124 of 130 seconds,
 # 0.05s with the flag); the ZFS path reaches it by a different route and never got the fix.
 #
-# Written into the clone's own config, which the container's git reads. sanitize_clone_git()
-# rewrites this file from scratch before the HOST runs git in it, and sets the same key there.
-git -C "$MNT" config core.checkStat minimal 2>/dev/null || true
-git -C "$MNT" config core.untrackedCache true 2>/dev/null || true
+# NO safe.directory HERE ANY MORE. The host used to need it because it ran git in a workspace
+# owned by ffbox-container. It runs git in exactly one place now -- the scratch clone
+# harvest_from_out makes from the mirror -- and both belong to this account.
 
-# HOST-SIDE GIT NEEDS PERMISSION TO LOOK AT A TREE IT DOES NOT OWN. Golden and its clones belong
-# to ffbox-container so that a container on the shared daemon sees them as root; git, running here
-# as the owner, then refuses with "detected dubious ownership" and every git call in the harvest
-# fails with it.
+# --- what used to happen here ------------------------------------------------------------------
 #
-# Passed through the environment rather than written to ~/.gitconfig: it applies to every git in
-# this process tree and to nothing else, it names the exact two directories rather than `*`, and
-# it leaves no state behind if this run is killed.
-GIT_CONFIG_COUNT=1
-GIT_CONFIG_KEY_0=safe.directory;   GIT_CONFIG_VALUE_0=$MNT
-export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
-
-# --- base ref ------------------------------------------------------------------------------------
-# Golden tracks master; the Discord lanes want develop. Checking out in the clone costs a ref
-# move plus a working-tree update, and Library/ stays warm because the import cache is keyed on
-# content, not on which branch produced it.
-if [ -d "$MNT/.git" ]; then
-    if [ -n "$REF" ]; then
-        TARGET=
-        if git -C "$MNT" rev-parse --verify --quiet "${REF}^{commit}" >/dev/null 2>&1; then
-            TARGET=$REF
-        elif git -C "$MNT" rev-parse --verify --quiet "origin/${REF}^{commit}" >/dev/null 2>&1; then
-            TARGET=origin/$REF
-        fi
-        if [ -z "$TARGET" ]; then
-            echo "ffbox: --ref '$REF' resolves to nothing in the clone" >&2
-            exit 69
-        fi
-        echo "[ffbox] checking out $TARGET"
-        git -C "$MNT" checkout --detach --quiet "$TARGET" || {
-            echo "ffbox: checkout of $TARGET failed" >&2; exit 69; }
-    fi
-    # Recorded whether or not --ref was given: the harvest step and ffwatch's base pinning both
-    # need to know exactly which commit this run reasoned against.
-    git -C "$MNT" rev-parse HEAD > "$OUT/base_sha.txt" 2>/dev/null || rm -f "$OUT/base_sha.txt"
-
-    # Read now, while the clone is still exactly what golden was and no container has run. This is
-    # the one value sanitize_clone_git needs to rebuild a config from, and taking it here rather
-    # than afterwards is the difference between a known-good value and one the run chose.
-    TRUSTED_ORIGIN_URL=$(git -C "$MNT" config --local --get remote.origin.url 2>/dev/null || echo "")
-
-    # The work branch, created at the pinned base sha. `checkout -B` on the commit HEAD already
-    # points at is a pure ref move: no file in the working tree is touched, so Library/ stays
-    # warm and Unity has nothing to re-import (design section 17).
-    if [ -n "$BRANCH" ]; then
-        echo "[ffbox] work branch $BRANCH at $(cat "$OUT/base_sha.txt" 2>/dev/null)"
-        git -C "$MNT" checkout -B "$BRANCH" --quiet || {
-            echo "ffbox: could not create branch $BRANCH" >&2; exit 69; }
-    fi
-
-    # The identity the agent's commits get. Set in the clone rather than passed per-invocation,
-    # because the agent runs `git commit` itself and would otherwise be stopped by git asking
-    # who it is. The harvest checks the range against this address.
-    # Not fatal under `set -e`: if this fails the agent cannot commit, but the harvest passes the
-    # identity explicitly on its own commit, so the run still produces work. Aborting here would
-    # throw away a whole container start over a config write.
-    git -C "$MNT" config user.name "$FFBOX_GIT_NAME" || \
-        echo "ffbox: WARNING: could not set the commit identity; the agent cannot commit" >&2
-    git -C "$MNT" config user.email "$FFBOX_GIT_EMAIL" || true
-
-    # THE CLONE MUST BE CLEAN BEFORE THE AGENT SEES IT, for two reasons that used to be one.
-    # The old one: harvest does `git add -A`, so anything inherited from golden would be
-    # committed onto the work branch as if the agent had done it, and "no changed files means
-    # no branch and no PR" would never fire. The new one, and the reason subtracting at harvest
-    # is no longer enough: the agent commits its own work now, so inherited dirt lands inside
-    # ITS commits, where the harvest can no longer take it back out. It would also poison every
-    # `git status` the agent reads while deciding what it has changed.
-    #
-    # Golden itself is clean. It stops being clean the moment --ref checks out a tree whose
-    # .gitattributes differs from golden's: LFS patterns were lowercase-only until 2abbcc945
-    # (2026-08-22, master), and git matches attribute patterns case-sensitively on Linux and
-    # case-insensitively on Windows. On a ref without that commit, every `.PNG`/`.JPG`/`.TGA`/
-    # `.PSD`/`.OBJ` committed from a Windows machine reads as modified against its pointer blob
-    # — 247 files, ~52MB, when this was found.
-    git -C "$MNT" status --porcelain -z > "$OUT/base_dirty.z" 2>/dev/null || : > "$OUT/base_dirty.z"
-    if [ -s "$OUT/base_dirty.z" ]; then
-        echo "[ffbox] baseline: $(tr -d -c '\0' < "$OUT/base_dirty.z" | wc -c) path(s) dirty" \
-             "before the run; restoring them so the agent starts clean"
-        split_status_z "$OUT/base_dirty.z" "$OUT/base_tracked.z" "$OUT/base_untracked.z" \
-            || { : > "$OUT/base_tracked.z"; : > "$OUT/base_untracked.z"; }
-        if [ -s "$OUT/base_tracked.z" ]; then
-            git -C "$MNT" restore --source=HEAD --staged --worktree \
-                --pathspec-from-file="$OUT/base_tracked.z" --pathspec-file-nul 2>/dev/null || true
-        fi
-        if [ -s "$OUT/base_untracked.z" ]; then
-            # Untracked at baseline, so deleting them loses nothing that git is tracking, and
-            # the clone is destroyed at the end of the run either way. Ignored paths are not in
-            # this list at all — `git status --porcelain` does not report them — so Library/
-            # survives and Unity has nothing to re-import.
-            python3 - "$OUT/base_untracked.z" "$MNT" <<'PYCLEAN' || true
-import os, shutil, sys
-
-root = sys.argv[2].encode()
-for path in open(sys.argv[1], "rb").read().split(b"\0"):
-    if not path:
-        continue
-    target = os.path.join(root, path.rstrip(b"/"))
-    try:
-        shutil.rmtree(target) if os.path.isdir(target) else os.remove(target)
-    except OSError:
-        pass
-PYCLEAN
-        fi
-        # Re-record. Whatever is STILL dirty is what the harvest has to subtract, and using the
-        # pre-restore list there would be wrong: those paths are clean now, so subtracting them
-        # would throw away the agent's work if it edited one of them.
-        git -C "$MNT" status --porcelain -z > "$OUT/base_dirty.z" 2>/dev/null \
-            || : > "$OUT/base_dirty.z"
-        if [ -s "$OUT/base_dirty.z" ]; then
-            echo "ffbox: WARNING: $(tr -d -c '\0' < "$OUT/base_dirty.z" | wc -c) path(s) still" \
-                 "dirty after the restore; the harvest will exclude them" >&2
-        else
-            echo "[ffbox] baseline restored; the clone is clean"
-        fi
-    fi
-fi
+# Checking out the ref, recording base_sha, creating the work branch, setting the git identity and
+# writing core.checkStat all used to happen on the host, against a workspace it could see. They
+# live in restore-workspace.sh now, because the workspace is a ramdrive the host never touches.
+#
+# The BASELINE CLEANING that was here is not moved, it is obsolete. It existed because a run was a
+# ZFS clone of golden and golden could carry stray edits, so the harness restored tracked paths and
+# deleted untracked ones before the agent started. A workspace extracted fresh from a tar and reset
+# to a commit cannot be dirty, so there is nothing to clean and split_status_z has no callers.
 
 # --- run -----------------------------------------------------------------------------------------
 # Secrets go in as environment variables read from the host-side env file. They are never baked
@@ -1063,7 +780,16 @@ harvest_from_out() {
 
     # Paths and ceilings, likewise re-derived. changed_files.txt is rewritten from the bundle so
     # that what the host reports and what it checked are the same list.
-    git -C "$_scratch" diff --name-only "${_hbase}..${_tip}" > "$OUT/changed_files.txt" 2>/dev/null || true
+    # rm first, then write: the container created these and the host may not be able to truncate
+    # them in place. A FAILURE HERE IS FATAL rather than ignored -- if the host cannot write its
+    # own derivation it would go on to read the container's copy, which is exactly the word it is
+    # supposed to be checking. Silently trusting the thing under test is worse than refusing.
+    rm -f "$OUT/changed_files.txt" "$OUT/changes.patch"
+    if ! git -C "$_scratch" diff --name-only "${_hbase}..${_tip}" > "$OUT/changed_files.txt" 2>/dev/null; then
+        rm -rf "$_scratch"
+        harvest_failed "could not write the host's own list of changed files; refusing to fall back on the run's"
+        return 0
+    fi
     _forbidden=$(grep -E "$FORBIDDEN_PATHS_RE" "$OUT/changed_files.txt" 2>/dev/null | tr '\n' ' ' || true)
     if [ -n "$_forbidden" ]; then
         rm -rf "$_scratch"
@@ -1094,284 +820,7 @@ harvest_from_out() {
 # --- harvest ---------------------------------------------------------------------------------------
 # Do this before cleanup destroys the clone, or the work evaporates with it.
 
-# THE CONTAINER HAS WRITTEN THIS TREE AND THE HOST IS ABOUT TO RUN git IN IT. That is finding F7
-# in docs/ci-runner-security-findings.md, and it needs no vulnerability to exploit: git executes
-# what .git tells it to. .git/hooks/post-commit, post-checkout and pre-push all run on ordinary
-# commands, and .git/config names commands too — core.fsmonitor fires on `status`, plus core.pager,
-# diff.external and filter.*.clean. `--no-verify` on the harvest commit suppresses pre-commit and
-# commit-msg and none of the rest. FORBIDDEN_PATHS_RE does not help either: it is checked against
-# the commit range, and neither .git/hooks nor .git/config is ever part of a commit.
-#
-# So the host does not read either of them. Both are replaced with known-good content first.
-#
-# A WHITELIST, NOT A BLACKLIST, and that is the whole point. Filtering dangerous keys out of the
-# run's config means keeping a list of every key git can execute and adding to it forever. Writing
-# the config from scratch means the run cannot define ANY key, including ones nobody has thought
-# of. The only value carried across is the origin URL, captured before the container started.
-#
-# Replacing the config is safe here specifically because git-lfs is configured in the SYSTEM
-# config on this box, not per-repository — verified: filter.lfs.clean/smudge/process/required all
-# come from `git config --system`. If that ever changes, `git add` would start storing LFS payloads
-# instead of pointers, so check it before assuming this still holds.
-sanitize_clone_git() {
-    [ -d "$MNT/.git" ] || return 0
-
-    # Hooks: keep them for inspection, but out of the path git looks in.
-    if [ -d "$MNT/.git/hooks" ]; then
-        rm -rf "$MNT/.git/hooks.quarantined" 2>/dev/null || true
-        mv "$MNT/.git/hooks" "$MNT/.git/hooks.quarantined" 2>/dev/null || true
-    fi
-    mkdir -p "$MNT/.git/hooks"
-
-    if [ -f "$MNT/.git/config" ]; then
-        mv "$MNT/.git/config" "$MNT/.git/config.quarantined" 2>/dev/null || true
-    fi
-    {
-        printf '[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n'
-        printf '\tbare = false\n\tlogallrefupdates = true\n'
-        # The harvest's own git runs against a clone whose st_dev differs from golden's, so it
-        # pays the same full re-hash the container just paid. Neither key names a command, so
-        # both are safe in a config written from scratch — that is what the whitelist is for.
-        printf '\tcheckStat = minimal\n\tuntrackedCache = true\n'
-        if [ -n "${TRUSTED_ORIGIN_URL:-}" ]; then
-            printf '[remote "origin"]\n\turl = %s\n' "$TRUSTED_ORIGIN_URL"
-            printf '\tfetch = +refs/heads/*:refs/remotes/origin/*\n'
-        fi
-    } > "$MNT/.git/config"
-
-    if ! cmp -s "$MNT/.git/config" "$MNT/.git/config.quarantined" 2>/dev/null; then
-        echo "[ffbox] sanitized the clone's .git before touching it (F7)"
-    fi
-}
-# THE WHOLE OF F7 GOES AWAY IN TMPFS MODE, rather than being mitigated. sanitize_clone_git exists
-# because the host runs git in a tree the container wrote, and git executes what .git tells it to.
-# With the workspace on a container ramdrive there is no such tree: the host reads inert files and
-# a bundle git itself verifies. Nothing to sanitise because nothing is read.
-if [ "$WORKSPACE_MODE" = tmpfs ]; then
-    harvest_from_out
-elif [ -d "$MNT/.git" ]; then
-    sanitize_clone_git
-    git -C "$MNT" status --porcelain > "$OUT/status.txt" 2>/dev/null || true
-
-    if [ -n "$BRANCH" ]; then
-        # The agent commits its own work now, so this is no longer "the harness makes the one
-        # commit". What the harness still owns is the PUBLISHED RANGE: it commits whatever was
-        # left uncommitted, points $BRANCH at wherever the agent ended, and refuses to bundle a
-        # range that fails any check below. A lane that "forgot to commit" still cannot exist.
-        BASE_SHA=$(cat "$OUT/base_sha.txt" 2>/dev/null || echo "")
-        # WHICH BRANCH THIS WORK IS FOR. Read off HEAD, before anything below moves a ref:
-        # adding a commit on top cannot change which published branch the work descends from,
-        # and resolving it here means the leftover commit's own message is chosen against the
-        # right base.
-        rm -f "$OUT/publish_base.txt"
-        PUBLISH_BASE= PUBLISH_BASE_SHA=
-        if [ -n "$BASE_REFS" ]; then
-            RESOLVED=$(resolve_publish_base HEAD)
-            if [ -n "$RESOLVED" ]; then
-                PUBLISH_BASE=${RESOLVED%% *}
-                PUBLISH_BASE_SHA=${RESOLVED##* }
-                echo "[ffbox] this work is based on $PUBLISH_BASE" \
-                     "($(printf %.12s "$PUBLISH_BASE_SHA"))"
-            fi
-        fi
-        if [ -z "$PUBLISH_BASE_SHA" ] && [ -n "$BASE_SHA" ] \
-           && git -C "$MNT" merge-base --is-ancestor "$BASE_SHA" HEAD 2>/dev/null; then
-            # No named branch claims it, but it still descends from the commit this run started
-            # at — an ordinary run on a conversation pinned to a sha origin has moved past.
-            # Publishable; the host targets its own default branch.
-            PUBLISH_BASE_SHA=$BASE_SHA
-        fi
-        git -C "$MNT" add -A -- . ':(exclude).github' 2>/dev/null || true
-        # Backstop for a baseline the pre-run restore could not clean. It only ever reaches what
-        # is still UNCOMMITTED; anything the agent committed is past saving here, which is why
-        # the restore moved to before the run. Tracked paths go back to their HEAD state; paths
-        # that were untracked at baseline leave the index entirely. Both are pathspec-driven and
-        # NUL-separated, because Final Factory has asset paths with spaces in them.
-        if [ -s "$OUT/base_dirty.z" ]; then
-            split_status_z "$OUT/base_dirty.z" "$OUT/base_tracked.z" "$OUT/base_untracked.z" \
-                || { : > "$OUT/base_tracked.z"; : > "$OUT/base_untracked.z"; }
-            if [ -s "$OUT/base_tracked.z" ]; then
-                git -C "$MNT" restore --staged --source=HEAD \
-                    --pathspec-from-file="$OUT/base_tracked.z" --pathspec-file-nul \
-                    2>/dev/null || true
-            fi
-            if [ -s "$OUT/base_untracked.z" ]; then
-                git -C "$MNT" rm --cached --quiet --ignore-unmatch \
-                    --pathspec-from-file="$OUT/base_untracked.z" --pathspec-file-nul \
-                    2>/dev/null || true
-            fi
-        fi
-        if ! git -C "$MNT" diff --cached --quiet 2>/dev/null; then
-            # Named for what it is. When the agent committed nothing this IS the work; when it
-            # committed as it went, this is the tail it left behind, and calling both "agent
-            # work" would make a reviewer read the second as the whole change.
-            if [ "$(git -C "$MNT" rev-list --count "${PUBLISH_BASE_SHA}..HEAD" \
-                    2>/dev/null || echo 0)" = "0" ]; then
-                LEFTOVER_MSG="ffbox ${RUN_ID}: agent work"
-            else
-                LEFTOVER_MSG="ffbox ${RUN_ID}: uncommitted work at exit"
-            fi
-            # The identity is already in the clone's config, for the agent's sake. Passing it
-            # again here is not redundant: if that config write failed, git refuses to commit
-            # at all, and the harness's own commit is the one that must never be the thing that
-            # silently drops a run's work.
-            git -C "$MNT" \
-                -c user.name="$FFBOX_GIT_NAME" -c user.email="$FFBOX_GIT_EMAIL" \
-                commit --quiet --no-verify -m "$LEFTOVER_MSG" 2>/dev/null || true
-        fi
-
-        # --- what the harness will not publish ---------------------------------------------
-        # None of these is a security boundary; the container is contained by holding no
-        # credential. They catch the ways a range can stop meaning what the host assumes it
-        # means once the agent, rather than the harness, decides what a commit is.
-        HARVEST_OK=1
-
-        # WHERE HEAD ENDS UP IS WHAT PUBLISHES. The agent may branch and switch freely while it
-        # works, so the published branch follows HEAD rather than the other way round: a run
-        # that did its work on a side branch and never switched back still publishes it, which
-        # beats publishing the empty branch it started on and calling that the answer.
-        CURRENT_BRANCH=$(git -C "$MNT" symbolic-ref --short -q HEAD 2>/dev/null || echo "")
-        for protected in $PROTECTED_BRANCHES; do
-            [ "$CURRENT_BRANCH" = "$protected" ] || continue
-            harvest_failed "the run ended on $protected instead of on a branch of its own"
-            HARVEST_OK=0
-            break
-        done
-
-        # The agent's own name for the work, which is the one a reviewer ends up reading.
-        # Sanitised rather than trusted: it reaches `git branch` here, a ref inside the bundle,
-        # and a `git push` refspec on the host. The run id goes on the end unconditionally —
-        # two runs at the same bug pick the same obvious name more often than you would think,
-        # and a name that already exists on origin is a rejected push at the end of an hour's
-        # work. Without --branch-prefix nothing is renamed and the host's name publishes, which
-        # is what `ffbox --branch wip` has always meant.
-        if [ "$HARVEST_OK" = 1 ] && [ -n "$BRANCH_PREFIX" ] && [ -n "$CURRENT_BRANCH" ] \
-           && [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
-            AGENT_NAME=$(printf '%s' "${CURRENT_BRANCH#"$BRANCH_PREFIX"}" \
-                         | tr -c 'A-Za-z0-9._/-' '-' \
-                         | sed -e 's|//*|/|g' -e 's/--*/-/g' | cut -c1-80 \
-                         | sed -e 's|^[-./]*||' -e 's|[-./]*$||')
-            RENAMED="${BRANCH_PREFIX}${AGENT_NAME}-${RUN_ID}"
-            if [ -n "$AGENT_NAME" ] \
-               && git -C "$MNT" check-ref-format --branch "$RENAMED" >/dev/null 2>&1; then
-                echo "[ffbox] the agent worked on $CURRENT_BRANCH; publishing it as $RENAMED"
-                BRANCH=$RENAMED
-            else
-                echo "ffbox: WARNING: '$CURRENT_BRANCH' does not make a usable branch name;" \
-                     "publishing as $BRANCH instead" >&2
-            fi
-        fi
-
-        if [ "$HARVEST_OK" = 1 ] && [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
-            echo "[ffbox] run ended on ${CURRENT_BRANCH:-a detached HEAD}; pointing $BRANCH at it"
-            git -C "$MNT" branch -f "$BRANCH" HEAD >/dev/null 2>&1 || {
-                harvest_failed "the run's work could not be named $BRANCH"
-                HARVEST_OK=0
-            }
-        fi
-
-        # Everything below is defined in terms of base..branch, and the base is the one resolved
-        # above: the published branch this work descends from, or failing that the commit the
-        # run started at. Without one there is no range to bundle and no prerequisite for the
-        # host's `git bundle verify` — which is precisely what an agent that reset or amended
-        # below every base it could have had leaves behind.
-        if [ "$HARVEST_OK" = 1 ] && [ -z "$PUBLISH_BASE_SHA" ]; then
-            harvest_failed "the work descends neither from ${BASE_REFS:-any known branch} nor from the commit this run started at (${BASE_SHA:-none recorded}), so it cannot be bundled"
-            HARVEST_OK=0
-        fi
-        # Every commit must be this run's own. `git merge`, `git rebase` and `git cherry-pick`
-        # are deliberately absent from WRITE_ALLOWED, so there is no legitimate way for a commit
-        # by somebody else to appear in this range: what would put one there is an agent running
-        # `git -c user.email=... commit` to make its work look like a person's, on a branch a
-        # reviewer reads by author.
-        if [ "$HARVEST_OK" = 1 ]; then
-            FOREIGN=$(git -C "$MNT" log --format='%ae%n%ce' "${PUBLISH_BASE_SHA}..${BRANCH}" 2>/dev/null \
-                      | sort -u | grep -Fxv "$FFBOX_GIT_EMAIL" || true)
-            if [ -n "$FOREIGN" ]; then
-                FOREIGN_ONE_LINE=$(printf '%s' "$FOREIGN" | tr '\n' ' ')
-                harvest_failed "commits claim an identity this run does not own: $FOREIGN_ONE_LINE"
-                HARVEST_OK=0
-            fi
-        fi
-
-        git -C "$MNT" diff --name-only "${PUBLISH_BASE_SHA}..${BRANCH}" > "$OUT/changed_files.txt" \
-            2>/dev/null || true
-        # Checked against the RANGE, not filtered at `git add`, because the agent has `git
-        # commit`: an add-time pathspec exclusion only ever reaches what is still uncommitted.
-        # Both exist — the exclusion above quietly drops an innocent stray edit, and this
-        # refuses the publish outright when a commit carries one, which is the case that would
-        # otherwise reach a runner.
-        if [ "$HARVEST_OK" = 1 ] && [ -s "$OUT/changed_files.txt" ]; then
-            FORBIDDEN=$(grep -E "$FORBIDDEN_PATHS_RE" "$OUT/changed_files.txt" | tr '\n' ' ' || true)
-            if [ -n "$FORBIDDEN" ]; then
-                harvest_failed "the range changes CI configuration, which this pipeline never publishes: $FORBIDDEN"
-                HARVEST_OK=0
-            fi
-        fi
-        if [ "$HARVEST_OK" = 1 ] && [ -s "$OUT/changed_files.txt" ] \
-           && [ "$(wc -l < "$OUT/changed_files.txt")" -gt "$MAX_CHANGED_FILES" ]; then
-            harvest_failed "$(wc -l < "$OUT/changed_files.txt") changed files, over the ceiling of ${MAX_CHANGED_FILES}"
-            HARVEST_OK=0
-        fi
-
-        if [ "$HARVEST_OK" = 0 ]; then
-            : # harvest_failed recorded the reason and removed the branch and bundle
-        elif [ -s "$OUT/changed_files.txt" ]; then
-            printf '%s\n' "$BRANCH" > "$OUT/branch.txt"
-            # The name, not the sha: it is what the pull request targets, and the host checks it
-            # against its own allow list and against the pushed range before believing it.
-            [ -z "$PUBLISH_BASE" ] || printf '%s\n' "$PUBLISH_BASE" > "$OUT/publish_base.txt"
-            git -C "$MNT" diff --binary "${PUBLISH_BASE_SHA}..${BRANCH}" > "$OUT/changes.patch" \
-                2>/dev/null || true
-            # A bundle of the RANGE, not of the branch: a full bundle would carry the project's
-            # entire history (gigabytes) where the range carries only what this run added.
-            # base_sha is a commit on origin, so the host already has the prerequisite — which is
-            # exactly the condition `git bundle verify` checks before ffwatch fetches from it.
-            if git -C "$MNT" bundle create "$OUT/work.bundle" "${PUBLISH_BASE_SHA}..${BRANCH}" \
-                    >/dev/null 2>&1; then
-                BUNDLE_BYTES=$(wc -c < "$OUT/work.bundle" 2>/dev/null || echo 0)
-                if [ "$BUNDLE_BYTES" -gt "$MAX_BUNDLE_BYTES" ]; then
-                    harvest_failed "the work bundle is ${BUNDLE_BYTES} bytes, over the ceiling of ${MAX_BUNDLE_BYTES}"
-                else
-                    echo "[ffbox] bundled $(wc -l < "$OUT/changed_files.txt") changed file(s)" \
-                         "in $(git -C "$MNT" rev-list --count "${PUBLISH_BASE_SHA}..${BRANCH}")" \
-                         "commit(s) on $BRANCH: $OUT/work.bundle"
-                fi
-            else
-                rm -f "$OUT/work.bundle"
-                echo "ffbox: WARNING: could not bundle ${PUBLISH_BASE_SHA}..${BRANCH}" >&2
-            fi
-        else
-            # No changed files means no branch left behind and no PR (design section 17). Saying
-            # nothing here would leave ffwatch unable to tell "nothing changed" from "harvest
-            # broke", and those two want very different replies.
-            rm -f "$OUT/work.bundle" "$OUT/branch.txt" "$OUT/changes.patch"
-            echo "[ffbox] no file changes in this run — no branch, no bundle"
-        fi
-    else
-        # No work branch: the shell lane harvests a patch instead. It has to span the agent's
-        # COMMITS as well as its uncommitted edits now that it can make them — a diff of the
-        # index alone would silently drop everything the agent had already committed and hand
-        # back a patch that looks like a much smaller change than the one it made.
-        BASE_SHA=$(cat "$OUT/base_sha.txt" 2>/dev/null || echo "")
-        git -C "$MNT" add -A -- . ':(exclude).github' 2>/dev/null || true
-        git -C "$MNT" diff --cached --binary ${BASE_SHA:+"$BASE_SHA"} > "$OUT/changes.patch" \
-            2>/dev/null || true
-        git -C "$MNT" reset >/dev/null 2>&1 || true
-    fi
-
-    if [ -s "$OUT/changes.patch" ]; then
-        files=$(wc -l < "$OUT/status.txt")
-        echo "[ffbox] harvested changes to $files file(s): $OUT/changes.patch"
-        echo "[ffbox] apply with: git -C $DEV_CHECKOUT apply $OUT/changes.patch"
-    else
-        [ -n "$BRANCH" ] || echo "[ffbox] no file changes in this run"
-        rm -f "$OUT/changes.patch"
-    fi
-    if [ -f "$OUT/base_sha.txt" ]; then
-        echo "[ffbox] base sha: $(cat "$OUT/base_sha.txt")"
-    fi
-fi
+harvest_from_out
 
 echo "[ffbox] results: $OUT"
 exit "$RUN_RC"

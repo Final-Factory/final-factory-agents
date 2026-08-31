@@ -51,15 +51,22 @@ fi
 #
 # Guarded on the workspace being EMPTY so the bind-mounted path still works untouched: with a
 # host-prepared workspace there is nothing to restore and this is skipped.
+# BEFORE THE RESTORE, and that is the whole point of taking it here. tar running as root applies
+# the archive's ownership to the TARGET DIRECTORY as well as its contents, so after extraction
+# /workspace itself is root-owned -- and reading the uid afterwards gives 0, making the chown below
+# a no-op that changes root-owned files to root-owned files. The agent then cannot write a single
+# file outside .git and reports the workspace as root-owned, which is what two real runs did.
+uid=$(stat -c '%u' "$WORKSPACE")
+gid=$(stat -c '%g' "$WORKSPACE")
+
 if [ -n "${FFBOX_CACHE_ENTRY:-}" ] && [ -z "$(ls -A "$WORKSPACE" 2>/dev/null)" ]; then
     [ -x /ffbox/restore-workspace.sh ] || { echo "ffbox: restore-workspace.sh is missing" >&2; exit 1; }
     /ffbox/restore-workspace.sh || { echo "ffbox: workspace restore failed" >&2; exit 1; }
-    # The tmpfs is owned by the account the run drops to, but tar wrote the tree as root.
-    chown -R "$(stat -c '%u' "$WORKSPACE")":"$(stat -c '%g' "$WORKSPACE")" "$WORKSPACE" 2>/dev/null || true
+    # Hand the whole tree to the account the run drops to. Not conditional and not best-effort:
+    # a workspace the agent cannot write is a run that can do nothing and says so late.
+    chown -R "$uid":"$gid" "$WORKSPACE" \
+        || { echo "ffbox: could not give the workspace to $uid:$gid" >&2; exit 1; }
 fi
-
-uid=$(stat -c '%u' "$WORKSPACE")
-gid=$(stat -c '%g' "$WORKSPACE")
 
 # Which task this container runs: the one-shot Claude prompt by default, or the Library import
 # when --task or --job sets FFBOX_ENTRY. Both drop privileges the same way and share the Unity

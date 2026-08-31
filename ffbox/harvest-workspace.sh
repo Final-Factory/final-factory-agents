@@ -27,7 +27,16 @@ OUT=${FFBOX_OUT:-/ffbox/out}
 BRANCH=${FFBOX_BRANCH:-}
 BRANCH_PREFIX=${FFBOX_BRANCH_PREFIX:-}
 BASE_REFS=${FFBOX_BASE_REFS:-}
+# FROM THE FILE, NOT JUST THE ENVIRONMENT. restore-workspace.sh records base_sha.txt at the moment
+# it finishes preparing the tree -- which is the only time anyone knows it. The host cannot pass it
+# in: it launches the container before the workspace exists, so there is no sha to name yet.
+#
+# Missing it is not cosmetic. Without a base there is no range to bundle, and the run reports "the
+# work descends neither from any known branch nor from the commit this run started at" -- which
+# reads like the agent did something odd rather than like a value never got wired through. Found on
+# the first real run; the component tests passed FFBOX_BASE_SHA by hand and never noticed.
 BASE_SHA=${FFBOX_BASE_SHA:-}
+[ -n "$BASE_SHA" ] || BASE_SHA=$(head -1 "${FFBOX_OUT:-/ffbox/out}/base_sha.txt" 2>/dev/null | tr -d ' \r\n')
 RUN_ID=${FFBOX_RUN_ID:-unknown}
 GIT_NAME=${FFBOX_GIT_NAME:-ffbox}
 GIT_EMAIL=${FFBOX_GIT_EMAIL:-ffbox@final-factory.invalid}
@@ -35,6 +44,12 @@ PROTECTED=${FFBOX_PROTECTED_BRANCHES:-develop master main}
 
 log() { printf '[harvest] %s\n' "$*"; }
 g()   { git -C "$WORKSPACE" "$@"; }
+
+# GROUP-WRITABLE, because the host rewrites some of these. /ffbox/out is setgid ffbox-container and
+# the host account is in that group, but files this container creates default to 0644 -- so the
+# host's own `>` onto changed_files.txt failed with Permission denied, and it silently kept reading
+# the copy this container wrote. That defeats the entire point of re-deriving from the bundle.
+umask 002
 
 mkdir -p "$OUT"
 [ -d "$WORKSPACE/.git" ] || { log "no .git in the workspace; nothing to harvest"; exit 0; }
