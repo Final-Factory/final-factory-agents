@@ -43,6 +43,21 @@ if [ ! -d "$WORKSPACE" ]; then
     exit 1
 fi
 
+# FILL THE WORKSPACE FIRST, WHEN IT ARRIVES EMPTY. A --tmpfs workspace starts with nothing in it,
+# so the restore has to happen in here rather than on the host -- which is the whole point: the
+# workspace never exists on a host path, it is capped by the tmpfs, and the kernel frees it when
+# this container goes, with no cleanup code to fail. Only /ffbox/out survives, which is exactly
+# what a run is meant to hand back.
+#
+# Guarded on the workspace being EMPTY so the bind-mounted path still works untouched: with a
+# host-prepared workspace there is nothing to restore and this is skipped.
+if [ -n "${FFBOX_CACHE_ENTRY:-}" ] && [ -z "$(ls -A "$WORKSPACE" 2>/dev/null)" ]; then
+    [ -x /ffbox/restore-workspace.sh ] || { echo "ffbox: restore-workspace.sh is missing" >&2; exit 1; }
+    /ffbox/restore-workspace.sh || { echo "ffbox: workspace restore failed" >&2; exit 1; }
+    # The tmpfs is owned by the account the run drops to, but tar wrote the tree as root.
+    chown -R "$(stat -c '%u' "$WORKSPACE")":"$(stat -c '%g' "$WORKSPACE")" "$WORKSPACE" 2>/dev/null || true
+fi
+
 uid=$(stat -c '%u' "$WORKSPACE")
 gid=$(stat -c '%g' "$WORKSPACE")
 

@@ -122,8 +122,23 @@ RUN set -eux; \
     chmod -R a+rX "$cache"; \
     find "$cache" -type f -printf '%p %s bytes\n'
 
-COPY entrypoint.sh entrypoint-ci.sh run-as-user.sh unity-license.sh restore-workspace.sh /ffbox/
-RUN chmod +x /ffbox/entrypoint.sh /ffbox/entrypoint-ci.sh /ffbox/run-as-user.sh /ffbox/restore-workspace.sh
+# SAFE.DIRECTORY FOR THE MIRROR MOUNT, IN SYSTEM CONFIG, AND IT HAS TO BE SYSTEM CONFIG.
+#
+# /ffmirror is a read-only bind mount of the bare mirror, owned on the host by an account whose uid
+# is not mapped into this rootless daemon namespace -- so it appears here as nobody while the
+# restore runs as root, and git calls it dubious ownership.
+#
+# The entrypoint already exports GIT_CONFIG_* for the workspace and that is enough there, because
+# those are direct operations. It is NOT enough here: `git fetch /ffmirror` spawns git upload-pack
+# in the mirror, and a subprocess does not inherit GIT_CONFIG_*. Only protected config reaches it.
+# The same lesson the gitmirror image carries, hit again from the other side.
+#
+# Narrow on purpose -- this one path, not '*' -- because the workspace exemption stays in the
+# environment where it belongs, scoped to one run and leaving nothing in an image layer.
+RUN git config --system --add safe.directory /ffmirror
+
+COPY entrypoint.sh entrypoint-ci.sh run-as-user.sh unity-license.sh restore-workspace.sh harvest-workspace.sh /ffbox/
+RUN chmod +x /ffbox/entrypoint.sh /ffbox/entrypoint-ci.sh /ffbox/run-as-user.sh /ffbox/restore-workspace.sh /ffbox/harvest-workspace.sh
 
 # BOTH PATHS, and the second one is not redundant. main.yml is already pushed with
 # `. /opt/ffghr/unity-license.sh`, and changing a workflow file needs a token scope this box
