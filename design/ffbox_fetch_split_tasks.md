@@ -109,3 +109,58 @@ failing. **S**
 A then B then C, and C is where it becomes real. D waits for a cycle of green runs on the new
 path; it is deletion, and deletion is the part that cannot be undone by a flag. E can start as
 soon as T9 lands and should not wait for D.
+
+---
+
+## Phase F — the CI partial drop (design section 11)
+
+Do this AFTER phases A-E: it reuses the agent's transition mechanism, and building it first would
+mean building that mechanism twice. Ordered by dependency.
+
+**T22. `ffghr-runtime-net` and its proxy.** A second `--internal` network and a second
+`ffbox-egress` instance with a narrow allowlist: `*.actions.githubusercontent.com`,
+`*.blob.core.windows.net`, Unity, UPM. No `github.com`, no `codeload.github.com`, no
+`objects.githubusercontent.com`, no `github-cloud.githubusercontent.com`. Its own subnet — the
+existing check that `ffbox-net` and `ffghr-net` do not collide has to cover three now. **M**
+
+**T23. Dual-home the job container.** `slot.sh` joins both networks at `docker run`, `--dns` at
+the wide proxy. No behaviour change until T25 fires. **S**
+
+**T24. `github.drop` on the existing channel.** `slot.sh`'s 15s watchdog already polls
+`/ffghr/out` for `cache.request`; teach it to notice `github.drop` too. Same directory, same
+poll, no new mechanism. **S**
+
+**T25. The transition.** Disconnect `ffghr-net`, repoint `/etc/resolv.conf` at the narrow proxy.
+Log it in the slot log with a timestamp, because "when did GitHub go away" is the first question
+any failure after this point will raise. **M**
+
+**T26. The workflow step.** In `main.yml`, between "Materialize Git LFS content" and "Activate
+Unity and run tests": write `github.drop`, then wait for the host to confirm. Waiting matters —
+a job that races ahead and starts Unity before the disconnect lands has a window where it holds
+both the credential and the running test code, which is the thing being prevented. **M**
+
+**T27. Move the check run to the host.** `post-check-run.py` at line 267 of `main.yml` is the one
+step needing `api.github.com` after the tests (measured at 20:08:20). The host holds a GitHub App
+installation token and can post it from outside the fence. Alternative if this slips: leave
+`api.github.com` on the narrow list and record that the drop is partial in that respect. **M**
+
+**T28. Prove it on a real job.** From inside a container after the transition: `github.com` and
+`codeload.github.com` unresolvable, `results-receiver.actions.githubusercontent.com` still
+reachable. Then the job completes, reports its verdict, and uploads artifacts. **S**
+
+**T29. Prove the failure mode.** A job that never writes `github.drop` must run to completion
+unchanged. Fail-open is the accepted design (section 11), not an accident, so it wants a test
+that says so. **S**
+
+**T30. Three concurrent jobs, one dropping.** The other two must keep full GitHub access. This is
+the whole reason the drop is a network change rather than an allowlist edit, and it is the thing
+most likely to be got wrong. **M**
+
+### Measured, for section 11
+
+- One editmode job, 2026-08-30 20:00:11-20:11:19: `codeload.github.com` at 20:00:14 only,
+  `github.com` 20:00:15-20:00:52 only, never again. 5m34s of tests with zero GitHub traffic.
+  `results-receiver` at 20:02:28, 20:08:36, 20:09:34 and 20:10:48-52; `broker` at 20:10:52;
+  `pipelinesghubeus14` at 20:11:19, 27s after the job ended.
+- One `ffghr-egress` serves all three slots — verified on the live daemon. An allowlist edit is
+  therefore global, which is why T22 exists.
