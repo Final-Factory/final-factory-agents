@@ -4401,6 +4401,20 @@ def test_the_classifier_runs_in_a_sandbox():
     check("the working directory is empty, so there is no CLAUDE.md to discover",
           os.path.isdir(cwd) and os.listdir(cwd) == [], cwd)
 
+    # THE BINARY IS RESOLVED, NOT LEFT TO PATH. A scrubbed environment is not the shell's: the
+    # systemd unit on the build server runs with PATH=/usr/local/sbin:...:/snap/bin and `claude`
+    # lives in ~/.local/bin, so a bare "claude" was FileNotFoundError the first time anything
+    # actually called it. Nothing noticed for weeks because the only watched channel is
+    # mention-only, so the gate is short-circuited and had never run.
+    check("the binary is an absolute path, so a scrubbed PATH cannot lose it",
+          os.sep in argv[0], argv[0])
+    check("and where a per-user install puts things is on the child's PATH",
+          os.path.expanduser("~/.local/bin") in env["PATH"], env["PATH"])
+    missing = dict(cfg, claude_bin="definitely-not-installed-anywhere")
+    parsed, err = ffwatch.run_classifier(missing, "x", {"type": "object"})
+    check("an unresolvable binary says where it looked, not just 'No such file'",
+          parsed is None and "not on the PATH" in (err or ""), err)
+
     # The sandbox is the defence; this only makes an ATTEMPT visible. Without it a message
     # trying to talk the gate into running Bash is declined as silently as "thanks" is.
     check("an injection attempt is recognised for the log",
