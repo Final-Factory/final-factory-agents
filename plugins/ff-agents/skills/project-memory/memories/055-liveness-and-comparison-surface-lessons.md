@@ -2,11 +2,13 @@
 
 **Feature:** 055 combat-mover-vision (2026-08-30, `specs/055-combat-mover-vision/tasks.md`)
 
-Six lessons from the same feature, all about how the AUDIT itself can mislead — a liveness check
-declared vacuous when it wasn't, a comparison query that silently narrowed its own population, and
+Six lessons from the same feature about verification signals that need a second look before you
+trust them — a liveness check declared vacuous when it wasn't, a comparison query that silently
+narrowed its own population, unsaved host-only state that only forks on a reload (not a join), and
 a KD-tree whose ORDER-noise looked like SET-noise. Read this alongside
-[[join-load-route-provisioning-desync-class]] (which is about the game code forking) — this file
-is about the harness/verification code around it.
+[[join-load-route-provisioning-desync-class]] (arrival-route provisioning forks in the game code) —
+some of these are audit/harness bugs, others are game-code bugs the audit surfaced; group-read
+before trusting an exit code, a comparison surface, or a "the scenario didn't cover it" verdict.
 
 ## An exit code alone is a vacuous liveness proof; require the decline/mint audit record (R31)
 
