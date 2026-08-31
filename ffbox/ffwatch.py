@@ -373,6 +373,16 @@ DEFAULTS = {
         # The other half, and the one that fixes "somebody answers two days later in a quiet
         # channel". Messages in the CHANNEL since the conversation last moved.
         "idle_msgs": 25,
+        # HOW FAR THE idle_msgs RESCUE MAY REACH. Without this the rescue had no time bound of
+        # its own and inherited max_candidate_secs, so in a channel nobody had posted in for a
+        # week an unrelated new question was still offered a five-day-old conversation and took
+        # it. Seen live on 2026-08-31: a message joined a conversation 5.2 days older than it
+        # with nothing in between.
+        #
+        # "Still on screen" was always the argument for the rescue, and it stops being true
+        # long before a week. Two days covers the case it exists for — somebody answering after
+        # a weekend — and nothing beyond that is a continuation anybody would recognise.
+        "idle_rescue_secs": 172800,
         # S3: a lone candidate this recent, with nothing at all in between, is a continuation
         # and must not cost a model call or carry a model's error rate.
         "certain_secs": 900,
@@ -624,6 +634,10 @@ def snowflake_secs(value):
 # S4. The model picks a PARENT FROM A SHORT LIST, or says new. Deliberately not a partition of
 # a window: a partition has no small answer space, cannot be validated against anything, and one
 # bad answer scrambles several conversations at once instead of one.
+# What model_selection returns for "this belongs in none of them". Distinct from None, which
+# means the selector could not be believed and the deterministic answer stands.
+SPLIT_OUT = "split-out"
+
 SELECTOR_SCHEMA = {
     "type": "object",
     "required": ["continues", "reason"],
@@ -1957,7 +1971,13 @@ class Watcher:
             if cc.get("per_author") and author_id and row["opener_discord_id"] != str(author_id):
                 continue
             intervening = self.intervening_messages(channel_id, row, message_id)
-            if gap <= cc["idle_secs"] or intervening <= cc["idle_msgs"]:
+            # Inside the plain window, or rescued by nothing having scrolled past — and the
+            # rescue has its OWN reach, which is much shorter than the hard ceiling. Both
+            # bounds, not either: a quiet channel is not a reason to keep a conversation alive
+            # indefinitely, it is a reason to keep it alive a bit longer.
+            fresh = gap <= cc["idle_secs"]
+            rescued = (gap <= cc["idle_rescue_secs"] and intervening <= cc["idle_msgs"])
+            if fresh or rescued:
                 out.append((row, gap, intervening))
             else:
                 self.close_conversation(row["id"], "idle")
@@ -2044,6 +2064,22 @@ class Watcher:
                           else self.select_for_turn(conv, pending))
         if target is None or target == conv["id"]:
             return 0
+        if target is SPLIT_OUT:
+            # These messages belong to none of the conversations on offer, including the one
+            # they are sitting in. Give them their own, anchored on the oldest of them, which is
+            # what ingest would have done had it known.
+            anchor = pending[0]
+            if self.db.scalar("SELECT COUNT(*) FROM message WHERE conversation_id=?",
+                              (conv["id"],), 0) == len(pending) and not self.db.scalar(
+                    "SELECT COUNT(*) FROM turn WHERE conversation_id=?", (conv["id"],), 0):
+                return 0        # already alone in a conversation of their own; nothing to do
+            target = self.upsert_conversation(
+                anchor["discord_id"], kind=conv["kind"], channel_id=conv["channel_id"],
+                guild_id=conv["guild_id"],
+                title=(anchor["content"] or "").strip().splitlines()[:1][0][:100]
+                      if (anchor["content"] or "").strip() else None,
+                root_message_id=anchor["discord_id"], opener=anchor["author_id"],
+                is_thread=False, alias=conv["watch_alias"])
         moved = self.reparent([m["id"] for m in pending], target)
         if moved:
             self.db.execute(
@@ -2113,7 +2149,11 @@ class Watcher:
             return None, None
         choice, why = parsed.get("continues"), str(parsed.get("reason", ""))[:200]
         if choice is None:
-            return None, f"the selector says this starts something new: {why}"
+            # A REAL ANSWER, and not the same as "could not decide". Both used to come back as
+            # None, and resettle read None as "leave it where it is" — so a selector saying
+            # "this starts something new" left the message in the conversation it was provisionally
+            # put in, which is the one place it had just said it does not belong.
+            return SPLIT_OUT, f"the selector says this starts something new: {why}"
         try:
             choice = int(choice)
         except (TypeError, ValueError):
