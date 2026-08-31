@@ -14,8 +14,13 @@
 # fetches, and writes fetch.done. The job writes it before the restore step, which takes about
 # forty seconds, so the 15s watchdog has slack and nothing usually waits at all.
 #
-# TWO HOPS, deliberately. The mirror fetches from golden and golden fetches from GitHub, so the
-# credentials stay where they already are instead of being copied to a third place.
+# STRAIGHT TO GITHUB, NOT VIA GOLDEN. The first version of this fetched from golden, which quietly
+# made golden load-bearing again -- the opposite of retiring it. The mirror IS the git source now:
+# it holds every branch and its own LFS objects, authenticates with the host's GitHub App token,
+# and nothing here reads /opt/FinalFactory. That is what lets the ZFS snapshot and golden go.
+#
+# A job restores its workspace from an ffcache tarball and fetches the delta from here. With no
+# cache entry it pays one slow full transfer from this mirror instead, which is still local.
 
 FFGHR_MIRROR_FETCH_TIMEOUT=${FFGHR_MIRROR_FETCH_TIMEOUT:-180}
 
@@ -42,33 +47,34 @@ ffghr_mirror_fetch() {
         return 0
     fi
 
-    # golden first, because it is the one holding credentials for GitHub.
-    if [ -n "${GOLDEN_MNT:-}" ] && [ -d "$GOLDEN_MNT/.git" ]; then
-        timeout "$FFGHR_MIRROR_FETCH_TIMEOUT" \
-            git -C "$GOLDEN_MNT" fetch --quiet --prune origin 2>/dev/null \
-            || echo "WARNING: golden fetch failed; the mirror may be behind"
-    fi
-    # FROM GOLDEN'S REMOTE-TRACKING REFS, NOT ITS LOCAL BRANCHES. golden is a working checkout: it
-    # has exactly one local branch, master, and every other branch lives under refs/remotes/origin.
-    # Fetching refs/heads/* from it therefore mirrored master and nothing else, so every job on
-    # develop or a feature branch asked the mirror for a commit it did not have and quietly fell
-    # back to github.com. Found because git daemon logged
-    # "not our ref e03e807..." while the jobs still passed -- which is exactly what the additive
-    # phase is for, and exactly the failure that would have become a broken build the moment
-    # github.com came off the allowlist.
+    # AUTHENTICATED BY THE HOST'S OWN STORED CREDENTIAL, which is what golden already uses:
+    # credential.helper store against ~/.git-credentials, owned by the account the supervisor runs
+    # as. The mirror is configured with that remote at provision time, so nothing is passed on a
+    # command line here.
+    #
+    # NOT the GitHub App token, and I checked rather than assumed: that installation is org-scoped
+    # for runner administration and /installation/repositories reports 0 repositories, so a fetch
+    # with it answers "Repository not found". Granting the App Contents:Read on this repository
+    # would be a tightening -- short-lived and read-only instead of a long-lived host credential --
+    # and is the obvious next step, but it is a change only a repository admin can make.
+    # EVERY BRANCH. Worth stating because the version of this that fetched from golden got it
+    # wrong: golden is a working checkout with exactly ONE local branch, master, and 157 others
+    # under refs/remotes/origin -- so refs/heads/* mirrored master and nothing else, and every job
+    # on develop or a feature branch quietly fell back to github.com. Found in the git daemon log
+    # as "not our ref e03e807...", which turned out to be develop HEAD, while the jobs still
+    # passed. Fetching GitHub directly makes refs/heads/* the right refspec and the trap goes away
+    # with the hop.
     timeout "$FFGHR_MIRROR_FETCH_TIMEOUT" \
-        git -C "$_repo" fetch --quiet --prune origin '+refs/remotes/origin/*:refs/heads/*' 2>/dev/null \
+        git -C "$_repo" fetch --quiet --prune origin '+refs/heads/*:refs/heads/*' 2>/dev/null \
         || { echo "mirror fetch failed"; return 1; }
 
-    # LFS TOO, and this is what makes github.com removable rather than merely unused.
-    #
-    # The mirror serves golden's LFS object store. Golden materialises LFS for whatever it has
-    # checked out, so master is covered -- but a feature branch that adds an image has objects
-    # golden has never fetched, and without this the first commit touching a PNG would fail a job
-    # with no way to recover. `git lfs fetch` for a commit that adds nothing is a cheap no-op.
-    if [ -n "$_want" ] && [ -n "${GOLDEN_MNT:-}" ] && [ -d "$GOLDEN_MNT/.git" ]; then
+    # LFS INTO THE MIRROR ITSELF, and this is what makes github.com removable rather than merely
+    # unused. A bare repository keeps its objects under <repo>/lfs/objects, which is what the LFS
+    # server beside git daemon serves. Fetching for the specific commit a job asked for is a cheap
+    # no-op when that commit adds no binaries -- which, measured, is almost always.
+    if [ -n "$_want" ]; then
         timeout "$FFGHR_MIRROR_FETCH_TIMEOUT" \
-            git -C "$GOLDEN_MNT" lfs fetch origin "$_want" >/dev/null 2>&1 \
+            git -C "$_repo" lfs fetch origin "$_want" >/dev/null 2>&1 \
             || echo "WARNING: LFS fetch for ${_want%${_want#???????}} failed; new binaries may be missing"
     fi
 

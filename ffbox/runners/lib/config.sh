@@ -222,7 +222,10 @@ ffghr_machine_id() {
 # THE LOCAL GIT MIRROR. Where a job fetches the repository instead of github.com. MIRROR_URL is a
 # git:// address on ffghr-net because that network is --internal: under the rootless daemon the real
 # host is not reachable from it at all, so the mirror has to be a container like the proxy is.
-# GOLDEN_MNT is the upstream of the mirror rather than GitHub, so the credentials stay in one place.
+#
+# IT IS THE GIT SOURCE, not a copy of golden. It fetches GitHub directly with the App token and
+# keeps its own LFS objects under <repo>/lfs/objects, so nothing here reads /opt/FinalFactory --
+# which is what lets the ZFS snapshot and golden be retired rather than merely bypassed.
 _ffghr_set MIRROR_DIR       mirror_dir       /opt/ffcache/mirror
 _ffghr_set MIRROR_REPO      mirror_repo      FinalFactory.git
 _ffghr_set MIRROR_IP        mirror_ip        10.81.0.250
@@ -230,7 +233,8 @@ _ffghr_set MIRROR_NAME      mirror_name      ffghr-gitmirror
 _ffghr_set MIRROR_IMAGE     mirror_image     ffghr-gitmirror:latest
 _ffghr_set MIRROR_URL       mirror_url       git://10.81.0.250/FinalFactory.git
 _ffghr_set MIRROR_ORIGIN    mirror_origin    https://github.com/Final-Factory/FinalFactory
-_ffghr_set MIRROR_LFS_DIR   mirror_lfs_dir   /opt/FinalFactory/.git/lfs/objects
+_ffghr_set MIRROR_SLUG      mirror_slug      FinalFactory
+_ffghr_set MIRROR_LFS_DIR   mirror_lfs_dir   /opt/ffcache/mirror/FinalFactory.git/lfs/objects
 _ffghr_set MIRROR_LFS_URL   mirror_lfs_url   http://10.81.0.250:8080/FinalFactory.git/info/lfs
 _ffghr_set GOLDEN_MNT       golden_mnt       /opt/FinalFactory
 

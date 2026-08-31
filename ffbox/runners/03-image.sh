@@ -170,6 +170,22 @@ printf '\n'
 # Additive while github.com is still on the allowlist -- a job whose mirror is missing or behind
 # just fetches from GitHub as before -- so nothing here is allowed to be fatal.
 if [ -d "$MIRROR_DIR/$MIRROR_REPO" ]; then
+  # THE MIRROR IS THE GIT SOURCE, so its remote must be GitHub. An earlier build pointed it at
+  # golden, which kept golden load-bearing and -- because golden is a working checkout with one
+  # local branch -- mirrored master and nothing else. Correct it in place rather than leaving a
+  # machine quietly on the old shape.
+  _cur=$(git -C "$MIRROR_DIR/$MIRROR_REPO" config --get remote.origin.url 2>/dev/null || true)
+  case "$_cur" in
+    https://github.com/*) : ;;
+    *)
+      say "repointing the mirror remote at GitHub (was: ${_cur:-unset})"
+      git -C "$MIRROR_DIR/$MIRROR_REPO" remote remove origin 2>/dev/null || true
+      git -C "$MIRROR_DIR/$MIRROR_REPO" remote add origin "https://github.com/$ORG/$MIRROR_SLUG.git" \
+        || say "WARNING: could not set the mirror remote"
+      git -C "$MIRROR_DIR/$MIRROR_REPO" config credential.helper store || true
+      ;;
+  esac
+
   if docker image inspect "$MIRROR_IMAGE" >/dev/null 2>&1; then
     skip "$MIRROR_IMAGE is present"
   else
@@ -209,7 +225,10 @@ if [ -d "$MIRROR_DIR/$MIRROR_REPO" ]; then
   fi
 else
   say "no mirror at $MIRROR_DIR/$MIRROR_REPO; jobs will fetch from github.com"
-  say "  create one with: git clone --bare --no-local $GOLDEN_MNT $MIRROR_DIR/$MIRROR_REPO"
+  say "  create one with:"
+  say "    git clone --bare https://github.com/$ORG/$MIRROR_SLUG.git $MIRROR_DIR/$MIRROR_REPO"
+  say "    git -C $MIRROR_DIR/$MIRROR_REPO lfs fetch --all"
+  say "  That is the one slow sync. Every job after it fetches a delta locally."
 fi
 
 skip "jobs join with: --network $EGRESS_NET --dns $EGRESS_IP"
