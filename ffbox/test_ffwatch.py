@@ -540,6 +540,9 @@ class Case:
         self.watcher = ffwatch.Watcher(cfg)
         self.watcher.init()
 
+    def db_exec(self, sql, params=()):
+        self.watcher.db.execute(sql, params)
+
     def set_verdict(self, verdict):
         """What the stub classifier answers next, in the envelope `claude -p` produces."""
         with open(self.verdict_path, "w", encoding="utf-8") as fh:
@@ -1213,7 +1216,10 @@ def test_reply_chain_and_one_shot():
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [root, mid, tip, solo]
     case = Case("chain", fixture)
-    case.events(ask_event(tip["id"]), ask_event(solo["id"]))
+    case.events(ask_event(tip["id"]))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()      # the chain is answered, so it owes nobody anything
+    case.events(ask_event(solo["id"]))
     case.watcher.drain_events()
 
     convs = {c["thread_id"]: c for c in case.rows("SELECT * FROM conversation")}
@@ -1231,8 +1237,13 @@ def test_reply_chain_and_one_shot():
     check("and holds exactly its own message",
           len(case.rows("SELECT * FROM message WHERE conversation_id=?",
                         (convs[solo["id"]]["id"],))) == 1)
-    check("the conversation it could not join is closed as stale, and says so",
-          convs[root["id"]]["close_reason"] == "stale", dict(convs[root["id"]]))
+    # Not CLOSED here, because a turn is queued on it and close_conversation leaves a
+    # conversation the scheduler is working on alone. Non-candidacy is the invariant that
+    # matters; the closed flag is bookkeeping that follows once the turn ends.
+    offered = case.watcher.cluster_candidates(ASK_CHANNEL, solo["id"], alias="ask_claude")
+    check("the conversation it could not join is no longer offered as a candidate",
+          convs[root["id"]]["id"] not in [r["id"] for r, _, _ in offered],
+          [r["id"] for r, _, _ in offered])
     check("session_id is uuid5 of the thread id",
           convs[root["id"]]["session_id"] == ffwatch.session_id_for(root["id"]),
           convs[root["id"]]["session_id"])
@@ -3916,6 +3927,11 @@ def test_messages_cluster_into_one_conversation():
         sflake(0, 1), kind="ask", channel_id=ASK_CHANNEL,
         root_message_id=sflake(0, 1), alias="ask_claude")
     case2.watcher.insert_message(old_id, message(sflake(0, 1), "the barge is too slow"))
+    # Declined by the gate, so the old conversation owes nobody an answer and may be closed. A
+    # conversation still holding an unanswered message is never closed, whatever the clock says,
+    # or a sweep spanning weeks would age out the early messages before anything answered them.
+    case2.db_exec("UPDATE message SET gate='none', gate_reason='test' WHERE conversation_id=?",
+                  (old_id,))
     new_id = case2.watcher.upsert_conversation(
         sflake(5 * 3600, 2), kind="ask", channel_id=ASK_CHANNEL,
         root_message_id=sflake(5 * 3600, 2), alias="ask_claude")
@@ -3978,6 +3994,292 @@ def test_messages_cluster_into_one_conversation():
           case4.watcher.cluster_candidates(ASK_CHANNEL, sflake(200, 9)) and all(
               r["is_thread"] == 0 for r, _, _ in
               case4.watcher.cluster_candidates(ASK_CHANNEL, sflake(200, 9))))
+
+
+def test_a_message_stops_moving_once_a_session_has_seen_it():
+    """The commit boundary. A session cannot be untold something.
+
+    Clustering decides provisionally at ingest and may re-decide at create_turn, which is what
+    "cluster broadly, then split" needs. What bounds it is that once a message has been in a
+    prompt, moving it elsewhere makes the record a lie — and message.turn_id IS NULL already
+    means exactly "no turn has claimed this, so no session has read it".
+    """
+    print("re-parenting stops at the commit boundary")
+    fixture = base_fixture()
+    a, b = sflake(0, 1), sflake(9 * 86400, 2)
+    fixture["messages"][ASK_CHANNEL] = [message(a, "first topic"), message(b, "second topic")]
+    case = Case("reparent", fixture, verdict={"engage": True, "reason": "r"})
+    case.events(ask_event(a), ask_event(b))
+    case.watcher.drain_events()
+    convs = case.rows("SELECT * FROM conversation ORDER BY id")
+    check("nine days apart, these are two conversations", len(convs) == 2, convs)
+    first, second = convs[0]["id"], convs[1]["id"]
+
+    unclaimed = case.rows("SELECT * FROM message WHERE discord_id=?", (b,))[0]
+    moved = case.watcher.reparent([unclaimed["id"]], first)
+    check("an unclaimed message moves", moved == 1)
+    check("and it really is in the other conversation now",
+          case.rows("SELECT * FROM message WHERE discord_id=?", (b,))[0]["conversation_id"]
+          == first)
+    check("the conversation it emptied is gone, because nobody was ever told its id",
+          case.rows("SELECT * FROM conversation WHERE id=?", (second,)) == [], second)
+
+    # Now claim it, which is what a session reading it looks like from here.
+    case.watcher.claim_turns()
+    claimed = case.rows("SELECT * FROM message WHERE discord_id=?", (b,))[0]
+    check("once claimed it has a turn", claimed["turn_id"] is not None, claimed)
+    third = case.watcher.upsert_conversation(
+        sflake(20 * 86400, 3), kind="ask", channel_id=ASK_CHANNEL,
+        root_message_id=sflake(20 * 86400, 3), alias="ask_claude")
+    check("and it refuses to move, whatever the caller believes",
+          case.watcher.reparent([claimed["id"]], third) == 0)
+    check("it is still where the session saw it",
+          case.rows("SELECT * FROM message WHERE discord_id=?", (b,))[0]["conversation_id"]
+          == first)
+
+    # A conversation something has been said about is never EMPTIED. Moving one row out of a
+    # conversation that still holds others is fine and is not what this guards.
+    fresh = sflake(0, 77)
+    case.watcher.insert_message(first, message(fresh, "a later unclaimed line"))
+    everything = [m["id"] for m in
+                  case.rows("SELECT * FROM message WHERE conversation_id=?", (first,))]
+    check("emptying a conversation WITH a turn is refused",
+          case.watcher.reparent(everything, third) == 0, everything)
+    check("so that conversation still exists",
+          len(case.rows("SELECT * FROM conversation WHERE id=?", (first,))) == 1)
+    check("and nothing moved at all — it is refused, not partly applied",
+          all(m["conversation_id"] == first for m in
+              case.rows("SELECT * FROM message WHERE conversation_id=?", (first,))))
+
+    # A CONVERSATION IS NEVER CLOSED WHILE IT STILL OWES SOMEBODY AN ANSWER. claim_turns skips
+    # a closed conversation, so closing one holding an unclaimed message meant that message was
+    # never answered and nothing said why. The sweep reaches this on its own: it reads a window
+    # spanning weeks, the early messages open conversations and the later ones age those out as
+    # stale, all before claim_turns has run once.
+    span = base_fixture()
+    old, new = sflake(0, 1), sflake(20 * 86400, 2)
+    span["messages"][ASK_CHANNEL] = [message(old, "the merger drops items"),
+                                     message(new, "unrelated, weeks later")]
+    backfill = Case("cluster-backfill", span, verdict={"engage": True, "reason": "r"})
+    backfill.events(ask_event(old), ask_event(new))
+    backfill.watcher.drain_events()          # both ingested before anything claims
+    backfill.watcher.claim_turns()
+    answered = {t["conversation_id"] for t in backfill.rows("SELECT * FROM turn")}
+    check("a sweep spanning weeks answers the OLD message too, not just the new one",
+          len(answered) == 2, backfill.rows(
+              "SELECT c.id, c.state, c.close_reason, COUNT(t.id) turns FROM conversation c"
+              " LEFT JOIN turn t ON t.conversation_id=c.id GROUP BY c.id"))
+
+    # And the no-op cases, which must not delete or move anything.
+    fresh_row = case.rows("SELECT * FROM message WHERE discord_id=?", (fresh,))[0]
+    check("re-parenting into the conversation a message is already in does nothing",
+          case.watcher.reparent([fresh_row["id"]], first) == 0)
+    check("an empty list does nothing", case.watcher.reparent([], first) == 0)
+
+
+def test_the_selector_narrows_a_choice_it_cannot_widen():
+    """S4 picks a parent from a short offered list, or says new.
+
+    It is asked a question with a small answer space on purpose, and its answer is checked
+    against the ids that were actually offered. The model narrows a choice the harness has
+    already bounded; nothing it can say widens one.
+    """
+    print("the S4 selector")
+
+    def two_live_conversations(name, answer):
+        """Two conversations coexisting in one channel, which is the only state S4 is for.
+
+        Built directly rather than by posting messages, because no purely deterministic
+        sequence reaches it: candidacy is a disjunction, so in a quiet channel every message
+        joins the one conversation already there. Creating the second one on content is what
+        S4 is FOR, so the state it operates on has to be arranged rather than produced.
+        """
+        fixture = base_fixture()
+        a, b, c = sflake(0, 1), sflake(4 * 3600, 2), sflake(8 * 3600, 3)
+        fixture["messages"][ASK_CHANNEL] = [
+            message(a, "the cargo barge is too slow"),
+            message(b, "unrelated: how does research tier 3 unlock?"),
+            message(c, "yeah that one"),
+        ]
+        case = Case(name, fixture, verdict={"engage": True, "reason": "r"})
+        ids = []
+        for mid, title in ((a, "the cargo barge is too slow"),
+                           (b, "unrelated: how does research tier 3 unlock?")):
+            cid = case.watcher.upsert_conversation(
+                mid, kind="ask", channel_id=ASK_CHANNEL, root_message_id=mid,
+                title=title, alias="ask_claude")
+            case.watcher.insert_message(cid, message(mid, title))
+            conv = case.rows("SELECT * FROM conversation WHERE id=?", (cid,))[0]
+            case.watcher.create_turn(conv)      # answered already, so nothing is owed
+            case.db_exec("UPDATE turn SET status='done' WHERE conversation_id=?", (cid,))
+            case.db_exec("UPDATE conversation SET state='idle' WHERE id=?", (cid,))
+            ids.append(cid)
+        first, second = ids
+        case.events(ask_event(c))
+        case.watcher.drain_events()
+        landed = case.rows("SELECT * FROM message WHERE discord_id=?", (c,))[0]
+        if answer is not None:
+            case.watcher.model_selection = lambda msg, cands, alias=None: answer
+        return case, first, second, landed
+
+    case, first, second, landed = two_live_conversations("sel-move", (None, None))
+    check("ingest put the ambiguous message in the most recent, provisionally",
+          landed["conversation_id"] == second and landed["routed_by"] == "recent",
+          dict(landed))
+
+    case, first, second, _ = two_live_conversations("sel-honour", None)
+    case.watcher.model_selection = lambda msg, cands, alias=None: (first, "it means the barge")
+    case.watcher.claim_turns()
+    moved = case.rows("SELECT * FROM message ORDER BY CAST(discord_id AS INTEGER)")[-1]
+    check("an answer naming an offered id is honoured",
+          moved["conversation_id"] == first, dict(moved))
+    check("and recorded as the model's decision, with its reason",
+          moved["routed_by"] == "model" and "barge" in (moved["routed_reason"] or ""),
+          dict(moved))
+
+    # An id that was never offered cannot widen anything.
+    case, first, second, _ = two_live_conversations("sel-bogus", None)
+    real = ffwatch.Watcher.model_selection
+    case.watcher.model_selection = lambda msg, cands, alias=None: real(
+        case.watcher, msg, cands, alias)
+    case.set_verdict({"continues": 99999, "reason": "made up"})
+    case.watcher.claim_turns()
+    kept = case.rows("SELECT * FROM message ORDER BY CAST(discord_id AS INTEGER)")[-1]
+    check("an id that was never offered keeps the deterministic answer",
+          kept["conversation_id"] == second and kept["routed_by"] == "recent", dict(kept))
+
+    # A selector that cannot answer at all must never block a turn.
+    case, first, second, _ = two_live_conversations("sel-dead", None)
+    case.watcher.model_selection = lambda msg, cands, alias=None: real(
+        case.watcher, msg, cands, alias)
+    os.environ["FFWATCH_CLAUDE"] = write_stub(
+        os.path.join(case.root, "claude_dead.sh"), CLAUDE_FAIL_STUB)
+    case.cfg["claude_bin"] = os.environ["FFWATCH_CLAUDE"]
+    case.watcher.claim_turns()
+    check("a selector that cannot run still lets the turn happen",
+          len(case.rows("SELECT * FROM turn WHERE conversation_id=?", (second,))) >= 1)
+    stuck = case.rows("SELECT * FROM message ORDER BY CAST(discord_id AS INTEGER)")[-1]
+    check("and the message keeps the deterministic answer",
+          stuck["conversation_id"] == second, dict(stuck))
+
+    # The selector call is sandboxed like every other model call in this file.
+    argv, env, cwd, stdin = ffwatch.classifier_invocation(
+        case.cfg, "prompt", ffwatch.SELECTOR_SCHEMA)
+    check("the selector goes through the same sandbox as the gate",
+          "--safe-mode" in argv and "--tools" in argv and "GH_TOKEN" not in env, argv)
+
+
+def test_a_long_conversation_rotates_its_session_not_itself():
+    """Something has to bound a session that has been growing for weeks. Not the conversation.
+
+    Closing a conversation at N turns splits a live discussion to solve a problem the discussion
+    did not cause. The session underneath it can roll over instead: a new generation seeded from
+    render_summary, which reads what people wrote out of the database rather than out of the
+    transcript. The conversation keeps its id, its page and its Discord anchor.
+    """
+    print("session rotation")
+    fixture = base_fixture()
+    mid = sflake(0, 1)
+    fixture["messages"][ASK_CHANNEL] = [message(mid, "a long-running discussion")]
+    case = Case("rotate", fixture, verdict={"engage": True, "reason": "r"})
+    case.events(ask_event(mid))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    conv = case.rows("SELECT * FROM conversation")[0]
+    case.cfg["cluster"] = dict(case.cfg["cluster"], rotate_turns=3)
+
+    # Pretend the session transcript exists, which is what `resume` keys on.
+    first_session = conv["session_id"]
+    path = case.watcher.transcript_path(conv["id"], first_session)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w").close()
+
+    seen = []
+    for seq in (2, 3, 4, 5):
+        conv = case.rows("SELECT * FROM conversation WHERE id=?", (conv["id"],))[0]
+        turn = dict(case.rows("SELECT * FROM turn")[0])
+        turn["seq"] = seq
+        job = case.watcher.build_job(turn, conv, f"r{seq}",
+                                     os.path.join(case.root, "att"))
+        seen.append((seq, job["session"]["resume"], job["session"]["id"]))
+        # Whatever session it names, the transcript for it exists next time round.
+        p2 = case.watcher.transcript_path(conv["id"], job["session"]["id"])
+        os.makedirs(os.path.dirname(p2), exist_ok=True)
+        open(p2, "w").close()
+
+    check("turns inside the window resume the same session",
+          seen[0][1] and seen[1][1] and seen[0][2] == seen[1][2] == first_session, seen)
+    check("the turn past rotate_turns starts a new session instead",
+          not seen[2][1] and seen[2][2] != first_session, seen)
+    check("and the one after that resumes the NEW session rather than rotating again",
+          seen[3][1] and seen[3][2] == seen[2][2], seen)
+
+    after = case.rows("SELECT * FROM conversation WHERE id=?", (conv["id"],))[0]
+    check("the conversation is still open, and still the same conversation",
+          after["id"] == conv["id"] and after["state"] != "closed", dict(after))
+    check("the seam is recorded, so the web page can show where it is",
+          after["rotated_at_seq"] == 4, dict(after))
+    check("the new generation is a different session id, derived not invented",
+          after["session_id"] == ffwatch.session_id_for(after["thread_id"],
+                                                        after["session_generation"]),
+          dict(after))
+
+    conv = after
+    turn = dict(case.rows("SELECT * FROM turn")[0])
+    turn["seq"] = 6
+    job = case.watcher.build_job(turn, conv, "r6", os.path.join(case.root, "att"))
+    check("nothing a person wrote is lost across the seam",
+          job["resume_summary"] is None or "a long-running discussion"
+          in job["resume_summary"], job["resume_summary"])
+
+
+def test_the_dev_chat_exchange_that_started_this():
+    """The twelve rows from the live database, replayed through the rule.
+
+    From ~/ffbox-state/ffwatch.db on the build server, 2026-08-30: one #dev-chat exchange split
+    across twelve conversations. Two discussions twenty-seven minutes apart, and the ids are the
+    real ones, so the timings here are the timings that actually happened.
+
+    The right answer is one or two conversations. Twelve is the bug.
+    """
+    print("the #dev-chat exchange, replayed")
+    real = [
+        ("1230234806424440882", "Best time is 2-3pm CST (1-2pm MST) any day this week"),
+        ("1230234883205501068", "Otherwise I'm slammed with meetings"),
+        ("1230235146326773902", "ok lets do tomorrow at 1pm MST then"),
+        ("1230242028382847117", "Ok I will be driving"),
+        ("1230242044161691729", "But should be fine"),
+        ("1230243012022505472", "whe re are you driving to"),
+    ]
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(mid, text) for mid, text in real]
+    case = Case("devchat", fixture, verdict={"engage": True, "reason": "r"})
+    for mid, _ in real:
+        case.events(ask_event(mid))
+        case.watcher.drain_events()
+
+    convs = case.rows("SELECT * FROM conversation")
+    check(f"six messages become one conversation, not six (got {len(convs)})",
+          len(convs) == 1, [dict(c) for c in convs])
+    check("and every message is in it",
+          len(case.rows("SELECT * FROM message")) == 6)
+
+    # The gap that a reader would draw a line at: 19:15:15 to 19:42:36, twenty-seven minutes.
+    gap = (ffwatch.snowflake_secs("1230242028382847117")
+           - ffwatch.snowflake_secs("1230235146326773902"))
+    check("the two discussions really are 27 minutes apart in the real ids",
+          1600 < gap < 1700, gap)
+    check("which is inside idle_secs, so the deterministic rules keep them together",
+          gap < ffwatch.DEFAULTS["cluster"]["idle_secs"], gap)
+
+    # And the thing that made this worth fixing: the agent now gets the antecedent.
+    case.watcher.claim_turns()
+    turn = case.rows("SELECT * FROM turn")[0]
+    job = case.watcher.build_job(turn, convs[0], "r1", os.path.join(case.root, "att"))
+    rendered = job["prompt"]
+    check("so 'whe re are you driving to' reaches the agent with what came before it",
+          "Ok I will be driving" in rendered and "whe re are you driving to" in rendered,
+          rendered[-600:])
 
 
 def test_a_thread_in_an_ordinary_channel_is_swept():
@@ -5794,6 +6096,10 @@ def main():
         test_github_client_retries_and_cannot_merge,
         test_verification_results_path_is_per_invocation,
         test_messages_cluster_into_one_conversation,
+        test_the_dev_chat_exchange_that_started_this,
+        test_a_message_stops_moving_once_a_session_has_seen_it,
+        test_the_selector_narrows_a_choice_it_cannot_widen,
+        test_a_long_conversation_rotates_its_session_not_itself,
         test_a_thread_in_an_ordinary_channel_is_swept,
         test_the_classifier_runs_in_a_sandbox,
         test_destructive_docker_calls_name_the_container,

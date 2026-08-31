@@ -615,6 +615,89 @@ The host does every Discord read and write. The container gets `job.json` with t
 messages, their authors and local paths to already-downloaded attachments — so the agent, which
 is reading text written by strangers, holds no credential that can speak as the bot.
 
+### What a conversation IS
+
+A Discord **thread** is a conversation, keyed on the thread's own id, and follow-ups append to
+it. Every watched channel has its threads listed on each sweep, forum or not — that used to
+happen only for forums, so a thread under an ordinary channel was swept never.
+
+In a plain text **channel** a conversation is a **window of activity**, not a reply chain. It
+was the latter until 2026-08-31, and that is why every message opened its own: `thread_id` is
+UNIQUE and a message that is not a reply is its own root. Discord users do not reply, they just
+talk, so a channel produced one conversation per message and an agent handed "okay, let's try
+that" had no antecedent for "that".
+
+Two decisions, in `ffwatch.py`:
+
+**Candidacy** — which conversations a message COULD be continuing. A conversation stays
+reachable while EITHER less than `idle_secs` has passed OR fewer than `idle_msgs` have scrolled
+past. Either one keeps it alive, and that disjunction is the whole design: what ends a
+discussion is not the clock, it is whether the thing being answered is still on screen. Two
+days of silence in a quiet channel leaves it visible; ten minutes in a busy one buries it.
+Timing comes from the message SNOWFLAKE, not `last_activity_at`, which is ingest time and would
+make everything a sweep backfilled look seconds old.
+
+**Selection** — which one it actually continues. An explicit Discord reply wins outright and
+reopens a closed conversation; no candidates means a new one; a lone candidate minutes old with
+nothing in between joins deterministically. Only what is left asks a model, and it picks a
+parent from a short offered list or says "new" — never partitions a window. Its answer is
+validated against the ids that were offered, so it narrows a choice the harness has already
+bounded and can never widen one. `message.routed_by` records which rule decided:
+`reply | new | certain | model | recent`.
+
+The model runs at `create_turn`, not at ingest, and may re-parent only messages with
+`turn_id IS NULL` — which already means no session has read them. A session cannot be untold
+something, so that is the commit boundary. A conversation is also never closed while it still
+holds an unanswered message, or a sweep spanning weeks would age out the early ones before
+anything replied to them.
+
+`cluster.rotate_turns` bounds the SESSION and not the conversation: past it the session rotates
+to a new generation seeded from `render_summary` (the database, not the lost transcript) and the
+conversation stays open, keeps its id and its Discord anchor. `ffweb` shows the seam.
+
+Config lives under `cluster` in `~/.config/ffbox/config.json`, overridable per watch entry:
+
+| key | default | |
+|---|---|---|
+| `idle_secs` | 7200 | half the disjunction: two hours of quiet |
+| `idle_msgs` | 25 | the other half: how much scrolled past |
+| `certain_secs` | 900 | a lone candidate this recent needs no model |
+| `max_candidate_secs` | 604800 | nothing older is ever offered |
+| `max_candidates` | 5 | how many the selector chooses between |
+| `rotate_turns` | 12 | rotates the session, not the conversation |
+| `per_author` | false | two people in one channel are one discussion |
+
+One consequence worth knowing: `idle_msgs` counts channel messages that are not this
+conversation's own, so while a channel holds ONE conversation its traffic IS that conversation
+and nothing has scrolled past it. A gap alone does not open a second one either, because the OR
+rescues it. So the deterministic rules alone merge a quiet channel up to `max_candidate_secs`,
+and the model selector is what splits it on content. That is the intended "cluster broadly, then
+split" shape; a box running without the selector wants a smaller `max_candidate_secs`.
+
+Full design and rationale: `design/conversation_clustering_design.txt`.
+
+### The classifier sandbox
+
+The engagement gate and the conversation selector both run `claude -p` ON THE HOST, as the
+account that owns the rootless Docker socket, the NOPASSWD `zfs` rules, `GH_TOKEN` and the
+Claude credential. That makes them the most privileged model calls in the pipeline — better
+isolated inside a container than out here.
+
+`classifier_invocation` is the only place either is built, deliberately: a flag set is a policy
+boundary that holds exactly as long as every edit remembers all of it. It passes `--tools ""`,
+`--safe-mode`, `--strict-mcp-config`, `--disable-slash-commands`, `--setting-sources ""`,
+`--no-session-persistence`, `--permission-mode manual` and a classifier system prompt in place
+of the agent one; the environment is scrubbed to PATH and HOME, the working directory is empty,
+and the prompt goes on **stdin** rather than argv, where `ps` could read it.
+
+**Not `--bare`.** It looks like the right flag and forces auth to `ANTHROPIC_API_KEY`, never
+reading OAuth — which is how this box authenticates, so it breaks the gate outright.
+
+Measured before this landed: `--tools ""` alone still loaded three plugins and thirty skills and
+fetched the claude.ai connector list. What it does NOT buy is a real boundary — `HOME` has to
+stay for the credential, so this is policy, not a kernel. See section 6 of the clustering design
+for the flag-by-flag evidence and what a process boundary would take.
+
 Inside the container there is **no `ffdiscord` at all** — not the real CLI, and since
 2026-08-21 not the credential-free outbox shim phase 2 shipped either. No run is given any
 path to Discord.
