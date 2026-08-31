@@ -976,16 +976,29 @@ def cmd_read(client, args):
 
 
 def cmd_thread(client, args):
-    """Read a forum bug report end to end: starter post + every reply."""
+    """Read a forum bug report end to end: starter post + every reply.
+
+    With --after, only what is new since that message id. A caller that already holds the
+    thread up to a watermark wants the tail, not the newest hundred re-fetched and thrown
+    away — and a thread that gains more than 100 messages between two full reads loses the
+    middle permanently, because Discord returns the NEWEST 100 and there is nothing to page
+    back through.
+    """
     tid = resolve_channel(client, args.thread)
     meta = client.get(f"/channels/{tid}")
-    # The starter message of a forum thread shares the thread's id.
+    after = getattr(args, "after", None)
+    # The starter message of a forum thread shares the thread's id. It is only wanted on a
+    # full read: with --after the caller has it already, and it sorts before everything.
     starter = None
-    try:
-        starter = client.get(f"/channels/{tid}/messages/{tid}")
-    except DiscordError:
-        pass
-    msgs = client.get(f"/channels/{tid}/messages?limit={min(args.limit, 100)}") or []
+    if not after:
+        try:
+            starter = client.get(f"/channels/{tid}/messages/{tid}")
+        except DiscordError:
+            pass
+    query = [f"limit={min(args.limit, 100)}"]
+    if after:
+        query.append(f"after={after}")
+    msgs = client.get(f"/channels/{tid}/messages?" + "&".join(query)) or []
     msgs.reverse()
     if starter and all(m["id"] != starter["id"] for m in msgs):
         msgs.insert(0, starter)
@@ -1388,6 +1401,7 @@ def build_parser():
     sp = add("thread", cmd_thread, "read one forum thread end to end (starter + replies)")
     sp.add_argument("thread", help="thread id")
     sp.add_argument("--limit", type=int, default=100)
+    sp.add_argument("--after", help="only messages after this message id (skips the starter)")
     sp.add_argument("--chars", type=int, default=0)
 
     sp = add("post", cmd_post, "post a message (\"@ben\" expands to a real ping)")

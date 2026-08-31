@@ -160,6 +160,7 @@ tmp.close()
 def fresh_listener(operator_ids=("600601",)):
     open(tmp.name, "w").close()
     li = L.Listener("tok", {"111": "ask_claude", "222": "bug_reports"}, tmp.name,
+                   resolve_unknown=False,
                     operator_ids=operator_ids)
     li.bot_id = "999"
     return li
@@ -321,7 +322,7 @@ for _gone in ('"ask_claude"', '"bug_reports"', '"suggestions"', '"dev_chat"',
 # A listener told to watch nothing rings for NOTHING in a guild. Since 2026-08-25 that is the
 # whole point rather than a degenerate case: an unlisted channel generates no events, so a
 # listener with an empty watch list is a listener that only answers operator DMs.
-li = L.Listener("tok", {}, tmp.name, operator_ids=("600601",))
+li = L.Listener("tok", {}, tmp.name, operator_ids=("600601",), resolve_unknown=False)
 li.bot_id = "999"
 open(tmp.name, "w").close()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "808", "id": "n1",
@@ -340,6 +341,69 @@ li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "dm9", "id": "n4"
                                       "author": {"id": "600601"}})
 check("but an operator DM still rings — a DM has no channel to list",
       events()[-1]["kind"] == "operator_dm")
+
+# ------------------------------------------------------------------------------------------
+# the thread map survives a restart
+# ------------------------------------------------------------------------------------------
+# thread_parents used to be filled ONLY by THREAD_CREATE, so it was correct for exactly as long
+# as the process lived. After a restart a message in an existing thread matched neither
+# watch_ids nor thread_parents and was dropped, silently, for the life of the process.
+
+li = fresh_listener()
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "t500", "id": "r1",
+                                      "guild_id": "g1", "author": {"id": "42"}})
+check("a fresh listener drops a message in a thread it never saw created", events() == [])
+
+# GUILD_CREATE carries every active thread the bot can see, on every connect.
+li = fresh_listener()
+li.handle_dispatch("GUILD_CREATE", {"id": "g1", "threads": [
+    {"id": "t500", "parent_id": "111"},      # under a watched channel
+    {"id": "t900", "parent_id": "808"},      # under one nobody watches
+]})
+check("GUILD_CREATE registers threads under watched channels",
+      li.thread_parents == {"t500": "111"}, li.thread_parents)
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "t500", "id": "r2",
+                                      "guild_id": "g1", "author": {"id": "42"}})
+evs = events()
+check("and the same message now rings as a thread_message",
+      len(evs) == 1 and evs[0]["kind"] == "thread_message"
+      and evs[0]["channel"] == "ask_claude" and evs[0]["id"] == "r2", evs)
+
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "t900", "id": "r3",
+                                      "guild_id": "g1", "author": {"id": "42"}})
+check("a thread under an unwatched channel still rings nothing", len(events()) == 1)
+
+# THREAD_LIST_SYNC carries the same list again on a resubscribe.
+li = fresh_listener()
+li.handle_dispatch("THREAD_LIST_SYNC", {"threads": [{"id": "t501", "parent_id": "222"}]})
+check("THREAD_LIST_SYNC registers them too", li.thread_parents == {"t501": "222"})
+
+# The lazy backstop, for a thread archived before we connected and revived after.
+li = fresh_listener()
+li.resolve_unknown = True
+li.resolve_thread_parent = lambda ch: "111" if ch == "t777" else None
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "t777", "id": "r4",
+                                      "guild_id": "g1", "author": {"id": "42"}})
+check("an unknown channel that resolves to a watched thread rings",
+      events()[-1]["kind"] == "thread_message", events())
+
+# The negative cache lives INSIDE resolve_thread_parent, so this exercises the real method:
+# with the channel already known not to be a watched thread it must return without reaching
+# the network at all. Any network attempt here would raise and be logged, and would also make
+# this file need one.
+li = fresh_listener()
+li.resolve_unknown = True
+li.not_a_watched_thread.add("t888")
+check("a channel already known not to be one is not looked up again",
+      li.resolve_thread_parent("t888") is None)
+check("and a lookup is refused outright when resolution is switched off",
+      fresh_listener().resolve_thread_parent("t999") is None)
+
+li = fresh_listener()
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "dm1", "id": "r6",
+                                      "author": {"id": "600601"}})
+check("a DM is never mistaken for an unknown channel to resolve",
+      events()[-1]["kind"] == "operator_dm", events())
 
 os.unlink(tmp.name)
 

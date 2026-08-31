@@ -252,7 +252,8 @@ class WS:
 
 
 class Listener:
-    def __init__(self, token, watch_ids, events_path, operator_ids=None, debug=False):
+    def __init__(self, token, watch_ids, events_path, operator_ids=None, debug=False,
+                 resolve_unknown=True):
         self.token = token
         self.watch_ids = watch_ids  # channel id -> alias
         self.events_path = events_path
@@ -261,7 +262,14 @@ class Listener:
         # account. Never a username: those are renameable.
         self.operator_ids = set(operator_ids or ())
         self.debug = debug
-        self.thread_parents = {}  # thread id -> watched parent id (seen this process)
+        # Whether an unknown guild channel is worth one REST lookup. On by default; the offline
+        # tests turn it off, because a listener that reaches the network to decide it is not
+        # interested in a message is not testable without one.
+        self.resolve_unknown = resolve_unknown
+        self.thread_parents = {}  # thread id -> watched parent id
+        # Channels proven NOT to be a watched thread, so an unwatched channel costs one lookup
+        # per process rather than one per message. Bounded by the channels the bot can see.
+        self.not_a_watched_thread = set()
         self.bot_id = None
         self.session_id = None
         self.resume_url = None
@@ -288,6 +296,57 @@ class Listener:
         """Ring the doorbell once for 'anything might have arrived while we could not
         see' — fresh start, or a resume that failed. One sweep pass catches it all."""
         self.emit("catchup", reason, None, None, None)
+
+    def register_threads(self, threads, where):
+        """Remember every thread whose parent is watched.
+
+        thread_parents used to be filled ONLY by THREAD_CREATE, which made it good for exactly
+        as long as the process lived. After a restart it was empty, so a message in an existing
+        thread matched neither watch_ids nor thread_parents, fell through to the
+        unwatched-channel branch, and was dropped — silently, and for the life of the process.
+
+        Discord hands the list over twice without being asked: GUILD_CREATE carries the active
+        threads the bot can see on every connect, and THREAD_LIST_SYNC carries them again on a
+        resubscribe. Both are free, and neither needs the guild id or a REST round trip.
+        """
+        found = 0
+        for t in threads or []:
+            parent = t.get("parent_id")
+            if parent in self.watch_ids and t.get("id") not in self.thread_parents:
+                self.thread_parents[t["id"]] = parent
+                self.not_a_watched_thread.discard(t["id"])
+                found += 1
+        if found:
+            log(f"{where}: registered {found} thread(s) under watched channels")
+        return found
+
+    def resolve_thread_parent(self, channel_id):
+        """One REST lookup for a channel this process has not seen, cached BOTH ways.
+
+        The backstop for a thread that was archived before we connected and revived later: it
+        is in no GUILD_CREATE list and we saw no THREAD_CREATE for it, so nothing above knows
+        it exists. A negative answer is remembered too, or an unwatched channel would cost a
+        lookup on every message it carries.
+        """
+        if channel_id in self.not_a_watched_thread or not self.resolve_unknown:
+            return None
+        try:
+            req = urllib.request.Request(
+                f"{API}/channels/{channel_id}",
+                headers={"Authorization": f"Bot {self.token}", "User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                meta = json.loads(resp.read())
+        except Exception as exc:  # network, permission, deleted channel — all the same here
+            log(f"could not resolve channel {channel_id}: {exc}")
+            self.not_a_watched_thread.add(channel_id)
+            return None
+        parent = meta.get("parent_id")
+        if meta.get("type") in (10, 11, 12) and parent in self.watch_ids:
+            self.thread_parents[channel_id] = parent
+            log(f"resolved {channel_id} as a thread under {self.watch_ids[parent]}")
+            return parent
+        self.not_a_watched_thread.add(channel_id)
+        return None
 
     def _bot_is_addressed(self, d):
         """Was the bot @-mentioned, or is this message a reply to one of the bot's own
@@ -332,8 +391,13 @@ class Listener:
             if ch in self.watch_ids:
                 self.emit("message", self.watch_ids[ch], ch, d.get("id"), author_id)
                 return None
-            if ch in self.thread_parents:
-                parent = self.thread_parents[ch]
+            parent = self.thread_parents.get(ch)
+            if parent is None and d.get("guild_id"):
+                # Not a channel we watch and not a thread we know. It may still be a thread
+                # under a watched channel that was archived before we connected; one lookup
+                # settles it, and the answer is cached either way.
+                parent = self.resolve_thread_parent(ch)
+            if parent is not None:
                 self.emit("thread_message", self.watch_ids[parent], ch, d.get("id"), author_id)
                 return None
             # A DIRECT MESSAGE. guild_id is present on every guild message and absent here, and
@@ -380,8 +444,14 @@ class Listener:
             parent = d.get("parent_id")
             if parent in self.watch_ids:
                 self.thread_parents[d.get("id")] = parent
+                self.not_a_watched_thread.discard(d.get("id"))
                 if d.get("newly_created"):
                     self.emit("thread", self.watch_ids[parent], d.get("id"), d.get("id"), d.get("owner_id"))
+            return None
+        if t in ("GUILD_CREATE", "THREAD_LIST_SYNC"):
+            # Every active thread the bot can see, handed over on connect and on resubscribe.
+            # This is what survives a restart; see register_threads.
+            self.register_threads(d.get("threads"), t)
             return None
         return None
 
