@@ -233,6 +233,19 @@ The base already carries git, git-lfs, python3, curl, jq and unity-editor.
 the base image: GitHub enforces a minimum runner version and a runner baked into a container
 cannot self-update, so a stale image eventually stops being given jobs.
 
+THE VERSION LIVES IN THE DOCKERFILE, NOT IN THE BUILD ARG, and that was a real bug from the day the
+self-updater started rebuilding on every commit. ARG RUNNER_VERSION is what every other build path
+uses, so the weekly --build-arg lasted exactly until the next push and the weekly log then said
+"already current" forever, comparing against the image it had just rebuilt. Nobody would have seen
+it until GitHub stopped scheduling jobs. So the weekly run commits the new version and pushes it,
+and the updater distributes it.
+
+The order is the safety property: the build proves the version (the Dockerfile runs
+Runner.Listener --version) before anything is written down. The commit happens only on a clean
+checkout that is exactly at origin, under update_ffbox.sh's lock so a merge cannot land underneath
+it, and a failed push is rolled back — an unpushed commit and a dirty tree are each a reason the
+updater does nothing, so leaving either would stop the box taking any code at all.
+
 
 5. The workspace
 ----------------
@@ -422,6 +435,7 @@ installed from there, so no second copy on disk can disagree with git.
       systemd/ffgithubrunners-image.{service,timer}
       config.json.example              slots, idle_pool, watchdog, image, labels, org
       test_pool.sh                     offline tests for the admission arithmetic
+      test_pin.sh                      offline tests for the weekly version bump
       secrets.env.example
       README.md
 
