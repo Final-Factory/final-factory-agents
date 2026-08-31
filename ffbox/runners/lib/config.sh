@@ -129,7 +129,26 @@ _ffghr_set APP_KEY             app_key             "$FFGHR_CONFIG_DIR/github-app
 _ffghr_set CONTAINER_USER   container_user   ffbox-container
 _ffghr_set DOCKER_SOCK      docker_sock      /run/ffbox-container/docker.sock
 _ffghr_set WORK_FOLDER      work_folder      /opt/actions-runner/_work
-_ffghr_set WORKSPACE_SIZE   workspace_size   40g
+# THE SHARED SETTING, so a box holds one answer to "how big may a workspace get" rather than two
+# that drift. ~/.config/ffbox/config.json is read by ffbox for its agent workspace; this falls back
+# to the same key, and githubrunners/config.json still overrides when CI genuinely wants a
+# different ceiling from the agent.
+_ffghr_shared_cfg() {
+    _sc=${FFBOX_CONFIG_JSON:-${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/config.json}
+    [ -r "$_sc" ] || return 0
+    python3 -c '
+import json, sys
+try:
+    v = json.load(open(sys.argv[1])).get(sys.argv[2])
+except Exception:
+    sys.exit(0)
+if v is not None and not isinstance(v, (dict, list)):
+    print(v)
+' "$_sc" "$1" 2>/dev/null
+}
+_ffghr_ws_default=$(_ffghr_shared_cfg workspace_size)
+[ -n "$_ffghr_ws_default" ] || _ffghr_ws_default=40g
+_ffghr_set WORKSPACE_SIZE   workspace_size   "$_ffghr_ws_default"
 # A ceiling, not an allocation: the workspace tmpfs plus about 32 GB for the editor. It exists
 # for one failure, a job filling the workspace while Unity is resident on a host with 2 GB of
 # swap. See section 12 of the design.
