@@ -136,9 +136,11 @@ ADDED_COLUMNS = [
     # or a long conversation rotates on every turn after the twelfth.
     ("conversation", "rotated_at_seq", "INTEGER"),
     # WHICH RULE PLACED THIS MESSAGE, set on every ingested message and not only the ones a
-    # model touched: 'reply' S1, 'new' S2, 'certain' S3, 'model' an S4 answer that was believed,
-    # 'recent' the S4 band with no model behind it. A routing call nobody can inspect is a
-    # routing call nobody can debug.
+    # model touched: 'reply' S1, 'new' S2, 'certain' S3, 'model' an S4 answer that was believed
+    # — including one that named the conversation the batch was already in — and 'recent' the
+    # S4 band as ingest left it, with no model behind it. 'recent' surviving into a turn now
+    # means the selector could not be run or could not be believed, not that nobody asked. A
+    # routing call nobody can inspect is a routing call nobody can debug.
     ("message", "routed_by", "TEXT"),
     ("message", "routed_reason", "TEXT"),
 ]
@@ -2135,7 +2137,17 @@ class Watcher:
         selector = getattr(self, "cluster_selector", None)
         target, reason = (selector(conv, pending) if selector
                           else self.select_for_turn(conv, pending))
-        if target is None or target == conv["id"]:
+        if target is None:
+            return 0
+        if target == conv["id"]:
+            # The selector was asked and agreed. Nothing moves, but the record should say a
+            # model looked rather than that a fallback went unexamined — 'recent' means exactly
+            # "the newest candidate, nobody checked", and that is no longer what happened.
+            #
+            # Only the 'recent' rows. A 'certain' row in the same batch was placed by S3 and
+            # nothing here overrode it; on the MOVE path below they are restamped because their
+            # conversation really did change on the model's word, but agreeing changed nothing.
+            self.stamp_routing([m for m in pending if m["routed_by"] == "recent"], reason)
             return 0
         if target is SPLIT_OUT:
             # These messages belong to none of the conversations on offer, including the one
@@ -2155,13 +2167,51 @@ class Watcher:
                 is_thread=False, alias=conv["watch_alias"])
         moved = self.reparent([m["id"] for m in pending], target)
         if moved:
-            self.db.execute(
-                f"UPDATE message SET routed_by='model', routed_reason=? WHERE id IN "
-                f"({','.join('?' * len(pending))})",
-                (reason, *[m["id"] for m in pending]))
+            self.stamp_routing(pending, reason)
             log(f"cluster: the selector moved {moved} message(s) from conversation "
                 f"{conv['id']} to {target}: {reason}")
         return moved
+
+    def prior_view(self, conv, pending, at_id):
+        """This conversation as it looked BEFORE the pending batch. A candidate tuple, or None.
+
+        A candidate has to be describable to the selector: how long ago it was last active, and
+        what was last said in it. For the conversation the batch is already sitting in, both of
+        those are contaminated by the batch itself. Its span has already swallowed the new
+        messages, so span_gap reads 0, and the last thing said in it IS the message being
+        judged — quoting a message back to the model as evidence for the conversation it might
+        belong to is circular, and "last active: 0 seconds ago" is a fact about nothing.
+
+        So the row is rewound: in_watermark_id goes back to the newest message that is NOT in
+        the batch, and every reader below keys off that — span_gap, intervening_messages and
+        render_candidates all take their bound from it.
+
+        None when the batch is the whole conversation. There is no prior state for it to
+        continue, nothing to ask about, and resettle's SPLIT_OUT guard already reads that case
+        as nothing to do.
+        """
+        ids = [m["id"] for m in pending]
+        prior = self.db.scalar(
+            "SELECT discord_id FROM message WHERE conversation_id=?"
+            f" AND id NOT IN ({','.join('?' * len(ids))})"
+            " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT 1", (conv["id"], *ids))
+        if not prior:
+            return None
+        row = dict(conv)
+        row["in_watermark_id"] = prior
+        gap = self.span_gap(row, snowflake_secs(at_id))
+        if gap is None:
+            return None
+        return (row, gap, self.intervening_messages(conv["channel_id"], row, at_id))
+
+    def stamp_routing(self, pending, reason):
+        """Record that S4 decided this batch, whichever way it went."""
+        if not pending:
+            return
+        ids = [m["id"] for m in pending]
+        self.db.execute(
+            f"UPDATE message SET routed_by='model', routed_reason=? WHERE id IN "
+            f"({','.join('?' * len(ids))})", (reason, *ids))
 
     def select_for_turn(self, conv, pending):
         """Ask S4 where these messages really belong. (conversation_id | None, reason).
@@ -2169,17 +2219,46 @@ class Watcher:
         Only for the messages ingest could not settle deterministically. A batch ingest already
         called 'reply' or 'certain' on is not re-opened: those rules are better than a model at
         the thing they answer, and asking again could only make them worse.
+
+        THE CONVERSATION THEY ARE ALREADY IN IS ONE OF THE CANDIDATES. It used to be filtered
+        out, on the reasoning that S4's job was to MOVE a message somewhere better — which left
+        the commonest miss unaskable. When the only conversation in reach was the one ingest had
+        provisionally dropped the batch into, the list came back empty and the model was never
+        called at all, so `recent` stood unexamined and SPLIT_OUT could not be reached however
+        obviously the message started something new. That is how "approximately how many lines
+        of code are in the codebase" joined a fifteen-hour-old conversation about the tutorial
+        (conversation 29, 2026-08-31): sole candidate, so nothing could ever say otherwise.
+
+        With `here` on the list the rule is the one a reader would state: no candidates and
+        nothing to decide, one or more and the model decides which — including none of them,
+        which is a new conversation. `here` is offered whatever its age, because it is not a
+        discovery to be bounded like the rest of the channel; it is where the message actually
+        is, and it is always a legitimate answer.
         """
         if not any(m["routed_by"] == "recent" for m in pending):
             return None, None
         alias = conv["watch_alias"] or alias_for_channel(self.cfg, conv["channel_id"])
-        newest = pending[-1]
+        # THE OLDEST of the batch, not the newest, and everything below is measured from it: it
+        # is the message whose routing is actually in question. Measuring from the batch's end
+        # inflated every candidate's age by the batch's own duration and counted the batch's own
+        # messages among the things that had scrolled past it.
+        oldest, newest = pending[0], pending[-1]
         cands = [(row, gap, n) for row, gap, n in
-                 self.cluster_candidates(conv["channel_id"], newest["discord_id"], alias=alias)
+                 self.cluster_candidates(conv["channel_id"], oldest["discord_id"], alias=alias)
                  if row["id"] != conv["id"]]
+        here = self.prior_view(conv, pending, oldest["discord_id"])
+        if here:
+            # First, and so never the one truncation drops. A list that cannot hold the
+            # deterministic answer would force "new" by its own shape rather than on the
+            # message.
+            cands = [here] + cands
         if not cands:
             return None, None
-        msg = {"content": "\n\n".join((m["content"] or "") for m in pending),
+        cands = cands[:int(cluster_cfg(self.cfg, alias)["max_candidates"])]
+        # Dated by the oldest, so render_candidates ages every quoted message against the
+        # moment the batch began rather than against the newest candidate's own clock.
+        msg = {"id": oldest["discord_id"],
+               "content": "\n\n".join((m["content"] or "") for m in pending),
                "author": {"username": newest["author_name"]}}
         return self.model_selection(msg, cands, alias=alias)
 
@@ -2196,9 +2275,17 @@ class Watcher:
         """
         out = []
         for row, gap, intervening in cands:
+            # BOUNDED BY THE ROW'S OWN WATERMARK, which for an ordinary candidate is its newest
+            # message and changes nothing. It matters for the rewound row prior_view builds for
+            # the conversation the batch is already in: without the bound, the last thing said
+            # in that candidate is the batch itself, and the model is shown the message it is
+            # judging as the evidence for judging it.
             recent = self.db.query(
                 "SELECT author_name, content, discord_id FROM message WHERE conversation_id=?"
-                " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT 2", (row["id"],))
+                " AND CAST(discord_id AS INTEGER) <= CAST(? AS INTEGER)"
+                " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT 2",
+                (row["id"], str(row["in_watermark_id"] or row["root_message_id"]
+                                or row["thread_id"])))
             lines = [f"id: {row['id']}",
                      f"title: {(row['title'] or '')[:120]}",
                      f"last active: {human_gap(gap)} before the new message",

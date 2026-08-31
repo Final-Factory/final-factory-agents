@@ -30,6 +30,15 @@ citations were wrong and are corrected against the source: the forum branch of s
 ffwatch.py:1661 not 1665, Listener.thread_parents is ffdiscord_listener.py:264 not 265, and
 build_job's rotation block starts at 2117 not 2116. The five routed_by values are now defined in
 one place (4.2) and used consistently. No decision changed.
+Revision 6, 2026-08-31: THE SELECTOR IS NOW OFFERED THE CONVERSATION THE BATCH IS ALREADY IN.
+Revision 3 through 5 all describe S4 as picking a parent from a list, and the implementation
+built that list out of OTHER conversations, on the reasoning that the selector's job is to move
+a message somewhere better. In a quiet channel there are no other conversations, so the list was
+empty, the model was never called, and 'recent' stood as a final answer nothing had examined.
+Ben's rule, and now the design's: no candidates and there is nothing to decide, one or more and
+the model decides which — including none of them. Sections 4.2, 4.3 and 5.1 are rewritten around
+it, and 5.6 is new: a candidate has to be described as it was BEFORE the batch, or the selector
+is shown the message it is judging as the evidence for judging it.
 
 
 1. The bug
@@ -201,6 +210,18 @@ In order. First match wins, and the early rules cost nothing.
       does M continue one of them, and which. It answers with an offered id or with "new". See
       section 5.
 
+      AT create_turn, THE LIST INCLUDES THE CONVERSATION M IS ALREADY SITTING IN. It did not,
+      at first, and that made the single-candidate case unaskable — which is to say it made the
+      commonest case unaskable, because a quiet channel holds exactly one conversation and that
+      one is where ingest just put M. The list came back empty, select_for_turn returned before
+      the model call, and 'recent' became final. Live on 2026-08-31: "approximately how many
+      lines of code are in the codebase now?" joined a fifteen-hour-old conversation about the
+      tutorial (conversation 29), sole candidate, no verdict available that could have said
+      otherwise. The conversation M is in is not a discovery to be bounded by candidacy like
+      the rest of the channel; it is the status quo, it is always a legitimate answer, and it
+      is offered whatever its age. A null answer then means what it says — none of these,
+      including that one — and M splits out.
+
 "NEW" IS A REAL ANSWER AND MUST SPLIT THE MESSAGE OUT. The first implementation returned it as
 None, which resettle read as "leave it where it is" — identical to the selector being
 unavailable. So a selector saying "this starts something new" left the message in the one
@@ -212,6 +233,13 @@ has spoken for it: the provisional answer ingest writes (4.3), and the fallback 
 cannot be believed (5.2). Both mean the same thing - the most recent candidate, chosen because
 the error costs favour merging - and both are worth telling apart from a decision something
 actually made.
+
+Which means 'recent' SURVIVING INTO A TURN is now a signal rather than a routine outcome. Every
+batch in the S4 band reaches the selector, so a message that still reads 'recent' once its turn
+exists is one the selector could not be run for or could not be believed on. A model that agrees
+with the provisional answer restamps it 'model' with its reason: agreeing is a decision, and the
+record has to tell it apart from nobody having looked. That distinction is the only thing that
+made conversation 29 diagnosable after the fact.
 
 4.3 WHERE THE DECISION COMMITS
 
@@ -228,7 +256,10 @@ message, which means no session has seen it. So:
     recorded as 'recent', which is the answer S4 would most often reach anyway and is the one
     that errs toward merging.
   - CREATE_TURN may RE-PARENT the still-unclaimed messages before it creates the turn. This is
-    the "end" the proposal wants, and turn_id IS NULL is what makes it safe.
+    the "end" the proposal wants, and turn_id IS NULL is what makes it safe. Everything it
+    measures is measured from the OLDEST message of the batch, which is the one whose routing
+    is in question; measuring from the newest inflated every candidate's age by the batch's own
+    duration and counted the batch's own messages among the things that had scrolled past it.
   - A message that has a turn never moves. Ever.
 
 If re-parenting empties a provisional conversation and it has no turns, delete it. Every
@@ -263,8 +294,13 @@ case, so this is a switch on the watch entry rather than a global.
 5.1 THE QUESTION IT IS ASKED
 
 Pick a parent from a short list, or say "new". Each candidate is offered as an id, its title,
-and a two-line excerpt of its most recent exchange. That is a classification over a label set of
-at most max_candidates + 1, which is what a small model is reliably good at.
+how long before the new message it was last active, how much of the channel has scrolled past
+since, and a two-line excerpt of its most recent exchange. That is a classification over a label
+set of at most max_candidates + 1, which is what a small model is reliably good at.
+
+The conversation the batch is already in goes FIRST on that list and is never the one truncation
+drops. A list that cannot hold the deterministic answer would force "new" by its own shape
+rather than on the message.
 
 It is deliberately NOT asked to partition a window of messages. A partition has no small answer
 space, cannot be validated against anything, and one bad answer scrambles the state of several
@@ -317,6 +353,30 @@ there is no read boundary to cross either.
 The realistic worst case is a reply that cites irrelevant context, which is embarrassing and
 not dangerous. Worth stating plainly so that a later change which makes candidacy cross channel
 is recognised as the boundary change it would be.
+
+
+5.6 DESCRIBING A CANDIDATE THE BATCH IS ALREADY INSIDE
+
+A candidate is described by two facts: how long ago it was last active, and what was last said
+in it. For every other conversation both come straight off the row. For the one the batch is
+sitting in, both are contaminated by the batch itself — ingest has already moved the
+conversation's watermark onto the new messages, so its span covers them, span_gap reads 0, and
+the last thing said in it IS the message being judged.
+
+Left alone that is not a hard question answered badly, it is a circular one: the selector is
+shown "last active: 0 seconds ago", which is a fact about nothing, and then handed the message
+it is judging as the evidence for judging it.
+
+So the row is REWOUND before it is offered. in_watermark_id goes back to the newest message that
+is not in the batch, and every reader keys off that — the gap, the intervening count, and the
+two quoted lines. Conversation 29 rewound reads "last active: 15.2 hours before the new message,
+other messages in the channel since: 0", with the tutorial question as its last word. That is
+the question worth asking, and it is answerable.
+
+When the rewind finds nothing — the batch IS the whole conversation — there is no prior state to
+continue and the conversation is not offered. If nothing else is in reach either, the list is
+empty and no model is called: the messages are already alone, which is what "new" would have
+produced anyway.
 
 
 6. The classifier sandbox
@@ -504,8 +564,10 @@ v11. Small.
                                                                  -- from here, not from seq 1
     -- WHICH RULE PLACED THIS MESSAGE. Set on every ingested message, not only the ones a
     -- model touched: 'reply' S1, 'new' S2, 'certain' S3, 'model' an S4 answer that was
-    -- believed, 'recent' the S4 band with no model behind it (4.3's provisional answer, or
-    -- 5.2's fallback). Kept because a routing call nobody can inspect is a routing call nobody
+    -- believed (including one naming the conversation the batch was already in), 'recent' the
+    -- S4 band with no model behind it (4.3's provisional answer, or 5.2's fallback -- and now
+    -- only those, since every S4 batch reaches the selector). Kept because a routing call
+    -- nobody can inspect is a routing call nobody
     -- can debug, and S4 is the one place a model touches conversation structure.
     ALTER TABLE message ADD COLUMN routed_by     TEXT;  -- reply | new | certain | model | recent
     ALTER TABLE message ADD COLUMN routed_reason TEXT;
@@ -557,6 +619,16 @@ SELECTION:
                                                   last_activity_at (the revision 2 tail bug)
   - two messages 60s apart, one candidate      -> S3, joined with no model call, 'certain'
   - two live conversations, ambiguous message  -> S4, model asked, answer honoured
+  - ONE candidate, outside the certain band    -> S4 still asked, and the candidate it is
+                                                  offered is the conversation ingest already
+                                                  put it in (the conversation 29 case: this
+                                                  used to be an empty list and no model call)
+  - S4 says new with only that one on offer    -> splits out into a conversation of its own
+  - S4 names that same conversation            -> stays, restamped 'model' with its reason
+  - the candidate row the selector is shown    -> rewound past the batch: the age is the real
+                                                  one and the batch is not quoted as its own
+                                                  antecedent (5.6)
+  - the batch IS the whole conversation        -> nothing offered, no model call, no move
   - S4 returns an id that was never offered    -> keeps the provisional 'recent', logged
   - S4 unavailable or malformed                -> same fallback, turn still runs
   - a message in a thread                      -> the thread's conversation, no candidacy at all

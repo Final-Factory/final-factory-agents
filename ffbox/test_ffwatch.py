@@ -4255,6 +4255,173 @@ def test_the_selector_narrows_a_choice_it_cannot_widen():
         case.cfg, "prompt", ffwatch.SELECTOR_SCHEMA)
     check("the selector goes through the same sandbox as the gate",
           "--safe-mode" in argv and "--tools" in argv and "GH_TOKEN" not in env, argv)
+    # AND ON THE SMALL MODEL. S4 now runs on every batch in its band rather than only when two
+    # conversations were in reach, so what it costs is a standing per-turn number. It is one
+    # tool-less haiku call; the full split is pinned in
+    # test_the_cheap_model_routes_and_the_good_one_answers.
+    check("and on the classifier model, which is not the model that answers the player",
+          argv[argv.index("--model") + 1] == case.cfg["classifier_model"] == "haiku",
+          (argv[argv.index("--model") + 1], case.cfg["model"]))
+
+
+def test_the_cheap_model_routes_and_the_good_one_answers():
+    """Two model tiers, and nothing may quietly move a call from one to the other.
+
+    The split is the whole cost model. Every HOST-side call — the engagement gate and the S4
+    selector — is a tool-less classification with a small answer space, and runs on haiku. The
+    only call that answers a person runs in the container on opus, with sonnet behind it.
+
+    Worth pinning now rather than later, because the selector's cost profile just changed: it
+    used to fire only when two conversations were in reach, which was rare, and now fires on
+    every batch in the S4 band. A standing per-turn cost is one somebody will eventually want
+    to check, and a model tier is exactly the kind of thing that gets edited in passing.
+    """
+    print("which model does what")
+
+    check("the shipped classifier model is haiku",
+          ffwatch.DEFAULTS["classifier_model"] == "haiku",
+          ffwatch.DEFAULTS["classifier_model"])
+    check("and the shipped answering model is opus, with sonnet behind it",
+          ffwatch.DEFAULTS["model"] == "opus" and ffwatch.DEFAULTS["fallback_model"] == "sonnet",
+          (ffwatch.DEFAULTS["model"], ffwatch.DEFAULTS["fallback_model"]))
+
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(7101, "what does the splitter do?")]
+    case = Case("models", fixture)
+    for key, value in (("classifier_model", "haiku"), ("model", "opus"),
+                       ("fallback_model", "sonnet")):
+        case.cfg[key] = value
+
+    # BOTH host-side calls, because there is one builder and the point of one builder is that
+    # neither caller can reach for a different model on its own.
+    for what, schema in (("the gate", ffwatch.CLASSIFIER_SCHEMA),
+                         ("the selector", ffwatch.SELECTOR_SCHEMA)):
+        argv, _, _, _ = ffwatch.classifier_invocation(case.cfg, "prompt", schema)
+        check(f"{what} runs on the configured classifier model",
+              "--model" in argv and argv[argv.index("--model") + 1] == "haiku", argv)
+
+    # And it is honoured as CONFIG, not hardcoded — a box that wants a different small model
+    # says so in one place and both calls follow.
+    case.cfg["classifier_model"] = "some-other-small-model"
+    argv, _, _, _ = ffwatch.classifier_invocation(case.cfg, "p", ffwatch.SELECTOR_SCHEMA)
+    check("and it comes from config rather than from a literal in the builder",
+          argv[argv.index("--model") + 1] == "some-other-small-model", argv)
+    case.cfg["classifier_model"] = "haiku"
+
+    case.events(ask_event(7101))
+    case.watcher.once()
+    job_files = []
+    for dirpath, _, files in os.walk(case.watcher.conv_root):
+        job_files += [os.path.join(dirpath, f) for f in files if f == "job.json"]
+    job = json.load(open(job_files[0], encoding="utf-8"))
+    check("the turn that answers a person gets the answering model, not the cheap one",
+          job["model"]["model"] == "opus" and job["model"]["fallback_model"] == "sonnet",
+          job["model"])
+
+
+def test_a_sole_candidate_is_still_a_question():
+    """One candidate is a question for the selector, not an answer on its own.
+
+    The list S4 was offered used to have the conversation the batch was ALREADY IN filtered out
+    of it, on the reasoning that the selector's job was to move a message somewhere better. That
+    made the commonest miss unaskable: in a quiet channel the only conversation in reach IS the
+    one ingest dropped the message into, so the list came back empty, the model was never
+    called, and `recent` — "the newest candidate, nobody checked" — stood as the final answer.
+    Live on 2026-08-31, "approximately how many lines of code are in the codebase now?" joined a
+    fifteen-hour-old conversation about the tutorial that way (conversation 29), and no verdict
+    the selector could have returned would have changed it, because it was never asked.
+
+    The rule now is the one a reader would state: no candidates and there is nothing to decide,
+    one or more and the model decides which — including none of them.
+    """
+    print("a sole candidate is still a question")
+
+    def one_live_conversation(name):
+        """A quiet channel: one answered conversation, then an unrelated question 15h later.
+
+        Entirely deterministic, unlike the two-conversation fixture below it — the whole point
+        is that this is what a quiet channel produces on its own.
+        """
+        opener, later = sflake(0, 1), sflake(15 * 3600, 2)
+        fixture = base_fixture()
+        fixture["messages"][ASK_CHANNEL] = [
+            message(opener, "how many steps are in the tutorial?"),
+            message(later, "approximately how many lines of code are in the codebase now?"),
+        ]
+        case = Case(name, fixture, verdict={"engage": True, "reason": "r"})
+        case.events(ask_event(opener))
+        case.watcher.drain_events()
+        conv = case.rows("SELECT * FROM conversation")[0]
+        case.watcher.create_turn(conv)          # answered already, so nothing is owed
+        case.db_exec("UPDATE turn SET status='done' WHERE conversation_id=?", (conv["id"],))
+        case.db_exec("UPDATE conversation SET state='idle' WHERE id=?", (conv["id"],))
+        case.events(ask_event(later))
+        case.watcher.drain_events()
+        landed = case.rows("SELECT * FROM message WHERE discord_id=?", (later,))[0]
+        return case, conv["id"], landed
+
+    # The setup is the bug: fifteen hours is far outside idle_secs, and the idle_msgs rescue
+    # holds the conversation open because nothing at all has scrolled past in a quiet channel.
+    case, cid, landed = one_live_conversation("sole-recent")
+    check("ingest still puts it in the one conversation in reach, provisionally",
+          landed["conversation_id"] == cid and landed["routed_by"] == "recent", dict(landed))
+
+    seen = []
+    case.watcher.model_selection = lambda msg, cands, alias=None: (
+        seen.append([r["id"] for r, _, _ in cands]) or (None, None))
+    case.watcher.claim_turns()
+    check("and the conversation it is already in is offered to the selector",
+          seen and seen[0] == [cid], seen)
+
+    # The verdict that could not be reached before. Nothing else in the channel to move it to,
+    # so this is the whole of what "no" can mean here: it is not a continuation of anything.
+    case, cid, _ = one_live_conversation("sole-split")
+    case.watcher.model_selection = lambda msg, cands, alias=None: (
+        ffwatch.SPLIT_OUT, "a fresh question about the codebase")
+    case.watcher.claim_turns()
+    split = case.rows("SELECT * FROM message ORDER BY CAST(discord_id AS INTEGER)")[-1]
+    check("a sole candidate the selector rejects becomes a conversation of its own",
+          split["conversation_id"] != cid, dict(split))
+    check("and the older conversation keeps its own message",
+          [m["conversation_id"] for m in case.rows(
+              "SELECT * FROM message ORDER BY CAST(discord_id AS INTEGER)")][0] == cid)
+
+    # And the other way: agreeing is a decision too, and the record has to be able to tell it
+    # apart from nobody having looked.
+    case, cid, _ = one_live_conversation("sole-agreed")
+    case.watcher.model_selection = lambda msg, cands, alias=None: (
+        cid, "still the same thread of talk")
+    case.watcher.claim_turns()
+    kept = case.rows("SELECT * FROM message ORDER BY CAST(discord_id AS INTEGER)")[-1]
+    check("a selector that names the conversation the batch is in leaves it there",
+          kept["conversation_id"] == cid, dict(kept))
+    check("and that is recorded as the model's decision, not as an unexamined fallback",
+          kept["routed_by"] == "model" and "same thread" in (kept["routed_reason"] or ""),
+          dict(kept))
+
+    # WHAT THE CANDIDATE LOOKS LIKE. The conversation the batch sits in has already swallowed
+    # it: its span covers the new message, so an unrewound row reads "last active: 0 seconds"
+    # and quotes the message being judged as its own last exchange.
+    case, cid, landed = one_live_conversation("sole-rewound")
+    conv = case.rows("SELECT * FROM conversation WHERE id=?", (cid,))[0]
+    check("the unrewound row reads as though the conversation were still live this second",
+          case.watcher.span_gap(conv, ffwatch.snowflake_secs(landed["discord_id"])) == 0)
+
+    view = case.watcher.prior_view(conv, [landed], landed["discord_id"])
+    check("rewound, it is offered with the age it actually has",
+          view is not None and 54000 - 60 < view[1] < 54000 + 60, view and view[1])
+    check("and with nothing having scrolled past it, which is why it is a candidate at all",
+          view is not None and view[2] == 0, view and view[2])
+    rendered = case.watcher.render_candidates(
+        [view], at=ffwatch.snowflake_secs(landed["discord_id"]))
+    check("and the message being judged is not quoted back as the evidence for judging it",
+          "lines of code" not in rendered, rendered)
+    check("the tutorial question is, though — that is the conversation's real last word",
+          "tutorial" in rendered, rendered)
+
+    all_of_it = case.rows("SELECT * FROM message WHERE conversation_id=?", (cid,))
+    check("a conversation that is nothing but the batch has no prior state to offer",
+          case.watcher.prior_view(conv, all_of_it, landed["discord_id"]) is None)
 
 
 def test_a_long_conversation_rotates_its_session_not_itself():
@@ -6262,6 +6429,8 @@ def main():
         test_the_dev_chat_exchange_that_started_this,
         test_a_message_stops_moving_once_a_session_has_seen_it,
         test_the_selector_narrows_a_choice_it_cannot_widen,
+        test_a_sole_candidate_is_still_a_question,
+        test_the_cheap_model_routes_and_the_good_one_answers,
         test_a_long_conversation_rotates_its_session_not_itself,
         test_a_thread_in_an_ordinary_channel_is_swept,
         test_a_container_sees_only_its_own_conversation,
