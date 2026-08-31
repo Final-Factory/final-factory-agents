@@ -161,5 +161,39 @@ if [ -n "$FFBOX_SUBNET" ] && [ "$FFBOX_SUBNET" = "$EGRESS_SUBNET" ]; then
 fi
 
 printf '\n'
+# --- the local git mirror ---------------------------------------------------------------------
+#
+# Where a job fetches the repository instead of github.com. It has to be a CONTAINER on
+# $EGRESS_NET rather than a daemon on the host: that network is --internal, and under the rootless
+# daemon the real host is not reachable from it at all.
+#
+# Additive while github.com is still on the allowlist -- a job whose mirror is missing or behind
+# just fetches from GitHub as before -- so nothing here is allowed to be fatal.
+if [ -d "$MIRROR_DIR/$MIRROR_REPO" ]; then
+  if docker image inspect "$MIRROR_IMAGE" >/dev/null 2>&1; then
+    skip "$MIRROR_IMAGE is present"
+  else
+    say "building $MIRROR_IMAGE from ffbox/runners/gitmirror/"
+    docker build -t "$MIRROR_IMAGE" "$HERE/gitmirror" \
+      || say "WARNING: the mirror image did not build; jobs will fetch from github.com"
+  fi
+  if docker image inspect "$MIRROR_IMAGE" >/dev/null 2>&1; then
+    docker rm -f "$MIRROR_NAME" >/dev/null 2>&1 || true
+    say "bringing up $MIRROR_NAME at $MIRROR_IP"
+    docker run -d --name "$MIRROR_NAME" --hostname "$MIRROR_NAME" \
+      --network "$EGRESS_NET" --ip "$MIRROR_IP" \
+      --restart unless-stopped \
+      --read-only --tmpfs /tmp \
+      --cap-drop ALL --security-opt no-new-privileges \
+      -v "$MIRROR_DIR:/srv:ro" \
+      "$MIRROR_IMAGE" >/dev/null \
+      && skip "jobs fetch the repository from $MIRROR_URL" \
+      || say "WARNING: $MIRROR_NAME did not start; jobs will fetch from github.com"
+  fi
+else
+  say "no mirror at $MIRROR_DIR/$MIRROR_REPO; jobs will fetch from github.com"
+  say "  create one with: git clone --bare --no-local $GOLDEN_MNT $MIRROR_DIR/$MIRROR_REPO"
+fi
+
 skip "jobs join with: --network $EGRESS_NET --dns $EGRESS_IP"
 skip "next: sh $HERE/04-github.sh"
