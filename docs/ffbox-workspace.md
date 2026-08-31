@@ -48,38 +48,52 @@ already written and produces exactly the files the host needs in `/ffbox/out` �
 can be a plain Docker `--tmpfs` with its own `size=`, identical to CI, with no sudoers rule at
 all. That is the tidier end state; the sudoers line is the cheaper one.
 
-## Status: the container half is done, the host half is not
+## Status: complete behind `--workspace tmpfs`, not yet the default
 
-Moving the workspace onto a per-run ramdrive is two halves. The first is finished and in the
-image; the second is not started, and until it is, `ffbox` still prepares a host-visible workspace
-on `/dev/shm` and nothing below is reached.
-
-**Done, tested, additive.** All of it is guarded on the workspace arriving *empty*, which only
-happens with `--tmpfs`, so the current path runs exactly as before.
+All four pieces are built and tested. The default is still `clone`, so live runs are unchanged
+until a real agent run says otherwise.
 
 | | |
 |---|---|
 | `entrypoint.sh` | restores an empty workspace as root, then drops privilege |
-| `restore-workspace.sh` | extracts the entry, fetches the delta from a read-only mirror mount, resolves the ref, sanitises `.git` config, sets `core.checkStat` |
-| `run-as-user.sh` | harvests to `/ffbox/out`, then returns the licence, in one trap |
-| image | carries `harvest-workspace.sh` and a system `safe.directory` for `/ffmirror` |
+| `restore-workspace.sh` | extract, mirror fetch, ref, `.git` config sanitise, `core.checkStat`, branch, identity, `base_sha` |
+| `run-as-user.sh` | harvest then licence return, in one trap |
+| `ffbox` | `--tmpfs` + `/ffcache` + `/ffmirror` read-only + 14 env vars; `harvest_from_out` |
 
-Measured: empty tmpfs to restored workspace in **36s**, delta fetched, HEAD on the mirror tip,
-22.1 G used of a 40 G cap.
+Measured: empty tmpfs to restored workspace in **36s**, 22.1 G of a 40 G cap, delta fetched, HEAD
+on the mirror tip. A 23 GB workspace hands back a **5 KB** bundle.
 
-**Not done: the host half.** `ffbox` has ~347 lines after its `docker run` that harvest by running
-19 git commands against the host-visible workspace. Those have to become reads of the files
-`harvest-workspace.sh` already writes, plus the host re-deriving its checks from `work.bundle` —
-that re-derivation is the point, because a run that skipped its own checks would otherwise be
-taken at its word.
+### The host re-derives, it does not read and believe
 
-There are also ~15 setup-side git calls before the container (branch creation, identity) that move
-into `restore-workspace.sh`.
+`harvest-workspace.sh` runs the checks in-container and writes `branch.txt`, `changed_files.txt`
+and the rest. A run that skipped or lied about those would be taken at its word if the host merely
+read them — so the host uses the container's files for **intent** (which branch, which base) and
+`work.bundle` for **fact**. git verifies the prerequisite; every commit, author and path is read
+back out of the bundle.
 
-**Why it stopped here.** That region decides what gets published from an agent run. Validating a
-rewrite of it needs a real end-to-end run — Unity activation, a Claude session, a harvest with
-something actually changed — not a component test. A half-migrated harvest is the one failure mode
-worth avoiding outright: it would publish, and publish wrongly.
+Verified against honest and dishonest input:
 
-The boundary is clean. Nothing is half-applied, and the container half is inert until `ffbox`
-passes `--tmpfs` and a cache entry.
+| input | result |
+|---|---|
+| honest bundle | verified, 1 file, 1 commit |
+| `branch.txt` says `master` | refused — protected branch |
+| `changed_files.txt` understates the range | **ignored**, rewritten from the bundle |
+| `publish_base_sha` not in the mirror | refused — does not descend from its base |
+| no bundle | clean "no branch, no PR" |
+| bundle really contains `.github/` | refused — CI configuration |
+| bundle really carries another author | refused — identity this run does not own |
+
+### What F7 becomes
+
+`sanitize_clone_git` is skipped entirely under tmpfs rather than run. It exists because the host
+runs git in a tree the container wrote, and git executes what `.git` tells it to. There is no such
+tree: the host reads inert files and a bundle. The hazard is **deleted**, not mitigated.
+
+### The gate before flipping the default
+
+One real `--workspace tmpfs` run — Unity activation, a Claude session, a harvest with something
+actually changed. Every piece is measured; the composed path has not run once.
+
+Known and accepted: on SIGKILL (OOM, `docker kill`, host crash) no trap fires, so the run's work is
+lost with the tmpfs. `docker stop`'s SIGTERM is fine — that is what ffbox sends, with a 120s grace
+shared with the Unity licence return, harvest first because it is the fast half.
