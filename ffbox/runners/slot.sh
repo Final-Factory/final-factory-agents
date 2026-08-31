@@ -171,7 +171,17 @@ wait_for_a_place() {
         # other slot for as long as it sat here.
         exec 7>>"$FFGHR_POOL_LOCK"
         POOL_FD_OPEN=1
-        if flock -w 30 7 && ffghr_pool_admit; then
+        if ! flock -w 30 7; then
+            # SAID EVERY TIME, unlike the two below. Thirty seconds means another slot has been
+            # holding this across a mint for half a minute, which is a GitHub API that is retrying,
+            # not a busy machine — and the count in the other messages would be a guess.
+            pool_unlock
+            log "could not take $FFGHR_POOL_LOCK within 30s; another slot is still minting"
+            _announced=""
+            sleep "$POOL_POLL_SECONDS"
+            continue
+        fi
+        if ffghr_pool_admit; then
             log "starting a runner ($(pool_summary))"
             return 0
         fi
