@@ -27,48 +27,51 @@ loses is GitHub, which it never had.
 What it does NOT remove is golden itself. Section 7.
 
 
-2. The two phases
------------------
+2. The two phases, in ONE container
+-----------------------------------
 
-    fetch    ffbox-fetch-<run>, on ffghr-net, holding a short-lived GitHub credential.
-             Restores the cache entry if there is one, fetches, checks out the wanted commit.
-             Exits. Nothing else runs in this container.
+    fetch    the container starts dual-homed on ffghr-net and ffbox-net, --dns at the CI proxy,
+             holding a short-lived GitHub credential. It restores the cache entry if one matches,
+             fetches, and checks out the wanted commit. Our script, not model output.
 
-    agent    ffbox-<run>, on ffbox-net, holding the Claude and Unity credentials and NO git
-             credential. Mounts the workspace the fetch phase left. Runs claude -p.
+    agent    the host disconnects ffghr-net and repoints /etc/resolv.conf at the agent proxy. The
+             entrypoint unsets the credential and execs claude -p. GitHub is now unresolvable and
+             unroutable; Anthropic and Unity are unchanged.
 
-TWO CONTAINERS RATHER THAN ONE THAT DROPS PRIVILEGE, and the difference is not stylistic. An
-environment variable, once visible to a process, can be copied anywhere before anything "drops"
-it, and the agent is the thing being guarded against. With two containers there is no moment when
-the credential and the agent exist together.
+MEASURED ON 2026-08-30, in that order: github.com reachable while dual-homed, then blocked after
+the disconnect, with api.anthropic.com and license.unity3d.com still reachable.
 
-The same reasoning rules out swapping the network under a running container. The host CAN do it —
-measured on 2026-08-30, github.com went from reachable to refused after a disconnect and
-reconnect — but --dns is fixed at container creation, so after the swap the resolver still points
-at the old proxy and everything breaks, Anthropic included. Making that work means rewriting
-/etc/resolv.conf inside the container on every swap. Two containers need none of it.
+THE DISCONNECT IS THE ENFORCEMENT, not the resolv.conf edit. Disconnecting the network makes the
+CI proxy unreachable whatever the container's resolver says, and the container cannot reverse it:
+it holds no docker socket. Rewriting resolv.conf afterwards is plumbing — without it the container
+keeps asking a proxy that is no longer there, and everything fails rather than just GitHub. That
+is what --dns being fixed at creation costs, and it is a repair rather than an obstacle.
 
+THE CREDENTIAL DROPS BECAUSE OUR SCRIPT RUNS FIRST. The entrypoint fetches, unsets, and only then
+execs the agent, so the agent never sees it. That ordering is the whole guarantee; it does not
+survive if anything the agent influences runs before the unset.
 
-3. The shared workspace
------------------------
+THIS DOES NOT APPLY TO CI, and the reason is not caution. A runner needs GitHub for its entire
+life: it long-polls the broker for work, streams step results as they happen, uploads artifacts,
+and deregisters at the end. The egress log for one real job shows results-receiver hit six times
+across the run and pipelinesghubeus14 seven. Blocking GitHub after checkout would leave a job
+unable to report that it passed. CI keeps its fence exactly as it is.
 
-One directory per run on a host tmpfs, bind-mounted into both containers.
+3. The workspace
+----------------
 
-A tmpfs-backed Docker VOLUME does not work and the failure is quiet: each container that mounts
-one gets its own tmpfs instance, so the agent sees an empty directory. Measured. It has to be a
-host path on a real tmpfs, bind-mounted twice.
+One tmpfs per run, mounted by the one container that uses it — the same --tmpfs the CI runners
+already use, at the same size. Nothing is shared between containers and nothing crosses a
+container boundary, which is the simplification the single-container shape buys.
 
-    /opt/ffws/<run id>        mode 2775, group ffbox-container
+A host-side shared directory WAS the earlier plan, when this was two containers. It works — two
+containers on different fences reading one host tmpfs was measured — but it needs the directory
+created, owned by the container account, bind-mounted twice and removed on every exit path. None
+of that is needed now.
 
-Its own tmpfs mount rather than /dev/shm, with its own size cap: /dev/shm is shared with anything
-else on the box that uses shared memory, and one runaway workspace should not be able to take it.
-A workspace is about 23 GB and this host has 755 GB, so three concurrent runs are comfortable; the
-cap exists for the run that is not.
-
-Ownership follows the rule the daemon move established: the directory belongs to the container
-account, because a rootless daemon shows a host uid outside its map as 65534 and neither container
-could then write it.
-
+Worth recording so nobody reaches for it again: a tmpfs-backed Docker VOLUME cannot be shared.
+Each container that mounts one gets its own tmpfs instance, so the second sees an empty directory,
+with no error. It has to be a host path if it is shared at all.
 
 4. The credential
 -----------------
@@ -89,12 +92,15 @@ agent a token in a config file.
 
 ENFORCED, because the containers hold no docker socket and cannot change any of it:
 
-  - which network each phase joins, and therefore what each can resolve and reach
-  - which credentials each phase's environment carries
-  - that the agent phase starts only after the fetch phase has exited
+  - that ffghr-net is gone before the agent starts, which is what makes GitHub unreachable
+  - which credentials the container's environment carries at launch
+  - the ordering: the entrypoint fetches and unsets before it execs the agent
 
-NOT ENFORCED: what the fetch phase does with its own credential while it holds it. It runs our
-script rather than model output, which is the whole reason the split is worth making.
+NOT ENFORCED: what the fetch phase does with the credential while it holds it, and the unset
+itself. Both rest on the entrypoint being our script and running to completion before the agent
+starts. That is a weaker guarantee than two containers would give — there, the credential and the
+agent could never coexist in one process tree — and it is the price of the simpler shape. It is
+sound because nothing the agent influences runs before the unset.
 
 
 6. The cache, unchanged
@@ -137,20 +143,23 @@ the host later runs git in. Section 1 says why that goes.
 
 Each step leaves a working machine.
 
-  1. The workspace tmpfs and its ownership, in 01-hostSetup.sh.
-  2. The fetch phase as a script, exercised by hand against a real cache entry.
-  3. ffbox grows --workspace tmpfs alongside the clone path, defaulting to clone.
-  4. Prove a real run end to end on tmpfs, including harvest.
-  5. Flip the default, leaving the clone path reachable for one cycle.
-  6. Delete the clone path, 04-warmLibrary.sh, and the delta bundle.
-  7. Golden becomes a bare mirror.
+  1. The fetch phase as a script, exercised by hand against a real cache entry.
+  2. ffbox grows --workspace tmpfs alongside the clone path, defaulting to clone: dual-home,
+     fetch, disconnect, repoint, unset, exec.
+  3. Prove a real run end to end on tmpfs, including harvest.
+  4. Flip the default, leaving the clone path reachable for one cycle.
+  5. Delete the clone path, 04-warmLibrary.sh, and the delta bundle.
+  6. Golden becomes a bare mirror.
+
+No host tmpfs to provision: the workspace is the container's own --tmpfs, as CI's already is.
 
 
 10. Open items
 --------------
 
-  a. The size cap on /opt/ffws, which wants measuring against three concurrent runs rather than
-     guessing. A workspace is 23 GB and Unity resident is about 32 GB.
-  b. Whether the fetch phase should also run for CI. It would not help: a CI job needs GitHub
-     throughout, to report results and upload artifacts.
+  a. Whether the entrypoint or the host repoints resolv.conf. The host doing it by `docker exec`
+     keeps the sequence in one place; the entrypoint doing it needs a signal that the disconnect
+     has happened, which is the branch.info pattern again.
+  b. Whether a fetch that fails should fail the run or fall through to the cache entry as it
+     stands. Falling through is a run against a slightly old tree; failing is no run at all.
   c. What ffwatch actually needs from golden, which decides whether the bare mirror survives.

@@ -10,9 +10,11 @@ Effort: **S** under an hour, **M** an afternoon, **L** a day or more, **?** unkn
 Not assumptions — measured on this box on 2026-08-30, and the reason the design is shaped the way
 it is.
 
-- Two containers on different fences sharing one host tmpfs directory works: the fetch phase
-  reached github.com and wrote the workspace, the agent phase read it, and github.com was
-  unresolvable from the agent phase while `api.anthropic.com` stayed reachable.
+- The single-container transition works. Dual-homed with DNS at the CI proxy, `github.com` was
+  reachable; after the host disconnected `ffghr-net` and repointed `/etc/resolv.conf`,
+  `github.com` was blocked while `api.anthropic.com` and `license.unity3d.com` stayed reachable.
+- Two containers sharing a host tmpfs also works, and was the earlier plan. Kept here only so the
+  measurement is not lost.
 - A tmpfs-backed Docker **volume** does not work. Each container that mounts one gets its own
   tmpfs instance and the second sees an empty directory. It must be a host path.
 - Swapping a running container's network **does** work — github.com went from reachable to refused
@@ -20,19 +22,21 @@ it is.
   at a proxy that is no longer reachable and everything breaks. Rejected for that reason.
 - `/dev/shm` has 378 GB free here; a workspace is about 23 GB.
 
-## Phase A — the workspace
+## Phase A — the transition
 
-**T1. `01-hostSetup.sh`: the workspace tmpfs.** A dedicated mount at `/opt/ffws` with a size cap,
-not `/dev/shm`, so one runaway run cannot take memory the rest of the box is using. Its own
-`tmpfs` entry, `mode 2775`, group `ffbox-container` — a rootless daemon shows a host uid outside
-its map as 65534 and neither container could write it otherwise. **S**
+Nothing to provision: the workspace is the container's own `--tmpfs`, exactly as CI's is. The
+host-side shared directory belonged to the two-container shape and is gone with it.
 
-**T2. `01-hostSetup.sh --check`: report it.** Present, mounted, size, ownership. A machine
-provisioned before this must show up as owing a re-run. **S**
+**T1. The dual-home at launch.** Start the agent container on `ffghr-net` AND `ffbox-net`, with
+`--dns` at the CI proxy. **S**
 
-**T3. Per-run directory lifecycle.** Created before the fetch phase, removed after the agent phase
-on every exit path including a killed supervisor. A leaked 23 GB directory on a tmpfs is memory
-nobody gets back until reboot. **S**
+**T2. The transition, host-side.** Disconnect `ffghr-net`, then repoint `/etc/resolv.conf` at the
+agent proxy. The disconnect is the enforcement; the repoint is repair, because `--dns` is fixed at
+creation and the container would otherwise keep asking a proxy that is no longer reachable. **M**
+
+**T3. Decide who repoints resolv.conf.** Open item (a): the host by `docker exec` keeps the
+sequence in one place; the entrypoint doing it needs to know the disconnect has happened, which is
+the `branch.info` pattern again. **S**
 
 ## Phase B — the fetch phase
 
@@ -56,9 +60,9 @@ rare, and it is what removes golden's last job on the run path. **S**
 **T8. `ffbox`: `--workspace tmpfs|clone`, defaulting to `clone`.** Both paths live side by side
 until T11. Nothing changes for anyone until the flag is passed. **M**
 
-**T9. The two `docker run` calls.** Fetch phase on `ffghr-net` with the token and no Unity or
-Claude credentials; agent phase on `ffbox-net` with those and no token, mounting the same
-directory. The agent phase starts only after the fetch phase has exited non-zero-free. **M**
+**T9. The entrypoint sequence.** Fetch, wait for the host's transition, unset the credential,
+`exec` the agent. The ordering is the whole guarantee that the agent never sees the token, so it
+wants a test that asserts it rather than a comment that claims it. **M**
 
 **T10. Harvest against a tmpfs workspace.** `harvest-workspace.sh` and `ffbox_validate_harvest`
 are written and unit-tested but have never run in anger; this is where they earn it. **M**
@@ -86,14 +90,16 @@ this reading did not find, and that decides whether T15 is a mirror or a deletio
 
 ## Phase E — proving it
 
-**T17. The agent phase cannot reach GitHub.** From inside a real agent container, on a real run:
-`github.com` unresolvable, `api.anthropic.com` and Unity licensing reachable. **S**
+**T17. The agent phase cannot reach GitHub.** From inside a real container after the transition,
+on a real run: `github.com` unresolvable, `api.anthropic.com` and Unity licensing reachable. **S**
+
+**T17b. CI is untouched.** A CI job still reaches the broker, streams results and uploads
+artifacts for its whole life. The transition must not be wired into the CI path. **S**
 
 **T18. No credential in the workspace.** After a real fetch phase, grep the whole `.git` for the
 token. **S**
 
-**T19. Three concurrent runs.** Memory, and whether the `/opt/ffws` cap is right. Open item (a).
-**M**
+**T19. Three concurrent runs.** Memory headroom with three agent workspaces resident. **M**
 
 **T20. A cache miss.** Delete the entry for a branch and confirm the fetch phase clones instead of
 failing. **S**
