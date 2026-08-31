@@ -85,7 +85,20 @@ _ffghr_set() {
 }
 
 # --- what a slot is -------------------------------------------------------------------------
-_ffghr_set SLOTS            slots            1
+#
+# TWO NUMBERS, AND THEY MEAN DIFFERENT THINGS. `slots` is the CEILING: how many supervisors run,
+# and so the most jobs that can ever be in flight at once. `idle_pool` is the STANDING COST: how
+# many runners are registered and waiting for work while nothing is happening.
+#
+# A supervisor whose turn has not come holds NOTHING — no container, no registration, nothing on
+# the org page — and costs a sleeping shell. It starts a runner only when the pool is short of
+# idle ones and there is room under the ceiling. See the pool section at the end of this file.
+#
+# idle_pool 1 with slots 1 is exactly the old behaviour, which is why both default to 1.
+FFGHR_DEFAULT_SLOTS=1
+FFGHR_DEFAULT_IDLE_POOL=1
+_ffghr_set SLOTS            slots            "$FFGHR_DEFAULT_SLOTS"
+_ffghr_set IDLE_POOL        idle_pool        "$FFGHR_DEFAULT_IDLE_POOL"
 _ffghr_set WATCHDOG_MINUTES watchdog_minutes 120
 # ONE NAME. ffbox and the runners are the same image built from ffbox/Dockerfile; a second tag
 # was only ever another name for it, and two names meant two builds that drifted apart on every
@@ -382,6 +395,116 @@ ffghr_cache_promote() {
     return 0
 }
 
+# --- the pool -----------------------------------------------------------------------------------
+#
+# $SLOTS supervisors run all the time, but a CONTAINER only exists while the pool needs one:
+# $IDLE_POOL runners registered and waiting, plus one per job in flight, never more than $SLOTS
+# altogether. A supervisor with no container is not an idle runner — it holds no registration and
+# GitHub has never heard of it — so the standing cost of the harness is idle_pool, not slots.
+#
+# ADMISSION IS DECIDED HERE AND NOWHERE ELSE, UNDER ONE LOCK, because the decision reads a count
+# that acting on the decision then changes. Two supervisors that both saw "no idle runner" a
+# millisecond apart would both mint one, and the pool would overshoot by exactly as many slots as
+# happened to be waiting.
+FFGHR_POOL_LOCK=$FFGHR_CONFIG_DIR/.pool.lock
+FFGHR_STATE_DIR=$FFGHR_CONFIG_DIR/state
+
+# HOW OFTEN A WAITING SUPERVISOR LOOKS, and how often a supervisor with an IDLE container checks
+# whether its runner has taken a job. Both are on the path between "a job was queued" and "a
+# replacement runner is listening", so this is CI latency, not housekeeping: five seconds each
+# means a second concurrent job waits about ten. Once a container is busy the poll drops back to
+# fifteen, because from then on the loop is only waiting for a job that takes minutes.
+_ffghr_set POOL_POLL_SECONDS pool_poll_seconds 5
+
+# A container that has taken a job. WRITTEN BY THE SUPERVISOR THAT OWNS IT — it is already awake
+# watching that container — and read by every supervisor waiting for a place.
+#
+# THE MARKER IS ONLY EVER TRUSTED FOR A CONTAINER THAT IS STILL RUNNING, which is what makes a
+# stale one harmless in both directions. A supervisor SIGKILLed before its job started leaves no
+# marker, and its container is counted idle, which it is. One SIGKILLed during a job leaves a
+# marker that stays true until the container exits, at which point no count includes it any more.
+# reap.sh sweeps the leftovers.
+ffghr_busy_marker() { printf '%s/%s.busy\n' "$FFGHR_STATE_DIR" "${1:?}"; }
+
+ffghr_mark_busy() {
+    mkdir -p "$FFGHR_STATE_DIR" 2>/dev/null || return 1
+    printf 'at=%s\n' "$(date -Is)" > "$(ffghr_busy_marker "${1:?}")" 2>/dev/null
+}
+
+ffghr_clear_busy() {
+    [ -n "${1:-}" ] || return 0
+    rm -f "$(ffghr_busy_marker "$1")" 2>/dev/null || true
+}
+
+# Is this container RUNNING A JOB? This is what writes the marker, so it cannot read it.
+#
+# The listener spawns Runner.Worker for the job it accepted and nothing else in the container is
+# called that, so its presence is the job. `-o pid,comm` rather than the default format is not
+# cosmetic: the default prints full argv, and the listener's argv carries the JIT config.
+ffghr_container_busy() {
+    docker top "${1:?}" -o pid,comm 2>/dev/null | grep -q 'Runner\.Worker'
+}
+
+# Live job containers, by LABEL. The fence is ffghr-* too and ffbox shares this daemon, so a name
+# prefix is the wrong filter; ffghr.slot is set by slot.sh on the containers this counts.
+ffghr_pool_containers() {
+    docker ps --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null || true
+}
+
+# "<total> <idle>" over those containers.
+ffghr_pool_counts() {
+    _total=0; _idle=0
+    for _c in $(ffghr_pool_containers); do
+        _total=$((_total + 1))
+        [ -e "$(ffghr_busy_marker "$_c")" ] || _idle=$((_idle + 1))
+    done
+    printf '%s %s\n' "$_total" "$_idle"
+    unset _c _total _idle
+}
+
+# May a slot start a runner right now? CALL WITH THE POOL LOCK HELD.
+#
+# The two conditions are the whole feature: room under the ceiling, and a pool that is short of
+# idle runners. A job in flight makes the pool short by one, which is what starts the next runner.
+ffghr_pool_admit() {
+    _counts=$(ffghr_pool_counts)
+    _ptotal=${_counts% *}
+    _pidle=${_counts#* }
+    [ "$_ptotal" -lt "$SLOTS" ] && [ "$_pidle" -lt "$IDLE_POOL" ]
+}
+
+# A number, or the default. Everything here is arithmetic under `set -e`, where a config that says
+# "six" is not a wrong answer but a dead supervisor.
+_ffghr_num() {
+    eval "_nv=\${$1:-}"
+    case "$_nv" in
+        ''|*[!0-9]*) eval "$1=\$2" ;;
+        *) [ "$_nv" -ge 1 ] || eval "$1=\$2" ;;
+    esac
+    unset _nv
+}
+_ffghr_num SLOTS             "$FFGHR_DEFAULT_SLOTS"
+_ffghr_num IDLE_POOL         "$FFGHR_DEFAULT_IDLE_POOL"
+_ffghr_num POOL_POLL_SECONDS 5
+
+# Re-read the two pool knobs. A waiting supervisor sits in its loop for as long as the machine is
+# quiet — hours — and an operator who raises idle_pool should not have to restart units for it to
+# take effect. Environment overrides still win, because _ffghr_set applies them last.
+#
+# A config.json that has gone unreadable leaves the current values alone rather than killing the
+# supervisor: `ffgithubrunners idle N` writes through a temporary file and renames, so the only
+# way to see a half-written one is to edit it by hand while a slot is waiting.
+ffghr_reload_limits() {
+    # A key DELETED from config.json since the last load would otherwise keep its old value:
+    # _ffghr_load_json only ever assigns _cfg_*, it never clears one that has gone away.
+    unset _cfg_slots _cfg_idle_pool 2>/dev/null || true
+    _ffghr_load_json 2>/dev/null || return 0
+    _ffghr_set SLOTS     slots     "$FFGHR_DEFAULT_SLOTS"
+    _ffghr_set IDLE_POOL idle_pool "$FFGHR_DEFAULT_IDLE_POOL"
+    _ffghr_num SLOTS     "$FFGHR_DEFAULT_SLOTS"
+    _ffghr_num IDLE_POOL "$FFGHR_DEFAULT_IDLE_POOL"
+}
+
 # The flag files behind `drain` and `slot stop|start`, per section 11. slot.sh checks these
 # before it mints a JIT config; nothing here talks to the system manager, which is why no
 # account needs a sudoers entry.
@@ -398,4 +521,4 @@ ffghr_is_drained() {
 DOCKER_HOST="unix://$DOCKER_SOCK"
 export DOCKER_HOST
 
-unset _cfg_slots _cfg_watchdog_minutes _cfg_image _cfg_labels _cfg_org 2>/dev/null || true
+unset _cfg_slots _cfg_idle_pool _cfg_watchdog_minutes _cfg_image _cfg_labels _cfg_org 2>/dev/null || true

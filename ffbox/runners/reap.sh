@@ -90,6 +90,31 @@ for c in $CONTAINERS; do
     fi
 done
 
+# --- pool markers ---------------------------------------------------------------------------------
+#
+# A busy marker says "this container has taken a job", and slot.sh removes its own on every exit
+# path it gets to run. A supervisor that was SIGKILLed does not, and the admission count would
+# then be reading a marker for a container that no longer exists.
+#
+# HARMLESS UNTIL THE NAME COMES BACK, which it cannot: the container name carries a random nonce.
+# So this is tidiness rather than a fix, and it is cheap. The counting itself already ignores a
+# marker with no live container, which is what keeps the failure benign in the meantime.
+LIVE=$(docker ps --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null || true)
+if [ -d "$FFGHR_STATE_DIR" ]; then
+    for m in "$FFGHR_STATE_DIR"/*.busy; do
+        [ -e "$m" ] || continue
+        cname=$(basename -- "$m" .busy)
+        case " $LIVE " in
+            *" $cname "*) skip "$cname is running; keeping its busy marker"; continue ;;
+        esac
+        if [ "$DRY" = 1 ]; then
+            act "would remove the busy marker for $cname, which is gone"
+        else
+            rm -f "$m" && act "removed the busy marker for $cname, which is gone"
+        fi
+    done
+fi
+
 # --- registrations ------------------------------------------------------------------------------------
 #
 # Delete org runners that are OURS, OFFLINE, and have no container here. Three conditions, and all

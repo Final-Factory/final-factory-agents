@@ -1,8 +1,13 @@
 #!/bin/sh
 # slot.sh — one slot, one job, then exit.
 #
-#   mint a JIT config -> docker run -> the runner takes ONE job -> the container exits
-#     -> remove the container, DELETE the registration -> exit 0 -> systemd starts us again
+#   wait for a place in the pool -> mint a JIT config -> docker run -> the runner takes ONE job
+#     -> the container exits -> remove the container, DELETE the registration -> exit 0
+#     -> systemd starts us again
+#
+# A SLOT IS A PLACE FOR A RUNNER, NOT A RUNNER. $SLOTS supervisors run all the time; a container
+# exists only while the pool is short of idle runners, so a quiet machine carries $IDLE_POOL
+# registrations rather than $SLOTS of them. lib/config.sh's pool section is the rule.
 #
 # The container did not exist before the job and does not exist after it. No socket, and a tmpfs
 # workspace that dies with the container.
@@ -39,11 +44,23 @@ RUNNER_ID=""
 CNAME=""
 STAGE=""
 
+# THE POOL LOCK IS HELD ACROSS THE MINT AND THE `docker run`, so it has to be released on every
+# exit path in between, teardown included. Defined here because teardown calls it.
+POOL_FD_OPEN=0
+pool_unlock() {
+    [ "$POOL_FD_OPEN" = 1 ] || return 0
+    POOL_FD_OPEN=0
+    exec 7>&-
+}
+
 # TEARDOWN RUNS ON EVERY EXIT PATH, and that is the whole point of it being a trap. A clean exit
 # deregisters itself, so the DELETE below usually returns 404; a container killed mid-job does
 # not, which is why the id is captured at mint time and the DELETE is unconditional.
 teardown() {
     _rc=$?
+    pool_unlock
+    # The pool counts a container, not a supervisor, so this marker has to go with the container.
+    ffghr_clear_busy "$CNAME"
     # The claim outlives the decision on purpose, so a second slot cannot grant itself the same
     # entry while this job is still working. It has to come back here on EVERY exit path, or one
     # crashed run stops that branch being archived until the claim ages past the watchdog.
@@ -90,19 +107,6 @@ teardown() {
 }
 trap teardown EXIT INT TERM
 
-# --- drain ---------------------------------------------------------------------------------------
-
-# A drained slot stays RUNNING and idle rather than being stopped, so nothing here has to talk to
-# the system manager and no account needs a sudoers entry. Sleep and recheck rather than exiting,
-# because exiting would have systemd restart us every RestartSec and fill the journal with it.
-if ffghr_is_drained "$SLOT"; then
-    log "drained; taking no work until the flag is cleared"
-    while ffghr_is_drained "$SLOT"; do
-        sleep 15
-    done
-    log "drain lifted"
-fi
-
 # --- preflight, BEFORE minting anything ------------------------------------------------------------
 #
 # Order matters. A registration minted against a machine that cannot then run a container is a
@@ -126,6 +130,62 @@ docker network inspect "$EGRESS_NET" >/dev/null 2>&1 \
 [ "$(docker inspect -f '{{.State.Running}}' "$EGRESS_NAME" 2>/dev/null)" = true ] \
     || fail_unfit "the egress proxy $EGRESS_NAME is not running; a job with no way out is worse
              than no job at all (03-image.sh --egress-only)"
+
+# --- wait for a place in the pool -----------------------------------------------------------------
+#
+# This is where a slot spends most of its life on a quiet machine, and it is also where drain
+# lives: both are the same question, "may this slot start a runner right now", and answering them
+# in one loop means a drained slot and a slot with no place in the pool behave identically —
+# RUNNING, holding nothing, taking no work. Sleeping rather than exiting, because exiting would
+# have systemd restart us every RestartSec and fill the journal with it.
+#
+# AFTER PREFLIGHT, NOT BEFORE. The counts come from the daemon, so a machine that cannot reach it
+# should say that once and clearly rather than sit here counting zero containers and admitting
+# everything.
+#
+# THE LOCK IS STILL HELD WHEN THIS RETURNS, and that is the point of it. Admission is decided from
+# a count that minting then changes, so the count has to stay frozen until the new container
+# exists and is countable — the `docker run` below, a couple of seconds later. Releasing here and
+# re-taking it afterwards would put every other waiter's decision inside that gap.
+pool_summary() {
+    _ps=$(ffghr_pool_counts)
+    printf '%s of %s slots in use, %s idle, want %s' "${_ps% *}" "$SLOTS" "${_ps#* }" "$IDLE_POOL"
+    unset _ps
+}
+
+wait_for_a_place() {
+    _announced=""
+    while :; do
+        if ffghr_is_drained "$SLOT"; then
+            [ "$_announced" = drained ] || log "drained; taking no work until the flag is cleared"
+            _announced=drained
+            sleep "$POOL_POLL_SECONDS"
+            continue
+        fi
+        [ "$_announced" != drained ] || log "drain lifted"
+
+        ffghr_reload_limits
+
+        # Opened and closed each time round rather than held across the sleep: an fd waiting on
+        # flock is invisible, and a supervisor that took the lock and then slept would stall every
+        # other slot for as long as it sat here.
+        exec 7>>"$FFGHR_POOL_LOCK"
+        POOL_FD_OPEN=1
+        if flock -w 30 7 && ffghr_pool_admit; then
+            log "starting a runner ($(pool_summary))"
+            return 0
+        fi
+        pool_unlock
+
+        if [ "$_announced" != waiting ]; then
+            log "the pool is satisfied ($(pool_summary)); waiting"
+            _announced=waiting
+        fi
+        sleep "$POOL_POLL_SECONDS"
+    done
+}
+
+wait_for_a_place
 
 # --- mint --------------------------------------------------------------------------------------------
 
@@ -244,6 +304,12 @@ docker run -d \
 
 unset FFGHR_JITCONFIG
 
+# THE POOL LOCK GOES HERE, AND NOT ONE LINE LATER. The container now exists, so `docker ps` counts
+# it and the next waiter's decision is made against the truth. It also has to come BEFORE the
+# background logger below: a child inherits open file descriptors, and a `docker logs -f` that
+# outlives this line would hold the lock for the length of the job.
+pool_unlock
+
 # Container output goes to the FILE, not to this script's stdout. stdout is the journal, and a
 # Unity job log is tens of megabytes; the journal gets this script's own lines instead, which are
 # the ones anyone reads first.
@@ -294,7 +360,24 @@ decide_cache_archive() {
 DEADLINE=$(( $(date +%s) + WATCHDOG_MINUTES * 60 ))
 KILLED=0
 
+# WHETHER THIS CONTAINER HAS TAKEN A JOB, and the reason this loop is worth waking up for while
+# nothing is wrong. Until it flips, this container is the pool's idle runner and no other slot
+# will start one; the moment it flips, the marker goes down and the next waiting slot brings a
+# replacement up within its poll interval. Nobody else can see this: docker top is the only
+# signal, and it is this supervisor's container.
+BUSY=0
+
 while [ "$(docker inspect -f '{{.State.Running}}' "$CNAME" 2>/dev/null)" = true ]; do
+    if [ "$BUSY" = 0 ] && ffghr_container_busy "$CNAME"; then
+        BUSY=1
+        if ffghr_mark_busy "$CNAME"; then
+            log "job started; the pool is short an idle runner and will start one"
+        else
+            # Not fatal, and the failure is bounded: the pool over-counts this container as idle,
+            # so it runs one runner short until the job ends. Worth a line, not worth dying for.
+            log "WARNING: could not write the busy marker in $FFGHR_STATE_DIR; the pool will count this slot as idle"
+        fi
+    fi
     if [ "$(date +%s)" -ge "$DEADLINE" ]; then
         log "WATCHDOG: $WATCHDOG_MINUTES minutes elapsed; stopping $CNAME"
         # TERM first, then KILL after the grace period. The grace is for the licence trap in the
@@ -307,12 +390,19 @@ while [ "$(docker inspect -f '{{.State.Running}}' "$CNAME" 2>/dev/null)" = true 
         break
     fi
     decide_cache_archive
-    # FIFTEEN SECONDS, NOT FIVE. This loop only has to notice two things: a container that has
-    # exited, and a branch.info the job wrote near its start. The job then runs for tens of
-    # minutes before it needs the answer, so the extra latency is invisible, and three slots each
-    # waking twelve times a minute to run `docker inspect` is work nobody asked for. The watchdog
-    # deadline is measured in hours; 15s of granularity on it means nothing.
-    sleep 15
+    # FIFTEEN SECONDS ONCE THERE IS A JOB, NOT FIVE. From then on this loop only has to notice two
+    # things: a container that has exited, and a branch.info the job wrote near its start. The job
+    # then runs for tens of minutes before it needs the answer, so the extra latency is invisible,
+    # and several slots each waking twelve times a minute to run `docker inspect` is work nobody
+    # asked for. The watchdog deadline is measured in hours; 15s of granularity on it means nothing.
+    #
+    # BEFORE THERE IS A JOB IT IS THE POOL POLL, because then this loop is the thing that notices
+    # a job arriving, and everything waiting to start a replacement runner is waiting on it.
+    if [ "$BUSY" = 1 ]; then
+        sleep 15
+    else
+        sleep "$POOL_POLL_SECONDS"
+    fi
 done
 
 wait "$LOGGER" 2>/dev/null || true

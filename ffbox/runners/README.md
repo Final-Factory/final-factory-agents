@@ -3,6 +3,9 @@
 Single-use GitHub Actions runners in rootless containers. One job per container; the container did
 not exist before the job and does not exist after it.
 
+The harness keeps a small **pool**: `idle_pool` runners registered and waiting, plus one per job in
+flight, never more than `slots` altogether. A slot with no runner in it holds nothing at all.
+
 The design is `design/ffgithubrunners_design.txt` and the task list is
 `design/ffgithubrunners_tasks.md`. This file is how to run the thing.
 
@@ -54,8 +57,9 @@ org-level permissions do. Do not use a classic PAT: the classic scope for these 
 ## Running it
 
 ```sh
-ffgithubrunners status              slots, containers, registrations, image tag and age
-ffgithubrunners slots [N]           show or set the slot count
+ffgithubrunners status              the pool, containers, registrations, image tag and age
+ffgithubrunners slots [N]           show or set the maximum pool size
+ffgithubrunners idle [N]            show or set how many runners wait for work
 ffgithubrunners slot stop|start N   idle one slot, or return it
 ffgithubrunners drain | resume      let running jobs finish, start no replacements
 ffgithubrunners image update        rebuild with a current runner tarball
@@ -64,20 +68,65 @@ ffgithubrunners logs [N]            the RUNNER's log for one slot (not the job's
 ```
 
 Only `slots N` needs privilege, and it asks for it: it enables and disables systemd unit instances.
-Everything else is a flag file that `slot.sh` reads before it mints a JIT config, which is why a
-drained slot stays running and idle rather than being stopped, and why no account here has a
-sudoers entry.
+Everything else is a flag file or one number in `config.json` that `slot.sh` reads before it mints
+a JIT config, which is why a drained slot stays running and idle rather than being stopped, and why
+no account here has a sudoers entry.
 
 `drain` is what makes an image update or a slot-count change safe while a job is running.
+
+## The pool
+
+`slots` is a ceiling, not a headcount. Six slots do not mean six runners: they mean at most six
+jobs at once, and a slot that is not needed sits there holding nothing — no container, no
+registration, nothing on the organization's runners page.
+
+What decides is two numbers:
+
+```
+slots      6     the most jobs that can run at once
+idle_pool  1     how many runners wait for work while nothing is happening
+```
+
+A supervisor starts a runner when **both** are true: the pool is below `slots`, and fewer than
+`idle_pool` of the runners in it are idle. So a quiet machine carries one registration. The moment
+that runner takes a job it stops being idle, the next slot notices within about five seconds and
+brings a replacement up, and a burst of queued jobs walks the pool up to six that way. As each job
+finishes its container is destroyed, its registration is deleted, and the pool settles back to one.
+
+Idle is decided locally and for free: a runner that has taken a job has a `Runner.Worker` process,
+which the supervisor watching that container can see with `docker top`. It writes
+`~/.config/ffbox/githubrunners/state/<container>.busy`, and that file is what the other slots
+count. Nothing polls GitHub to make this decision.
+
+`ffgithubrunners idle N` changes the standing cost with no privilege and no restart — waiting
+slots re-read it each time round their loop. Raising it starts runners within seconds. **Lowering
+it does not stop any**: killing an idle runner races GitHub handing it a job. The extra ones retire
+by taking one job each, or `systemctl restart ffgithubrunners.target` clears them at once, at the
+cost of that same race.
+
+`ffgithubrunners slots N` changes the ceiling, needs root, and takes effect when
+`05-services.sh --install` enables or disables the unit instances behind it.
+
+Two things to know before raising `slots` much:
+
+- **Concurrent Unity jobs cannot activate.** Open item (e): every container built from this image
+  carries the same `/etc/machine-id`, so Unity's licensing service sees all slots as one machine
+  and a Personal licence holds one seat per machine. The second concurrent activation fails with
+  exit 198. Until that is fixed, a high ceiling helps jobs that do not start the editor and does
+  nothing for the ones that do.
+- **The cache quota is sized for three slots staging at once.** 250G is ten 16G entries plus three
+  16G staging directories; six slots on six different branches could ask for more than that.
 
 ## Where things are
 
 ```
 ~/.config/ffbox/githubrunners/
-  config.json          slots, watchdog, image, labels, org, the App's two ids
+  config.json          slots, idle_pool, watchdog, image, labels, org, the App's two ids
   github-app.pem       the private key, 0600, at a fixed path nothing records
   secrets.env          empty on an App install; only a PAT goes here
   drain, slot-N.stop   the flag files behind drain and slot stop
+  .pool.lock           held across one admission decision and the mint that follows it
+  state/               one <container>.busy per container that has taken a job
 
 /var/log/ffgithubrunners/slot-N.log    the runner's own lifecycle lines, rotated daily
 /opt/ffbox_container_docker            the daemon's store, its own dataset, 64G quota
@@ -146,6 +195,15 @@ manual `reset-failed`. If you see one, the reason is in the journal and is worth
 **Every slot idle and no jobs taken.** Check `ffgithubrunners status` for `DRAINED` first. An
 `image update` that was killed between draining and its cleanup trap leaves the flag set, and the
 flag records the pid and time that set it.
+
+**Slots with no container.** Normal, and what `status` calls "waiting for a place in the pool" —
+see the pool section above. What is NOT normal is every slot waiting while none is idle: that means
+the pool believes runners are busy that are not. `ls ~/.config/ffbox/githubrunners/state/` and
+compare it with `docker ps`; a marker whose container is gone is ignored by the count and swept by
+the next `ffgithubrunners reap`.
+
+Offline tests for the admission arithmetic: `sh ffbox/runners/test_pool.sh`. They stub `docker` and
+use a temporary config directory, so they touch neither the daemon nor GitHub.
 
 ## What a real job proved, and what it did not
 
