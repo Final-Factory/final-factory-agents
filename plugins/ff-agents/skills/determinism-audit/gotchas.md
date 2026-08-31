@@ -23,6 +23,11 @@ load-bearing for future runs even where the original defect is fixed.
 - [Wait for a running BEAST sweep before bundle-syncing](#beast-sweep-wait) (055)
 - [Never run the two editors' fast suites concurrently](#no-concurrent-fast-suites)
 - [Burst is OFF by design on paired automation runs](#burst-off-by-design)
+- [Built-player pair harness needs role-keyed identity, not per-copy keying](#built-pair-identity) (049 T028b)
+- [Silent-weakening audit class: assert the leg your docstring claims to prove](#silent-weakening) (049 T028b)
+- [Built-player sessions need an opt-in watcher to outlive a pair break](#outlive-pair-break) (049 T028)
+- [Mute the real audio path — `-batchmode -nographics` does not touch FMOD](#automation-mute) (049)
+- [Fixture determinism can be CPU-load-dependent even with no cross-peer comparison — unverified](#fixture-load-dependence) (055 R35)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -283,3 +288,65 @@ no remote-MCP reach); the rolling report window evicts early heartbeats on long 
 (shorten `DURATION_S` to keep a burst in-window). The `.110` checkout can fail to fetch over its
 non-interactive SSH session; fast-forward it with the exact command in
 `Documentation/Two-Machine-LAN-Dev-Pair.md:34-48` when the pre-flight hashes differ.
+
+## Built-player pair harness needs role-keyed identity, not per-copy keying {#built-pair-identity}
+
+(049 T028b, 2026-08-31, `22a8c8ca4`.) A built-player pair audit runs TWO PROCESSES OF ONE BUILD on
+ONE MACHINE — every per-editor-copy trick that keeps an editor pair's host and client apart
+(ParrelSync's separate `Assets`, a project-path-keyed identity file) does nothing here, because
+there is only one binary and one set of on-disk singletons. Two premise breaks surfaced this way:
+(1) both processes shared ONE Steam login via `GameStateRpcManager` — fixed by
+`SteamworksManager.ShouldInitializeSteam(enableSteamworks, automationRole)`
+(`Assets/Scripts/Steam/SteamworksManager.cs:44-46`), which skips Steam init whenever an automation
+role is set, giving every automation peer `steamId 0`; (2) both processes read/wrote ONE
+`reclaim-identity.txt` via `ClientReclaimIdentity.GetStorePath` — the editor/ParrelSync trap already
+had per-copy keying, but no built-player counterpart, fixed by
+`ClientReclaimIdentity.ComputeStoreFileName` (`Assets/Scripts/PlayerController/ClientReclaimIdentity.cs:77-92`)
+falling back to `reclaim-identity-automation-<role>.txt` when there is no editor project key.
+**Rule**: a built-player pair harness must role-key every singleton a single build would otherwise
+let two processes share — audit for MORE than the one that just broke, since editor-copy keying does
+not generalize to a single shared binary.
+
+## Silent-weakening audit class: assert the leg your docstring claims to prove {#silent-weakening}
+
+(049 T028b, `22a8c8ca4`.) Before the identity fix above, `run_player_persistence_audit.sh`'s
+`MODE=rejoin` arm (`scripts/audit/run_player_persistence_audit.sh:38-52`) documented itself as
+proving GUID reclaim — a departed player's Guid re-parked and reclaimed on rejoin — but the shared
+`reclaim-identity.txt` meant the arm was silently passing through the SteamId-keyed reclaim leg
+instead, per the fix commit's own message. `AutomationLanIdentityTest.AutomationSessionsDoNotLogIntoSteam`
+(`Assets/Tests/Playtest/AutomationLanIdentityTest.cs:48-55`) now asserts the automation precondition
+(`steamId==0`) the arm depends on, in-run. **Rule**: an audit arm whose preconditions are documented
+only in a docstring — never asserted in the run itself — can prove a WEAKER claim than advertised
+while still reporting PASS; sweep arms for unasserted preconditions, not just for wrong assertions.
+
+## Built-player sessions need an opt-in watcher to outlive a pair break {#outlive-pair-break}
+
+(049 T028, `5c0550919`.) Evict/leave/rejoin/saveload arms deliberately break the pair mid-session —
+one peer disconnects, then reconnects. Without `-ffAutomationOutlivePairBreak`
+(`Assets/Scripts/Behaviours/Multiplayer/LocalMultiplayerAutomationBootstrap.cs:1991`), the session
+watcher's default `ShouldEndSession` policy (`LocalMultiplayerAutomationBootstrap.cs:912-929`) tears
+the session down the moment the pair breaks, before the pending rejoin chain ever completes. Pass the
+flag for any arm whose chain SPANS a disconnect/reconnect; leave it off for arms that don't, since it
+changes when the session is allowed to end.
+
+## Mute the real audio path — `-batchmode -nographics` does not touch FMOD {#automation-mute}
+
+(049, `cb5bd8cab`.) Built automation players still make sound: `-batchmode -nographics` mutes
+RENDERING, but Final Factory's audio runs through FMOD middleware, independent of Unity's
+`AudioListener`/render pipeline — `AudioListener.volume = 0` alone does nothing. The fix mutes the
+real path: `AudioController.SetAutomationMuted(true)` (`Assets/Scripts/Audio/AudioController.cs:51-55`)
+calls FMOD's `RuntimeManager.MuteAllEvents` (`AudioController.cs:73`), called from every automation
+role's `LocalMultiplayerAutomationBootstrap.ApplyGlobalSettings`
+(`Assets/Scripts/Behaviours/Multiplayer/LocalMultiplayerAutomationBootstrap.cs:412`) alongside a
+belt-and-braces `AudioListener` kill. **Rule**: automated runs must stay silent while Ben is at the
+machine — any new automated-run entry point (built player OR editor) needs to call the FMOD mute
+path, not just the Unity one.
+
+## Fixture determinism can be CPU-load-dependent even with no cross-peer comparison — unverified {#fixture-load-dependence}
+
+(055 R35 leg observation, unverified class.) Two identical single-fixture `MODE=economy` runs (no
+second peer, so this is not a cross-peer desync) differed run-to-run on `movers` on a loaded machine,
+while the same runs on a quiet machine reproduced exactly. This is an observation, not a confirmed
+root cause — but it means a behavioral-fixture diff measured on a busy machine can look like a
+regression that isn't one. **Diagnose fixture run-to-run drift on a quiet machine before treating it
+as a code regression.**
