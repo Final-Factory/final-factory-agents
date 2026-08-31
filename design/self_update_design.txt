@@ -188,36 +188,61 @@ silently idle build server:
     6 is what makes that safe: a resume can never land inside another updater's drain.
 
 
-5. What the diff decides
-------------------------
+5. What happens after the merge
+-------------------------------
 
-A restart is only the right action for a pure Python or shell change. The three actions that
-are NOT a restart are what makes "pull and restart" wrong as a general rule, and each is a real
-path in this repository. After the merge, the updater inspects
-`git diff --name-only OLD_SHA..HEAD`:
+A restart is only the right action for a pure Python or shell change, and the actions that are
+NOT a restart are what makes "pull and restart" wrong as a general rule: a unit template is inert
+until rendered, an image file is inert until rebuilt, a plugin is inert until the marketplace
+cache is refreshed.
 
-  ffbox/systemd/**            sudo sh ffbox/06-services.sh --install  (the unit TEMPLATES are
-                              the source; an edited template is inert until rendered)
-  Dockerfile, entrypoint.sh,  sh ffbox/03-build.sh                    (baked into ffbox:latest
-  run-as-user.sh,                                                      by the Dockerfile's two
-  import-project.sh,                                                   COPY lines — a restart
-  unity-license.sh,                                                    does nothing for these)
-  install-claude.sh
-  plugins/**, *.claude-plugin/** sh registerAgents.sh                 (live sessions read
-                              ~/.claude/plugins/cache/, not this tree, and only a version bump
-                              refreshes it — see CLAUDE.md)
-  anything else               restart alone
+THIS USED TO BE A TABLE KEYED ON `git diff --name-only OLD_SHA..HEAD` — Dockerfile means rebuild,
+plugins/** means registerAgents, systemd/** means 06-services. That table is a second,
+hand-maintained model of what setup.sh already knows, and it is wrong the moment a commit moves a
+file or adds a stage. Worse, it can only ever react to what CHANGED IN GIT: a config key added by
+a commit, or a channel somebody added to the watch block by hand, has no diff to match and never
+gets applied.
+
+So the updater runs the real thing instead. Both of them, from the NEW tree, after the merge:
+
+    sh ffbox/setup.sh          --non-interactive
+    sh ffbox/runners/setup.sh  --non-interactive --skip-github --skip-image-build
+
+Every stage is idempotent and no-ops when it is already satisfied, so on a machine that is set up
+this is a few seconds and a lot of "already exists"; on one that is behind it is exactly the
+commands a human would have run. The second call is what makes ffgithubrunners deploy itself: its
+egress allowlist, its networks and its git mirror are in this tree too, and before it they were
+merged and then applied by nobody.
+
+  --skip-image-build       because ffbox/03-build.sh in the first call has just built that exact
+                           tag from that exact Dockerfile. One cached rebuild, not two.
+  --skip-github            because that stage verifies the credential by minting a real JIT config
+                           and deleting the runner it created. Right for a human setting a machine
+                           up, pointless noise on the org's runner list once per commit.
+
+NOTHING IN THE SECOND CALL MAY DISTURB A RUNNING JOB, and that is a constraint on the scripts it
+calls rather than on the updater. Only ffbox is drained above; ffgithubrunners is not, because
+waiting for a Unity job would hold the whole update for up to ninety minutes. So `egress up` and
+the git mirror are fingerprinted — image id, mode, allowlist checksum — and leave a healthy
+container alone rather than recreating it under a job that is mid-fetch. An unconditional recreate
+anywhere in that path puts this back.
+
+WHAT NEITHER CALL DOES IS ROOT. --non-interactive skips the stages that need it and prints what is
+owed, so a commit that changes a unit template is live everywhere except the units until somebody
+runs `sudo sh ffbox/06-services.sh --install` or `sudo sh ffbox/runners/05-services.sh --install`.
+That is the deliberate cost of an updater that fetches code off the internet and then executes it
+holding no root.
 
   discord-task.sh, ffverify.sh   restart alone, but see fact (g): these two are MOUNTED from
                               the checkout, not baked, so the new copy is in effect for the
                               next container with no rebuild — and would have been in effect
                               mid-run without the drain.
 
-These run from the NEW tree, after the merge, which is what makes step 0 of section 6
-necessary.
-
-The Dockerfile row is the one most likely to be skipped by hand and least likely to be
-noticed: nothing fails, the containers simply keep running last week's image.
+  slot.sh, runners/lib/**     no restart to give: a slot supervisor is a long-lived process that
+                              the pool may leave WAITING for hours. It stamps the mtime and size
+                              of its own two files at start and exits when either changes, which
+                              costs nothing — a waiting slot holds no container, no registration
+                              and no lock — and systemd starts it again on the new code.
 
 
 6. Sequence

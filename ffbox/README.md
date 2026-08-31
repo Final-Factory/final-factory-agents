@@ -204,7 +204,7 @@ journalctl -u ffbox-update -f               # what it did
 touch ~/.config/ffbox/update.disabled       # pause updates while you work on the box
 ```
 
-Four things worth knowing:
+Five things worth knowing:
 
 - **It drains before it stops.** No new containers, then it waits (up to two hours) for the
   ones already running to finish on their own. This matters because ffbox bind-mounts the
@@ -212,9 +212,17 @@ Four things worth knowing:
   mid-run really would change them underneath a container.
 - **It refuses a dirty working tree** and says so, rather than stashing or resetting. On a
   machine where you are editing, updates stop until you commit.
-- **The diff decides the action.** A unit change re-runs `06-services.sh --install`; a change to
-  the image's own files re-runs `03-build.sh`; a plugin change re-runs `registerAgents.sh`.
-  A restart alone is only right for pure Python or shell changes.
+- **It re-runs setup rather than guessing from the diff.** Both setups: `ffbox/setup.sh` and
+  `ffbox/runners/setup.sh`, each `--non-interactive` and each idempotent. So a commit that changes
+  the Dockerfile rebuilds the image, one that changes the CI egress allowlist recreates that fence,
+  and one that changes a plugin re-runs `registerAgents.sh` — with no hand-maintained list of which
+  path means which action. It used to have that list, and a list can only react to what changed in
+  git: a config key or a channel added by hand has no diff to match and never got applied.
+- **Root stages are the exception, deliberately.** `--non-interactive` SKIPS them rather than
+  waiting on a sudo prompt nobody will answer, and prints what is owed into the journal. So a
+  commit that changes a unit template — `ffbox/systemd/`, `ffbox/runners/systemd/` — is fetched,
+  merged and live everywhere except the units, until somebody runs the one command it names. The
+  alternative is a sudoers rule for writing `/etc/systemd/system`, which is root.
 - **It is deliberately not part of `ffbox.target`.** `systemctl stop ffbox.target` leaves the
   timer firing, so a commit that breaks ffwatch can be repaired by the next commit without
   anyone touching the machine. There is no rollback, and that independence is why.

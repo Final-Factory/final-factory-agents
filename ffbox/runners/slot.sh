@@ -147,6 +147,22 @@ docker network inspect "$EGRESS_NET" >/dev/null 2>&1 \
 # a count that minting then changes, so the count has to stay frozen until the new container
 # exists and is countable — the `docker run` below, a couple of seconds later. Releasing here and
 # re-taking it afterwards would put every other waiter's decision inside that gap.
+# WHAT CODE THIS SUPERVISOR IS RUNNING, so it can notice that the answer has changed.
+#
+# THE POOL MADE THIS NECESSARY. Before it, a slot ran one job and exited, so systemd restarted it
+# into whatever was on disk and a merge reached every slot within a job or two. A slot that is
+# WAITING now sits in the loop below for as long as the machine is quiet — hours — and it is
+# still executing the file the self-updater rewrote underneath it, which is both stale and, since
+# `sh` reads a script by byte offset, not necessarily even coherent. The updater's own header
+# makes exactly this point about ffbox: editing a file is not deploying it.
+#
+# A waiting slot holds NOTHING — no container, no registration, no lock — so exiting costs
+# nothing and systemd starts a fresh one five seconds later on the new code.
+code_stamp() {
+    stat -c '%n %Y %s' "$0" "$HERE/lib/config.sh" 2>/dev/null | tr '\n' ' '
+}
+CODE_STAMP=$(code_stamp)
+
 pool_summary() {
     _ps=$(ffghr_pool_counts)
     printf '%s of %s slots in use, %s idle, want %s' "${_ps% *}" "$SLOTS" "${_ps#* }" "$IDLE_POOL"
@@ -163,6 +179,11 @@ wait_for_a_place() {
             continue
         fi
         [ "$_announced" != drained ] || log "drain lifted"
+
+        if [ "$(code_stamp)" != "$CODE_STAMP" ]; then
+            log "slot.sh or lib/config.sh changed on disk; exiting so systemd starts the new code"
+            exit 0
+        fi
 
         ffghr_reload_limits
 
