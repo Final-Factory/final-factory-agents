@@ -26,6 +26,13 @@ WORKSPACE=${FFBOX_WORKSPACE:-/workspace}
 ENTRY=${FFBOX_CACHE_ENTRY:-}
 BUNDLE=${FFBOX_BASE_BUNDLE:-}
 TARGET=${FFBOX_TARGET_SHA:-}
+# A READ-ONLY BIND MOUNT OF THE BARE MIRROR, which turned out simpler than the bundle this was
+# written for. A bundle needs the host to know what commit the cache entry is at, which means
+# opening the tar before deciding what to put in the bundle; a mirror mount needs none of that --
+# git works out the delta itself. It is :ro, so a run cannot write into the mirror every later run
+# and every CI job then reads.
+MIRROR=${FFBOX_MIRROR:-}
+REF=${FFBOX_REF:-}
 
 log() { printf '[restore] %s\n' "$*"; }
 die() { printf '[restore] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -75,12 +82,42 @@ if [ -n "$BUNDLE" ] && [ -r "$BUNDLE" ]; then
         || die "could not fetch from the delta bundle"
 fi
 
-if [ -n "$TARGET" ]; then
-    git -C "$WORKSPACE" rev-parse --verify --quiet "${TARGET}^{commit}" >/dev/null 2>&1 \
-        || die "target $TARGET is not in the workspace after restore (bundle missing or wrong)"
-    git -C "$WORKSPACE" reset --hard --quiet "$TARGET" || die "could not reset to $TARGET"
+if [ -n "$MIRROR" ] && [ -d "$MIRROR" ]; then
+    log "fetching the delta from the local mirror"
+    git -C "$WORKSPACE" fetch --quiet --prune "$MIRROR" '+refs/heads/*:refs/remotes/origin/*' \
+        || die "could not fetch from the mirror at $MIRROR"
+fi
+
+# Resolve what to land on: an explicit commit, else a ref via the mirror's refs.
+_target=$TARGET
+if [ -z "$_target" ] && [ -n "$REF" ]; then
+    for _c in "origin/$REF" "$REF"; do
+        if git -C "$WORKSPACE" rev-parse --verify --quiet "${_c}^{commit}" >/dev/null 2>&1; then
+            _target=$_c; break
+        fi
+    done
+    [ -n "$_target" ] || die "ref '$REF' resolves to nothing after the restore"
+fi
+
+if [ -n "$_target" ]; then
+    git -C "$WORKSPACE" rev-parse --verify --quiet "${_target}^{commit}" >/dev/null 2>&1 \
+        || die "target $_target is not in the workspace after restore (mirror missing or wrong)"
+    git -C "$WORKSPACE" reset --hard --quiet "$_target" || die "could not reset to $_target"
     log "workspace at $(git -C "$WORKSPACE" rev-parse --short HEAD)"
 fi
+
+# THE ENTRY'S CONFIG IS A CI JOB'S CONFIG. Hooks are already gone above; these keys name commands
+# that ordinary git operations fire, so they are a persistence channel in the same way.
+for _k in core.fsmonitor core.pager core.hooksPath diff.external \
+          filter.lfs.process filter.lfs.smudge filter.lfs.clean; do
+    git -C "$WORKSPACE" config --local --unset-all "$_k" 2>/dev/null || true
+done
+
+# tar gives every restored file a new inode and ctime, so git's index cannot trust any of it and
+# re-hashes the whole worktree on the first command that touches it -- measured at two minutes in
+# CI. core.checkStat=minimal compares mtime, size and mode instead, which is exactly the difference
+# a tarball introduces.
+git -C "$WORKSPACE" config --local core.checkStat minimal 2>/dev/null || true
 
 # Whoever runs next is not root; the tmpfs is 1777 but the extracted tree is not.
 chmod -R a+rwX "$WORKSPACE/.git" 2>/dev/null || true
