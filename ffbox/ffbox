@@ -975,6 +975,122 @@ case "$TIMEOUT_KIND" in
     verify) RUN_RC=125 ;;
 esac
 
+# --- harvest, when the workspace was a container ramdrive --------------------------------------
+#
+# There is no tree to run git in: it was a tmpfs and it is gone. harvest-workspace.sh turned the
+# run's work into files under $OUT before the container exited, and this re-derives every check
+# from the one file that carries evidence rather than assertion -- work.bundle.
+#
+# WHY RE-DERIVE AT ALL. The container ran the same checks, and its own header says so. But it also
+# wrote branch.txt and changed_files.txt, and a run that skipped or lied about its checks would be
+# taken at its word if the host merely read them. The bundle cannot lie: git verifies its
+# prerequisite, and every commit, author and path below is read out of it here. The container's
+# files are used for INTENT -- which branch, which base -- and the bundle for FACT.
+#
+# The scratch repo is `clone --shared`, so it is alternates pointing at the mirror rather than a
+# copy: instant, and no gigabyte of objects moved to check a five-kilobyte bundle.
+harvest_from_out() {
+    if [ -s "$OUT/harvest_error.txt" ]; then
+        echo "ffbox: the run refused to publish: $(cat "$OUT/harvest_error.txt")" >&2
+        return 0
+    fi
+    if [ ! -s "$OUT/work.bundle" ]; then
+        echo "[ffbox] no work bundle — no branch, no PR"
+        rm -f "$OUT/branch.txt" "$OUT/publish_base.txt"
+        return 0
+    fi
+
+    _hb=$(head -1 "$OUT/branch.txt" 2>/dev/null | tr -d ' \r\n')
+    _hbase=$(head -1 "$OUT/publish_base_sha.txt" 2>/dev/null | tr -d ' \r\n')
+    [ -n "$_hb" ] || { harvest_failed "the run left a bundle but no branch name"; return 0; }
+    [ -n "$_hbase" ] || { harvest_failed "the run left a bundle but no publish base"; return 0; }
+
+    # A protected branch is refused on the NAME the host would push to, before anything else.
+    for _p in $PROTECTED_BRANCHES; do
+        [ "$_hb" = "$_p" ] || continue
+        harvest_failed "the run asks to publish as $_p, which this pipeline never pushes to"
+        return 0
+    done
+    git check-ref-format --branch "$_hb" >/dev/null 2>&1 \
+        || { harvest_failed "the run asks to publish as '$_hb', which is not a usable branch name"; return 0; }
+
+    _bytes=$(wc -c < "$OUT/work.bundle" 2>/dev/null || echo 0)
+    if [ "$_bytes" -gt "$MAX_BUNDLE_BYTES" ]; then
+        harvest_failed "the work bundle is ${_bytes} bytes, over the ceiling of ${MAX_BUNDLE_BYTES}"
+        return 0
+    fi
+
+    [ -d "$MIRROR_REPO_PATH" ] \
+        || { harvest_failed "no mirror at $MIRROR_REPO_PATH to verify the bundle against"; return 0; }
+    _scratch=$(mktemp -d "${TMPDIR:-/tmp}/ffbox-verify-XXXXXX") || {
+        harvest_failed "could not make a scratch repo to verify the bundle"; return 0; }
+
+    if ! git clone -q --no-checkout --local --shared "$MIRROR_REPO_PATH" "$_scratch" 2>/dev/null; then
+        rm -rf "$_scratch"; harvest_failed "could not open the mirror to verify the bundle"; return 0
+    fi
+    # THE PREREQUISITE CHECK, and it is the load-bearing one: a bundle whose base the host does not
+    # have is a range the host cannot push, and one whose base is not on the mirror is a range that
+    # does not descend from anything real.
+    if ! git -C "$_scratch" bundle verify "$OUT/work.bundle" >/dev/null 2>&1; then
+        rm -rf "$_scratch"
+        harvest_failed "the work bundle does not verify against the mirror"
+        return 0
+    fi
+    if ! git -C "$_scratch" fetch -q "$OUT/work.bundle" '+refs/heads/*:refs/remotes/run/*' 2>/dev/null; then
+        rm -rf "$_scratch"; harvest_failed "could not read the work bundle"; return 0
+    fi
+
+    _tip=$(git -C "$_scratch" rev-parse --verify --quiet "refs/remotes/run/$_hb" 2>/dev/null || echo "")
+    if [ -z "$_tip" ]; then
+        rm -rf "$_scratch"
+        harvest_failed "the bundle carries no branch called $_hb"
+        return 0
+    fi
+    if ! git -C "$_scratch" merge-base --is-ancestor "$_hbase" "$_tip" 2>/dev/null; then
+        rm -rf "$_scratch"
+        harvest_failed "the bundled work does not descend from the base it names ($_hbase)"
+        return 0
+    fi
+
+    # Identity, out of the bundle rather than out of the container's word for it.
+    _foreign=$(git -C "$_scratch" log --format='%ae%n%ce' "${_hbase}..${_tip}" 2>/dev/null \
+               | sort -u | grep -Fxv "$FFBOX_GIT_EMAIL" || true)
+    if [ -n "$_foreign" ]; then
+        rm -rf "$_scratch"
+        harvest_failed "commits claim an identity this run does not own: $(printf '%s' "$_foreign" | tr '\n' ' ')"
+        return 0
+    fi
+
+    # Paths and ceilings, likewise re-derived. changed_files.txt is rewritten from the bundle so
+    # that what the host reports and what it checked are the same list.
+    git -C "$_scratch" diff --name-only "${_hbase}..${_tip}" > "$OUT/changed_files.txt" 2>/dev/null || true
+    _forbidden=$(grep -E "$FORBIDDEN_PATHS_RE" "$OUT/changed_files.txt" 2>/dev/null | tr '\n' ' ' || true)
+    if [ -n "$_forbidden" ]; then
+        rm -rf "$_scratch"
+        harvest_failed "the range changes CI configuration, which this pipeline never publishes: $_forbidden"
+        return 0
+    fi
+    _count=$(wc -l < "$OUT/changed_files.txt" 2>/dev/null || echo 0)
+    if [ "$_count" -gt "$MAX_CHANGED_FILES" ]; then
+        rm -rf "$_scratch"
+        harvest_failed "$_count changed files, over the ceiling of ${MAX_CHANGED_FILES}"
+        return 0
+    fi
+    if [ "$_count" -eq 0 ]; then
+        rm -rf "$_scratch"
+        rm -f "$OUT/work.bundle" "$OUT/branch.txt" "$OUT/changes.patch"
+        echo "[ffbox] no file changes in this run — no branch, no bundle"
+        return 0
+    fi
+
+    # The patch is regenerated here too, so a reviewer reads the same range the checks passed.
+    git -C "$_scratch" diff --binary "${_hbase}..${_tip}" > "$OUT/changes.patch" 2>/dev/null || true
+    _commits=$(git -C "$_scratch" rev-list --count "${_hbase}..${_tip}" 2>/dev/null || echo '?')
+    rm -rf "$_scratch"
+    echo "[ffbox] verified ${_count} changed file(s) in ${_commits} commit(s) on $_hb: $OUT/work.bundle"
+    return 0
+}
+
 # --- harvest ---------------------------------------------------------------------------------------
 # Do this before cleanup destroys the clone, or the work evaporates with it.
 
@@ -1027,9 +1143,14 @@ sanitize_clone_git() {
         echo "[ffbox] sanitized the clone's .git before touching it (F7)"
     fi
 }
-sanitize_clone_git
-
-if [ -d "$MNT/.git" ]; then
+# THE WHOLE OF F7 GOES AWAY IN TMPFS MODE, rather than being mitigated. sanitize_clone_git exists
+# because the host runs git in a tree the container wrote, and git executes what .git tells it to.
+# With the workspace on a container ramdrive there is no such tree: the host reads inert files and
+# a bundle git itself verifies. Nothing to sanitise because nothing is read.
+if [ "$WORKSPACE_MODE" = tmpfs ]; then
+    harvest_from_out
+elif [ -d "$MNT/.git" ]; then
+    sanitize_clone_git
     git -C "$MNT" status --porcelain > "$OUT/status.txt" 2>/dev/null || true
 
     if [ -n "$BRANCH" ]; then
