@@ -236,7 +236,6 @@ _ffghr_set MIRROR_ORIGIN    mirror_origin    https://github.com/Final-Factory/Fi
 _ffghr_set MIRROR_SLUG      mirror_slug      FinalFactory
 _ffghr_set MIRROR_LFS_DIR   mirror_lfs_dir   /opt/ffcache/mirror/FinalFactory.git/lfs/objects
 _ffghr_set MIRROR_LFS_URL   mirror_lfs_url   http://10.81.0.250:8080/FinalFactory.git/info/lfs
-_ffghr_set GOLDEN_MNT       golden_mnt       /opt/FinalFactory
 
 _ffghr_set EGRESS_NET       egress_net       ffghr-net
 _ffghr_set EGRESS_UPLINK    egress_uplink    ffghr-egress-net

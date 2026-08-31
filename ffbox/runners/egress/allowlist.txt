@@ -25,18 +25,39 @@
 # pulling the base image, the runner tarball and gh is unfiltered. Nothing build-time belongs
 # here, and a failing build is never a reason to add a line.
 
+# REMOVED 2026-08-31: github.com, api.github.com, github-cloud.githubusercontent.com.
+#
+# All three went because a job stopped NEEDING them, not because they were filtered. That is the
+# difference that matters: an SNI fence cannot restrict github.com to one repository -- the repo
+# lives in the URL path, inside the TLS -- so while any of these were reachable, hostile test code
+# could push to its own repo or POST to /gists with a credential of its own. Measured from a live
+# runner while they were still listed: api.github.com/repos/torvalds/linux answered 200 and
+# /gists answered 200.
+#
+#   github.com + github-cloud   The repository and its LFS objects now come from ffghr-gitmirror
+#                               on this network: git daemon for objects, a download-only LFS batch
+#                               server beside it. The runner image rewrites the GitHub URL with
+#                               url.<mirror>.insteadOf, so actions/checkout never knows. There is
+#                               no repository but ours at the other end, so "restricted to our
+#                               repo" is a property of what exists rather than a rule to maintain.
+#   api.github.com              Used by NEITHER the runner NOR any action -- only by our own two
+#                               scripts. post-check-run.py now hands its payload to the supervisor,
+#                               and mode2Freshness moved to ubuntu-latest, off this fence entirely.
+#
+# WHAT BREAKS IF THE MIRROR IS DOWN: every job, immediately and loudly, because there is no longer
+# a fallback. That is deliberate -- a silent fallback to GitHub is exactly what hid the mirror
+# serving only master for a day -- but it makes ffghr-gitmirror load-bearing. It is
+# --restart unless-stopped and 03-image.sh brings it up.
+
 # --- GitHub: the runner itself ------------------------------------------------------------------
 # CONFIRMED by a real job on 2026-08-29. The wildcard earned itself: one job touched seven
 # distinct hosts under it — broker., pipelinesghubeus14., token., run., launch.,
 # results-receiver. and run-actions-3-azure-eastus. — which no hand-written list would have
 # anticipated. Do not try to enumerate these.
-github.com
 *.actions.githubusercontent.com
 
 # NOT yet seen from a job. main.yml's cache-pruning step calls gh, which needs it; the smoke
 # workflow has no such step, so this stays on the list unconfirmed.
-api.github.com
-
 # --- GitHub: what a job downloads ---------------------------------------------------------------
 # REMOVED 2026-08-31: codeload.github.com and objects.githubusercontent.com.
 #
@@ -72,8 +93,6 @@ api.github.com
 #                                         only extra reach, and this one accepts requests.
 #
 # So the wildcard bought one wanted host and one unwanted one. Two exact entries instead.
-github-cloud.githubusercontent.com
-
 # --- actions/cache and actions/upload-artifact ----------------------------------------------------
 # CONFIRMED 2026-08-29: upload-artifact went to productionresultssa5.blob.core.windows.net. Sixteen
 # distinct shards have been seen since — sa0, 2, 4-14, 16-18 — which is why this cannot be a list.
