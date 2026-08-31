@@ -1,8 +1,9 @@
 #!/bin/sh
 # ffgithubrunners — the operator's handle on the runners.
 #
-#   ffgithubrunners status              slots, containers, registrations, image tag and age
-#   ffgithubrunners slots [N]           show or set the slot count
+#   ffgithubrunners status              the pool, containers, registrations, image tag and age
+#   ffgithubrunners slots [N]           show or set the MAX pool size (needs root to apply)
+#   ffgithubrunners idle [N]            show or set how many runners idle waiting for work
 #   ffgithubrunners slot stop|start N   drain or return one slot
 #   ffgithubrunners drain | resume      let running jobs finish, start no replacements
 #   ffgithubrunners image update        rebuild with a current runner tarball
@@ -11,6 +12,11 @@
 #   ffgithubrunners cache [list]        the workspace cache: entries, sizes, ages
 #   ffgithubrunners cache seed [REF]    seed it from golden, so the first job is not cold
 #   ffgithubrunners cache clear         delete every entry
+#
+# TWO NUMBERS RUN THE POOL. `slots` is the ceiling on jobs in flight and is one systemd unit
+# instance each, so changing it needs root. `idle` is how many runners sit registered and waiting
+# while nothing is happening; it is one number in config.json that waiting slots re-read, so it
+# takes effect within seconds and needs no privilege at all.
 #
 # WHAT NEEDS PRIVILEGE AND WHAT DOES NOT. drain, resume and slot stop|start write a flag file that
 # slot.sh checks before it mints a JIT config, so a drained slot idles rather than being stopped
@@ -25,7 +31,7 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 say()  { printf '==> %s\n' "$*"; }
 die()  { printf 'ffgithubrunners: %s\n' "$*" >&2; exit 1; }
 
- usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
+ usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # --- status ---------------------------------------------------------------------------------------
 
@@ -63,15 +69,39 @@ cmd_status() {
         printf 'drain      off\n'
     fi
 
-    printf '\nslots      %s configured\n' "$SLOTS"
+    # THE POOL, NOT THE SLOT COUNT, is the first thing to read here now. A slot with no container
+    # is the normal resting state of most of them, and an operator who does not know that reads
+    # the per-slot lines below as five things being broken.
+    _counts=$(ffghr_pool_counts)
+    _total=${_counts% *}
+    _idle=${_counts#* }
+    printf '\npool       %s of %s slots in use, %s idle (want %s idle, max %s)\n' \
+        "$_total" "$SLOTS" "$_idle" "$IDLE_POOL" "$SLOTS"
+    printf '           a slot with no container holds no registration and costs nothing\n'
     _i=1
     while [ "$_i" -le "$SLOTS" ]; do
         _unit=$(systemctl is-active "ffgithubrunners@$_i.service" 2>/dev/null || true)
         _stop=""
         [ -e "$(ffghr_slot_stop_flag "$_i")" ] && _stop=" STOPPED"
-        _c=$(docker ps --filter "name=^ffghr-.*-$_i-" --format '{{.Names}} ({{.Status}})' 2>/dev/null | head -1)
-        printf '  slot %-3s unit %-10s%s %s\n' "$_i" "${_unit:-unknown}" "$_stop" "${_c:-no container}"
+        _c=$(docker ps --filter "label=ffghr.slot=$_i" --format '{{.Names}} ({{.Status}})' 2>/dev/null | head -1)
+        _what="waiting for a place in the pool"
+        if [ -n "$_c" ]; then
+            if [ -e "$(ffghr_busy_marker "${_c%% *}")" ]; then _what="$_c BUSY"
+            else                                               _what="$_c idle"
+            fi
+        fi
+        printf '  slot %-3s unit %-10s%s %s\n' "$_i" "${_unit:-unknown}" "$_stop" "$_what"
         _i=$((_i + 1))
+    done
+    # A container whose slot is above the configured count is a slot that was disabled while it
+    # was working, or an orphan the reaper has not swept yet. Either way it is in the pool and the
+    # loop above cannot show it.
+    for _c in $(ffghr_pool_containers); do
+        _cs=$(docker inspect -f '{{index .Config.Labels "ffghr.slot"}}' "$_c" 2>/dev/null || echo "")
+        case "$_cs" in ''|*[!0-9]*) _cs=0 ;; esac
+        if [ "$_cs" -gt "$SLOTS" ]; then
+            printf '  slot %-3s (no longer configured) %s\n' "$_cs" "$_c"
+        fi
     done
 
     printf '\nworkspace cache\n'
@@ -112,16 +142,10 @@ cmd_status() {
 
 # --- slots -----------------------------------------------------------------------------------------
 
-cmd_slots() {
-    if [ $# -eq 0 ]; then
-        printf '%s\n' "$SLOTS"
-        return 0
-    fi
-    _n=$1
-    case "$_n" in ''|*[!0-9]*) die "slots takes a number, got '$_n'" ;; esac
-    [ "$_n" -ge 1 ] || die "at least one slot, or use drain to stop taking work"
-
-    KEY=slots VAL="$_n" CFG="$FFGHR_CONFIG" python3 - <<'PY'
+# One integer key in config.json, written through a temporary file and renamed. The rename is
+# what lets a waiting slot re-read the file at any moment without ever seeing half of it.
+set_config_int() {
+    KEY=$1 VAL=$2 CFG="$FFGHR_CONFIG" python3 - <<'PY'
 import json, os
 path = os.environ["CFG"]
 with open(path) as fh:
@@ -132,12 +156,54 @@ with open(tmp, "w") as fh:
     json.dump(cfg, fh, indent=2); fh.write("\n")
 os.replace(tmp, path)
 PY
-    say "slots = $_n in $FFGHR_CONFIG"
+}
+
+cmd_slots() {
+    if [ $# -eq 0 ]; then
+        printf '%s\n' "$SLOTS"
+        return 0
+    fi
+    _n=$1
+    case "$_n" in ''|*[!0-9]*) die "slots takes a number, got '$_n'" ;; esac
+    [ "$_n" -ge 1 ] || die "at least one slot, or use drain to stop taking work"
+    if [ "$_n" -lt "$IDLE_POOL" ]; then
+        say "WARNING: idle is $IDLE_POOL, above this ceiling. The pool will keep $_n runners
+    idle, which is all it has room for. Lower it with: ffgithubrunners idle N"
+    fi
+
+    set_config_int slots "$_n"
+    say "slots = $_n in $FFGHR_CONFIG (the most jobs that can run at once)"
 
     # This is the ONE thing here that writes /etc/systemd/system, so it is the one thing that asks
     # for sudo. Enabling and disabling unit instances is not something a flag file can do.
     say "applying (needs root to enable or disable unit instances)"
     sudo sh "$HERE/05-services.sh" --install
+}
+
+# NO sudo, AND NOTHING RESTARTS. Every waiting slot re-reads this number each time round its
+# poll loop, so raising it starts runners within seconds. LOWERING it does not stop any: killing
+# an idle runner races GitHub handing it a job, and the runners are single-use, so the extra ones
+# retire by taking one job each. `systemctl restart ffgithubrunners.target` shrinks the pool at
+# once if the wait is not acceptable, at the cost of that same race.
+cmd_idle() {
+    if [ $# -eq 0 ]; then
+        printf '%s\n' "$IDLE_POOL"
+        return 0
+    fi
+    _n=$1
+    case "$_n" in ''|*[!0-9]*) die "idle takes a number, got '$_n'" ;; esac
+    [ "$_n" -ge 1 ] || die "at least one idle runner, or use drain to stop taking work.
+       An idle pool of zero means nothing is registered when a job is queued, and GitHub cannot
+       queue a job against a runner that does not exist yet."
+    [ "$_n" -le "$SLOTS" ] || die "idle $_n is above the ceiling of $SLOTS slots.
+       Raise the ceiling first: ffgithubrunners slots $_n"
+
+    set_config_int idle_pool "$_n"
+    say "idle_pool = $_n in $FFGHR_CONFIG"
+    say "waiting slots pick this up within ${POOL_POLL_SECONDS}s; nothing needs restarting"
+    if [ "$_n" -lt "$IDLE_POOL" ]; then
+        say "the $IDLE_POOL already registered are left alone; they retire as they take jobs"
+    fi
 }
 
 cmd_slot() {
@@ -318,6 +384,7 @@ cmd_cache() {
 case "${1:-status}" in
     status)     shift 2>/dev/null || true; cmd_status ;;
     slots)      shift; cmd_slots "$@" ;;
+    idle)       shift; cmd_idle "$@" ;;
     slot)       shift; cmd_slot "$@" ;;
     drain)      cmd_drain ;;
     resume)     cmd_resume ;;

@@ -36,18 +36,43 @@ Not a goal: protecting a job from itself. A job gets namespace-root in its own c
 2. The slot lifecycle
 ---------------------
 
-Slots are configurable and default to 1. Each keeps one runner registered and idle. A slot takes
-one job, runs it, and its container exits.
+A SLOT IS A PLACE FOR A RUNNER, NOT A RUNNER. Slots are configurable and default to 1; how many of
+them hold a runner at any moment is the other knob, idle_pool, also 1 by default. A slot takes one
+job, runs it, and its container exits.
 
-    mint JIT config -> docker run --rm -> runner idles
+    wait for a place in the pool
+      -> mint JIT config -> docker run --rm -> runner idles
       -> runner takes one job, runs it, deregisters, container exits
       -> remove the container, DELETE the registration
       -> supervisor exits, systemd restarts it
 
+The pool is idle_pool runners registered and waiting, plus one per job in flight, never more than
+slots altogether. A supervisor with no container holds NOTHING: no container, no registration, and
+GitHub has never heard of it. So slots is the ceiling on concurrency and idle_pool is what the
+harness costs while nothing is happening, and the two are set independently.
+
+    admit a runner  <=>  containers < slots  AND  idle containers < idle_pool
+
+Both counts come from the daemon and from the host, never from the API: `docker ps` filtered on the
+ffghr.slot label is the total, and a container is BUSY when it has a Runner.Worker process, which
+the supervisor watching it sees with `docker top` and records as a file under state/. Deciding this
+from GitHub instead would mean every waiting slot polling /orgs/.../actions/runners several times a
+minute for an answer the machine already has.
+
+The decision is taken under one lock, held across the mint and the docker run that follows it,
+because it is read from a count that acting on it then changes. Two supervisors that both saw "no
+idle runner" a millisecond apart would otherwise both mint one.
+
+Latency is the cost, and it is bounded by the poll interval, five seconds: a job arrives, the
+supervisor of the idle runner notices its Runner.Worker within five seconds, a waiting slot admits
+within another five, and the replacement is listening a second or two after that. Jobs run for
+minutes, so a burst walks the pool up to the ceiling without ever waiting on it.
+
 One instance of ffgithubrunners@.service per slot, running as FinalFactoryTester. Each runs
 slot.sh with the slot number as its argument:
 
-  0. If the drain flag or this slot's stop flag is set, sleep and recheck rather than take work.
+  0. Wait for a place: if the drain flag or this slot's stop flag is set, or the pool already has
+     the idle runners it wants, sleep and recheck rather than take work.
   1. Mint an installation token from the GitHub App, then POST
      /orgs/Final-Factory/actions/runners/generate-jitconfig with the slot's name, its labels and
      runner_group_id 1. Keep the returned runner id. Back off and retry on API errors.
@@ -72,7 +97,8 @@ which is an EnvironmentFile for ffbox's units and reaches ffbox's containers. Us
 that file stays empty: the App's two ids are configuration and live in config.json, and its
 private key is github-app.pem beside them, at a fixed path nothing has to record.
 
-    slots             1
+    slots             1     the ceiling: unit instances, and so jobs in flight
+    idle_pool         1     runners registered and waiting while nothing is happening
     watchdog_minutes  120
     image             ffghrunner:latest
     labels            self-hosted, Linux, X64, ffgithubrunners
@@ -394,7 +420,8 @@ installed from there, so no second copy on disk can disagree with git.
       systemd/ffghr-egress.service     the fence, after the daemon
       systemd/ffgithubrunners-reap.{service,timer}
       systemd/ffgithubrunners-image.{service,timer}
-      config.json.example              slots, watchdog, image, labels, org
+      config.json.example              slots, idle_pool, watchdog, image, labels, org
+      test_pool.sh                     offline tests for the admission arithmetic
       secrets.env.example
       README.md
 
@@ -402,8 +429,9 @@ installed from there, so no second copy on disk can disagree with git.
 11. The ffgithubrunners command
 -------------------------------
 
-    ffgithubrunners status              slots, containers, registrations, image tag and age
-    ffgithubrunners slots [N]           show or set the slot count, default 1
+    ffgithubrunners status              the pool, containers, registrations, image tag and age
+    ffgithubrunners slots [N]           show or set the ceiling, default 1
+    ffgithubrunners idle [N]            show or set the idle pool, default 1
     ffgithubrunners slot stop|start N   drain or return one slot
     ffgithubrunners drain               let running jobs finish, start no replacements
     ffgithubrunners image update        rebuild the image with a current runner tarball
@@ -417,6 +445,11 @@ before it mints a JIT config, so a drained slot stays running and idle rather th
 Nothing there talks to the system manager, which is why the image timer can drain on its own and
 why no account needs a sudoers entry. slots N is the exception: it enables and disables unit
 instances, so it re-invokes itself through sudo and prompts.
+
+idle N is the cheap one: it writes one integer to config.json, which every waiting slot re-reads
+each time round its loop, so it needs no privilege and nothing restarts. It only ever ADDS runners.
+Lowering it stops none, because killing an idle runner races GitHub handing it a job and the runners
+are single-use anyway: the extra ones retire by taking one job each.
 
 
 12. Security properties
