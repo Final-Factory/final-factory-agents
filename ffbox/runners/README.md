@@ -235,9 +235,32 @@ Two things it will not do, both because it holds no root:
   is owed.
 - **provision the host or the daemon** (stages 1 and 2). Same shape, same message.
 
-`ffgithubrunners image update` is a different thing from the rebuild above and is still worth
-running: it asks GitHub for the LATEST runner release and rebuilds with that, which is what keeps
-the runner new enough to be given jobs at all. Its weekly timer does it unattended.
+`ffgithubrunners image update` is a different thing from the rebuild above: it asks GitHub for the
+LATEST runner release and rebuilds with that, which is what keeps the runner new enough to be given
+jobs at all. Its weekly timer (`Sun 04:00`, `Persistent=true`) does it unattended.
+
+**It writes the version down and pushes it.** `ffbox/Dockerfile`'s `ARG RUNNER_VERSION` is what
+every other build path uses — `03-build.sh`, `03-image.sh`, the self-updater on every commit — so a
+version that exists only as a `--build-arg` in one image is undone by the next rebuild, which on
+this box is minutes away. The weekly run therefore commits
+
+```
+ffghr: runner 2.337.0 -> 2.338.0
+```
+
+and pushes it, and the updater carries it to every machine like anything else.
+
+The version is only ever written down AFTER it has built: the Dockerfile runs
+`Runner.Listener --version`, so a release that does not unpack or does not run fails the build and
+never reaches the commit. The commit itself only happens on a clean checkout that is exactly at
+`origin/master`, under the self-updater's own lock, and a failed push is rolled back — an unpushed
+commit or a dirty tree would each stop `update_ffbox.sh` from taking anything, which is a much
+worse failure than a missed version bump. To go back a version, revert the commit; the next rebuild
+follows the pin.
+
+`image-update.sh --pin-only VERSION` records a version without draining or building — for one built
+by hand, or for a run whose push failed. `sh ffbox/runners/test_pin.sh` covers all of it offline
+against a scratch checkout with a real bare origin.
 
 ## When something is wrong
 
@@ -272,8 +295,9 @@ the pool believes runners are busy that are not. `ls ~/.config/ffbox/githubrunne
 compare it with `docker ps`; a marker whose container is gone is ignored by the count and swept by
 the next `ffgithubrunners reap`.
 
-Offline tests for the admission arithmetic: `sh ffbox/runners/test_pool.sh`. They stub `docker` and
-use a temporary config directory, so they touch neither the daemon nor GitHub.
+Offline tests: `sh ffbox/runners/test_pool.sh` (the admission arithmetic and the machine id) and
+`sh ffbox/runners/test_pin.sh` (the weekly version bump, against a scratch checkout). Both stub or
+avoid the daemon and neither touches GitHub.
 
 ## What a real job proved, and what it did not
 
