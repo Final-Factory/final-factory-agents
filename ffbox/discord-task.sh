@@ -88,6 +88,54 @@ PRE_AGENT_HEAD=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo "")
 export CLAUDE_CONFIG_DIR=/ffbox/claude
 mkdir -p "$CLAUDE_CONFIG_DIR"
 
+# THE HOST HAS TO BE ABLE TO READ THAT FILE WHILE IT IS STILL BEING WRITTEN, and since the
+# shared daemon it cannot without help. This is the mirror image of the resume bug in
+# ffwatch.py's share_with_container: there the container could not read what the host wrote,
+# here the host cannot read what the container writes.
+#
+# Claude Code creates the session JSONL mode 0600 — deliberately and not through the umask,
+# which is why setting one does not help: shell-snapshots land 0644 in the same tree on the
+# same pass. The container owns it as its own mapped subuid (1411719 on this box), the setgid
+# on the bind mount gives it group ffbox-container, and 0600 grants that group nothing. ffwatch
+# runs as uid 1015, is IN that group, and gets EPERM on every read.
+#
+# The host cannot fix it from its side. share_with_container() runs once, before this container
+# starts, when a new session's transcript does not exist yet; and were it to run later its
+# chmod/chown would fail anyway, because 1015 does not own a file belonging to 1411719 — the
+# `except OSError: pass` in there would swallow it. So the WRITER opens the mode. That is this.
+#
+# Measured on 2026-08-31, conversation 30 turn 1 (run 26): the agent had been working for five
+# minutes with a 672 KB transcript on disk while the run page said "the container is still
+# warming up" — ffweb's empty-transcript fallback — and ffwatch logged
+# "PermissionError: [Errno 13] Permission denied" on that path every two seconds throughout.
+# Real warm-up on this box is 0-13s. Every transcript older than the daemon migration is owned
+# by uid 1015 and indexed live perfectly well, which is why nothing noticed until a NEW
+# conversation opened.
+#
+# A LOOP RATHER THAN ONE CALL. The mode is sticky once set, so the first successful pass is
+# usually the whole job — but a compaction rewrites that path, and a rewritten file is a new
+# 0600 inode. Five seconds costs nothing against a run measured in minutes and it self-heals.
+#
+# ONLY THE TRANSCRIPTS. Not `chmod -R` over the config dir: .claude.json, remote-settings.json
+# and sessions/ are 0600 for their own reasons and nothing on the host reads them. What ffwatch
+# indexes is projects/<slug>/<session>.jsonl, so that is what is opened.
+share_transcript_now() {
+    local d="$CLAUDE_CONFIG_DIR/projects"
+    [ -d "$d" ] || return 0
+    # g+rX on the project directories: X is exec-for-directories-only, so a transcript that
+    # matched the first glob does not come out executable.
+    chmod g+rX "$d" "$d"/* 2>/dev/null
+    chmod g+r "$d"/*/*.jsonl 2>/dev/null
+    return 0
+}
+
+share_transcript_loop() {
+    while :; do
+        share_transcript_now
+        sleep 5
+    done
+}
+
 # THE WORKSPACE IS DELIBERATELY LEFT UNTRUSTED, and claude.log says so on every run:
 #
 #   Ignoring N permissions.allow entries from .claude/settings.json: this workspace has not
@@ -454,9 +502,26 @@ rm -f "$FFBOX_OUT/argv"
 AGENT_START=$(date +%s)
 
 log "launching the agent (capabilities came from job.json; see claude.log for stderr)"
+
+# Started HERE and not earlier: the transcript does not exist until claude does, and the first
+# pass of the loop runs before its own first sleep, so the file is shared within a second of
+# appearing. See share_transcript_now above for why this exists at all.
+share_transcript_loop &
+SHARER_PID=$!
+
 "${ARGV[@]}" > "$FFBOX_OUT/stream.jsonl" 2> "$FFBOX_OUT/claude.log"
 rc=$?
 AGENT_END=$(date +%s)
+
+# Stop the ticker, then share once more by hand. The final pass is what covers a compaction
+# that rewrote the transcript between the last tick and the agent's exit: ffwatch reads the
+# file once more in finish_run, and that read is the one that catches everything the live
+# passes missed. No trap — unity-license.sh owns EXIT/INT/TERM, and a second `trap` here would
+# REPLACE the licence return rather than add to it, leaking the Unity seat on every stopped
+# container. Nothing is lost to a `docker stop` anyway: the mode is already set by then.
+kill "$SHARER_PID" 2>/dev/null
+wait "$SHARER_PID" 2>/dev/null
+share_transcript_now
 
 # The last {"type":"result"} line of the stream is the run envelope: cost, turn count, token
 # usage and the structured verdict. Lifting it into result.json is the host's contract with
