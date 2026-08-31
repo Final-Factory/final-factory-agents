@@ -237,7 +237,8 @@ CAP_ADD_ARGS=""
 for _cap in $(printf '%s' "$CAP_ADD" | tr ',' ' '); do
     CAP_ADD_ARGS="$CAP_ADD_ARGS --cap-add=$_cap"
 done
-# shellcheck disable=SC2086  # CAP_ADD_ARGS and CACHE_ARGS are deliberately word-split option lists
+# shellcheck disable=SC2086  # CAP_ADD_ARGS, CACHE_ARGS and MACHINE_ID_ARGS are deliberately
+# word-split option lists
 
 # THE WORKSPACE CACHE MOUNTS. Two of them, and the asymmetry is the design:
 #
@@ -289,6 +290,18 @@ else
     log "cache: not provisioned or disabled; running without it"
 fi
 
+# THE UNITY MACHINE ID. Passed in rather than baked, because it is derived from the SLOT: see the
+# machine id section of lib/config.sh for why per-slot rather than game-ci's per-container random.
+# Empty means "leave the image's alone", which is what machine_id=image asks for.
+MACHINE_ID_ARGS=""
+if _mid=$(ffghr_machine_id "$SLOT"); then
+    # Not a secret, so the value may sit in argv: it identifies a machine, it does not authenticate
+    # one, and it is derived from this host's name and a slot number.
+    MACHINE_ID_ARGS="-e FFGHR_MACHINE_ID=$_mid"
+    log "machine id $_mid (Unity sees this slot as its own machine)"
+    unset _mid
+fi
+
 log "starting $CNAME (workspace tmpfs $WORKSPACE_SIZE at $WORK_FOLDER, caps +$CAP_ADD)"
 # LABELS SO THE REAPER CAN TELL AN ORPHAN FROM A LIVE JOB. A supervisor killed with SIGKILL
 # leaves its container RUNNING and its registration ONLINE, which is indistinguishable from a job
@@ -303,6 +316,7 @@ docker run -d \
     --network "$EGRESS_NET" --dns "$EGRESS_IP" \
     --tmpfs "$WORK_FOLDER:size=$WORKSPACE_SIZE,mode=1777,exec" \
     $CACHE_ARGS \
+    $MACHINE_ID_ARGS \
     --cap-drop=ALL \
     $CAP_ADD_ARGS \
     --security-opt=no-new-privileges \

@@ -1,5 +1,5 @@
 #!/bin/sh
-# test_pool.sh — offline tests for the pool arithmetic in lib/config.sh.
+# test_pool.sh — offline tests for the pool arithmetic and the machine id in lib/config.sh.
 #
 #   sh ffbox/runners/test_pool.sh
 #
@@ -9,7 +9,9 @@
 # is invisible until an idle machine is carrying six registrations or a busy one is carrying none.
 #
 # What is NOT covered here, because it needs a real daemon: ffghr_container_busy, which reads
-# `docker top`. Its contract is checked live instead — see the pool section of README.md.
+# `docker top`. Its contract is checked live instead — see the pool section of README.md. Nor is
+# the machine id actually being WRITTEN, which happens as root inside the container; what is
+# checked here is that the value handed to it is stable per slot and refused when malformed.
 
 set -eu
 
@@ -123,6 +125,32 @@ write_config 6 1
 ffghr_reload_limits
 is "$IDLE_POOL" 5 "FFGITHUBRUNNERS_IDLE_POOL beats config.json"
 unset FFGITHUBRUNNERS_IDLE_POOL
+
+printf '\nthe Unity machine id\n'
+write_config 6 1
+ffghr_reload_limits
+
+MACHINE_ID=per-slot
+_m1=$(ffghr_machine_id 1)
+_m2=$(ffghr_machine_id 2)
+is "$(printf '%s' "$_m1" | wc -c)" 32 "an id is 32 characters"
+printf '%s' "$_m1" | grep -qE '^[0-9a-f]{32}$' && ok "and 32 HEX characters" || bad "not hex: $_m1"
+is "$(ffghr_machine_id 1)" "$_m1" "the same slot gets the same id every time"
+[ "$_m1" != "$_m2" ] && ok "different slots get different ids" || bad "slot 1 and slot 2 collided"
+
+# THE POINT OF PER-SLOT. A leaked Unity seat is reclaimed by the next job on that slot, which only
+# works if the id survives the container that leaked it — so this must NOT be random.
+is "$(ffghr_machine_id 1)" "$_m1" "an id does not change between containers"
+
+MACHINE_ID=image
+ffghr_machine_id 1 >/dev/null 2>&1 && bad "machine_id=image must override nothing" || ok "machine_id=image leaves the image's id alone"
+
+MACHINE_ID=0123456789abcdef0123456789abcdef
+is "$(ffghr_machine_id 1)" "$MACHINE_ID" "an explicit 32-hex id is used verbatim"
+
+MACHINE_ID=not-a-machine-id
+ffghr_machine_id 1 >/dev/null 2>&1 && bad "a malformed id must be refused" || ok "a malformed id is refused rather than written"
+MACHINE_ID=per-slot
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
