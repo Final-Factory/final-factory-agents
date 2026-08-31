@@ -1,0 +1,156 @@
+ffbox: a fetch phase that holds the credential, and an agent phase that does not
+================================================================================
+
+2026-08-30.
+
+An ffbox run gets its workspace from a ZFS clone of /opt/FinalFactory, and golden exists because
+the agent container cannot fetch: ffbox-net reaches Anthropic and Unity and not GitHub, and no git
+credential goes inside. So the host keeps a full checkout current and clones it.
+
+This replaces that with two containers. The first has GitHub and a credential and builds the
+workspace. The second has neither and runs the agent. They share one directory on a host tmpfs.
+
+Nothing about the agent's own reach changes: it keeps Anthropic and Unity, exactly as now. What it
+loses is GitHub, which it never had.
+
+
+1. What this removes
+--------------------
+
+  - The ZFS snapshot and clone on the run path, and the golden lock contention that comes with it.
+  - 04-warmLibrary.sh entirely. The cache entry IS the warm workspace; there is nothing to warm.
+  - The delta bundle of design/ffcache_design.txt, and the host-side plumbing that builds it.
+  - Finding F7's remaining surface: the host never reads a tree a container wrote, because the
+    workspace is a tmpfs the host does not run git in.
+  - Roughly 9 GB, once golden stops needing a worktree and a Library.
+
+What it does NOT remove is golden itself. Section 7.
+
+
+2. The two phases
+-----------------
+
+    fetch    ffbox-fetch-<run>, on ffghr-net, holding a short-lived GitHub credential.
+             Restores the cache entry if there is one, fetches, checks out the wanted commit.
+             Exits. Nothing else runs in this container.
+
+    agent    ffbox-<run>, on ffbox-net, holding the Claude and Unity credentials and NO git
+             credential. Mounts the workspace the fetch phase left. Runs claude -p.
+
+TWO CONTAINERS RATHER THAN ONE THAT DROPS PRIVILEGE, and the difference is not stylistic. An
+environment variable, once visible to a process, can be copied anywhere before anything "drops"
+it, and the agent is the thing being guarded against. With two containers there is no moment when
+the credential and the agent exist together.
+
+The same reasoning rules out swapping the network under a running container. The host CAN do it —
+measured on 2026-08-30, github.com went from reachable to refused after a disconnect and
+reconnect — but --dns is fixed at container creation, so after the swap the resolver still points
+at the old proxy and everything breaks, Anthropic included. Making that work means rewriting
+/etc/resolv.conf inside the container on every swap. Two containers need none of it.
+
+
+3. The shared workspace
+-----------------------
+
+One directory per run on a host tmpfs, bind-mounted into both containers.
+
+A tmpfs-backed Docker VOLUME does not work and the failure is quiet: each container that mounts
+one gets its own tmpfs instance, so the agent sees an empty directory. Measured. It has to be a
+host path on a real tmpfs, bind-mounted twice.
+
+    /opt/ffws/<run id>        mode 2775, group ffbox-container
+
+Its own tmpfs mount rather than /dev/shm, with its own size cap: /dev/shm is shared with anything
+else on the box that uses shared memory, and one runaway workspace should not be able to take it.
+A workspace is about 23 GB and this host has 755 GB, so three concurrent runs are comfortable; the
+cap exists for the run that is not.
+
+Ownership follows the rule the daemon move established: the directory belongs to the container
+account, because a rootless daemon shows a host uid outside its map as 65534 and neither container
+could then write it.
+
+
+4. The credential
+-----------------
+
+The fetch phase gets a GitHub token scoped to reading this repository, and only for as long as
+that container lives. An App installation token is the right shape: it expires in an hour on its
+own, so a leak has a bounded life, and lib/gh.sh already mints one.
+
+IT MUST NOT SURVIVE INTO THE WORKSPACE. `git fetch` with a credential helper writes it into
+.git/config, and .git travels to the agent. The fetch phase uses a one-shot header
+(-c http.extraHeader) and never a helper, and the phase ends by asserting that no credential
+appears anywhere under .git. That assertion is the point: it fails the run rather than handing the
+agent a token in a config file.
+
+
+5. What the host enforces, and what it does not
+-----------------------------------------------
+
+ENFORCED, because the containers hold no docker socket and cannot change any of it:
+
+  - which network each phase joins, and therefore what each can resolve and reach
+  - which credentials each phase's environment carries
+  - that the agent phase starts only after the fetch phase has exited
+
+NOT ENFORCED: what the fetch phase does with its own credential while it holds it. It runs our
+script rather than model output, which is the whole reason the split is worth making.
+
+
+6. The cache, unchanged
+-----------------------
+
+The fetch phase restores /ffcache/<branch>@<scope>.tar exactly as a CI job does, then fetches on
+top. A miss is no longer special: with GitHub reachable it clones from scratch, slowly, instead of
+failing. That is what removes golden's last job on the run path.
+
+Agent runs still never write the cache. They mount /ffcache read-only and have no staging
+directory, so there is nothing to promote and no code path that would promote it.
+
+
+7. What golden is still for
+---------------------------
+
+ffwatch.py:223 reads it as a git-dir for repository state. That wants a real repository and
+nothing more, so golden becomes a bare mirror: `git fetch` into it keeps update-golden.sh's job,
+and the worktree and Library go away with the clone path.
+
+Whether even that survives is a question for whoever changes ffwatch. It is out of scope here.
+
+
+8. Security properties
+----------------------
+
+The agent container is unchanged in what it holds: the Claude token and the Unity credentials,
+which it needs and which the design has always accepted it can read from its own environment. It
+gains nothing and loses GitHub.
+
+The fetch container is new surface, and it is small: our script, no model output, no Unity, no
+prompt, exiting in the time a fetch takes. Its credential is read-scoped and short-lived.
+
+What this improves on today: golden is a host directory that ffbox writes through a bind mount and
+the host later runs git in. Section 1 says why that goes.
+
+
+9. Migration
+------------
+
+Each step leaves a working machine.
+
+  1. The workspace tmpfs and its ownership, in 01-hostSetup.sh.
+  2. The fetch phase as a script, exercised by hand against a real cache entry.
+  3. ffbox grows --workspace tmpfs alongside the clone path, defaulting to clone.
+  4. Prove a real run end to end on tmpfs, including harvest.
+  5. Flip the default, leaving the clone path reachable for one cycle.
+  6. Delete the clone path, 04-warmLibrary.sh, and the delta bundle.
+  7. Golden becomes a bare mirror.
+
+
+10. Open items
+--------------
+
+  a. The size cap on /opt/ffws, which wants measuring against three concurrent runs rather than
+     guessing. A workspace is 23 GB and Unity resident is about 32 GB.
+  b. Whether the fetch phase should also run for CI. It would not help: a CI job needs GitHub
+     throughout, to report results and upload artifacts.
+  c. What ffwatch actually needs from golden, which decides whether the bare mirror survives.
