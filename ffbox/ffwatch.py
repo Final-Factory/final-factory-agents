@@ -6832,9 +6832,11 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # that went fine and said something, rather than one that said nothing.
         lines.append("the run finished without saying anything")
     if body:
-        if lines:
-            lines.append("")
-        lines.append(body)
+        # The ANSWER leads; the harness's own rows follow it. Whoever opens the reply came for
+        # what the run found, and whether the suite passed and where the branch went is
+        # provenance FOR that answer — it belongs under the thing it backs, not stacked on top
+        # of it where the first screen is status and the summary starts below the fold.
+        lines = ([body, ""] + lines) if lines else [body]
     # So a human can pull the whole conversation onto a desktop and keep going interactively —
     # the session id is the same one the container ran under.
     if lines:
