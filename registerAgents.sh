@@ -18,6 +18,22 @@
 
 set -eu
 
+# ~/.local/bin ON PATH, ALWAYS. A login shell gets it from ~/.profile; a systemd unit does not —
+# its PATH is /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin, and nothing puts the
+# user's bin dir back. That is exactly how ffbox-update.service runs this script (setup.sh stage
+# 5), and it is where the official Claude Code installer puts `claude`, so the scheduled run
+# found no agent CLI, exited 1, and printed "live sessions keep the cached plugin" every five
+# minutes while the same command by hand succeeded. It is also where this script installs the
+# ffdiscord launcher, so the "not on your PATH" warning below was firing for the same reason.
+# Fixed here rather than in the unit: every non-login caller gets it, and a unit change needs a
+# human running 06-services.sh --install.
+if [ -d "$HOME/.local/bin" ]; then
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) PATH="$HOME/.local/bin:$PATH"; export PATH ;;
+  esac
+fi
+
 MP_NAME="final-factory-agents"
 MP_SOURCE="Final-Factory/final-factory-agents"
 DEFAULT_PLUGINS="ff-agents ff-speckit"     # installed on every machine unless explicitly removed
