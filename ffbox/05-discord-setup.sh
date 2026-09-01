@@ -280,10 +280,15 @@ for key, value in (
         # counts against max_concurrent_runs above AND holds a Unity seat, taken after it syncs
         # and before it goes idle.
         #
-        # max is NOT WIRED UP and -1 says so. This lane has no ceiling of its own -- only the
-        # box-wide max_concurrent_runs, which CI counts against too. The key is here so both
-        # sections have one shape and so giving the agent lane its own ceiling later is a code
-        # change rather than another config move.
+        # max is THIS LANE's ceiling on containers, runs and staged ones together, underneath
+        # the box-wide max_concurrent_runs that CI counts against too. Both have to hold: the
+        # lane cap stops the agent filling a shared box on its own, the box cap stops the two
+        # lanes together overcommitting it.
+        #
+        # -1 means "no ceiling of my own" and is coerced to max_concurrent_runs, so the default
+        # is to use the whole box when CI is quiet. A negative idle is coerced to 0, which is
+        # off. Zero is left alone on both: it means no places, which is a thing somebody may
+        # actually want to say.
         "pool": {"idle": 1, "max": -1},
         # What a staged container waits before retiring. Passed in at stage time, so the
         # deadline it enforces is the one configured when it was staged.
@@ -497,10 +502,12 @@ ffbox["_help"] = {
              "container gets to finish after it is told to stop -- conflating them makes a slow "
              "Unity import look like a hung agent. pool.idle is how many containers fill a "
              "workspace before any request exists (1.2s to dispatch against 40s cold); each one "
-             "counts against max_concurrent_runs and holds a Unity seat. pool.max is NOT wired "
-             "up, and -1 says so: this lane has no ceiling of its own, only the box-wide "
-             "max_concurrent_runs, and the key is there so both lanes describe their pool the "
-             "same way. idle_agent_ttl_secs is how long a staged container waits before "
+             "counts against max_concurrent_runs and holds a Unity seat. pool.max is this lane's own "
+             "ceiling on containers, runs and staged ones together, and it sits under the "
+             "box-wide max_concurrent_runs -- both have to hold before anything starts. -1 "
+             "means no ceiling of its own and is read as max_concurrent_runs, so the default is "
+             "to use the whole box while CI is quiet; a negative idle is read as 0, off. Zero "
+             "is left alone on both, and means no places. idle_agent_ttl_secs is how long a staged container waits before "
              "retiring, and pool_ref which branch it stages (null follows base_ref).",
     "githubrunner": "ffgithubrunners' settings, which lived in githubrunners/config.json until "
              "2026-09-01 -- one file per box, so there is one place to look. Anything absent "

@@ -342,6 +342,11 @@ DEFAULTS = {
     # against 40 on a cold launch. 0 is off, and off is exactly the behaviour that predates
     # this. Re-read on the poll, so raising it takes effect without a restart.
     "idle_agents": 1,
+    # THIS LANE'S OWN CEILING on containers -- runs and staged ones together -- underneath the
+    # box-wide max_concurrent_runs that CI also counts against. Negative means "no ceiling of my
+    # own": it is coerced to max_concurrent_runs, so the lane may use the whole box when the
+    # other one is quiet. Seeded as pool.max in the ffagent section.
+    "agent_pool_max": -1,
     # What a staged container waits before retiring, enforced by the container itself and
     # passed in at stage time. It stops applying the moment a request is dispatched into it.
     "idle_agent_ttl_secs": 14400,
@@ -592,6 +597,8 @@ def load_config():
     _agent_pool = (ffbox_raw.get("ffagent") or {}).get("pool") or {}
     if "idle" in _agent_pool:
         ffbox_block["idle_agents"] = _agent_pool["idle"]
+    if "max" in _agent_pool:
+        ffbox_block["agent_pool_max"] = _agent_pool["max"]
     # `githubrunner` needs no line here and must not get one: it is not in DEFAULTS, so this
     # filter already drops it, which is exactly right -- those settings belong to the runners and
     # ffbox/runners/lib/config.sh is what reads them.
@@ -606,6 +613,21 @@ def load_config():
         cfg["dry_run"] = os.environ["FFWATCH_DRY_RUN"] not in ("", "0", "false")
     if os.environ.get("FFWATCH_APPROVE"):
         cfg["approve_before_send"] = os.environ["FFWATCH_APPROVE"] not in ("", "0", "false")
+    # THE TWO POOL NUMBERS, COERCED IN ONE PLACE so every reader downstream gets something it
+    # can do arithmetic on. A negative idle is off, not a negative number of containers; a
+    # negative max is "no ceiling of my own", which is the box's. Non-numeric is the default
+    # rather than a crash, because a config that says "two" must not take the daemon down.
+    def _int(value, fallback):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    cfg["max_concurrent_runs"] = max(1, _int(cfg.get("max_concurrent_runs"),
+                                             DEFAULTS["max_concurrent_runs"]))
+    cfg["idle_agents"] = max(0, _int(cfg.get("idle_agents"), DEFAULTS["idle_agents"]))
+    _max = _int(cfg.get("agent_pool_max"), DEFAULTS["agent_pool_max"])
+    cfg["agent_pool_max"] = cfg["max_concurrent_runs"] if _max < 0 else _max
     cfg["state_dir"] = os.path.expanduser(cfg["state_dir"])
     cfg["kill_switch"] = os.path.expanduser(cfg["kill_switch"])
     cfg["drain_switch"] = os.path.expanduser(cfg["drain_switch"])
@@ -3029,6 +3051,38 @@ class Watcher:
         """Places left under the shared ceiling. Never negative."""
         return max(0, int(self.cfg["max_concurrent_runs"]) - self.workload_count())
 
+    def agent_workload_count(self):
+        """This lane's containers only: runs and staged ones, not CI's.
+
+        COUNTED FROM THE LABEL rather than by adding running_counts() to pool_containers(),
+        because those two overlap. A staged container that has been dispatched keeps its
+        ffbox.pool label AND gains a run row, so adding the two would count it twice and the
+        lane would throttle itself at half its ceiling.
+
+        `ffbox.workload` is agent, pool or ci, and the first two are ours.
+        """
+        try:
+            proc = subprocess.run(
+                [self.cfg["docker"], "ps", "--filter", "label=ffbox.workload",
+                 "--format", '{{.Label "ffbox.workload"}}'],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"pool: could not count this lane's containers: {exc}")
+            return int(self.cfg["agent_pool_max"])
+        if proc.returncode != 0:
+            return int(self.cfg["agent_pool_max"])
+        return len([ln for ln in (proc.stdout or "").splitlines()
+                    if ln.strip() and ln.strip() != "ci"])
+
+    def agent_room(self):
+        """Places left under THIS LANE's ceiling, which sits under the box's.
+
+        Both have to hold: the lane cap stops the agent filling a shared box on its own, and
+        the box cap stops the two lanes together overcommitting it. A run may start only when
+        neither says no.
+        """
+        return max(0, int(self.cfg["agent_pool_max"]) - self.agent_workload_count())
+
     def pool_owner_path(self, pool_id):
         return os.path.join(self.pool_dir(pool_id), "out", "owner")
 
@@ -3261,7 +3315,7 @@ class Watcher:
         # nothing still holds its workspace, and CI holds the same kind on the same daemon.
         #
         # ffbox refuses for real, under the shared lock. This only keeps the daemon from asking.
-        if self.workload_room() <= 0:
+        if self.workload_room() <= 0 or self.agent_room() <= 0:
             return None
         if not self.pool_has_room():
             if not self._pool_squeeze_logged:
@@ -3465,7 +3519,10 @@ class Watcher:
             #
             # Breaking rather than continuing: the queue is in order, and a turn that cannot
             # start now stays queued and is tried again on the next pass.
-            if self.workload_room() <= 0 and not self.pool_would_serve(
+            # BOTH CEILINGS, and a dispatch is exempt from both for the same reason: handing a
+            # turn to a container that is already running creates nothing, so neither the box
+            # nor this lane is asked for another place.
+            if (self.workload_room() <= 0 or self.agent_room() <= 0) and not self.pool_would_serve(
                     (turn_options(turn).get("ref")
                      or turn["conv_base_sha"] or self.cfg["base_ref"])):
                 break
