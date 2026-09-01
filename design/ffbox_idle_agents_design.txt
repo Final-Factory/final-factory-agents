@@ -1,0 +1,598 @@
+ffbox idle agents: a warm container waiting for the next request
+================================================================
+
+2026-08-31.
+
+A Discord message or a web prompt waits about forty seconds before the model reads a word of it,
+and none of that time is spent thinking. Measured on this box on 2026-08-31, on the ramdrive
+path, from the moment ffwatch wrote job.json to the moment the container created .agent-started:
+
+    conversation 29 turn 5    19:00:24 -> 19:01:04     40s
+    conversation 29 turn 6    19:07:08 -> 19:07:50     41s
+
+Turn 6 answered in 71 seconds altogether, so 58% of it was `docker run`, a 22 GiB tar extracted
+onto a fresh tmpfs, a recursive chown over 89,664 files, and a fetch from the local mirror. The
+task's own preparation inside the container rounds to zero on both runs.
+
+That cost went UP with the ramdrive migration, not down. The same measurement on the ZFS-clone
+path earlier the same day (turn 4, 03:50:27 -> 03:50:45) was 18 seconds, of which 9 were the
+task's own. A copy-on-write clone is nearly free and a tar is not; what the migration bought was
+the end of host-side Unity, golden, and the sudoers rules, and it paid for that in warm-up. This
+design buys the warm-up back, for a request that arrives while a container is already sitting
+there with the workspace filled.
+
+Nothing about the run itself changes. One prompt per container, the same task, the same harvest,
+the same destruction afterwards. The only difference is that the expensive half of warm-up happens
+before the request exists rather than after it.
+
+
+1. What gets built
+------------------
+
+  1. `idle_agents` containers, configurable, default 1, each holding a filled workspace at the
+     head of its branch, holding no Unity seat and no conversation.
+  2. A request that finds a warm container starts the agent in about a second instead of forty.
+  3. A request that finds none launches cold, exactly as today. The pool is never a dependency,
+     and `idle_agents: 0` is precisely current behaviour.
+  4. One prompt per container, still. A container that has served a request is destroyed and a
+     replacement is staged; nothing a run wrote is ever seen by a later run.
+  5. A staged container that nobody uses shuts ITSELF down after `idle_agent_ttl_secs`, default
+     four hours, and the host stages another. Staleness needs no host-side comparison. The
+     deadline stops applying the moment a prompt is dispatched into it.
+  6. A dispatched prompt gets `agent_secs`, raised to thirty minutes, and when it expires the
+     agent is actually stopped and the caller is actually told. Neither is true today
+     (section 8).
+  7. The standing cost is stated in RAM and is bounded by the same `workspace_size` both lanes
+     already share.
+
+Not a goal: making a long dev task faster. Forty seconds is noise against a ten-minute
+implementation run. This is about the question-shaped turns, where warm-up is most of the wait
+and the bot either feels like a bot or feels like a build.
+
+
+2. Why a container and not a staged directory
+---------------------------------------------
+
+The obvious cheaper thing is to pre-fill a workspace on the host, under /dev/shm, and bind-mount
+it into a fresh container per run. It saves the tar extract, which is the largest single piece.
+
+It is rejected because it undoes the property the ramdrive migration was for. Today no host path
+is writable by a run: the workspace is a tmpfs Docker creates inside the container, the host never
+runs git in a tree a container wrote, and the kernel frees it when the container exits with no
+cleanup code to fail. A host-staged workspace is host-visible and run-writable again, needs its
+own chown, needs its own reaper, and puts finding F7's hazard back.
+
+A staged CONTAINER keeps all of it. The workspace still exists only inside the container, is still
+freed by the kernel, and is still destroyed after one prompt. What changes is only when the filling
+happens.
+
+
+3. There are no slots. There is a spool directory per container
+----------------------------------------------------------------
+
+ffgithubrunners has numbered slots because a systemd template unit needs a stable instance number:
+`ffgithubrunners@3.service` is a supervisor that outlives the containers it starts. Nothing here
+outlives a container. The keeper is a thread in ffwatch, the container serves one prompt, and there
+is no place that persists between one container and the next, so there is nothing to number.
+
+What a staged container does need is a set of directories that exist when it is created, because a
+container's mounts are fixed at create time and every per-turn input is currently a mount:
+
+    $OUT:/ffbox/out                  the run directory
+    job.json:/ffbox/job.json:ro      the turn
+    <conv>/claude:/ffbox/claude      CLAUDE_CONFIG_DIR, per conversation
+    <conv>/attachments:/ffbox/...:ro what the player uploaded
+
+None of those exist yet. So staging creates one directory named for the container itself, and the
+host writes its CONTENTS later:
+
+    ~/ffbox-state/pool/<id>/in     ->  /ffbox/in:ro     job.json, prompt.txt, attachments/
+    ~/ffbox-state/pool/<id>/out    ->  /ffbox/out       everything the run hands back
+    ~/ffbox-state/pool/<id>/claude ->  /ffbox/claude    CLAUDE_CONFIG_DIR for this one turn
+
+`<id>` is eight random hex, the same shape a run id already uses, and the container is
+`ffbox-pool-<id>`. The directory is created with the container and deleted with it. It is not a
+slot, it is the container's own scratch space; two staged containers never share one and no state
+survives either of them.
+
+`:ro` is the container's view, not the host's. A read-only bind mount of a directory the host goes
+on writing into works exactly as wanted: the host drops the job in at dispatch, the container sees
+it and cannot alter it. That is the whole mechanism, and it needs no new privilege.
+
+AT DISPATCH THE CONTAINER TAKES THE RUN'S NAME. `docker rename ffbox-pool-<id> ffbox-<run-id>`,
+verified on this box's rootless daemon on 2026-08-31 against a running container, including that
+`docker exec` and `docker ps --filter name=` follow the new name immediately. That one call keeps
+every existing handle correct: ffbox's clock loop stops `ffbox-${RUN_ID}`, ffwatch's `recover()`
+matches `run.container_name` exactly, and neither needs to learn what a pooled run is.
+
+The container's PID 1 is a new task, `pool-task.sh`, mounted from the checkout the way
+`discord-task.sh` already is:
+
+    stage:     restore-workspace.sh from the cache entry, fetch the mirror, reset to the head of
+               its branch, write `staged` into /ffbox/out
+    wait:      poll /ffbox/in for `dispatch`, which the host writes last, after job.json and the
+               attachments are in place. Retire when `idle_agent_ttl_secs` passes, under the
+               handshake in section 7
+    dispatch:  re-fetch the mirror, reset to the requested commit, create the run branch, then
+               exec the existing per-turn task with FFBOX_JOB_FILE=/ffbox/in/job.json
+    exit:      the per-turn task's own ending, not this script's: harvest, then the licence trap,
+               then the container dies. Section 8 is what puts a harvest trap on the Discord and
+               web path, which does not have one today
+
+A poll rather than inotify: it is one file, and a one-second poll on an idle container costs
+nothing measurable. The container never signals the host; the host reads `staged` and `done` out of
+the out directory the way ffbox already reads `.agent-started`.
+
+A rejected alternative worth recording: `-v ...:rshared` propagation, so the host could
+`mount --bind` the real run directory over the pooled one at dispatch and leave every downstream
+path in ffwatch untouched. It works, and it needs `mount`, which needs root or a new sudoers rule.
+This design has none and is not adding one to save a `mv`.
+
+
+4. Admission and the claim
+---------------------------
+
+Two numbers, the same shape as ffgithubrunners:
+
+    max_concurrent_runs   2     the most turns that can run at once (already exists, unchanged)
+    idle_agents           1     how many staged containers wait while nothing is happening
+
+    stage a container  <=>  staged containers not yet spoken for < idle_agents
+                            AND running_counts() + staged containers
+                                    < max_concurrent_runs + idle_agents
+                            AND there is memory for it (section 9)
+
+A staged container is not a run. It holds no run row, no turn, no conversation and no Unity seat,
+so `running_counts()` does not see it and `max_concurrent_runs` is untouched by it. What the
+ceiling above adds is that the pool cannot crowd out the runs it exists to serve: at
+`max_concurrent_runs: 2, idle_agents: 1` the box holds at most three agent containers, and the
+third only ever exists because nothing is using the first two.
+
+The second line counts BOTH kinds of container, because a cold run and a pooled one occupy the same
+machine: `running_counts()` is what is in flight either way, and `docker ps --filter
+label=ffbox.pool` is what is staged. The label survives the rename at dispatch, so it is not what
+tells idle from busy; `out/owner` is (section 7). A staged container with no `owner` is waiting, and
+that is what the first line counts.
+
+`owner` is also the claim, and one file is deliberately doing both jobs: whoever creates it decides
+what happens to that container next, so the question "is this one still available" and the act of
+taking it are one act. It is `open(..., O_CREAT|O_EXCL)` — atomic, one winner, no lock to leak, and
+inter-process because it has to be: `schedule()` runs in the daemon, and `ffwatch submit --wait`
+from a shell or from the web page's POST drives a pass itself when no daemon holds the lock. Two
+dispatchers that both saw the same idle container would otherwise feed it two prompts, and the
+second would arrive at a workspace the first is already writing. The loser does not wait; it
+launches cold.
+
+The keeper is a thread on ffwatch's existing poll rather than a systemd unit. ffwatch is already
+the only thing that dispatches a turn, the knob belongs in the config file it already re-reads, and
+a unit per container would need root to add or remove an instance, which is the one thing the CI
+harness still owes a human on every `slots N` change.
+
+
+5. Dispatch: sync to head, then the normal turn
+------------------------------------------------
+
+The staged workspace sits at whatever the mirror's head was when it was staged. At dispatch the
+container fetches the mirror again and resets to the commit this turn wants. The mirror is a live
+read-only bind mount, so a container staged an hour ago sees everything fetched since; it holds no
+credential and reaches no network, and that does not change.
+
+The reset is the same work a cold run does. A cold run extracts a tar whose HEAD is wherever CI
+left it and then resets to the target too, so the delta is not new cost, it is the same cost from a
+slightly different starting point. What it costs Unity is whatever changed under Library/, bounded
+by how long the container sat plus how far the cache entry was behind when it was staged. Section 7
+is the knob for that.
+
+One thing not to pretend about: BASE PINNING means most follow-ups are not at head. `finish_run`
+pins `conversation.base_sha` from the first run and `launch()` passes it as `--ref`, so turn 5 of a
+three-day-old conversation asks for a three-day-old commit and the staged container resets BACKWARDS
+onto it. That is not a reason to refuse it a warm container, because a cold run pays the same reset
+from the same tar. It is a reason not to claim idle agents make every turn start at head; only a
+first turn does.
+
+
+6. Which turns a staged container may serve
+--------------------------------------------
+
+A staged container advertises the branch its cache entry came from, and serves only turns whose ref
+belongs to that branch. The reason is the Library, not the source: a master-staged workspace handed
+a develop-based turn checks out the whole divergence and Unity re-imports it, which is slower than
+a cold run that would have picked the develop entry and its matching Library. ffbox's own entry
+ladder already chooses by branch, and the pool has to respect that rather than defeat it.
+
+Anything else falls through to a cold launch, silently and by design: a ref on a branch nothing is
+staged for, a run with `--mount` arguments a staged container does not have, `ffbox --direct`, and
+any turn arriving while every staged container is claimed.
+
+SO THE POOL AND `base_ref` HAVE TO AGREE, and today they do not: `base_ref` is `develop`, so a pool
+staged on master would serve nothing. Both become master under this design, and section 6a is why.
+
+`pool_ref` therefore defaults to null, meaning "follow `base_ref`", rather than naming a branch of
+its own. A second knob that can disagree with the first is a knob that will.
+
+
+6a. Why Discord turns are based on master
+------------------------------------------
+
+`base_ref` was `develop` and nobody chose it. It arrived in ffwatch's first commit (9432da8,
+2026-08-21) as one uncommented line in the block listing what the container gets, and no design
+document argues for it. It is the git-flow reflex — development targets the integration branch —
+applied to a pipeline that turned out not to be doing git-flow work.
+
+It also predates the two changes that decide the question. The single-lane collapse (2026-08-25)
+means every run can change files, so there is no read-only question lane to reason about
+separately. And `publish_bases` moved the base decision to the agent, which chooses by choosing
+what it branches from; ffbox reads that back out of the commit graph at harvest and `pr_base`
+verifies it by ancestry. The comment under `base_ref` already says what is left of it: "only where
+the clone starts".
+
+WHICH MEANS THIS CHANGES WHAT THE AGENT READS, NOT WHERE ITS WORK GOES. An agent that decides a
+change belongs in the next version still branches from `origin/develop`, still gets a pull request
+into develop, and nothing in the publication path is touched. What moves is the source the agent
+has in front of it when it answers.
+
+For Discord that has to be master. A player asking why something behaves the way it does is running
+master, and answering from develop is answering a question about the released game out of
+unreleased source: develop may already have changed the very thing being asked about, and the reply
+would be confidently wrong in a way nobody reading it could catch. The same holds for a bug report,
+where the first question is always whether the bug is still there in what players have.
+
+Four consequences, none of them expensive:
+
+  * THE CACHE ENTRY ALREADY EXISTS. `master@6000.3.19f1.tar`, 23.6 GB, written 2026-08-31 00:30.
+    ffbox's entry ladder picks by branch, so `--ref master` costs nothing it was not already
+    costing for develop.
+  * ONLY NEW CONVERSATIONS MOVE. `conversation.base_sha` pins turn 1's commit for the life of the
+    conversation, so anything already open keeps the develop commit it started on.
+  * DEVELOP-TARGETED WORK BECOMES THE SLOWER PATH. The workspace starts on master, so an agent
+    branching to develop checks out the divergence and Unity re-imports it under the warm Library.
+    That cost already existed in the other direction; this puts it on the rarer case.
+  * `github["base"]` IS ALSO `develop` and should move with it. It is the fallback `pr_base` uses
+    when the commit graph cannot answer, and it fails safe rather than wrong as it stands — work
+    off master does not descend from develop, the ancestry check refuses, and the run gets a branch
+    with no pull request instead of a pull request into the wrong branch. Leaving it means the
+    fallback is the less likely answer to a question it only gets asked when something has already
+    gone strange.
+
+`publish_bases` keeps develop first. That order is a specificity rule and not a default: work off
+develop has master behind it as well, so develop is the more specific answer when both are
+ancestors, and that is true whichever branch a run started on.
+
+7. Staleness: the container times itself out, until it has work
+----------------------------------------------------------------
+
+A staged container that nobody dispatched shuts itself down after `idle_agent_ttl_secs`, default
+14400 (four hours). The wait loop in `pool-task.sh` has a deadline; when it passes, the task exits
+0, the container is removed by `--rm`, the keeper sees the count drop on its next pass and stages a
+replacement. The host compares nothing and the age lives in one place.
+
+That covers three kinds of staleness at once. The workspace drifts from head, the cache entry it
+came from is superseded by a newer CI write, and `ffbox:latest` is rebuilt under it. All three are
+bounded by the same four hours, and all three cost the same thing when they bite: a larger reset
+and a longer Unity import on that one turn, never a wrong answer, because the dispatch-time mirror
+fetch is what decides which code the run sees.
+
+Shorter is fresher and more restaging; longer is staler and cheaper. Four hours on a box that
+answers a handful of turns a day means most staged containers age out having served nothing, which
+costs one tar extract every four hours on an otherwise idle machine. That is the trade the knob
+exists for.
+
+ONE KIND OF STALENESS THE TIMER DOES NOT COVER, and it is the sharp one. `pool-task.sh`, `ffverify`
+and the per-turn task are bind-mounted from the working copy, live, and the self-updater
+fast-forwards that working copy every five minutes. A container staged before a merge would dispatch
+into code that changed under it, four-hour timer or not. The updater already drains before it
+merges; draining must now also DESTROY every staged container, which is free because none of them
+holds a turn.
+
+THE DEADLINE STOPS APPLYING AT DISPATCH. A container that has been sitting for three hours and
+fifty-nine minutes serves its prompt with the whole of `agent_secs` in front of it, exactly as a
+freshly staged one would. Since a container serves one prompt and then dies, resetting the idle
+clock and cancelling it are the same observable thing: nothing ever returns to waiting. What
+matters is only that the idle deadline can never fire while a request is in flight.
+
+That is a race by construction, so it is settled with one file rather than with two checks.
+`pool/<id>/out/owner` is created with `O_CREAT|O_EXCL`, and whoever creates it owns the container:
+
+    the host, wanting to dispatch    creates `owner` -> it dispatches
+                                     already exists  -> the container is retiring, launch cold
+    the container, at its deadline   creates `owner` -> it exits
+                                     already exists  -> a dispatch is coming, keep waiting
+
+One file, one winner, no ordering to get wrong and no lock to leak. `out` is the mount both sides
+can write; `in` is read-only to the container, so the handshake cannot live there. Nothing
+untrusted is running inside a staged container at that moment, which is what makes a
+container-writable handshake acceptable here and would not make it acceptable later.
+
+Lowering `idle_agents` does NOT kill a staged container, for the same reason `ffgithubrunners idle`
+does not: it is a target the keeper stops topping up, not a headcount it enforces downwards. The
+extras retire by serving one prompt each or by timing out.
+
+
+8. The request ceiling, and the three things that stop it working
+------------------------------------------------------------------
+
+THE KNOB ALREADY EXISTS. `agent_secs` is the agent's working time, enforced by ffbox's clock loop
+against the `.agent-started` marker, and exceeding it stops the container, exits 124, lands the run
+as `timed_out` and is never retried, because a retry of a run that has already burned the ceiling
+just burns it again. It defaults to 900 and this box sets 900 explicitly.
+
+So the change is `agent_secs: 1800`, in the defaults and in `~/.config/ffbox/config.json`, and NOT
+a second setting beside it. Two knobs on one clock is how `max_unity_runs` came to exist, counting
+exactly the same runs `max_concurrent_runs` counted, until it was deleted for it.
+
+What is not already true is everything the ceiling is supposed to DO. Three defects, each verified
+on 2026-08-31, and each one worse at thirty minutes than at fifteen.
+
+**The agent is not actually stopped at the ceiling.** `docker stop` signals PID 1, which is the
+task script, and nothing else in the container. The task runs `claude` as a FOREGROUND child, and
+bash does not run a trap handler while it is waiting on one: it waits for the child to finish and
+runs the handler after. Measured with a 20-second child and a SIGTERM at 2 seconds, the handler
+fired at t=20 when the child ended on its own; with the same child backgrounded and `wait`ed, it
+fired at t=2 and killed it. So today the ceiling sends a signal nothing acts on, the agent keeps
+working, and 120 seconds later Docker SIGKILLs the whole container — agent, task, traps and all.
+The fix is one line of shape: run the agent with `&`, `wait` for it, and let the handler kill the
+child. That is what makes "claude shuts down when the ceiling hits" true rather than "claude is
+killed two minutes later by SIGKILL".
+
+**A timed-out turn throws its work away.** `run-as-user.sh` installs `_ffbox_finish`, which
+harvests and then returns the licence. `discord-task.sh` installs no finish trap at all; the only
+trap in it is `return_license` from unity-license.sh. So a Discord or web turn stopped by the clock
+produces no bundle, no branch and no pull request, and thirty minutes of committed work dies with
+the tmpfs. `discord-task.sh` needs the same trap, harvest first, licence second, for the same
+reason `run-as-user.sh` has it.
+
+**Nobody is told what happened, and one front door is told something false.** `result.json` is
+written by a python block that runs after `claude` returns, so a killed agent leaves none, and each
+caller then gets:
+
+    public Discord    PUBLIC_NO_ANSWER: "Something broke on my end and this one never got an
+                      answer. It is logged. Try asking again." Nothing broke, and an identical
+                      retry burns the identical ceiling.
+    private Discord   "the run timed out on the agent clock", which is right and does not say
+                      what the ceiling was.
+    shell and web     result_text() reads result.json, finds none, returns "". An empty terminal
+                      after thirty minutes.
+
+Three fixes, all small. A `PUBLIC_TIMED_OUT` string that says the request ran past the time one
+request is allowed and there is no answer, and does not invite the same question again. The
+configured ceiling on the private line, so an operator reads "timed out on the agent clock after
+30m" and knows which number to change. And `result_text()` falling back to a fixed line when the
+run's `terminal_state` is `timed_out` and no result was written, naming the ceiling and pointing at
+the transcript, which IS on disk: ffwatch indexes it live, so the page shows everything the agent
+did up to the moment it was stopped.
+
+WHAT A TIMED-OUT RUN STILL DOES, once it has the trap: it harvests and publishes its branch, and it
+does not verify. The agent was killed mid-edit, so its tree is whatever it happened to be, and
+running the suite over that answers nothing. No verification means no pull request, which the
+verification gate already enforces without being told about timeouts. That is the existing rule
+applied unchanged: the work is always published so it cannot be lost, and only the proposal to
+merge is withheld.
+
+That does put one more line in front of a reader, and it is currently the wrong line.
+`record_verification` synthesises a row for a run that changed files and produced no report, and
+its evidence reads "the container produced no verification report", which compose_head prints as
+⚠️ NOT VERIFIED. For a timeout that reads as a suite that failed, when what happened is that
+nothing ever got to run one. The function already distinguishes the verify clock
+(`timeout_kind == "verify"` -> "verification hit its own ceiling and was stopped") and needs the
+same for the agent clock. Same one line.
+
+The 120-second `docker stop` floor stays. It is what the trap needs to kill the agent, harvest a
+bundle, and return a Unity seat if the agent took one by running `ffverify` itself mid-turn.
+
+SCOPE: `agent_secs` bounds the AGENT PHASE, not the request. Warm-up (3600) and verification (1800)
+are separate clocks on purpose, because a slow Unity import and a hung agent look identical with
+one timer. A turn can therefore still exceed thirty minutes of wall time by importing for ten and
+verifying for fifteen. Whether there should be a fourth ceiling over the whole thing is section
+15(d).
+
+
+9. Memory, and yielding to real runs
+-------------------------------------
+
+This is the honest cost, and the first version of this section measured the wrong thing.
+
+`--tmpfs /workspace:size=40g` is a tmpfs Docker CREATES for the container. It is not a directory
+under /dev/shm and it is not charged to /dev/shm's usage. Measured on 2026-08-31 with one run in
+flight:
+
+    host                df -h /dev/shm            378G total, 2.1M used
+    inside that run     df -h /workspace          40G cap, 24G used
+    host                /proc/meminfo Shmem       24,330,224 kB   (23.2 GiB, that one workspace)
+    host                MemTotal                  792,528,632 kB  (755 GiB)
+
+So a free-space check written against `df /dev/shm` would report 378 GiB free with 23 GiB of
+workspaces already resident and would keep saying so until the machine died. The right reading is
+`MemAvailable`, with `Shmem` as the cross-check on what ffbox itself is holding.
+
+The arithmetic the keeper has to respect, against RAM rather than against a filesystem:
+
+    (max_concurrent_runs + idle_agents) x workspace   +   ffgithubrunners slots x workspace
+        <= what the box can give up
+
+Entries are 22.0 GiB (master) and 23.0 GiB (develop) today, and 755 GiB is a lot of headroom at
+`max_concurrent_runs: 2, idle_agents: 1`. It would not be at six CI slots plus a raised agent
+ceiling, which is the case worth writing the check for. Two rules keep it honest:
+
+  * The keeper checks MemAvailable before staging, with headroom for `max_concurrent_runs` cold
+    launches, and simply does not stage when it cannot. ffbox's existing "refuse rather than fill
+    the ramdrive" check is the model, once it is reading the same number.
+  * A COLD LAUNCH THAT IS SHORT OF MEMORY DESTROYS A STAGED CONTAINER FIRST. A staged container
+    must never be the reason a real turn cannot start; it exists to make turns faster, and a turn
+    that fails to launch is infinitely slower than one that launches cold.
+
+
+10. The clocks
+--------------
+
+ffbox owns three clocks and starts them when it starts the container. For a dispatched turn the
+container is already up, so the warm-up clock starts at DISPATCH, not at container start, or a
+container that sat idle for an hour would trip a 3600-second warm-up ceiling immediately.
+
+The existing loop already watches markers in the out directory rather than the container's age, so
+the change is one variable: `ffbox --dispatch <id>` takes its `STARTED_AT` from when it wrote the
+dispatch marker and watches the same `.agent-started` and `.verify-started` files. `docker stop`
+with the 120-second floor stays exactly as it is, because a dispatched container holds a Unity seat
+by then and the trap is what returns it.
+
+An idle container is watched by nothing, deliberately. It has no clock to exceed; it has a deadline
+it enforces on itself, and section 7's handshake is what keeps the two from overlapping.
+
+The agent clock is the one that gains a number and loses a defect, in section 8.
+
+
+11. The transcript, and the one ordering rule that matters
+-----------------------------------------------------------
+
+`CLAUDE_CONFIG_DIR` is per conversation today, and the session JSONL under it is the conversation's
+memory across turns. A staged container cannot mount it, because it does not know which
+conversation it will serve.
+
+It gets its own claude directory instead, and the host moves the file:
+
+    dispatch:   copy <conv>/claude/projects/-workspace/<session>.jsonl into the pool directory,
+                when the turn resumes a session
+    during:     ffwatch indexes the transcript from that path, live, as it does now
+    finish:     move the file back into the conversation's claude directory
+
+Two consequences to hold on to.
+
+NOTHING DELETES A POOL DIRECTORY UNTIL ITS TRANSCRIPT HAS BEEN SWEPT. Today the file is written
+straight into the conversation's directory, so a crashed run loses nothing; with a pool directory in
+the middle, a crash leaves the only copy where the reaper is about to delete it. So the reaper
+sweeps first and deletes second, and `recover()` at ffwatch start sweeps any pool directory holding
+a transcript before it decides anything else. This is the one place the pool can lose something a
+cold run would not, and it is worth a test of its own.
+
+MOUNTING THE CONVERSATIONS TREE IS NOT THE ANSWER. It would remove the copy entirely and would hand
+every run read and write access to every other conversation's transcript, which holds repo
+internals, the contents of files agents read, and other people's messages. Rejected.
+
+The run directory has the same shape and less risk: the container writes into the pool directory's
+`out`, and the dispatcher moves the contents into `conversations/<id>/runs/<run-id>/` after the
+container exits, before `finish_run` reads them. `run.stream_path` is written at insert, before the
+container starts, so it records the pool path and is rewritten at finish. A schema bump (v8) carries
+whichever columns this needs, through the same `ALTER TABLE` list the read/unread work used.
+
+
+12. Unity
+----------
+
+Nothing to do, and worth stating because it was the first worry. The agent lane stopped acquiring a
+licence up front on 2026-08-31: `discord-task.sh` acquires nothing, and licensing is the job of
+whatever launches an editor, which is `ffverify` and the verification block. So a staged container
+holds NO SEAT. Ten of them would hold no seats. The machine-id problem ffgithubrunners had to solve
+does not arise either, because the agent lane deliberately keeps the image's baked-in id and every
+container looks like one machine.
+
+
+13. Configuration and CLI
+--------------------------
+
+In `~/.config/ffbox/config.json`, beside `max_concurrent_runs`:
+
+    "idle_agents": 1                staged containers waiting while nothing is happening. 0 is off
+                                    and is exactly today's behaviour.
+    "idle_agent_ttl_secs": 14400    a staged container shuts itself down after this long unused.
+                                    Passed into the container at stage time, so the deadline the
+                                    container enforces is the one that was configured when it was
+                                    staged; a change reaches existing containers as they retire.
+    "pool_ref": null                which branch to stage; null means follow base_ref, and there
+                                    is deliberately no second answer to configure (section 6a)
+    "base_ref": "master"            EXISTS ALREADY, changed from develop. What the agent reads,
+                                    not where its work is proposed (section 6a)
+    "agent_secs": 1800              EXISTS ALREADY, default raised from 900. The most time one
+                                    request may spend in the agent, after which the agent is
+                                    stopped, the work is harvested and the caller is told. This
+                                    box sets 900 explicitly, so the default alone does not move
+                                    it (section 8).
+
+`idle_agents` and `pool_ref` are re-read on the poll, not at start, so raising the pool takes effect
+within seconds. No restart, no root, matching `ffgithubrunners idle N`.
+
+    ffwatch pool                    what is staged: branch, commit, age, and whether it is claimed
+    ffwatch pool stage              stage one now
+    ffwatch pool drop [id]          destroy one, or all
+    ffwatch status                  gains one line: "pool: 1 staged (master@a1b2c3d, 6m old)"
+
+`ffweb` gains nothing beyond that line. A staged container is not a conversation, a turn or a run,
+and does not belong in any list of those.
+
+
+14. Failure modes
+------------------
+
+  * STAGING FAILS (no cache entry, mirror down, tar corrupt). Logged once per failure, not per
+    poll; the keeper backs off; every turn launches cold. This is the normal state on a machine
+    that has never run CI, and it must be quiet about it.
+  * A STAGED CONTAINER DIES ON ITS OWN, including by its own timer. `docker ps` stops counting it,
+    the keeper stages another, its directory is deleted. Nothing else notices.
+  * THE HOST WRITES A DISPATCH INTO A CONTAINER THAT HAS JUST TIMED OUT. The claim and the timer
+    race by definition, and section 7's `owner` file is what settles it: the host creates it before
+    it writes anything into `in/`, the container creates it before it exits, and the one that fails
+    to create it takes the other path. A container that is gone anyway before the dispatch marker
+    lands is a miss, and the turn launches cold.
+  * A DISPATCHED CONTAINER NEVER STARTS THE AGENT. Identical to today: the warm-up ceiling fires,
+    exit 123, the turn fails and says so.
+  * FFWATCH RESTARTS. Staged containers are adopted by label; the ones staged before the current
+    checkout are destroyed. A container that was mid-dispatch when ffwatch died is NOT adopted: its
+    run row is non-terminal, `recover()` requeues the turn as it does now, and the container is
+    destroyed rather than reused, because its workspace holds whatever a half-finished run left.
+
+
+15. Decisions still open
+-------------------------
+
+  (a) SETTLED 2026-08-31: master, and `base_ref` moves with it. Section 6a. What is still owed is
+      the second half of it, `github["base"]`, which is a one-line change nobody has made yet.
+  (b) Whether four hours is right. The real input is how far Library/ drifts per hour of commits,
+      which nobody has measured. Measure it by staging a container, letting it age, dispatching a
+      turn that runs ffverify, and comparing its Unity import against a cold run's. The knob is
+      cheap to change either way.
+  (c) Whether a second staged container ever pays for itself here. CI walks its pool up under
+      burst load; Discord traffic on this box is a handful of turns a day, and the second turn of
+      a burst is usually a follow-up on a conversation that is still busy. Start at 1.
+  (d) WHETHER A REQUEST NEEDS A TOTAL CEILING as well as a per-phase one. `agent_secs: 1800` bounds
+      the agent and nothing else, so a turn that imports for ten minutes and verifies for fifteen
+      still runs past thirty even though the agent stayed inside its budget. A fourth clock over
+      the whole container would bound what a person actually waits for, at the cost of a run that
+      can be killed during a verification it was going to pass. Not proposed here, because nothing
+      has yet been observed to run long that way; worth deciding if one does.
+
+
+16. What this does not do
+--------------------------
+
+  * It does not touch the host-side latency before job.json exists: the two-second scheduler poll,
+    the engagement gate's `claude -p` on the host, and the conversation selector when it runs.
+    Those are seconds, not tens of seconds, and nobody has measured them.
+  * It does not make verification faster. `ffverify` is a cold Unity compile in the same container
+    and takes minutes; this is about the forty seconds before the model starts.
+  * It does not share anything between prompts. One prompt per container stays, and every argument
+    for it stays.
+  * It does not pre-warm `claude` itself. The process cannot start before the prompt exists.
+
+
+17. Files this touches
+-----------------------
+
+    ffbox/pool-task.sh          NEW. Stage, wait with a deadline, dispatch, then exec the per-turn
+                                task.
+    ffbox/ffbox                 --stage-pool and --dispatch <id>. The three pool mounts, the
+                                rename, the dispatch marker, the warm-up clock starting at
+                                dispatch, the out-directory move.
+    ffbox/ffwatch.py            The keeper thread, the O_EXCL claim, `launch()` choosing a staged
+                                container, transcript copy in and out, `recover()` sweeping pool
+                                directories, `drain()` destroying staged containers, the `pool`
+                                subcommand, schema v8.
+    ffbox/entrypoint.sh         The staged path: restore into an empty tmpfs, then hand to
+                                pool-task.sh rather than straight to the per-turn task.
+    ffbox/discord-task.sh       Section 8: run the agent with `&` and `wait` so the trap can reach
+                                it, a finish trap that harvests before returning the licence, and
+                                a result.json stub written on the way out.
+    ffbox/run-as-user.sh        The same `&`/`wait` change. Its finish trap already exists.
+    ffbox/update_ffbox.sh       Destroy staged containers as part of the drain it already does.
+    ffbox/test_ffwatch.py       Admission arithmetic, the claim under contention, the claim/timeout
+                                race, the transcript sweep on a crash, cold fallback, and the three
+                                timeout replies.
+    ffbox/README.md             The pool, the two numbers, the TTL, the RAM it costs, and what a
+                                request that runs out of time now does.
