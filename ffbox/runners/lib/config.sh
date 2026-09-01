@@ -617,9 +617,53 @@ _ffghr_num() {
     esac
     unset _nv
 }
-_ffghr_num SLOTS             "$FFGHR_DEFAULT_SLOTS"
-_ffghr_num IDLE_POOL         "$FFGHR_DEFAULT_IDLE_POOL"
 _ffghr_num POOL_POLL_SECONDS 5
+
+# The box-wide ceiling, from the TOP level of the shared config -- not from the "container"
+# section _ffghr_shared_cfg reads, and not from this lane's own section. It is the one number both
+# lanes count against, so it belongs to neither of them.
+_ffghr_box_cfg() {
+    _bc=${FFBOX_CONFIG_JSON:-${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/config.json}
+    [ -r "$_bc" ] || return 0
+    python3 -c '
+import json, sys
+try:
+    v = json.load(open(sys.argv[1])).get(sys.argv[2])
+except Exception:
+    sys.exit(0)
+if v is not None and not isinstance(v, (dict, list)):
+    print(v)
+' "$_bc" "$1" 2>/dev/null
+}
+
+# THE TWO POOL NUMBERS, COERCED THE SAME WAY THE AGENT LANE COERCES ITS OWN, because a box that
+# holds one answer should not need two rules for reading it:
+#
+#   idle < 0   ->  0. Off. Not a negative number of registered runners.
+#   max  < 0   ->  max_concurrent_runs, the box ceiling. "No ceiling of my own", so this lane may
+#                  use the whole box when the other one is quiet.
+#
+# NOT _ffghr_num's rule, which sends anything below 1 to the DEFAULT -- under that, a -1 meaning
+# "defer to the box" would silently become 1 and CI would run one job at a time while the config
+# said otherwise. Non-numeric still falls back to the default: a config that says "three" must
+# not take a supervisor down.
+_ffghr_coerce_pool() {
+    case "${SLOTS:-}" in
+        ''|*[!0-9-]*) SLOTS=$FFGHR_DEFAULT_SLOTS ;;
+        -*) SLOTS=$(_ffghr_box_cfg max_concurrent_runs)
+            case "$SLOTS" in ''|*[!0-9]*) SLOTS=$FFGHR_DEFAULT_SLOTS ;; esac ;;
+    esac
+    # ZERO IS LEFT ALONE, on both lanes, and it means what it says: no places, so this lane
+    # takes nothing. Sending it to the default instead would be the same silent override that
+    # makes a -1 unreadable, and `drain` is the flag for pausing, not a number nobody meant.
+    [ "$SLOTS" -ge 0 ] 2>/dev/null || SLOTS=$FFGHR_DEFAULT_SLOTS
+    case "${IDLE_POOL:-}" in
+        ''|*[!0-9-]*) IDLE_POOL=$FFGHR_DEFAULT_IDLE_POOL ;;
+        -*) IDLE_POOL=0 ;;
+    esac
+    [ "$IDLE_POOL" -ge 0 ] 2>/dev/null || IDLE_POOL=0
+}
+_ffghr_coerce_pool
 
 # Re-read the two pool knobs. A waiting supervisor sits in its loop for as long as the machine is
 # quiet — hours — and an operator who raises idle_pool should not have to restart units for it to
@@ -635,8 +679,7 @@ ffghr_reload_limits() {
     _ffghr_load_json 2>/dev/null || return 0
     _ffghr_set SLOTS     slots     "$FFGHR_DEFAULT_SLOTS"
     _ffghr_set IDLE_POOL idle_pool "$FFGHR_DEFAULT_IDLE_POOL"
-    _ffghr_num SLOTS     "$FFGHR_DEFAULT_SLOTS"
-    _ffghr_num IDLE_POOL "$FFGHR_DEFAULT_IDLE_POOL"
+    _ffghr_coerce_pool
 }
 
 # The flag files behind `drain` and `slot stop|start`, per section 11. slot.sh checks these
