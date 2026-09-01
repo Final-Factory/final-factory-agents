@@ -290,7 +290,12 @@ for key, value in (
     # took. One budget across every kind of turn a player can cause. `operator` is null, which
     # ffwatch reads as no limit: an operator directive and a locally typed prompt are not the
     # runaway a busy forum is. See ffwatch.py DEFAULTS.
-    ("rate_limits", {"player": 5, "operator": None}),
+    # Tier keys cap TURNS per rolling 24 hours, keyed on who wrote the text rather than which
+    # lane it took; "send" caps what reaches the wire, and is separate because one run that loops
+    # writing intents would spray a thread no matter how few turns it took. Anything here that is
+    # not "send" is a tier. `operator` is null, which ffwatch reads as no limit.
+    ("rate_limits", {"player": 5, "operator": None,
+                     "send": {"per_hour": 60, "per_conversation_hour": 12}}),
     # The page. It is behind a login and served over TLS, but 127.0.0.1 is still the default:
     # it renders raw model thinking, and one hardcoded password is a thin thing to hold a LAN
     # off with. Widening it stays a deliberate edit, made here where it is reviewable.
@@ -299,7 +304,6 @@ for key, value in (
     # approve_before_send holds every reply at 'pending' until `ffwatch approve <id>` releases
     # it — turn it on for the first days on a live server.
     ("approve_before_send", False),
-    ("send_limits", {"per_hour": 60, "per_conversation_hour": 12}),
     ("max_send_attempts", 5),
     # ONE EXAMPLE ROW, NOT A SHIPPED CHANNEL LIST. This block is the only thing in the system
     # that names a channel — ffwatch's DEFAULTS["watch"] is empty on purpose — so what gets
@@ -325,6 +329,20 @@ for key, value in (
     # THE FULL SET IS DELIBERATELY NOT HERE. slots and idle_pool are the two anybody changes;
     # the mirror addresses, network names, log directory and daemon root are infrastructure that
     # lib/config.sh owns and nothing should be tempted to fork into a config file.
+    # --- what is true of a container whichever lane started it ----------------------------
+    # THE SAME LIMITS FOR BOTH LANES, which they did not have until 2026-09-01: a CI job ran
+    # under --memory and --pids-limit and an agent run ran under neither, so an agent container
+    # was bounded only by the box and one that leaked took the machine with it.
+    #
+    # memory is a ceiling rather than an allocation -- the workspace tmpfs plus about 32 GB for
+    # the editor -- and the tmpfs counts against it, which is the point: a run that fills its
+    # ramdrive hits its own limit instead of the host's. A copy of any of these inside
+    # "githubrunner" still overrides for CI alone, and nothing seeds one.
+    ("container", {
+        "workspace_size": "40g",
+        "memory": "72g",
+        "pids_limit": 4096,
+    }),
     ("githubrunner", {
         "slots": 1,
         "idle_pool": 1,
@@ -338,9 +356,9 @@ for key, value in (
         # a file beside secrets.env. Null when a PAT is used instead.
         "app_id": None,
         "app_installation_id": None,
-        "memory": "72g",
-        "pids_limit": 4096,
-        "workspace_size": "40g",
+        # The container limits are NOT here: memory, pids_limit and workspace_size are the same
+        # question for both lanes and live in "container" below. A copy of any of them in this
+        # section still overrides, for a machine that wants CI on a different ceiling.
         "machine_id": "per-slot",
         "cache_dir": "/opt/ffcache",
         "cache_keep": 10,
@@ -454,6 +472,14 @@ ffbox["_help"] = {
              "against it. They share a daemon, each holds a workspace of tens of GiB, and RAM is "
              "what runs out. The \"githubrunner\" section's \"slots\" caps how many of its "
              "places may be busy, underneath this one.",
+    "container": "The limits every container gets, whichever lane started it. workspace_size "
+             "caps the in-RAM workspace; memory is the cgroup ceiling for the whole container "
+             "(that workspace plus about 32 GB for the editor, and the tmpfs counts against it, "
+             "so a run that fills its ramdrive hits its own limit rather than the host's); "
+             "pids_limit bounds runaway process creation. Both lanes hold the same kind of "
+             "container on the same daemon, so these are one answer rather than two that drift "
+             "-- until 2026-09-01 a CI job had all three and an agent run had none of them. A "
+             "copy of any of them inside \"githubrunner\" overrides for CI alone.",
     "ffagent": "What governs a RUN rather than the pipeline around it, flattened over the top "
              "level when ffwatch reads it. base_ref is where a run's clone starts. agent_secs, "
              "warmup_secs and kill_grace_secs are three separate clocks: the model's working "

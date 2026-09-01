@@ -73,12 +73,16 @@ UNITY_SCOPE=${FFBOX_UNITY_SCOPE:-}
 # The runners keep their own githubrunners/config.json override for the case where CI genuinely
 # wants a different ceiling from the agent; absent that, it reads this same value.
 FFBOX_CONFIG_JSON=${FFBOX_CONFIG_JSON:-${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/config.json}
+# ONE VALUE READ FROM THE "container" SECTION, which is where settings that apply to a container
+# whichever lane started it live. The agent lane and the CI lane hold the same kind of workspace on
+# the same daemon, so a box wants one answer to "how big may one get" rather than two that drift
+# apart -- ffbox/runners/lib/config.sh reads the same section for the same key.
 _ffbox_cfg() {
     [ -r "$FFBOX_CONFIG_JSON" ] || return 0
     python3 -c '
 import json, sys
 try:
-    v = json.load(open(sys.argv[1])).get(sys.argv[2])
+    v = (json.load(open(sys.argv[1])).get("container") or {}).get(sys.argv[2])
 except Exception:
     sys.exit(0)
 if v is not None and not isinstance(v, (dict, list)):
@@ -87,6 +91,18 @@ if v is not None and not isinstance(v, (dict, list)):
 }
 WORKSPACE_SIZE=${FFBOX_WORKSPACE_SIZE:-$(_ffbox_cfg workspace_size)}
 [ -n "$WORKSPACE_SIZE" ] || WORKSPACE_SIZE=40g
+# THE SAME RESOURCE LIMITS THE CI LANE HAS, from the same section, because the two containers are
+# the same size of thing on the same daemon. Until 2026-09-01 a CI job ran under --memory and
+# --pids-limit and an agent run ran under neither: an agent container was bounded only by the box,
+# so one that leaked took the machine down with it rather than dying on its own.
+#
+# memory is a ceiling, not an allocation -- the workspace tmpfs plus about 32 GB for the editor --
+# and the tmpfs counts against it, which is the point: a run that fills its ramdrive hits its own
+# limit instead of the host's.
+MEMORY=${FFBOX_MEMORY:-$(_ffbox_cfg memory)}
+[ -n "$MEMORY" ] || MEMORY=72g
+PIDS_LIMIT=${FFBOX_PIDS_LIMIT:-$(_ffbox_cfg pids_limit)}
+[ -n "$PIDS_LIMIT" ] || PIDS_LIMIT=4096
 SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
 
@@ -728,6 +744,8 @@ fi
 # starting no container at all.
 RUN_ARGS=(
     --hostname ffbox
+    --memory "$MEMORY"
+    --pids-limit "$PIDS_LIMIT"
     "${NETWORK_ARGS[@]}"
     "${WORKSPACE_ARGS[@]}"
     "${PROMPT_MOUNT[@]}"

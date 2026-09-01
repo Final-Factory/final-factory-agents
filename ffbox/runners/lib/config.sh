@@ -153,16 +153,17 @@ _ffghr_set CONTAINER_USER   container_user   ffbox-container
 _ffghr_set DOCKER_SOCK      docker_sock      /run/ffbox-container/docker.sock
 _ffghr_set WORK_FOLDER      work_folder      /opt/actions-runner/_work
 # THE SHARED SETTING, so a box holds one answer to "how big may a workspace get" rather than two
-# that drift. The top level of config.json is what ffbox reads for its agent workspace; this falls
-# back to that, and a workspace_size inside the "githubrunner" section still overrides it when CI
-# genuinely wants a different ceiling from the agent.
+# that drift. It lives in the "container" section of config.json -- things true of a container
+# whichever lane started it -- and ffbox reads the same section for the same key. A workspace_size
+# inside the "githubrunner" section still overrides it, for a machine that genuinely wants CI on a
+# different ceiling from the agent; nothing seeds one, because wanting that is unusual.
 _ffghr_shared_cfg() {
     _sc=${FFBOX_CONFIG_JSON:-${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/config.json}
     [ -r "$_sc" ] || return 0
     python3 -c '
 import json, sys
 try:
-    v = json.load(open(sys.argv[1])).get(sys.argv[2])
+    v = (json.load(open(sys.argv[1])).get("container") or {}).get(sys.argv[2])
 except Exception:
     sys.exit(0)
 if v is not None and not isinstance(v, (dict, list)):
