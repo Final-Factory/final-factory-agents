@@ -201,10 +201,19 @@ cannot do, or must be checked by the host afterwards.
 
 ## Which branch a run's work is for
 
-The agent decides — `origin/master` for a fix to the build players are running, `origin/develop`
-for everything else — and it decides by choosing what it branches from, not by saying so. `ffbox`
-resolves the most specific base its work descends from and writes the name to
-`publish_base.txt`; `ffwatch` then targets the pull request at it.
+The agent decides — `origin/master`, the default, for anything aimed at the build players are
+running, `origin/develop` for work aimed at the next version or wanting soak time — and it
+decides by choosing what it branches from, not by saying so. `ffbox` resolves the most specific
+base its work descends from and writes the name to `publish_base.txt`; `ffwatch` then targets
+the pull request at it.
+
+The order of `publish_bases` is what makes one of them the default: the container preamble tells
+the agent to take the first entry when the choice is unclear. `base_ref` must name that same
+branch, because it is where the clone starts — disagree and every run's default course of action
+is a cross-base checkout, which in a Unity workspace means reimporting everything that differs
+(master against develop: 3787 files) on the agent's own clock. The job also carries
+`bases.checked_out_base`, which names the base a pinned start sha belongs to, so a resumed turn
+can tell it is already standing on the right one instead of checking one out to be sure.
 
 That file is in the run directory, which is bind-mounted into the container, so the agent can
 write it. The host therefore verifies rather than trusts, and the two checks are the ones that

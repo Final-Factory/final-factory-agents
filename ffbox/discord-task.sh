@@ -44,6 +44,37 @@ log() { printf '[ffbox] %s\n' "$*"; }
 # Installs the return-license trap and defines ensure_unity_license.
 . /ffbox/unity-license.sh
 
+# HARVEST IN HERE, BECAUSE THE WORKSPACE IS NOT ON A HOST PATH ANY MORE. Identical in purpose to
+# the block in run-as-user.sh, and it has to be repeated because a task script is PID 1's whole
+# world: ffbox runs exactly the one named by --task, so a hook added to the default task reaches
+# nothing this lane does.
+#
+# That is not hypothetical. The in-container harvest landed in run-as-user.sh alone (fdcee29), the
+# ramdrive became the only path four hours later (ee9ab14), and from that moment every Discord run
+# dropped its work on the floor: harvest-workspace.sh never ran, /ffbox/out got no branch.txt, and
+# publish() reported "the run changed no files" over two commits it could not see. Conversation 30
+# lost `antimatter-cloud-phantom-stability` that way. If a third task script ever appears, it needs
+# this too.
+#
+# REPLACING THE LICENCE TRAP WOULD LEAK A UNITY SEAT ON EVERY RUN. unity-license.sh set
+# `trap return_license EXIT INT TERM` just above, and a bare `trap harvest EXIT` here would
+# silently take its place. This calls both, harvest first: a docker stop gives 120 seconds, the
+# harvest is a bundle of a small range and takes a moment, and the licence return is an editor
+# launch that wants what is left.
+#
+# ON INT/TERM TOO, which is the case that matters most here. An agent killed at its ceiling is
+# exactly the run whose work is worth keeping — turn 1 of conversation 30 blew the clock holding
+# two commits — and this is the only thing standing between those commits and a freed tmpfs.
+_ffbox_finish() {
+    _rc=$?
+    if [ -x /ffbox/harvest-workspace.sh ] && [ -n "${FFBOX_CACHE_ENTRY:-}" ]; then
+        /ffbox/harvest-workspace.sh || log "WARNING: harvest failed"
+    fi
+    return_license
+    return $_rc
+}
+trap _ffbox_finish EXIT INT TERM
+
 START_TS=$(date +%s)
 
 if [ ! -r "$JOB_FILE" ]; then
@@ -258,8 +289,13 @@ PREAMBLE_BRANCH = (
     "`ffbox/<your name>-<run id>`, pushed to origin, and read by a human under that name — "
     "and anything you left uncommitted is committed onto it for you. A run that ends on "
     "develop, master or main is refused outright and every commit it made is discarded, so "
-    "never commit onto those branches and never switch back to one before you exit. Branch and "
-    "switch as much as you like in between; only where HEAD ends up matters."
+    "never commit onto those branches and never switch back to one before you exit. Only where "
+    "HEAD ends up matters, but getting there is not free: this workspace is a Unity project "
+    "whose asset database is already imported for the commit you start on, so a checkout that "
+    "moves you to a DIFFERENT base re-imports everything that differs. Between master and "
+    "develop that is thousands of files and minutes of your clock, twice if you change your "
+    "mind. Decide which base the change belongs on BEFORE you branch, branch once, and stay on "
+    "that base; moving between branches that share it costs nothing."
 )
 
 
@@ -273,8 +309,17 @@ def preamble_bases(bases):
     if not choices:
         return ""
     checked_out = (bases or {}).get("checked_out") or ""
+    # WHICH BASE THAT SHA IS, when the host could tell. A resumed turn starts at a pinned commit,
+    # and without this line the agent reads forty hex characters, cannot tell which release they
+    # belong to, and re-checks-out a base to be sure — the single most expensive move available
+    # to it in a Unity workspace.
+    on = (bases or {}).get("checked_out_base") or ""
     text = (" CHOOSE WHAT YOU BRANCH FROM, deliberately. This clone starts checked out at "
-            f"`{checked_out}`, and these are the branches you may base work on:")
+            f"`{checked_out}`"
+            + (f", which is a commit on `{on}`, so you are ALREADY on that base: branching "
+               f"from `origin/{on}` is free and moving to the other one costs a full reimport."
+               if on else ".")
+            + " These are the branches you may base work on:")
     for name, what in choices.items():
         text += f" `origin/{name}` — {what}"
     text += (" Branch from the one the change belongs on — `git checkout -b <name> "
@@ -516,9 +561,10 @@ AGENT_END=$(date +%s)
 # Stop the ticker, then share once more by hand. The final pass is what covers a compaction
 # that rewrote the transcript between the last tick and the agent's exit: ffwatch reads the
 # file once more in finish_run, and that read is the one that catches everything the live
-# passes missed. No trap — unity-license.sh owns EXIT/INT/TERM, and a second `trap` here would
-# REPLACE the licence return rather than add to it, leaking the Unity seat on every stopped
-# container. Nothing is lost to a `docker stop` anyway: the mode is already set by then.
+# passes missed. No trap of its own — `_ffbox_finish` above owns EXIT/INT/TERM, and a second
+# `trap` here would REPLACE it rather than add to it, losing both the harvest and the licence
+# return on every stopped container. Nothing is lost to a `docker stop` anyway: the mode is
+# already set by then. Anything that must run at exit belongs in `_ffbox_finish`.
 kill "$SHARER_PID" 2>/dev/null
 wait "$SHARER_PID" 2>/dev/null
 share_transcript_now

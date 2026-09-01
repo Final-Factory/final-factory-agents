@@ -213,21 +213,33 @@ DEFAULTS = {
     "ffverify": os.path.join(HERE, "ffverify.sh"),
     "plugins_dir": os.path.join(REPO_ROOT, "plugins"),
     "plugin": "ff-discord",
-    "base_ref": "develop",
+    # KEEP THIS EQUAL TO THE FIRST KEY OF publish_bases BELOW. This is where the clone starts;
+    # that is what the agent is told to branch from by default. When they disagree, the default
+    # course of action is a cross-base checkout inside the container, and between master and
+    # develop that is 3787 files and a full Unity reimport charged to the agent's clock — the
+    # most expensive thing a run can do before it has read a line of code.
+    "base_ref": "master",
     "branch_prefix": "ffbox/",
     # WHICH BRANCH A RUN'S WORK IS FOR, and the run decides by choosing what it branches from.
     # `base_ref` above is only where the clone starts; the agent is told these two exist and
     # what each is for, ffbox reads its choice back out of the commit graph at harvest, and the
     # pull request targets whichever one the work descends from.
     #
-    # Ordered, and the order is the tie-break: when the two are at the same commit — the moment
-    # after a release merge — the first one wins. The descriptions are not decoration; they are
-    # rendered into the container's preamble, so this is the one place the policy is written.
+    # Ordered, and the order carries two meanings. It is the tie-break when the two sit on the
+    # same commit — the moment after a release merge — and, because preamble_bases() tells the
+    # agent to take the first one listed when the answer is unclear, it is also the default. The
+    # descriptions are not decoration; they are rendered into the container's preamble, so this
+    # is the one place the policy is written.
+    #
+    # MASTER FIRST since 2026-08-31. develop led this dict and called itself "the default", and
+    # the agent obeyed: every run branched off origin/develop, including small fixes to bugs
+    # players are hitting in the released build, which is the one thing develop is wrong for.
     "publish_bases": {
-        "develop": "the integration branch, and the default. Anything for the next version, "
-                   "anything large, anything that needs soak time.",
-        "master": "what players are running right now. A small, low-risk fix to a bug in the "
-                  "released build belongs here, and nothing else does.",
+        "master": "what players are running right now, and the default. A bug in the released "
+                  "build belongs here, and so does anything you would want in the next patch.",
+        "develop": "the integration branch. Take it for work aimed at the next version, for "
+                   "anything large, and for anything that needs soak time — and say in your "
+                   "summary why you did.",
     },
 
     # -- verification (design section 14) --------------------------------------------------
@@ -241,14 +253,26 @@ DEFAULTS = {
     # refs/ffbox/ there and pushes them: no local branch, no checkout, no working-tree change,
     # so this can safely be the golden checkout that every ffbox clone is made from.
     "git_dir": os.environ.get("FFBOX_GOLDEN_MNT", "/opt/FinalFactory"),
+    # THE FRESHEST LOCAL COPY OF THE REMOTE, and the only one guaranteed to hold a pinned base
+    # sha: every workspace is built from it, so a commit a run started on is by definition in
+    # here. `git_dir` is a working checkout whose remote refs lag whenever nothing has fetched
+    # — /opt/FinalFactory sat eight commits behind origin/develop while this was written, and did
+    # not have conversation 30's base sha as an object at all. Same default as ffbox's own
+    # MIRROR_REPO_PATH, and read-only: nothing here writes to it.
+    "mirror_repo": os.environ.get(
+        "FFBOX_MIRROR_REPO",
+        os.path.join(os.environ.get("FFBOX_CACHE_DIR", "/opt/ffcache"),
+                     "mirror", "FinalFactory.git")),
     "push_remote": "origin",
     "github": {
         "api_base": "https://api.github.com",
         "repo": "Final-Factory/FinalFactory",
         # The fallback when a run's own base cannot be established — not a fixed target any
-        # more. A run that based itself on master gets a pull request into master; see
-        # publish_bases above and pr_base() below.
-        "base": "develop",
+        # more. A run that based itself on develop gets a pull request into develop; see
+        # publish_bases above and pr_base() below. Tracks the first key of publish_bases,
+        # because "we could not tell" should land on the same branch as "we did not decide",
+        # and pr_base() ancestry-checks it before using it either way.
+        "base": "master",
         # Host-side only, and never passed into a container. This absence, not the deny list,
         # is what makes "nothing merges" true (design section 17).
         "token_env": "GH_TOKEN",
@@ -3022,6 +3046,11 @@ class Watcher:
             " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT ?",
             (conv["id"], turn["id"], int(self.cfg["history_messages"])))
 
+        # Where this run's clone starts, resolved once because the job reports it twice: as the
+        # ref itself, and as the base it belongs to. Same ladder ffbox is given as --ref.
+        checked_out = (turn_options(turn).get("ref") or conv["base_sha"]
+                       or self.cfg["base_ref"])
+
         session_id = conv["session_id"] or session_id_for(conv["thread_id"])
         generation = int(conv["session_generation"] or 1)
         transcript = self.transcript_path(conv["id"], session_id)
@@ -3122,8 +3151,11 @@ class Watcher:
             # from config, because the container renders them into its own preamble and the
             # policy should be written once. `checked_out` is where the clone starts; the agent
             # moves off it if the change belongs somewhere else.
-            "bases": {"checked_out": turn_options(turn).get("ref") or conv["base_sha"]
-                                     or self.cfg["base_ref"],
+            "bases": {"checked_out": checked_out,
+                      # Which base that IS, when the line above is a pinned sha rather than a
+                      # name. Without it a resumed turn cannot tell whether it is already on
+                      # the base it wants; see base_containing().
+                      "checked_out_base": self.base_containing(checked_out),
                       "choices": dict(self.cfg.get("publish_bases") or {})},
             # Verification is on for every run. It costs nothing on a run that changed no files:
             # the container skips the suite when the tree is untouched, so a question does not
@@ -4266,6 +4298,40 @@ class Watcher:
                         (str(pr.get("url") or pr.get("number") or ""), conv["id"]))
         log(f"run {run_row_id}: PR #{pr.get('number')} {pr.get('url')}")
         return {"branch": branch, "pr_number": pr.get("number"), "pr_url": pr.get("url")}
+
+    def base_containing(self, ref):
+        """Which of `publish_bases` a run's starting point sits on, or None.
+
+        A FIRST TURN starts at a branch name and the agent can read it. A RESUMED turn starts at
+        the sha that turn pinned, and `checked_out` is then forty hex characters that say nothing
+        about which release they belong to — so an agent that has been told to think about its
+        base has no way to find out it is already standing on the right one, and the cheapest
+        thing it can do is exactly the wrong one: check out a base to be sure. Conversation 30
+        did that, and paid a full Unity reimport to arrive where it already was.
+
+        Ancestry, not equality: the pin is normally a commit that branch has since moved past.
+        First match wins, so the answer follows the same preference order as everything else.
+        """
+        if not ref:
+            return None
+        names = list(self.cfg.get("publish_bases") or {})
+        if ref in names:
+            return ref
+        # The mirror first: it is bare, fetched for every run, and holds the pinned sha. The
+        # golden checkout is the fallback for a box that has no mirror yet. A repo that lacks
+        # either the commit or the ref just answers no, and the next one is tried.
+        for git_dir in (self.cfg.get("mirror_repo"), self.cfg["git_dir"]):
+            if not git_dir or not os.path.isdir(git_dir):
+                continue
+            for name in names:
+                for ref_name in (f"refs/remotes/{self.cfg['push_remote']}/{name}",
+                                 f"refs/heads/{name}"):
+                    done = subprocess.run(
+                        ["git", "-C", git_dir, "merge-base", "--is-ancestor", ref, ref_name],
+                        capture_output=True, text=True)
+                    if done.returncode == 0:
+                        return name
+        return None
 
     def pr_base(self, run_row_id, run_dir, branch):
         """(base branch, reason it could not be decided). Which branch this work is for.
