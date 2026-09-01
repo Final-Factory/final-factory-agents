@@ -211,6 +211,10 @@ def build_fixture(root):
     # a run that never reached the container: everything measurable is NULL
     ex("INSERT INTO run(id, turn_id, ffbox_run_id, session_id, terminal_state)"
        " VALUES(3,3,'run-c','sess-2','crashed')")
+    # WHAT THE CONVERSATION OWNS, which is what the page states at the top of it. Run 2 pushed
+    # it; conversation 1 is what a reader is looking at when they ask where the code went.
+    ex("UPDATE run SET pr_base='develop', changed_files=3 WHERE id=2")
+    ex("UPDATE conversation SET branch='ffbox/run-b' WHERE id=1")
 
     ex("INSERT INTO verification(id, run_id, ran, compiled, compile_errors, tests_run,"
        " tests_passed, tests_failed, results_path, evidence)"
@@ -2101,11 +2105,103 @@ def test_the_session_store_survives_a_bad_file():
           not ffweb.Sessions(path=path).valid("stale"))
 
 
+
+def test_the_branch_is_shown_as_the_conversations_own():
+    """Where the code went, answerable at a glance and stated as a fact about the conversation.
+
+    It used to be one line of plain text inside a run item, three items down a timeline, and
+    nowhere on the list — so "did this produce code" meant opening every conversation. A
+    conversation owns exactly one branch, so this belongs beside the kind and the state.
+    """
+    srv = serve()
+    try:
+        code, _h, body = srv.get("/conversation/1")
+        conv = text_of(body)
+        check("the conversation names its branch", "ffbox/run-b" in conv, conv[:400])
+        check("linked to the branch on GitHub",
+              "https://github.com/Final-Factory/FinalFactory/tree/ffbox/run-b" in conv,
+              [ln for ln in conv.splitlines() if "tree/" in ln][:3])
+        check("with the base it targets and the size of the change",
+              "develop" in conv and "3 file(s)" in conv, conv[:400])
+        check("and the pull request as a link, not as a bare url",
+              "https://github.com/x/y/pull/42" in conv and "#42" in conv, conv[:400])
+
+        code, _h, body = srv.get("/")
+        page = text_of(body)
+        check("the list carries a branch column", ">branch<" in page, page[:600])
+        check("and the conversation that has one shows it",
+              "ffbox/run-b" in page or "run-b" in page, page[:600])
+        # A conversation with no branch says nothing rather than saying "no branch": most
+        # conversations are questions, and that is not news about one.
+        code, _h, body = srv.get("/conversation/2")
+        other = text_of(body)
+        check("a conversation that produced no code says nothing about branches",
+              "ffbox/" not in other, other[:400])
+    finally:
+        srv.stop()
+
+
+def test_a_run_that_published_nothing_does_not_claim_a_branch():
+    """The page reads `pushed`, not the presence of a name.
+
+    run.branch is written at LAUNCH with the name the container is told to start on. ffwatch
+    clears it now when a run publishes nothing, but a row written by an older ffwatch — or a
+    run still in flight — still carries one, and rendering that as a branch is how eighteen
+    rows on the build server claimed to have pushed work that never existed.
+    """
+    srv = serve()
+    try:
+        # Exactly the shape the old rule left: a launch-time name beside the reason there is
+        # no branch.
+        srv.db("UPDATE run SET branch='ffbox/run-a', pushed=0,"
+               " no_branch_reason='the run changed no files' WHERE id=1")
+        code, _h, body = srv.get("/conversation/1")
+        conv = text_of(body)
+        check("the reason is shown", "the run changed no files" in conv, conv[:600])
+        check("and the placeholder name is not rendered as a branch",
+              "ffbox/run-a" not in conv,
+              [ln for ln in conv.splitlines() if "run-a" in ln][:4])
+        check("the run that DID push still shows its branch",
+              "ffbox/run-b" in conv, conv[:600])
+    finally:
+        # PUT IT BACK. This file's cases share one fixture database for the whole process, so a
+        # mutation left behind is a later case's mystery failure.
+        srv.db("UPDATE run SET branch=NULL, pushed=0, no_branch_reason=NULL WHERE id=1")
+        srv.stop()
+
+
+def test_a_branch_name_cannot_carry_markup_into_the_page():
+    """Branch names reach the page from the database and go into an href. Both are escaped.
+
+    ffwatch only ever writes a name git accepted, so this is not a live path — which is the
+    reason to test it rather than to assume it: the escaping is the invariant, not the
+    provenance.
+    """
+    srv = serve()
+    try:
+        srv.db("UPDATE conversation SET branch=? WHERE id=1",
+                    ("ffbox/x\"><script>alert(1)</script>",))
+        code, _h, body = srv.get("/conversation/1")
+        conv = text_of(body)
+        check("the payload is escaped in the text", "<script>alert(1)</script>" not in conv,
+              [ln for ln in conv.splitlines() if "alert" in ln][:3])
+        check("and cannot break out of the href", "\"><script" not in conv,
+              [ln for ln in conv.splitlines() if "alert" in ln][:3])
+        code, _h, body = srv.get("/")
+        check("the same on the list", "<script>alert(1)</script>" not in text_of(body))
+    finally:
+        srv.db("UPDATE conversation SET branch='ffbox/run-b' WHERE id=1")
+        srv.stop()
+
+
 def main():
     print("ffweb — web UI")
     tests = [
         test_every_route_serves,
         test_the_page_shows_how_clustering_decided,
+        test_the_branch_is_shown_as_the_conversations_own,
+        test_a_run_that_published_nothing_does_not_claim_a_branch,
+        test_a_branch_name_cannot_carry_markup_into_the_page,
         test_timeline_reads_as_a_conversation,
         test_filters_actually_filter,
         test_the_title_filter,

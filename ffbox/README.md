@@ -973,6 +973,27 @@ and the agent cannot touch:
   pushes it, and leaves the published branch checkoutable there with its upstream set, so
   `git checkout ffbox/belt-merger-priority-<id>` in `/opt/FinalFactory` works with no further
   ceremony.
+- **One branch per conversation** (2026-09-01). The first run of a conversation that pushes
+  claims that branch name in `conversation.branch`, and every later turn of the same
+  conversation *continues* it: the clone starts at the branch's head rather than at the
+  conversation's pinned base sha, `--branch-prefix` is withheld so the harvest cannot rename a
+  name a reviewer has already seen, and the preamble tells the agent it is standing on its own
+  earlier work and must commit onto it. One conversation, one branch, one pull request —
+  `find_pull_request` finds the open one and adds commits to it rather than opening a second.
+
+  Before this, each publishing turn invented its own name. Conversation 30 took four turns at
+  one bug and left two branches on origin — `…-phantom-stability-d30t3-…` based on develop and
+  `…-phantom-stability-master-d30t4-…` based on master, the same three files twice, with
+  nothing on either saying which was current. The second turn had no idea the first had
+  published, so it re-picked its base and started over.
+
+  Because a container resolves `--ref` against the **local git mirror and nothing else**,
+  `publish()` also fetches what it just pushed into `/opt/ffcache/mirror/FinalFactory.git` —
+  the one place ffwatch writes to it, fenced to `refs/heads/ffbox/*`. Without that the next
+  turn dies in `restore-workspace.sh` with "ref … resolves to nothing after the restore", since
+  what otherwise refreshes the mirror is the CI runners' own fetch on no schedule this daemon
+  controls. If the branch cannot be put there, the run still starts — from the pinned base,
+  with a `WARNING` saying the turn does **not** stand on the conversation's own work.
 - **The pull request.** Opened through the stdlib GitHub client, targeting **the branch the work
   is based on** — `master` for a fix to the build players are running, `develop` for everything
   else. The agent chooses by choosing what it branches from; ffbox reads that back out of the
@@ -1187,6 +1208,14 @@ the consequence and not just the rule. The host still creates `ffbox/<run-id>` a
 run there, so an agent that never branches loses nothing; what the rule buys is a name a
 reviewer can read.
 
+**On the FIRST publishing turn only.** Once a conversation owns a branch the name is settled,
+and a later turn of it is launched onto that branch with no `--branch-prefix` at all — so the
+harvest publishes exactly the name it was given and cannot rename a branch a reviewer is
+already reading or a pull request is already open against. The preamble swaps with it: instead
+of "make a branch", the agent is told it is already on the conversation's, that its commits are
+the next ones on top of work that is already on origin, and that a branch of its own is a name
+that gets discarded while the commits land there anyway.
+
 The clone is also cleaned before the agent starts rather than subtracted from at harvest.
 Inherited dirt that the agent has already committed cannot be unstaged back out, and a `git
 status` full of noise it did not cause would mislead every judgement it makes.
@@ -1217,8 +1246,8 @@ the certificate, because the standard library can serve TLS but cannot create an
 
 | route | what it is |
 |---|---|
-| `/` | conversations, filtered live by kind, state, verdict and lane (one value now) as the dropdowns change, plus a title box that narrows to the titles containing a typed word (Enter applies it) and a **show** dropdown that opens on the unread ones, with cost, tokens and the average warm-up and agent time per conversation. The id and the title both open the conversation, and each row has a button that ticks it read |
-| `/conversation/<id>` | one thread: `message`, `turn`, `run` and `verification` rows interleaved in time, with attachments rendered in place. A local conversation also carries a reply box that continues it |
+| `/` | conversations, filtered live by kind, state, verdict and lane (one value now) as the dropdowns change, plus a title box that narrows to the titles containing a typed word (Enter applies it) and a **show** dropdown that opens on the unread ones, with cost, tokens and the average warm-up and agent time per conversation. A **branch** column says which of them produced code, linked to the branch on GitHub. The id and the title both open the conversation, and each row has a button that ticks it read |
+| `/conversation/<id>` | one thread: `message`, `turn`, `run` and `verification` rows interleaved in time, with attachments rendered in place. Under the header, the branch this conversation owns — base, file count, how many turns pushed to it, and the pull request or the reason there is none. A local conversation also carries a reply box that continues it |
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
@@ -1304,6 +1333,26 @@ the agent said shows up under the message that started it, marked **"still worki
 thing it said, not the reply"** until the turn reaches a terminal state. Warm-up — the clone,
 the container, Unity — happens before the agent says anything, so a run page opened in that
 window says so rather than showing an empty transcript.
+
+**Where the code went.** A conversation that produced code says so at the top of itself: the
+branch, linked to GitHub, the base it targets, how many files it carries, how many turns pushed
+to it, and either the pull request or the reason there is none. It is stated once, as a
+property of the conversation, because that is the shape of the thing — one conversation owns
+one branch — and because it used to be a line of plain text inside a run item three items down
+a timeline, which meant "did this produce code" was a question you answered by opening every
+conversation. The list now carries the same name in a **branch** column, so it is answerable
+without opening any.
+
+A conversation that produced no code renders nothing at all rather than an empty row saying so;
+most of them are questions, and "no branch" is not news about one.
+
+What the run rows still show is what each individual turn published, and that reads `pushed`
+rather than the presence of a name. `run.branch` is written at *launch*, with the name the
+container is told to start on, before any branch exists — so a run that changed nothing used to
+render `branch ffbox/d30t1-24602a02` and, on the same line, `no branch: the run changed no
+files`. Eighteen of the nineteen rows on this box that carried a branch name had never pushed
+anything. ffwatch clears the column now when a run publishes nothing, and the page reads
+`pushed` regardless, because the column is a name and `pushed` is the fact.
 
 **Read and unread.** Every row on `/` carries a button that ticks that conversation off, and
 the **show** dropdown at the top picks between `unread`, `read` and `all`. It opens on

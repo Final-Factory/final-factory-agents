@@ -75,7 +75,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a column added to
 # the schema file never reaches a database created before it. These are applied with ALTER on
@@ -171,6 +171,11 @@ ADDED_COLUMNS = [
     # routing call nobody can inspect is a routing call nobody can debug.
     ("message", "routed_by", "TEXT"),
     ("message", "routed_reason", "TEXT"),
+    # -- v12, one branch per conversation --------------------------------------------------
+    # The branch this conversation owns, claimed by its first run that pushes. See the column
+    # comment in the schema file: it is what makes turn 4 continue turn 3's work instead of
+    # opening a second branch beside it.
+    ("conversation", "branch", "TEXT"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -1318,6 +1323,36 @@ class Db:
                 self.conn.execute(
                     "CREATE INDEX IF NOT EXISTS conversation_candidates"
                     " ON conversation(channel_id, is_thread, state, last_activity_at)")
+            # v12 (2026-09-01): one branch per conversation, in two halves.
+            #
+            # FIRST, run.branch stops lying. It is written at LAUNCH with the name the container
+            # is told to start on, before any branch exists, and _no_branch left that placeholder
+            # in place when the run turned out to publish nothing — so 18 of the 19 non-null
+            # values on this box named a branch that was never created, never committed and
+            # never pushed, several of them sitting next to `no_branch_reason = 'the run changed
+            # no files'` in the same row. The page rendered every one of them as a branch. A run
+            # that has reached a terminal state without pushing has no branch, and the column now
+            # says so; `pushed` remains the only predicate anything should test.
+            if all(self._has_column("run", c) for c in ("branch", "pushed", "terminal_state")):
+                self.conn.execute("UPDATE run SET branch = NULL"
+                                  " WHERE branch IS NOT NULL AND pushed = 0"
+                                  "   AND terminal_state IS NOT NULL")
+            # SECOND, the conversations that already own a branch are given it. Only a pushed
+            # run counts, and the LAST one wins — a conversation that published more than once
+            # before this rule existed has several, and the newest is the one its next turn
+            # should continue. Guarded on branch IS NULL so this never rewrites a claim that
+            # publish() has since made.
+            if (self._has_column("conversation", "branch")
+                    and self._has_column("run", "pushed")):
+                self.conn.execute(
+                    "UPDATE conversation SET branch = ("
+                    "  SELECT r.branch FROM run r JOIN turn t ON t.id = r.turn_id"
+                    "   WHERE t.conversation_id = conversation.id AND r.pushed = 1"
+                    "     AND r.branch IS NOT NULL ORDER BY r.id DESC LIMIT 1)"
+                    " WHERE branch IS NULL AND EXISTS ("
+                    "  SELECT 1 FROM run r JOIN turn t ON t.id = r.turn_id"
+                    "   WHERE t.conversation_id = conversation.id AND r.pushed = 1"
+                    "     AND r.branch IS NOT NULL)")
             have = self.conn.execute(
                 "SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
             if have < SCHEMA_VERSION:
@@ -3683,9 +3718,9 @@ class Watcher:
             (conv["id"], turn["id"], int(self.cfg["history_messages"])))
 
         # Where this run's clone starts, resolved once because the job reports it twice: as the
-        # ref itself, and as the base it belongs to. Same ladder ffbox is given as --ref.
-        checked_out = (turn_options(turn).get("ref") or conv["base_sha"]
-                       or self.cfg["base_ref"])
+        # ref itself, and as the base it belongs to. THE SAME CALL launch() gives ffbox as
+        # --ref, so the preamble cannot describe a checkout the container did not make.
+        checked_out = self.run_ref(turn, conv)
 
         session_id = conv["session_id"] or session_id_for(conv["thread_id"])
         generation = int(conv["session_generation"] or 1)
@@ -3792,6 +3827,12 @@ class Watcher:
                       # name. Without it a resumed turn cannot tell whether it is already on
                       # the base it wants; see base_containing().
                       "checked_out_base": self.base_containing(checked_out),
+                      # THE BRANCH THIS CONVERSATION ALREADY OWNS, when it owns one. The run is
+                      # started standing on it and publishes back onto it whatever the agent
+                      # does, so this is not a request — it is the container being told the
+                      # situation it is already in, so that it commits onto the branch instead
+                      # of making a second one and wondering why its name did not survive.
+                      "conversation_branch": self.conversation_branch(conv),
                       "choices": dict(self.cfg.get("publish_bases") or {})},
             # Verification is on for every run. It costs nothing on a run that changed no files:
             # the container skips the suite when the tree is untouched, so a question does not
@@ -3996,6 +4037,112 @@ class Watcher:
         path = self.cfg.get("ffbox") or os.path.join(HERE, "ffbox")
         return [sys.executable, path] if path.endswith(".py") else [path]
 
+    @staticmethod
+    def conversation_branch(conv):
+        """The branch this conversation owns, or None.
+
+        Read through a guard because ffwatch migrates the database on start and a caller can be
+        holding a row read before that: the column is v12 and every path below treats its
+        absence as "this conversation has never published", which is the right answer for a
+        database that predates it.
+        """
+        try:
+            return (conv["branch"] or None) if conv is not None else None
+        except (IndexError, KeyError):
+            return None
+
+    def run_ref(self, turn, conv):
+        """WHERE THIS RUN'S CLONE STARTS, and the one place that ladder is written.
+
+        A conversation that has published owns a branch, and its next turn starts on that
+        branch's head rather than at the base sha the conversation pinned when it opened. That
+        is the whole mechanism behind "one branch per conversation": turn 4 begins standing on
+        turn 3's commits, so the work it adds is the next commit on the same branch instead of
+        a second branch beside it carrying a second copy of the same change.
+
+        It comes FIRST, ahead of the pinned base, because the pin answers a different question —
+        which tree the conversation was reasoning about before any of it existed. Once there is
+        published work, starting anywhere but on top of it means the turn either rediscovers
+        what the last one already did or silently reverts it.
+
+        A per-submission --ref still wins over both: somebody who names a ref on the command
+        line is overriding exactly this.
+        """
+        return (turn_options(turn).get("ref") or self.conversation_branch(conv)
+                or conv["base_sha"] or self.cfg["base_ref"])
+
+    def mirror_carries(self, branch):
+        """Is `branch` in the local git mirror, which is the only place a container can see it.
+
+        THE CONTAINER NEVER TALKS TO GITHUB. restore-workspace.sh fills the workspace from
+        `$MIRROR` with `+refs/heads/*:refs/remotes/origin/*`, so `--ref <branch>` resolves for a
+        run only if the mirror has that branch under refs/heads. push_bundle pushes from the
+        GOLDEN CHECKOUT to origin and never touches the mirror, and what does refresh the mirror
+        is the CI runners' own fetch (runners/lib/mirror.sh), driven by GitHub Actions on no
+        schedule this daemon controls.
+
+        So a conversation's branch reaches the mirror by luck of a CI job having run in between,
+        and without this check the second turn of a conversation dies in restore with "ref
+        '<branch>' resolves to nothing after the restore" — losing the turn, after the warm-up,
+        for a reason that has nothing to do with what was asked.
+        """
+        mirror = self.cfg.get("mirror_repo")
+        if not branch or not mirror or not os.path.isdir(mirror):
+            return False
+        done = subprocess.run(
+            ["git", "-C", mirror, "rev-parse", "--verify", "--quiet",
+             f"refs/heads/{branch}^{{commit}}"],
+            capture_output=True, text=True)
+        return done.returncode == 0
+
+    def mirror_take(self, branch):
+        """Put `branch` into the mirror from the host checkout, so the next run can start on it.
+
+        A LOCAL FETCH, not one from origin: the golden checkout has just pushed these commits
+        and still holds them under refs/ffbox/, so this copies a handful of objects off the same
+        disk and needs no network and no credential. Fetching from GitHub instead would work and
+        would also drag the fetch's failure modes — rate limits, a dead TCP connection — onto
+        the publish path, which has already succeeded by the time this runs.
+
+        THIS WRITES TO THE MIRROR, which nothing else in ffwatch does; `mirror_repo` is
+        documented as read-only to this daemon and was, until a conversation needed to start a
+        run on work of its own. The write is confined to refs/heads/<the branch we just pushed>:
+        it cannot move a branch CI cares about, because everything this pipeline publishes lives
+        under the `ffbox/` prefix and a name outside it never reaches here.
+
+        Best effort, and deliberately AFTER the push, for the same reason set_upstream is: the
+        work is on origin by the time this runs, so nothing here can cost a run its publication.
+        A failure is logged, and mirror_carries catches it again at the next launch.
+        """
+        mirror = self.cfg.get("mirror_repo")
+        if not mirror or not os.path.isdir(mirror):
+            return False
+        # THE ONLY NAMESPACE THIS MAY WRITE. The mirror is shared — CI's own runners fetch every
+        # branch on origin into it and build against what they find — so a bug that let this
+        # write outside `ffbox/` could move `develop` under a job that was mid-fetch. Everything
+        # this pipeline publishes carries the prefix by construction (launch() adds it and the
+        # harvest keeps it), so nothing legitimate is turned away, and the check costs one
+        # comparison against the config value rather than trusting the caller.
+        if not branch or not branch.startswith(self.cfg["branch_prefix"]):
+            log(f"WARNING: refusing to put {branch!r} in the mirror — it is outside "
+                f"{self.cfg['branch_prefix']}")
+            return False
+        try:
+            done = subprocess.run(
+                ["git", "-C", mirror, "fetch", "--quiet", self.cfg["git_dir"],
+                 f"+refs/ffbox/{branch}:refs/heads/{branch}"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=300)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"WARNING: could not put {branch} in the mirror: {type(exc).__name__}: {exc}")
+            return False
+        if done.returncode != 0:
+            log(f"WARNING: could not put {branch} in the mirror: "
+                f"{(done.stderr or '').strip()[:200]}")
+            return False
+        log(f"mirror: took {branch} from {self.cfg['git_dir']}")
+        return True
+
     def launch(self, turn_id):
         turn = self.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (turn["conversation_id"],))
@@ -4040,7 +4187,38 @@ class Watcher:
         # left alone rather than gaining a second one.
         if not branch.startswith(self.cfg["branch_prefix"]):
             branch = f"{self.cfg['branch_prefix']}{branch}"
-        ref = options.get("ref") or conv["base_sha"] or self.cfg["base_ref"]
+        # A CONVERSATION THAT HAS PUBLISHED KEEPS ITS BRANCH, and every later turn of it starts
+        # on that branch and publishes back onto it. The name is settled — it was settled the
+        # first time somebody pushed — so the run-id name above is not used and, below, no
+        # --branch-prefix is passed: renaming is how the agent NAMES a branch, and this one
+        # already has a name a reviewer has seen and a pull request may already be open against.
+        conv_branch = self.conversation_branch(conv)
+        ref = self.run_ref(turn, conv)
+        if conv_branch and ref == conv_branch and not self.mirror_carries(conv_branch):
+            # The container resolves --ref against the mirror and nothing else. Repair it here
+            # rather than let restore fail after the warm-up: mirror_take is cheap and local,
+            # and the alternative is a turn that dies with "ref … resolves to nothing" for a
+            # reason having nothing to do with what was asked.
+            #
+            # IF IT CANNOT BE DONE, THE WHOLE CONTINUATION IS OFF — not just the ref. Starting
+            # at the base while still publishing under the conversation's settled name would
+            # build that branch again from scratch, and the push is not a force push, so it
+            # would be rejected as a non-fast-forward and the turn's work would go nowhere. So
+            # this turn behaves exactly as a first one does: base ref, its own run-id name, the
+            # prefix restored so the agent can name it. That leaves a second branch, which is
+            # the thing this feature exists to avoid — and it is still the better outcome,
+            # because work that is published somewhere can be found and work that is not is
+            # gone with the ZFS clone. Loudly, because a human has to reconcile the two.
+            if not self.mirror_take(conv_branch):
+                log(f"WARNING: run {run_id}: {conv_branch} is not in the mirror and could not "
+                    f"be put there — this turn CANNOT continue the conversation's branch. "
+                    f"Falling back to a run of its own off "
+                    f"{conv['base_sha'] or self.cfg['base_ref']}; its work will publish under "
+                    f"a second branch that somebody has to reconcile with {conv_branch}")
+                conv_branch = None
+                ref = conv["base_sha"] or self.cfg["base_ref"]
+        if conv_branch:
+            branch = conv_branch
         pool_id = self.pool_claim_for(ref)
         if not pool_id and not self.pool_has_room(for_containers=0):
             # A STAGED CONTAINER MUST NEVER BE THE REASON A REAL TURN CANNOT START. This launch
@@ -4123,10 +4301,20 @@ class Watcher:
             # better. When the agent makes its own branch, ffbox publishes that name under this
             # prefix with the run id appended, so the reviewer reads what the change is rather
             # than which run made it.
-            cmd += ["--branch", branch, "--branch-prefix", self.cfg["branch_prefix"],
-                    # Most-preferred first, which is also how ffbox breaks a tie between two
-                    # branches sitting on the same commit.
-                    "--base-refs", " ".join(self.cfg.get("publish_bases") or {})]
+            #
+            # NOT ON A CONTINUATION. --branch-prefix is what lets the harvest rename the run's
+            # work after whatever branch HEAD ended on, and on turn 4 of a conversation the
+            # published name is already decided: renaming it would push a second branch carrying
+            # turn 3's commits again and leave the open pull request pointing at the older one.
+            # Without the flag ffbox publishes exactly --branch, which is what "one branch per
+            # conversation" means at the harvest. The agent is told the same thing in words; the
+            # missing flag is what makes it true whether or not it listens.
+            cmd += ["--branch", branch]
+            if not conv_branch:
+                cmd += ["--branch-prefix", self.cfg["branch_prefix"]]
+            # Most-preferred first, which is also how ffbox breaks a tie between two branches
+            # sitting on the same commit.
+            cmd += ["--base-refs", " ".join(self.cfg.get("publish_bases") or {})]
 
         env = dict(os.environ)
         env["FFBOX_RESULTS"] = runs_dir          # so ffbox's OUT is exactly our run_dir
@@ -4989,6 +5177,22 @@ class Watcher:
         # verification gate below can withhold the PR without making that fact unavailable.
         base, base_reason = self.pr_base(run_row_id, run_dir, branch)
         self.db.execute("UPDATE run SET pushed=1, pr_base=? WHERE id=?", (base, run_row_id))
+        # THE CONVERSATION CLAIMS THE BRANCH, here and nowhere else, because here is the first
+        # moment it names something that exists on origin. Everything that makes later turns
+        # continue this work reads that column: run_ref starts them on it, launch() passes it as
+        # --branch and withholds --branch-prefix so the harvest cannot rename it, and the
+        # preamble tells the agent to commit onto it rather than to make one of its own.
+        #
+        # `WHERE branch IS NULL` so this is a claim and not a rewrite. On a continuation the two
+        # already agree — the run was launched with this exact name — and the guard costs
+        # nothing; what it prevents is a run that somehow published under a different name
+        # silently moving the conversation onto it, which would strand the open pull request and
+        # everything already reviewed on the branch it moved off.
+        self.db.execute("UPDATE conversation SET branch=? WHERE id=? AND branch IS NULL",
+                        (branch, conv["id"]))
+        # So the NEXT turn can start on it: the container resolves --ref against the mirror, and
+        # nothing but the CI runners' own fetch otherwise puts a branch there. See mirror_take.
+        self.mirror_take(branch)
         log(f"run {run_row_id}: pushed {branch} -> {base or '?'} ({len(changed)} file(s))")
         if base is None:
             return self._no_pr(run_row_id, conv, branch, base_reason)
@@ -5047,14 +5251,51 @@ class Watcher:
         for git_dir in (self.cfg.get("mirror_repo"), self.cfg["git_dir"]):
             if not git_dir or not os.path.isdir(git_dir):
                 continue
-            for name in names:
+
+            def resolve(name, _dir=git_dir):
                 for ref_name in (f"refs/remotes/{self.cfg['push_remote']}/{name}",
                                  f"refs/heads/{name}"):
                     done = subprocess.run(
-                        ["git", "-C", git_dir, "merge-base", "--is-ancestor", ref, ref_name],
-                        capture_output=True, text=True)
+                        ["git", "-C", _dir, "rev-parse", "--verify", "--quiet",
+                         f"{ref_name}^{{commit}}"], capture_output=True, text=True)
                     if done.returncode == 0:
-                        return name
+                        return (done.stdout or "").strip()
+                return None
+
+            def ancestor(a, b, _dir=git_dir):
+                return subprocess.run(
+                    ["git", "-C", _dir, "merge-base", "--is-ancestor", a, b],
+                    capture_output=True, text=True).returncode == 0
+
+            # BEHIND the ref: a commit ON develop that develop has since moved past, which is
+            # what a conversation's pinned base sha is. First match wins, so the answer follows
+            # the same preference order as everything else.
+            for name in names:
+                target = resolve(name)
+                if target and ancestor(ref, target):
+                    return name
+            # AHEAD of it: `ref` is a branch head carrying commits of its own, which is what a
+            # conversation's own branch is from the second turn onwards. The test above is false
+            # for one by construction — work ahead of develop is not an ancestor of develop — so
+            # without this a continuing turn is told nothing about where it stands, and the
+            # cheapest move available to an agent that cannot tell is the most expensive one
+            # there is: check out a base to be sure, and pay a full Unity reimport to arrive
+            # where it already was. That is conversation 30's mistake, one turn later.
+            #
+            # THE MOST SPECIFIC base it descends from, first-listed on a tie — the same rule
+            # harvest-workspace.sh applies to the same question, because the answer the agent is
+            # given must be the answer the pull request ends up targeting. A branch off develop
+            # has master behind it as well, so develop is the descendant of the two and the more
+            # specific answer; a branch off master does not have develop behind it at all.
+            best, best_sha = None, None
+            for name in names:
+                target = resolve(name)
+                if not target or not ancestor(target, ref):
+                    continue
+                if best_sha is None or (target != best_sha and ancestor(best_sha, target)):
+                    best, best_sha = name, target
+            if best:
+                return best
         return None
 
     def pr_base(self, run_row_id, run_dir, branch):
@@ -5099,7 +5340,18 @@ class Watcher:
                       f"not descend from {' or '.join(candidates)}")
 
     def _no_branch(self, run_row_id, reason):
-        self.db.execute("UPDATE run SET no_branch_reason=? WHERE id=?", (reason, run_row_id))
+        # THE PLACEHOLDER GOES WITH IT. run.branch is written at launch with the name the
+        # container was told to start on, before any branch exists; reaching here means nothing
+        # was published under that name and, on a first turn, that nothing was ever created. A
+        # row that kept it read as "this run made a branch" next to a column saying why it had
+        # not, and the page believed the first half.
+        #
+        # A CONTINUATION IS THE ONE CASE WHERE THAT NAME IS REAL — the conversation's branch is
+        # on origin whatever this run did — but clearing it here is still right: this column
+        # answers "what did THIS RUN publish", and the answer is nothing. What the conversation
+        # owns is conversation.branch, which is untouched by anything on this path.
+        self.db.execute("UPDATE run SET branch=NULL, no_branch_reason=? WHERE id=?",
+                        (reason, run_row_id))
         log(f"run {run_row_id}: no branch — {reason}")
         return {"no_branch_reason": reason}
 
