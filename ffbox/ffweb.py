@@ -104,7 +104,7 @@ DEFAULT_GITHUB_REPO = "Final-Factory/FinalFactory"
 # Shown in the header so a person reading a page knows which build wrote it. The HTTP
 # server_version below is the protocol banner and moves for its own reasons; this is the
 # one a human is meant to read.
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 
 # A turn in one of these has stopped; anything else is still on its way. Kept in step with
 # ffwatch's own list by hand, because this process deliberately imports nothing from it — it
@@ -226,10 +226,23 @@ FILTER_SCRIPT = ("for (const s of document.querySelectorAll('#conversation-filte
 #   somebody was reading. The tick writes the scroll offset to sessionStorage on its way out,
 #   and the next page consumes it. Only a tick writes that entry and only one read survives
 #   it, so arriving by link or by the back button still starts where the browser wants to.
+#   Fold the reader's work back up. A <details> the operator opened — a turn's machinery, a
+#   subagent's chain — comes back shut on the replacement page, because nothing in the HTML
+#   remembers it was ever open. So the tick also writes the ids of the open ones, and the next
+#   page reopens exactly those. This is what makes the scroll offset mean anything on these
+#   pages at all: restoring a y-offset into a document that just lost several screens of
+#   expanded detail lands somewhere else entirely, so the folds are restored FIRST and the
+#   scroll after, against a document that is once again the height it was.
 REFRESH_BUDGET_MS = 1800000
 
 _REFRESH_TEMPLATE = (
     "const k = 'ffweb:scroll:' + location.pathname;"
+    " const dk = 'ffweb:open:' + location.pathname;"
+    " const folds = () => document.querySelectorAll('details[id]');"
+    " try { const o = sessionStorage.getItem(dk);"
+    " if (o !== null) { sessionStorage.removeItem(dk);"
+    " const ids = JSON.parse(o) || [];"
+    " folds().forEach(d => { if (ids.indexOf(d.id) !== -1) d.open = true; }); } } catch (e) {}"
     " try { const y = sessionStorage.getItem(k);"
     " if (y !== null) { sessionStorage.removeItem(k); window.scrollTo(0, +y); } } catch (e) {}"
     " let n = 0; const t = setInterval(() => {"
@@ -242,6 +255,9 @@ _REFRESH_TEMPLATE = (
     " const f = document.querySelector('input[name=title]');"
     " if (f && f.value.trim() !== (u.searchParams.get('title') || '').trim()) return;"
     " u.searchParams.delete('sent'); u.searchParams.delete('msg');"
+    " try { const open = [];"
+    " folds().forEach(d => { if (d.open) open.push(d.id); });"
+    " sessionStorage.setItem(dk, JSON.stringify(open)); } catch (e) {}"
     " try { sessionStorage.setItem(k, String(window.scrollY)); } catch (e) {}"
     " location.replace(u.href); }, @MS@);")
 
@@ -968,8 +984,9 @@ def page(title, body_parts, banner="", refresh=False):
     faster than a turn does. A finished run reverts to False — nothing more is coming, so
     there is nothing to reload for.
 
-    A tick carries the reader's scroll offset across the reload (see the refresh script), so
-    watching a long transcript grow does not keep snapping back to the top.
+    A tick carries the reader's scroll offset AND the folds they had opened across the reload
+    (see the refresh script), so watching a long transcript grow does not keep snapping back to
+    the top with everything shut again.
     """
     return (
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -1065,6 +1082,18 @@ def pill(value):
     value = value or "—"
     cls = re.sub(r"[^a-z_]", "", str(value).lower())
     return Raw("<span class=\"pill " + esc(cls) + "\">" + esc(value) + "</span>")
+
+
+def fold_id(prefix, key):
+    """A DOM id for a <details> whose open/shut state must survive the refresh tick.
+
+    The tick remembers the open folds by id, so the id has to name the same THING on the page
+    that replaces this one — a turn's row id, a transcript record's uuid — and never a
+    position, which shifts the moment another turn lands. Anything outside [A-Za-z0-9_-] is
+    folded to a dash, because a record that arrived with no uuid is keyed on a NUL-prefixed
+    synthetic string and that is not a legal id.
+    """
+    return prefix + "-" + re.sub(r"[^A-Za-z0-9_-]", "-", str(key))
 
 
 def mark_button(conv_id, is_read, back):
@@ -2153,7 +2182,8 @@ class App:
             for ver in self.db.query("SELECT * FROM verification WHERE run_id = ? ORDER BY id",
                                      (run["id"],)):
                 body.append(self._render_verification(ver))
-        return ("<details class=\"sidechain\"><summary>" + esc(" · ".join(bits)) +
+        return ("<details class=\"sidechain\" id=" + attr(fold_id("turn", turn["id"])) +
+                "><summary>" + esc(" · ".join(bits)) +
                 "</summary>" + "".join(body) + "</details>")
 
     def _render_message(self, row, detail=None, kind=None):
@@ -2390,7 +2420,8 @@ class App:
     def _render_sidechain(self, rec):
         chain = descend(rec)
         label = f"subagent · {len(chain)} record(s)"
-        out = ["<details class=\"sidechain\"><summary>", esc(label), "</summary>"]
+        out = ["<details class=\"sidechain\" id=", attr(fold_id("sc", rec["key"])),
+               "><summary>", esc(label), "</summary>"]
         for node, _depth in chain:
             out.append("<div class=\"meta\">" +
                        esc(f"{node['ts'] or ''} · {node['uuid'] or 'no uuid'}") + "</div>")
