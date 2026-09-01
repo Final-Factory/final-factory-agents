@@ -252,36 +252,40 @@ for key, value in (
     # Left as "~/ffbox-state" unless overridden, so the file stays portable between machines
     # with different home paths.
     ("state_dir", os.environ.get("FFWATCH_STATE_DIR", "~/ffbox-state")),
-    # Where a run's clone starts. Must match the first key of ffwatch's publish_bases, which is
-    # what the agent is told to branch from by default; disagreeing costs a cross-base checkout
-    # and a full Unity reimport inside every container.
-    ("base_ref", "master"),
-    ("agent_secs", 1800),
-    ("warmup_secs", 3600),
-    ("kill_grace_secs", 10),
-    # THE CEILING ON CONTAINERS, AND IT IS THE BOX'S RATHER THAN ONE LANE'S. Agent runs, staged
-    # pool containers and ffgithubrunners' CI jobs all count against this one number: same
-    # daemon, same size of workspace, and RAM is what runs out. ffgithubrunners' own `slots`
-    # caps how many of ITS places may be busy, under this. See ffwatch.py DEFAULTS and
-    # ffbox/lib-workloads.sh, which is what actually refuses.
+    # THE BOX'S CONTAINER CEILING, and it stays at the top level because it is not the agent's
+    # alone: agent runs, staged pool containers and ffgithubrunners' CI jobs all count against it.
+    # See ffbox/lib-workloads.sh, which is what actually refuses.
     ("max_concurrent_runs", 6),
     ("catchup_secs", 900),
-    # --- the idle pool -------------------------------------------------------------------
-    # Containers that fill a workspace before a request exists, so one that arrives finds a warm
-    # one: measured at 1.2s from dispatch to the agent starting, against 40s cold. 0 is off and
-    # off is the behaviour that predates the pool.
-    #
-    # A staged container counts against max_concurrent_runs above and holds a Unity seat, taken
-    # after it syncs and before it goes idle. So this is also "how many seats are held while the
-    # box is quiet".
-    ("idle_agents", 1),
-    # What a staged container waits before retiring. Passed in at stage time, so the deadline a
-    # container enforces is the one configured when it was staged; a change reaches existing
-    # containers as they retire.
-    ("idle_agent_ttl_secs", 14400),
-    # Which branch to stage. null follows base_ref, and there is deliberately no second answer
-    # to configure: a pool staged on a branch no turn asks for serves nothing.
-    ("pool_ref", None),
+    # --- the agent containers -------------------------------------------------------------
+    # Everything that governs a RUN rather than the pipeline around it: the clocks it is held
+    # to, the branch its workspace starts from, and the warm pool it may be dispatched into.
+    # ffwatch flattens this section over the top level, so a key here is read exactly as it
+    # was before it moved.
+    ("ffagent", {
+        # Where a run's clone starts. Must match the first key of ffwatch's publish_bases,
+        # which is what the agent is told to branch from by default; disagreeing costs a
+        # cross-base checkout and a full Unity reimport inside every container.
+        "base_ref": "master",
+        # THREE CLOCKS, and conflating them makes a slow Unity import look like a hung agent.
+        # agent_secs is the model's working time, measured from the .agent-started marker;
+        # warmup_secs covers everything before it; kill_grace_secs is how long a container
+        # gets to finish after it is told to stop.
+        "agent_secs": 1800,
+        "warmup_secs": 3600,
+        "kill_grace_secs": 10,
+        # Containers that fill a workspace before a request exists, so one that arrives finds
+        # a warm one: 1.2s from dispatch to the agent starting, against 40s cold. 0 is off.
+        # Each staged container counts against max_concurrent_runs above AND holds a Unity
+        # seat, taken after it syncs and before it goes idle.
+        "idle_agents": 1,
+        # What a staged container waits before retiring. Passed in at stage time, so the
+        # deadline it enforces is the one configured when it was staged.
+        "idle_agent_ttl_secs": 14400,
+        # Which branch the pool stages. null follows base_ref, and there is deliberately no
+        # second answer to configure: a pool staged on a branch no turn asks for serves nothing.
+        "pool_ref": None,
+    }),
     # Turns per rolling 24 hours, keyed on TRUST TIER — who wrote the text, not which lane it
     # took. One budget across every kind of turn a player can cause. `operator` is null, which
     # ffwatch reads as no limit: an operator directive and a locally typed prompt are not the
@@ -448,19 +452,18 @@ ffbox["_help"] = {
     "max_concurrent_runs": "The ceiling on CONTAINERS, and it is the box's rather than one "
              "lane's: agent runs, staged pool containers and ffgithubrunners' CI jobs all count "
              "against it. They share a daemon, each holds a workspace of tens of GiB, and RAM is "
-             "what runs out. ffgithubrunners' own \"slots\" caps how many of its places may be "
-             "busy, underneath this one. Raising it is an ordinary edit; the number that matters "
-             "is how many workspaces this machine can hold at once.",
-    "idle_agents": "Containers that fill a workspace before any request exists, so one that "
-             "arrives finds a warm one — 1.2s from dispatch to the agent starting, against 40s "
-             "cold. 0 is off. Each staged container counts against max_concurrent_runs AND holds "
-             "a Unity seat, taken after it syncs and before it goes idle, so this is also how "
-             "many seats are held while the box is quiet. Re-read on the poll: raising it takes "
-             "effect in seconds, with no restart.",
-    "idle_agent_ttl_secs": "How long a staged container waits before retiring, enforced by the "
-             "container itself. Passed in at stage time, so the deadline a container enforces is "
-             "the one configured when it was staged; a change reaches existing ones as they "
-             "retire. It stops applying the moment a request is dispatched into it.",
+             "what runs out. The \"githubrunner\" section's \"slots\" caps how many of its "
+             "places may be busy, underneath this one.",
+    "ffagent": "What governs a RUN rather than the pipeline around it, flattened over the top "
+             "level when ffwatch reads it. base_ref is where a run's clone starts. agent_secs, "
+             "warmup_secs and kill_grace_secs are three separate clocks: the model's working "
+             "time from the .agent-started marker, everything before it, and how long a "
+             "container gets to finish after it is told to stop -- conflating them makes a slow "
+             "Unity import look like a hung agent. idle_agents is how many containers fill a "
+             "workspace before any request exists (1.2s to dispatch against 40s cold); each one "
+             "counts against max_concurrent_runs and holds a Unity seat. idle_agent_ttl_secs is "
+             "how long one waits before retiring, and pool_ref which branch it stages (null "
+             "follows base_ref).",
     "githubrunner": "ffgithubrunners' settings, which lived in githubrunners/config.json until "
              "2026-09-01 -- one file per box, so there is one place to look. Anything absent "
              "falls back to the default in ffbox/runners/lib/config.sh, and "
@@ -470,10 +473,6 @@ ffbox["_help"] = {
              "and waiting while nothing is happening). `ffgithubrunners slots N` and `idle N` "
              "write them here. The mirror addresses, network names and daemon paths are NOT "
              "seeded on purpose: they are infrastructure lib/config.sh owns.",
-    "pool_ref": "Which branch the pool stages. null follows base_ref, which is what almost "
-             "everything should do — a pool staged on a branch no turn asks for serves nothing, "
-             "and a turn that wants another branch launches cold rather than checking out the "
-             "divergence in a warm workspace.",
 }
 
 # `ping` arrived after boxes were already configured, and stage 5 only seeds "watch" when the

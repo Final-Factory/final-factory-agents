@@ -567,6 +567,17 @@ def load_config():
     # edit does not have to guess. Anything that is not a setting we know is ignored.
     ffbox_block = dict(ffbox_raw)
     ffbox_block.update(ffbox_raw.get("ffwatch") or {})
+    # THE AGENT CONTAINER'S OWN SETTINGS, in a section of their own since 2026-09-01 -- the
+    # clocks a run is held to, the branch its workspace starts from, and the warm pool. Everything
+    # left at the top level is about the PIPELINE rather than the container: what is watched, what
+    # may be sent, where the page listens, and the box-wide container ceiling that CI shares.
+    #
+    # LAST, so the section wins over a stray copy at the top level. Flattened rather than nested
+    # so nothing downstream has to know a key moved: cfg["agent_secs"] is still cfg["agent_secs"].
+    ffbox_block.update(ffbox_raw.get("ffagent") or {})
+    # `githubrunner` needs no line here and must not get one: it is not in DEFAULTS, so this
+    # filter already drops it, which is exactly right -- those settings belong to the runners and
+    # ffbox/runners/lib/config.sh is what reads them.
     ffbox_block = {k: v for k, v in ffbox_block.items() if k in DEFAULTS}
     cfg = _deep_merge(DEFAULTS, raw.get("ffwatch", {}))
     cfg = _deep_merge(cfg, ffbox_block)
