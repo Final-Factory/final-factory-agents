@@ -1411,6 +1411,49 @@ def test_the_live_pages_reload_themselves():
         # Consumed on read: arriving by link or by the back button starts where the browser
         # wants to, not at the offset some earlier tick happened to leave behind.
         check("the saved offset is spent once", "sessionStorage.removeItem(k)" in src)
+
+        # The folds are the other half of "do not move the reader": a scroll offset restored
+        # into a document whose expanded turns all came back shut points at different content.
+        check("the tick saves which folds were open",
+              "sessionStorage.setItem(dk, JSON.stringify(open))" in src and
+              "details[id]" in src)
+        check("and the page it loads reopens exactly those",
+              "sessionStorage.getItem(dk)" in src and "d.open = true" in src)
+        check("the saved folds are spent once too", "sessionStorage.removeItem(dk)" in src)
+        check("folds are restored before the scroll, so the offset still means something",
+              src.index("sessionStorage.getItem(dk)") < src.index("window.scrollTo"))
+    finally:
+        srv.stop()
+
+
+def test_open_folds_survive_the_tick():
+    """A <details> the operator opened has to be findable on the page that replaces this one,
+    which means an id that names the same thing both times — a turn row, a transcript record —
+    and never a position, since a new turn landing would shift every one of them."""
+    srv = serve()
+    try:
+        conv = text_of(srv.get("/conversation/1")[2])
+        ids = re.findall(r'<details class="sidechain" id="([^"]+)"', conv)
+        check("every fold on a conversation carries an id", ids and
+              conv.count("<details") == len(ids), f"{conv.count('<details')} vs {len(ids)}")
+        check("a turn's fold is keyed on the turn row, not its place on the page",
+              all(i.startswith("turn-") for i in ids), ids)
+        check("the ids are unique", len(set(ids)) == len(ids), ids)
+
+        run = text_of(srv.get("/run/1")[2])
+        rids = re.findall(r'<details class="sidechain" id="([^"]+)"', run)
+        check("every subagent fold on a run carries an id", rids and
+              run.count("<details") == len(rids), f"{run.count('<details')} vs {len(rids)}")
+        check("a subagent's fold is keyed on its record", all(i.startswith("sc-") for i in rids))
+        check("those ids are unique too", len(set(rids)) == len(rids), rids)
+        check("and they are legal ids — no NUL from a record that had no uuid",
+              all(re.fullmatch(r"[A-Za-z0-9_-]+", i) for i in rids), rids)
+
+        # The id has to be STABLE, not merely present: rendering the same page twice must name
+        # the same folds, or every tick would forget what the reader had opened.
+        check("the same page renders the same fold ids",
+              re.findall(r'<details class="sidechain" id="([^"]+)"',
+                         text_of(srv.get("/run/1")[2])) == rids)
     finally:
         srv.stop()
 
@@ -2227,6 +2270,7 @@ def main():
         test_a_refused_login_is_answered_slowly,
         test_a_queued_prompt_says_one_thing_and_a_failure_says_everything,
         test_the_live_pages_reload_themselves,
+        test_open_folds_survive_the_tick,
         test_work_in_flight_shows_up_while_it_happens,
         test_next_cannot_leave_this_origin,
         test_signing_out_ends_the_session,
