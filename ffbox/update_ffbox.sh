@@ -131,6 +131,15 @@ if command -v flock >/dev/null 2>&1 && [ "${FFBOX_UPDATE_LOCKED:-0}" != 1 ]; the
 fi
 
 FFWATCH=$REPO/ffbox/ffwatch.py
+FFGHR=$REPO/ffbox/runners/ffgithubrunners
+
+# WHICH DAEMON, SET HERE RATHER THAN INHERITED, and for exactly the reason ffbox's own header
+# gives: `docker` with no DOCKER_HOST falls back to the current CONTEXT, which on this account is
+# still `rootless` -> /run/user/1015/docker.sock. That daemon holds none of the containers this
+# script has to look at, so an inherited context would report a quiet box and sail into the stop
+# with six jobs running on the other one.
+FFBOX_DOCKER_SOCK=${FFBOX_DOCKER_SOCK:-/run/ffbox-container/docker.sock}
+docker_() { as_owner env DOCKER_HOST="unix://$FFBOX_DOCKER_SOCK" docker "$@"; }
 FLAG_LIFTED=0
 lift_drain() {
     [ "$FLAG_LIFTED" = 1 ] && return 0
@@ -139,6 +148,9 @@ lift_drain() {
     # By hand rather than through ffwatch: this also has to work when the commit we just
     # installed is the reason ffwatch.py will not run.
     rm -f "$DRAIN_SWITCH" 2>/dev/null || :
+    # THE CI LANE TOO, and by hand for the same reason. ffgithubrunners' drain is a flag file
+    # under its own config dir; `resume` is the CLI for it and this is what that CLI writes.
+    rm -f "$CONFIG_DIR/githubrunners/drain" 2>/dev/null || :
 }
 # A crash, or systemd's TimeoutStartSec, must not leave the machine drained and silent.
 trap 'lift_drain' EXIT HUP INT TERM
@@ -150,6 +162,10 @@ trap 'lift_drain' EXIT HUP INT TERM
 if [ -e "$DRAIN_SWITCH" ] && [ "$DRY_RUN" = 0 ]; then
     log "clearing a drain flag left by an earlier run: $DRAIN_SWITCH"
     rm -f "$DRAIN_SWITCH"
+fi
+if [ -e "$CONFIG_DIR/githubrunners/drain" ] && [ "$DRY_RUN" = 0 ]; then
+    log "clearing a CI drain flag left by an earlier run"
+    rm -f "$CONFIG_DIR/githubrunners/drain"
 fi
 
 # ------------------------------------------------------------------------------------------
@@ -202,16 +218,80 @@ fi
 # ------------------------------------------------------------------------------------------
 # Never fatal. A commit that breaks ffwatch.py also breaks `ffwatch drain`, and an updater that
 # treats that as fatal can never install the fix.
+# BOTH LANES, AND AN IDLE CONTAINER IS NOT WORK. Until 2026-08-31 this drained ffbox only:
+# ffgithubrunners was never told, so a CI job could be mid-Unity-import while the merge replaced
+# the task script bind-mounted under it. The two flags are independent and both are lifted by
+# lift_drain, including on a crash.
+#
+# The rule the rest of this section implements:
+#
+#   * a container that has been ASKED TO DO SOMETHING is never killed. It finishes, and if it has
+#     not finished by the end of the window the UPDATE gives way, not the run.
+#   * a container that is merely WAITING is destroyed immediately. A staged agent container and an
+#     idle CI runner hold a workspace and no work; they cost 22 GiB each to keep and nothing to
+#     recreate, and keeping one across a merge is how a container ends up serving a turn through
+#     the OLD task script -- its mounts point at inodes the merge replaced.
 if [ -r "$FFWATCH" ]; then
-    log "draining (up to ${DRAIN_TIMEOUT}s) — no new containers, finishing what is running"
-    if as_owner python3 "$FFWATCH" drain --wait --timeout "$DRAIN_TIMEOUT"; then
-        log "drained: nothing in flight"
-    else
-        log "WARNING: drain did not finish cleanly — stopping anyway (runs are requeued)"
-    fi
+    log "draining the agent lane — no new containers"
+    as_owner python3 "$FFWATCH" drain || log "WARNING: could not set the agent drain flag"
 else
-    log "WARNING: no readable $FFWATCH — skipping the drain"
+    log "WARNING: no readable $FFWATCH — skipping the agent drain"
 fi
+if [ -x "$FFGHR" ]; then
+    log "draining the CI lane — running jobs finish, no slot takes new work"
+    as_owner "$FFGHR" drain >/dev/null 2>&1 || log "WARNING: could not set the CI drain flag"
+else
+    log "WARNING: no executable $FFGHR — skipping the CI drain"
+fi
+
+# The waiting ones go now. Both are cheap to recreate and neither is doing anything.
+if [ -r "$FFWATCH" ]; then
+    # `grep -c` exits 1 when it counts nothing, so a `|| echo 0` fallback would append a SECOND
+    # zero and leave "0\n0" in the variable -- not a number, and the `[ -gt ]` below would then
+    # fail under `set -e`. Count the lines instead, which cannot fail.
+    _dropped=$(as_owner python3 "$FFWATCH" pool drop 2>/dev/null | grep '^dropped' | wc -l)
+    _dropped=${_dropped:-0}
+    # `if` rather than `[ ... ] && log ...`: under `set -e` that idiom aborts the updater on the
+    # ordinary case where nothing was staged, because the list's status is the failed test's.
+    if [ "$_dropped" -gt 0 ]; then
+        log "destroyed $_dropped staged agent container(s); nothing was using them"
+    fi
+    unset _dropped
+fi
+for _c in $(docker_ ps --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null); do
+    # `docker top | grep Runner.Worker` is the same test slot.sh's own reaper uses, and it reads
+    # the container rather than a marker file a SIGKILLed supervisor may have left behind.
+    if docker_ top "$_c" -o pid,comm 2>/dev/null | grep -q 'Runner\.Worker'; then
+        log "$_c is running a job — leaving it alone"
+    else
+        log "destroying idle runner $_c; it holds a workspace and no job"
+        docker_ rm -f "$_c" >/dev/null 2>&1 || log "WARNING: could not remove $_c"
+    fi
+done
+unset _c
+
+# WAIT FOR WORK, NOT FOR EVERYTHING. What is left after the sweep above is containers with a job
+# in them. They are given the whole window, and if they are still going at the end of it the
+# update stands down: the timer comes back in five minutes and nothing was interrupted.
+_deadline=$(( $(date +%s) + DRAIN_TIMEOUT ))
+while :; do
+    _busy=0
+    for _c in $(docker_ ps --filter label=ffbox.workload --format '{{.Names}}' 2>/dev/null); do
+        _busy=$((_busy + 1))
+    done
+    if [ "$_busy" -eq 0 ]; then
+        break
+    fi
+    if [ "$(date +%s)" -ge "$_deadline" ]; then
+        log "$_busy container(s) are still working after ${DRAIN_TIMEOUT}s."
+        log "STANDING DOWN rather than killing them; the next trigger will try again."
+        exit 0
+    fi
+    log "waiting for $_busy working container(s) to finish"
+    sleep 15
+done
+unset _busy _c _deadline
+log "nothing is running; safe to stop"
 
 log "stopping ffbox.target"
 sudo_systemctl stop ffbox.target || log "WARNING: stop reported a failure; continuing"

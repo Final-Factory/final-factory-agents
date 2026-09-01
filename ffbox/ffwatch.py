@@ -318,13 +318,23 @@ DEFAULTS = {
     "warmup_secs": 3600,
     "kill_grace_secs": 10,
 
-    # THE ONLY CEILING ON RUNS. Every concurrent run gets a Unity session — there is no way
-    # to launch without an editor — so this bounds agents and editors with one number. It is a
-    # CPU and memory limit rather than a licensing one: ffbox does not copy game-ci's
-    # `dbus-uuidgen > /etc/machine-id`, so every container inherits the base image's machine id
-    # and they all look like one machine to Unity, and four game-ci containers in parallel have
-    # been run with no licensing trouble. Raising it is an ordinary config question.
-    "max_concurrent_runs": 2,
+    # THE CEILING ON CONTAINERS, AND IT IS THE BOX'S RATHER THAN THIS LANE'S. Agent runs,
+    # staged pool containers and ffgithubrunners' CI jobs all count against this one number:
+    # they run on the same daemon, each holds a workspace of 22-24 GiB, and RAM is what runs
+    # out. ffgithubrunners' own `slots` still caps how many of ITS places may be busy, under
+    # this. ffbox/lib-workloads.sh is the shell half and carries the argument in full; the
+    # default here and FFBOX_WORKLOAD_DEFAULT_MAX there have to agree.
+    #
+    # WHAT THIS IS NOT is a licensing limit, and the comment that used to sit here said so for
+    # the wrong reason: "every container inherits the base image's machine id and they all look
+    # like one machine to Unity". They do, and that is a BUG rather than a justification.
+    # ffgithubrunners hit it and measured it -- two concurrent activations on one machine id,
+    # "Found 0 entitlement groups and 0 free entitlements", exit 198 -- and fixed it with a
+    # per-slot id. The agent lane has not, and it takes a seat whenever a turn verifies
+    # (discord-task.sh's verify block) or on every plain `ffbox` run (run-as-user.sh). At two
+    # concurrent runs that window was narrow enough never to have bitten; at six it is not.
+    # Per-slot machine ids for this lane are still owed. See ffgithubrunners_design.txt item (e).
+    "max_concurrent_runs": 6,
 
     # --- the pool (design/ffbox_idle_agents_design.txt) ---------------------------------
     # Containers that fill their workspace before a request exists, so one that arrives finds
@@ -2956,6 +2966,36 @@ class Watcher:
                 out.append({"name": parts[0], "id": parts[1], "branch": parts[2]})
         return out
 
+    def workload_count(self):
+        """Every workspace-holding container on the box, BOTH LANES.
+
+        The ceiling is a resource ceiling and the box is shared: ffgithubrunners' containers hold
+        the same 22-24 GiB workspace on the same daemon, and until 2026-08-31 nothing on either
+        side counted the other. Runs, staged containers and CI jobs all carry `ffbox.workload`;
+        infrastructure -- the egress proxies, the git mirror -- deliberately does not.
+
+        ffbox/lib-workloads.sh is the shell half of this and the two must agree: it is what
+        actually REFUSES, at the point a container is created and under a lock. This one is a
+        scheduling courtesy, so that the daemon does not launch what would be refused.
+
+        A daemon that will not answer counts as FULL, for the same reason it does there: every
+        caller is about to start a container on it.
+        """
+        try:
+            proc = subprocess.run(
+                [self.cfg["docker"], "ps", "-q", "--filter", "label=ffbox.workload"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"pool: could not count containers: {exc}")
+            return int(self.cfg["max_concurrent_runs"])
+        if proc.returncode != 0:
+            return int(self.cfg["max_concurrent_runs"])
+        return len([ln for ln in (proc.stdout or "").splitlines() if ln.strip()])
+
+    def workload_room(self):
+        """Places left under the shared ceiling. Never negative."""
+        return max(0, int(self.cfg["max_concurrent_runs"]) - self.workload_count())
+
     def pool_owner_path(self, pool_id):
         return os.path.join(self.pool_dir(pool_id), "out", "owner")
 
@@ -3033,7 +3073,12 @@ class Watcher:
         avail = self.mem_available_bytes()
         if avail is None:
             return True
-        need = (for_containers + int(self.cfg["max_concurrent_runs"])) * POOL_WORKSPACE_BYTES
+        # THE HEADROOM IS WHAT THE CEILING STILL ALLOWS, not max_concurrent_runs flat. The old
+        # arithmetic reserved a full ceiling's worth on top of whatever was already running and
+        # counted only agent containers doing it, so it both over-reserved on a busy box and
+        # ignored every CI job on the same daemon. Now: room for this one, plus room for
+        # everything else that could still legitimately start.
+        need = (for_containers + self.workload_room()) * POOL_WORKSPACE_BYTES
         return avail >= need
 
     def pool_reap(self):
@@ -3176,8 +3221,14 @@ class Watcher:
         warm = [c for c in containers if not os.path.exists(self.pool_owner_path(c["id"]))]
         if len(warm) >= want:
             return None
-        if len(containers) + self.running_counts() >= \
-                int(self.cfg["max_concurrent_runs"]) + want:
+        # THE BOX, NOT THE LANE. This used to be `len(containers) + running_counts() >=
+        # max_concurrent_runs + want`, which counted only agent containers and then allowed
+        # `want` more on top of the ceiling. The ceiling is now a total over both lanes and the
+        # pool lives under it like everything else: a staged container that has been asked to do
+        # nothing still holds its workspace, and CI holds the same kind on the same daemon.
+        #
+        # ffbox refuses for real, under the shared lock. This only keeps the daemon from asking.
+        if self.workload_room() <= 0:
             return None
         if not self.pool_has_room():
             if not self._pool_squeeze_logged:
@@ -3323,6 +3374,19 @@ class Watcher:
                 return c["id"]
         return None
 
+    def pool_would_serve(self, ref):
+        """Is there a warm container this ref could use, WITHOUT claiming it?
+
+        The same matching rule as pool_claim_for and deliberately no side effect: this is asked
+        while deciding whether a turn may start at all, and taking a container there would strand
+        it if the turn then failed one of the checks below.
+        """
+        if int(self.cfg.get("idle_agents") or 0) <= 0:
+            return False
+        want = (ref or "").replace("origin/", "")
+        looks_like_sha = len(want) >= 7 and all(c in "0123456789abcdef" for c in want.lower())
+        return any(looks_like_sha or c["branch"] == want for c in self.pool_warm())
+
     def running_counts(self):
         """How many runs are in flight.
 
@@ -3353,12 +3417,24 @@ class Watcher:
         self._drain_logged = False
         started = []
         queued = self.db.query(
-            "SELECT t.*, c.state AS conv_state FROM turn t"
+            "SELECT t.*, c.state AS conv_state, c.base_sha AS conv_base_sha FROM turn t"
             " JOIN conversation c ON c.id=t.conversation_id"
             " WHERE t.status='queued' ORDER BY t.queued_at, t.id")
         for turn in queued:
-            total = self.running_counts()
-            if total >= int(self.cfg["max_concurrent_runs"]):
+            # THE CEILING IS THE BOX'S, NOT THIS LANE'S. It used to count runs in this database
+            # and nothing else, so ffgithubrunners' containers -- same daemon, same size of
+            # workspace -- were invisible to it and the box got the sum of two limits.
+            #
+            # A DISPATCH IS EXEMPT, and that is not a loophole. Handing a turn to a container
+            # that is ALREADY RUNNING creates nothing and adds no workspace; refusing there
+            # would leave a warm container idle at the very moment it is wanted, which is the
+            # opposite of what the pool is for. Only a cold launch has to find room.
+            #
+            # Breaking rather than continuing: the queue is in order, and a turn that cannot
+            # start now stays queued and is tried again on the next pass.
+            if self.workload_room() <= 0 and not self.pool_would_serve(
+                    (turn_options(turn).get("ref")
+                     or turn["conv_base_sha"] or self.cfg["base_ref"])):
                 break
             cap = CAPABILITIES
             if turn["conv_state"] == "running":
