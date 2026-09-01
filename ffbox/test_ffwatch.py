@@ -2168,7 +2168,8 @@ def test_sender_kill_switch():
 def test_sender_rate_limit():
     print("sender: rate limits")
     case = Case("sendrate")
-    case.watcher.cfg["send_limits"] = {"per_hour": 0, "per_conversation_hour": 1}
+    case.watcher.cfg["rate_limits"] = dict(case.watcher.cfg.get("rate_limits") or {},
+                                           send={"per_hour": 0, "per_conversation_hour": 1})
     conv = seed_conversation(case)
     for i in range(3):
         case.watcher.record_outbound(None, conv, "post",
@@ -2186,7 +2187,8 @@ def test_sender_rate_limit():
     # ceiling and left the answer it promised sitting pending. It still counts — these limits
     # are the only bound on what reaches Discord at all — it just goes last.
     ack = Case("sendrateack")
-    ack.watcher.cfg["send_limits"] = {"per_hour": 0, "per_conversation_hour": 1}
+    ack.watcher.cfg["rate_limits"] = dict(ack.watcher.cfg.get("rate_limits") or {},
+                                          send={"per_hour": 0, "per_conversation_hour": 1})
     conv = seed_conversation(ack)
     ack.watcher.record_outbound(None, conv, "react",
                                 {"channel": ASK_CHANNEL, "message": "22001",

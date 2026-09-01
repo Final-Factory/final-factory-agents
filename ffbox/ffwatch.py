@@ -380,7 +380,12 @@ DEFAULTS = {
     # types two hundred prompts, and a person at a terminal watching a prompt refused because
     # "the tier is full today" is a worse failure than the one a cap prevents. Concurrency and
     # the three clocks still bound what they can spend at any moment.
-    "rate_limits": {"player": 5, "operator": None},
+    # TURNS BY TRUST TIER, AND SENDS BY THE HOUR, in one place because both answer "how much may
+    # this thing do". The tier keys cap how many TURNS a lane may run; "send" caps what reaches the
+    # wire, and is separate because a single run that loops writing intents would spray a thread no
+    # matter how few turns it took. Anything here that is not "send" is a tier.
+    "rate_limits": {"player": 5, "operator": None,
+                    "send": {"per_hour": 60, "per_conversation_hour": 12}},
 
     # alias -> what this channel IS. kind decides the lane; the listener reports the parent
     # channel's alias on every thread event, so that much needs no second Discord round trip.
@@ -494,7 +499,7 @@ DEFAULTS = {
     "approve_before_send": False,
     # A runaway loop must not be able to spray a thread. These are send-side ceilings, separate
     # from rate_limits above, which caps how many TURNS a lane may run.
-    "send_limits": {"per_hour": 60, "per_conversation_hour": 12},
+
     # A transient Discord failure stays retryable, with exponential backoff, until this many
     # attempts have failed; then the row is rejected so it stops consuming send slots forever
     # and shows up as a problem a human can see.
@@ -1801,6 +1806,11 @@ class Watcher:
         existed, and guessing the uncapped side there would let old rows launch unbounded.
         """
         tier = tier or "player"
+        # "send" is a sibling of the tier keys and is NOT one: it holds the send-side ceilings
+        # that _send_limited reads. A turn whose trust tier were somehow the string "send" would
+        # otherwise be capped by a dict, which `if not limit` would read as no limit at all.
+        if tier == "send":
+            return False
         limit = (self.cfg.get("rate_limits") or {}).get(tier)
         if not limit:
             return False
@@ -3494,7 +3504,7 @@ class Watcher:
         it does not count towards the ceiling that blocked it: the tier stays over its limit
         for the rest of the day while claim_turns keeps minting turns — turn CREATION is not
         rate limited, only launching is — and every message after the fifth would otherwise
-        draw its own refusal. Those posts count against send_limits like any
+        draw its own refusal. Those posts count against rate_limits.send like any
         other, so a channel could spend its whole hourly send budget saying no while replies
         from runs still in flight waited behind them.
 
@@ -5288,7 +5298,7 @@ class Watcher:
         minutes before the reply and holds the lower id, so ordering by id alone spent the
         conversation's last slot on the tick and held back the answer it promised.
         """
-        limits = self.cfg.get("send_limits") or {}
+        limits = (self.cfg.get("rate_limits") or {}).get("send") or {}
         since = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         per_hour = int(limits.get("per_hour") or 0)
         if per_hour:
