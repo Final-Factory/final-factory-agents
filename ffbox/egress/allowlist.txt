@@ -28,6 +28,19 @@ platform.claude.com
 # downloads.claude.ai (DISABLE_AUTOUPDATER=1). A run that silently updated its own Claude Code
 # would also stop being the version this image was built and tested with.
 
+# --- CANDIDATES FOR REMOVAL, 2026-09-01 ------------------------------------------------------------
+# The licence became an offline .ulf on this date (ffbox/unity-offline-license.sh), and the offline
+# resolver makes NO call to Unity's licensing service. So the ACTIVATION half of the block below --
+# license.unity3d.com, activation.unity3d.com, api.unity.com, id.unity.com, accounts.unity3d.com --
+# should now carry no traffic at all.
+#
+# NOT DELETED YET, ON PURPOSE, and this file's own rule is why: "Do not guess. Put the proxy in log
+# mode for a few real runs." Do that, confirm those five are silent across real runs, and then drop
+# them. An entry nothing uses is only extra reach.
+#
+# KEEP core.cloud.unity3d.com AND public-cdn.cloud.unity3d.com REGARDLESS. The licensing client
+# fetches public-cdn.cloud.unity3d.com/config/production on every start even with a valid local
+# licence -- observed directly on 2026-09-01 -- so that one is load-bearing on the offline path too.
 # --- Unity licensing ---------------------------------------------------------------------------
 # What unity-license.sh needs to activate a seat and hand it back. accounts/id/api are the login
 # leg of the -username/-password flow, which is how a Personal serial activates at all.

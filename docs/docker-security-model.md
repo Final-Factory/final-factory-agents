@@ -69,20 +69,31 @@ always "one bad branch a human has to look at", and it still is.
 ## What the container actually holds
 
 The shorthand "the container holds no credential" is wrong, and worth correcting because people
-reason from it. The accurate claim is that it holds **no git or GitHub credential.**
+reason from it. The accurate claim is that it holds **exactly one** credential, and it is not a git
+or GitHub one.
 
-`ffbox` passes these into `docker run`:
+`ffbox` passes this into `docker run`:
 
 | variable | what it is |
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | Anthropic API access |
-| `UNITY_SERIAL`, `UNITY_EMAIL`, `UNITY_PASSWORD` | the Unity account, including its password |
 
-The container has network access, because the model is remote. An agent with shell can read its
-own environment; what changed on 2026-08-23 is where it can send what it read. Both secrets are
-still exposed to any run and should be scoped accordingly. The Unity password in particular is a
-real account password, and moving it to a license file rather than interactive credentials
-would still be a genuine improvement — the allowlist does nothing about it.
+That is the list. The container has network access, because the model is remote. An agent with
+shell can read its own environment; what changed on 2026-08-23 is where it can send what it read.
+That token is still exposed to any run and should be scoped accordingly — it is long-lived, and a
+pooled container holds it for hours before a job arrives.
+
+**The Unity account credential was removed on 2026-09-01.** This section used to list
+`UNITY_SERIAL`, `UNITY_EMAIL` and `UNITY_PASSWORD` and note that "moving it to a license file
+rather than interactive credentials would still be a genuine improvement — the allowlist does
+nothing about it". That is what happened: the licence is now a `.ulf` file mounted read-only at
+`/ffbox/unity/Unity_lic.ulf`, Unity's licensing client resolves it from local files with no call
+out, and no container is handed an account password. See `ffbox/README.md`, "Unity licensing", and
+`ffbox/unity-offline-license.sh`.
+
+A mounted licence file is not nothing — an agent can read and exfiltrate it like anything else in
+the container — but it is a bounded, revocable, machine-bound artifact rather than the credential
+for an account that also owns the Asset Store and org membership.
 
 What is absent, and deliberately: `gh`, any git remote credential, and `ffdiscord`. The container
 task checks for a stray `ffdiscord` on PATH at startup and says so loudly if one resolves.

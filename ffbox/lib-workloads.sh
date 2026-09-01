@@ -215,11 +215,57 @@ ffbox_workload_await_container() {
 # agent 2 and CI slot 2 are different machines, and neither lane has to know the other's numbering.
 FFBOX_SLOT_DIR=${FFBOX_SLOT_DIR:-$FFBOX_WL_CONFIG_DIR/slots}
 
+# --- and why it no longer does, as of 2026-09-01 -------------------------------------------------
+#
+# EVERYTHING ABOVE DESCRIBES THE ONLINE ACTIVATION PATH, WHICH IS GONE. The licence is now a .ulf
+# FILE mounted into the container (ffbox/unity-offline-license.sh), and the licensing client
+# resolves it from local files without calling Unity at all. Exit 198 was Unity's ACTIVATION
+# ENDPOINT refusing a second concurrent registration; with no call there is no refusal, and the
+# reason for a per-slot id goes with it.
+#
+# WORSE THAN UNNECESSARY, ACTIVELY WRONG NOW. A .ulf is bound to one /etc/machine-id. A container
+# presenting a per-slot id would not match the licence and would find no entitlement at all, so
+# the default has to be the id the licence was minted against -- the base image's pinned constant,
+# which is what game-ci pins it to for exactly this purpose.
+#
+#   <32 hex>   the default, and it is OUR constant rather than the image's: see
+#              ffbox/unity-offline-license.sh, which mints the licence against exactly this value.
+#              Pinning our own means the licence does not depend on a number game-ci controls.
+#   image      leave the image's baked-in constant alone.
+#   per-slot   the old behaviour, for a caller that has gone back to online activation.
+#
+# THE SLOT ITSELF IS STILL CLAIMED. It labels the container and bounds the pool the way it always
+# did; only the machine id stopped being derived from it.
+#
+# KEEP IN LOCKSTEP WITH FFBOX_MACHINE_ID_CONST in ffbox/unity-offline-license.sh and with
+# ffbox/runners/lib/config.sh. Three copies of one constant, because the three files have no shared
+# library; `unity-offline-license.sh status` is what catches them drifting apart.
+FFBOX_AGENT_MACHINE_ID=${FFBOX_AGENT_MACHINE_ID:-46696e616c466163746f72792d666662}
+
+# Prints the id for a slot, or returns 1 when nothing should be overridden. An empty print is also
+# safe: ffbox passes -e FFBOX_MACHINE_ID= and entrypoint.sh treats an empty value as "keep the
+# image's", so a caller that does not check the return code still behaves.
 ffbox_agent_machine_id() {
     _wl_n=${1:?ffbox_agent_machine_id needs a slot}
-    _wl_host=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo host)
-    printf 'ffbox-%s-agent-%s' "$_wl_host" "$_wl_n" | sha256sum | cut -c1-32
-    unset _wl_n _wl_host
+    case "$FFBOX_AGENT_MACHINE_ID" in
+        ''|image|none)
+            unset _wl_n
+            return 1 ;;
+        per-slot)
+            _wl_host=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo host)
+            printf 'ffbox-%s-agent-%s' "$_wl_host" "$_wl_n" | sha256sum | cut -c1-32
+            unset _wl_n _wl_host ;;
+        *)
+            if printf '%s' "$FFBOX_AGENT_MACHINE_ID" | grep -qE '^[0-9a-f]{32}$'; then
+                printf '%s\n' "$FFBOX_AGENT_MACHINE_ID"
+            else
+                ffbox_wl_log "machine id must be image, per-slot, or 32 hex characters"
+                unset _wl_n
+                return 1
+            fi
+            unset _wl_n ;;
+    esac
+    return 0
 }
 
 # A claim is a file naming the container that holds the number. THE FILE IS NOT THE TRUTH -- the

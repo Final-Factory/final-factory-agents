@@ -347,6 +347,26 @@ fi
 # THE UNITY MACHINE ID. Passed in rather than baked, because it is derived from the SLOT: see the
 # machine id section of lib/config.sh for why per-slot rather than game-ci's per-container random.
 # Empty means "leave the image's alone", which is what machine_id=image asks for.
+# THE UNITY LICENCE, MOUNTED READ-ONLY. A file rather than the account credentials the job used to
+# activate with; see ffbox/unity-offline-license.sh. Absent is not fatal here -- the job still has
+# the workflow's own UNITY_* secrets to fall back on, and unity-license.sh says so loudly.
+# Refreshed at container-creation time for the same reason ffbox does it: a Personal .ulf carries a
+# rolling ~24-hour UpdateDate, and a CI job wants one that outlives the job. Quiet when there is
+# nothing to do, and never fatal -- a job with the workflow's own credentials can still activate.
+_FFGHR_LICTOOL=$HERE/../unity-offline-license.sh
+if [ -x "$_FFGHR_LICTOOL" ]; then
+    sh "$_FFGHR_LICTOOL" ensure "${FFGHR_LICENCE_MIN_HOURS:-4}" 2>&1 | while IFS= read -r _l; do
+        log "$_l"
+    done || :
+fi
+
+LICENCE_ARGS=""
+if [ -r "$FFGHR_UNITY_ULF" ]; then
+    LICENCE_ARGS="-v $FFGHR_UNITY_ULF:/ffbox/unity/Unity_lic.ulf:ro -e FFBOX_UNITY_ULF=/ffbox/unity/Unity_lic.ulf"
+else
+    log "WARNING: no Unity licence at $FFGHR_UNITY_ULF; jobs will fall back to workflow credentials"
+fi
+
 MACHINE_ID_ARGS=""
 if _mid=$(ffghr_machine_id "$SLOT"); then
     # Not a secret, so the value may sit in argv: it identifies a machine, it does not authenticate
@@ -371,6 +391,7 @@ docker run -d \
     --network "$EGRESS_NET" --dns "$EGRESS_IP" \
     --tmpfs "$WORK_FOLDER:size=$WORKSPACE_SIZE,mode=1777,exec" \
     $CACHE_ARGS \
+    $LICENCE_ARGS \
     $MACHINE_ID_ARGS \
     --cap-drop=ALL \
     $CAP_ADD_ARGS \
