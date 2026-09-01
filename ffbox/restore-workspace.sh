@@ -37,28 +37,48 @@ REF=${FFBOX_REF:-}
 log() { printf '[restore] %s\n' "$*"; }
 die() { printf '[restore] ERROR: %s\n' "$*" >&2; exit 1; }
 
+# --resync: EVERYTHING BELOW THE TAR, against a workspace that already holds one.
+#
+# A pooled container filled itself from the cache entry before any request existed, so when one
+# arrives the tar is already extracted and only the last part of this script applies: fetch the
+# mirror again, land on the commit the turn asked for, create its branch, record base_sha. Those
+# steps live here rather than in pool-task.sh because getting them subtly different from what a
+# cold run does is exactly how a pooled run would start producing different answers.
+RESYNC=0
+if [ "${1:-}" = "--resync" ]; then
+    RESYNC=1
+    shift
+fi
+
 [ -d "$WORKSPACE" ] || die "no workspace at $WORKSPACE"
 
-# An empty workspace is the contract. Restoring over an existing tree would merge two states and
-# the result would be neither.
-if [ -n "$(ls -A "$WORKSPACE" 2>/dev/null)" ]; then
-    die "$WORKSPACE is not empty; refusing to restore over it"
+if [ "$RESYNC" = 1 ]; then
+    [ -n "$(ls -A "$WORKSPACE" 2>/dev/null)" ] || die "--resync wants a workspace that is already filled"
+    [ -d "$WORKSPACE/.git" ] || die "--resync wants a git workspace, and $WORKSPACE is not one"
+else
+    # An empty workspace is the contract. Restoring over an existing tree would merge two states
+    # and the result would be neither.
+    if [ -n "$(ls -A "$WORKSPACE" 2>/dev/null)" ]; then
+        die "$WORKSPACE is not empty; refusing to restore over it"
+    fi
+
+    if [ -z "$ENTRY" ]; then
+        log "no cache entry given — leaving the workspace empty"
+        exit 0
+    fi
+    [ -r "$ENTRY" ] || die "cannot read $ENTRY"
 fi
 
-if [ -z "$ENTRY" ]; then
-    log "no cache entry given — leaving the workspace empty"
-    exit 0
+if [ "$RESYNC" = 0 ]; then
+    log "restoring $(basename "$ENTRY") ($(du -h "$ENTRY" 2>/dev/null | cut -f1))"
+    _t0=$(date +%s)
+    # --no-same-owner: the archive records a CI container's uids, which mean nothing here, and
+    # letting tar apply them also rewrites the workspace directory's own ownership.
+    tar -xf "$ENTRY" -C "$WORKSPACE" --no-same-owner || die "the archive did not extract"
+    log "extracted in $(( $(date +%s) - _t0 ))s"
+
+    [ -d "$WORKSPACE/.git" ] || die "the archive contained no .git"
 fi
-[ -r "$ENTRY" ] || die "cannot read $ENTRY"
-
-log "restoring $(basename "$ENTRY") ($(du -h "$ENTRY" 2>/dev/null | cut -f1))"
-_t0=$(date +%s)
-# --no-same-owner: the archive records a CI container's uids, which mean nothing here, and
-# letting tar apply them also rewrites the workspace directory's own ownership.
-tar -xf "$ENTRY" -C "$WORKSPACE" --no-same-owner || die "the archive did not extract"
-log "extracted in $(( $(date +%s) - _t0 ))s"
-
-[ -d "$WORKSPACE/.git" ] || die "the archive contained no .git"
 
 # The archive was written by a CI job, so its .git is a tree a job controlled. Nothing on the host
 # will read it — the host never sees this workspace — but the AGENT is about to run git in it, and

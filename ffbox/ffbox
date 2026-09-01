@@ -121,6 +121,21 @@ TASK=
 JOB_FILE=
 RUN_ID_OVERRIDE=
 MOUNTS=()
+# --- the pool ------------------------------------------------------------------------------
+# A staged container fills its workspace before any request exists and then waits, so that a
+# request which finds one starts the agent in about a second rather than in forty. Two modes:
+#
+#   --stage-pool ID   create one and return as soon as it is up. No job, no clocks, no prompt.
+#   --dispatch ID     give an already-staged container this run's job, and from there behave
+#                     exactly as a cold run does -- same clocks, same harvest, same output.
+#
+# Both take the id of a directory under POOL_DIR that the caller has created; ffwatch's keeper
+# owns that lifecycle. design/ffbox_idle_agents_design.txt.
+STAGE_POOL=
+DISPATCH=
+POOL_DIR=${FFBOX_POOL_DIR:-$HOME/ffbox-state/pool}
+POOL_TASK=${FFBOX_POOL_TASK:-}
+IDLE_TTL=${FFBOX_IDLE_TTL_SECS:-14400}
 # Golden is brought to origin before every clone (see "golden" below). This is the escape hatch
 # for the two cases where that is wrong: reproducing a bug against exactly the code golden is
 # already on, and running when origin is unreachable and you would rather have a stale run than
@@ -130,7 +145,12 @@ SKIP_FETCH=${FFBOX_SKIP_FETCH:-0}
 # The three clocks of the Discord design, section 8. They are ENFORCED only when this run is a
 # task run (or when one of the flags is given explicitly): a plain interactive one-shot was
 # always unbounded and quietly acquiring a one-hour ceiling would be a surprise.
-AGENT_TIMEOUT=900        # agent working time, measured from the task's own start marker
+# THE AGENT CLOCK, and the number a person is actually waiting on. Thirty minutes since
+# 2026-08-31, raised together with the three repairs that made it mean anything: until then this
+# ceiling stopped the container and not the agent, threw the run's work away, and told the caller
+# that something had broken. design/ffbox_idle_agents_design.txt section 8. ffwatch passes its own
+# value; this is what `ffbox --direct` and a hand-run task get.
+AGENT_TIMEOUT=1800       # agent working time, measured from the task's own start marker
 WARMUP_TIMEOUT=3600      # clone, container start, Unity activation, Library delta
 # Harness-owned verification (design section 14) is a fourth phase with a fourth marker. Without
 # its own ceiling it would burn the AGENT clock, and a fix lane whose agent finished in fourteen
@@ -189,7 +209,16 @@ Options:
                        /workspace work; Docker creates the intermediate directories.
   --run-id ID          Use ID for the run instead of a timestamp, so the caller owns the
                        ffbox-<ID> container name and can address exactly it later.
-  --agent-timeout N    Seconds of AGENT working time (default 900). The clock starts when the
+  --stage-pool ID      Start a container that fills its workspace and then WAITS for a request,
+                       so one that arrives finds it warm. Detached; no job, no clocks, no
+                       prompt. It retires itself after --idle-ttl seconds unclaimed.
+  --dispatch ID        Give an already-staged container this run's job. From there it is an
+                       ordinary run: same clocks, same harvest, same output directory. The
+                       container is renamed to ffbox-<run id> as the job goes in.
+  --pool-dir PATH      Where staged containers' spool directories live
+                       (default ~/ffbox-state/pool).
+  --idle-ttl N         How long a staged container waits before retiring (default 14400).
+  --agent-timeout N    Seconds of AGENT working time (default 1800). The clock starts when the
                        task creates <out>/.agent-started, not when ffbox does.
   --warmup-timeout N   Seconds for everything before that marker (default 3600).
   --verify-timeout N   Seconds for the harness verification phase after the agent exits, from
@@ -229,6 +258,10 @@ while [ $# -gt 0 ]; do
         --job-file)       JOB_FILE=${2:?--job-file needs a path}; CLOCKS=1; shift 2 ;;
         --mount)          MOUNTS+=("${2:?--mount needs HOST:CONTAINER[:ro]}"); shift 2 ;;
         --run-id)         RUN_ID_OVERRIDE=${2:?--run-id needs an id}; shift 2 ;;
+        --stage-pool)     STAGE_POOL=${2:?--stage-pool needs an id}; shift 2 ;;
+        --dispatch)       DISPATCH=${2:?--dispatch needs a pool id}; CLOCKS=1; shift 2 ;;
+        --pool-dir)       POOL_DIR=${2:?--pool-dir needs a path}; shift 2 ;;
+        --idle-ttl)       IDLE_TTL=${2:?--idle-ttl needs seconds}; shift 2 ;;
         --agent-timeout)  AGENT_TIMEOUT=${2:?--agent-timeout needs seconds}; CLOCKS=1; shift 2 ;;
         --warmup-timeout) WARMUP_TIMEOUT=${2:?--warmup-timeout needs seconds}; CLOCKS=1; shift 2 ;;
         --verify-timeout) VERIFY_TIMEOUT=${2:?--verify-timeout needs seconds}; CLOCKS=1; shift 2 ;;
@@ -279,7 +312,7 @@ fi
 
 # A task run carries its instructions in its own mounted files (job.json for the Discord lanes),
 # so a prompt is required only for the default one-shot task.
-if [ -z "$TASK" ] && [ -z "${PROMPT// }" ]; then
+if [ -z "$TASK" ] && [ -z "$STAGE_POOL$DISPATCH" ] && [ -z "${PROMPT// }" ]; then
     echo "ffbox: no prompt given" >&2
     usage >&2
     exit 2
@@ -296,7 +329,8 @@ fi
 # debugging the container itself.
 FFBOX_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 FFWATCH_PY=${FFWATCH_PY:-$FFBOX_DIR/ffwatch.py}
-if [ "$DIRECT" = 0 ] && [ -z "$TASK" ] && [ -z "$JOB_FILE" ] && [ -r "$FFWATCH_PY" ]; then
+if [ "$DIRECT" = 0 ] && [ -z "$TASK" ] && [ -z "$JOB_FILE" ] && [ -z "$STAGE_POOL$DISPATCH" ] \
+   && [ -r "$FFWATCH_PY" ]; then
     ROUTE=("python3" "$FFWATCH_PY" "submit" "--wait")
     [ -z "$REF" ] || ROUTE+=("--ref" "$REF")
     [ -z "$BRANCH" ] || ROUTE+=("--branch" "$BRANCH")
@@ -385,6 +419,46 @@ esac
 
 RUN_ID=${RUN_ID_OVERRIDE:-$(date +%Y%m%d-%H%M%S)-$$}
 OUT="${RESULTS}/${RUN_ID}"
+
+# --- the pool's directories ---------------------------------------------------------------------
+#
+# A staged container's mounts are fixed when it is created, so the directory it will read its job
+# out of has to exist before there is a job. It is named for the container and deleted with it:
+# not a slot, nothing persists across two of them, and no number to allocate.
+#
+#   in/     read-only to the container, written by the host at dispatch
+#   out/    the container's /ffbox/out, moved into the real run directory when the run ends
+#   claude/ CLAUDE_CONFIG_DIR for the one turn this container serves
+POOL_IN=
+FINAL_OUT=
+if [ -n "$STAGE_POOL$DISPATCH" ]; then
+    POOL_ID=${STAGE_POOL:-$DISPATCH}
+    case "$POOL_ID" in
+        *[!A-Za-z0-9._-]*|"")
+            echo "ffbox: a pool id must match [A-Za-z0-9._-]+" >&2; exit 2 ;;
+    esac
+    [ -n "$STAGE_POOL" ] && [ -n "$DISPATCH" ] && {
+        echo "ffbox: --stage-pool and --dispatch are different jobs; pass one" >&2; exit 2; }
+    POOL_HOME="$POOL_DIR/$POOL_ID"
+    POOL_IN="$POOL_HOME/in"
+    if [ -n "$STAGE_POOL" ]; then
+        mkdir -p "$POOL_IN" "$POOL_HOME/out" "$POOL_HOME/claude"
+        # A LEFTOVER JOB WOULD DISPATCH THE CONTAINER THE MOMENT IT FINISHED STAGING. Refuse the
+        # id rather than clearing it: something else believes it owns this directory.
+        if [ -n "$(ls -A "$POOL_IN" 2>/dev/null)" ]; then
+            echo "ffbox: $POOL_IN is not empty; refusing to stage over it" >&2
+            exit 2
+        fi
+    else
+        [ -d "$POOL_HOME" ] || {
+            echo "ffbox: no pool container directory at $POOL_HOME" >&2; exit 70; }
+        # The run directory the caller asked for is where everything ends up; the container is
+        # already writing into the pool's own out, so that is $OUT until it exits.
+        FINAL_OUT="$OUT"
+        mkdir -p "$FINAL_OUT"
+    fi
+    OUT="$POOL_HOME/out"
+fi
 
 mkdir -p "$OUT"
 
@@ -621,24 +695,105 @@ if [ -f "$OUT/prompt.txt" ]; then
     PROMPT_MOUNT=(-v "$OUT/prompt.txt:/ffbox/prompt.txt:ro")
 fi
 
+# EVERY MODE STARTS FROM THE SAME ARGUMENT LIST, which is the only reason a pooled run and a
+# cold run can be trusted to behave alike. Staging differs by three things -- it detaches, it
+# carries a label and a pool name, and its entry is pool-task.sh -- and dispatch differs by
+# starting no container at all.
+RUN_ARGS=(
+    --hostname ffbox
+    "${NETWORK_ARGS[@]}"
+    "${WORKSPACE_ARGS[@]}"
+    "${PROMPT_MOUNT[@]}"
+    "${DOCKER_MOUNTS[@]}"
+    "${ENTRY_ENV[@]}"
+    -e CLAUDE_CODE_OAUTH_TOKEN
+    -e UNITY_SERIAL -e UNITY_EMAIL -e UNITY_PASSWORD
+    -e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+    -e DISABLE_AUTOUPDATER=1
+    -e FFBOX_OUTPUT_FORMAT="$OUTPUT_FORMAT"
+    "${WORKSPACE_ENV[@]}"
+)
+
+if [ -n "$STAGE_POOL" ]; then
+    # --- stage ---------------------------------------------------------------------------------
+    #
+    # Fill a workspace before anybody has asked for anything. Detached, because the caller wants
+    # to go on scheduling: the container's own `staged` file is how it says it is warm, and the
+    # keeper reads that rather than waiting here.
+    #
+    # NO CLOCKS. A staged container has nothing to exceed -- it holds a deadline of its own
+    # instead (FFBOX_IDLE_TTL_SECS, enforced in pool-task.sh) and retires by itself.
+    #
+    # THE LABEL CARRIES THE BRANCH, so the keeper can count what is staged and tell what each one
+    # can serve with one `docker ps` and no bookkeeping of its own.
+    echo "[ffbox] staging a pool container on ${REF} (ttl ${IDLE_TTL}s)"
+    set +e
+    docker run --rm -d \
+        --name "ffbox-pool-${STAGE_POOL}" \
+        --label "ffbox.pool=${REF}" \
+        --label "ffbox.pool.id=${STAGE_POOL}" \
+        "${RUN_ARGS[@]}" \
+        -v "$POOL_IN:/ffbox/in:ro" \
+        -v "$OUT:/ffbox/out" \
+        -e "FFBOX_IN=/ffbox/in" \
+        -e "FFBOX_IDLE_TTL_SECS=$IDLE_TTL" \
+        "$IMAGE" >/dev/null
+    _rc=$?
+    set -e
+    [ "$_rc" -eq 0 ] || { echo "ffbox: could not stage ffbox-pool-${STAGE_POOL}" >&2; exit "$_rc"; }
+    echo "[ffbox] staged ffbox-pool-${STAGE_POOL}"
+    exit 0
+fi
+
 set +e
-docker run --rm \
-    --name "ffbox-${RUN_ID}" \
-    --hostname ffbox \
-    "${NETWORK_ARGS[@]}" \
-    "${WORKSPACE_ARGS[@]}" \
-    -v "$OUT:/ffbox/out" \
-    "${PROMPT_MOUNT[@]}" \
-    "${DOCKER_MOUNTS[@]}" \
-    "${ENTRY_ENV[@]}" \
-    -e CLAUDE_CODE_OAUTH_TOKEN \
-    -e UNITY_SERIAL -e UNITY_EMAIL -e UNITY_PASSWORD \
-    -e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
-    -e DISABLE_AUTOUPDATER=1 \
-    -e FFBOX_OUTPUT_FORMAT="$OUTPUT_FORMAT" \
-    "${WORKSPACE_ENV[@]}" \
-    "$IMAGE" &
-DOCKER_PID=$!
+if [ -n "$DISPATCH" ]; then
+    # --- dispatch ------------------------------------------------------------------------------
+    #
+    # The container is already up with its workspace filled. Everything the run needs goes into
+    # the directory it is already reading, and `dispatch` goes in LAST -- pool-task.sh waits on
+    # that one file, so anything written after it would be a job the container might miss.
+    #
+    # THE ENV FILE IS WHAT A COLD RUN PASSES AS -e. It cannot be passed that way here because the
+    # container exists already, so pool-task.sh reads it and exports it. Same names, same values.
+    {
+        printf 'FFBOX_REF=%s\n' "$REF"
+        printf 'FFBOX_BRANCH=%s\n' "$BRANCH"
+        printf 'FFBOX_BRANCH_PREFIX=%s\n' "$BRANCH_PREFIX"
+        printf 'FFBOX_BASE_REFS=%s\n' "$BASE_REFS"
+        printf 'FFBOX_RUN_ID=%s\n' "$RUN_ID"
+        printf 'FFBOX_GIT_NAME=%s\n' "$FFBOX_GIT_NAME"
+        printf 'FFBOX_GIT_EMAIL=%s\n' "$FFBOX_GIT_EMAIL"
+        printf 'FFBOX_OUTPUT_FORMAT=%s\n' "$OUTPUT_FORMAT"
+    } > "$POOL_IN/env"
+    [ -f "$OUT/prompt.txt" ] && cp "$OUT/prompt.txt" "$POOL_IN/prompt.txt"
+    [ -n "$JOB_FILE" ] && cp "$JOB_FILE" "$POOL_IN/job.json"
+
+    # THE NAME MOVES WITH THE JOB. Every handle downstream -- the stop below, ffwatch's
+    # container_live(), anything an operator types -- expects ffbox-<run id>, and renaming is
+    # cheaper than teaching all of them that a pooled run is called something else. Verified on
+    # this box's rootless daemon: a running container renames, and `docker ps --filter name=` and
+    # `docker exec` follow it immediately.
+    if ! docker rename "ffbox-pool-${DISPATCH}" "ffbox-${RUN_ID}" 2>/dev/null; then
+        echo "ffbox: pool container ffbox-pool-${DISPATCH} is gone; nothing dispatched" >&2
+        set -e
+        exit 70
+    fi
+    : > "$POOL_IN/dispatch"
+    echo "[ffbox] dispatched into the pool container as ffbox-${RUN_ID}"
+
+    # `docker wait` prints the container's exit code and exits 0 itself, so the code has to come
+    # out of its stdout rather than out of $?. Backgrounded so the clock loop below watches this
+    # exactly as it watches a `docker run`.
+    docker wait "ffbox-${RUN_ID}" > "$POOL_DIR/$DISPATCH/.container-rc" 2>/dev/null &
+    DOCKER_PID=$!
+else
+    docker run --rm \
+        --name "ffbox-${RUN_ID}" \
+        "${RUN_ARGS[@]}" \
+        -v "$OUT:/ffbox/out" \
+        "$IMAGE" &
+    DOCKER_PID=$!
+fi
 
 TIMEOUT_KIND=
 if [ "$CLOCKS" = 1 ]; then
@@ -685,6 +840,29 @@ fi
 wait "$DOCKER_PID"
 RUN_RC=$?
 set -e
+
+if [ -n "$DISPATCH" ]; then
+    # `docker wait` exits 0 having PRINTED the container's code, so $? above is its own success
+    # and not the run's. An unreadable file means the container went away without docker wait
+    # seeing it end, which is a failed run rather than a successful one.
+    RUN_RC=$(tr -dc '0-9' < "$POOL_HOME/.container-rc" 2>/dev/null || true)
+    [ -n "$RUN_RC" ] || RUN_RC=70
+
+    # EVERYTHING THE RUN PRODUCED MOVES TO THE RUN DIRECTORY, and from here on nothing downstream
+    # knows this was a pooled run: the harvest validation, the hints and ffwatch all read $OUT.
+    # A rename within one filesystem, so it costs nothing even with a transcript in it.
+    (
+        shopt -s dotglob nullglob
+        for _f in "$OUT"/*; do
+            mv -f "$_f" "$FINAL_OUT"/ 2>/dev/null || cp -a "$_f" "$FINAL_OUT"/ 2>/dev/null || true
+        done
+    )
+    OUT="$FINAL_OUT"
+    # The container is gone and so is anything it could still be told. What is left under
+    # POOL_HOME is this run's leavings, and the keeper deletes the directory; the transcript is
+    # the one thing that must be taken out first, which is ffwatch's job and not this script's.
+    rm -f "$POOL_HOME/.container-rc"
+fi
 
 case "$TIMEOUT_KIND" in
     warmup) RUN_RC=123 ;;

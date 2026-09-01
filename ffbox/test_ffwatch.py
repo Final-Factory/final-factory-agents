@@ -3798,7 +3798,16 @@ def test_the_run_is_on_the_filtered_network():
     """
     print("egress: the run is on the filtered network")
     src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
-    run = src.partition("docker run --rm")[2]
+    # EVERY container ffbox starts, not just the cold one. The cold run and a staged pool
+    # container are launched from one shared argument list precisely so a fence cannot be on one
+    # and off the other, so that list is what these assert on — and that every `docker run` in
+    # the file is built from it.
+    run = src.partition("RUN_ARGS=(")[2].partition(")\n")[0]
+    starts = [ln for ln in src.splitlines() if ln.strip().startswith("docker run")]
+    check("every container is started from the one argument list",
+          len(starts) >= 2 and all('"${RUN_ARGS[@]}"' in
+                                   src.partition(ln)[2].partition("$IMAGE")[0] for ln in starts),
+          starts)
     check("the container is given a network explicitly", '"${NETWORK_ARGS[@]}"' in run)
     check("and the default is the filtered one", "NETWORK=${FFBOX_NETWORK:-ffbox-net}" in src)
     check("a missing network is refused, not worked around",
