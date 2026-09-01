@@ -267,9 +267,27 @@ unset _c
 # update stands down: the timer comes back in five minutes and nothing was interrupted.
 _deadline=$(( $(date +%s) + DRAIN_TIMEOUT ))
 while :; do
+    # BUSY, NOT MERELY PRESENT. Counting every workload container was right only because the
+    # sweep above had just destroyed the idle ones and both lanes are drained, so no new one can
+    # appear -- but the drains are NOT fatal if they fail to take (they log a warning and this
+    # carries on), and one idle runner registering after the sweep would then hold the update
+    # here for the whole two-hour window before standing down over nothing.
+    #
+    # So ask the same question the sweep asked. A CI container with no Runner.Worker is idle and
+    # is destroyed here rather than waited on. An agent container is counted busy: the staged
+    # ones are already gone and a drained ffwatch stages no more, so what is left is a run.
     _busy=0
     for _c in $(docker_ ps --filter label=ffbox.workload --format '{{.Names}}' 2>/dev/null); do
-        _busy=$((_busy + 1))
+        case "$_c" in
+            ffghr-*)
+                if docker_ top "$_c" -o pid,comm 2>/dev/null | grep -q 'Runner\.Worker'; then
+                    _busy=$((_busy + 1))
+                else
+                    log "destroying idle runner $_c that appeared after the sweep"
+                    docker_ rm -f "$_c" >/dev/null 2>&1 || :
+                fi ;;
+            *)  _busy=$((_busy + 1)) ;;
+        esac
     done
     if [ "$_busy" -eq 0 ]; then
         break
