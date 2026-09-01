@@ -224,9 +224,26 @@ grounds that a half-removed fence is worse than none.
 `ffbox-egress:latest` onto FinalFactoryTester's daemon, and the runners use ffbox-container's,
 which knew nothing about it. `03-image.sh` builds it there before bringing the fence up.
 
-**Which daemon you reach is `DOCKER_HOST`'s business.** The script calls `docker` by name and never
-guesses. Set it wrong and you will build a fence in a network namespace nothing runs in, with no
-error. There is deliberately no `sudo docker` fallback for the same reason.
+**Which daemon you reach is defaulted, not left to the shell.** `ffbox-egress.sh` sets
+`DOCKER_HOST` to `/run/ffbox-container/docker.sock` when the environment does not, exactly as
+`ffbox` does, and there is still no `sudo docker` fallback.
+
+This paragraph used to say the opposite — that the script "never guesses", and the daemon was
+`DOCKER_HOST`'s business, set by the unit and the profile.d line. The unit does set it. The
+profile.d line only reaches a LOGIN shell. So a hand-run from any other shell fell through to the
+docker CONTEXT, which on this account is still `rootless` → `/run/user/1015/docker.sock`.
+
+On 2026-09-01 that cost most of a night. `ffbox-egress.sh up`, typed by hand to apply a new
+allowlist entry, rebuilt the fence on that daemon — which held no run, no CI job and no workload
+of any kind, only a leftover copy of the proxy from before the shared-daemon migration. It
+printed "ffbox-egress is up" and listed the new allowlist. The real fence went on refusing the
+host that had just been added. The entry was then read back out of the same wrong container and
+reported as verified; every line of that output was true and none of it was about the fence any
+run uses. What exposed it was an unrelated test failing on `ECONNRESET`.
+
+`ffbox-egress.sh status` prints the socket it is talking to. If that line ever says
+`<default socket>` again, something has undone this and you are about to configure the wrong
+machine. The stray proxy and its unused `ffbox-net` were deleted the same day.
 
 **An empty allowlist is refused.** The entrypoint exits rather than start wide open.
 

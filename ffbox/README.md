@@ -57,7 +57,15 @@ Everything ffbox owns on a machine lives in one directory:
 
 ```
 ~/.config/ffbox/secrets.env        tokens, the Unity account
-~/.config/ffbox/config.json        ffwatch + ffweb settings (lanes, ceilings, web_host/web_port)
+~/.config/ffbox/config.json        EVERY setting this box has, in four parts: the pipeline at the
+                                   top level (watch, rate_limits, web_host/web_port, and
+                                   max_concurrent_runs, the ceiling on containers that BOTH lanes
+                                   count against); "container" for what is true of a container
+                                   whichever lane started it (workspace_size, memory,
+                                   pids_limit); "ffagent" for what governs a run (base_ref, the
+                                   three clocks, pool); "githubrunner" for the CI runners, which
+                                   kept their own file until 2026-09-01. The "_help" block in it
+                                   is generated on every setup run and documents each part.
 ~/.config/ffbox/discord/           the Discord CLI's home: config.json, cursors, doorbell, lock
 ~/.config/ffbox/discord.disabled   the kill switch
 ~/.config/ffbox/update.disabled    pauses the self-update timer (see "Staying current")
@@ -380,12 +388,28 @@ Consequences:
   two Unity runs at once were a race rather than two seats, because activation state is
   machine-level and the first container to exit fires `-returnlicense` for the shared identity.
   It also said, honestly, that whether concurrent activation worked at all was untested here.
-  It has since been tested — four game-ci containers in parallel, no licensing trouble — so the
-  ceiling on parallel editors is about CPU and memory rather than licensing, and raising it is an
-  ordinary config question. **`max_concurrent_runs` is that ceiling and the only one.** Every
-  concurrent run gets a Unity session, so one number bounds agents and editors together. A
-  separate `max_unity_runs` existed until 2026-08-25, from when Unity was optional per run; it
-  counted exactly the same runs and was deleted.
+  It has since been tested — four game-ci containers in parallel, no licensing trouble.
+
+  **REWRITTEN 2026-09-01, because "no licensing trouble" was luck rather than a property.** Two
+  containers presenting the same `/etc/machine-id` are ONE machine to Unity, a Personal licence
+  holds one seat per machine, and the second concurrent activation dies with "Found 0 entitlement
+  groups and 0 free entitlements", exit 198. ffgithubrunners measured that on 2026-08-29 and
+  fixed it with per-slot ids; the agent lane did not, and got away with it only because the
+  ceiling was two and licensing had been deferred to whatever launched an editor, which made two
+  overlapping activations rare rather than impossible.
+
+  Both lanes now derive an id from a claimed slot — `ffghr-<host>-slot-<n>` against
+  `ffbox-<host>-agent-<n>`, different salts, so the two numberings cannot collide. Per slot
+  rather than game-ci's per-container `dbus-uuidgen`, because an activation registers a machine
+  and only `-returnlicense` gives it back: a random id makes every leaked seat permanent, while a
+  recycled one is reclaimed by whatever takes the number next. See `ffbox/lib-workloads.sh`.
+
+  **`max_concurrent_runs` is the ceiling on CONTAINERS, and it is the box's rather than one
+  lane's.** Agent runs, staged pool containers and ffgithubrunners' CI jobs all count against it:
+  same daemon, same size of workspace, and RAM is what runs out. Each lane also has its own
+  ceiling under it, `pool.max` in its section. A separate `max_unity_runs` existed until
+  2026-08-25, from when Unity was optional per run; it counted exactly the same runs and was
+  deleted.
 
   One edge is still worth knowing rather than fearing: the return-licence trap fires on exit for
   an identity every container shares. The likely reason four in parallel is fine is that the
@@ -859,7 +883,7 @@ the skills merely advise:
   target, or a forum would give each new bug thread its own refusal. A private venue is also told which tier ran out.
 - **Reactions go last, both directions.** The acknowledgement is queued at turn creation and
   holds the lowest id in its conversation, so sending in id order spent the last slot under a
-  `send_limits` ceiling on the tick and left the answer it promised pending. Messages are sent
+  `rate_limits.send` ceiling on the tick and left the answer it promised pending. Messages are sent
   first and reactions after; a reaction still counts towards the ceilings, which are the only
   bound on what reaches Discord at all. Its removal is queued alongside the reply and is
   deprioritised the same way, because taking a mark off is never more urgent than the answer
@@ -876,9 +900,12 @@ the skills merely advise:
   accepted it" and "the row says sent" would double-post on restart. The nonce is derived from
   the outbound row's uuid — deterministic, so the retry presents the same one and Discord hands
   back the original message.
-- **One place for the kill switch, send-side rate limits and `--dry-run`.** `send_limits`
+- **One place for the kill switch, send-side rate limits and `--dry-run`.** `rate_limits.send`
   caps sends per hour overall and per conversation; `--dry-run` marks every row `dry` and posts
-  nothing.
+  nothing. It lives inside `rate_limits` beside the trust tiers because both answer "how much may
+  this thing do" — the tier keys cap TURNS, `send` caps what reaches the wire, and the two are
+  separate because one run that loops writing intents would spray a thread no matter how few
+  turns it took. Anything under `rate_limits` that is not `send` is a tier.
 - **Retries are bounded.** A transient failure leaves the row `pending` with `attempts` and
   `last_error` recorded and an exponential backoff; after `max_send_attempts` it becomes
   `rejected` so it stops consuming send slots and shows up in `ffwatch status`. `ask` and
@@ -950,18 +977,26 @@ A request used to wait about forty seconds before the model read a word of it. M
 `docker run`, a 22 GiB tar onto a fresh tmpfs, a recursive chown over 89,664 files and a fetch
 from the mirror, none of which depends on what was asked.
 
-So it happens before the asking. `idle_agents` containers sit with their workspace filled and
+So it happens before the asking. `pool.idle` containers sit with their workspace filled and
 wait; a request that finds one starts the agent in **1.2 seconds**, measured on this box.
 
 ```json
-"idle_agents": 1,              // how many wait while nothing is happening. 0 is off
-"idle_agent_ttl_secs": 14400,  // what one waits before retiring, enforced inside it
-"pool_ref": null               // which branch to stage; null follows base_ref
+"ffagent": {
+  "pool": { "idle": 1,         // how many wait while nothing is happening. 0 is off
+            "max": -1 },       // this lane's ceiling; -1 means "the box's", max_concurrent_runs
+  "idle_agent_ttl_secs": 14400,// what one waits before retiring, enforced inside it
+  "pool_ref": null             // which branch to stage; null follows base_ref
+}
 ```
+
+Both lanes describe their pool the same way — `githubrunner.pool` has the same two keys, where
+`max` is the most CI jobs at once. The coercion is shared too: a negative `idle` is 0 (off), a
+negative `max` is `max_concurrent_runs`, and 0 is left alone on both because "no places" is a
+thing somebody may mean.
 
 ```bash
 python3 ffbox/ffwatch.py pool          # what is staged, on what, and how old
-python3 ffbox/ffwatch.py pool stage    # stage one now, ignoring idle_agents
+python3 ffbox/ffwatch.py pool stage    # stage one now, ignoring pool.idle
 python3 ffbox/ffwatch.py pool drop     # destroy them all, or one by id
 ```
 
@@ -969,19 +1004,36 @@ python3 ffbox/ffwatch.py pool drop     # destroy them all, or one by id
 a run wrote is ever seen by a later run and the workspace is still a tmpfs the host cannot see.
 What changed is only when the filling happens.
 
-**There are no slots.** ffgithubrunners numbers its slots because a systemd template unit needs a
-stable instance; nothing here outlives a container, so staging creates one directory named for
-the container and deletes it with the container. A container's mounts are fixed when it is
+**A container gets a spool directory, and a slot number it holds no longer than it lives.** The
+directory is named for the container and deleted with it; nothing here outlives a container, so
+there is nothing to number for its own sake — ffgithubrunners numbers its slots because a systemd
+template unit needs a stable instance, and that reason does not apply.
+
+What DOES need a number is the Unity machine id (see the licensing section above), and it has to
+be chosen when the container STARTS, which for a staged one is hours before it has a turn. So a
+container claims a slot at stage time and holds it for its idle life. The claim is a file naming
+the container, and a number is free again the moment that container is gone — the same rule
+ffgithubrunners applies to its busy markers, which is what makes it survive a SIGKILL with no
+reaper. The file records the container ID rather than its name, because dispatch renames it. A container's mounts are fixed when it is
 created, so that directory is how a job reaches one that is already running: the host writes
 `job.json`, the attachments and an env file into `in/`, and `dispatch` last. `in/` is read-only
 to the container and written by the host, which is the whole trick — read-only is the
 container's view, not the host's. At dispatch the container is renamed to `ffbox-<run id>`, so
 every existing handle keeps working.
 
-**What it costs is memory.** A staged container holds its whole workspace resident, 22 GiB for
-master. The keeper checks `MemAvailable` before staging and keeps back enough for
-`max_concurrent_runs` cold launches, and a cold launch that is short of memory **evicts** a
-staged container rather than failing: the pool must never be why a real turn cannot start. Note
+**What it costs is memory and a Unity seat.** A staged container holds its whole workspace
+resident, 22 GiB for master, and since 2026-09-01 it also holds a licence: `pool-task.sh`
+activates after the workspace is synced and before the container goes idle, so a dispatched turn
+never waits for one. That reverses the lazy acquisition of 2026-08-31, which was right while
+every container was cold and wrong once there was a warm pool — the cost moves off the request
+path instead of being avoided. It is affordable because the machine ids are per slot, so the
+licence sees a small recycled set of machines rather than one per container.
+
+The keeper checks `MemAvailable` before staging and keeps back enough for the cold launches the
+ceiling still allows, and a cold launch that is short of memory **evicts** a staged container
+rather than failing: the pool must never be why a real turn cannot start. On top of that every
+container now runs under a cgroup: `container.memory` and `container.pids_limit`, the same
+numbers CI has had all along and the agent lane had none of until 2026-09-01. Note
 that `--tmpfs /workspace` is a tmpfs Docker creates, so it is NOT charged to `/dev/shm` — with a
 run in flight `df` reported 2.1M used of 378G while that run held 24G. `/proc/meminfo` is the
 number that means anything here.
@@ -998,7 +1050,7 @@ try to create `out/owner`, and whoever wins decides what happens next.
 immediately after draining.
 
 **The pool is never a dependency.** An empty pool, a container staged on another branch, a run
-with mounts a staged container does not have, `--direct`, and `idle_agents: 0` all fall through
+with mounts a staged container does not have, `--direct`, and `pool.idle: 0` all fall through
 to a cold launch, which is exactly what this did before.
 
 Design: `design/ffbox_idle_agents_design.txt`.

@@ -22,6 +22,29 @@ intervention, and manual intervention on a running build server is not free.
   `PartOf=ffbox.target` — `ffwatch`, `ffweb` **and `ffdiscord-listener`** — so all three come
   back on the new code, with the new plugin cache already in place because stage 5 ran first.
 
+**IT MAY DECIDE NOT TO UPDATE AT ALL, and that is the correct behaviour (2026-09-01).** Before
+it stops anything it drains BOTH lanes — `ffwatch drain` and `ffgithubrunners drain` — and then:
+
+- **idle containers are destroyed.** A staged agent container and a registered-but-jobless CI
+  runner hold a workspace and no work; they are cheap to recreate, and keeping one across a merge
+  is how a container ends up serving a turn through the OLD task script, since its mounts point
+  at inodes the merge replaced.
+- **a container with work in it is never killed.** It gets the whole window, and if it is still
+  going at the end the UPDATE stands down and the next tick tries again.
+
+So "a push is live on the next tick" is no longer reliably true. A CI job takes up to 90 minutes,
+and a push behind one simply waits. The journal says so plainly — `waiting for N working
+container(s) to finish`, then either `nothing is running; safe to stop` or `STANDING DOWN rather
+than killing them`. **Read that before concluding a push did not land.** Do not intervene; that
+is the rule this whole note exists for, and it applies twice as hard when the reason for the
+delay is a job somebody is waiting on.
+
+**`ffbox-egress` is NOT `PartOf=ffbox.target`**, deliberately: stopping the pipeline must not
+take the fence down, and the proxy has to be up before ffwatch starts a container rather than
+alongside it. So a target restart does NOT reload the allowlist. Changing
+`ffbox/egress/allowlist.txt` needs `ffbox-egress.sh up`, which recreates the proxy when the
+allowlist fingerprint changes — and see [[ffbox-two-docker-daemons]] before running it by hand.
+
 **Why I got it wrong, so as not to repeat it.** `sudo systemctl restart ffdiscord-listener`
 failed from my shell with "interactive authentication required", and I read that as "this box
 cannot restart the listener without a human". The NOPASSWD sudoers rule is scoped to exactly
@@ -50,5 +73,5 @@ points at `/opt/final-factory-agents` on this box: the checkout the live service
 the updater fast-forwards. Editing there directly races the updater's fast-forward. Work in
 your own checkout, push, and let the updater deliver it.
 
-Related: [[ffbox-installs-as-one-service]], [[feedback-publish-harness-changes-to-ff-agents]],
-[[feedback-simple-report-language]].
+Related: [[ffbox-installs-as-one-service]], [[ffbox-two-docker-daemons]],
+[[feedback-publish-harness-changes-to-ff-agents]], [[feedback-simple-report-language]].
