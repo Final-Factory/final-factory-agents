@@ -114,8 +114,12 @@ config reaches the container through the environment, never disk. It is dropped 
 environment after the entrypoint reads it, though it remains in that process's argv; what the
 design relies on is that it is single-use and dies with the container.
 
-The four old runners still carry `.credentials` files and will until they are deleted at the end of
-the cutover. `chmod 640` on them is still worth doing in the meantime.
+The four old runners still carry `.credentials` files.
+
+> **Unblocked 2026-09-01.** They were kept alive for `deploy.yml`, the only workflow asking for
+> `runs-on: self-hosted`. That file has been deleted, so they serve no workflow in the repository
+> and can simply be decommissioned — which removes these `.credentials` rather than tightening
+> them. `chmod 640` is still worth doing for as long as they exist.
 
 **Effort:** small now, removed entirely once the old runners go.
 
@@ -313,11 +317,16 @@ likely ones.
 workflow asks for them. Anyone with write access can print them. Nothing at the runner layer
 changes this; it is a question about who has write access to the org.
 
-> **Narrowed 2026-09-01, but not closed.** The Unity secrets are no longer *needed*: both lanes now
-> mount an offline `.ulf` licence and `unity-license.sh` prefers it, so a job never reads them. They
-> are still *handed* to the job, because `main.yml` names them in its `env:` block and editing a
-> workflow file needs a token scope this box deliberately lacks. Removing those four lines from
-> `main.yml` is what actually closes this, and it is now a safe edit rather than a breaking one.
+> **Closed in the repository, 2026-09-01 — one manual step left.** Both lanes now mount an offline
+> `.ulf` licence and `unity-license.sh` resolves it locally, so the Unity secrets stopped being
+> needed. `main.yml` no longer names them, and `deploy.yml` — the last reader of `UNITY_LICENSE` —
+> was deleted. **No workflow in the repository references a Unity secret.**
+>
+> They are still *stored*, and a stored secret is readable by anyone who can write a workflow, so
+> the finding is not closed until `UNITY_LICENSE`, `UNITY_EMAIL`, `UNITY_PASSWORD` and
+> `UNITY_SERIAL` are deleted in Settings → Secrets. Nothing on the build box depends on those
+> copies: the licence renews from `~/.config/ffbox/secrets.env`, host-side.
+>
 > `GITHUB_TOKEN` is unaffected and stays.
 
 **A job gets root inside its own container or guest.** Intended. The container is the boundary,

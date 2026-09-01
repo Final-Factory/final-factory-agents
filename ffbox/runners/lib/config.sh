@@ -141,9 +141,12 @@ _ffghr_set WATCHDOG_MINUTES watchdog_minutes 120
 _ffghr_set IMAGE            image            ffbox:latest
 
 # NO self-hosted, permanently. It was going to come back at cutover, but routing main.yml with
-# `runs-on: ffgithubrunners` is better: that label is carried only by these runners and
-# self-hosted only by the four legacy ones, so the two harnesses stay separable with no label
-# surgery, and deploy.yml keeps landing on the old runners without being pinned by hand.
+# `runs-on: ffgithubrunners` is better: that label is carried only by these runners, so the two
+# harnesses stay separable with no label surgery.
+#
+# NOTHING IN THE GAME REPO ASKS FOR self-hosted ANY MORE. deploy.yml was the last workflow that did
+# and it was deleted on 2026-09-01, so the four legacy runners now serve nothing and adding the
+# label back here would only widen what can land on these containers.
 _ffghr_set LABELS           labels           'Linux,X64,ffgithubrunners'
 
 # --- GitHub ---------------------------------------------------------------------------------
