@@ -65,8 +65,102 @@ log() { printf '[ffbox] %s\n' "$*"; }
 # ON INT/TERM TOO, which is the case that matters most here. An agent killed at its ceiling is
 # exactly the run whose work is worth keeping — turn 1 of conversation 30 blew the clock holding
 # two commits — and this is the only thing standing between those commits and a freed tmpfs.
+#
+# STOPPING THE AGENT IS PART OF ENDING, and the trap above cannot do it on its own. `docker
+# stop` signals PID 1 and nothing else, and bash does not run a trap while it is waiting on a
+# FOREGROUND child: it waits for the child to finish and runs the handler after. Measured with
+# a 20-second child and a TERM at 2 seconds, the handler fired at t=20; with the same child
+# backgrounded and waited on, at t=2. So a foreground agent is not stopped by its ceiling and
+# nothing after it runs either -- docker's SIGKILL arrives 120 seconds later and no trap
+# survives that. The agent is backgrounded below and this is what reaches it.
+#
+# AND SAYING SOMETHING, because result.json is written after the agent returns and a killed
+# agent leaves none. ffwatch reads that file rather than the stream, so without a stub a public
+# thread was told that something broke and a terminal printed nothing at all.
+
+FFBOX_AGENT_PID=
+FFBOX_SHARER_PID=
+
+# The last {"type":"result"} line of the stream is the run envelope: cost, turn count, token
+# usage and the structured verdict. Lifting it into result.json is the host's contract with
+# this script — ffwatch reads that file, never the stream.
+#
+# A FUNCTION BECAUSE THE FINISH HANDLER NEEDS IT TOO. It used to be inline after the agent
+# returned, which is exactly the path a killed agent does not take, so a stopped run left no
+# result.json at all: a public thread got PUBLIC_NO_ANSWER ("something broke ... try asking
+# again") and the person at a terminal got an empty screen after fifteen minutes.
+#
+# Re-deriving rather than guarding on the file's absence, so calling it twice is calling it
+# once: the stream is the input either way and a run that produced a real result event gets
+# that same event written again. $1 is what to say when there is no result event, which is the
+# only case where the two callers want different words.
+lift_result() {
+    python3 - "$FFBOX_OUT" "${1:-no result event in the stream}" <<'RESULTEOF'
+import json
+import os
+import sys
+
+out, missing = sys.argv[1], sys.argv[2]
+result = None
+try:
+    with open(os.path.join(out, "stream.jsonl"), "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict) and rec.get("type") == "result":
+                result = rec
+except OSError:
+    pass
+
+with open(os.path.join(out, "result.json"), "w", encoding="utf-8") as fh:
+    json.dump(result or {"type": "result", "is_error": True, "subtype": missing},
+              fh, indent=2, ensure_ascii=False)
+RESULTEOF
+}
+
+# Stop the transcript ticker and share once more by hand, covering a compaction that rewrote
+# the file between the last tick and now. Guarded on the function existing because the finish
+# handler is installed before share_transcript_now is defined, and an early exit would
+# otherwise call a name bash has not seen yet.
+_ffbox_stop_sharer() {
+    [ -n "$FFBOX_SHARER_PID" ] || return 0
+    kill "$FFBOX_SHARER_PID" 2>/dev/null
+    wait "$FFBOX_SHARER_PID" 2>/dev/null
+    FFBOX_SHARER_PID=
+    if command -v share_transcript_now >/dev/null 2>&1; then
+        share_transcript_now
+    fi
+    return 0
+}
+
+_ffbox_stop_agent() {
+    [ -n "$FFBOX_AGENT_PID" ] || return 0
+    kill -0 "$FFBOX_AGENT_PID" 2>/dev/null || return 0
+    log "stopping the agent (pid $FFBOX_AGENT_PID)"
+    kill -TERM "$FFBOX_AGENT_PID" 2>/dev/null
+    # Ten seconds to write out whatever it is holding, then it goes. Small against the 120
+    # docker stop allows, because everything after this still has to happen.
+    _w=0
+    while [ "$_w" -lt 10 ] && kill -0 "$FFBOX_AGENT_PID" 2>/dev/null; do
+        sleep 1
+        _w=$((_w + 1))
+    done
+    kill -KILL "$FFBOX_AGENT_PID" 2>/dev/null
+    FFBOX_AGENT_PID=
+}
+
 _ffbox_finish() {
     _rc=$?
+    _ffbox_stop_agent
+    _ffbox_stop_sharer
+    # The stream is on the bind mount and complete as far as it got, so the result can still be
+    # lifted out of it. A run killed mid-answer has no result event and gets the stub.
+    lift_result "the run was stopped before the agent finished"
     if [ -x /ffbox/harvest-workspace.sh ] && [ -n "${FFBOX_CACHE_ENTRY:-}" ]; then
         /ffbox/harvest-workspace.sh || log "WARNING: harvest failed"
     fi
@@ -197,7 +291,7 @@ log "                 not from .claude/settings.json in the checkout (see the no
 # job.json is JSON with player-authored text in it. Parse it with python3 (present in the
 # image) rather than sed/grep — a hand-rolled shell parser is exactly how a bug report
 # containing a quote character turns into a broken command line.
-if ! python3 - "$JOB_FILE" "$FFBOX_OUT/argv" <<'PYEOF'
+if ! python3 - "$JOB_FILE" "$FFBOX_OUT/argv" <<'ARGVEOF'
 import json
 import os
 import sys
@@ -530,7 +624,7 @@ with open(argv_path, "wb") as fh:
 sys.stderr.write("kind=%s local=%s tools=%s resume=%s\n" % (
     (job.get("conversation") or {}).get("kind"), is_local, caps.get("tools"),
     bool(session.get("resume"))))
-PYEOF
+ARGVEOF
 then
     log "ERROR: could not build the claude invocation from $JOB_FILE"
     exit 78
@@ -552,10 +646,26 @@ log "launching the agent (capabilities came from job.json; see claude.log for st
 # pass of the loop runs before its own first sleep, so the file is shared within a second of
 # appearing. See share_transcript_now above for why this exists at all.
 share_transcript_loop &
-SHARER_PID=$!
+FFBOX_SHARER_PID=$!
 
-"${ARGV[@]}" > "$FFBOX_OUT/stream.jsonl" 2> "$FFBOX_OUT/claude.log"
+# BACKGROUNDED AND WAITED ON, RATHER THAN RUN IN THE FOREGROUND, and it is not a style choice.
+# `docker stop` sends SIGTERM to PID 1, which is this script, and to nothing else — the agent is
+# never signalled. Bash then does not run a trap while it is waiting on a FOREGROUND child: it
+# waits for the child to finish and runs the handler afterwards. Measured on 2026-08-31 with a
+# 20-second child and a TERM at 2 seconds, the handler ran at t=20; with the same child
+# backgrounded and waited on, at t=2. So the agent clock stopped nothing, and what actually
+# ended a run that ignored it was docker's SIGKILL 120 seconds later, which no trap survives.
+#
+# `wait` on a specific pid, not a bare `wait`: the transcript sharer is a background child too,
+# and a bare wait would sit there until the sharer's infinite loop ended, which is never.
+"${ARGV[@]}" > "$FFBOX_OUT/stream.jsonl" 2> "$FFBOX_OUT/claude.log" &
+FFBOX_AGENT_PID=$!
+wait "$FFBOX_AGENT_PID"
 rc=$?
+# A `wait` interrupted by a signal returns 128+signo without the child having exited, so the
+# handler is what ends the run in that case and this line is never reached. Reaching it means
+# the agent finished on its own.
+FFBOX_AGENT_PID=
 AGENT_END=$(date +%s)
 
 # Stop the ticker, then share once more by hand. The final pass is what covers a compaction
@@ -563,42 +673,11 @@ AGENT_END=$(date +%s)
 # file once more in finish_run, and that read is the one that catches everything the live
 # passes missed. No trap of its own — `_ffbox_finish` above owns EXIT/INT/TERM, and a second
 # `trap` here would REPLACE it rather than add to it, losing both the harvest and the licence
-# return on every stopped container. Nothing is lost to a `docker stop` anyway: the mode is
-# already set by then. Anything that must run at exit belongs in `_ffbox_finish`.
-kill "$SHARER_PID" 2>/dev/null
-wait "$SHARER_PID" 2>/dev/null
-share_transcript_now
+# return on every stopped container. Anything that must run at exit belongs in `_ffbox_finish`,
+# which calls this too, for the run that never reaches this line at all.
+_ffbox_stop_sharer
 
-# The last {"type":"result"} line of the stream is the run envelope: cost, turn count, token
-# usage and the structured verdict. Lifting it into result.json is the host's contract with
-# this script — ffwatch reads that file, never the stream.
-python3 - "$FFBOX_OUT" <<'PYEOF'
-import json
-import os
-import sys
-
-out = sys.argv[1]
-result = None
-try:
-    with open(os.path.join(out, "stream.jsonl"), "r", encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(rec, dict) and rec.get("type") == "result":
-                result = rec
-except OSError:
-    pass
-
-with open(os.path.join(out, "result.json"), "w", encoding="utf-8") as fh:
-    json.dump(result or {"type": "result", "is_error": True,
-                         "subtype": "no result event in the stream"}, fh, indent=2,
-              ensure_ascii=False)
-PYEOF
+lift_result
 
 # ------------------------------------------------------------------------------------------
 # harness-owned verification  (design section 14)
