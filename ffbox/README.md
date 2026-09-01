@@ -907,10 +907,11 @@ the skills merely advise:
   ended badly and why, and whether the engagement gate failed — all of it UNDER the answer,
   which is what the reader came for and what those lines are provenance for. At a **public**
   venue it is the agent's answer alone. Neither shape carries the state, the run id, the lane,
-  the cost, the turn count, the classification or the `ffresume` handle — those are on the run
-  row and on the web page, which is where somebody who wants them goes looking. The handle in
-  particular is a command typed at the box, so it lives on the conversation page under the
-  branch and not in a chat window.
+  the cost, the turn count, the classification or the session id — those are on the run row and
+  on the web page, which is where somebody who wants them goes looking. The session id in
+  particular is only usable at a machine holding the box's state directory, so it sits on the
+  conversation page under the branch — `conversation <session> (<n>)`, the transcript's
+  filename beside the number every `ffwatch` subcommand takes — and not in a chat window.
 - **One correction, where the harness disagrees with the agent.** A public reply is prose, and
   prose is the part nobody checked. A summary saying "pushed the fix and opened a PR" reads as
   fact in a bug thread even when the tests failed and the harness refused to propose anything,

@@ -2184,35 +2184,38 @@ def test_the_branch_is_shown_as_the_conversations_own():
         srv.stop()
 
 
-def test_the_resume_handle_is_on_the_conversation_page_and_nowhere_else():
-    """`ffresume <session>` belongs where somebody could act on it.
+def test_the_ids_are_on_the_conversation_page_and_nowhere_else():
+    """Both ids, together, where somebody could act on them.
 
-    It used to go out under every private Discord reply, which is the one place it cannot be
-    used — it is typed at a machine holding the box's state directory. It does not belong on
-    the conversations list either: that page answers "which of these needs me", and a session
-    id in every row is a column nobody reads until they have already picked one.
+    The session id names the transcript on disk; the number names the conversation to every
+    ffwatch subcommand. The line used to print `ffresume <session>` instead, which is a command
+    that does not exist on this box. It does not belong on the conversations list either: that
+    page answers "which of these needs me", and a session id in every row is a column nobody
+    reads until they have already picked one.
     """
     srv = serve()
     try:
         code, _h, body = srv.get("/conversation/1")
         conv = text_of(body)
-        check("the conversation carries the handle to take it over",
-              "ffresume sess-1" in conv, conv[:900])
+        check("the conversation carries both of its ids",
+              "conversation <code>sess-1</code> (1)" in conv, conv[:900])
+        check("and no longer offers a command that does not exist",
+              "ffresume" not in conv, conv[:900])
         check("under the branch, not above it",
-              conv.index("ffbox/run-b") < conv.index("ffresume"),
-              [ln for ln in conv.splitlines() if "ffresume" in ln or "run-b" in ln][:4])
+              conv.index("ffbox/run-b") < conv.index("<code>sess-1</code>"),
+              [ln for ln in conv.splitlines() if "sess-1" in ln or "run-b" in ln][:4])
 
         code, _h, body = srv.get("/")
         page = text_of(body)
-        check("and the list page carries neither the handle nor the session id",
-              "ffresume" not in page and "sess-1" not in page, page[:900])
+        check("and the list page carries no session id",
+              "sess-1" not in page, page[:900])
 
-        # A conversation whose first run has not started has no session to resume, and a handle
-        # with a blank in it reads as a command somebody could paste.
+        # A conversation whose first run has not started has no session id yet, and half the
+        # pair — with a blank where the session goes — reads as an id somebody could paste.
         code, _h, body = srv.get("/conversation/3")
         none = text_of(body)
-        check("a conversation with no session offers no handle", "ffresume" not in none,
-              none[:600])
+        check("a conversation with no session prints neither id",
+              "conversation <code>" not in none, none[:600])
     finally:
         srv.stop()
 
@@ -2277,7 +2280,7 @@ def main():
         test_the_page_shows_how_clustering_decided,
         test_the_branch_is_shown_as_the_conversations_own,
         test_a_run_that_published_nothing_does_not_claim_a_branch,
-        test_the_resume_handle_is_on_the_conversation_page_and_nowhere_else,
+        test_the_ids_are_on_the_conversation_page_and_nowhere_else,
         test_a_branch_name_cannot_carry_markup_into_the_page,
         test_timeline_reads_as_a_conversation,
         test_filters_actually_filter,

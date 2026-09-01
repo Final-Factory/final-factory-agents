@@ -6840,10 +6840,10 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # provenance FOR that answer — it belongs under the thing it backs, not stacked on top
         # of it where the first screen is status and the summary starts below the fold.
         lines = ([body, ""] + lines) if lines else [body]
-    # No resume handle here. `ffresume <session>` is typed at a machine holding the box's state
-    # directory, which Discord is not, and it rode on every private reply whether or not anyone
-    # would ever take that session over. It is on the conversation page now, under the branch,
-    # where somebody who has decided to take one over is already standing.
+    # No session id here. It is only usable at a machine holding the box's state directory,
+    # which Discord is not, and it rode on every private reply whether or not anyone would ever
+    # take that session over. It is on the conversation page now, under the branch, where
+    # somebody who has decided to take one over is already standing.
     return "\n".join(lines)
 
 

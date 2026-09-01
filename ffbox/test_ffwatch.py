@@ -2668,8 +2668,8 @@ def test_the_reply_has_two_shapes():
           text == "Checked the belt merger path; this is expected behaviour.", text)
     check("no state, run id, lane, cost, turn count or classification leads it",
           not any(bit in text for bit in ("✅", "lane ", "$0.21", "4 turns", "type:")), text)
-    check("and no ffresume footer, which names a session nobody there can resume",
-          "ffresume" not in text, text)
+    check("and no session id footer, which nobody there could use",
+          "ffresume" not in text and "sess" not in text, text)
 
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [message(24001, "why does the belt stall?")]
@@ -2701,7 +2701,7 @@ def test_the_reply_has_two_shapes():
     check("a private reply warns that the gate could not decide, and why",
           "⚠️" in ptext and "the engagement gate failed" in ptext, ptext[:400])
     check("it carries the answer too", "belt merger" in ptext, ptext)
-    check("and no session handle, which is typed at the box and not in Discord",
+    check("and no session id, which is only usable at the box and not in Discord",
           "ffresume" not in ptext
           and priv.rows("SELECT session_id FROM run")[0]["session_id"] not in ptext,
           ptext)
