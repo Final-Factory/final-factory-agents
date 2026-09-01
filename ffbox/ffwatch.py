@@ -47,6 +47,7 @@ import inspect
 import json
 import os
 import re
+import glob
 import shutil
 import sqlite3
 import subprocess
@@ -84,6 +85,11 @@ SCHEMA_VERSION = 11
 # schema script runs FIRST, so an index over a column added here would fail on an old database
 # before the ALTER could add it. If a new column ever needs an index, create the index in code
 # after this loop rather than in the .sql.
+# What one workspace costs in memory, for the headroom check before staging another. The two
+# cache entries on this box are 22.0 and 23.0 GiB extracted; 24 is the round number above both,
+# and being wrong on the generous side only means staging one fewer container than it could.
+POOL_WORKSPACE_BYTES = 24 * 1024 * 1024 * 1024
+
 ADDED_COLUMNS = [
     ("conversation", "is_thread", "INTEGER NOT NULL DEFAULT 0"),
     ("outbound", "attempts", "INTEGER NOT NULL DEFAULT 0"),
@@ -101,6 +107,14 @@ ADDED_COLUMNS = [
     ("run", "no_branch_reason", "TEXT"),
     ("run", "no_pr_reason", "TEXT"),
     ("run", "verify_secs", "REAL"),
+    # Which CLAUDE_CONFIG_DIR this run's container actually had. NULL for a cold run, meaning
+    # the conversation's own; a pooled run gets the staged container's, because that mount was
+    # fixed before anyone knew which conversation it would serve. index_transcript reads it.
+    ("run", "transcript_dir", "TEXT"),
+    # The staged container this run was dispatched into, or NULL for a cold launch. Recorded so
+    # a crash can be told from a cold run's, and so recover() knows which spool directory still
+    # holds a transcript nobody has swept.
+    ("run", "pool_id", "TEXT"),
     ("turn", "parent_turn_id", "INTEGER"),
     ("turn", "rebased_from", "TEXT"),
     ("turn", "note", "TEXT"),
@@ -311,6 +325,20 @@ DEFAULTS = {
     # and they all look like one machine to Unity, and four game-ci containers in parallel have
     # been run with no licensing trouble. Raising it is an ordinary config question.
     "max_concurrent_runs": 2,
+
+    # --- the pool (design/ffbox_idle_agents_design.txt) ---------------------------------
+    # Containers that fill their workspace before a request exists, so one that arrives finds
+    # a warm one. Measured on this box: 1.2 seconds from dispatch to the agent starting,
+    # against 40 on a cold launch. 0 is off, and off is exactly the behaviour that predates
+    # this. Re-read on the poll, so raising it takes effect without a restart.
+    "idle_agents": 1,
+    # What a staged container waits before retiring, enforced by the container itself and
+    # passed in at stage time. It stops applying the moment a request is dispatched into it.
+    "idle_agent_ttl_secs": 14400,
+    # Which branch to stage. null follows base_ref, and there is deliberately no second answer
+    # to configure: a pool staged on a branch no turn asks for serves nothing.
+    "pool_ref": None,
+    "pool_task": os.path.join(HERE, "pool-task.sh"),
     "catchup_secs": 900,
     "poll_secs": 2,
 
@@ -1668,6 +1696,7 @@ class Watcher:
         # same not-yet-inserted uuid and insert it twice, which renders as a duplicated turn.
         self._index_lock = threading.Lock()
         self._kill_switch_logged = False
+        self._pool_squeeze_logged = False
         self._drain_logged = False
         # Sweep complaints are per-alias-per-process. The sweep runs every catchup_secs, so an
         # alias that cannot be resolved would otherwise write the same line to the journal four
@@ -2886,6 +2915,362 @@ class Watcher:
 
     # -- triage -> fix (design section 13) --------------------------------------------------
 
+    # ======================================================================================
+    # the pool
+    # ======================================================================================
+    #
+    # A staged container has filled its workspace and is waiting for a request. It holds no run
+    # row, no turn, no conversation and no Unity seat, so nothing here changes what
+    # max_concurrent_runs means; what it changes is that a request arriving while one is warm
+    # starts the agent in about a second instead of forty. Measured on 2026-08-31: 1.2s against
+    # a 40s cold launch. design/ffbox_idle_agents_design.txt.
+
+    def pool_dir(self, pool_id=None):
+        base = os.path.join(self.state_dir, "pool")
+        return os.path.join(base, pool_id) if pool_id else base
+
+    def pool_containers(self):
+        """Every staged container this box holds, from the daemon rather than from a file.
+
+        The LABEL carries the branch, so one `docker ps` answers both "how many" and "what can
+        each serve" with no bookkeeping of our own to get out of step. It survives the rename at
+        dispatch, which is why the label is not what tells idle from busy — `out/owner` is.
+        """
+        fmt = '{{.Names}}\t{{.Label "ffbox.pool.id"}}\t{{.Label "ffbox.pool"}}'
+        try:
+            proc = subprocess.run(
+                [self.cfg["docker"], "ps", "--filter", "label=ffbox.pool",
+                 "--format", fmt],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"pool: could not list containers: {exc}")
+            return []
+        out = []
+        for line in (proc.stdout or "").splitlines():
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) == 3 and parts[1]:
+                out.append({"name": parts[0], "id": parts[1], "branch": parts[2]})
+        return out
+
+    def pool_owner_path(self, pool_id):
+        return os.path.join(self.pool_dir(pool_id), "out", "owner")
+
+    def pool_take(self, pool_id):
+        """Claim a staged container, atomically, against the container's own retirement.
+
+        One file decides both questions at once — is this one still available, and it is mine
+        now — so there is no window between asking and taking. The container creates the same
+        path when its deadline passes; whoever creates it first says what happens next, and the
+        loser takes the other path. O_EXCL on a shared mount is the whole mechanism: no lock to
+        leak, and no ordering to get wrong.
+
+        Inter-process because it has to be. schedule() runs in the daemon, and `ffwatch submit
+        --wait` drives a pass itself when no daemon holds the lock, so two dispatchers can be
+        looking at one container.
+        """
+        try:
+            fd = os.open(self.pool_owner_path(pool_id),
+                         os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o664)
+        except FileExistsError:
+            return False
+        except OSError as exc:
+            log(f"pool: could not claim {pool_id}: {exc}")
+            return False
+        try:
+            os.write(fd, f"host {os.getpid()} {now_iso()}\n".encode("utf-8"))
+        finally:
+            os.close(fd)
+        return True
+
+    def pool_warm(self):
+        """Staged containers that are up, finished filling, and nobody has spoken for."""
+        warm = []
+        for c in self.pool_containers():
+            d = self.pool_dir(c["id"])
+            if not os.path.exists(os.path.join(d, "out", "staged")):
+                continue                      # still extracting
+            if os.path.exists(self.pool_owner_path(c["id"])):
+                continue                      # claimed, or retiring
+            warm.append(c)
+        return warm
+
+    def pool_branch(self):
+        """Which branch the pool stages. Follows base_ref unless told otherwise, because a pool
+        staged on a branch no turn asks for serves nothing at all."""
+        return self.cfg.get("pool_ref") or self.cfg["base_ref"]
+
+    @staticmethod
+    def mem_available_bytes():
+        """MemAvailable, NOT `df /dev/shm`.
+
+        `--tmpfs /workspace` is a tmpfs Docker CREATES for the container; it is not a directory
+        under /dev/shm and is not charged to it. Measured on 2026-08-31 with one run in flight:
+        df said 2.1M used of 378G while that run's workspace held 24G and /proc/meminfo's Shmem
+        read 23.2 GiB. A check written against df would report hundreds of gigabytes free until
+        the machine died.
+        """
+        try:
+            with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) * 1024
+        except (OSError, ValueError, IndexError):
+            pass
+        return None
+
+    def pool_has_room(self, for_containers=1):
+        """Is there memory for another workspace, leaving room for the cold runs that matter more?
+
+        A staged container is an optimisation and a run is the job, so the headroom kept back is
+        max_concurrent_runs' worth: the pool must never be the reason a real turn cannot start.
+        An unreadable /proc/meminfo answers yes — this is a guard against a foreseeable squeeze,
+        not a gate that should take the feature offline on a platform it cannot measure.
+        """
+        avail = self.mem_available_bytes()
+        if avail is None:
+            return True
+        need = (for_containers + int(self.cfg["max_concurrent_runs"])) * POOL_WORKSPACE_BYTES
+        return avail >= need
+
+    def pool_reap(self):
+        """Delete the spool directory of any container that is gone.
+
+        NEVER BEFORE ITS TRANSCRIPT HAS BEEN TAKEN OUT. A pooled run writes the conversation's
+        session JSONL into its own claude directory, so a run that crashed leaves the only copy
+        here — recover() sweeps those first, and this refuses to delete a directory that still
+        holds one rather than racing it.
+        """
+        live = {c["id"] for c in self.pool_containers()}
+        base = self.pool_dir()
+        if not os.path.isdir(base):
+            return 0
+        gone = 0
+        for pool_id in os.listdir(base):
+            if pool_id in live:
+                continue
+            d = self.pool_dir(pool_id)
+            held = glob.glob(os.path.join(d, "claude", "projects", "*", "*.jsonl"))
+            if held:
+                log(f"pool: {pool_id} is gone but still holds a transcript; leaving it for "
+                    f"recovery to sweep")
+                continue
+            shutil.rmtree(d, ignore_errors=True)
+            gone += 1
+        return gone
+
+    def pool_drop(self, pool_id):
+        """Destroy a staged container and forget it. Free, because it holds no work."""
+        subprocess.run([self.cfg["docker"], "rm", "-f", f"ffbox-pool-{pool_id}"],
+                       capture_output=True, text=True, timeout=60)
+        shutil.rmtree(self.pool_dir(pool_id), ignore_errors=True)
+
+    def pool_stage(self):
+        """Start one staged container. Returns its id, or None.
+
+        ONE AT A TIME, by construction: the caller stages at most one per pass, because two
+        22 GiB extractions at once compete for the memory the runs they exist to serve need.
+        """
+        pool_id = uuid.uuid4().hex[:8]
+        d = self.pool_dir(pool_id)
+        for sub in ("in", "out", "claude"):
+            os.makedirs(os.path.join(d, sub), exist_ok=True)
+        self.share_with_container(os.path.join(d, "claude"))
+        cmd = self.ffbox_cmd() + [
+            "--stage-pool", pool_id,
+            "--pool-dir", self.pool_dir(),
+            "--ref", self.pool_branch(),
+            "--idle-ttl", str(int(self.cfg["idle_agent_ttl_secs"])),
+            "--task", self.cfg["pool_task"],
+            # The turn task the container will eventually exec. Mounted now because a mount
+            # cannot be added later, and it is the same script a cold run gets.
+            "--mount", f"{self.cfg['task_script']}:/ffbox/turn-task.sh:ro",
+            "--mount", f"{os.path.join(d, 'claude')}:/ffbox/claude",
+            "--mount", f"{self.cfg['ffverify']}:/usr/local/bin/ffverify:ro",
+        ]
+        plugin_dir = os.path.join(self.cfg["plugins_dir"], self.cfg["plugin"])
+        if os.path.isdir(plugin_dir):
+            cmd += ["--mount", f"{plugin_dir}:/ffbox/plugins/{self.cfg['plugin']}:ro"]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=180)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"pool: staging failed: {exc}")
+            shutil.rmtree(d, ignore_errors=True)
+            return None
+        if proc.returncode != 0:
+            log(f"pool: staging failed ({proc.returncode}): "
+                f"{(proc.stderr or '').strip()[:300]}")
+            shutil.rmtree(d, ignore_errors=True)
+            return None
+        log(f"pool: staging {pool_id} on {self.pool_branch()}")
+        return pool_id
+
+    def keep_pool(self):
+        """Top the pool up to `idle_agents`, if there is room for one more.
+
+        Two conditions, the second of which is what stops the pool crowding out the runs it
+        exists to serve: fewer warm containers than asked for, AND fewer containers altogether
+        than max_concurrent_runs + idle_agents.
+
+        Lowering idle_agents does NOT kill anything, for the same reason `ffgithubrunners idle`
+        does not: it is a target the keeper stops topping up, not a headcount enforced downwards.
+        The extras retire by serving one prompt each or by timing out.
+        """
+        want = int(self.cfg.get("idle_agents") or 0)
+        self.pool_reap()
+        if want <= 0 or self.killed() or self.draining():
+            return None
+        containers = self.pool_containers()
+        warm = [c for c in containers if not os.path.exists(self.pool_owner_path(c["id"]))]
+        if len(warm) >= want:
+            return None
+        if len(containers) + self.running_counts() >= \
+                int(self.cfg["max_concurrent_runs"]) + want:
+            return None
+        if not self.pool_has_room():
+            if not self._pool_squeeze_logged:
+                log("pool: not staging — too little memory free to hold another workspace "
+                    "without eating into what the runs need")
+                self._pool_squeeze_logged = True
+            return None
+        self._pool_squeeze_logged = False
+        return self.pool_stage()
+
+    def stage_session_into(self, container_claude, conv_id, session):
+        """Put the session this turn resumes where the staged container will look for it.
+
+        Claude Code writes the transcript to $CLAUDE_CONFIG_DIR/projects/<cwd slug>/<id>.jsonl,
+        and cwd inside is always /workspace, so the slug is always "-workspace". A cold run
+        mounts the conversation's own directory and the file is simply there; a pooled container
+        was created before anyone knew which conversation it would serve, so the one file the
+        run needs is copied in and moved back afterwards.
+        """
+        dest_dir = os.path.join(container_claude, "projects", "-workspace")
+        os.makedirs(dest_dir, exist_ok=True)
+        if not (session or {}).get("resume"):
+            self.share_with_container(container_claude)
+            return None
+        src = self.transcript_path(conv_id, session["id"])
+        if not os.path.exists(src):
+            log(f"pool: turn resumes {session['id']} but no transcript exists yet at {src}")
+            self.share_with_container(container_claude)
+            return None
+        dest = os.path.join(dest_dir, f"{session['id']}.jsonl")
+        try:
+            shutil.copy2(src, dest)
+        except OSError as exc:
+            log(f"pool: could not stage the session transcript: {exc}")
+        self.share_with_container(container_claude)
+        return dest
+
+    def sweep_session_out(self, pool_id, conv_id):
+        """Move a pooled run's transcripts back into the conversation they belong to.
+
+        THE ORDERING RULE. A cold run writes straight into the conversation's directory, so a
+        crash loses nothing; with a spool in the middle, the only copy is somewhere the reaper
+        is about to delete. So this runs before anything deletes a pool directory — at the end
+        of a run, and again from recover() for a run whose container died with the daemon.
+
+        A rotation writes a second session id into the same directory, so this moves whatever it
+        finds rather than the one id it expected.
+        """
+        moved = 0
+        src_dir = os.path.join(self.pool_dir(pool_id), "claude", "projects", "-workspace")
+        if not os.path.isdir(src_dir):
+            return 0
+        dest_dir = os.path.join(self.conv_dir(conv_id), "claude", "projects", "-workspace")
+        os.makedirs(dest_dir, exist_ok=True)
+        for src in glob.glob(os.path.join(src_dir, "*.jsonl")):
+            dest = os.path.join(dest_dir, os.path.basename(src))
+            try:
+                shutil.move(src, dest)
+                moved += 1
+            except OSError as exc:
+                log(f"pool: could not sweep {src}: {exc}")
+        return moved
+
+    def stage_attachments_into(self, pool_in, att_dir):
+        """Copy what a player uploaded into the spool a staged container is already reading."""
+        dest = os.path.join(pool_in, "attachments")
+        os.makedirs(dest, exist_ok=True)
+        if not os.path.isdir(att_dir):
+            return 0
+        n = 0
+        for name in os.listdir(att_dir):
+            src = os.path.join(att_dir, name)
+            if not os.path.isfile(src):
+                continue
+            try:
+                shutil.copy2(src, os.path.join(dest, name))
+                n += 1
+            except OSError as exc:
+                log(f"pool: could not stage attachment {name}: {exc}")
+        return n
+
+    def pool_status(self):
+        """What is staged, in the two or three lines a person reading `status` wants.
+
+        A staged container is not a conversation, a turn or a run, so it appears here and
+        nowhere else: putting it in any of those lists would mean inventing a row for something
+        that has no work and no history.
+        """
+        want = int(self.cfg.get("idle_agents") or 0)
+        containers = self.pool_containers()
+        if not want and not containers:
+            return []
+        lines = [f"pool: {len(containers)} staged, {want} wanted, on {self.pool_branch()}"]
+        now = datetime.now(timezone.utc)
+        for c in sorted(containers, key=lambda x: x["id"]):
+            d = self.pool_dir(c["id"])
+            staged = _read_text(os.path.join(d, "out", "staged")) or ""
+            commit = ""
+            for line in staged.splitlines():
+                if line.startswith("commit="):
+                    commit = line.split("=", 1)[1][:12]
+            state = "warming"
+            if os.path.exists(self.pool_owner_path(c["id"])):
+                state = "in use"
+            elif commit:
+                state = "warm"
+            age = ""
+            try:
+                secs = (now - datetime.fromtimestamp(
+                    os.path.getmtime(os.path.join(d, "out")), timezone.utc)).total_seconds()
+                age = f", {human_gap(secs)} old"
+            except OSError:
+                pass
+            lines.append(f"  {c['id']} {state} on {c['branch']}@{commit or '?'}{age}")
+        avail = self.mem_available_bytes()
+        if avail is not None and not self.pool_has_room():
+            lines.append(f"  not staging: {avail // (1024 ** 3)} GiB available, which is not "
+                         f"enough to hold another workspace and still start "
+                         f"{self.cfg['max_concurrent_runs']} run(s)")
+        return lines
+
+    def pool_claim_for(self, ref):
+        """A warm container this turn may use, claimed, or None.
+
+        BY BRANCH, because the workspace is only warm for the branch its cache entry came from:
+        a master-staged tree handed a develop turn checks out the whole divergence and Unity
+        re-imports it, which is slower than the cold run that would have picked the develop
+        entry. ffbox's own entry ladder chooses by branch and the pool has to agree with it.
+
+        A miss is not a failure and is not logged as one. It is the ordinary state of a box
+        whose pool is empty, and every one of them falls through to a cold launch.
+        """
+        if int(self.cfg.get("idle_agents") or 0) <= 0:
+            return None
+        want = (ref or "").replace("origin/", "")
+        # A pinned sha asks for no branch in particular; the container resets to it from
+        # wherever it is staged, and a cold run would pay the same reset from the same tar.
+        looks_like_sha = len(want) >= 7 and all(c in "0123456789abcdef" for c in want.lower())
+        for c in self.pool_warm():
+            if not looks_like_sha and c["branch"] != want:
+                continue
+            if self.pool_take(c["id"]):
+                return c["id"]
+        return None
+
     def running_counts(self):
         """How many runs are in flight.
 
@@ -3363,11 +3748,17 @@ class Watcher:
                 "player-facing disclosure rules in your role apply in full.")
         return lines + [""]
 
-    def transcript_path(self, conv_id, session_id):
-        # cwd inside the container is always /workspace, so Claude Code's project slug is
-        # always "-workspace" — deterministic even though the clone underneath differs.
-        return os.path.join(self.conv_dir(conv_id), "claude", "projects", "-workspace",
-                            f"{session_id}.jsonl")
+    def transcript_path(self, conv_id, session_id, base=None):
+        """Where this session's JSONL is, while it is being written.
+
+        cwd inside the container is always /workspace, so Claude Code's project slug is always
+        "-workspace" — deterministic even though the workspace underneath differs. `base` is the
+        CLAUDE_CONFIG_DIR the container actually had: the conversation's own for a cold run, and
+        a staged container's spool for a pooled one, which is a directory that did not know
+        which conversation it would serve when it was created.
+        """
+        base = base or os.path.join(self.conv_dir(conv_id), "claude")
+        return os.path.join(base, "projects", "-workspace", f"{session_id}.jsonl")
 
     def ffbox_cmd(self):
         path = self.cfg.get("ffbox") or os.path.join(HERE, "ffbox")
@@ -3390,6 +3781,7 @@ class Watcher:
         # with its own umask, and the next run may be a different uid again if the image is
         # rebuilt. Cheap — these trees hold a handful of files.
         self.share_with_container(claude_dir)
+
 
         job = self.build_job(turn, conv, run_id, att_dir)
         job_path = os.path.join(run_dir, "job.json")
@@ -3416,27 +3808,66 @@ class Watcher:
         # left alone rather than gaining a second one.
         if not branch.startswith(self.cfg["branch_prefix"]):
             branch = f"{self.cfg['branch_prefix']}{branch}"
+        ref = options.get("ref") or conv["base_sha"] or self.cfg["base_ref"]
+        pool_id = self.pool_claim_for(ref)
+        if not pool_id and not self.pool_has_room(for_containers=0):
+            # A STAGED CONTAINER MUST NEVER BE THE REASON A REAL TURN CANNOT START. This launch
+            # is about to ask for a 22 GiB workspace and the machine is short; a container that
+            # is only waiting in case somebody asks something is exactly what should go first.
+            # One is enough to make room for one, so this does not empty the pool in a panic.
+            for c in self.pool_warm():
+                log(f"pool: evicting {c['id']} to make room for run {run_id}")
+                self.pool_drop(c["id"])
+                break
+        # THE CONTAINER'S CLAUDE DIRECTORY IS ITS OWN, because that mount was fixed before
+        # anyone knew which conversation it would serve. The session the turn resumes is copied
+        # in here and moved back when the run ends; a handful of megabytes, and the alternative
+        # — mounting the conversations tree — would hand every run every other conversation's
+        # transcript, which holds repo internals and other people's messages.
+        container_claude = claude_dir
+        if pool_id:
+            container_claude = os.path.join(self.pool_dir(pool_id), "claude")
+            self.stage_session_into(container_claude, conv["id"], job["session"])
+
+
 
         # The run row is written BEFORE the container starts. A run that crashes, hangs or is
         # killed is still identifiable, and recovery can find it by the container name it owns.
         cur = self.db.execute(
             "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, resumed,"
-            " base_sha, unity, tools, disallowed, allowed, stream_path, branch)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            " base_sha, unity, tools, disallowed, allowed, stream_path, branch,"
+            " transcript_dir, pool_id)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (turn["id"], run_id, f"ffbox-{run_id}", job["session"]["id"],
              1 if job["session"]["resume"] else 0, conv["base_sha"], 1,
              cap["tools"], ",".join(cap["disallowed"]),
-             ",".join(cap.get("allowed") or []), os.path.join(run_dir, "stream.jsonl"), branch))
+             ",".join(cap.get("allowed") or []), os.path.join(run_dir, "stream.jsonl"), branch,
+             # The container name is ffbox-<run id> either way: a dispatched container is
+             # RENAMED as the job goes in, so recover() and container_live() need no idea that
+             # pooled runs exist. transcript_dir is the one thing that does differ.
+             container_claude if pool_id else None, pool_id))
         run_row_id = cur.lastrowid
 
         cmd = self.ffbox_cmd() + [
             "--run-id", run_id,
             "--task", self.cfg["task_script"],
             "--job-file", job_path,
-            "--ref", options.get("ref") or conv["base_sha"] or self.cfg["base_ref"],
-            "--mount", f"{claude_dir}:/ffbox/claude",
-
+            "--ref", ref,
             "--mount", f"{att_dir}:/ffbox/attachments:ro",
+        ]
+        if pool_id:
+            # Everything above that is a MOUNT is already on the staged container; what is left
+            # is the job, and --dispatch is how it gets in. The turn task, ffverify and the
+            # plugin directory were mounted at stage time from the same config values.
+            #
+            # The attachments are the exception: a mount cannot be added to a running container,
+            # so what a player uploaded is COPIED into the spool the container is already
+            # reading. Read-only to it, like the mount it replaces.
+            self.stage_attachments_into(os.path.join(self.pool_dir(pool_id), "in"), att_dir)
+            cmd += ["--dispatch", pool_id, "--pool-dir", self.pool_dir()]
+        else:
+            cmd += ["--mount", f"{container_claude}:/ffbox/claude"]
+        cmd += [
             # Nothing is mounted at /usr/local/bin/ffdiscord, on purpose. The container has
             # no ffdiscord of any kind — not the real CLI (it would need a token) and not the
             # phase-2 outbox shim (it would let the container author a message). The ff-discord
@@ -3550,6 +3981,19 @@ class Watcher:
         # the alarming one. The flag is read back out of job.json rather than recomputed from
         # the lane, so the host records exactly what the container was told to do and the two
         # cannot drift apart again.
+        # THE TRANSCRIPT COMES HOME FIRST, and nothing may delete the spool before it has.
+        # A pooled run wrote it into the staged container's own claude directory; the
+        # conversation's next turn resumes from the conversation's, and a crash between the two
+        # is the one thing this pool can lose that a cold run cannot. ffbox has already moved
+        # the run's output into run_dir by the time we are here; this is the other half.
+        run_row = self.db.one("SELECT pool_id FROM run WHERE id=?", (run_row_id,))
+        pool_id = run_row["pool_id"] if run_row else None
+        if pool_id:
+            moved = self.sweep_session_out(pool_id, conv["id"])
+            log(f"pool: {pool_id} finished; swept {moved} transcript(s) home")
+            self.db.execute("UPDATE run SET transcript_dir=NULL, stream_path=? WHERE id=?",
+                            (os.path.join(run_dir, "stream.jsonl"), run_row_id))
+
         if (job.get("verify") or {}).get("enabled"):
             self.record_verification(run_row_id, turn, run_dir, timeout_kind)
         self.publish(run_row_id, turn, conv, run_dir, job, verdict)
@@ -3655,7 +4099,7 @@ class Watcher:
 
     # -- transcript indexing ---------------------------------------------------------------
 
-    def index_transcript(self, run_row_id, conv_id, session_id):
+    def index_transcript(self, run_row_id, conv_id, session_id, transcript_dir=None):
         """Index the session JSONL into transcript_event.
 
         The file stays source of truth and payload_json keeps full fidelity; this table exists
@@ -3675,9 +4119,14 @@ class Watcher:
         line. It fails json.loads, is skipped, and — having never been marked seen — is picked
         up whole on the next pass.
         """
-        path = self.transcript_path(conv_id, session_id)
+        path = self.transcript_path(conv_id, session_id, base=transcript_dir)
         if not os.path.exists(path):
-            return 0
+            # A pooled run whose transcript has already been swept back is read from the
+            # conversation's own directory instead, which is where finish_run leaves it.
+            if transcript_dir:
+                path = self.transcript_path(conv_id, session_id)
+            if not os.path.exists(path):
+                return 0
         with self._index_lock:
             return self._index_transcript(run_row_id, conv_id, path)
 
@@ -3744,12 +4193,17 @@ class Watcher:
         added = 0
         for run in self.db.query(
                 "SELECT r.id AS id, r.session_id AS session_id,"
+                " r.transcript_dir AS transcript_dir,"
                 " t.conversation_id AS conversation_id FROM run r"
                 " JOIN turn t ON t.id=r.turn_id WHERE r.terminal_state IS NULL"
                 " AND r.session_id IS NOT NULL"):
             try:
+                # A pooled run writes into the staged container's own claude directory, because
+                # that mount was fixed before the container knew which conversation it would
+                # serve. Reading the conversation's directory instead would find nothing and the
+                # page would sit on "still warming up" for the whole run.
                 added += self.index_transcript(run["id"], run["conversation_id"],
-                                               run["session_id"])
+                                               run["session_id"], run["transcript_dir"])
             except (OSError, sqlite3.Error) as exc:  # noqa: BLE001 - one run, not the pass
                 log(f"WARNING: could not index the live transcript of run {run['id']}: "
                     f"{type(exc).__name__}: {exc}")
@@ -5108,6 +5562,18 @@ class Watcher:
         for run in self.db.query("SELECT * FROM run WHERE terminal_state IS NULL"):
             if run["container_name"] and self.container_live(run["container_name"]):
                 continue
+            # A POOLED RUN'S TRANSCRIPT IS SWEPT BEFORE ANYTHING ELSE IS DECIDED. Its container
+            # is gone, so the only copy of the conversation's memory is in a spool directory
+            # pool_reap() would delete, and the requeued turn below is about to resume from it.
+            if run["pool_id"]:
+                row = self.db.one("SELECT conversation_id FROM turn WHERE id=?",
+                                  (run["turn_id"],))
+                if row:
+                    moved = self.sweep_session_out(run["pool_id"], row["conversation_id"])
+                    if moved:
+                        log(f"pool: swept {moved} transcript(s) out of {run['pool_id']} "
+                            f"before recovering run {run['ffbox_run_id']}")
+                self.pool_drop(run["pool_id"])
             self.db.execute("UPDATE run SET terminal_state='crashed' WHERE id=?", (run["id"],))
             self.db.execute(
                 "UPDATE turn SET status='queued', started_at=NULL,"
@@ -5137,6 +5603,10 @@ class Watcher:
         self.drain_events()
         self.claim_turns()
         started = self.schedule()
+        # AFTER scheduling, never before: a turn that could use a warm container should get the
+        # one that is already there rather than wait behind the staging of another. keep_pool
+        # tops up what the turns just took.
+        self.keep_pool()
         # Before the join, because the join is what blocks: in this pass-at-a-time form the
         # live index only ever catches a run some OTHER caller started. The daemon loop below
         # is where it earns its keep, ticking every poll_secs while a container works.
@@ -5217,6 +5687,18 @@ class Watcher:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(f"{now_iso()} pid {os.getpid()}\n")
+        # STAGED CONTAINERS GO NOW, and this is not housekeeping. pool-task.sh, the turn task
+        # and ffverify are bind-mounted from the working copy, live, and the updater
+        # fast-forwards that copy immediately after draining — so a container staged before the
+        # merge would dispatch into code that changed under it. They hold no turn, so destroying
+        # them costs nothing but the tar they will extract again afterwards.
+        dropped = 0
+        for c in self.pool_containers():
+            self.pool_drop(c["id"])
+            dropped += 1
+        if dropped:
+            log(f"draining: destroyed {dropped} staged container(s)")
+
         total = self.running_counts()
         log(f"draining: {path} written; {total} run(s) in flight")
         if not wait:
@@ -5318,6 +5800,7 @@ class Watcher:
             out.append(f"blocked turns: {len(blocked)}")
             for b in blocked:
                 out.append(f"  turn {b['id']} lane={b['lane']}: {b['error']}")
+        out.extend(self.pool_status())
         if self.killed():
             out.append(f"KILL SWITCH ACTIVE: {self.cfg['kill_switch']}")
         if self.draining():
@@ -5668,6 +6151,10 @@ def build_parser():
     sp.add_argument("--timeout", type=int, default=7200,
                     help="seconds to wait before giving up (default 7200)")
     sub.add_parser("resume", help="remove the drain flag and start launching again")
+    sp = sub.add_parser("pool", help="staged containers waiting for a request")
+    sp.add_argument("action", nargs="?", default="status",
+                    choices=["status", "stage", "drop"])
+    sp.add_argument("id", nargs="?", help="for drop: one pool id, or all of them if omitted")
     sp = sub.add_parser("approve", help="release outbound rows held for approval")
     sp.add_argument("id", nargs="+", type=int, help="outbound row id(s) from `ffwatch status`")
     sp = sub.add_parser("submit", help="run a prompt through the pipeline (the local ingress)")
@@ -5747,6 +6234,25 @@ def main(argv=None):
         return 1 if left else 0
     if args.cmd == "resume":
         print("drain flag removed" if watcher.resume() else "no drain flag was set")
+        return 0
+    if args.cmd == "pool":
+        if args.action == "stage":
+            # Ignores idle_agents on purpose: this is somebody asking for one, not the keeper
+            # deciding it wants one. It still respects the memory check, which is the rule that
+            # keeps the pool from taking what the runs need.
+            pool_id = watcher.pool_stage()
+            print(f"staging {pool_id}" if pool_id else "nothing staged; see the log")
+            return 0 if pool_id else 1
+        if args.action == "drop":
+            ids = [args.id] if args.id else [c["id"] for c in watcher.pool_containers()]
+            for pool_id in ids:
+                watcher.pool_drop(pool_id)
+                print(f"dropped {pool_id}")
+            if not ids:
+                print("nothing staged")
+            return 0
+        lines = watcher.pool_status()
+        print("\n".join(lines) if lines else "the pool is off (idle_agents: 0)")
         return 0
     if args.cmd == "approve":
         done = watcher.approve(args.id)

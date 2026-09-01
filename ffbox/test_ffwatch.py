@@ -4665,8 +4665,16 @@ def test_a_container_sees_only_its_own_conversation():
     # The mount the container is given is that directory and nothing above it. A mount of
     # `conversations/` would hand every run every transcript on the box.
     src = ffwatch.inspect.getsource(ffwatch.Watcher.launch)
-    check("the claude mount is the conversation's own dir, not the conversations root",
-          "claude_dir}:/ffbox/claude" in src and "conv_root" not in src, "launch() mounts")
+    # The mounted path is `container_claude`, which is the conversation's own claude directory
+    # for a cold run and a STAGED CONTAINER'S OWN spool for a pooled one — a directory serving
+    # exactly one turn. Never a root above either: mounting the conversations tree would hand
+    # every run every other conversation's transcript, which holds repo internals, the contents
+    # of files agents read, and other people's messages.
+    check("the claude mount is scoped to one conversation, not the conversations root",
+          "container_claude}:/ffbox/claude" in src and "conv_root" not in src, "launch() mounts")
+    check("and a pooled run's is the staged container's own, not a shared one",
+          'container_claude = os.path.join(self.pool_dir(pool_id), "claude")' in src,
+          "launch() pool claude dir")
 
 
 def test_the_classifier_runs_in_a_sandbox():
@@ -6527,8 +6535,193 @@ def test_a_verification_that_never_ran_does_not_read_as_one_that_failed():
           "produced no verification report" not in (row["evidence"] or ""), dict(row))
 
 
+
+def test_the_pool_only_stages_what_it_has_room_for():
+    """The admission rule, and the one that keeps it from crowding out the runs it serves.
+
+    Two conditions: fewer warm containers than asked for, AND fewer containers altogether than
+    max_concurrent_runs + idle_agents. The second is the whole reason the pool is safe to turn
+    on -- at 2 and 1 this box holds at most three agent containers, and the third only ever
+    exists because nothing is using the first two.
+    """
+    print("pool: admission")
+    case = Case("pooladmit", base_fixture())
+    w = case.watcher
+    w.cfg["idle_agents"] = 1
+    w.cfg["max_concurrent_runs"] = 2
+
+    staged = []
+    w.pool_stage = lambda: (staged.append(len(staged)) or f"p{len(staged)}")
+    w.pool_has_room = lambda for_containers=1: True
+    w.pool_reap = lambda: 0
+
+    containers, running = [], [0]
+    w.pool_containers = lambda: list(containers)
+    w.running_counts = lambda: running[0]
+
+    check("an empty pool stages one", w.keep_pool() is not None, staged)
+    containers.append({"name": "c1", "id": "a1", "branch": "master"})
+    check("and stops at idle_agents", w.keep_pool() is None, staged)
+
+    # One warm container taken by a turn: the pool is short again, and there is room for a
+    # replacement because 1 container + 1 run is still under 2 + 1.
+    os.makedirs(os.path.dirname(w.pool_owner_path("a1")), exist_ok=True)
+    open(w.pool_owner_path("a1"), "w").close()
+    running[0] = 1
+    check("a claimed container makes the pool short, so another is staged",
+          w.keep_pool() is not None, staged)
+
+    # At the ceiling: two runs in flight and one container is 3, which is not less than 3.
+    containers.append({"name": "c2", "id": "a2", "branch": "master"})
+    running[0] = 2
+    check("but never past max_concurrent_runs + idle_agents", w.keep_pool() is None, staged)
+
+    running[0] = 0
+    w.pool_has_room = lambda for_containers=1: False
+    containers[:] = []
+    check("and never when the memory is not there", w.keep_pool() is None, staged)
+
+
+def test_two_dispatchers_cannot_take_one_container():
+    """One file answers "is this one free" and "it is mine now" in a single act.
+
+    It has to be inter-process: schedule() runs in the daemon, but `ffwatch submit --wait`
+    drives a pass itself when no daemon holds the lock, so two dispatchers can be looking at the
+    same container. The loser does not wait; it launches cold.
+    """
+    print("pool: the claim")
+    case = Case("poolclaim", base_fixture())
+    w = case.watcher
+    os.makedirs(os.path.join(w.pool_dir("z1"), "out"), exist_ok=True)
+
+    winners = []
+    def race():
+        if w.pool_take("z1"):
+            winners.append(threading.current_thread().name)
+    threads = [threading.Thread(target=race, name=f"d{i}") for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    check("exactly one of eight dispatchers takes it", len(winners) == 1, winners)
+    check("and the loser gets nothing to launch into", w.pool_take("z1") is False, None)
+
+    # The container's own retirement uses the same file from the other side: whichever gets
+    # there first decides, and the design's rule is that the loser takes the other path.
+    os.makedirs(os.path.join(w.pool_dir("z2"), "out"), exist_ok=True)
+    check("a container that has already retired cannot be dispatched into",
+          (open(w.pool_owner_path("z2"), "w").close() or w.pool_take("z2")) is False, None)
+
+
+def test_a_pooled_run_never_loses_the_conversations_memory():
+    """The one thing this pool can lose that a cold run cannot.
+
+    A cold run writes the session JSONL straight into the conversation's directory, so a crash
+    loses nothing. A pooled run writes it into the staged container's own spool, which is a
+    directory the reaper deletes -- so the sweep runs first, from finish_run and again from
+    recover(), and the reaper refuses to delete a directory that still holds one.
+    """
+    print("pool: the transcript comes home")
+    case = Case("poolsweep", base_fixture())
+    w = case.watcher
+    conv_id = w.upsert_conversation("88001", kind="ask", channel_id=ASK_CHANNEL)
+
+    src = os.path.join(w.pool_dir("s1"), "claude", "projects", "-workspace")
+    os.makedirs(src, exist_ok=True)
+    with open(os.path.join(src, "SESSION.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write('{"uuid":"u1","type":"assistant"}\n')
+
+    # The reaper must not touch it while it still holds the only copy.
+    w.pool_containers = lambda: []
+    check("the reaper leaves a spool that still holds a transcript", w.pool_reap() == 0, None)
+    check("and the transcript is still there",
+          os.path.exists(os.path.join(src, "SESSION.jsonl")), src)
+
+    check("the sweep moves it into the conversation", w.sweep_session_out("s1", conv_id) == 1,
+          None)
+    check("where the next turn resumes from",
+          os.path.exists(w.transcript_path(conv_id, "SESSION")), None)
+    check("and it is gone from the spool",
+          not os.path.exists(os.path.join(src, "SESSION.jsonl")), None)
+    check("so the reaper can now delete it", w.pool_reap() == 1, None)
+
+
+def test_a_turn_falls_back_to_a_cold_launch():
+    """The pool is an optimisation and never a dependency. Every one of these is an ordinary
+    state of an ordinary box, and none of them may be an error."""
+    print("pool: cold fallback")
+    case = Case("poolcold", base_fixture())
+    w = case.watcher
+    w.pool_containers = lambda: []
+
+    w.cfg["idle_agents"] = 0
+    check("with the pool off, nothing is claimed", w.pool_claim_for("master") is None, None)
+
+    w.cfg["idle_agents"] = 1
+    check("with an empty pool, nothing is claimed", w.pool_claim_for("master") is None, None)
+
+    # A warm container on the wrong branch is not a hit: the workspace is only warm for the
+    # branch its cache entry came from, and a cross-branch checkout is slower than a cold run
+    # that would have picked the matching entry.
+    os.makedirs(os.path.join(w.pool_dir("b1"), "out"), exist_ok=True)
+    open(os.path.join(w.pool_dir("b1"), "out", "staged"), "w").close()
+    w.pool_containers = lambda: [{"name": "c", "id": "b1", "branch": "develop"}]
+    check("a container staged on another branch is not used",
+          w.pool_claim_for("master") is None, None)
+    check("and the matching branch is", w.pool_claim_for("develop") == "b1", None)
+
+
+def test_draining_destroys_what_is_staged():
+    """The updater drains and then fast-forwards the checkout, and pool-task.sh, the turn task
+    and ffverify are all bind-mounted from that checkout, live. A container staged before the
+    merge would dispatch into code that changed under it, whatever its own timer says."""
+    print("pool: draining")
+    case = Case("pooldrain", base_fixture())
+    w = case.watcher
+    dropped = []
+    w.pool_containers = lambda: [{"name": "c1", "id": "d1", "branch": "master"},
+                                 {"name": "c2", "id": "d2", "branch": "master"}]
+    w.pool_drop = lambda pool_id: dropped.append(pool_id)
+    w.drain()
+    check("every staged container is destroyed by a drain", dropped == ["d1", "d2"], dropped)
+    check("and the flag is down so nothing stages another",
+          os.path.exists(w.cfg["drain_switch"]), None)
+    w.pool_drop = lambda pool_id: None
+    check("the keeper stages nothing while draining", w.keep_pool() is None, None)
+
+
+def test_memory_is_read_from_meminfo_not_from_dev_shm():
+    """`--tmpfs /workspace` is a tmpfs Docker CREATES; it is not a directory under /dev/shm and
+    is not charged to it. Measured on 2026-08-31 with one run in flight: df said 2.1M used of
+    378G while that run's workspace held 24G and Shmem read 23.2 GiB. A check written against df
+    would report hundreds of gigabytes free until the machine died."""
+    print("pool: the memory check")
+    src = open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
+    check("the headroom check reads /proc/meminfo", "/proc/meminfo" in src, None)
+    check("and the headroom check itself never consults df or /dev/shm",
+          "/dev/shm" not in src.partition("def pool_has_room")[2].partition("def ")[0], None)
+
+    case = Case("poolmem", base_fixture())
+    w = case.watcher
+    w.cfg["max_concurrent_runs"] = 2
+    w.mem_available_bytes = staticmethod(lambda: 200 * 1024 ** 3)
+    check("200 GiB is room for a staged container and two cold runs", w.pool_has_room(), None)
+    w.mem_available_bytes = staticmethod(lambda: 40 * 1024 ** 3)
+    check("40 GiB is not", not w.pool_has_room(), None)
+    check("but it is still room for the two runs themselves",
+          w.pool_has_room(for_containers=0) is False, None)
+    w.mem_available_bytes = staticmethod(lambda: None)
+    check("an unreadable meminfo does not take the feature offline", w.pool_has_room(), None)
+
+
 def main():
     tests = [
+        test_the_pool_only_stages_what_it_has_room_for,
+        test_two_dispatchers_cannot_take_one_container,
+        test_a_pooled_run_never_loses_the_conversations_memory,
+        test_a_turn_falls_back_to_a_cold_launch,
+        test_draining_destroys_what_is_staged,
+        test_memory_is_read_from_meminfo_not_from_dev_shm,
         test_the_finish_handler_reaches_the_agent_and_its_work,
         test_a_discord_run_can_publish_at_all,
         test_a_run_that_ran_out_of_time_still_says_so,
