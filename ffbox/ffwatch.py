@@ -2925,6 +2925,10 @@ class Watcher:
     # starts the agent in about a second instead of forty. Measured on 2026-08-31: 1.2s against
     # a 40s cold launch. design/ffbox_idle_agents_design.txt.
 
+    # Spools this process has already complained about, so the reaper says it once rather than
+    # on every pass. Class-level: it is about the path, not about a particular Watcher.
+    _unreapable = set()
+
     def pool_dir(self, pool_id=None):
         base = os.path.join(self.state_dir, "pool")
         return os.path.join(base, pool_id) if pool_id else base
@@ -3054,9 +3058,52 @@ class Watcher:
                 log(f"pool: {pool_id} is gone but still holds a transcript; leaving it for "
                     f"recovery to sweep")
                 continue
-            shutil.rmtree(d, ignore_errors=True)
-            gone += 1
+            if self._rmtree_spool(d):
+                gone += 1
         return gone
+
+    @staticmethod
+    def _rmtree_spool(path):
+        """Delete a dead container's spool, and REPORT WHETHER IT WORKED.
+
+        `shutil.rmtree(ignore_errors=True)` is not enough here and hid the failure: the
+        container writes its own CLAUDE_CONFIG_DIR as its mapped subuid, and Claude Code creates
+        `sessions/` mode 0700. The host owns the directory above it and can unlink entries
+        there, but it cannot READ a 0700 directory belonging to another uid, so rmtree's scandir
+        fails — and with ignore_errors the caller counted a removal that never happened. Left
+        one spool per pooled run on disk while reporting them reaped.
+
+        An empty directory needs no read to remove, only write on its parent, so bottom-up
+        rmdir clears the ordinary case. What genuinely cannot be removed is reported rather than
+        swallowed: the container opens its own config directory up at exit for exactly this, so
+        a leftover here means that did not happen and somebody should know.
+        """
+        shutil.rmtree(path, ignore_errors=True)
+        if not os.path.exists(path):
+            return True
+        for root, dirs, files in os.walk(path, topdown=False):
+            for name in files:
+                try:
+                    os.unlink(os.path.join(root, name))
+                except OSError:
+                    pass
+            for name in dirs:
+                try:
+                    os.rmdir(os.path.join(root, name))
+                except OSError:
+                    pass
+        try:
+            os.rmdir(path)
+        except OSError as exc:
+            # ONCE PER SPOOL PER PROCESS. The reaper runs on every pass, and a directory it can
+            # never delete would otherwise put the same line in the journal every two seconds
+            # for as long as the daemon is up — which is how a real warning becomes wallpaper.
+            if path not in Watcher._unreapable:
+                Watcher._unreapable.add(path)
+                log(f"pool: could not delete the spool at {path}: {exc}")
+            return False
+        Watcher._unreapable.discard(path)
+        return True
 
     def pool_drop(self, pool_id):
         """Destroy a staged container and forget it. Free, because it holds no work."""

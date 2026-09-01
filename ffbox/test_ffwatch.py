@@ -6640,6 +6640,79 @@ def test_a_pooled_run_never_loses_the_conversations_memory():
     check("so the reaper can now delete it", w.pool_reap() == 1, None)
 
 
+def test_a_crashed_pooled_run_gives_its_transcript_back():
+    """recover() sweeps before it decides anything, and this is the path that needs it.
+
+    A run whose container died with the daemon has a non-terminal row, so recover() requeues its
+    turn — and that requeued turn RESUMES the session whose only copy is sitting in a spool
+    directory the reaper deletes. Getting the order wrong here loses a conversation's memory
+    exactly once, silently, on the run that already went wrong.
+    """
+    print("pool: recovery sweeps first")
+    case = Case("poolrecover", base_fixture())
+    w = case.watcher
+    conv_id = w.upsert_conversation("99001", kind="ask", channel_id=ASK_CHANNEL)
+    cur = w.db.execute(
+        "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
+        " VALUES(?,1,'fix','running',?,'private')", (conv_id, ffwatch.now_iso()))
+    turn_id = cur.lastrowid
+    w.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, pool_id)"
+        " VALUES(?,?,?,?,?)", (turn_id, "d1t1-crash", "ffbox-d1t1-crash", "SESS", "k9"))
+
+    src = os.path.join(w.pool_dir("k9"), "claude", "projects", "-workspace")
+    os.makedirs(src, exist_ok=True)
+    with open(os.path.join(src, "SESS.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write('{"uuid":"u1","type":"assistant"}\n')
+
+    dropped = []
+    w.container_live = lambda name: False          # the container died with the daemon
+    w.pool_drop = lambda pool_id: dropped.append(pool_id)
+
+    check("the run is recovered", len(w.recover()) == 1, None)
+    check("its transcript reached the conversation before anything else happened",
+          os.path.exists(w.transcript_path(conv_id, "SESS")), None)
+    check("and is gone from the spool", not os.path.exists(os.path.join(src, "SESS.jsonl")),
+          None)
+    check("the staged container is dropped, not reused: its workspace holds a half-finished run",
+          dropped == ["k9"], dropped)
+    turn = w.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
+    check("and the turn is queued again, ready to resume what was just swept home",
+          turn["status"] == "queued", dict(turn))
+
+
+def test_a_cold_launch_short_of_memory_evicts_a_staged_container():
+    """A staged container must never be the reason a real turn cannot start.
+
+    It exists to make turns faster, and a turn that fails to launch is infinitely slower than
+    one that launches cold. So the squeeze takes the thing that is only waiting in case somebody
+    asks something — one of them, not the whole pool, because one is what makes room for one.
+    """
+    print("pool: eviction")
+    case = Case("poolevict", base_fixture())
+    w = case.watcher
+    w.cfg["idle_agents"] = 1
+    warm = [{"name": "c1", "id": "e1", "branch": "master"},
+            {"name": "c2", "id": "e2", "branch": "master"}]
+    dropped = []
+    w.pool_warm = lambda: list(warm)
+    w.pool_drop = lambda pool_id: dropped.append(pool_id)
+
+    src = open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
+    body = src.partition("def launch(self, turn_id)")[2].partition("\n    def ")[0]
+    check("launch evicts when it cannot claim and the memory is short",
+          "pool_has_room(for_containers=0)" in body and "evicting" in body, None)
+    check("and only when it did NOT get a container of its own",
+          body.index("pool_claim_for") < body.index("pool_has_room(for_containers=0)"), None)
+
+    # ONE, not all of them: one eviction makes room for one launch, and emptying the pool
+    # because a single turn was tight would spend the next forty seconds of every later turn
+    # restaging. The `break` is what says so, and it is easy to delete by accident.
+    loop = body.partition("for c in self.pool_warm():")[2].split("\n")[:6]
+    check("launch evicts exactly one container, not the whole pool",
+          any(ln.strip() == "break" for ln in loop), loop)
+
+
 def test_a_turn_falls_back_to_a_cold_launch():
     """The pool is an optimisation and never a dependency. Every one of these is an ordinary
     state of an ordinary box, and none of them may be an error."""
@@ -6714,6 +6787,8 @@ def main():
         test_the_daemon_loop_keeps_the_pool,
         test_two_dispatchers_cannot_take_one_container,
         test_a_pooled_run_never_loses_the_conversations_memory,
+        test_a_crashed_pooled_run_gives_its_transcript_back,
+        test_a_cold_launch_short_of_memory_evicts_a_staged_container,
         test_a_turn_falls_back_to_a_cold_launch,
         test_draining_destroys_what_is_staged,
         test_memory_is_read_from_meminfo_not_from_dev_shm,

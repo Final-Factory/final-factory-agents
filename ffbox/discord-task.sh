@@ -154,10 +154,25 @@ _ffbox_stop_agent() {
     FFBOX_AGENT_PID=
 }
 
+# THE HOST HAS TO BE ABLE TO DELETE THIS DIRECTORY AFTERWARDS, and for a pooled run that is a
+# spool belonging to one dead container rather than a conversation's permanent home. Claude Code
+# creates `sessions/` mode 0700 under CLAUDE_CONFIG_DIR as this container's own mapped subuid,
+# and the host cannot read a 0700 directory owned by another uid — so its rmtree fails, and the
+# spool leaks one directory per pooled run. Opening it up is safe precisely because everything
+# in it is this run's own and the transcript has already been swept out by the time anything
+# deletes it. Group only: ffbox-container is the group the host shares, and nothing wider.
+_ffbox_release_config() {
+    [ -n "${CLAUDE_CONFIG_DIR:-}" ] || return 0
+    [ -d "$CLAUDE_CONFIG_DIR" ] || return 0
+    chmod -R g+rwX "$CLAUDE_CONFIG_DIR" 2>/dev/null || true
+    return 0
+}
+
 _ffbox_finish() {
     _rc=$?
     _ffbox_stop_agent
     _ffbox_stop_sharer
+    _ffbox_release_config
     # The stream is on the bind mount and complete as far as it got, so the result can still be
     # lifted out of it. A run killed mid-answer has no result event and gets the stub.
     lift_result "the run was stopped before the agent finished"
