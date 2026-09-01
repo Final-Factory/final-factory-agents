@@ -6745,6 +6745,33 @@ def test_the_project_directory_survives_a_workspace_move():
           w.transcript_path(7, "SESSION").startswith(os.path.join(plain, new)),
           w.transcript_path(7, "SESSION"))
 
+    # THE ONE THE FIRST ATTEMPT COULD NOT DO. The container creates this directory as its own
+    # mapped uid with no group write, so the daemon can neither rename inside it nor chmod it.
+    # Conversation 31 on the real box was exactly this. 0555 stands in for that here: the daemon
+    # is not root in the tests either, so the permission is real.
+    stuck = os.path.join(w.conv_dir(9), "claude", "projects")
+    os.makedirs(os.path.join(stuck, old, "memory"), exist_ok=True)
+    for rel in (("STUCK.jsonl",), ("memory", "kept.md")):
+        with open(os.path.join(stuck, old, *rel), "w", encoding="utf-8") as fh:
+            fh.write("old\n")
+    os.chmod(stuck, 0o555)
+    try:
+        w.migrate_project_slugs()
+        check("an unwritable projects directory is rebuilt rather than abandoned",
+              os.path.exists(os.path.join(stuck, new, "STUCK.jsonl")), sorted(os.listdir(stuck)))
+        check("and memory/ comes with it",
+              os.path.exists(os.path.join(stuck, new, "memory", "kept.md")), None)
+        check("the tree that could not be written is kept, not deleted",
+              any(d.startswith("projects.superseded")
+                  for d in os.listdir(os.path.dirname(stuck))), None)
+    finally:
+        for base, dirs, _f in os.walk(os.path.dirname(stuck)):
+            for d in dirs:
+                try:
+                    os.chmod(os.path.join(base, d), 0o755)
+                except OSError:
+                    pass
+
 
 def test_every_lane_agrees_on_the_workspace_path():
     """The workspace is at CI's runner path, and eight files have to say so identically.

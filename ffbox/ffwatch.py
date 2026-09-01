@@ -1873,10 +1873,70 @@ class Watcher:
                             src, os.path.join(projects, CONTAINER_PROJECT_SLUG))
                         dirs += 1
                     except OSError as exc:
-                        log(f"WARNING: could not migrate {src}: {exc}")
+                        # Almost always EACCES, and it has one cause: the CONTAINER created this
+                        # directory when it wrote the first transcript, as its own mapped uid and
+                        # with no group write. The daemon can then neither rename inside it nor
+                        # chmod it — os.chmod wants ownership — which is what
+                        # share_with_container's `except OSError: pass` has quietly been unable
+                        # to fix. There is a way through and it is worth taking, because the
+                        # alternative is a conversation that silently forgets itself.
+                        log(f"cannot migrate {src} in place ({exc}); rebuilding the tree")
+                        try:
+                            n = self._rehome_projects_dir(projects, old)
+                            moved += n
+                            dirs += 1
+                        except OSError as exc2:
+                            log(f"WARNING: could not migrate {src}: {exc2}")
         if dirs:
             log(f"migrated {dirs} project directories ({moved} file(s)) into "
                 f"projects/{CONTAINER_PROJECT_SLUG}")
+
+    def _rehome_projects_dir(self, projects, old):
+        """Rebuild a `projects` directory the daemon is not allowed to write into.
+
+        What the daemon DOES own is the `claude` directory above it — it made that one itself —
+        so the unwritable tree is moved aside wholesale and a fresh `projects` is built in its
+        place, with every file COPIED across on the group read the container's umask does leave.
+        The copies belong to the daemon, so share_with_container can finally do its job on them
+        and the next migration has nothing to work around.
+
+        THE OLD TREE IS LEFT BEHIND, as `projects.superseded*`. Deleting a file inside it needs
+        exactly the write permission this method exists to work around. It is inert — nothing
+        looks for a project directory under that name — and it is the honest residue of a
+        recovery rather than a leak.
+        """
+        aside = projects + ".superseded"
+        n = 1
+        while os.path.exists(aside):
+            aside = f"{projects}.superseded.{n}"
+            n += 1
+        os.rename(projects, aside)                      # needs write on `claude`, which we own
+        copied = 0
+        for base, _dirs, files in os.walk(os.path.join(aside, old)):
+            rel = os.path.relpath(base, os.path.join(aside, old))
+            target = os.path.join(projects, CONTAINER_PROJECT_SLUG)
+            if rel != ".":
+                target = os.path.join(target, rel)
+            os.makedirs(target, exist_ok=True)
+            for name in files:
+                try:
+                    shutil.copy2(os.path.join(base, name), os.path.join(target, name))
+                    copied += 1
+                except OSError as exc:
+                    log(f"WARNING: {os.path.join(base, name)} could not be copied: {exc}")
+        # Anything else that directory held — another slug, a stray file — comes across too, at
+        # its own name. Losing it would be the same mistake in a smaller costume.
+        for name in sorted(os.listdir(aside)):
+            if name == old or os.path.exists(os.path.join(projects, name)):
+                continue
+            try:
+                s = os.path.join(aside, name)
+                d = os.path.join(projects, name)
+                shutil.copytree(s, d) if os.path.isdir(s) else shutil.copy2(s, d)
+            except OSError as exc:
+                log(f"WARNING: {name} could not be carried across: {exc}")
+        log(f"rebuilt {projects}; the unwritable tree is at {aside}")
+        return copied
 
     @staticmethod
     def _merge_project_dir(src, dest):
