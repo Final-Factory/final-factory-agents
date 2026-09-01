@@ -104,6 +104,12 @@ CONTAINER_WORKSPACE = "/opt/actions-runner/_work/FinalFactory/FinalFactory"
 # rule was measured against Claude Code 2.1.252 rather than assumed.
 CONTAINER_PROJECT_SLUG = re.sub(r"[^A-Za-z0-9-]", "-", CONTAINER_WORKSPACE)
 
+# Names that slug has had. Claude Code writes EVERYTHING it keeps for a project under this one
+# directory -- the session transcripts a resume opens, and the memory/ the agent is told it can
+# write to -- so moving the workspace renames the directory and orphans the lot. Migrated rather
+# than abandoned; see Watcher.migrate_project_slugs.
+FORMER_PROJECT_SLUGS = ("-workspace",)
+
 ADDED_COLUMNS = [
     ("conversation", "is_thread", "INTEGER NOT NULL DEFAULT 0"),
     ("outbound", "attempts", "INTEGER NOT NULL DEFAULT 0"),
@@ -1830,7 +1836,81 @@ class Watcher:
         for d in (self.state_dir, self.blobs_dir, self.conv_root):
             os.makedirs(d, exist_ok=True)
         self.db.init_schema()
+        self.migrate_project_slugs()
         return self.state_dir
+
+    def migrate_project_slugs(self):
+        """Carry Claude Code's per-project directory across a change of workspace path.
+
+        Claude Code names that directory after the container's cwd, so CONTAINER_WORKSPACE moving
+        on 2026-09-01 renamed it, and everything written under the old name went invisible in the
+        same instant: every conversation's session transcript, and the memory/ directory the
+        agent's own instructions tell it to write to.
+
+        NOT A COSMETIC LOSS, and conversation 30 demonstrated it inside the hour. The next turn
+        looked for its session at the new name, found nothing, and opened a fresh one -- silently,
+        because "no transcript yet" is exactly what a first turn looks like. A 2.7 MB conversation
+        became a stranger, and the only symptom a person saw was an agent that had forgotten
+        everything and an `ls` of memory/ that failed.
+
+        Runs on every start and over both trees, because a pool spool holds the same directory for
+        a container staged before anyone knew which conversation it would serve. Idempotent: a box
+        already migrated finds nothing.
+        """
+        moved = dirs = 0
+        for root in (self.conv_root, self.pool_dir()):
+            for projects in sorted(glob.glob(os.path.join(root, "*", "claude", "projects"))):
+                for old in FORMER_PROJECT_SLUGS:
+                    src = os.path.join(projects, old)
+                    if not os.path.isdir(src):
+                        continue
+                    # NON-FATAL, and that is the whole reason for the try. This runs inside
+                    # init(), which every subcommand calls, so an EACCES on one conversation
+                    # directory left unhandled would stop the daemon from starting at all --
+                    # a far worse outcome than one conversation that cannot resume.
+                    try:
+                        moved += self._merge_project_dir(
+                            src, os.path.join(projects, CONTAINER_PROJECT_SLUG))
+                        dirs += 1
+                    except OSError as exc:
+                        log(f"WARNING: could not migrate {src}: {exc}")
+        if dirs:
+            log(f"migrated {dirs} project directories ({moved} file(s)) into "
+                f"projects/{CONTAINER_PROJECT_SLUG}")
+
+    @staticmethod
+    def _merge_project_dir(src, dest):
+        """Move src onto dest, returning how many files moved.
+
+        THE DESTINATION WINS a name collision, because it can only have been written by a run
+        under the new name and is therefore the newer of the two. A source file that loses is
+        LEFT WHERE IT IS rather than deleted -- this runs unattended on every start, and silently
+        dropping a transcript to tidy a directory is not a trade worth making. The leftover is
+        named in the log and the migration simply finds nothing to do next time.
+        """
+        if not os.path.exists(dest):
+            os.replace(src, dest)
+            return sum(len(files) for _, _, files in os.walk(dest))
+        moved = 0
+        for base, _dirs, files in os.walk(src):
+            rel = os.path.relpath(base, src)
+            target = dest if rel == "." else os.path.join(dest, rel)
+            os.makedirs(target, exist_ok=True)
+            for name in files:
+                to = os.path.join(target, name)
+                if os.path.exists(to):
+                    continue
+                os.replace(os.path.join(base, name), to)
+                moved += 1
+        # Prune what is now empty, deepest first. Anything left held a collision.
+        for base, _dirs, _files in sorted(os.walk(src), key=lambda t: -len(t[0])):
+            try:
+                os.rmdir(base)
+            except OSError:
+                pass
+        if os.path.isdir(src):
+            log(f"WARNING: {src} still holds files the new name already had; left in place")
+        return moved
 
     def share_with_container(self, path):
         """Make a tree the container can actually READ AND WRITE.
@@ -3397,7 +3477,7 @@ class Watcher:
         would serve, so the one file the run needs is copied in and moved back afterwards.
         """
         dest_dir = os.path.join(container_claude, "projects", CONTAINER_PROJECT_SLUG)
-        os.makedirs(dest_dir, exist_ok=True)
+        os.makedirs(os.path.join(dest_dir, "memory"), exist_ok=True)
         if not (session or {}).get("resume"):
             self.share_with_container(container_claude)
             return None
@@ -4178,6 +4258,13 @@ class Watcher:
         att_dir = os.path.join(conv_dir, "attachments")
         for d in (run_dir, claude_dir, att_dir):
             os.makedirs(d, exist_ok=True)
+        # The agent's own instructions promise it a memory/ that "already exists", and Claude
+        # Code creates it lazily — so an agent that looks before it writes gets an `ls` failure
+        # on a path its prompt told it was there. Cheap to make it true instead. The project
+        # directory has to exist for the memory one to sit under it, and naming it here rather
+        # than letting the container name it is what keeps the host and the container agreed.
+        os.makedirs(os.path.join(claude_dir, "projects", CONTAINER_PROJECT_SLUG, "memory"),
+                    exist_ok=True)
         # EVERY LAUNCH, not just the first: `claude` inside the container writes the transcript
         # with its own umask, and the next run may be a different uid again if the image is
         # rebuilt. Cheap — these trees hold a handful of files.
