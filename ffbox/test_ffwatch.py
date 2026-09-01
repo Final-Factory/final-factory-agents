@@ -6681,6 +6681,71 @@ def test_draining_destroys_what_is_staged():
     check("the keeper stages nothing while draining", w.keep_pool() is None, None)
 
 
+def test_the_project_directory_survives_a_workspace_move():
+    """Claude Code keeps everything for a project — transcripts and memory/ — in one directory
+    named after the container's cwd. Moving the workspace renames it, and conversation 30 showed
+    what that costs within the hour: the next turn found no session at the new name and opened a
+    fresh one, silently, because a missing transcript is what a first turn looks like anyway."""
+    print("the project directory across a workspace move")
+    case = Case("slugmove", base_fixture())
+    w = case.watcher
+    old, new = "-workspace", ffwatch.CONTAINER_PROJECT_SLUG
+
+    # A plain conversation: nothing at the new name, so the whole directory is renamed.
+    plain = os.path.join(w.conv_dir(7), "claude", "projects")
+    os.makedirs(os.path.join(plain, old, "memory"), exist_ok=True)
+    for rel in (("SESSION.jsonl",), ("memory", "a-fact.md")):
+        with open(os.path.join(plain, old, *rel), "w", encoding="utf-8") as fh:
+            fh.write("old\n")
+
+    # One that already ran under the new name. The new file wins; the old one is not deleted to
+    # tidy up after it.
+    both = os.path.join(w.conv_dir(8), "claude", "projects")
+    os.makedirs(os.path.join(both, old), exist_ok=True)
+    os.makedirs(os.path.join(both, new), exist_ok=True)
+    for name, body in (("SAME.jsonl", "old"), ("ONLY-OLD.jsonl", "old")):
+        with open(os.path.join(both, old, name), "w", encoding="utf-8") as fh:
+            fh.write(body)
+    with open(os.path.join(both, new, "SAME.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write("new")
+
+    # And a pool spool, which holds the same directory for a container staged before anyone knew
+    # which conversation it would serve.
+    spool = os.path.join(w.pool_dir("z9"), "claude", "projects")
+    os.makedirs(os.path.join(spool, old), exist_ok=True)
+    with open(os.path.join(spool, old, "SPOOL.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write("old")
+
+    w.migrate_project_slugs()
+
+    check("the transcript moves to the new name",
+          os.path.exists(os.path.join(plain, new, "SESSION.jsonl")), None)
+    check("and so does memory/, which is where the agent is told to write",
+          os.path.exists(os.path.join(plain, new, "memory", "a-fact.md")), None)
+    check("the old directory is gone once it is empty",
+          not os.path.exists(os.path.join(plain, old)), None)
+    check("a pool spool is migrated too",
+          os.path.exists(os.path.join(spool, new, "SPOOL.jsonl")), None)
+
+    check("a file only the old name had is carried over",
+          os.path.exists(os.path.join(both, new, "ONLY-OLD.jsonl")), None)
+    check("the newer copy wins a collision",
+          io.open(os.path.join(both, new, "SAME.jsonl"), encoding="utf-8").read() == "new", None)
+    check("and the loser is left on disk rather than deleted",
+          os.path.exists(os.path.join(both, old, "SAME.jsonl")), None)
+
+    # Runs on every start, so it has to be safe to run twice.
+    w.migrate_project_slugs()
+    check("a second pass changes nothing",
+          io.open(os.path.join(both, new, "SAME.jsonl"), encoding="utf-8").read() == "new"
+          and os.path.exists(os.path.join(plain, new, "SESSION.jsonl")), None)
+
+    # transcript_path is what a resume opens; it has to name the directory the migration wrote.
+    check("and a resume looks where the migration put things",
+          w.transcript_path(7, "SESSION").startswith(os.path.join(plain, new)),
+          w.transcript_path(7, "SESSION"))
+
+
 def test_every_lane_agrees_on_the_workspace_path():
     """The workspace is at CI's runner path, and eight files have to say so identically.
 
@@ -7261,6 +7326,7 @@ def main():
         test_a_second_branch_is_refused_at_the_push,
         test_a_submission_cannot_name_a_branch_the_conversation_does_not_own,
         test_the_mirror_is_only_written_inside_the_pipelines_own_namespace,
+        test_the_project_directory_survives_a_workspace_move,
     ]
     for fn in tests:
         try:
