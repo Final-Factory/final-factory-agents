@@ -6558,6 +6558,24 @@ def test_the_pool_only_stages_what_it_has_room_for():
     check("and never when the memory is not there", w.keep_pool() is None, staged)
 
 
+def test_the_daemon_loop_keeps_the_pool():
+    """The daemon does not call once(); it drives the same steps itself.
+
+    So a hook added to only one of them reaches half the callers, and this one did: keep_pool
+    went into once(), the daemon ran run(), and the box reported "0 staged, 1 wanted" for as
+    long as it was up while staging nothing. Both are asserted here because there is no third
+    place to put the call that would make the rule enforce itself.
+    """
+    print("pool: the daemon keeps it")
+    src = open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
+    for name in ("def once(self)", "def run(self)"):
+        body = src.partition(name)[2].partition("\n    def ")[0]
+        check(f"{name.split()[1]} schedules turns", "self.schedule()" in body, None)
+        check(f"{name.split()[1]} tops the pool up", "self.keep_pool()" in body, None)
+        check(f"{name.split()[1]} tops it up AFTER scheduling, not before",
+              body.index("self.schedule()") < body.index("self.keep_pool()"), None)
+
+
 def test_two_dispatchers_cannot_take_one_container():
     """One file answers "is this one free" and "it is mine now" in a single act.
 
@@ -6693,6 +6711,7 @@ def test_memory_is_read_from_meminfo_not_from_dev_shm():
 def main():
     tests = [
         test_the_pool_only_stages_what_it_has_room_for,
+        test_the_daemon_loop_keeps_the_pool,
         test_two_dispatchers_cannot_take_one_container,
         test_a_pooled_run_never_loses_the_conversations_memory,
         test_a_turn_falls_back_to_a_cold_launch,
