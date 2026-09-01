@@ -621,6 +621,14 @@ running. After it, revert one commit.
      would burn an activation every time. Open item (d) — whether the watchdog's TERM reaches the
      licence trap — is now the only thing that leaks a seat, and it leaks a REUSABLE one.
 
+     SUPERSEDED 2026-09-01 for the agent lane, which no longer keeps the pinned id. The reason
+     given above was about a RANDOM id per container, which is what game-ci does and what this
+     item rejected; it was never an argument for the pin, and the pin is the collision. That lane
+     now claims a number and derives from 'ffbox-<host>-agent-<n>' the way this one derives from
+     'ffghr-<host>-slot-<n>'. Different salts, so the two numberings are independent and neither
+     lane has to know the other's — CI keeps its systemd instance number and nothing here changed.
+     ffbox/lib-workloads.sh, and section 12 of ffbox_idle_agents_design.txt.
+
      Still unmeasured: how many machines this Personal licence will hold seats for at once. Six
      slots do not create six entitlements if the licence only grants two.
 

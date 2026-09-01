@@ -70,6 +70,15 @@ happens.
 3. There are no slots. There is a spool directory per container
 ----------------------------------------------------------------
 
+AMENDED 2026-09-01: there is now ONE number, and it is not what this section was arguing against.
+The spool directory is still per container and still named for it; nothing below changes. What was
+added is a claimed SLOT NUMBER, for one reason this section did not have to consider -- the Unity
+machine id has to be derived from something small and recycled, and it is written when a container
+STARTS, which for a staged container is hours before it has a turn. So the number is claimed at
+stage time and held for the container's idle life. It is a claim on an entitlement, not a place in
+a pool, and it does not give a staged container an identity that outlives it: the claim is a file
+naming the container, and a number is free again the moment that container is gone. Section 12.
+
 ffgithubrunners has numbered slots because a systemd template unit needs a stable instance number:
 `ffgithubrunners@3.service` is a supervisor that outlives the containers it starts. Nothing here
 outlives a container. The keeper is a thread in ffwatch, the container serves one prompt, and there
@@ -477,12 +486,33 @@ whichever columns this needs, through the same `ALTER TABLE` list the read/unrea
 12. Unity
 ----------
 
-Nothing to do, and worth stating because it was the first worry. The agent lane stopped acquiring a
-licence up front on 2026-08-31: `discord-task.sh` acquires nothing, and licensing is the job of
-whatever launches an editor, which is `ffverify` and the verification block. So a staged container
-holds NO SEAT. Ten of them would hold no seats. The machine-id problem ffgithubrunners had to solve
-does not arise either, because the agent lane deliberately keeps the image's baked-in id and every
-container looks like one machine.
+REVISED 2026-09-01. The first half of this section stands. The second half was wrong and is now
+implemented the other way round.
+
+What stands: the agent lane stopped acquiring a licence up front on 2026-08-31. `discord-task.sh`
+acquires nothing, and licensing is the job of whatever launches an editor, which is `ffverify` and
+the verification block. So a staged container holds NO SEAT, and ten of them would hold no seats.
+That is still true and it is still the reason the pool is cheap.
+
+What was wrong: "The machine-id problem ffgithubrunners had to solve does not arise either, because
+the agent lane deliberately keeps the image's baked-in id and every container looks like one
+machine." Every container looking like one machine IS the problem, not the reason there is not one.
+A staged container holds no seat, but a DISPATCHED one takes a seat the moment its turn verifies,
+and so does every plain `ffbox` run through run-as-user.sh. Two of those at once are one machine to
+Unity's licensing service and the second activation dies with "Found 0 entitlement groups and 0
+free entitlements", exit 198 -- which ffgithubrunners measured on 2026-08-29 rather than predicted.
+
+It had never bitten here because verification is a narrow window and the ceiling was two. Every
+unity-license.log on this box was searched on 2026-08-31: no 198, no failed activation. The ceiling
+is now six, and the window is not narrow at six.
+
+So the agent lane derives a machine id from a claimed slot, the way ffgithubrunners does, and
+entrypoint.sh writes it exactly as entrypoint-ci.sh already did. Per slot rather than game-ci's
+per-container `dbus-uuidgen`, for the reason that lane records: an activation registers a machine
+and only -returnlicense gives it back, so a random id makes every leaked seat permanent while a
+recycled one is reclaimed by whatever takes the number next. The two lanes cannot collide because
+the derivations are salted differently -- 'ffghr-<host>-slot-<n>' against 'ffbox-<host>-agent-<n>'
+-- so neither has to know the other's numbering. See ffbox/lib-workloads.sh.
 
 
 13. Configuration and CLI

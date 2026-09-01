@@ -3724,7 +3724,12 @@ def test_the_run_is_on_the_filtered_network():
     # and off the other, so that list is what these assert on — and that every `docker run` in
     # the file is built from it.
     run = src.partition("RUN_ARGS=(")[2].partition(")\n")[0]
-    starts = [ln for ln in src.splitlines() if ln.strip().startswith("docker run")]
+    # `in` rather than `startswith`: a container start is legitimately an assignment when the
+    # caller needs the id back -- `_CID=$(docker run -d ...)` -- and a matcher that only saw the
+    # bare form would silently stop checking that one. Comments are excluded so the prose around
+    # here does not count as a container.
+    starts = [ln for ln in src.splitlines()
+              if "docker run" in ln and not ln.strip().startswith("#")]
     check("every container is started from the one argument list",
           len(starts) >= 2 and all('"${RUN_ARGS[@]}"' in
                                    src.partition(ln)[2].partition("$IMAGE")[0] for ln in starts),
