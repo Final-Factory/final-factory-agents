@@ -18,7 +18,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# BEFORE the import, which is when CONFIG_DIR, LOG_PATH and LOCK_PATH are computed. Without
+# BEFORE the import, which is when FFDISCORD_HOME, LOG_PATH and LOCK_PATH are computed. Without
 # this the suite logs its fixtures into the REAL ~/.config/ffbox/discord/listener.log — which
 # it did for months, leaving lines like "READY as ffa#2265 watching ask_claude(111)" in the
 # operational log of a live box and making that log useless for diagnosing anything.

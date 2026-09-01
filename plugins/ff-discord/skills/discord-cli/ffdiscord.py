@@ -8,14 +8,22 @@ Python 3 standard library only (urllib) — no pip install, no venv, no lockfile
 Config (first match wins):
   1. env vars  FFDISCORD_APP_TOKEN, FFDISCORD_SERVER_ID
                (FFDISCORD_TOKEN / FFDISCORD_GUILD_ID are the older names, still read)
-  2. ~/.config/ffbox/discord/config.json
+  2. the "discord" section of ~/.config/ffbox/config.json
 
-  {
+  "discord": {
     "app_token": "<the Bot tab's token — NOT the Application ID or public key>",
     "server_id": "<right-click the server name > Copy Server ID>",
     "channels": { "<alias>": "<channel id, or \"\" to have it resolved by name>" },
     "mentions": { "<name>": "<user id>" }
   }
+
+  ONE FILE FOR THE BOX (2026-09-01). These settings had a config.json of their own next door in
+  ~/.config/ffbox/discord/, which meant the alias table and the "watch" block that gives those
+  aliases their meaning lived in two files that had to be edited together and could disagree.
+  Everything else ffbox owns already shares ~/.config/ffbox/config.json — the lanes, the
+  ceilings, the runner pool — so Discord's settings are a section of it like the rest.
+  ~/.config/ffbox/discord/ stays: it is where the read cursors, the doorbell and the locks
+  live, and FFDISCORD_HOME still points at it. FFBOX_CONFIG_DIR relocates the config.
 
   `channels` maps an alias to a channel's snowflake id. The alias is what the ffwatch "watch"
   block names, which is what says what the channel MEANS; the id says which channel it is.
@@ -23,7 +31,7 @@ Config (first match wins):
   Pre-2026-08-24 configs say "token" and "guild_id"; both are still read, and
   ffbox/05-discord-setup.sh renames them in place.
 
-The token NEVER lives in the repo. Config + read cursors live under ~/.config/ffdiscord/.
+The token NEVER lives in the repo. Config and read cursors live under ~/.config/ffbox/.
 
 Every command accepts --json for machine-readable output. Channel arguments accept a raw
 snowflake id, a configured alias (bug_reports / dev_chat / ask_claude), or #channel-name.
@@ -82,13 +90,15 @@ for _stream in (sys.stdout, sys.stderr, sys.stdin):
 API = os.environ.get("FFDISCORD_API", "https://discord.com/api/v10")
 UA = "DiscordBot (https://github.com/bryding/FinalFactory, 1.0) ffdiscord"
 def _ffdiscord_home():
-    """Where the Discord CLI keeps its config, cursors, doorbell and locks.
+    """Where the Discord CLI keeps its cursors, doorbell and locks — its STATE, not its config.
 
     ~/.config/ffbox/discord since 2026-08-22: everything ffbox owns on a machine lives under
     ~/.config/ffbox, and the Discord CLI is one part of ffbox rather than a separate product.
     The pre-move ~/.config/ffdiscord is still honoured when it exists and the new location does
     not, so a machine that has not been migrated keeps working untouched. FFDISCORD_HOME beats
     both.
+
+    The config used to live here too; it is a section of ~/.config/ffbox/config.json now.
     """
     env = os.environ.get("FFDISCORD_HOME")
     if env:
@@ -100,9 +110,15 @@ def _ffdiscord_home():
     return new
 
 
-CONFIG_DIR = _ffdiscord_home()
-CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
-STATE_PATH = os.path.join(CONFIG_DIR, "state.json")
+FFDISCORD_HOME = _ffdiscord_home()
+STATE_PATH = os.path.join(FFDISCORD_HOME, "state.json")
+
+# THE BOX'S ONE CONFIG FILE, and this CLI reads one section of it. FFBOX_CONFIG_DIR is the same
+# variable ffwatch and ffweb honour, so a test harness (or a second box on one machine) points
+# all three at the same scratch directory with one export.
+FFBOX_CONFIG_DIR = os.path.expanduser(os.environ.get("FFBOX_CONFIG_DIR") or "~/.config/ffbox")
+CONFIG_PATH = os.path.join(FFBOX_CONFIG_DIR, "config.json")
+CONFIG_SECTION = "discord"
 
 DISCORD_EPOCH = 1420070400000
 
@@ -148,14 +164,28 @@ class DiscordError(RuntimeError):
 # --------------------------------------------------------------------------------------
 
 
+def read_ffbox_config():
+    """The WHOLE ~/.config/ffbox/config.json, or {} when there is none.
+
+    Every writer below goes through this: the file is shared with ffwatch, ffweb and the CI
+    runners, so a write that did not carry the rest of the document forward would delete their
+    settings. A file that is not valid JSON is fatal rather than {} — this CLI is invoked by a
+    human or by one lane at a time, and silently running on defaults out of a config somebody
+    just fat-fingered is how a token appears to have "stopped working".
+    """
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+    with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+        try:
+            doc = json.load(fh)
+        except json.JSONDecodeError as exc:
+            die(f"{CONFIG_PATH} is not valid JSON: {exc}")
+    return doc if isinstance(doc, dict) else {}
+
+
 def load_config():
-    cfg = {}
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
-            try:
-                cfg = json.load(fh)
-            except json.JSONDecodeError as exc:
-                die(f"{CONFIG_PATH} is not valid JSON: {exc}")
+    section = read_ffbox_config().get(CONFIG_SECTION)
+    cfg = dict(section) if isinstance(section, dict) else {}
     # KEY NAMES, AND THE ONE PLACE THEY ARE NORMALIZED. The file says `app_token` and
     # `server_id`, matching what a human is looking at: the developer portal issues an app and
     # its bot token, and the Discord client calls a guild a server. Discord's API still says
@@ -193,7 +223,7 @@ def _atomic_write_json(path, data):
     mid-rename, and 0600 is applied before the rename so the file is never briefly
     world-readable — the config holds the bot token.
     """
-    os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, sort_keys=True)
@@ -202,8 +232,30 @@ def _atomic_write_json(path, data):
     os.replace(tmp, path)
 
 
-def save_config(cfg):
-    _atomic_write_json(CONFIG_PATH, cfg)
+def update_config(mutate):
+    """Read-modify-write the "discord" section of the ffbox config, under the config lock.
+
+    `mutate` is handed the section AS IT IS ON DISK and edits it in place; returning False
+    means "nothing changed" and leaves the file alone. Never the config load_config returned:
+    that has FFDISCORD_APP_TOKEN from the environment and the legacy key names folded into it,
+    and writing it back would bake the environment's secret into the file.
+
+    The rest of the document — ffwatch's settings, the container limits, the CI runner pool —
+    is read and written back untouched. That is the whole reason this goes through
+    read_ffbox_config: the file has several owners now, and this one owns one key of it.
+    """
+    with config_lock():
+        doc = read_ffbox_config()
+        section = doc.get(CONFIG_SECTION)
+        if not isinstance(section, dict):
+            # "discord": null, or a list. Replacing it is safe — nothing readable was in there
+            # — and setdefault would hand back the junk value for the caller to raise on.
+            section = {}
+        if mutate(section) is False:
+            return False
+        doc[CONFIG_SECTION] = section
+        _atomic_write_json(CONFIG_PATH, doc)
+        return True
 
 
 def load_state():
@@ -226,13 +278,13 @@ def state_lock():
 
 
 def config_lock():
-    """The config file's lock."""
+    """The ffbox config file's lock."""
     return file_lock(CONFIG_PATH)
 
 
 @contextlib.contextmanager
 def file_lock(target_path):
-    """Serialise read-modify-write on one of this directory's JSON files.
+    """Serialise read-modify-write on one of the JSON files this CLI shares.
 
     One machine routinely runs SEVERAL sessions against different channels — an
     always-on #ask-assistant answerer plus a periodic bug-triage loop. They share these
@@ -244,8 +296,11 @@ def file_lock(target_path):
     an operator running `ffdiscord set app_token <tok>` would otherwise each write the whole
     document from a pre-change read, and whichever renamed last would drop the other's key —
     the token included.
+
+    The lock sits beside the file it guards, which since the config moved is two different
+    directories: the cursors in ~/.config/ffbox/discord, the config one level up.
     """
-    os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+    os.makedirs(os.path.dirname(target_path), mode=0o700, exist_ok=True)
     lock_path = target_path + ".lock"
     with open(lock_path, "a+") as fh:
         acquired = False
@@ -305,8 +360,9 @@ class Client:
         if not self.token:
             die(
                 "no bot token. Set FFDISCORD_APP_TOKEN, or fill in the \"app_token\" field "
-                f"in {CONFIG_PATH}. `sh ffbox/05-discord-setup.sh --check` lists every blank, "
-                "and that file's \"_help\" block says where each value comes from."
+                f"in the \"{CONFIG_SECTION}\" section of {CONFIG_PATH}. "
+                "`sh ffbox/05-discord-setup.sh --check` lists every blank, and that section's "
+                "\"_help\" block says where each value comes from."
             )
         self.ctx = ssl.create_default_context()
 
@@ -454,38 +510,26 @@ def match_channels_by_name(live, alias):
 
 
 def remember_channel_id(alias, channel_id):
-    """Write channels.<alias> = <id> back to the config file. Best effort, never fatal.
-
-    Re-reads from disk rather than saving the in-memory config: load_config folds
-    FFDISCORD_APP_TOKEN and the legacy key names into what it returns, and writing that back
-    would bake the environment's secret into the file. Same reason cmd_resolve_channels
-    re-reads before it writes.
+    """Write discord.channels.<alias> = <id> back to the config file. Best effort, never fatal.
 
     A read-only config directory, or two processes resolving at once, must not turn a working
     command into a failed one — the id was already resolved, and the only thing lost is having
     to look it up again next time.
     """
+    def mutate(section):
+        channels = section.get("channels")
+        if not isinstance(channels, dict):
+            # "channels": null, or a list. setdefault would hand back the junk value and the
+            # .get below would raise AttributeError, which is NOT in the except clause — the
+            # command would die with a traceback after the channel had already resolved fine.
+            channels = {}
+            section["channels"] = channels
+        if str(channels.get(alias) or "").strip() == str(channel_id):
+            return False
+        channels[alias] = str(channel_id)
+
     try:
-        with config_lock():
-            on_disk = {}
-            if os.path.exists(CONFIG_PATH):
-                with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
-                    on_disk = json.load(fh)
-            if not isinstance(on_disk, dict):
-                return False
-            channels = on_disk.get("channels")
-            if not isinstance(channels, dict):
-                # "channels": null, or a list. setdefault would hand back the junk value and
-                # the .get below would raise AttributeError, which is NOT in the except clause
-                # — the command would die with a traceback after the channel had already
-                # resolved fine. Replacing it is safe: nothing readable was in there.
-                channels = {}
-                on_disk["channels"] = channels
-            if str(channels.get(alias) or "").strip() == str(channel_id):
-                return False
-            channels[alias] = str(channel_id)
-            _atomic_write_json(CONFIG_PATH, on_disk)
-            return True
+        return update_config(mutate)
     except (OSError, ValueError):
         return False
 
@@ -1283,7 +1327,7 @@ def cmd_config(client_unused, args):
     for key in ("app_token", "token"):
         if redacted.get(key):
             redacted[key] = redacted[key][:8] + "…(redacted)"
-    print(f"# {CONFIG_PATH}")
+    print(f"# {CONFIG_PATH}  -> \"{CONFIG_SECTION}\"")
     print(json.dumps(redacted, indent=2, sort_keys=True))
 
 
@@ -1331,30 +1375,34 @@ def cmd_resolve_channels(client, args):
     if not args.write:
         print("\n--write was not given; nothing was saved")
         return
-    # Re-read rather than saving the `cfg` loaded above: load_config folds env vars and legacy
-    # key names into what it returns, and writing that back would bake FFDISCORD_APP_TOKEN
-    # from the environment into the file on disk.
-    with config_lock():
-        on_disk = {}
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
-                on_disk = json.load(fh)
-        if not isinstance(on_disk.get("channels"), dict):
-            on_disk["channels"] = {}
-        on_disk["channels"].update(resolved)
-        _atomic_write_json(CONFIG_PATH, on_disk)
-    print(f"\nwrote {len(resolved)} channel id(s) to {CONFIG_PATH}")
+    # update_config writes the section as it is ON DISK, not the `cfg` loaded above: load_config
+    # folds env vars and legacy key names into what it returns, and writing that back would bake
+    # FFDISCORD_APP_TOKEN from the environment into the file.
+    def mutate(section):
+        if not isinstance(section.get("channels"), dict):
+            section["channels"] = {}
+        section["channels"].update(resolved)
+
+    update_config(mutate)
+    print(f"\nwrote {len(resolved)} channel id(s) to {CONFIG_PATH} (\"{CONFIG_SECTION}\")")
 
 
 def cmd_set(client_unused, args):
-    cfg = load_config()
-    # env-provided values must not be persisted by accident
-    node = cfg
-    parts = args.key.split(".")
-    for p in parts[:-1]:
-        node = node.setdefault(p, {})
-    node[parts[-1]] = args.value
-    save_config(cfg)
+    """`ffdiscord set channels.agent_testing 123` — one dotted key inside the "discord" section.
+
+    Edits the section as it is on disk, so a value that only ever came from the environment is
+    not persisted by accident, and so the rest of the ffbox config is carried through untouched.
+    """
+    def mutate(section):
+        node = section
+        parts = args.key.split(".")
+        for p in parts[:-1]:
+            if not isinstance(node.get(p), dict):
+                node[p] = {}
+            node = node[p]
+        node[parts[-1]] = args.value
+
+    update_config(mutate)
     print(f"set {args.key}")
 
 

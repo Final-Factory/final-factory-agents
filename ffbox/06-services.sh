@@ -128,7 +128,7 @@ DOCKER_UNITS="ffbox-docker.service"
 # unit quietly watching a channel the classifier no longer knows about.
 # The page's bind address, from the same config block, so the unit and a by-hand run agree.
 web_bind() {
-    FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" LEGACY="$FFDISCORD_HOME/config.json" python3 - <<'PY'
+    FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" python3 - <<'PY'
 import json, os
 
 
@@ -142,15 +142,14 @@ def read(path):
 
 
 cfg = read(os.environ["FFBOX_CONFIG_JSON"])
-block = dict(read(os.environ["LEGACY"]).get("ffwatch") or {})   # the pre-split location
-block.update(cfg)
+block = dict(cfg)
 block.update(cfg.get("ffwatch") or {})
 print("%s %s" % (block.get("web_host") or "127.0.0.1", block.get("web_port") or 8787))
 PY
 }
 
 watched_channels() {
-    FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" LEGACY="$FFDISCORD_HOME/config.json" python3 - <<'PY'
+    FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" python3 - <<'PY'
 import json, os
 
 
@@ -163,12 +162,9 @@ def read(path):
         return {}
 
 
-legacy = read(os.environ["LEGACY"])
 cfg = read(os.environ["FFBOX_CONFIG_JSON"])
 block = dict(cfg)
 block.update(cfg.get("ffwatch") or {})
-if "watch" not in block:                      # a machine that predates the config split
-    block = (legacy.get("ffwatch") or {})
 
 # No fallback list. A default channel here is one nobody chose and everybody inherits, which
 # is the bug this whole path was rewritten to remove: the watch block is the only thing that
@@ -180,7 +176,8 @@ if "watch" not in block:                      # a machine that predates the conf
 # an hour before anyone copied its id) would take the whole doorbell down, mentions and
 # operator DMs included, rather than degrade. Those aliases are listed by `blanks` and in
 # MANUAL STEPS; they are not a reason for the daemon to be dead.
-channels = legacy.get("channels") or {}
+discord = cfg.get("discord")
+channels = (discord.get("channels") if isinstance(discord, dict) else None) or {}
 ready = [a for a in sorted(block.get("watch") or {})
          if str(channels.get(a) or "").strip().isdigit()]
 print(",".join(ready))

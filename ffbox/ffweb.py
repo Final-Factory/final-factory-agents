@@ -2655,14 +2655,12 @@ def _config_block():
         except (OSError, json.JSONDecodeError):
             return {}
 
-    # ~/.config/ffbox/config.json is where these live; the "ffwatch" block of the Discord CLI's
-    # config is where they used to, and a machine that has not been migrated still reads right.
+    # ~/.config/ffbox/config.json, at the top level or under "ffwatch" — the same two spellings
+    # ffwatch's own loader accepts, read here rather than imported because ffweb must render a
+    # page on a box whose ffwatch is not running.
     ffbox_dir = os.path.expanduser(os.environ.get("FFBOX_CONFIG_DIR", "~/.config/ffbox"))
-    block = dict((read(os.path.join(ffbox_dir, "discord", "config.json"))
-                  or read(os.path.expanduser("~/.config/ffdiscord/config.json"))
-                  ).get("ffwatch") or {})
     ffbox_raw = read(os.path.join(ffbox_dir, "config.json"))
-    block.update(ffbox_raw)
+    block = dict(ffbox_raw)
     block.update(ffbox_raw.get("ffwatch") or {})
     return block
 

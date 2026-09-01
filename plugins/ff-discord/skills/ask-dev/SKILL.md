@@ -11,7 +11,7 @@ context-switch to write it themselves.
 
 **Where it lands is config, not a channel named in this file.** `ffdiscord ask` posts to the
 `agent_testing` alias unless `--channel` says otherwise, and that alias resolves through the
-`channels` table in the Discord config like every other channel. Pass `--channel <alias>` to
+`discord.channels` table in `~/.config/ffbox/config.json` like every other channel. Pass `--channel <alias>` to
 send it somewhere else. If the CLI cannot resolve the destination it says so and posts
 nothing.
 
@@ -24,7 +24,7 @@ ffdiscord ask lothsahn \
 Targets are `ben`, `lothsahn`, or both (`lothsahn,ben`). The message is posted by the shared
 bot but **attributed to this machine's operator** — "from **Ben's Claude**" — because both
 developers share one bot identity and the recipient must know who's asking. That attribution
-comes from `me` in `~/.config/ffdiscord/config.json`; if it's unset the CLI refuses to post
+comes from `discord.me` in `~/.config/ffbox/config.json`; if it's unset the CLI refuses to post
 rather than send an anonymous message. Fix with `ffdiscord set me ben`.
 
 ## Write a question that can be answered without context

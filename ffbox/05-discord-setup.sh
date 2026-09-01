@@ -34,9 +34,12 @@ STATE_DIR=${FFWATCH_STATE_DIR:-$HOME/ffbox-state}
 # EVERYTHING ffbox owns on this machine lives under one directory (moved 2026-08-22):
 #
 #   ~/.config/ffbox/secrets.env        tokens and the Unity account
-#   ~/.config/ffbox/config.json        ffwatch and ffweb settings
-#   ~/.config/ffbox/discord/           the Discord CLI's own home: config.json (token, guild,
-#                                      channels), cursors, the doorbell, the listener lock
+#   ~/.config/ffbox/config.json        ffwatch, ffweb, the CI runners, and the "discord"
+#                                      section: token, server, channels, mentions, trust
+#   ~/.config/ffbox/discord/           the Discord CLI's STATE: cursors, the doorbell, the
+#                                      listener lock. Its config moved into the file above on
+#                                      2026-09-01, so the alias table and the "watch" block
+#                                      that gives those aliases their meaning are one edit.
 #   ~/.config/ffbox/discord.disabled   the kill switch
 #
 # The pre-move ~/.config/ffdiscord is migrated below rather than left to rot: two config files
@@ -64,7 +67,7 @@ did()  { printf '[discord-setup]   %s\n' "$*"; }
 # "what is missing" is how a setup script starts lying about its own state. Prints one line per
 # unfilled field with the command that fills it, and exits 1 when a REQUIRED one is still blank.
 blanks() {
-    FFDISCORD_HOME=$FFDISCORD_HOME FFBOX_CONFIG=$FFBOX_CONFIG \
+    FFBOX_CONFIG=$FFBOX_CONFIG \
     FFBOX_CONFIG_JSON=$FFBOX_CONFIG_JSON python3 - <<'PY'
 import json
 import os
@@ -81,9 +84,10 @@ def read(path):
     return loaded if isinstance(loaded, dict) else {}
 
 
-home = os.environ["FFDISCORD_HOME"]
-discord = read(os.path.join(home, "config.json"))
 ffbox = read(os.environ["FFBOX_CONFIG_JSON"])
+discord = ffbox.get("discord")
+if not isinstance(discord, dict):
+    discord = {}
 secrets = os.path.join(os.environ["FFBOX_CONFIG"], "secrets.env")
 
 
@@ -154,8 +158,8 @@ if not any(str(v or "").strip().isdigit()
 # The reverse mismatch is not a blank, but it is the same class of mistake: an id nothing
 # watches. Reported, never counted.
 for alias in sorted(set(channels) - set(ffbox.get("watch") or {})):
-    print(f"[discord-setup]   channels.{alias:<15} set, but no \"watch\" entry in "
-          f"{os.environ['FFBOX_CONFIG_JSON']} — nothing reads it")
+    print(f"[discord-setup]   channels.{alias:<15} set, but no \"watch\" entry beside it "
+          f"in {os.environ['FFBOX_CONFIG_JSON']} — nothing reads it")
 
 sys.exit(1 if missing else 0)
 PY
@@ -164,8 +168,8 @@ PY
 if [ "$CHECK" = 1 ]; then
     say "state dir      : $STATE_DIR $([ -d "$STATE_DIR" ] && echo present || echo MISSING)"
     say "database       : $STATE_DIR/ffwatch.db $([ -f "$STATE_DIR/ffwatch.db" ] && echo present || echo MISSING)"
-    say "ffdiscord home : $FFDISCORD_HOME $([ -d "$FFDISCORD_HOME" ] && echo present || echo MISSING)"
-    say "config         : $FFDISCORD_HOME/config.json $([ -f "$FFDISCORD_HOME/config.json" ] && echo present || echo MISSING)"
+    say "ffdiscord state: $FFDISCORD_HOME $([ -d "$FFDISCORD_HOME" ] && echo present || echo MISSING)"
+    say "config         : $FFBOX_CONFIG_JSON $([ -f "$FFBOX_CONFIG_JSON" ] && echo present || echo MISSING)"
     say "kill switch    : $KILL_SWITCH $([ -f "$KILL_SWITCH" ] && echo ACTIVE || echo 'not set (lanes may run)')"
     say "units          : see 'sh $HERE/06-services.sh'"
     say "still to fill in:"
@@ -181,18 +185,17 @@ mkdir -p "$STATE_DIR" "$STATE_DIR/blobs" "$STATE_DIR/conversations"
 python3 "$HERE/ffwatch.py" --state-dir "$STATE_DIR" init
 did "$STATE_DIR"
 
-# --- ffdiscord config ---------------------------------------------------------------------------
-# The ffwatch block lives inside the config the Discord CLI already uses, following 059's
-# pattern: one machine-local file, 0600, outside the repo. Seeding it must not disturb the token
-# or the channel ids that are already there, so the merge is key-by-key rather than a rewrite.
+# --- config ---------------------------------------------------------------------------------
+# ONE machine-local file, 0600, outside the repo. Seeding it must not disturb the token or the
+# channel ids that are already there, so the merge is key-by-key rather than a rewrite.
 say "config"
 mkdir -p "$FFBOX_CONFIG"
 chmod 700 "$FFBOX_CONFIG" 2>/dev/null || true
 
 # --- migration: ~/.config/ffdiscord -> ~/.config/ffbox/discord ------------------------------
-# Moved whole, cursors and doorbell included, because the listener's read cursors are state a
-# reinstall must not lose. Only when the destination does not exist: a half-merge of two live
-# config directories is not something a setup script should attempt.
+# The STATE directory, moved whole: the listener's read cursors and the doorbell are state a
+# reinstall must not lose. Only when the destination does not exist — a half-merge of two live
+# directories is not something a setup script should attempt.
 if [ -d "$LEGACY_FFDISCORD_HOME" ] && [ ! -e "$FFDISCORD_HOME" ]; then
     mv "$LEGACY_FFDISCORD_HOME" "$FFDISCORD_HOME"
     did "migrated $LEGACY_FFDISCORD_HOME -> $FFDISCORD_HOME"
@@ -202,17 +205,20 @@ elif [ -d "$LEGACY_FFDISCORD_HOME" ]; then
 fi
 mkdir -p "$FFDISCORD_HOME"
 chmod 700 "$FFDISCORD_HOME" 2>/dev/null || true
-CONFIG_PATH="$FFDISCORD_HOME/config.json" FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" python3 - <<'PY'
+FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" python3 - <<'PY'
 import json
 import os
 
-# TWO FILES, EACH OWNING WHAT IT IS FOR.
-#   ~/.config/ffbox/config.json     ffwatch and ffweb: lanes, ceilings, the page's bind address
-#   ~/.config/ffbox/discord/config.json   the Discord CLI's own: token, guild, channels, mentions
+# ONE FILE FOR THE BOX: ~/.config/ffbox/config.json.
+#   top level + "ffagent" + "container"   ffwatch and ffweb: lanes, ceilings, the page's bind
+#   "githubrunner"                        the CI runner pool
+#   "discord"                             the Discord CLI's own: token, server, channels,
+#                                         mentions, trust
 #
-# They used to be one file, with the ffwatch settings in a block inside the Discord CLI's
-# config, which meant a root-run installer had to read a user's Discord directory to find out
-# where the WEB PAGE should listen. Anything still in that block is moved here, once.
+# The Discord keys had a config.json of their own next door until 2026-09-01. That put the
+# "channels" alias table and the "watch" block that gives those aliases their meaning in two
+# files that had to be edited together and could disagree — and every reader had to open both
+# and decide which won. One file, one read, one place to look.
 
 
 def read(path):
@@ -236,16 +242,14 @@ def write(path, data):
     os.replace(tmp, path)
 
 
-discord_path = os.environ["CONFIG_PATH"]
 ffbox_path = os.environ["FFBOX_CONFIG_JSON"]
-discord = read(discord_path)
 ffbox = read(ffbox_path)
-
-moved = sorted(k for k in (discord.get("ffwatch") or {}) if k not in ffbox)
-for key, value in (discord.get("ffwatch") or {}).items():
-    ffbox.setdefault(key, value)
-if "ffwatch" in discord:
-    del discord["ffwatch"]
+# The Discord section, edited in place and written back with everything else at the end. A
+# section that is missing, null or the wrong shape starts empty rather than raising: this
+# script's whole job is to hand a half-configured box a template it can fill in.
+discord = ffbox.get("discord")
+if not isinstance(discord, dict):
+    discord = {}
 
 seeded = []
 for key, value in (
@@ -416,16 +420,17 @@ discord["_help"] = {
     "app_token": "Discord developer portal > your app > Bot > Reset Token. NOT the "
                  "Application ID and NOT the public key. Better: leave this blank and put "
                  f"FFDISCORD_APP_TOKEN in {os.path.dirname(ffbox_path)}/secrets.env, which "
-                 "keeps the secret out of this file.",
+                 "keeps the secret out of this file (which is why this file is 0600).",
     "server_id": "Right-click the server name > Copy Server ID (Settings > Advanced > "
                  "Developer Mode must be on). Optional: it is inferred when the bot is in "
                  "exactly one server.",
     "channels": "alias -> that channel's id (right-click the channel > Copy Channel ID). The "
-                f"alias must match an entry in the \"watch\" block of {ffbox_path}, which is "
-                "what says what the channel MEANS; the id here says which channel it IS. "
-                "Leave the id blank and the first command that uses the alias looks it up by "
-                "name on the server and writes the id back here, so agent_testing finds "
-                "#agent-testing on its own. Nothing is watched unless it is in both tables.",
+                "alias must match an entry in the \"watch\" block at the top level of this "
+                "file, which is what says what the channel MEANS; the id here says which "
+                "channel it IS. Leave the id blank and the first command that uses the alias "
+                "looks it up by name on the server and writes the id back here, so "
+                "agent_testing finds #agent-testing on its own. Nothing is watched unless it "
+                "is in both tables.",
     "mentions": "name -> user id. What @name expands to in a post.",
     "trust": "operators: name -> user id. Whose messages may command this box. Ids only, "
              "never usernames: a username is renameable, so a trust key somebody else can "
@@ -476,8 +481,9 @@ ffbox["_help"] = {
              "channel, \"venue\": public|private, \"engage\": all|mention, \"ping\": true "
              "to let a reply there @-mention a human}. THE ONLY PLACE A "
              "CHANNEL IS NAMED — nothing is built in, so this box reads exactly what is listed "
-             "here and nothing else. The alias needs a matching row in the \"channels\" table "
-             f"of {discord_path}, which says which channel it IS. venue private means "
+             "here and nothing else. The alias needs a matching row in the \"channels\" "
+             "table of the \"discord\" section of this file, which says which channel it IS. "
+             "venue private means "
              "internals may be said out loud there; engage mention means only a message that "
              "@-mentions the bot (or replies to it) is considered. Both fall closed when "
              "omitted, and ffwatch logs which entry made it choose. ping is false unless "
@@ -509,6 +515,14 @@ ffbox["_help"] = {
              "to use the whole box while CI is quiet; a negative idle is read as 0, off. Zero "
              "is left alone on both, and means no places. idle_agent_ttl_secs is how long a staged container waits before "
              "retiring, and pool_ref which branch it stages (null follows base_ref).",
+    "discord": "What the ffdiscord CLI and the Gateway listener read: app_token, server_id, "
+             "the channels alias -> id table, mentions, and trust.operators. It had a "
+             "config.json of its own in the discord/ directory beside this file until "
+             "2026-09-01, which put that alias table and the \"watch\" block that gives the "
+             "aliases their meaning in two files that had to be edited together. The "
+             "directory is still there and still holds Discord STATE: read cursors, the "
+             "doorbell, the listener's lock. The section carries its own \"_help\" saying "
+             "what each field is, and `ffdiscord set <key> <value>` writes into it.",
     "githubrunner": "ffgithubrunners' settings, which lived in githubrunners/config.json until "
              "2026-09-01 -- one file per box, so there is one place to look. Anything absent "
              "falls back to the default in ffbox/runners/lib/config.sh, and "
@@ -531,21 +545,18 @@ pinged = [a for a, e in sorted((ffbox.get("watch") or {}).items())
 for alias in pinged:
     ffbox["watch"][alias]["ping"] = False
 
+ffbox["discord"] = discord
 write(ffbox_path, ffbox)
-write(discord_path, discord)
 
-if moved:
-    print("[discord-setup]   moved out of the Discord config: " + ", ".join(moved))
 if renamed:
     print("[discord-setup]   renamed keys: " + ", ".join(renamed))
-print("[discord-setup]   seeded ffwatch keys: " + (", ".join(seeded) or "(nothing new)"))
+print("[discord-setup]   seeded keys: " + (", ".join(seeded) or "(nothing new)"))
 if pinged:
     print("[discord-setup]   added \"ping\": false to watch entries: " + ", ".join(pinged)
           + "\n[discord-setup]     (a reply there cannot @-mention a human until you set it "
             "true; nothing could, before this key existed on the entry)")
 PY
-did "$FFBOX_CONFIG_JSON        (ffwatch + ffweb settings)"
-did "$FFDISCORD_HOME/config.json"
+did "$FFBOX_CONFIG_JSON        (ffwatch, ffweb, the runners, and the \"discord\" section)"
 # The template now carries a key for everything it needs, so the useful thing to say is whether
 # any of those keys are still empty. The list itself belongs to MANUAL STEPS at the end, printed
 # once, next to the instructions for filling it.
@@ -617,16 +628,16 @@ if ! blanks >/dev/null 2>&1; then
     say "     - invite it (OAuth2 > URL Generator, scope 'bot') and give it, per channel:"
     say "       View Channels, Read Message History, Send Messages, Embed Links, Attach Files,"
     say "       plus Add Reactions + Create Public Threads + Send Messages in Threads on a forum."
-    say "  2. Fill in the blanks below. Every one of them is already a key in"
-    say "     $FFDISCORD_HOME/config.json, waiting empty, and the \"_help\" block in that"
-    say "     file says what each value is:"
+    say "  2. Fill in the blanks below. Every one of them is already a key in the"
+    say "     \"discord\" section of $FFBOX_CONFIG_JSON, waiting empty, and that"
+    say "     section's \"_help\" block says what each value is:"
     blanks || true
     say "     (Discord: Settings > Advanced > Developer Mode, then right-click to copy an id.)"
     say "     app_token is the Bot tab's Reset Token, NOT the Application ID or public key."
     say "     Channel ids: once app_token is set, re-run this script and it looks them up by"
     say "     name, or do it directly with 'ffdiscord resolve-channels --write'."
     say "  3. Watching a channel this box does not know about yet? Add it to the ffwatch"
-    say "     \"watch\" block in $FFBOX_CONFIG_JSON first, which is what says what it MEANS:"
+    say "     \"watch\" block in the same file first, which is what says what it MEANS:"
     say '       "watch": { "agent_testing": { "kind": "ask", "forum": false, "venue": "private",'
     say '                                     "engage": "mention", "ping": false } }'
     say "     kind says what the channel IS (ask, bug_report, suggestion); every turn gets the"

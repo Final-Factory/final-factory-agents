@@ -50,11 +50,15 @@ for _stream in (sys.stdout, sys.stderr):
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# ffwatch resolves ~/.config/ffdiscord at import time. Point it at a scratch directory BEFORE
-# importing, so a real config on the developer's machine can never leak into a test.
+# ffwatch resolves both config paths at import time. Point them at scratch directories BEFORE
+# importing, so a real config on the developer's machine can never leak into a test — and, since
+# the Discord channel table moved into ~/.config/ffbox/config.json, so that a test that writes
+# one can never land on the developer's live box config.
 TMPROOT = tempfile.mkdtemp(prefix="ffwatch-test-")
 os.environ["FFDISCORD_HOME"] = os.path.join(TMPROOT, "ffdiscord-home")
 os.makedirs(os.environ["FFDISCORD_HOME"], exist_ok=True)
+os.environ["FFBOX_CONFIG_DIR"] = os.path.join(TMPROOT, "ffbox-config")
+os.makedirs(os.environ["FFBOX_CONFIG_DIR"], exist_ok=True)
 
 sys.path.insert(0, HERE)
 import ffwatch  # noqa: E402
@@ -916,15 +920,15 @@ def test_no_channel_is_watched_unless_the_config_says_so():
 
 
 def test_sweep_uses_the_id_once_the_config_has_one():
-    """sweep_target re-reads the Discord config from DISK every call, because `ffdiscord read
-    <alias>` writes a resolved id back into it. That is what makes the name lookup happen once
+    """sweep_target re-reads the discord.channels table from DISK every call, because
+    `ffdiscord read <alias>` writes a resolved id back into it. That is what makes the name lookup happen once
     instead of on every sweep forever."""
     print("sweep targets")
     case = Case("sweep-targets")
 
     def channels_on_disk(table):
-        with open(ffwatch.FFDISCORD_CONFIG, "w", encoding="utf-8") as fh:
-            json.dump({"channels": table}, fh)
+        with open(ffwatch.FFBOX_CONFIG, "w", encoding="utf-8") as fh:
+            json.dump({"discord": {"channels": table}}, fh)
 
     try:
         channels_on_disk({})
@@ -937,8 +941,8 @@ def test_sweep_uses_the_id_once_the_config_has_one():
         check("a blank id is not an id",
               case.watcher.sweep_target("agent_testing") == "agent_testing")
     finally:
-        if os.path.exists(ffwatch.FFDISCORD_CONFIG):
-            os.remove(ffwatch.FFDISCORD_CONFIG)
+        if os.path.exists(ffwatch.FFBOX_CONFIG):
+            os.remove(ffwatch.FFBOX_CONFIG)
 
     # An id written back at RUNTIME must be visible to everything that maps an id to an alias,
     # not just to the sweep. cfg["_discord"] is a start-up snapshot and ffwatch never reloads
@@ -952,8 +956,8 @@ def test_sweep_uses_the_id_once_the_config_has_one():
           and ffwatch.venue_for(case.cfg, ffwatch.alias_for_channel(case.cfg, DEVCHAT))
           == "public")
     try:
-        with open(ffwatch.FFDISCORD_CONFIG, "w", encoding="utf-8") as fh:
-            json.dump({"channels": {"escalation": DEVCHAT}}, fh)
+        with open(ffwatch.FFBOX_CONFIG, "w", encoding="utf-8") as fh:
+            json.dump({"discord": {"channels": {"escalation": DEVCHAT}}}, fh)
         check("an id resolved after start-up is seen without restarting ffwatch",
               ffwatch.alias_for_channel(case.cfg, DEVCHAT) == "escalation")
         check("so the escalation may ping",
@@ -962,8 +966,8 @@ def test_sweep_uses_the_id_once_the_config_has_one():
               ffwatch.venue_for(case.cfg, ffwatch.alias_for_channel(case.cfg, DEVCHAT))
               == "private")
     finally:
-        if os.path.exists(ffwatch.FFDISCORD_CONFIG):
-            os.remove(ffwatch.FFDISCORD_CONFIG)
+        if os.path.exists(ffwatch.FFBOX_CONFIG):
+            os.remove(ffwatch.FFBOX_CONFIG)
     del case.cfg["watch"]["escalation"]
 
     # Repeated failures are one line, not four an hour: the sweep runs every catchup_secs.
@@ -5480,14 +5484,19 @@ def test_past_standalone_runs_import():
 
 
 def test_config_lives_under_ffbox():
-    """One directory owns this machine's ffbox state, and the pre-move layout still reads.
+    """ONE FILE holds every setting this box has, and the Discord keys are a section of it.
 
-    The settings for ffwatch and ffweb used to sit in a block inside the Discord CLI's config,
+    ffwatch's and ffweb's settings used to sit in a block inside the Discord CLI's own config,
     which meant a ROOT-run installer had to read a user's Discord directory to learn where the
-    WEB PAGE should listen — and that is exactly how the sudo/$HOME bug shipped. They now live
-    in ~/.config/ffbox/config.json, beside secrets.env and the kill switch.
+    WEB PAGE should listen — and that is exactly how the sudo/$HOME bug shipped. The move that
+    fixed it left the Discord keys behind in that file, so the `channels` alias table and the
+    `watch` block that gives those aliases their meaning were two files that had to be edited
+    together; on 2026-09-01 they joined the rest under "discord".
+
+    The STATE directory did not move: cursors, the doorbell and the listener lock are still
+    ~/.config/ffbox/discord, and an unmigrated machine's ~/.config/ffdiscord still wins there.
     """
-    print("config: one home under ~/.config/ffbox")
+    print("config: one file under ~/.config/ffbox")
     root = os.path.join(TMPROOT, "confmove")
     shutil.rmtree(root, ignore_errors=True)
     legacy = os.path.join(root, ".config", "ffdiscord")
@@ -5496,39 +5505,46 @@ def test_config_lives_under_ffbox():
     # it exists, which is what lets an unmigrated machine keep working untouched.
     os.makedirs(legacy); os.makedirs(ffbox_dir)
 
-    # A machine that predates the move: everything in the Discord file's ffwatch block.
-    with open(os.path.join(legacy, "config.json"), "w", encoding="utf-8") as fh:
-        json.dump({"token": "t", "ffwatch": {"web_host": "10.0.0.9", "catchup_secs": 4242}}, fh)
-
     saved = dict(os.environ)
     try:
         os.environ.pop("FFDISCORD_HOME", None)
         os.environ["HOME"] = root
         os.environ["FFBOX_CONFIG_DIR"] = ffbox_dir
         importlib.reload(ffwatch)
-        check("with no new home yet, the legacy directory is still used",
+        check("with no new state home yet, the legacy directory is still used",
               ffwatch.FFDISCORD_HOME == legacy, ffwatch.FFDISCORD_HOME)
-        cfg = ffwatch.load_config()
-        check("and its settings are still read", cfg["web_host"] == "10.0.0.9"
-              and cfg["catchup_secs"] == 4242, (cfg["web_host"], cfg["catchup_secs"]))
 
-        # After the move, ~/.config/ffbox/config.json wins over anything left behind.
         with open(os.path.join(ffbox_dir, "config.json"), "w", encoding="utf-8") as fh:
-            json.dump({"web_host": "192.168.1.5"}, fh)
+            json.dump({"web_host": "192.168.1.5", "catchup_secs": 4242,
+                       "discord": {"app_token": "t", "server_id": "9",
+                                   "channels": {"agent_testing": "111"},
+                                   "trust": {"operators": {"loth": "600"}}}}, fh)
         importlib.reload(ffwatch)
         cfg = ffwatch.load_config()
-        check("the ffbox file wins where the two disagree", cfg["web_host"] == "192.168.1.5",
-              cfg["web_host"])
-        check("and a setting only the old file has still comes through",
-              cfg["catchup_secs"] == 4242, cfg["catchup_secs"])
-        check("a key that is not a known setting is ignored rather than injected",
-              "token" not in cfg, sorted(cfg)[:5])
+        check("the settings are read from the ffbox file", cfg["web_host"] == "192.168.1.5"
+              and cfg["catchup_secs"] == 4242, (cfg["web_host"], cfg["catchup_secs"]))
+        check("the Discord section is read as read-only context, not merged into the settings",
+              cfg["_discord"]["server_id"] == "9" and "app_token" not in cfg, sorted(cfg)[:5])
+        check("the alias table comes from that section",
+              ffwatch.discord_channels(cfg) == {"agent_testing": "111"},
+              ffwatch.discord_channels(cfg))
+        check("and so does the operator table the listener shares",
+              ffwatch.operators(cfg) == {"loth": "600"}, ffwatch.operators(cfg))
 
-        # Once the Discord home has moved, the legacy path is no longer consulted.
+        # A section that is missing, null or the wrong shape must not take the daemon down:
+        # ffwatch runs unattended, and a hand-edited config is exactly where this happens.
+        with open(os.path.join(ffbox_dir, "config.json"), "w", encoding="utf-8") as fh:
+            json.dump({"web_host": "192.168.1.5", "discord": None}, fh)
+        importlib.reload(ffwatch)
+        cfg = ffwatch.load_config()
+        check("a null discord section is read as absent rather than raising",
+              ffwatch.discord_channels(cfg) == {} and ffwatch.operators(cfg) == {})
+
+        # Once the Discord state home has moved, the legacy path is no longer consulted.
         os.makedirs(os.path.join(ffbox_dir, "discord"))
         shutil.rmtree(legacy)
         importlib.reload(ffwatch)
-        check("with the new home present, that is the one used",
+        check("with the new state home present, that is the one used",
               ffwatch.FFDISCORD_HOME == os.path.join(ffbox_dir, "discord"),
               ffwatch.FFDISCORD_HOME)
     finally:

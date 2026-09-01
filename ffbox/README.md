@@ -57,23 +57,25 @@ Everything ffbox owns on a machine lives in one directory:
 
 ```
 ~/.config/ffbox/secrets.env        tokens, the Unity account
-~/.config/ffbox/config.json        EVERY setting this box has, in four parts: the pipeline at the
+~/.config/ffbox/config.json        EVERY setting this box has, in five parts: the pipeline at the
                                    top level (watch, rate_limits, web_host/web_port, and
                                    max_concurrent_runs, the ceiling on containers that BOTH lanes
                                    count against); "container" for what is true of a container
                                    whichever lane started it (workspace_size, memory,
                                    pids_limit); "ffagent" for what governs a run (base_ref, the
                                    three clocks, pool); "githubrunner" for the CI runners, which
-                                   kept their own file until 2026-09-01. The "_help" block in it
+                                   kept their own file until 2026-09-01; and "discord" for the
+                                   bot token, server, channel aliases, mentions and trust, which
+                                   kept its own file until the same day. The "_help" block in it
                                    is generated on every setup run and documents each part.
-~/.config/ffbox/discord/           the Discord CLI's home: config.json, cursors, doorbell, lock
+~/.config/ffbox/discord/           the Discord CLI's STATE: cursors, doorbell, listener lock
 ~/.config/ffbox/discord.disabled   the kill switch
 ~/.config/ffbox/update.disabled    pauses the self-update timer (see "Staying current")
 ~/ffbox-state/                     the database, blobs and per-conversation run directories
 ```
 
-A pre-2026-08-22 machine keeps `~/.config/ffdiscord`; stage 5 moves it whole, cursors included,
-and every reader falls back to the old path until it does.
+A pre-2026-08-22 machine keeps `~/.config/ffdiscord`; stage 5 moves that state directory whole,
+cursors included, and every reader falls back to the old path until it does.
 
 ## The services
 
@@ -103,18 +105,22 @@ a different checkout deliberately, `--install --force` and then re-run `register
 recorded path follows.
 
 Nothing is read from Discord until a bot token exists, so starting the daemons first is safe.
-Stage 5 writes `~/.config/ffbox/discord/config.json` as a **fill-in-the-blanks template**: every
-key it needs is already there and empty, including one `channels` blank per alias the `ffwatch`
-→ `watch` block declares. JSON cannot carry comments, so an empty key is the only way the file
-can say what it wants. `sh ffbox/05-discord-setup.sh --check` lists what is still blank and the
+Stage 5 writes the `discord` section of `~/.config/ffbox/config.json` as a
+**fill-in-the-blanks template**: every key it needs is already there and empty, including one
+`channels` blank per alias the `watch` block above it declares. JSON cannot carry comments, so
+an empty key is the only way the file can say what it wants. `sh ffbox/05-discord-setup.sh --check` lists what is still blank and the
 command that fills each one; re-run the stage after adding a `watch` entry to get its blank.
 
-The keys are `app_token` (the Bot tab's token, not the Application ID), `server_id` (right-click
-the server name, Copy Server ID) and `channels`, which maps each alias to that channel's id.
+The keys are `discord.app_token` (the Bot tab's token, not the Application ID),
+`discord.server_id` (right-click the server name, Copy Server ID) and `discord.channels`, which
+maps each alias to that channel's id. They lived in a `config.json` of their own under
+`~/.config/ffbox/discord/` until 2026-09-01; keeping the alias table in one file and the `watch`
+block that gives those aliases their meaning in another meant two edits to add a channel, and
+two files for every reader to open.
 They were called `token` and `guild_id` before 2026-08-24; both are still read, and stage 5
 renames them in place. Discord's API still says "guild", so only what a human types changed.
 
-Channel ids do not have to be typed. Once `app_token` is set, re-running stage 5 looks up every
+Channel ids do not have to be typed. Once `discord.app_token` is set, re-running stage 5 looks up every
 blank alias by name — `agent_testing` finds #agent-testing — or do it directly with
 `ffdiscord resolve-channels --write`. Either way it only writes unambiguous single matches, and
 a name that hits two channels or none is left blank and reported. A blank that nobody resolved
@@ -148,7 +154,8 @@ resolve once and write the id back — after that the sweep asks for the snowfla
 matches no channel at all is reported once per process, with the command that fixes it, and is
 not swept.
 
-Better than filling in `app_token`: put `FFDISCORD_APP_TOKEN` in `~/.config/ffbox/secrets.env`,
+Better than filling in `discord.app_token`: put `FFDISCORD_APP_TOKEN` in
+`~/.config/ffbox/secrets.env`,
 which both units read through `EnvironmentFile=` and which never enters a container — `ffbox`
 names the container's env vars one at a time and that is not one of them. Then re-run
 `sudo sh ffbox/06-services.sh --install` so the listener picks up the new watch list.
