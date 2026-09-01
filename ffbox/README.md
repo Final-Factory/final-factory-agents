@@ -1011,8 +1011,8 @@ that file back as the run's `no_branch_reason`, so a refusal never reads as an i
 
 **The agent picks the base, too.** `publish_bases` in the config names the branches a run may
 base work on and says what each is for, and that text is rendered into the container's preamble,
-so the policy is written once. The run starts checked out at `base_ref` (`develop`); an agent
-that decides the change belongs in the released build branches from `origin/master` instead, and
+so the policy is written once. The run starts checked out at `base_ref` (`master`); an agent
+that decides the change belongs in the next version branches from `origin/develop` instead, and
 that is the whole mechanism — nothing else has to be told. At harvest ffbox takes the most
 specific base the work descends from: a branch off develop has master behind it as well, and
 develop is the descendant of the two, so develop wins; a branch off master does not have develop
@@ -1024,6 +1024,16 @@ no network and can only check out what the clone already holds.
 One cost worth knowing: the clone starts checked out at `base_ref`, so a run that switches to the
 other branch churns whatever differs under the warm `Library/` and Unity re-imports it. That is a
 slower `ffverify`, not a broken one, and it is the price of the choice being the agent's.
+
+**Why `master` and not `develop`.** `base_ref` decides what the agent READS, and since
+`publish_bases` it decides nothing else — where the work goes is the agent's choice of what to
+branch from, read back out of the commit graph. Most of what arrives here is a player asking why
+something behaves the way it does, and the player is running master; answering out of develop is
+answering a question about the released game from unreleased code, and being confidently wrong in
+a way nobody reading the thread can catch. The same holds for a bug report, where the first
+question is whether the bug is still there in what players have. It was `develop` from ffwatch's
+first commit, uncommented, and nobody chose it. Changed 2026-08-31, with `github.base` following
+it; `design/ffbox_idle_agents_design.txt` section 6a is the long form.
 
 **The agent names the branch.** Every write preamble opens with the rule: make a branch before
 you change anything, named for the change. Whatever HEAD is on when the container exits is what
