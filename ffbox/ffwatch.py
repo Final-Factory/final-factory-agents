@@ -3121,6 +3121,11 @@ class Watcher:
         if want <= 0 or self.killed() or self.draining():
             return None
         containers = self.pool_containers()
+        # COUNTS "WILL BE WARM", not "is warm", and the difference is deliberate: a container
+        # still extracting its tar has no owner file and belongs in this count, or a pass every
+        # two seconds would stage another twenty of them while the first one filled. pool_warm()
+        # is the stricter one, and it is stricter because a claim needs a workspace that is
+        # actually there.
         warm = [c for c in containers if not os.path.exists(self.pool_owner_path(c["id"]))]
         if len(warm) >= want:
             return None
@@ -5644,6 +5649,15 @@ class Watcher:
                     last_sweep = time.time()
                 self.claim_turns()
                 self.schedule()
+                # AFTER scheduling, never before: a turn that could use a warm container should
+                # get the one already there rather than wait behind the staging of another.
+                #
+                # Here AND in once(), because this loop does not call once() — it drives the
+                # same steps itself. A hook added to only one of them reaches half the callers,
+                # which is exactly what happened the first time this landed: the keeper was in
+                # once(), the daemon ran run(), and the live box staged nothing at all while
+                # reporting "0 staged, 1 wanted". test_the_daemon_loop_keeps_the_pool covers it.
+                self.keep_pool()
                 # Every pass, so the web page shows the agent talking as it talks rather than
                 # in one lump when the container exits. finish_run indexes the same transcript
                 # once more at the end; both are idempotent by uuid.
