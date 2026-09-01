@@ -37,7 +37,21 @@ FFBOX_WORKLOAD_LABEL=${FFBOX_WORKLOAD_LABEL:-ffbox.workload}
 
 FFBOX_WL_CONFIG_DIR=${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}
 FFBOX_WL_CONFIG=${FFBOX_WL_CONFIG:-$FFBOX_WL_CONFIG_DIR/config.json}
-FFBOX_WL_LOCK=${FFBOX_WL_LOCK:-$FFBOX_WL_CONFIG_DIR/.admission.lock}
+# THE LOCK LIVES IN THE CI LANE'S DIRECTORY, which looks wrong and is not. ffgithubrunners@.service
+# runs with ProtectHome=read-only and grants exactly three writable paths, of which
+# ~/.config/ffbox/githubrunners is the only one that is neither a log nor a cache. The parent
+# ~/.config/ffbox is READ-ONLY to a slot supervisor.
+#
+# Measured the hard way on 2026-09-01: with the lock in the parent, every slot died with "cannot
+# create .../.admission.lock: Read-only file system" the moment it tried to admit, and all six
+# units crash-looped for an hour and twenty minutes before anyone counted the containers and asked
+# why CI had none.
+#
+# BOTH LANES MUST NAME THE SAME FILE or the lock is not a lock, so this is one fixed default rather
+# than a search for somewhere writable -- a fallback list would let the two lanes pick different
+# files and mutually exclude nothing, silently. The agent lane can write here too; only the CI lane
+# is constrained, so the constrained one chooses.
+FFBOX_WL_LOCK=${FFBOX_WL_LOCK:-$FFBOX_WL_CONFIG_DIR/githubrunners/.admission.lock}
 
 # The default lives HERE and in ffwatch.py's DEFAULTS, and they have to agree. Two readers, one
 # number: this file is what a shell reads and DEFAULTS is what the daemon reads, and there is no
@@ -129,8 +143,22 @@ ffbox_workload_has_room() {
 # These use fd 9 in the CALLER's shell rather than a subshell, on purpose: a subshell cannot hand
 # back the `$!` of a process the caller has to `wait` on.
 ffbox_workload_lock_acquire() {
-    mkdir -p "$FFBOX_WL_CONFIG_DIR" 2>/dev/null || :
-    command -v flock >/dev/null 2>&1 || return 0     # no flock: no lock, same as admit()
+    command -v flock >/dev/null 2>&1 || return 0     # no flock: no lock, count anyway
+    mkdir -p "$(dirname "$FFBOX_WL_LOCK")" 2>/dev/null || :
+    # PROBE IN A SUBSHELL FIRST. `exec 9>>` on a path that cannot be opened does not hand back a
+    # status a caller can catch -- it aborts the shell, which under `set -e` in a supervisor means
+    # the unit dies and systemd restarts it into the same wall, forever. That is exactly what
+    # happened. A subshell contains the failure so this can report it and carry on.
+    if ! ( : >> "$FFBOX_WL_LOCK" ) 2>/dev/null; then
+        # CARRY ON WITHOUT IT rather than refusing to start anything. The count is still taken and
+        # still right; what is lost is only the guarantee that two lanes cannot take the last place
+        # at the same instant. A box that overshoots by one beats a box that runs nothing, and this
+        # says so every time rather than once.
+        ffbox_wl_log "WARNING: cannot write $FFBOX_WL_LOCK -- admitting without the shared lock."
+        ffbox_wl_log "         Two lanes may briefly overshoot the ceiling by one. Check the"
+        ffbox_wl_log "         ReadWritePaths of whatever unit this is running under."
+        return 0
+    fi
     exec 9>>"$FFBOX_WL_LOCK" || return 1
     flock 9 || return 1
     return 0
