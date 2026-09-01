@@ -47,7 +47,7 @@
 # failed), and dying on it would leave no JSON for the harness to record. Errors are explicit.
 set -uo pipefail
 
-PROJECT=${FFVERIFY_PROJECT:-${FFBOX_WORKSPACE:-/workspace}}
+PROJECT=${FFVERIFY_PROJECT:-${FFBOX_WORKSPACE:-/opt/actions-runner/_work/FinalFactory/FinalFactory}}
 OUT=${FFVERIFY_OUT:-${HOME:-/tmp}/ffverify}
 TAG=
 # The fast EditMode suite, matching the "run FFEditorTests by default" rule in the game repo's

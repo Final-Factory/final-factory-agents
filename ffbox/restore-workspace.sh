@@ -22,7 +22,7 @@
 # leave a half-restored tree that looks complete.
 set -eu
 
-WORKSPACE=${FFBOX_WORKSPACE:-/workspace}
+WORKSPACE=${FFBOX_WORKSPACE:-/opt/actions-runner/_work/FinalFactory/FinalFactory}
 ENTRY=${FFBOX_CACHE_ENTRY:-}
 BUNDLE=${FFBOX_BASE_BUNDLE:-}
 TARGET=${FFBOX_TARGET_SHA:-}

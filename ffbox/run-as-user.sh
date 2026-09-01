@@ -11,7 +11,7 @@ set -uo pipefail
 export HOME
 export PATH="/usr/local/bin:${PATH}"
 
-WORKSPACE=${FFBOX_WORKSPACE:-/workspace}
+WORKSPACE=${FFBOX_WORKSPACE:-/opt/actions-runner/_work/FinalFactory/FinalFactory}
 FFBOX_OUT=${FFBOX_OUT:-/ffbox/out}
 PROMPT_FILE=${FFBOX_PROMPT_FILE:-/ffbox/prompt.txt}
 export FFBOX_OUT

@@ -3,7 +3,7 @@
 # ffbox container entrypoint. Runs as root, then drops to the UID that owns the workspace.
 #
 # WHY THE UID DANCE
-# /workspace is a bind mount of a ZFS clone owned by the host user. If Claude ran as root, every
+# The workspace is a bind mount of a ZFS clone owned by the host user. If Claude ran as root, every
 # file it created would come back root-owned, and the harvest step on the host (git diff, patch
 # extraction) could neither read nor clean them up. This mirrors what game-ci's entrypoint does
 # under runAsHostUser:true — which is exactly how .github/workflows/main.yml already runs.
@@ -65,7 +65,7 @@ if [ -n "${FFBOX_MACHINE_ID:-}" ]; then
 fi
 unset FFBOX_MACHINE_ID
 
-WORKSPACE=${FFBOX_WORKSPACE:-/workspace}
+WORKSPACE=${FFBOX_WORKSPACE:-/opt/actions-runner/_work/FinalFactory/FinalFactory}
 
 if [ ! -d "$WORKSPACE" ]; then
     echo "ffbox: nothing bind-mounted at $WORKSPACE" >&2
@@ -82,7 +82,7 @@ fi
 # host-prepared workspace there is nothing to restore and this is skipped.
 # BEFORE THE RESTORE, and that is the whole point of taking it here. tar running as root applies
 # the archive's ownership to the TARGET DIRECTORY as well as its contents, so after extraction
-# /workspace itself is root-owned -- and reading the uid afterwards gives 0, making the chown below
+# the workspace itself is root-owned -- and reading the uid afterwards gives 0, making the chown below
 # a no-op that changes root-owned files to root-owned files. The agent then cannot write a single
 # file outside .git and reports the workspace as root-owned, which is what two real runs did.
 uid=$(stat -c '%u' "$WORKSPACE")
@@ -175,7 +175,7 @@ export USER="$user"
 
 # GIT INSIDE THE CONTAINER NEEDS THE SAME EXEMPTION THE HOST DOES. The workspace belongs to the
 # container account, which is uid 0 in here, and we have just dropped to 1000 — so git refuses
-# with "detected dubious ownership" and the run reports "/workspace (not a git repo)" while
+# with "detected dubious ownership" and the run reports "<the workspace> (not a git repo)" while
 # looking otherwise healthy. An agent that cannot read the repo cannot do its job, and nothing
 # about the failure says so.
 #

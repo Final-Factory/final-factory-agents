@@ -22,7 +22,7 @@
 # them would otherwise be taken at its word.
 set -euo pipefail
 
-WORKSPACE=${FFBOX_WORKSPACE:-/workspace}
+WORKSPACE=${FFBOX_WORKSPACE:-/opt/actions-runner/_work/FinalFactory/FinalFactory}
 OUT=${FFBOX_OUT:-/ffbox/out}
 BRANCH=${FFBOX_BRANCH:-}
 BRANCH_PREFIX=${FFBOX_BRANCH_PREFIX:-}

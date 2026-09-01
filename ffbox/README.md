@@ -247,7 +247,7 @@ Design and rationale: `design/self_update_design.txt`.
    │
    │ bind mount
    ▼
-container /workspace           ffbox:latest         FROM the exact image CI tests in
+container workspace            ffbox:latest         FROM the exact image CI tests in
    │
    └── entrypoint.sh → setpriv to host UID → activate Unity → claude -p → return license
                                                                   │
@@ -346,9 +346,38 @@ in the game repo's `.github/workflows/main.yml`. Anything Claude compiles or tes
 the way CI will, for free. **Keep the two in lockstep**; if they drift, a green ffbox run stops
 predicting a green CI run, which is the whole reason for the choice.
 
+### Why the workspace is at the runner's path
+
+The workspace is restored at `/opt/actions-runner/_work/FinalFactory/FinalFactory`, which
+is where a GitHub Actions job checks the repository out inside this same image — not at a tidy
+`/workspace`. That is not cosmetic.
+
+The ffcache entry is CI's finished workspace, `Library/` included, and Unity caches its package
+resolution in `Library/PackageManager/projectResolution.json`. That file records ABSOLUTE paths:
+the project, its `Packages/manifest.json` and `packages-lock.json`, and the editor's
+`BuiltInPackagesCombined.sha1`. Restore the tree anywhere else and none of those paths exists, so
+UPM throws the cached resolution away and re-resolves from scratch on every editor launch.
+
+A cold resolve reads package TARBALLS, not the extracted `Library/PackageCache`. The editor image
+ships an offline tgz repo that covers 27 of this project's 37 registry packages at exactly the
+locked version; the other ten go to the registry. When the fence is refusing that host, the
+resolve fails and the editor exits 1 six seconds in, which the harness records as
+`compiled=false` — a verdict about the diff, for a reason that has nothing to do with the diff.
+Runs 26, 27, 35 and 36 died that way. The fence itself is fixed separately; what this removes is
+the dependency, so a run cannot be broken by a registry it never asks.
+
+At the runner's path all three inputs line up, both lanes sharing the editor image, and UPM does
+not resolve at all. Nothing on the HOST is at this path — CI's own tree is a tmpfs in a different
+container — so the two lanes cannot collide.
+
+One consequence worth knowing: Claude Code names its transcript directory after the cwd, every
+character outside `[A-Za-z0-9-]` becoming a dash, so transcripts land in
+`projects/-opt-actions-runner--work-FinalFactory-FinalFactory/` — with the doubled dash where the
+path has `/_`. `ffwatch.py` derives that as `CONTAINER_PROJECT_SLUG`.
+
 ### Why the UID dance
 
-`/workspace` is a bind mount of a host-owned clone. Running Claude as root would return
+The workspace is a bind mount of a host-owned clone. Running Claude as root would return
 root-owned files that the harvest step can't read. `entrypoint.sh` creates a matching user and
 `setpriv`s to it — the same thing `runAsHostUser: true` does in CI today.
 
@@ -602,7 +631,7 @@ does its Unity import. The flags below make it usable from outside this director
 |---|---|
 | `--task PATH` | The container task to run. A host path is mounted read-only at `/ffbox/task.sh`; anything else is taken as a path already in the image. |
 | `--job-file FILE` | Mounted read-only at `/ffbox/job.json`. The task reads it; nothing is passed in argv. |
-| `--mount HOST:CONTAINER[:ro]` | An extra bind mount, repeatable. Nested paths under `/workspace` work — Docker creates the intermediates. |
+| `--mount HOST:CONTAINER[:ro]` | An extra bind mount, repeatable. Nested paths under the workspace work — Docker creates the intermediates. |
 | `--run-id ID` | Caller-supplied run id, so the caller owns the `ffbox-<ID>` container name and can address exactly that container later. |
 | `--ref REF` | Check the clone out at `REF` after cloning. `develop` falls back to `origin/develop`. The resolved sha lands in `base_sha.txt`. |
 | `--branch NAME` | Create `NAME` at that commit before the container starts — a ref move, so nothing churns under the warm `Library/`. At harvest, anything the agent left uncommitted is committed, the branch HEAD ended on is bundled to `work.bundle` as `base..branch`, and `NAME` is the name it publishes under unless `--branch-prefix` renames it. A run that ends on `develop`, `master` or `main` is refused. No changed files means no commit, no bundle and no branch. |
@@ -1034,7 +1063,7 @@ ceiling still allows, and a cold launch that is short of memory **evicts** a sta
 rather than failing: the pool must never be why a real turn cannot start. On top of that every
 container now runs under a cgroup: `container.memory` and `container.pids_limit`, the same
 numbers CI has had all along and the agent lane had none of until 2026-09-01. Note
-that `--tmpfs /workspace` is a tmpfs Docker creates, so it is NOT charged to `/dev/shm` — with a
+that the workspace tmpfs is one Docker creates, so it is NOT charged to `/dev/shm` — with a
 run in flight `df` reported 2.1M used of 378G while that run held 24G. `/proc/meminfo` is the
 number that means anything here.
 
