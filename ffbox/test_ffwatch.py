@@ -282,9 +282,30 @@ if branch and os.environ.get("FFBOX_STUB_GIT_ORIGIN"):
     git("clone", "--quiet", os.environ["FFBOX_STUB_GIT_ORIGIN"], work)
     base_branch = os.environ.get("FFBOX_STUB_BASE") or "develop"
     base = git("-C", work, "rev-parse", "origin/" + base_branch).stdout.strip()
+    # WHERE THE RUN STARTS, which is not always the base it publishes against. A continuation
+    # turn is given --ref <the conversation's branch>, and restore-workspace.sh lands the
+    # workspace on origin/<that> before creating the branch on top — so the run begins standing
+    # on the previous turn's commits, and the range harvested is still base..branch, now
+    # carrying both turns. Reproduced here because that difference is the whole feature: a stub
+    # that ignored --ref would branch from develop every time and the second turn would silently
+    # produce a fresh branch carrying a second copy of the first turn's work, which is exactly
+    # the bug this is meant to prove is gone.
+    #
+    # ONLY FOR A CONTINUATION, which is what an --ref under `ffbox/` means and the only case
+    # where the run is told to stay where it was put. Every other run starts wherever the clone
+    # landed and then MOVES — the preamble's whole job is to make it branch from the base the
+    # change belongs on — so FFBOX_STUB_BASE stands in for that choice, and a stub that followed
+    # --ref unconditionally would publish `master`-based work for every test that asked for
+    # develop. It did, and pr_base rejected all of it for not descending from develop.
+    start = base
+    ref = opt("--ref")
+    if (ref and ref.startswith("ffbox/")
+            and git("-C", work, "rev-parse", "--verify", "--quiet",
+                    "origin/%s^{commit}" % ref).returncode == 0):
+        start = git("-C", work, "rev-parse", "origin/" + ref).stdout.strip()
     with open(os.path.join(out, "base_sha.txt"), "w", encoding="utf-8") as fh:
-        fh.write(base + "\n")
-    git("-C", work, "checkout", "--quiet", "--detach", base)
+        fh.write(start + "\n")
+    git("-C", work, "checkout", "--quiet", "--detach", start)
     git("-C", work, "checkout", "--quiet", "-B", branch)
     changed = json.loads(os.environ.get("FFBOX_STUB_CHANGED", "[]"))
     for name in changed:
@@ -296,8 +317,14 @@ if branch and os.environ.get("FFBOX_STUB_GIT_ORIGIN"):
         git("-C", work, "add", "-A")
         git("-C", work, "-c", "user.name=ffbox", "-c", "user.email=ffbox@invalid",
             "commit", "--quiet", "-m", "ffbox %s: agent work" % run_id)
+        # THE WHOLE RANGE, the way harvest-workspace.sh writes it: `git diff --name-only
+        # base..branch`, not the files this one turn touched. On a continuation those differ —
+        # the branch carries the earlier turn's files too — and the count the database records
+        # and the page shows is the branch's, not the turn's.
+        listed = git("-C", work, "diff", "--name-only",
+                     "%s..%s" % (base, branch)).stdout.strip()
         with open(os.path.join(out, "changed_files.txt"), "w", encoding="utf-8") as fh:
-            fh.write("\n".join(changed) + "\n")
+            fh.write((listed or "\n".join(changed)) + "\n")
         with open(os.path.join(out, "branch.txt"), "w", encoding="utf-8") as fh:
             fh.write(branch + "\n")
         with open(os.path.join(out, "publish_base.txt"), "w", encoding="utf-8") as fh:
@@ -537,6 +564,15 @@ class Case:
         cfg["github"] = {"api_base": "http://127.0.0.1:9", "repo": "test/test",
                          "base": "develop", "token": None}
         cfg["git_dir"] = os.path.join(self.root, "no-such-checkout")
+        # AND THE MIRROR, for the same reason and then some. It defaults to
+        # /opt/ffcache/mirror/FinalFactory.git — a real 1.3 GB repository that exists on the
+        # build server this suite runs on — and publish() writes to it now, so a suite that
+        # left it at the default fetched every test case's throwaway commits into the machine's
+        # production mirror and left a refs/heads/ffbox/d1t2-<hex> behind for each. It did
+        # exactly that, seventeen times, before this line existed. Cases that publish point it
+        # at their own fixture; the default here is a path that is not a repository, so
+        # mirror_carries answers no and mirror_take declines rather than inventing one.
+        cfg["mirror_repo"] = os.path.join(self.root, "no-such-mirror")
         # No sleeping in the suite: a failed row must be retryable on the very next pass.
         cfg["send_backoff_secs"] = 0
         cfg["_discord"] = {"channels": {"dev_chat": DEVCHAT}}
@@ -3025,6 +3061,14 @@ def git_origin(case):
     git_run("-C", host, "commit", "-qm", "develop is ahead of the release")
     git_run("-C", host, "push", "-q", "origin", "HEAD:refs/heads/develop")
     git_run("-C", host, "fetch", "-q", "origin")
+    # THE MIRROR, which is what a container can actually see. restore-workspace.sh fills the
+    # workspace from it and from nothing else, so a branch that is not here does not exist as
+    # far as any run is concerned — which is why publish() puts what it pushes into it and
+    # launch() checks before starting a turn on one. A real bare repo rather than a stub,
+    # because the checking and the putting are both plain git and a stub would prove neither.
+    mirror = os.path.join(case.root, "mirror.git")
+    git_run("clone", "-q", "--mirror", origin, mirror)
+    case.watcher.cfg["mirror_repo"] = mirror
     case.watcher.cfg["git_dir"] = host
     case.watcher.cfg["push_remote"] = "origin"
     case.watcher.cfg["github"] = {"api_base": github_base(),
@@ -3032,6 +3076,11 @@ def git_origin(case):
                                   "base": "develop", "token": "gh-test-token"}
     os.environ["FFBOX_STUB_GIT_ORIGIN"] = origin
     return origin, host
+
+
+def mirror_of(case):
+    """The mirror git_origin built for this case."""
+    return case.watcher.cfg["mirror_repo"]
 
 
 PASSING_VERIFY = {"ran": True, "compiled": True, "compile_errors": None, "tests_run": 214,
@@ -4834,8 +4883,16 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
     # CONTAINER, on the fact that the run changed no files, rather than by excluding the lane.
     check("harness verification is scheduled for a local turn like any other dev turn",
           job["verify"]["enabled"] is True, job["verify"])
+    # ASKED FOR ON THE COMMAND LINE, not read back off the run row. run.branch is what the run
+    # PUBLISHED, and since v12 a run that published nothing carries NULL there rather than the
+    # name it was launched with — this stub changes no files, so the column is empty and the
+    # question "was a branch asked for" has to be put to ffbox's argv, which is where the ask
+    # actually lives.
+    argv = json.load(open(os.path.join(os.path.dirname(run["stream_path"]),
+                                       "ffbox-argv.json"), encoding="utf-8"))
     check("and a branch is asked for, so the work can leave the clone",
-          run["branch"] == f"ffbox/{run['ffbox_run_id']}", run["branch"])
+          "--branch" in argv and argv[argv.index("--branch") + 1]
+          == f"ffbox/{run['ffbox_run_id']}", argv)
     # Measured, not assumed: with the Discord framing in place, a shell prompt asking which file
     # defines something came back as a POLICY REFUSAL addressed to a player, because the
     # answerer role forbids naming repo internals to Discord users.
@@ -4984,9 +5041,17 @@ def test_the_shell_lane_was_merged_into_dev():
     check("both are verified by the harness",
           (local_job["verify"]["enabled"], remote_job["verify"]["enabled"]) == (True, True),
           (local_job["verify"], remote_job["verify"]))
+    # From the argv for the same reason as above: neither stub run changes a file, so neither
+    # PUBLISHES a branch, and run.branch is NULL on both. What this check is about is that the
+    # host asked ffbox for one in both cases — locality does not decide whether work can leave
+    # the clone.
+    local_argv_launch = json.load(open(os.path.join(
+        os.path.dirname(local_run["stream_path"]), "ffbox-argv.json"), encoding="utf-8"))
+    remote_argv_launch = json.load(open(os.path.join(
+        os.path.dirname(remote_run["stream_path"]), "ffbox-argv.json"), encoding="utf-8"))
     check("and both get a branch to publish, because both can change code",
-          local_run["branch"] is not None and remote_run["branch"] is not None,
-          (local_run["branch"], remote_run["branch"]))
+          "--branch" in local_argv_launch and "--branch" in remote_argv_launch,
+          (local_argv_launch, remote_argv_launch))
     check("only the Discord turn is fenced as untrusted input",
           "<discord>" not in local_job["prompt"] and "<discord>" in remote_job["prompt"],
           local_job["prompt"][:120])
@@ -6691,6 +6756,287 @@ def test_memory_is_read_from_meminfo_not_from_dev_shm():
     check("an unreadable meminfo does not take the feature offline", w.pool_has_room(), None)
 
 
+
+def test_a_conversation_publishes_onto_one_branch():
+    """Turn 4's work lands on turn 3's branch, not on a second one beside it.
+
+    THE BUG THIS EXISTS FOR, observed on the build server rather than imagined. Conversation 30
+    took four turns at one bug. Turn 3 published
+    `ffbox/antimatter-cloud-phantom-stability-d30t3-c499b106` against develop; turn 4, started
+    from the same pinned base with no idea any of that had happened, re-picked its base, renamed
+    itself, and published `ffbox/antimatter-cloud-phantom-stability-master-d30t4-8ec81be5`
+    against master. Two branches, two bases, one three-file change, and nothing on either of
+    them saying which was current.
+
+    A conversation is one piece of work however many turns it takes. It owns ONE branch, claimed
+    by the first run that pushes, and every turn after starts standing on it and publishes back
+    onto it.
+    """
+    print("publication: one branch per conversation")
+    case = bug_case("oneabranch", venue="private")
+    origin, host = git_origin(case)
+
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    first = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                      " ORDER BY r.id DESC")[0]
+    conv = case.rows("SELECT * FROM conversation")[0]
+    branch = first["branch"]
+    check("the first run to push claims the branch for the conversation",
+          conv["branch"] == branch and branch == f"ffbox/{first['ffbox_run_id']}",
+          (conv["branch"], branch))
+    check("and it is in the mirror, which is the only place a later run could see it",
+          git_run("-C", mirror_of(case), "rev-parse", "--verify", "--quiet",
+                  "refs/heads/%s^{commit}" % branch).returncode == 0,
+          git_run("-C", mirror_of(case), "for-each-ref", "--format=%(refname)",
+                  "refs/heads/ffbox/*").stdout)
+
+    # A SECOND TURN, touching a different file so the two contributions are told apart.
+    escalate(case, changed=["Assets/Merger.cs"], verify=PASSING_VERIFY)
+    second = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                       " ORDER BY r.id DESC")[0]
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("the second turn publishes onto the same branch",
+          second["branch"] == branch, (second["branch"], branch))
+    check("and it really did push", second["pushed"] == 1, second)
+    check("the conversation still names that one branch, not the newer run's id",
+          conv["branch"] == branch, conv["branch"])
+
+    heads = [ln.split()[-1] for ln in
+             git_run("-C", host, "ls-remote", "--heads", "origin").stdout.splitlines()
+             if "refs/heads/ffbox/" in ln]
+    check("ONE ffbox branch exists on the remote, not two",
+          heads == [f"refs/heads/{branch}"], heads)
+
+    # The point of one branch: a reviewer opens it and sees the whole conversation's work.
+    listed = git_run("-C", host, "diff", "--name-only",
+                     "refs/remotes/origin/develop..refs/ffbox/%s" % branch).stdout.split()
+    check("the branch carries both turns' files",
+          sorted(listed) == ["Assets/Belt.cs", "Assets/Merger.cs"], listed)
+    check("and the recorded file count is the branch's, not the last turn's",
+          second["changed_files"] == 2, second["changed_files"])
+    check("both runs point at the same base, so the second did not re-pick one",
+          first["pr_base"] == second["pr_base"] == "develop",
+          (first["pr_base"], second["pr_base"]))
+
+
+def test_a_continuation_starts_on_the_branch_and_is_told_so():
+    """The second turn is checked out on the conversation's branch and knows it.
+
+    Three separate mechanisms have to agree or the run publishes something other than what it
+    was started on:
+
+      * --ref is the branch, so the clone lands on the earlier turn's commits
+      * --branch-prefix is WITHHELD, so the harvest cannot rename the work after whatever
+        branch the agent happened to make
+      * the preamble says all of this, so the agent commits onto it instead of fighting it
+
+    The middle one is what makes it true whether or not the model cooperates; the last is what
+    stops the model wasting a turn discovering the middle one.
+    """
+    print("publication: what a continuing turn is told")
+    case = bug_case("continued", venue="private")
+    origin, host = git_origin(case)
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    branch = case.rows("SELECT * FROM conversation")[0]["branch"]
+
+    escalate(case, changed=["Assets/Merger.cs"], verify=PASSING_VERIFY)
+    run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                    " ORDER BY r.id DESC")[0]
+    run_dir = os.path.dirname(run["stream_path"])
+    argv = json.load(open(os.path.join(run_dir, "ffbox-argv.json"), encoding="utf-8"))
+    job = json.load(open(os.path.join(run_dir, "job.json"), encoding="utf-8"))
+
+    check("the clone starts on the conversation's branch, not at the pinned base",
+          "--ref" in argv and argv[argv.index("--ref") + 1] == branch, argv)
+    check("and ffbox is told to publish under exactly that name",
+          "--branch" in argv and argv[argv.index("--branch") + 1] == branch, argv)
+    # WITHOUT THIS the harvest renames the work to <prefix><whatever branch HEAD ended on>-<run
+    # id>, which is a second branch carrying the first turn's commits again and an open pull
+    # request left pointing at the older one.
+    check("--branch-prefix is withheld, so the harvest cannot rename a settled branch",
+          "--branch-prefix" not in argv, argv)
+    check("the job names the branch the conversation owns",
+          job["bases"]["conversation_branch"] == branch, job["bases"])
+
+    # THROUGH THE CONTAINER'S OWN BUILDER, because the preamble is assembled inside
+    # discord-task.sh and not on the host: asserting on the host's job dict would prove nothing
+    # about what `claude` is actually told.
+    pre = preamble_for(job, "continuedpre")
+    check("the preamble says the run is already on it and names it",
+          "ALREADY ON THIS CONVERSATION'S BRANCH" in pre and branch in pre, pre[:400])
+    check("and tells it not to make one of its own", "DO NOT make a branch" in pre, pre[:400])
+    check("the base-choosing instruction is gone, because there is nothing left to choose",
+          "git checkout -b <name> origin/<base>" not in pre, pre[:400])
+    check("but it is still told which base the branch is for",
+          "based on `origin/develop`" in pre, pre[:400])
+    check("and it is warned off the cross-base checkout that costs a Unity reimport",
+          "reimport" in pre, pre[:400])
+
+    # A FIRST turn is unchanged: it still makes a branch and still picks a base.
+    fresh = json.load(open(os.path.join(
+        os.path.dirname(case.rows("SELECT r.* FROM run r ORDER BY r.id")[0]["stream_path"]),
+        "job.json"), encoding="utf-8"))
+    fresh_pre = preamble_for(fresh, "freshpre")
+    check("a first turn is still told to make a branch and choose a base",
+          "MAKE A BRANCH BEFORE YOU CHANGE ANYTHING" in fresh_pre
+          and "git checkout -b <name> origin/<base>" in fresh_pre, fresh_pre[:400])
+    check("and it carries no conversation branch, because there was none yet",
+          fresh["bases"]["conversation_branch"] is None, fresh["bases"])
+
+
+def test_a_run_that_publishes_nothing_leaves_no_branch_name():
+    """run.branch names what a run PUBLISHED, and a run that published nothing names nothing.
+
+    It is written at launch with the name the container is told to start on — before any branch
+    exists — and _no_branch used to leave that placeholder sitting in the row next to the reason
+    there was no branch. Eighteen of the nineteen non-null values on the build server were that:
+    a name for a branch that was never created, that the page rendered as a branch, on the same
+    line as "no branch: the run changed no files".
+    """
+    print("publication: no branch means no branch name")
+    case = bug_case("nobranchname", venue="private")
+    git_origin(case)
+    # No changed files, so the harvest leaves no branch.txt and publish takes the _no_branch path.
+    escalate(case, changed=[], verify=None)
+    run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                    " ORDER BY r.id DESC")[0]
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("the run records why there is no branch",
+          run["no_branch_reason"] == "the run changed no files", run["no_branch_reason"])
+    check("and does not also claim one", run["branch"] is None, run["branch"])
+    check("it was launched with a name all the same — the ask is on the command line",
+          "--branch" in json.load(open(os.path.join(os.path.dirname(run["stream_path"]),
+                                                    "ffbox-argv.json"), encoding="utf-8")))
+    check("and the conversation claims no branch either",
+          conv["branch"] is None, conv["branch"])
+
+
+def test_the_v12_migration_repairs_what_the_old_rule_left():
+    """A database written before this rule is brought to it on the next start.
+
+    Both halves matter and they are separate facts: the placeholder names have to go, and the
+    conversations that DID publish have to end up owning the branch their next turn will
+    continue. Where a conversation published more than once — which is what the old rule
+    produced — the newest push is the one to carry forward.
+    """
+    print("publication: the v12 migration")
+    case = Case("v12migrate")
+    db = case.watcher.db
+    db.execute("INSERT INTO conversation(id, thread_id, kind, state, created_at)"
+               " VALUES(9, '9000', 'bug_report', 'idle', ?)", (ffwatch.now_iso(),))
+    db.execute("INSERT INTO turn(conversation_id, seq, status) VALUES(9, 1, 'done')")
+    db.execute("INSERT INTO turn(conversation_id, seq, status) VALUES(9, 2, 'done')")
+    db.execute("INSERT INTO turn(conversation_id, seq, status) VALUES(9, 3, 'done')")
+    turns = [r["id"] for r in case.rows("SELECT id FROM turn WHERE conversation_id=9 ORDER BY seq")]
+    # Exactly conversation 30's shape: a turn that published nothing but kept its placeholder,
+    # then two that published, on two different branches.
+    db.execute("INSERT INTO run(turn_id, ffbox_run_id, branch, pushed, terminal_state,"
+               " no_branch_reason) VALUES(?, 'd9t1', 'ffbox/d9t1', 0, 'done',"
+               " 'the run changed no files')", (turns[0],))
+    db.execute("INSERT INTO run(turn_id, ffbox_run_id, branch, pushed, terminal_state)"
+               " VALUES(?, 'd9t2', 'ffbox/fix-it-d9t2', 1, 'done')", (turns[1],))
+    db.execute("INSERT INTO run(turn_id, ffbox_run_id, branch, pushed, terminal_state)"
+               " VALUES(?, 'd9t3', 'ffbox/fix-it-master-d9t3', 1, 'done')", (turns[2],))
+    # A run still in flight: no terminal state, so its launch-time name is not a stale one yet.
+    db.execute("INSERT INTO turn(conversation_id, seq, status) VALUES(9, 4, 'running')")
+    live = case.rows("SELECT id FROM turn WHERE conversation_id=9 ORDER BY seq")[-1]["id"]
+    db.execute("INSERT INTO run(turn_id, ffbox_run_id, branch, pushed)"
+               " VALUES(?, 'd9t4', 'ffbox/d9t4', 0)", (live,))
+    db.execute("UPDATE conversation SET branch=NULL WHERE id=9")
+
+    db.init_schema()
+
+    rows = {r["ffbox_run_id"]: r for r in case.rows("SELECT * FROM run")}
+    check("a finished run that never pushed loses its placeholder",
+          rows["d9t1"]["branch"] is None, rows["d9t1"]["branch"])
+    check("a run still in flight keeps the name it was launched with",
+          rows["d9t4"]["branch"] == "ffbox/d9t4", rows["d9t4"]["branch"])
+    check("a pushed branch is left exactly as it was",
+          rows["d9t2"]["branch"] == "ffbox/fix-it-d9t2", rows["d9t2"]["branch"])
+    conv = case.rows("SELECT * FROM conversation WHERE id=9")[0]
+    check("the conversation takes the NEWEST branch it published, which is what a next turn"
+          " should continue",
+          conv["branch"] == "ffbox/fix-it-master-d9t3", conv["branch"])
+
+    # IDEMPOTENT, because it runs on every start and not once.
+    db.init_schema()
+    check("running it again changes nothing",
+          case.rows("SELECT * FROM conversation WHERE id=9")[0]["branch"]
+          == "ffbox/fix-it-master-d9t3")
+    check("and a conversation that never published still owns no branch",
+          all(r["branch"] is None for r in case.rows(
+              "SELECT * FROM conversation WHERE id<>9")))
+
+
+def test_a_continuation_the_mirror_cannot_supply_falls_all_the_way_back():
+    """No mirror, no continuation — and then a run of its own rather than a lost turn.
+
+    The container resolves --ref against the mirror and nothing else, so a conversation branch
+    that is not there cannot be continued. What matters is that the fallback is COMPLETE. Half
+    of it — starting at the base while still publishing under the settled name — would rebuild
+    that branch from scratch and offer it as a non-fast-forward push, which is rejected, and the
+    turn's work would go nowhere at all. A second branch a human has to reconcile is a bad
+    outcome; work that only ever existed inside a destroyed ZFS clone is a worse one.
+    """
+    print("publication: a continuation the mirror cannot supply")
+    case = bug_case("nomirror", venue="private")
+    origin, host = git_origin(case)
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    branch = case.rows("SELECT * FROM conversation")[0]["branch"]
+
+    # Take the branch away AND make the repair impossible, which is what a missing mirror is.
+    git_run("-C", mirror_of(case), "update-ref", "-d", "refs/heads/%s" % branch)
+    case.watcher.cfg["mirror_repo"] = os.path.join(case.root, "gone.git")
+    check("the branch is not visible to a container any more",
+          not case.watcher.mirror_carries(branch))
+
+    escalate(case, changed=["Assets/Merger.cs"], verify=PASSING_VERIFY)
+    run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                    " ORDER BY r.id DESC")[0]
+    argv = json.load(open(os.path.join(os.path.dirname(run["stream_path"]),
+                                       "ffbox-argv.json"), encoding="utf-8"))
+    check("the run does not start on a branch nothing can see",
+          argv[argv.index("--ref") + 1] != branch, argv)
+    check("and does not publish under the settled name, which would be a rejected push",
+          argv[argv.index("--branch") + 1] != branch, argv)
+    check("it takes a name of its own instead",
+          argv[argv.index("--branch") + 1] == f"ffbox/{run['ffbox_run_id']}", argv)
+    check("with the prefix restored, so the agent can still name the work",
+          "--branch-prefix" in argv, argv)
+    check("and the work is published rather than lost", run["pushed"] == 1, run)
+    check("the conversation keeps naming the branch it already owned",
+          case.rows("SELECT * FROM conversation")[0]["branch"] == branch,
+          case.rows("SELECT * FROM conversation")[0]["branch"])
+
+
+def test_the_mirror_is_only_written_inside_the_pipelines_own_namespace():
+    """mirror_take may create refs/heads/ffbox/*, and nothing else.
+
+    The mirror is shared: CI's runners fetch every branch on origin into it and build against
+    what they find. A bug that let this write outside the prefix could move `develop` under a
+    job that was mid-fetch, so the guard is a check against the configured prefix rather than
+    trust in the caller.
+    """
+    print("publication: the mirror write is fenced")
+    case = bug_case("mirrorfence", venue="private")
+    origin, host = git_origin(case)
+    mirror = mirror_of(case)
+    before = git_run("-C", mirror, "rev-parse", "develop").stdout.strip()
+
+    check("a name outside the prefix is refused", case.watcher.mirror_take("develop") is False)
+    check("and nothing moved", git_run("-C", mirror, "rev-parse", "develop").stdout.strip()
+          == before)
+    check("an empty name is refused too", case.watcher.mirror_take("") is False)
+
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    branch = case.rows("SELECT * FROM conversation")[0]["branch"]
+    check("a published branch does go in", case.watcher.mirror_carries(branch), branch)
+    check("and develop is still where it was",
+          git_run("-C", mirror, "rev-parse", "develop").stdout.strip() == before)
+    check("a branch nobody published is not there",
+          not case.watcher.mirror_carries("ffbox/never-existed"))
+
+
 def main():
     tests = [
         test_the_pool_only_stages_what_it_has_room_for,
@@ -6809,6 +7155,12 @@ def main():
         test_the_agent_picks_the_branch_its_work_is_for,
         test_the_pull_request_targets_the_branch_the_work_is_based_on,
         test_every_lane_agrees_on_the_workspace_path,
+        test_a_conversation_publishes_onto_one_branch,
+        test_a_continuation_starts_on_the_branch_and_is_told_so,
+        test_a_run_that_publishes_nothing_leaves_no_branch_name,
+        test_the_v12_migration_repairs_what_the_old_rule_left,
+        test_a_continuation_the_mirror_cannot_supply_falls_all_the_way_back,
+        test_the_mirror_is_only_written_inside_the_pipelines_own_namespace,
     ]
     for fn in tests:
         try:

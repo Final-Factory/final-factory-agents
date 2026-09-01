@@ -95,6 +95,11 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_STATE_DIR = os.path.expanduser(os.environ.get("FFWATCH_STATE_DIR", "~/ffbox-state"))
 DEFAULT_PORT = 8787
+# Where a branch name links to, when the config does not say. It matches ffwatch's own default
+# (`github.repo`), which is what a box with no override actually publishes against — so a page
+# reading a config that never mentions GitHub still links to the right repository rather than
+# rendering plain text.
+DEFAULT_GITHUB_REPO = "Final-Factory/FinalFactory"
 
 # Shown in the header so a person reading a page knows which build wrote it. The HTTP
 # server_version below is the protocol banner and moves for its own reasons; this is the
@@ -1040,6 +1045,17 @@ class Raw:
     def __init__(self, markup):
         self.markup = markup
 
+    def __str__(self):
+        """The markup, so composing one into a larger string works.
+
+        Without this, `str(pill(x))` yields `<ffweb.Raw object at 0x…>` and puts it on the page
+        — which is exactly what the state cell of every CLOSED conversation carrying a
+        close_reason showed, since the day that cell was written. The composition reads as the
+        obvious thing to write and there was nothing to stop it, so the fix is to make the
+        obvious thing correct rather than to find the call sites.
+        """
+        return self.markup
+
 
 def link(href, text):
     return Raw("<a href=" + attr(href) + ">" + esc(text) + "</a>")
@@ -1770,12 +1786,18 @@ class App:
         # `sent` and `msg` are dropped, because coming back from a POST is not the moment to
         # re-show an acknowledgement of a different one.
         back = self._back_to(query)
+        # WHICH OF THESE PRODUCED CODE, answerable without opening any of them. A conversation
+        # owns at most one branch, so this is one cell and not a list; most rows are questions
+        # and render an em dash. The name is truncated from the LEFT of its readable part
+        # rather than the right — every published name ends in `-<run id>` and begins with the
+        # same `ffbox/` prefix, so the two ends are the least informative characters in it.
         body = [table(
-            ["id", "kind", "state", "lane", "verdict", "title", "msgs", "turns"] + AGG_HEADERS
-            + ["last activity", "read"],
+            ["id", "kind", "state", "lane", "verdict", "title", "branch", "msgs", "turns"]
+            + AGG_HEADERS + ["last activity", "read"],
             [[link(f"/conversation/{r['id']}", r["id"]), r["kind"], pill(r["state"]),
               r["lane"] or "—", r["verdict"] or "—",
               link(f"/conversation/{r['id']}", short(r["title"] or r["thread_id"], 70)),
+              branch_cell(_row(r, "branch")),
               r["messages"], r["turns"]]
              + agg_cells(aggs.get(r["id"]))
              + [r["last_activity_at"] or "—", mark_button(r["id"], r["is_read"], back)]
@@ -1864,7 +1886,8 @@ class App:
             [[conv["kind"] or "—", state_cell, conv["lane"] or "—",
               conv["verdict"] or "—", conv["thread_id"], session_cell,
               (conv["base_sha"] or "—")[:12], conv["github_issue"] or "—",
-              conv["github_pr"] or "—"]]))
+              pr_link(conv["github_pr"])]]))
+        head.append(self._branch_note(conv))
         head.append(self._close_button(conv))
         head.append(table(AGG_HEADERS, [agg_cells(agg)]))
 
@@ -1880,6 +1903,60 @@ class App:
         return page(conv["title"] or f"conversation {conv_id}",
                     head + note + [self._reply_box(conv, in_flight)] + body,
                     refresh="live" if in_flight else True)
+
+    def _branch_note(self, conv):
+        """THE CODE THIS CONVERSATION PRODUCED, stated once, at the top, as a property of the
+        conversation rather than of whichever run happened to push.
+
+        That is the shape of the thing: a conversation owns ONE branch, claimed by the first run
+        of it that pushes and continued by every turn after — so the question "did this produce
+        code, and where is it" has one answer and it belongs beside the kind and the state, not
+        buried three runs down a timeline. It was buried three runs down a timeline, and only in
+        the run rows, which is why it is here now.
+
+        The file counts come from the runs because the conversation does not carry them, and
+        they are per-run and cumulative both: each publishing run bundles its whole branch
+        against the base, so the LAST one is the branch's total. Only `pushed` rows are counted.
+        A conversation with no branch renders nothing at all rather than an empty row saying so
+        — most conversations are questions, and "no branch" is not news about one.
+        """
+        branch = _row(conv, "branch")
+        if not branch:
+            return ""
+        last = self.db.one(
+            "SELECT r.changed_files, r.pr_base, r.pr_number, r.pr_url, r.id"
+            " FROM run r JOIN turn t ON t.id = r.turn_id"
+            " WHERE t.conversation_id = ? AND r.pushed = 1"
+            " ORDER BY r.id DESC LIMIT 1", (conv["id"],))
+        pushes = self.db.one(
+            "SELECT COUNT(*) AS n FROM run r JOIN turn t ON t.id = r.turn_id"
+            " WHERE t.conversation_id = ? AND r.pushed = 1", (conv["id"],))
+        bits = ["<div class=\"note branch\">branch ", str(branch_link(branch))]
+        if last and _row(last, "pr_base"):
+            bits.append(" → " + esc(last["pr_base"]))
+        if last and _row(last, "changed_files"):
+            bits.append(" · " + esc(last["changed_files"]) + " file(s)")
+        turns = int((pushes or {"n": 0})["n"] or 0)
+        if turns > 1:
+            # Said out loud, because it is the difference between "an agent wrote this" and "an
+            # agent wrote this, was told it was wrong, and wrote more". A reviewer reading the
+            # branch sees one diff either way.
+            bits.append(" · pushed on " + esc(turns) + " turns")
+        pr = _row(last or {}, "pr_url") or _row(last or {}, "pr_number")
+        if pr:
+            bits.append(" · PR " + str(pr_link(pr)))
+        else:
+            # WHY THERE IS NO PULL REQUEST, on the row that says there is a branch. Confidence
+            # and a failed verification gate the PR and never the branch, so "pushed, no PR" is
+            # a normal and frequent outcome — and it is the one a human has to act on, since
+            # nothing else will.
+            why = self.db.one(
+                "SELECT r.no_pr_reason FROM run r JOIN turn t ON t.id = r.turn_id"
+                " WHERE t.conversation_id = ? AND r.pushed = 1 AND r.no_pr_reason IS NOT NULL"
+                " ORDER BY r.id DESC LIMIT 1", (conv["id"],))
+            bits.append(" · no PR" + (": " + esc(why["no_pr_reason"]) if why else ""))
+        bits.append("</div>")
+        return "".join(bits)
 
     def _close_button(self, conv):
         """End a conversation by hand, for what a person can see and the rules cannot.
@@ -2159,20 +2236,39 @@ class App:
         out.append("<div class=\"meta\">tools: " + esc(run["tools"] or "—") +
                    " · unity " + ("yes" if run["unity"] else "no") +
                    " · session " + esc(run["session_id"] or "—") + "</div>")
-        pub = []
-        if run["branch"]:
-            pub.append(f"branch {run['branch']}" + (" (pushed)" if run["pushed"] else "")
-                       + (f" → {_row(run, 'pr_base')}" if _row(run, "pr_base") else ""))
-        if run["pr_url"]:
-            pub.append(f"PR #{run['pr_number']} {run['pr_url']}")
-        if run["no_branch_reason"]:
-            pub.append("no branch: " + run["no_branch_reason"])
-        if run["no_pr_reason"]:
-            pub.append("no PR: " + run["no_pr_reason"])
-        if pub:
-            out.append("<div class=\"meta\">" + esc(" · ".join(pub)) + "</div>")
+        out.append(self._publication(run))
         out.append("</div>")
         return "".join(out)
+
+    @staticmethod
+    def _publication(run):
+        """What THIS RUN published, on the run row. The branch itself belongs to the
+        conversation and is stated once at the top of the page; this is the per-turn detail.
+
+        GATED ON `pushed`, NOT ON `branch` BEING SET. run.branch is written at launch with the
+        name the container is told to start on, before any branch exists — so a run that changed
+        nothing used to render "branch ffbox/d30t1-24602a02" and, in the same line, "no branch:
+        the run changed no files". Eighteen of the nineteen rows on this box that had a branch
+        name had never pushed anything. ffwatch now clears the column when a run publishes
+        nothing, and this reads `pushed` regardless, because the column is a name and `pushed`
+        is the fact.
+        """
+        pub = []
+        if run["pushed"]:
+            pub.append(Raw("pushed " + str(branch_link(run["branch"]))
+                           + (" → " + esc(_row(run, "pr_base")) if _row(run, "pr_base") else "")
+                           + (" · " + esc(_row(run, "changed_files")) + " file(s)"
+                              if _row(run, "changed_files") else "")))
+        if run["pr_url"]:
+            pub.append(Raw("PR " + str(link(run["pr_url"], f"#{run['pr_number']}"))))
+        if run["no_branch_reason"]:
+            pub.append(Raw(esc("nothing published: " + run["no_branch_reason"])))
+        if run["no_pr_reason"]:
+            pub.append(Raw(esc("no PR: " + run["no_pr_reason"])))
+        if not pub:
+            return ""
+        return ("<div class=\"meta\">"
+                + " · ".join(c.markup for c in pub) + "</div>")
 
     def _render_verification(self, ver):
         # Three states, not two. "nothing to test" is what a run that changed no files leaves
@@ -2492,12 +2588,12 @@ def missing_columns(db):
     return missing
 
 
-def configured_bind():
-    """(host, port) from the ffwatch block of the ffdiscord config, else the default.
+def _config_block():
+    """The merged ffwatch settings, or {} — never an exception.
 
-    Read here rather than only rendered into the unit so that `python3 ffbox/ffweb.py` by hand
-    lands on the same address as the service. A missing or unreadable config is not an error: it
-    falls back to 127.0.0.1, because a config this cannot read is not one to widen a bind on.
+    Split out of configured_bind so the repo slug can be read from the same place the bind is,
+    by the same ladder. A config this cannot read is not an error anywhere it is used: the bind
+    falls back to loopback, and the GitHub links below simply do not render.
     """
     def read(path):
         try:
@@ -2516,7 +2612,84 @@ def configured_bind():
     ffbox_raw = read(os.path.join(ffbox_dir, "config.json"))
     block.update(ffbox_raw)
     block.update(ffbox_raw.get("ffwatch") or {})
+    return block
 
+
+def github_repo():
+    """`owner/name` from the config, or "" — what turns a branch name into a link.
+
+    READ ONCE PER PAGE, not cached at import: ffweb runs for weeks under systemd and the config
+    is edited under it. It is two small file reads.
+
+    Falls back to ffwatch's own default rather than to nothing, because that default is what
+    ffwatch publishes against on a box whose config does not override it — a page that dropped
+    the links there would be wrong in exactly the common case.
+    """
+    gh = _config_block().get("github")
+    repo = (gh or {}).get("repo") if isinstance(gh, dict) else None
+    repo = str(repo or DEFAULT_GITHUB_REPO).strip().strip("/")
+    # Two path segments and nothing exotic. This is interpolated into an href, so a config
+    # somebody fat-fingered must not be able to put a `javascript:` or a second host in one.
+    return repo if re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", repo) else ""
+
+
+def branch_link(branch):
+    """A published branch, as a link to it on GitHub when we know where that is."""
+    if not branch:
+        return Raw("—")
+    repo = github_repo()
+    if not repo:
+        return Raw("<code>" + esc(branch) + "</code>")
+    return Raw("<a href=" + attr(f"https://github.com/{repo}/tree/{urllib.parse.quote(branch)}")
+               + " rel=\"noreferrer noopener\"><code>" + esc(branch) + "</code></a>")
+
+
+def branch_cell(branch, limit=34):
+    """A branch for a LIST row: linked, and short enough not to own the table.
+
+    Trimmed in the middle, keeping the tail. `ffbox/antimatter-cloud-phantom-stability-d30t3-
+    c499b106` is 52 characters of which the first six are the same on every branch this
+    pipeline has ever pushed; the run id on the end is what tells two attempts apart, so it is
+    the half that must survive. The title attribute carries the whole name for anyone who
+    wants it.
+    """
+    if not branch:
+        return Raw("—")
+    text = str(branch)
+    prefix = "ffbox/"
+    shown = text[len(prefix):] if text.startswith(prefix) else text
+    if len(shown) > limit:
+        shown = "…" + shown[-(limit - 1):]
+    repo = github_repo()
+    inner = "<code title=" + attr(text) + ">" + esc(shown) + "</code>"
+    if not repo:
+        return Raw(inner)
+    return Raw("<a href=" + attr(f"https://github.com/{repo}/tree/{urllib.parse.quote(text)}")
+               + " rel=\"noreferrer noopener\">" + inner + "</a>")
+
+
+def pr_link(value):
+    """conversation.github_pr, which holds a url when there is one and a number when there is not."""
+    text = str(value or "").strip()
+    if not text:
+        return Raw("—")
+    if text.startswith("https://github.com/"):
+        number = text.rstrip("/").rsplit("/", 1)[-1]
+        return link(text, f"#{number}" if number.isdigit() else text)
+    repo = github_repo()
+    if text.isdigit() and repo:
+        return link(f"https://github.com/{repo}/pull/{text}", f"#{text}")
+    return Raw(esc(text))
+
+
+def configured_bind():
+    """(host, port) from the ffwatch block of the ffdiscord config, else the default.
+
+    Read here rather than only rendered into the unit so that `python3 ffbox/ffweb.py` by hand
+    lands on the same address as the service. A missing or unreadable config is not an error: it
+    falls back to 127.0.0.1, because a config this cannot read is not one to widen a bind on.
+    """
+    block = _config_block()
     host = os.environ.get("FFWATCH_WEB_HOST") or block.get("web_host") or "127.0.0.1"
     try:
         port = int(os.environ.get("FFWATCH_WEB_PORT") or block.get("web_port") or DEFAULT_PORT)

@@ -408,7 +408,7 @@ PREAMBLE_COMMON = (
 # throws the whole run away, which is why the agent is told the consequence and not just the
 # rule. The host still creates a branch at the base sha and starts the run on it, so a lane that
 # ignores this loses nothing — what the rule buys is a name a reviewer can read.
-PREAMBLE_BRANCH = (
+PREAMBLE_BRANCH_NEW = (
     " MAKE A BRANCH BEFORE YOU CHANGE ANYTHING: `git checkout -b belt-merger-priority`, named "
     "for the change rather than for this run or for yourself. Do all of your work on it. What "
     "the harness publishes is whatever branch HEAD is on when you exit — renamed to "
@@ -425,6 +425,42 @@ PREAMBLE_BRANCH = (
 )
 
 
+# THE OTHER HALF OF THE SAME RULE, for a conversation that has already published. This one is
+# not an instruction so much as a description of where the run already is: the harness checked
+# the workspace out at the conversation's branch, created it, and will publish that exact name
+# whatever HEAD ends on, because it withholds --branch-prefix on a continuation. What the
+# preamble buys is the agent not fighting it — a `git checkout -b` here makes a branch whose
+# name is discarded at harvest, and the commits still land on the conversation's branch, so the
+# only thing a new branch produces is an agent whose summary names something that does not
+# exist.
+#
+# WHY IT IS ONE BRANCH. A conversation is one piece of work however many turns it takes. Turn
+# 4's fix belongs beside turn 3's, in front of the same reviewer, under the same pull request —
+# not on a second branch carrying its own copy of the change with no way to tell from the
+# outside which of the two is current.
+def preamble_branch(job):
+    """The branch half of the preamble: make one, or continue the conversation's."""
+    branch = (job.get("bases") or {}).get("conversation_branch")
+    if not branch:
+        return PREAMBLE_BRANCH_NEW
+    return (
+        f" YOU ARE ALREADY ON THIS CONVERSATION'S BRANCH, `{branch}`, and it is checked out at "
+        "the work an earlier turn of this same conversation published. Those commits are on "
+        "origin and a human may already be reading them; anything you do here is the next "
+        "commit on top of them, not a fresh start. DO NOT make a branch and do not switch to "
+        "one: the harness publishes this branch by name whatever HEAD ends on, so a branch of "
+        "your own is a name that gets discarded while your commits land here anyway. Commit "
+        "onto the branch you are on. Do not try to undo, rewrite or revert the earlier turn's "
+        "commits — you have no `git rebase` and the harness refuses a range that rewrites "
+        "history below its base; if the earlier work was wrong, correct it with a new commit "
+        "and say so in your summary. A run that ends on develop, master or main is refused "
+        "outright and every commit it made is discarded, so never switch to one before you "
+        "exit. Read what is already on this branch — `git log` and `git diff` against the base "
+        "— before you decide what is left to do, because the last turn's changes are part of "
+        "the tree you are looking at and not a proposal you are being asked to review."
+    )
+
+
 def preamble_bases(bases):
     """WHICH BRANCH THE WORK IS FOR — the agent's decision, made by choosing what it branches
     from. The names and what each is for come from the host's config rather than being written
@@ -434,6 +470,21 @@ def preamble_bases(bases):
     choices = (bases or {}).get("choices") or {}
     if not choices:
         return ""
+    # NOTHING TO CHOOSE ON A CONTINUATION. This block exists to make the agent pick a base
+    # deliberately, because the harness reads that choice back out of the commit graph and aims
+    # the pull request at it. A conversation that already has a branch made that choice on an
+    # earlier turn and is standing on the result: the base is whatever the branch descends
+    # from, the pull request may already be open against it, and there is no way to revisit it
+    # from here that is not `git rebase`, which this container does not have. Left in, its
+    # `git checkout -b <name> origin/<base>` would be the one instruction most likely to be
+    # obeyed — and obeying it is how a continuation throws away the work it was started on.
+    if (bases or {}).get("conversation_branch"):
+        on = (bases or {}).get("checked_out_base") or ""
+        return (f" This branch is based on `origin/{on}`, which is what its pull request "
+                "targets; that was decided when the work started and is not yours to revisit. "
+                "Do not check out another base — between master and develop that is thousands "
+                "of files and a full Unity reimport charged to your clock, and it would move "
+                "you off the very commits you were started on." if on else "")
     checked_out = (bases or {}).get("checked_out") or ""
     # WHICH BASE THAT SHA IS, when the host could tell. A resumed turn starts at a pinned commit,
     # and without this line the agent reads forty hex characters, cannot tell which release they
@@ -496,7 +547,7 @@ PREAMBLE_LOCAL = (
     "survives it is the branch you leave behind, which the harness pushes to origin and — "
     "when its own test run passes and you set `confident` — proposes as a pull request "
     "against develop."
-    + PREAMBLE_BRANCH + preamble_bases(job.get("bases")) + PREAMBLE_GIT + PREAMBLE_VERIFY +
+    + preamble_branch(job) + preamble_bases(job.get("bases")) + PREAMBLE_GIT + PREAMBLE_VERIFY +
     " Say plainly what you changed and what you verified. "
     "Put your whole answer in `summary`: it is printed verbatim to the terminal or the page, "
     "so write it as prose for a person, at whatever length the question deserves. Nothing "
@@ -528,7 +579,7 @@ PREAMBLE_TURN = (
     "here — there is no second turn to hand it to. When it is too large, too risky, or needs a "
     "decision that is not yours, set change_required with an outline and leave the code alone. "
     "You may edit code, and you have local git."
-    + PREAMBLE_BRANCH + preamble_bases(job.get("bases")) + PREAMBLE_GIT + PREAMBLE_VERIFY +
+    + preamble_branch(job) + preamble_bases(job.get("bases")) + PREAMBLE_GIT + PREAMBLE_VERIFY +
     " You do not post to Discord and there is no ffdiscord command in this container: whatever "
     "you put in `summary` IS the reply, and the harness posts it to the thread for you. Skill "
     "text that tells you to run `ffdiscord` does not apply here. Do not report an inability to "

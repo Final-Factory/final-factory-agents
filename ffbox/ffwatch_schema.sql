@@ -69,6 +69,24 @@ CREATE TABLE IF NOT EXISTS conversation (
     -- reads this column — ffwatch owns the write, ffweb is the only reader — but it lives
     -- here rather than in a file beside the database so the record travels with the record.
     read_through        TEXT,
+    -- THE BRANCH THIS CONVERSATION OWNS, claimed by the first run of it that actually pushes
+    -- and never reassigned. A conversation is one piece of work however many turns it takes,
+    -- so turn 4's fix belongs on the same branch as turn 3's, in front of the same reviewer,
+    -- under the same pull request. Before this column each publishing run invented its own
+    -- name — the published name carries the run id — and a conversation that took three
+    -- attempts left three branches on origin, two of them abandoned, with no way to tell from
+    -- the outside which one was current.
+    --
+    -- Its presence is also what CHANGES THE NEXT LAUNCH: a conversation with a branch starts
+    -- its next run on that branch's head rather than at the pinned base sha, and the agent is
+    -- told to commit onto it rather than to make one. NULL means no run of this conversation
+    -- has published yet, which is the normal state for anything that only ever answered a
+    -- question.
+    --
+    -- Written only after the push succeeds, so it names a branch that exists on origin. That
+    -- is deliberately not true of run.branch, which is written at launch as the name the
+    -- container was told to start on; `pushed` is what makes that one real.
+    branch              TEXT,
     github_issue        TEXT,
     github_pr           TEXT,
     created_at          TEXT,
