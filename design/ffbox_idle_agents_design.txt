@@ -489,10 +489,18 @@ whichever columns this needs, through the same `ALTER TABLE` list the read/unrea
 REVISED 2026-09-01. The first half of this section stands. The second half was wrong and is now
 implemented the other way round.
 
-What stands: the agent lane stopped acquiring a licence up front on 2026-08-31. `discord-task.sh`
-acquires nothing, and licensing is the job of whatever launches an editor, which is `ffverify` and
-the verification block. So a staged container holds NO SEAT, and ten of them would hold no seats.
-That is still true and it is still the reason the pool is cheap.
+REVISED AGAIN the same day, and this half is now the other way round too. Lazy acquisition was
+right while every container was cold -- a question paid for a seat it never used, measured at 2m09s
+of reply delay -- but a warm pool can take the cost off the request path instead of avoiding it,
+which is better than either. pool-task.sh activates after the workspace is filled and synced and
+before the container goes idle, and hands the seat across its `exec` into the turn task.
+
+So a staged container DOES hold a seat, and this section's "ten of them would hold no seats" is
+wrong in the other direction now. The trade is deliberate: `idle_agents` seats held while the box
+is quiet, in exchange for a dispatched turn never waiting for an activation. It is affordable
+because the ids are per slot, so the licence sees a small recycled set of machines rather than one
+per container, and because a seat is returned when a container retires on its TTL or finishes the
+turn it was given.
 
 What was wrong: "The machine-id problem ffgithubrunners had to solve does not arise either, because
 the agent lane deliberately keeps the image's baked-in id and every container looks like one
