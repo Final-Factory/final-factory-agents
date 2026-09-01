@@ -103,6 +103,37 @@ MEMORY=${FFBOX_MEMORY:-$(_ffbox_cfg memory)}
 [ -n "$MEMORY" ] || MEMORY=72g
 PIDS_LIMIT=${FFBOX_PIDS_LIMIT:-$(_ffbox_cfg pids_limit)}
 [ -n "$PIDS_LIMIT" ] || PIDS_LIMIT=4096
+
+# THE CAPABILITIES, DROPPED TO WHAT THIS LANE ACTUALLY USES. Docker hands a container root about
+# fourteen of root's forty-odd separate powers by default -- module loading, raw sockets, ptrace,
+# mount, changing the clock -- and this lane needs five of them. The rest are container-escape
+# primitives that are simply absent rather than merely unused.
+#
+# NOT CI'S LIST, and this is the whole reason the agent lane could not just copy slot.sh. A CI job
+# stays root from start to finish (RUNNER_ALLOW_RUNASROOT=1; the container is the boundary, not
+# the uid), so three capabilities do it. This lane DROPS PRIVILEGE: entrypoint.sh creates a user
+# and hands the run to it with setpriv, and changing uid needs CAP_SETUID and CAP_SETGID even
+# when you are already root. Measured on 2026-09-01 against the real image -- with CI's three,
+# `setpriv --reuid` fails with "setresuid failed: Operation not permitted", and the run dies
+# before it starts.
+#
+#   CHOWN         restore-workspace.sh hands the extracted tree to the run's uid
+#   DAC_OVERRIDE  and writes over whatever modes the archive carried
+#   FOWNER        chmod/utime on files the archive says belong to somebody else
+#   SETUID SETGID the privilege drop itself
+#
+# NO_NEW_PRIVS on top: once set, nothing in the tree can gain privilege through execve, so a
+# setuid binary found later buys nothing. It does not interfere with the drop above, which gives
+# privilege up rather than taking it.
+CAP_ADD=${FFBOX_CAP_ADD:-CHOWN,DAC_OVERRIDE,FOWNER,SETUID,SETGID}
+CAP_ADD_ARGS=()
+if [ -n "$CAP_ADD" ]; then
+    _oldifs=$IFS; IFS=,
+    for _cap in $CAP_ADD; do
+        [ -n "$_cap" ] && CAP_ADD_ARGS+=(--cap-add "$_cap")
+    done
+    IFS=$_oldifs; unset _oldifs _cap
+fi
 SECRETS=${FFBOX_SECRETS:-$HOME/.config/ffbox/secrets.env}
 RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
 
@@ -746,6 +777,9 @@ RUN_ARGS=(
     --hostname ffbox
     --memory "$MEMORY"
     --pids-limit "$PIDS_LIMIT"
+    --cap-drop=ALL
+    "${CAP_ADD_ARGS[@]}"
+    --security-opt=no-new-privileges
     "${NETWORK_ARGS[@]}"
     "${WORKSPACE_ARGS[@]}"
     "${PROMPT_MOUNT[@]}"
