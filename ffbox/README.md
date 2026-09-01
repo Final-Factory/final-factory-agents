@@ -987,13 +987,38 @@ and the agent cannot touch:
   nothing on either saying which was current. The second turn had no idea the first had
   published, so it re-picked its base and started over.
 
+  **The harness disallows a second one; it does not merely avoid it.** Three gates, because
+  the invariant is worth more than any one of them:
+
+  - `run_ref` and `launch()` give the conversation's branch precedence over a per-submission
+    `--ref` or `--branch`. Those are honoured on a conversation that owns no branch — every
+    first turn, every shell prompt — and ignored, with a log line, on one that does. Obeying
+    them would either rebuild the branch from another base (a non-fast-forward push, rejected,
+    work lost) or publish under a new name (the second branch itself).
+  - If the branch cannot be put in front of the container at all, the turn **fails**
+    (`BranchUnavailable`) before the run row is written. There is deliberately no fallback:
+    every route past that point is one of the two bad outcomes above, and a turn that says
+    plainly it could not start is better than either. The reply names the branch and says
+    nothing ran.
+  - `publish()` refuses to push a harvested name the conversation does not own, which is the
+    last moment before a name becomes a branch on origin. No ordinary run can reach it —
+    `--branch-prefix` is withheld so the harvest publishes exactly what it was given — and that
+    is the argument for the check rather than against it: a config change, a harvest bug or an
+    edited row would otherwise put a second copy of the same work on origin, which is the one
+    failure a reviewer cannot see by reading either branch. The bundle stays on disk, so
+    refusing destroys nothing.
+
+  The claim itself (`WHERE branch IS NULL`) runs only after the push succeeds, so a conversation
+  never names a branch that is not on origin, and the per-conversation `flock` around a launch
+  means two turns of one conversation cannot race to claim it.
+
   Because a container resolves `--ref` against the **local git mirror and nothing else**,
   `publish()` also fetches what it just pushed into `/opt/ffcache/mirror/FinalFactory.git` —
   the one place ffwatch writes to it, fenced to `refs/heads/ffbox/*`. Without that the next
   turn dies in `restore-workspace.sh` with "ref … resolves to nothing after the restore", since
   what otherwise refreshes the mirror is the CI runners' own fetch on no schedule this daemon
-  controls. If the branch cannot be put there, the run still starts — from the pinned base,
-  with a `WARNING` saying the turn does **not** stand on the conversation's own work.
+  controls. If the branch cannot be put there, the turn fails rather than starting somewhere
+  else; see the gates above.
 - **The pull request.** Opened through the stdlib GitHub client, targeting **the branch the work
   is based on** — `master` for a fix to the build players are running, `develop` for everything
   else. The agent chooses by choosing what it branches from; ffbox reads that back out of the

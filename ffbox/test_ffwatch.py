@@ -6968,45 +6968,143 @@ def test_the_v12_migration_repairs_what_the_old_rule_left():
               "SELECT * FROM conversation WHERE id<>9")))
 
 
-def test_a_continuation_the_mirror_cannot_supply_falls_all_the_way_back():
-    """No mirror, no continuation — and then a run of its own rather than a lost turn.
+def test_a_continuation_the_mirror_cannot_supply_is_refused():
+    """No mirror, no continuation, and NO SECOND BRANCH — the turn fails instead.
 
-    The container resolves --ref against the mirror and nothing else, so a conversation branch
-    that is not there cannot be continued. What matters is that the fallback is COMPLETE. Half
-    of it — starting at the base while still publishing under the settled name — would rebuild
-    that branch from scratch and offer it as a non-fast-forward push, which is rejected, and the
-    turn's work would go nowhere at all. A second branch a human has to reconcile is a bad
-    outcome; work that only ever existed inside a destroyed ZFS clone is a worse one.
+    A container resolves --ref against the mirror and nothing else, so a conversation branch
+    that is not there cannot be continued. Every route past that point breaks the rule: starting
+    at the base while publishing under the settled name offers origin a non-fast-forward push,
+    which is rejected and loses the work; starting at the base under a NEW name is the second
+    branch itself. So the launcher refuses before the run row is written — nothing runs, nothing
+    is spent, and the reply says what a human has to fix.
     """
     print("publication: a continuation the mirror cannot supply")
     case = bug_case("nomirror", venue="private")
     origin, host = git_origin(case)
     escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
     branch = case.rows("SELECT * FROM conversation")[0]["branch"]
+    runs_before = len(case.rows("SELECT * FROM run"))
 
-    # Take the branch away AND make the repair impossible, which is what a missing mirror is.
+    # Take the branch away AND make the repair impossible, which is what a lost branch is: gone
+    # from the mirror, and gone from the host checkout the repair would have fetched it from.
     git_run("-C", mirror_of(case), "update-ref", "-d", "refs/heads/%s" % branch)
     case.watcher.cfg["mirror_repo"] = os.path.join(case.root, "gone.git")
     check("the branch is not visible to a container any more",
           not case.watcher.mirror_carries(branch))
 
     escalate(case, changed=["Assets/Merger.cs"], verify=PASSING_VERIFY)
+    check("no run was started at all — the refusal is before the container",
+          len(case.rows("SELECT * FROM run")) == runs_before,
+          [r["ffbox_run_id"] for r in case.rows("SELECT * FROM run")])
+    heads = [ln.split()[-1] for ln in
+             git_run("-C", host, "ls-remote", "--heads", "origin").stdout.splitlines()
+             if "refs/heads/ffbox/" in ln]
+    check("and still exactly one ffbox branch on the remote",
+          heads == [f"refs/heads/{branch}"], heads)
+    check("the conversation keeps naming the branch it owns",
+          case.rows("SELECT * FROM conversation")[0]["branch"] == branch,
+          case.rows("SELECT * FROM conversation")[0]["branch"])
+    turn = case.rows("SELECT * FROM turn ORDER BY seq DESC")[0]
+    check("the turn is failed rather than left queued forever",
+          turn["status"] == "failed", turn["status"])
+    check("with a reason that names the branch and says nothing ran",
+          branch in (turn["error"] or "") and "Nothing was run" in (turn["error"] or ""),
+          turn["error"])
+
+
+def test_a_second_branch_is_refused_at_the_push():
+    """The last gate: a run that harvested a name the conversation does not own never pushes.
+
+    Everything upstream is arranged so this cannot happen — launch() passes the settled name and
+    withholds --branch-prefix, so the harvest publishes exactly what it was given, and no
+    ordinary run can reach this state. That is the argument FOR the check rather than against
+    it: it is an assertion about an invariant several moving parts have to keep, and the cost of
+    one of them being wrong is a second branch on origin carrying a second copy of the same
+    work — the one failure a reviewer cannot see by reading either branch.
+
+    So publish() is called directly, with a harvest that names a branch the conversation does
+    not own. There is no way to provoke it through launch(), which is the point.
+    """
+    print("publication: a second branch is refused at the push")
+    case = bug_case("secondbranch", venue="private")
+    origin, host = git_origin(case)
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    first = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                      " ORDER BY r.id DESC")[0]
+    conv = case.rows("SELECT * FROM conversation")[0]
+    branch = conv["branch"]
+    run_dir = os.path.dirname(first["stream_path"])
+    check("the harvest on disk names the branch that was published",
+          io.open(os.path.join(run_dir, "branch.txt"),
+                  encoding="utf-8").read().strip() == branch, branch)
+
+    # The conversation now owns something else. However that came about — a rename slipping
+    # through, a config change, an edited row — this harvest is a second branch and must not go.
+    case.watcher.db.execute("UPDATE conversation SET branch=? WHERE id=?",
+                            ("ffbox/something-else-entirely", conv["id"]))
+    conv = case.rows("SELECT * FROM conversation")[0]
+    turn = case.rows("SELECT * FROM turn ORDER BY seq DESC")[0]
+    cur = case.watcher.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, branch) VALUES(?,'d1t9-forced',?)",
+        (turn["id"], branch))
+    result = case.watcher.publish(cur.lastrowid, turn, conv, run_dir,
+                                  {"run_id": "d1t9-forced"}, CONFIDENT_VERDICT)
+    forced = case.rows("SELECT * FROM run WHERE id=?", (cur.lastrowid,))[0]
+
+    check("it did not push", forced["pushed"] == 0, forced["pushed"])
+    check("and says why, naming the branch it refused",
+          "second branch" in (forced["no_branch_reason"] or "")
+          and "ffbox/something-else-entirely" in (forced["no_branch_reason"] or ""),
+          forced["no_branch_reason"])
+    check("the refusal is what the reply is told, too",
+          "second branch" in (result.get("no_branch_reason") or ""), result)
+    heads = [ln.split()[-1] for ln in
+             git_run("-C", host, "ls-remote", "--heads", "origin").stdout.splitlines()
+             if "refs/heads/ffbox/" in ln]
+    check("origin still carries the one branch the conversation published",
+          heads == [f"refs/heads/{branch}"], heads)
+    check("and the bundle is still on disk, so nothing was destroyed by stopping",
+          os.path.exists(os.path.join(run_dir, "work.bundle")))
+
+
+def test_a_submission_cannot_name_a_branch_the_conversation_does_not_own():
+    """`--branch` and `--ref` lose to a conversation that already publishes somewhere.
+
+    Both are operator overrides and both are honoured on a conversation that owns no branch —
+    which is every first turn and every shell prompt. On one that does, obeying either produces
+    the same two bad outcomes as everything else here, so they are ignored and said so.
+    """
+    print("publication: a submission cannot re-aim a settled conversation")
+    case = bug_case("overrides", venue="private")
+    origin, host = git_origin(case)
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    branch = conv["branch"]
+
+    turn_id = queue_follow_up(case, conv, note="try again")
+    case.watcher.db.execute(
+        "UPDATE turn SET options_json=? WHERE id=?",
+        (json.dumps({"ref": "develop", "branch": "wip"}), turn_id))
+    turn = case.rows("SELECT * FROM turn WHERE id=?", (turn_id,))[0]
+    check("the run starts on the conversation's branch, not the --ref",
+          case.watcher.run_ref(turn, case.rows("SELECT * FROM conversation")[0]) == branch,
+          case.watcher.run_ref(turn, conv))
+
+    os.environ["FFBOX_STUB_CHANGED"] = json.dumps(["Assets/Merger.cs"])
+    os.environ["FFBOX_STUB_VERIFY"] = json.dumps(PASSING_VERIFY)
+    os.environ["FFBOX_STUB_VERDICT"] = json.dumps(CONFIDENT_VERDICT)
+    case.watcher.once()
     run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
                     " ORDER BY r.id DESC")[0]
     argv = json.load(open(os.path.join(os.path.dirname(run["stream_path"]),
                                        "ffbox-argv.json"), encoding="utf-8"))
-    check("the run does not start on a branch nothing can see",
-          argv[argv.index("--ref") + 1] != branch, argv)
-    check("and does not publish under the settled name, which would be a rejected push",
-          argv[argv.index("--branch") + 1] != branch, argv)
-    check("it takes a name of its own instead",
-          argv[argv.index("--branch") + 1] == f"ffbox/{run['ffbox_run_id']}", argv)
-    check("with the prefix restored, so the agent can still name the work",
-          "--branch-prefix" in argv, argv)
-    check("and the work is published rather than lost", run["pushed"] == 1, run)
-    check("the conversation keeps naming the branch it already owned",
-          case.rows("SELECT * FROM conversation")[0]["branch"] == branch,
-          case.rows("SELECT * FROM conversation")[0]["branch"])
+    check("and publishes under the conversation's name, not --branch wip",
+          argv[argv.index("--branch") + 1] == branch, argv)
+    check("it published", run["pushed"] == 1 and run["branch"] == branch, run["branch"])
+    heads = [ln.split()[-1] for ln in
+             git_run("-C", host, "ls-remote", "--heads", "origin").stdout.splitlines()
+             if "refs/heads/ffbox/" in ln]
+    check("one branch on the remote, still", heads == [f"refs/heads/{branch}"], heads)
 
 
 def test_the_mirror_is_only_written_inside_the_pipelines_own_namespace():
@@ -7159,7 +7257,9 @@ def main():
         test_a_continuation_starts_on_the_branch_and_is_told_so,
         test_a_run_that_publishes_nothing_leaves_no_branch_name,
         test_the_v12_migration_repairs_what_the_old_rule_left,
-        test_a_continuation_the_mirror_cannot_supply_falls_all_the_way_back,
+        test_a_continuation_the_mirror_cannot_supply_is_refused,
+        test_a_second_branch_is_refused_at_the_push,
+        test_a_submission_cannot_name_a_branch_the_conversation_does_not_own,
         test_the_mirror_is_only_written_inside_the_pipelines_own_namespace,
     ]
     for fn in tests:

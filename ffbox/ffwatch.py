@@ -1665,6 +1665,18 @@ def safe_name(name):
 GITHUB_UA = "ffwatch (Final Factory)"
 
 
+class BranchUnavailable(RuntimeError):
+    """A conversation's own branch could not be put in front of the container.
+
+    Raised by launch() BEFORE the run row is written, so the turn fails cleanly with a reply
+    rather than running for twenty minutes and being refused at publish. It is deliberately not
+    recoverable in the launcher: the only two ways past it both break the rule this exists to
+    keep, which is that ONE CONVERSATION HAS ONE BRANCH. Starting somewhere else and publishing
+    under the settled name offers a non-fast-forward push, which is rejected and loses the work;
+    starting somewhere else and publishing under a NEW name is the second branch itself.
+    """
+
+
 class GitHubError(RuntimeError):
     def __init__(self, status, body):
         self.status = status
@@ -4065,11 +4077,21 @@ class Watcher:
         published work, starting anywhere but on top of it means the turn either rediscovers
         what the last one already did or silently reverts it.
 
-        A per-submission --ref still wins over both: somebody who names a ref on the command
-        line is overriding exactly this.
+        A PER-SUBMISSION --ref DOES NOT WIN OVER IT, which is the one place this ladder is not
+        simply "most specific first". The published name is settled by then, so a turn started
+        somewhere else still publishes onto the conversation's branch — and a branch rebuilt
+        from another base is offered to origin as a non-fast-forward push, which is rejected,
+        which loses the turn's work. The override survives for a conversation that owns no
+        branch yet, which is every first turn and every shell prompt.
         """
-        return (turn_options(turn).get("ref") or self.conversation_branch(conv)
-                or conv["base_sha"] or self.cfg["base_ref"])
+        conv_branch = self.conversation_branch(conv)
+        override = turn_options(turn).get("ref")
+        if conv_branch:
+            if override and override != conv_branch:
+                log(f"conversation {conv['id']}: ignoring --ref {override!r}; its work "
+                    f"continues on {conv_branch}")
+            return conv_branch
+        return override or conv["base_sha"] or self.cfg["base_ref"]
 
     def mirror_carries(self, branch):
         """Is `branch` in the local git mirror, which is the only place a container can see it.
@@ -4193,32 +4215,33 @@ class Watcher:
         # --branch-prefix is passed: renaming is how the agent NAMES a branch, and this one
         # already has a name a reviewer has seen and a pull request may already be open against.
         conv_branch = self.conversation_branch(conv)
+        if conv_branch and options.get("branch") and options["branch"] != conv_branch:
+            # A per-submission name loses to one the conversation already owns. It is not an
+            # error — somebody typed `--branch wip` and the harness is telling them where the
+            # work is actually going — but it must not pass silently, or the reply names a
+            # branch nothing pushed.
+            log(f"run {run_id}: ignoring --branch {options['branch']!r}; conversation "
+                f"{conv['id']} already publishes as {conv_branch}")
         ref = self.run_ref(turn, conv)
-        if conv_branch and ref == conv_branch and not self.mirror_carries(conv_branch):
-            # The container resolves --ref against the mirror and nothing else. Repair it here
-            # rather than let restore fail after the warm-up: mirror_take is cheap and local,
-            # and the alternative is a turn that dies with "ref … resolves to nothing" for a
-            # reason having nothing to do with what was asked.
-            #
-            # IF IT CANNOT BE DONE, THE WHOLE CONTINUATION IS OFF — not just the ref. Starting
-            # at the base while still publishing under the conversation's settled name would
-            # build that branch again from scratch, and the push is not a force push, so it
-            # would be rejected as a non-fast-forward and the turn's work would go nowhere. So
-            # this turn behaves exactly as a first one does: base ref, its own run-id name, the
-            # prefix restored so the agent can name it. That leaves a second branch, which is
-            # the thing this feature exists to avoid — and it is still the better outcome,
-            # because work that is published somewhere can be found and work that is not is
-            # gone with the ZFS clone. Loudly, because a human has to reconcile the two.
-            if not self.mirror_take(conv_branch):
-                log(f"WARNING: run {run_id}: {conv_branch} is not in the mirror and could not "
-                    f"be put there — this turn CANNOT continue the conversation's branch. "
-                    f"Falling back to a run of its own off "
-                    f"{conv['base_sha'] or self.cfg['base_ref']}; its work will publish under "
-                    f"a second branch that somebody has to reconcile with {conv_branch}")
-                conv_branch = None
-                ref = conv["base_sha"] or self.cfg["base_ref"]
         if conv_branch:
             branch = conv_branch
+            # The container resolves --ref against the mirror and nothing else, so a branch that
+            # is not there cannot be continued. Repair it here rather than let restore fail
+            # after the warm-up: mirror_take is cheap and local, and the alternative is a turn
+            # that dies with "ref … resolves to nothing" for a reason having nothing to do with
+            # what was asked.
+            if not self.mirror_carries(conv_branch) and not self.mirror_take(conv_branch):
+                # AND IF IT STILL CANNOT BE DONE, THE TURN FAILS. There is deliberately no
+                # fallback: every route past this point creates a second branch on the
+                # conversation or a push that is rejected, and both are worse than a turn that
+                # says plainly it could not start. A human has something to act on — the branch
+                # is missing from the mirror and from the host checkout both, which normally
+                # means it was deleted after a merge — and the conversation is still intact.
+                raise BranchUnavailable(
+                    f"conversation {conv['id']} publishes as {conv_branch}, and that branch is "
+                    f"in neither the mirror nor {self.cfg['git_dir']}, so this turn cannot "
+                    f"continue it. Nothing was run. Put the branch back, or close this "
+                    f"conversation so the next message starts a new one.")
         pool_id = self.pool_claim_for(ref)
         if not pool_id and not self.pool_has_room(for_containers=0):
             # A STAGED CONTAINER MUST NEVER BE THE REASON A REAL TURN CANNOT START. This launch
@@ -5165,6 +5188,28 @@ class Watcher:
             # bundle next to a branch means the harvest itself broke — a different problem from
             # "nothing to publish", and one a human has to look at.
             return self._no_branch(run_row_id, f"the work on {branch} could not be bundled")
+
+        # ONE CONVERSATION, ONE BRANCH — enforced HERE because here is the last moment before a
+        # name becomes a branch on origin. Everything upstream is arranged so this cannot fire:
+        # launch() passes the settled name as --branch and withholds --branch-prefix, so the
+        # harvest publishes exactly what it was given and its rename block never runs. That is
+        # the argument for the check rather than against it. It is an assertion about an
+        # invariant several moving parts have to keep — a config change, a harvest bug, an
+        # edited row, a name that came back through a path nobody thought about — and the cost
+        # of it being wrong is a second branch on origin carrying a second copy of the same
+        # work, which is exactly the outcome this feature exists to prevent and the one thing
+        # a reviewer cannot detect by reading either branch.
+        #
+        # REFUSED, NOT RENAMED. Pushing it under the conversation's name instead would offer
+        # origin a branch built from a different base: a non-fast-forward, rejected, and if it
+        # were NOT rejected it would overwrite reviewed work. The run's bundle stays on disk
+        # either way, so nothing is destroyed by stopping here.
+        owned = self.conversation_branch(conv)
+        if owned and branch != owned:
+            return self._no_branch(
+                run_row_id,
+                f"this run harvested {branch}, but conversation {conv['id']} publishes as "
+                f"{owned}; refusing to open a second branch for one conversation"[:200])
 
         self.db.execute("UPDATE run SET bundle_path=?, changed_files=?, branch=? WHERE id=?",
                         (bundle, len(changed), branch, run_row_id))
