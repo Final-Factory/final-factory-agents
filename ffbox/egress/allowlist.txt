@@ -40,8 +40,23 @@ core.cloud.unity3d.com
 public-cdn.cloud.unity3d.com
 
 # --- Unity Package Manager ---------------------------------------------------------------------
-# A run inherits golden's warm Library/, so UPM should resolve from the on-disk cache and never
-# come here. It is listed because the cost of being wrong is a failed import 40 minutes in, and
-# because 04-warmLibrary.sh's cold import genuinely does need it.
+# A run restores Library/ from the ffcache entry, so UPM should resolve from that and never come
+# here. It is listed because the cost of being wrong is a failed verification at the END of a run,
+# after the agent has done all of its work.
+#
+# THE CACHE BEING RIGHT IS NOT ENOUGH, which is what 2026-08-31 cost us. Conversation 30's harness
+# verification died at `unity exit 1 after 7s` on ten packages, every one of them present in
+# develop@6000.3.19f1.tar at exactly the version packages-lock.json asks for -- entities at 1.4.7
+# with 5082 members extracted. UPM went to the registry anyway, and being refused there turned a
+# slow resolve into a failed run. Why it re-resolves packages it already has is still open.
+#
+# download.packages.unity.com IS THE ONE THIS LANE KEPT MISSING. The CI lane hit the identical
+# refusal on 2026-08-29 and added it (runners/egress/allowlist.txt); that entry even predicted
+# this one -- "a cold UPM resolve in a real import is exactly where it would be" -- and it was
+# never carried across. It is also the worked example of the second refusal path in
+# docs/egress.md: the bare `packages.unity.com` below lets dnsmasq resolve the subdomain by
+# suffix, so the connection reaches nginx, whose match is EXACT, and dies in the deny sink. What
+# the run sees is ECONNRESET and a message about its own firewall, which is us.
 packages.unity.com
 cdn.packages.unity.com
+download.packages.unity.com
