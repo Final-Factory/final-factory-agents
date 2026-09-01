@@ -241,29 +241,6 @@ ffbox_path = os.environ["FFBOX_CONFIG_JSON"]
 discord = read(discord_path)
 ffbox = read(ffbox_path)
 
-# THE RUNNERS' OWN CONFIG FILE, folded into a section of this one and then removed. Same shape
-# as the ffwatch-block move below it and for the same reason: one file per box, so there is one
-# place to look and one template to keep honest.
-#
-# BEFORE THE SEEDING, so a machine's real values beat the defaults seeded further down -- a box
-# running six slots must not come out of this migration set back to one.
-#
-# _comment keys are dropped rather than carried: they were that file's documentation, and this
-# file documents itself through the "_help" block instead.
-ghr_legacy = os.path.join(os.path.dirname(ffbox_path), "githubrunners", "config.json")
-ghr_moved = []
-ghr_old = read(ghr_legacy)
-if ghr_old:
-    ghr_section = ffbox.setdefault("githubrunner", {})
-    if not isinstance(ghr_section, dict):
-        raise SystemExit(f'{ffbox_path}: "githubrunner" must be an object')
-    for key, value in ghr_old.items():
-        if key.startswith("_") or key in ghr_section:
-            continue
-        ghr_section[key] = value
-        ghr_moved.append(key)
-    ghr_moved.sort()
-
 moved = sorted(k for k in (discord.get("ffwatch") or {}) if k not in ffbox)
 for key, value in (discord.get("ffwatch") or {}).items():
     ffbox.setdefault(key, value)
@@ -512,18 +489,8 @@ for alias in pinged:
 write(ffbox_path, ffbox)
 write(discord_path, discord)
 
-# ONLY NOW. write() is atomic and the values are in it, so the old file has nothing left to
-# lose -- doing this any earlier would put the app ids nowhere at all if the write then failed.
-if ghr_old:
-    try:
-        os.unlink(ghr_legacy)
-    except OSError as exc:
-        print(f"  could not delete {ghr_legacy}: {exc}; it is now ignored and can go by hand")
 if moved:
     print("[discord-setup]   moved out of the Discord config: " + ", ".join(moved))
-if ghr_moved:
-    print("[discord-setup]   folded githubrunners/config.json into \"githubrunner\" and deleted "
-          "it: " + ", ".join(ghr_moved))
 if renamed:
     print("[discord-setup]   renamed keys: " + ", ".join(renamed))
 print("[discord-setup]   seeded ffwatch keys: " + (", ".join(seeded) or "(nothing new)"))
