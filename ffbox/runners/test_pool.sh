@@ -43,11 +43,25 @@ PATH="$TMP/bin:$PATH"
 export PATH
 
 # A config directory of our own, so nothing here reads or writes the machine's real one.
+#
+# FFBOX_CONFIG_DIR IS THE ONE THAT MATTERS NOW. The runners' settings became a section of the
+# box's single config.json on 2026-09-01, so FFGITHUBRUNNERS_CONFIG_DIR no longer decides where
+# they are read from -- it still names the directory holding this lane's secrets and flags, and
+# is set for that. Without the line below, this file wrote a config nothing read and then
+# asserted against the REAL MACHINE's numbers, which is exactly how it failed when the shape
+# changed: "got '3', want '6'", 3 being this box's actual ceiling.
 FFGITHUBRUNNERS_CONFIG_DIR="$TMP/config"
 export FFGITHUBRUNNERS_CONFIG_DIR
 mkdir -p "$FFGITHUBRUNNERS_CONFIG_DIR"
+FFBOX_CONFIG_DIR="$TMP/config"
+export FFBOX_CONFIG_DIR
 
-write_config() { printf '{ "slots": %s, "idle_pool": %s }\n' "$1" "$2" > "$FFGITHUBRUNNERS_CONFIG_DIR/config.json"; }
+# max and idle, in the "pool" object both lanes use. max_concurrent_runs rides along because a
+# negative max is read as the box ceiling, and a test for that needs the box to have one.
+write_config() {
+    printf '{ "max_concurrent_runs": 6, "githubrunner": { "pool": { "max": %s, "idle": %s } } }\n' \
+        "$1" "$2" > "$FFBOX_CONFIG_DIR/config.json"
+}
 
 write_config 6 1
 . "$HERE/lib/config.sh"
@@ -110,12 +124,12 @@ ffghr_reload_limits
 is "$SLOTS" 4 "a raised ceiling is picked up without a restart"
 is "$IDLE_POOL" 3 "a raised idle_pool is picked up without a restart"
 
-printf '{ "slots": "six" }\n' > "$FFGITHUBRUNNERS_CONFIG_DIR/config.json"
+printf '{ "githubrunner": { "pool": { "max": "six" } } }\n' > "$FFBOX_CONFIG_DIR/config.json"
 ffghr_reload_limits
 is "$SLOTS" 1 "a non-numeric slots falls back to the default rather than killing the supervisor"
 is "$IDLE_POOL" 1 "a key that has gone away falls back to the default"
 
-printf '{ not json\n' > "$FFGITHUBRUNNERS_CONFIG_DIR/config.json"
+printf '{ not json\n' > "$FFBOX_CONFIG_DIR/config.json"
 ffghr_reload_limits 2>/dev/null
 is "$SLOTS" 1 "an unreadable config.json leaves the current values alone"
 

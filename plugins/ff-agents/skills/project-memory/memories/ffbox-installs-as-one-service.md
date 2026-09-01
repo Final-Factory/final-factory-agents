@@ -4,9 +4,11 @@ Stated by Ben on 2026-08-22, while reviewing the Discord pipeline's systemd layo
 
 **The rule.** ffbox is one product with several front doors. Whatever machine it is set up on
 gets *all* of it: the container harness, the Discord conversation pipeline (gateway listener +
-`ffwatch`), and the `ffweb` page. `sh ffbox/setup.sh` runs every stage — Docker, the ZFS layout,
-the image, the warm Unity `Library/`, then the Discord provisioning — and finishes by installing
-and starting `ffbox.target`. A machine is either an ffbox machine or it is not.
+`ffwatch`), and the `ffweb` page. `sh ffbox/setup.sh` runs every stage — Docker, the ZFS layout for
+the daemon, the container image, the plugin marketplace, then the Discord provisioning — and
+finishes by installing and starting `ffbox.target`. (The warm Unity `Library/` stage is gone: a
+run fills a tmpfs workspace from the ffcache entry inside the container now, so there is no
+golden checkout to warm.) A machine is either an ffbox machine or it is not.
 
 **Why it matters when writing code or docs here.** The temptation is to treat each daemon as an
 optional extra ("enable ffweb if you want the UI"), because that is how the units are *built* —
@@ -31,8 +33,8 @@ exception, for bootstrapping and container debugging only.
 If you add a fourth ingress, it enqueues a turn. It does not launch a container.
 
 **The `--skip-*` flags are not a modularity story.** They exist so a re-run can avoid a slow or
-already-satisfied stage (`--skip-library` after the Unity import, `--skip-docker` on a box where
-Docker is managed elsewhere). Documenting them as a way to choose which parts of ffbox to have
+already-satisfied stage (`--skip-build` when the image is already current, `--skip-docker` on a box
+where Docker is managed elsewhere). Documenting them as a way to choose which parts of ffbox to have
 is wrong.
 
 Related: [[feedback-publish-harness-changes-to-ff-agents]],

@@ -3,8 +3,12 @@
 Single-use GitHub Actions runners in rootless containers. One job per container; the container did
 not exist before the job and does not exist after it.
 
-The harness keeps a small **pool**: `idle_pool` runners registered and waiting, plus one per job in
-flight, never more than `slots` altogether. A slot with no runner in it holds nothing at all.
+The harness keeps a small **pool**: `pool.idle` runners registered and waiting, plus one per job in
+flight, never more than `pool.max` altogether. A slot with no runner in it holds nothing at all.
+
+Both settings live in the `githubrunner` section of `~/.config/ffbox/config.json`, and the agent
+lane describes its own pool with the same two keys in `ffagent`. Above both sits
+`max_concurrent_runs`, the box-wide ceiling on containers that the two lanes share.
 
 The design is `design/ffgithubrunners_design.txt` and the task list is
 `design/ffgithubrunners_tasks.md`. This file is how to run the thing.
@@ -76,19 +80,22 @@ no account here has a sudoers entry.
 
 ## The pool
 
-`slots` is a ceiling, not a headcount. Six slots do not mean six runners: they mean at most six
+`pool.max` is a ceiling, not a headcount. Six slots do not mean six runners: they mean at most six
 jobs at once, and a slot that is not needed sits there holding nothing — no container, no
 registration, nothing on the organization's runners page.
 
 What decides is two numbers:
 
 ```
-slots      6     the most jobs that can run at once
-idle_pool  1     how many runners wait for work while nothing is happening
+pool.max   3     the most jobs that can run at once, under max_concurrent_runs
+pool.idle  1     how many runners wait for work while nothing is happening
 ```
 
-A supervisor starts a runner when **both** are true: the pool is below `slots`, and fewer than
-`idle_pool` of the runners in it are idle. So a quiet machine carries one registration. The moment
+A supervisor starts a runner when **both** are true: the pool is below `pool.max`, and fewer than
+`pool.idle` of the runners in it are idle. Since 2026-09-01 a third condition sits above them
+both: the BOX must be under `max_concurrent_runs`, counting the agent lane's containers too. That
+check is taken under a shared lock at the point the container is created, because a count is only
+good for as long as nothing else can create one — see `ffbox/lib-workloads.sh`. So a quiet machine carries one registration. The moment
 that runner takes a job it stops being idle, the next slot notices within about five seconds and
 brings a replacement up, and a burst of queued jobs walks the pool up to six that way. As each job
 finishes its container is destroyed, its registration is deleted, and the pool settles back to one.

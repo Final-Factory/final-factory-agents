@@ -89,6 +89,13 @@ slot.sh with the slot number as its argument:
 
 Configuration follows ffbox's convention: defaults in code, overlaid with
 ~/.config/ffbox/githubrunners/config.json, then FFGITHUBRUNNERS_* environment overrides.
+
+     SUPERSEDED 2026-09-01: that file is gone. These settings are the "githubrunner" section of
+     ~/.config/ffbox/config.json -- one config file for the box, seeded and documented by the
+     same installer as everything else in it -- and the two pool numbers moved into a "pool"
+     object inside it, `max` (was slots) and `idle` (was idle_pool), so this lane and the agent
+     lane describe themselves the same way. The environment layer is unchanged. The container
+     limits are shared and live in a "container" section: workspace_size, memory, pids_limit.
 Everything ffbox owns on a machine lives under ~/.config/ffbox, and this is a component of it
 rather than a second product, so it takes a subdirectory there the way the Discord CLI does.
 
@@ -434,6 +441,9 @@ installed from there, so no second copy on disk can disagree with git.
       systemd/ffgithubrunners-reap.{service,timer}
       systemd/ffgithubrunners-image.{service,timer}
       config.json.example              slots, idle_pool, watchdog, image, labels, org
+                                       DELETED 2026-09-01 with the file it seeded; the
+                                       "githubrunner" section of the box's one config.json is
+                                       seeded by ffbox/05-discord-setup.sh instead
       test_pool.sh                     offline tests for the admission arithmetic
       test_pin.sh                      offline tests for the weekly version bump
       secrets.env.example

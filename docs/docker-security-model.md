@@ -89,7 +89,7 @@ task checks for a stray `ffdiscord` on PATH at startup and says so loudly if one
 
 ## What contains it
 
-Five things, in descending order of how much weight they carry.
+Six things, in descending order of how much weight they carry.
 
 **No push credential anywhere in the container.** `GH_TOKEN` is host-side only. There is no
 authenticated remote in the clone. This is what makes "nothing merges" true.
@@ -104,8 +104,12 @@ does not name the branch at all.
 `find_pull_request` and nothing else. Its docstring says the absence is load-bearing. Adding one
 is a design change, not a feature.
 
-**The clone is destroyed.** Each run is a ZFS clone of golden, thrown away when the run ends.
-Whatever an agent leaves behind on disk goes with it.
+**The workspace never touches a host path, and it is gone when the run is.** It was a ZFS clone
+of golden until the ramdrive migration; it is now a tmpfs the container creates, sized by
+`container.workspace_size`, which the host cannot see and the kernel frees when the container
+exits. Whatever an agent leaves behind on disk goes with it, and there is no cleanup step that
+could fail to run. What survives is `/ffbox/out`, which is exactly what a run is meant to hand
+back.
 
 **There is one route out, and it is not the agent's to choose.** The run joins `ffbox-net`, a
 Docker `--internal` bridge. Internal means no default route: not a firewall the container could
@@ -113,6 +117,20 @@ argue with, an absence of anywhere to send a packet. The only host on that bridg
 `ffbox-egress`, which resolves and connects the names in `ffbox/egress/allowlist.txt` and refuses
 everything else. This is what stops an injected agent fetching a second stage, reaching this
 machine's other services, or posting the workspace somewhere.
+
+**The container holds five capabilities, and cannot gain more.** Added 2026-09-01; until then
+this lane ran with Docker's default fourteen and no restriction at all, while being the one that
+executes a model's shell commands against text written by strangers. It now runs
+`--cap-drop=ALL` with `CHOWN`, `DAC_OVERRIDE`, `FOWNER` (the workspace restore) and `SETUID`,
+`SETGID` (the privilege drop in `entrypoint.sh`), plus `--security-opt=no-new-privileges`, so a
+setuid binary found later elevates nothing. Module loading, raw sockets, ptrace, mount and the
+clock are absent rather than merely unused. It also runs under `container.memory` and
+`container.pids_limit`, so a leaking run dies on its own limit instead of taking the box down.
+
+CI's three capabilities were not enough to copy: that lane stays root throughout, while this one
+drops privilege with `setpriv`, and changing uid needs `CAP_SETUID`/`CAP_SETGID` even as root.
+Verified on the real image — the harness's own EditMode suite, 774 tests, 774 passed,
+`compiled=true`, inside a container with exactly these flags.
 
 Two further host-side gates apply to the pull request specifically. `verification_gate()`
 requires `compiled=true`, at least one test run and zero failures, judged from a report the
