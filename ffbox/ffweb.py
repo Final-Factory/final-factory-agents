@@ -1903,20 +1903,14 @@ class App:
         if conv["state"] == "closed" and conv["close_reason"]:
             state_cell = Raw(str(pill(conv["state"])) + " <span class=\"muted\">"
                              + esc(conv["close_reason"]) + "</span>")
-        session_cell = conv["session_id"] or "—"
-        if conv["rotated_at_seq"]:
-            # A silent session boundary is what "the agent forgot what we said in turn 3" looks
-            # like from the outside, so it is named here rather than left to be deduced.
-            session_cell = Raw(esc(str(session_cell)) + " <span class=\"muted\">gen "
-                               + esc(conv["session_generation"]) + ", rotated at turn "
-                               + esc(conv["rotated_at_seq"]) + "</span>")
         head.append(table(
-            ["kind", "state", "lane", "verdict", "thread", "session", "base", "issue", "PR"],
+            ["kind", "state", "lane", "verdict", "thread", "base", "issue", "PR"],
             [[conv["kind"] or "—", state_cell, conv["lane"] or "—",
-              conv["verdict"] or "—", conv["thread_id"], session_cell,
+              conv["verdict"] or "—", conv["thread_id"],
               (conv["base_sha"] or "—")[:12], conv["github_issue"] or "—",
               pr_link(conv["github_pr"])]]))
         head.append(self._branch_note(conv))
+        head.append(self._resume_note(conv))
         head.append(self._close_button(conv))
         head.append(table(AGG_HEADERS, [agg_cells(agg)]))
 
@@ -1984,6 +1978,33 @@ class App:
                 " WHERE t.conversation_id = ? AND r.pushed = 1 AND r.no_pr_reason IS NOT NULL"
                 " ORDER BY r.id DESC LIMIT 1", (conv["id"],))
             bits.append(" · no PR" + (": " + esc(why["no_pr_reason"]) if why else ""))
+        bits.append("</div>")
+        return "".join(bits)
+
+    def _resume_note(self, conv):
+        """THE HANDLE FOR TAKING THIS CONVERSATION OVER BY HAND, where that gets decided.
+
+        `ffresume <session>` used to ride under every private Discord reply, which is the one
+        place it is no use: it is a command typed at a machine holding the box's state
+        directory, and Discord is not that. It went out whether or not anybody would ever
+        resume that run. Here it is one line, under the branch, in front of a person who has
+        already opened the conversation and is weighing whether to take it over.
+
+        The session boundary comes with it rather than keeping a column of its own, because it
+        is a fact ABOUT this handle and not about the conversation: a resume lands in the
+        CURRENT session, and nothing said before a rotation is in it. That seam is what "the
+        agent forgot what we said in turn 3" looks like from the outside.
+        """
+        session = conv["session_id"]
+        if not session:
+            # Nothing to resume: a conversation whose first run has not started, or one that
+            # never got a session at all. A handle with a blank where the id goes is worse than
+            # no handle — it looks like a command somebody could paste.
+            return ""
+        bits = ["<div class=\"note resume\">resume <code>ffresume ", esc(session), "</code>"]
+        if conv["rotated_at_seq"]:
+            bits.append(" <span class=\"muted\">gen " + esc(conv["session_generation"])
+                        + ", rotated at turn " + esc(conv["rotated_at_seq"]) + "</span>")
         bits.append("</div>")
         return "".join(bits)
 

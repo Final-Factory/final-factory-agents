@@ -897,10 +897,13 @@ the skills merely advise:
 - **A reply has two shapes, chosen by the channel's `venue`.** At a **private** venue it
   carries what the HARNESS knows and the agent's prose cannot be trusted for: whether the
   harness's own tests ran and passed, the branch and PR the work landed on, whether the run
-  ended badly and why, whether the engagement gate failed, and the `ffresume` handle. At a
-  **public** venue it is the agent's answer alone. Neither shape carries the state, the run
-  id, the lane, the cost, the turn count or the classification — those are on the run row and
-  on the web page, which is where somebody who wants them goes looking.
+  ended badly and why, and whether the engagement gate failed — all of it UNDER the answer,
+  which is what the reader came for and what those lines are provenance for. At a **public**
+  venue it is the agent's answer alone. Neither shape carries the state, the run id, the lane,
+  the cost, the turn count, the classification or the `ffresume` handle — those are on the run
+  row and on the web page, which is where somebody who wants them goes looking. The handle in
+  particular is a command typed at the box, so it lives on the conversation page under the
+  branch and not in a chat window.
 - **One correction, where the harness disagrees with the agent.** A public reply is prose, and
   prose is the part nobody checked. A summary saying "pushed the fix and opened a PR" reads as
   fact in a bug thread even when the tests failed and the harness refused to propose anything,
