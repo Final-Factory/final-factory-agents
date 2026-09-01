@@ -36,7 +36,18 @@ BASE_REFS=${FFBOX_BASE_REFS:-}
 # reads like the agent did something odd rather than like a value never got wired through. Found on
 # the first real run; the component tests passed FFBOX_BASE_SHA by hand and never noticed.
 BASE_SHA=${FFBOX_BASE_SHA:-}
-[ -n "$BASE_SHA" ] || BASE_SHA=$(head -1 "${FFBOX_OUT:-/ffbox/out}/base_sha.txt" 2>/dev/null | tr -d ' \r\n')
+# `|| true` INSIDE the substitution, and it is load-bearing. This runs under `set -euo
+# pipefail`, so when base_sha.txt is absent head exits 1, pipefail carries that out of the
+# pipeline, and the assignment on the right of `||` makes the whole compound non-zero — which
+# under `set -e` ends the script HERE, before a single file has been harvested, with an empty
+# stderr. The caller logs "harvest failed" and the run's work goes with the tmpfs.
+#
+# An absent base_sha.txt is not an error worth dying on: restore-workspace.sh writes it
+# best-effort, and the block below is written to work without one (it falls back to the base
+# refs, and refuses honestly if it can find nothing). Found by pointing the branch-derivation
+# test at this script instead of at a fragment cut out of ffbox.
+[ -n "$BASE_SHA" ] \
+    || BASE_SHA=$( (head -1 "${FFBOX_OUT:-/ffbox/out}/base_sha.txt" 2>/dev/null || true) | tr -d ' \r\n')
 RUN_ID=${FFBOX_RUN_ID:-unknown}
 GIT_NAME=${FFBOX_GIT_NAME:-ffbox}
 GIT_EMAIL=${FFBOX_GIT_EMAIL:-ffbox@final-factory.invalid}
@@ -81,7 +92,18 @@ for _name in $BASE_REFS; do
     _sha=$(g rev-parse --verify --quiet "origin/${_name}^{commit}" 2>/dev/null) \
       || _sha=$(g rev-parse --verify --quiet "${_name}^{commit}" 2>/dev/null) || continue
     g merge-base --is-ancestor "$_sha" HEAD 2>/dev/null || continue
-    if [ -z "$PUBLISH_BASE_SHA" ] || g merge-base --is-ancestor "$PUBLISH_BASE_SHA" "$_sha" 2>/dev/null; then
+    # THE MOST SPECIFIC BASE THE WORK DESCENDS FROM, and on a tie the FIRST one listed. A
+    # branch off develop has master behind it as well, so develop is the descendant of the two
+    # and the more specific answer; a branch off master does not have develop behind it at all.
+    #
+    # STRICTLY a descendant, which is the half that was wrong. `is-ancestor X X` is true, so an
+    # equality test let every later candidate replace the one before it and the LAST listed won
+    # — the exact opposite of the documented rule, on the one occasion it matters: the moment
+    # after a release merge, when master and develop are the same commit and publish_bases
+    # leads with master to say which of them a tie should mean.
+    if [ -z "$PUBLISH_BASE_SHA" ] \
+       || { [ "$_sha" != "$PUBLISH_BASE_SHA" ] \
+            && g merge-base --is-ancestor "$PUBLISH_BASE_SHA" "$_sha" 2>/dev/null; }; then
         PUBLISH_BASE=$_name; PUBLISH_BASE_SHA=$_sha
     fi
 done

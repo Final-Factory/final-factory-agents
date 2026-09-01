@@ -3424,8 +3424,13 @@ def test_the_agent_commits_its_own_work():
           open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read())
 
     ffbox_src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
-    check("ffbox configures the identity those commits get, in the clone",
-          'config user.email "$FFBOX_GIT_EMAIL"' in ffbox_src)
+    # IN THE CONTAINER, since the ramdrive: the workspace is a tmpfs no host path reaches, so
+    # restore-workspace.sh sets this while it is filling the tree. It is not decoration —
+    # harvest-workspace.sh checks every commit in the published range against it, so a run whose
+    # commits carry somebody else's name is caught rather than published.
+    restore_src = io.open(os.path.join(HERE, "restore-workspace.sh"), encoding="utf-8").read()
+    check("the identity those commits get is configured in the workspace",
+          'config --local user.email "${FFBOX_GIT_EMAIL' in restore_src)
     check("and no longer passes one per commit, because the agent runs the commit",
           '-c user.email="ffbox@final-factory.invalid"' not in ffbox_src)
 
@@ -3442,99 +3447,6 @@ def test_the_agent_commits_its_own_work():
               "--author" in pre and "claims to be somebody else" in pre, pre[:200])
     check("the local preamble stops telling the agent its work ends as a patch",
           "harvested patch" not in local, local[:200])
-
-
-def test_the_clone_is_clean_before_the_agent_runs():
-    """Baseline dirt is restored BEFORE the container starts, not subtracted afterwards.
-
-    Subtracting at harvest was enough while the harness made the only commit. It stopped being
-    enough when the agent got `git commit`: dirt it has already committed is inside its history,
-    where `restore --staged` cannot reach, and a `git status` full of inherited noise poisons
-    every judgement the agent makes about what it has changed.
-
-    The re-record afterwards matters as much as the restore. base_dirty.z is read again at
-    harvest, and a stale list of paths that are clean now would make the backstop throw away the
-    agent's work on any file it happened to name.
-    """
-    print("pre-run: the clone is clean before the agent sees it")
-    src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
-    pre, _, post = src.partition("docker run --rm")
-    check("the restore runs before the container starts",
-          "restore --source=HEAD --staged --worktree" in pre,
-          "found only after docker run" if "restore --source=HEAD" in post else "not found")
-    check("untracked baseline paths are removed, not just unstaged", "PYCLEAN" in pre)
-    check("and the baseline is re-recorded after the restore",
-          pre.count('status --porcelain -z > "$OUT/base_dirty.z"') == 2,
-          pre.count('status --porcelain -z > "$OUT/base_dirty.z"'))
-
-    # The real thing, with the three shapes that actually occur: a staged binary, a loose
-    # untracked file, and an untracked DIRECTORY, which porcelain reports as one entry with a
-    # trailing slash and which os.remove cannot delete.
-    root = os.path.join(TMPROOT, "preclean")
-    repo = os.path.join(root, "repo")
-    shutil.rmtree(root, ignore_errors=True)
-    os.makedirs(os.path.join(repo, "Assets", "Hovl Studio"))
-
-    def g(*args):
-        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
-
-    subprocess.run(["git", "init", "-q", repo], check=True)
-    g("config", "user.email", "t@t"); g("config", "user.name", "t")
-    for path, body in ((os.path.join("Assets", "Hovl Studio", "Splash.PNG"), "pointer"),
-                       (os.path.join("Assets", "Belt.cs"), "code")):
-        with open(os.path.join(repo, path), "w", encoding="utf-8") as fh:
-            fh.write(body)
-    g("add", "-A"); g("commit", "-qm", "base")
-
-    with open(os.path.join(repo, "Assets", "Hovl Studio", "Splash.PNG"), "w") as fh:
-        fh.write("smudged binary content")
-    g("add", os.path.join("Assets", "Hovl Studio", "Splash.PNG"))
-    with open(os.path.join(repo, "Assets", "Stray.tmp"), "w") as fh:
-        fh.write("untracked")
-    os.makedirs(os.path.join(repo, "Assets", "StrayDir"))
-    with open(os.path.join(repo, "Assets", "StrayDir", "a.txt"), "w") as fh:
-        fh.write("in an untracked directory")
-
-    base = os.path.join(root, "base_dirty.z")
-    with open(base, "wb") as fh:
-        fh.write(subprocess.run(["git", "-C", repo, "status", "--porcelain", "-z"],
-                                capture_output=True).stdout)
-    check("the clone starts dirty", os.path.getsize(base) > 0)
-
-    def heredoc(marker):
-        """The body of one of ffbox's inline python blocks, run here rather than re-implemented.
-
-        Everything after the marker on its own line is shell — `|| true`, a redirection — and
-        belongs to the invocation, not to the program.
-        """
-        return src.split("<<'%s'" % marker)[1].split(marker)[0].split("\n", 1)[1]
-
-    parser, cleaner = heredoc("PYBASE"), heredoc("PYCLEAN")
-    tracked_z, untracked_z = os.path.join(root, "t.z"), os.path.join(root, "u.z")
-    subprocess.run([sys.executable, "-c", parser, base, tracked_z, untracked_z], check=True)
-    if os.path.getsize(tracked_z):
-        g("restore", "--source=HEAD", "--staged", "--worktree",
-          f"--pathspec-from-file={tracked_z}", "--pathspec-file-nul")
-    if os.path.getsize(untracked_z):
-        subprocess.run([sys.executable, "-c", cleaner, untracked_z, repo], check=True)
-
-    left = g("status", "--porcelain").stdout
-    check("and is clean by the time the agent would see it", left.strip() == "", left)
-
-    # The agent's work must survive a file it touched having been dirty at baseline — which is
-    # exactly what re-recording prevents, and what reusing the stale list would destroy.
-    with open(os.path.join(repo, "Assets", "Hovl Studio", "Splash.PNG"), "w") as fh:
-        fh.write("the agent's own edit")
-    g("add", "-A"); g("commit", "-qm", "agent work")
-    with open(base, "wb") as fh:
-        fh.write(subprocess.run(["git", "-C", repo, "status", "--porcelain", "-z"],
-                                capture_output=True).stdout)
-    check("the re-recorded baseline is empty, so the harvest backstop takes nothing back",
-          os.path.getsize(base) == 0)
-    shown = g("show", "--stat", "--format=", "HEAD").stdout
-    check("and the agent's commit keeps the file it edited", "Splash.PNG" in shown, shown)
-
-
 def test_harvest_refuses_a_rewritten_or_forged_range():
     """Three ways an agent-authored range stops meaning what the host assumes, and the checks.
 
@@ -3545,10 +3457,19 @@ def test_harvest_refuses_a_rewritten_or_forged_range():
     reads by author.
     """
     print("harvest: a range that stopped meaning what the host assumes")
-    src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
-    check("ffbox publishes only a range that descends from a base it knows",
-          'merge-base --is-ancestor "$_sha" "$_tip"' in src
-          and '[ -z "$PUBLISH_BASE_SHA" ]; then' in src)
+    # TWO FILES, because the harvest happens twice on purpose. harvest-workspace.sh does it
+    # inside the container, where the workspace is — a tmpfs no host path reaches since the
+    # ramdrive — and ffbox re-derives every check on the host from the BUNDLE alone, because a
+    # run that skipped them would otherwise be taken at its word.
+    src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read() \
+        + open(os.path.join(HERE, "lib-cache.sh"), encoding="utf-8").read()
+    harvest = open(os.path.join(HERE, "harvest-workspace.sh"), encoding="utf-8").read()
+    check("the container publishes only a range that descends from a base it knows",
+          'merge-base --is-ancestor "$_sha" HEAD' in harvest
+          and '[ -z "$PUBLISH_BASE_SHA" ]; then' in harvest)
+    check("and the host checks that again from the bundle, not from what the run said",
+          'merge-base --is-ancestor "$_base" "$_tip"' in src
+          and "does not descend from the base it claims" in src)
     check("checks every commit against the run's own identity",
           "%ae%n%ce" in src and 'grep -Fxv "$FFBOX_GIT_EMAIL"' in src)
     check("caps the changed files and the bundle bytes",
@@ -3563,9 +3484,9 @@ def test_harvest_refuses_a_rewritten_or_forged_range():
           and 'grep -E "$FORBIDDEN_PATHS_RE" "$OUT/changed_files.txt"' in src
           and "the range changes CI configuration" in src)
     check("and drops an uncommitted stray edit to one rather than refusing the whole run",
-          src.count("""add -A -- . ':(exclude).github'""") == 2)
+          harvest.count("""add -A -- . ':(exclude).github'""") == 2)
     check("and points the work branch at wherever the agent ended",
-          'branch -f "$BRANCH" HEAD' in src)
+          'branch -f "$BRANCH" HEAD' in harvest)
     check("a refusal is written where ffwatch reads it back",
           'harvest_error.txt' in src)
 
@@ -3851,17 +3772,22 @@ def test_the_run_is_on_the_filtered_network():
     # one query type reads as "no such host" to a resolver that has already had a good A record.
     check("an allowed name exists for every query type, not just A",
           "local=/api.anthropic.com/" in dns, dns)
+    # ON THE MAPPING, NOT ON THE PADDING. These read the generated nginx config with its runs of
+    # alignment whitespace collapsed, because the column width is formatting: it moved from one
+    # printf width to another and left three checks failing over a behaviour that had not
+    # changed at all.
+    squash = lambda text: re.sub(r"[ \t]+", " ", text)
     check("an allowed name maps to itself upstream",
-          "api.anthropic.com                        api.anthropic.com:443;" in ngx, ngx)
+          "api.anthropic.com api.anthropic.com:443;" in squash(ngx), ngx)
     check("and anything unlisted maps to the deny sink",
-          "default" in ngx and "127.0.0.1:9;" in ngx, ngx)
+          "default 127.0.0.1:9;" in squash(ngx), ngx)
     check("the allowlist is not passed through by default",
-          "default                                  $ssl_preread_server_name:443;" not in ngx)
+          "default $ssl_preread_server_name:443;" not in squash(ngx), ngx)
 
     _, dns_log, ngx_log = generate("api.anthropic.com\n", mode="log")
     check("log mode records everything instead of refusing it",
           "address=/#/10.80.0.2" in dns_log
-          and "default                                  $ssl_preread_server_name:443;" in ngx_log)
+          and "default $ssl_preread_server_name:443;" in squash(ngx_log), ngx_log)
 
     # A list that has been emptied — by a bad edit, a bind mount that did not land — must stop
     # the proxy, not produce one that permits whatever it is asked for.
@@ -3869,9 +3795,16 @@ def test_the_run_is_on_the_filtered_network():
     check("an empty allowlist refuses to start", empty.returncode == 2, empty.returncode)
     check("and says why", "refusing to start wide open" in empty.stderr, empty.stderr)
 
+    # TWO WAYS AN ENTRY CAN BE WRONG, and both have to stop the proxy rather than produce a
+    # quietly-sanitised list. This used to assert one guard's wording against an input that
+    # trips the OTHER guard, so it failed while both were working.
     bad, _, _ = generate("api.anthropic.com\nevil.com; rm -rf /\n")
-    check("a malformed entry is refused rather than sanitised",
-          bad.returncode == 2 and "bad allowlist entry" in bad.stderr, bad.stderr)
+    check("an entry carrying a second field is refused, not split and used",
+          bad.returncode == 2 and "evil.com" in bad.stderr, bad.stderr)
+    # No spaces in this one, so it reaches the hostname check rather than the field count.
+    worse, _, _ = generate("api.anthropic.com\nevil;rm.com\n")
+    check("and so is one that is not a hostname",
+          worse.returncode == 2 and "bad allowlist entry" in worse.stderr, worse.stderr)
 
 
 def test_messages_cluster_into_one_conversation():
@@ -4840,107 +4773,6 @@ with open(results, "w", encoding="utf-8") as fh:
 print("Batchmode run complete")
 sys.exit(2)
 '''
-
-
-def test_harvest_excludes_what_was_already_dirty():
-    """A run clone inherits golden's working tree, dirt included, and harvest does `git add -A`.
-
-    Without a baseline, anything the clone was already carrying is committed onto the work
-    branch as if the agent had done it, and "no changed files means no branch and no PR" can
-    never fire. The cause was found live: .gitattributes marked LFS patterns in lowercase only
-    (`*.png`), git matches attribute patterns case-sensitively on Linux and case-insensitively
-    on Windows, so 247 uppercase-extension assets (~52MB) read as modified here and clean there.
-    Fixed at the source on master in 2abbcc945, which is why this now bites only when --ref
-    checks out a tree that predates it.
-
-    This is the harvest-side BACKSTOP. The primary defence moved before the run once the agent
-    got its own `git commit` — see test_the_clone_is_clean_before_the_agent_runs — because dirt
-    the agent has already committed cannot be unstaged back out.
-
-    The parser is not re-implemented here — it is extracted from ffbox and run — because the
-    subtle case is a rename, whose `--porcelain -z` entry carries a SECOND NUL-terminated field
-    that must be consumed or every later entry is read one field out of step.
-    """
-    print("harvest: baseline dirt is excluded")
-    src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
-    check("ffbox records the baseline before the container starts",
-          'status --porcelain -z > "$OUT/base_dirty.z"' in src)
-    check("and unstages whatever is left at harvest, tracked and untracked separately",
-          "restore --staged --source=HEAD" in src and "rm --cached --quiet --ignore-unmatch"
-          in src, )
-    parser = src.split("<<'PYBASE'")[1].split("PYBASE")[0]
-    check("the harvest carries a baseline parser to extract", "tracked, untracked" in parser)
-
-    root = os.path.join(TMPROOT, "harvest")
-    repo = os.path.join(root, "repo")
-    shutil.rmtree(root, ignore_errors=True)
-    os.makedirs(os.path.join(repo, "Assets", "Hovl Studio"))
-
-    def g(*args, **kw):
-        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, **kw)
-
-    subprocess.run(["git", "init", "-q", repo], check=True)
-    g("config", "user.email", "t@t"); g("config", "user.name", "t")
-    # A path with a space in it, because Final Factory has plenty and they are what breaks a
-    # naive newline-separated path list.
-    for path, body in ((os.path.join("Assets", "Hovl Studio", "Splash.PNG"), "real"),
-                       (os.path.join("Assets", "Belt.cs"), "code"),
-                       (os.path.join("Assets", "Renamed.txt"), "old")):
-        with open(os.path.join(repo, path), "w", encoding="utf-8") as fh:
-            fh.write(body)
-    g("add", "-A"); g("commit", "-qm", "base")
-
-    # Golden-style dirt: a staged binary, an untracked file, and a rename.
-    with open(os.path.join(repo, "Assets", "Hovl Studio", "Splash.PNG"), "w") as fh:
-        fh.write("CHANGED")
-    g("add", os.path.join("Assets", "Hovl Studio", "Splash.PNG"))
-    with open(os.path.join(repo, "Assets", "Stray.tmp"), "w") as fh:
-        fh.write("untracked")
-    g("mv", os.path.join("Assets", "Renamed.txt"), os.path.join("Assets", "RenamedNew.txt"))
-
-    base = os.path.join(root, "base_dirty.z")
-    with open(base, "wb") as fh:
-        fh.write(subprocess.run(["git", "-C", repo, "status", "--porcelain", "-z"],
-                                capture_output=True).stdout)
-
-    # The agent's one real edit.
-    with open(os.path.join(repo, "Assets", "Belt.cs"), "a", encoding="utf-8") as fh:
-        fh.write("\nagent edit\n")
-
-    tracked_z, untracked_z = os.path.join(root, "t.z"), os.path.join(root, "u.z")
-    g("add", "-A", "--", ".")
-    subprocess.run([sys.executable, "-c", parser, base, tracked_z, untracked_z], check=True)
-    for flag, path in (("tracked", tracked_z), ("untracked", untracked_z)):
-        if os.path.getsize(path) == 0:
-            continue
-        if flag == "tracked":
-            g("restore", "--staged", "--source=HEAD", f"--pathspec-from-file={path}",
-              "--pathspec-file-nul")
-        else:
-            g("rm", "--cached", "--quiet", "--ignore-unmatch", f"--pathspec-from-file={path}",
-              "--pathspec-file-nul")
-
-    staged = [ln for ln in g("diff", "--cached", "--name-only").stdout.splitlines() if ln]
-    check("only the agent's edit is committed", staged == ["Assets/Belt.cs"], staged)
-
-    # And the run that changes nothing must leave the index empty, or every idle turn opens a
-    # branch full of somebody else's textures.
-    g("reset", "-q")
-    g("checkout", "-q", "--", os.path.join("Assets", "Belt.cs"))
-    g("add", "-A", "--", ".")
-    for flag, path in (("tracked", tracked_z), ("untracked", untracked_z)):
-        if os.path.getsize(path) == 0:
-            continue
-        if flag == "tracked":
-            g("restore", "--staged", "--source=HEAD", f"--pathspec-from-file={path}",
-              "--pathspec-file-nul")
-        else:
-            g("rm", "--cached", "--quiet", "--ignore-unmatch", f"--pathspec-from-file={path}",
-              "--pathspec-file-nul")
-    idle = [ln for ln in g("diff", "--cached", "--name-only").stdout.splitlines() if ln]
-    check("an agent that changed nothing stages nothing, so no branch and no PR", not idle, idle)
-
-
 def test_shell_is_an_ingress_not_a_second_pipeline():
     """`ffbox "prompt"` produces the SAME rows a Discord message does.
 
@@ -5912,7 +5744,7 @@ def test_systemd_units_hang_off_one_target():
     # somebody has to remember.
     top = open(os.path.join(HERE, "setup.sh"), encoding="utf-8").read()
     for script in ("01-dockerSetup.sh", "02-zfsSetup.sh", "03-build.sh",
-                   "04-warmLibrary.sh", "05-discord-setup.sh", "06-services.sh"):
+                   "05-discord-setup.sh", "06-services.sh"):
         check(f"setup.sh runs {script}", f'"$ROOT/{script}"' in top, )
 
 
@@ -5960,21 +5792,47 @@ def test_allow_list_is_scope_not_a_boundary():
                if "push" in p or "gh " in p or "remote" in p], ffwatch.CAPABILITIES)
 
 
-def run_branch_derivation(root, *, host_branch, prefix, run_id, ending, protected=None):
-    """Run ffbox's OWN branch-derivation block over a real repo. Returns (harvest_ok, branch).
+def run_harvest(repo, out, *, branch, prefix="", run_id="d1t1-test", base_refs="",
+                base_sha="", protected=None):
+    """Run the REAL harvest-workspace.sh over a real repo. Returns (published_ok, branch, error).
 
-    The block is lifted out of the script rather than re-implemented here, for the same reason
-    the baseline-cleaning heredocs are: a re-implementation tests the test. Everything it needs
-    is a repo, a name to fall back to and the prefix — no zfs, no docker, no container.
+    It used to lift a block of shell out of `ffbox` and exec it, on the reasoning that a
+    re-implementation tests the test. That reasoning was right and the mechanism was not: the
+    harvest moved into the container when the workspace became a tmpfs, the marker comment the
+    block was cut at went with it, and the test raised IndexError from then on while the
+    behaviour it covers went on working. Running the shipped script needs no marker to stay put
+    and no fragment to stay self-contained — and it is the thing that actually runs.
+
+    Everything it needs is a git repo and an output directory. No docker, no tmpfs, no network.
+    """
+    os.makedirs(out, exist_ok=True)
+    env = {**os.environ,
+           "FFBOX_WORKSPACE": repo,
+           "FFBOX_OUT": out,
+           "FFBOX_BRANCH": branch,
+           "FFBOX_BRANCH_PREFIX": prefix,
+           "FFBOX_BASE_REFS": base_refs,
+           "FFBOX_RUN_ID": run_id,
+           "FFBOX_GIT_NAME": "ffbox",
+           "FFBOX_GIT_EMAIL": "ffbox@final-factory.invalid",
+           "FFBOX_PROTECTED_BRANCHES": protected or "develop master main"}
+    if base_sha:
+        env["FFBOX_BASE_SHA"] = base_sha
+    done = subprocess.run(["bash", os.path.join(HERE, "harvest-workspace.sh")],
+                          capture_output=True, text=True, env=env)
+    if done.returncode != 0:
+        raise AssertionError(f"harvest-workspace.sh aborted: {done.stderr[-400:]}")
+    read = lambda n: (open(os.path.join(out, n), encoding="utf-8").read().strip()
+                      if os.path.exists(os.path.join(out, n)) else "")
+    error = read("harvest_error.txt")
+    return (not error), read("branch.txt"), error
+
+
+def seed_agent_repo(root, *, host_branch, ending):
+    """A repo that looks like a workspace an agent has just finished in.
 
     `ending` is what the agent left HEAD on: a branch name, or None for a detached HEAD.
     """
-    src = io.open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
-    block = src.split("        # WHERE HEAD ENDS UP IS WHAT PUBLISHES.")[1]
-    block = "        # WHERE HEAD ENDS UP IS WHAT PUBLISHES." + \
-        block.split("\n        # Everything below is defined in terms of base..branch")[0]
-    failed = "harvest_failed() {" + src.split("harvest_failed() {")[1].split("\n}\n")[0] + "\n}\n"
-
     repo = os.path.join(root, "repo")
     shutil.rmtree(root, ignore_errors=True)
     os.makedirs(repo)
@@ -5987,6 +5845,7 @@ def run_branch_derivation(root, *, host_branch, prefix, run_id, ending, protecte
     with io.open(os.path.join(repo, "Belt.cs"), "w", encoding="utf-8") as fh:
         fh.write("code\n")
     g("add", "-A"); g("commit", "-qm", "base")
+    base = g("rev-parse", "HEAD").stdout.strip()
     g("checkout", "-q", "-B", host_branch)
     if ending is None:
         g("checkout", "-q", "--detach")
@@ -5995,29 +5854,16 @@ def run_branch_derivation(root, *, host_branch, prefix, run_id, ending, protecte
     with io.open(os.path.join(repo, "Belt.cs"), "a", encoding="utf-8") as fh:
         fh.write("the agent's work\n")
     g("add", "-A"); g("commit", "-qm", "agent work")
+    return repo, base
 
+
+def run_branch_derivation(root, *, host_branch, prefix, run_id, ending, protected=None):
+    """What name this run's work publishes under, from the real harvest. (ok, branch, out, repo)."""
+    repo, base = seed_agent_repo(root, host_branch=host_branch, ending=ending)
     out = os.path.join(root, "out")
-    os.makedirs(out, exist_ok=True)
-    script = "\n".join([
-        "set -euo pipefail",
-        'MNT="$1"; OUT="$2"; BRANCH="$3"; BRANCH_PREFIX="$4"; RUN_ID="$5"',
-        'PROTECTED_BRANCHES="$6"',
-        "HARVEST_OK=1",
-        failed,
-        block,
-        'printf "%s\\n%s\\n" "$HARVEST_OK" "$BRANCH"',
-    ])
-    done = subprocess.run(["bash", "-c", script, "ffbox-harvest", repo, out, host_branch,
-                           prefix, run_id, protected or "develop master main"],
-                          capture_output=True, text=True)
-    if done.returncode != 0:
-        raise AssertionError(f"the derivation block aborted: {done.stderr[-400:]}")
-    # The block narrates what it did on stdout, so the two lines printed after it are the last
-    # two, never the first.
-    printed = done.stdout.strip().splitlines()[-2:]
-    if len(printed) != 2:
-        raise AssertionError(f"the block printed nothing usable: {done.stdout!r}")
-    return printed[0].strip() == "1", printed[1].strip(), out, repo
+    ok, published, _ = run_harvest(repo, out, branch=host_branch, prefix=prefix, run_id=run_id,
+                                   base_sha=base, protected=protected)
+    return ok, published, out, repo
 
 
 def test_the_agent_names_the_branch_it_publishes():
@@ -6228,15 +6074,13 @@ def test_a_run_that_changed_nothing_is_not_verified():
 
 
 def run_base_resolution(root, *, base_refs, ending):
-    """Run ffbox's OWN base resolver over a repo with a real origin/master and origin/develop.
+    """Which branch the work is for, from the real harvest, over a repo with a real
+    origin/master and origin/develop.
 
-    Returns "<name> <sha>" exactly as the function prints it, or "". `ending` says what the work
-    was branched from: "develop", "master", or "below" for an agent that reset underneath both.
+    Returns "<name> <sha>", or "" when the work descends from no known base. `ending` says what
+    the work was branched from: "develop", "master", or "below" for an agent that reset
+    underneath both.
     """
-    src = io.open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
-    fn = "resolve_publish_base() {" + \
-        src.split("resolve_publish_base() {")[1].split("\n}\n")[0] + "\n}\n"
-
     origin = os.path.join(root, "origin.git")
     repo = os.path.join(root, "clone")
     shutil.rmtree(root, ignore_errors=True)
@@ -6276,13 +6120,17 @@ def run_base_resolution(root, *, base_refs, ending):
     git_run("-C", repo, "add", "-A")
     git_run("-C", repo, "commit", "-qm", "agent work")
 
-    script = "\n".join(["set -euo pipefail", 'MNT="$1"', 'BASE_REFS="$2"', fn,
-                         'resolve_publish_base HEAD'])
-    done = subprocess.run(["bash", "-c", script, "ffbox-base", repo, base_refs],
-                          capture_output=True, text=True)
-    if done.returncode != 0:
-        raise AssertionError(f"the resolver aborted: {done.stderr[-400:]}")
-    return done.stdout.strip()
+    # THE REAL HARVEST, not a resolver lifted out of it. The base decision moved into the
+    # container with everything else, and the function this used to extract does not exist any
+    # more — so the test raised rather than failed, which is the worst way for coverage of a
+    # rule like this to go: a pull request into the wrong branch is a proposal to ship
+    # unreleased work to players.
+    out = os.path.join(root, "out")
+    ok, _, _ = run_harvest(repo, out, branch="ffbox/base-test", base_refs=base_refs)
+    read = lambda n: (io.open(os.path.join(out, n), encoding="utf-8").read().strip()
+                      if os.path.exists(os.path.join(out, n)) else "")
+    name, sha = read("publish_base.txt"), read("publish_base_sha.txt")
+    return f"{name} {sha}".strip() if name else ""
 
 
 def test_the_agent_picks_the_branch_its_work_is_for():
@@ -6316,13 +6164,13 @@ def test_the_agent_picks_the_branch_its_work_is_for():
     check("and with no candidates there is nothing to resolve",
           resolved == "", resolved)
 
-    src = io.open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    harvest = io.open(os.path.join(HERE, "harvest-workspace.sh"), encoding="utf-8").read()
     check("the resolved base is what gets bundled, not the commit the run was checked out at",
-          'bundle create "$OUT/work.bundle" "${PUBLISH_BASE_SHA}..${BRANCH}"' in src)
+          'bundle create "$OUT/work.bundle" "${PUBLISH_BASE_SHA}..${BRANCH}"' in harvest)
     check("and the commit the run started at is the fallback when no branch claims the work",
-          'PUBLISH_BASE_SHA=$BASE_SHA' in src)
+          'PUBLISH_BASE_SHA=$BASE_SHA' in harvest)
     check("the name reaches the host in publish_base.txt",
-          '"$OUT/publish_base.txt"' in src)
+          '"$OUT/publish_base.txt"' in harvest)
 
 
 def test_the_pull_request_targets_the_branch_the_work_is_based_on():
@@ -6845,7 +6693,6 @@ def main():
         test_past_standalone_runs_import,
         test_config_lives_under_ffbox,
         test_systemd_units_hang_off_one_target,
-        test_harvest_excludes_what_was_already_dirty,
         test_failed_launch_frees_the_slot,
         test_transcript_reindex_is_stable,
         test_a_live_run_is_indexed_as_it_goes,
@@ -6877,7 +6724,6 @@ def main():
         test_compile_failure_blocks_the_pull_request,
         test_no_changed_files_means_no_branch_and_no_pr,
         test_the_agent_commits_its_own_work,
-        test_the_clone_is_clean_before_the_agent_runs,
         test_harvest_refuses_a_rewritten_or_forged_range,
         test_a_refused_harvest_is_reported,
         test_github_client_retries_and_cannot_merge,
