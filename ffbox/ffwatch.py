@@ -6724,8 +6724,8 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
 
     A PRIVATE reply keeps the lines a reader would otherwise have to take the agent's word for
     — whether the harness's own tests ran and passed, which branch and PR the work landed on,
-    why a run was demoted to read-only, and the session to resume from. Every one of those
-    comes from the HARNESS (ffbox, the batchmode test run, git, the GitHub API) rather than
+    and why a run was demoted to read-only — under the answer they are provenance for. Every
+    one of those comes from the HARNESS (ffbox, the batchmode test run, git, the GitHub API) rather than
     from the agent's prose, which is what makes them worth the space. The telemetry line is
     gone from here too; what is left is fact a person acts on.
 
@@ -6765,8 +6765,8 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # ALWAYS a line, even with nothing to add to it. A run that died before it wrote a
         # result leaves `result` empty, and a read-only lane was never asked to verify, so
         # neither the error line nor the verification line below would fire — and the whole
-        # private reply came to the resume footer and nothing else. An operator has to be told
-        # that a run they are waiting on is not coming back.
+        # private reply came to nothing at all. An operator has to be told that a run they are
+        # waiting on is not coming back.
         detail = str(result.get("subtype") or result.get("error") or "") \
             if isinstance(result, dict) else ""
         said = f"the run {terminal.replace('_', ' ')}"
@@ -6828,8 +6828,8 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
     if not body and not lines:
         # A clean run that produced no summary at all, on a lane with nothing to verify and
         # nothing to publish. Every conditional above it is skipped and the state line does not
-        # fire, so without this the whole reply is the resume footer — which reads like a run
-        # that went fine and said something, rather than one that said nothing.
+        # fire, so without this the reply is empty — and an empty reply is not a report that
+        # the run had nothing to say, it is no report at all.
         lines.append("the run finished without saying anything")
     if body:
         # The ANSWER leads; the harness's own rows follow it. Whoever opens the reply came for
@@ -6837,11 +6837,10 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # provenance FOR that answer — it belongs under the thing it backs, not stacked on top
         # of it where the first screen is status and the summary starts below the fold.
         lines = ([body, ""] + lines) if lines else [body]
-    # So a human can pull the whole conversation onto a desktop and keep going interactively —
-    # the session id is the same one the container ran under.
-    if lines:
-        lines.append("")
-    lines.append(f"resume:  ffresume {job['session']['id']}")
+    # No resume handle here. `ffresume <session>` is typed at a machine holding the box's state
+    # directory, which Discord is not, and it rode on every private reply whether or not anyone
+    # would ever take that session over. It is on the conversation page now, under the branch,
+    # where somebody who has decided to take one over is already standing.
     return "\n".join(lines)
 
 

@@ -2697,8 +2697,9 @@ def test_the_reply_has_two_shapes():
     check("a private reply warns that the gate could not decide, and why",
           "⚠️" in ptext and "the engagement gate failed" in ptext, ptext[:400])
     check("it carries the answer too", "belt merger" in ptext, ptext)
-    check("and the ffresume footer lets a human take the session over",
-          f"ffresume {priv.rows('SELECT session_id FROM run')[0]['session_id']}" in ptext,
+    check("and no session handle, which is typed at the box and not in Discord",
+          "ffresume" not in ptext
+          and priv.rows("SELECT session_id FROM run")[0]["session_id"] not in ptext,
           ptext)
     check("but the telemetry is gone from here as well",
           not any(bit in ptext for bit in ("✅", "lane ", "$0.21", "4 turns", "type:")), ptext)
@@ -2717,8 +2718,8 @@ def test_a_private_reply_never_composes_to_nothing():
     `result` is {} when there is no result.json to read, a read-only lane was never asked to
     verify so there is no verification row, and a dead run left no verdict — so every
     conditional line in the private shape is skipped. Until the state line was made
-    unconditional this composed to the resume footer and nothing else, which on a screen reads
-    exactly like a run that went fine.
+    unconditional this composed to nothing a person could read as a failure, which on a screen
+    looks exactly like a run that went fine.
     """
     print("reply: a run that produced nothing still says so")
     job = {"run_id": "d1t1-dead", "session": {"id": "S"}, "classification": {}, "messages": []}
@@ -2727,8 +2728,9 @@ def test_a_private_reply_never_composes_to_nothing():
     text = ffwatch.compose_head(None, turn, "failed", {}, {}, None, job)
     check("the state is named even with nothing to add to it",
           text.splitlines()[0] == "the run failed", text)
-    check("and the resume handle is still there", "ffresume S" in text, text)
-    check("but not the run id, the lane or a cost",
+    check("and it is the whole reply — no session handle rides under it",
+          text == "the run failed", text)
+    check("nor the run id, the lane or a cost",
           "d1t1-dead" not in text and "lane " not in text and "$" not in text, text)
 
     text = ffwatch.compose_head(None, turn, "timed_out", {}, {}, "agent", job)
@@ -2746,13 +2748,12 @@ def test_a_private_reply_never_composes_to_nothing():
                                 "verify", job)
     check("the verify clock is reported without calling the run failed",
           "stopped on the verify clock" in text and "the run" not in text, text)
-    check("a run that went fine says nothing about its state at all",
-          ffwatch.compose_head(None, turn, "done", {}, {"summary": "fine"}, None, job)
-          == "fine\n\nresume:  ffresume S",
+    check("a run that went fine is its answer and nothing else",
+          ffwatch.compose_head(None, turn, "done", {}, {"summary": "fine"}, None, job) == "fine",
           ffwatch.compose_head(None, turn, "done", {}, {"summary": "fine"}, None, job))
-    check("but a clean run that said nothing at all does not compose to the footer either",
+    check("but a clean run that said nothing at all does not compose to an empty message",
           ffwatch.compose_head(None, turn, "done", {}, {"summary": ""}, None, job)
-          == "the run finished without saying anything\n\nresume:  ffresume S",
+          == "the run finished without saying anything",
           ffwatch.compose_head(None, turn, "done", {}, {"summary": ""}, None, job))
 
 
