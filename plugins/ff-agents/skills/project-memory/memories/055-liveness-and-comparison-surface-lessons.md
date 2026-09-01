@@ -1,12 +1,13 @@
-# 055 liveness-witness and comparison-surface lessons (R31–R35)
+# 055 liveness-witness and comparison-surface lessons (R31–R37)
 
 **Feature:** 055 combat-mover-vision (2026-08-30/31, `specs/055-combat-mover-vision/tasks.md`)
 
-Eleven lessons from the same feature about verification signals that need a second look before you
+Thirteen lessons from the same feature about verification signals that need a second look before you
 trust them — a liveness check declared vacuous when it wasn't, a comparison query that silently
 narrowed its own population, unsaved host-only state that only forks on a reload (not a join), a
-KD-tree whose ORDER-noise looked like SET-noise, and — once that fork was diagnosed — the R35 fix
-and the four verification lessons that came with it. Read this alongside
+KD-tree whose ORDER-noise looked like SET-noise, and — once that fork was diagnosed — the R35 fix,
+the four verification lessons that came with it, and (R36/R37) an instrument that turned out to be
+watching the wrong moment in the heartbeat. Read this alongside
 [[join-load-route-provisioning-desync-class]] (arrival-route provisioning forks in the game code) —
 some of these are audit/harness bugs, others are game-code bugs the audit surfaced; group-read
 before trusting an exit code, a comparison surface, or a "the scenario didn't cover it" verdict.
@@ -141,3 +142,34 @@ over 300 warm-up + 600 timed heartbeats × 5 passes = 3000 timed samples per sid
 (`BurstCompiler.IsEnabled=True`), at a fixed census (`specs/055-combat-mover-vision/tasks.md:5533-5541`).
 **Rule**: at this scale a single before/after run is noise — only report a hot-path delta this small
 when it's a pooled statistic across many timed samples, not a one-shot comparison.
+
+## An end-of-heartbeat instrument cannot adjudicate a mid-heartbeat consumer (R36, `8dfeb1d1e`)
+
+`DeterminismStateFingerprintSystem` is `FFFixedPostTransformGroup`, `OrderLast`; `KnnSystem` is
+`FFFixedEarlyGroup`, `OrderFirst` — the fingerprint samples a full transform pass AFTER the KD-tree
+has already consumed its input (`KnnSystem.cs:332-353`, `TryGetBuildWitness`'s own docstring names
+this "THE BLIND WINDOW THIS CLOSES"). Two BEAST reproductions forked with every end-of-heartbeat
+aggregate reading clean — `tier4Src=0`, `pendingSrc=0`, equal poses, equal `enemySrcSeq` — while the
+actual KD-tree build input differed between peers on the heartbeat a spawn wave entered the
+population (no earlier row existed yet to compare against, either). **Fix: digest the ACTUAL
+retained buffers at the consumer**, not an `EntityManager` re-query at report time —
+`KnnSystem.TryGetBuildWitness` hands back the post-sort `Sources` prefix and the new
+`KnnVisionWitness` `Build*`/`View*` fields (`DeterminismStateFingerprint.cs:6210-6256`,
+`FoldKnnBuildSources`). A digest whose sub-hash folds only fields that CAN'T differ is structurally
+blind to the fork it exists to catch: the OLD `…SrcSeq` sub-hash folded only `(id, keyed, pose)`
+(`DeterminismStateFingerprint.cs:6217-6224`) — two entries whose key AND pose are equal (the exact
+residue an unstable sort leaves behind) folded IDENTICALLY on both peers, which is why 1611 forking
+heartbeats reported `enemySrcSeq` agreement.
+
+## Rank hypotheses, then build the instrument that discriminates them, BEFORE designing a fix (R36→R37)
+
+R37's commit message (`f9c91d268`) states it directly: "R36's instrument discriminated the
+hypotheses and refuted every one of them: BuildDupKey=0/BuildTier4=0/BuildUnkeyed=0 on every
+heartbeat (no canonical-key tie), BuildN equal (no membership split)... What is left is the one
+thing the roster cannot see." The new `BuildDupKey`/`BuildTier4`/`BuildUnkeyed` fields refuted the
+ranked-first hypothesis — a stale sort producing a canonical-key collision — in one sweep;
+`BuildN`/`BuildSeq`/`BuildSet` equal-vs-differing then localized the fork to a transient-input class
+in the pre-build/post-fingerprint window, which R37 traced to an absent `LocalToWorld` writer (see
+[[fixed-group-reads-of-localtoworld-are-frame-count-bugs]] for that fix). **Rule**: rank your
+hypotheses, then build the instrument fields that would discriminate between them, BEFORE picking a
+fix — the fix the naive first hypothesis (stable sort) implied here would have been wrong.

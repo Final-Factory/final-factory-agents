@@ -372,6 +372,20 @@ the bridge's own polling, silently killing `editor_state`/`execute_code` (a leg 
 recover the editor to get the bridge back). Subscribe with `+=`, keep the reference, remove
 with `-=` — or avoid subscribing and diff `editor_state` sequence/time across calls instead.
 
+### ⚠️ EditMode SUITE runs are also focus-throttled — different failure signature (055)
+
+The single-long-test defects above are not the only focus-dependent bridge failure. An
+ordinary EditMode SUITE run (many small tests, not one long NUnit test) is also throttled by
+an unfocused editor — observed ~2.4s/test unfocused vs ~64s total for the whole suite
+focused — and the bridge then **aborts the job with a false `Test job failed to initialize
+(tests did not start within timeout)`**, even though the Editor.log shows the tests
+demonstrably still completing. Seen 3 consecutive times, each an aborted ~15-minute run. The
+false-init-timeout error text is the TELL for this class — do not read it as a real
+initialization/startup problem; it means the run was too slow to finish inside the bridge's
+timeout, not that it never started. Mitigation: extend the same tool used above — call
+`osascript -e 'tell application "Unity" to activate'` before `run_tests`, AND again every ~2
+minutes while polling `get_test_job`, not just once at the start.
+
 ## Compile verification — a PASSED result does NOT prove your code compiled
 
 The editor will NOT recompile while it is in **play mode** (compilation blocks during play),
