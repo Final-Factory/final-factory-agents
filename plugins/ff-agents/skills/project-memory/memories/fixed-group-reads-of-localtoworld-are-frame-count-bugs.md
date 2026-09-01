@@ -53,6 +53,20 @@ fixed it by writing the matrix itself; the spawn path had no such fix.
    no KNN component (`PlayerAuthoring.cs:193-200`); the player's participation lives on the
    heartbeat-driven `PlayerSimulationObject` (`PlayerSimulationObject.cs:79-83`).
 
+5. The class is GUARDED at the reader side since game-repo `fbac32eb4` (2026-09-01, 055 R37g):
+   `Assets/Tests/Transforms/FixedGroupLocalToWorldReaderGuardTest.cs` classifies every
+   `FinalFactoryFixedStepSystemGroup<>` pre-/post-transform-pass from its attribute chain by
+   reflection, and keeps a CENSUS of every system in a pre-pass fixed group
+   (Initialization/Early/PreTransform/ConnectorMovement) that reads `LocalToWorld`, detected by
+   the union of a reflection channel (fields of the system and nested types, generics flattened)
+   and a comment-stripped source channel. A new reader trips it; the fix is to derive the pose
+   like `KnnChunkPoses.Read`, or add a census entry with the file:line read site and a reason.
+   Post-pass readers are excluded because their own frame's pass precedes them. The census had 26
+   entries at landing, 24 `Unreviewed` (pinned count) — adjudicating an entry means flipping its
+   Status and decrementing the pin, never loosening the detector. Lesson from the leg's design: a
+   guard proposed alongside a fix design that was later SUPERSEDED (writer-side → reader-side)
+   guards the wrong invariant; re-derive the guard from the fix that landed.
+
 Sibling classes: [[055-liveness-and-comparison-surface-lessons]] (the R34b/R35 KD-tree INPUT-ORDER
 fork — same system, different input property) and
 [[join-load-route-provisioning-desync-class]] (R30's cold INPUT, which is this class restricted to
