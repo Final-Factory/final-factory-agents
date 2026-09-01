@@ -59,7 +59,17 @@ fi
 
 REPO=${FFBOX_UPDATE_REPO:?the re-exec must pass the checkout path}
 BRANCH=${FFBOX_UPDATE_BRANCH:-master}
-DRAIN_TIMEOUT=${FFBOX_DRAIN_TIMEOUT:-7200}
+# THE WINDOW, AND WHAT HAPPENS AT THE END OF IT. An hour is long enough for any agent turn and
+# for all but the longest CI job; past that the update goes ahead anyway, because a box that
+# never updates because it is never quiet is a box running code nobody chose. Forcing is still a
+# SOFT stop — see the force block in section 3 — so "forced" means "we stopped waiting", never
+# "we threw the work away".
+DRAIN_TIMEOUT=${FFBOX_DRAIN_TIMEOUT:-3600}
+# What each container gets to run its PID-1 trap when the window does expire: the workspace
+# harvest and the Unity licence return. ffbox uses the same floor for its own timeout stops.
+FORCE_STOP_GRACE=${FFBOX_FORCE_STOP_GRACE:-120}
+# And what the HOST gets afterwards, to finish publishing the containers we just stopped.
+FORCE_SETTLE=${FFBOX_FORCE_SETTLE_SECS:-300}
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
@@ -225,12 +235,18 @@ fi
 #
 # The rule the rest of this section implements:
 #
-#   * a container that has been ASKED TO DO SOMETHING is never killed. It finishes, and if it has
-#     not finished by the end of the window the UPDATE gives way, not the run.
 #   * a container that is merely WAITING is destroyed immediately. A staged agent container and an
 #     idle CI runner hold a workspace and no work; they cost 22 GiB each to keep and nothing to
 #     recreate, and keeping one across a merge is how a container ends up serving a turn through
 #     the OLD task script -- its mounts point at inodes the merge replaced.
+#   * a container that has been ASKED TO DO SOMETHING is never killed. It gets the window, and
+#     so does the HOST-SIDE work behind it -- the harvest, the branch push, the pull request,
+#     the reply. Those run in an ffwatch thread after the container exits and do not survive a
+#     `systemctl stop`, so "the containers are down" is not "safe to stop".
+#   * at the end of the window the update GOES AHEAD, and it does it with `docker stop`, giving
+#     every straggler its full grace to harvest and hand its Unity seat back, then giving the
+#     host a bounded window to publish what those stops just released. Until 2026-09-01 the
+#     update stood down instead and left the box on old code for as long as it stayed busy.
 if [ -r "$FFWATCH" ]; then
     log "draining the agent lane — no new containers"
     as_owner python3 "$FFWATCH" drain || log "WARNING: could not set the agent drain flag"
@@ -247,9 +263,15 @@ fi
 # The waiting ones go now. Both are cheap to recreate and neither is doing anything.
 #
 # NOTHING HERE DROPS THE AGENT POOL, because `ffwatch drain` above already did: it destroys every
-# staged container as part of draining and says so ("draining: destroyed N staged container(s)").
-# This used to call `ffwatch pool drop` as well, which found nothing every time -- one line of
-# output in the journal claiming a job the previous line had already done. One place, not two.
+# IDLE staged container as part of draining and says so ("draining: destroyed N idle staged
+# container(s)"). This used to call `ffwatch pool drop` as well, which found nothing every time
+# -- one line of output in the journal claiming a job the previous line had already done. One
+# place, not two.
+#
+# IDLE, not every one of them. A dispatched pool container keeps its `ffbox.pool` label, so a
+# sweep by label takes the container serving a turn as well; on 2026-09-01 that deleted a live
+# run's spool directory and the harness reported a verified, finished turn as "the run failed".
+# ffwatch decides by `out/owner` now. Do not add a by-label sweep back in here.
 for _c in $(docker_ ps --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null); do
     # `docker top | grep Runner.Worker` is the same test slot.sh's own reaper uses, and it reads
     # the container rather than a marker file a SIGKILLed supervisor may have left behind.
@@ -263,19 +285,28 @@ done
 unset _c
 
 # WAIT FOR WORK, NOT FOR EVERYTHING. What is left after the sweep above is containers with a job
-# in them. They are given the whole window, and if they are still going at the end of it the
-# update stands down: the timer comes back in five minutes and nothing was interrupted.
+# in them, and the host-side threads that finish those jobs off.
+#
+# TWO THINGS HAVE TO GO QUIET, and until 2026-09-01 this waited only for the first. A container
+# is the FIRST HALF of a turn. The second half runs on the HOST after it exits: ffbox harvests
+# the work bundle out of the run directory, and ffwatch's launch thread sweeps the transcript
+# home, records the verification, PUSHES THE BRANCH, opens the pull request and composes the
+# reply. None of that is a queue that survives a restart -- it is a thread -- so stopping the
+# target the moment the last container exits can lose a push that was seconds from landing.
+# `ffwatch quiet` is the second question: it asks the database, not docker, and it counts the
+# turn rows that are still publishing as well as the replies not yet delivered.
 _deadline=$(( $(date +%s) + DRAIN_TIMEOUT ))
+_forced=0
 while :; do
     # BUSY, NOT MERELY PRESENT. Counting every workload container was right only because the
     # sweep above had just destroyed the idle ones and both lanes are drained, so no new one can
     # appear -- but the drains are NOT fatal if they fail to take (they log a warning and this
     # carries on), and one idle runner registering after the sweep would then hold the update
-    # here for the whole two-hour window before standing down over nothing.
+    # here for the whole window before forcing over nothing.
     #
     # So ask the same question the sweep asked. A CI container with no Runner.Worker is idle and
-    # is destroyed here rather than waited on. An agent container is counted busy: the staged
-    # ones are already gone and a drained ffwatch stages no more, so what is left is a run.
+    # is destroyed here rather than waited on. An agent container is counted busy: the idle
+    # staged ones are already gone and a drained ffwatch stages no more, so what is left is a run.
     _busy=0
     for _c in $(docker_ ps --filter label=ffbox.workload --format '{{.Names}}' 2>/dev/null); do
         case "$_c" in
@@ -286,22 +317,65 @@ while :; do
                     log "destroying idle runner $_c that appeared after the sweep"
                     docker_ rm -f "$_c" >/dev/null 2>&1 || :
                 fi ;;
+            ffbox-pool-*)
+                # STILL UNDER ITS STAGING NAME, so dispatch never renamed it: it is waiting, not
+                # working, whatever `ffwatch drain` did or did not manage. The drain is not fatal
+                # if it fails to take, and one leftover staged container must not hold the update
+                # for the whole window and then be force-stopped over nothing.
+                log "destroying idle staged container $_c that the drain did not take"
+                docker_ stop --timeout 10 "$_c" >/dev/null 2>&1 || :
+                docker_ rm -f "$_c" >/dev/null 2>&1 || : ;;
             *)  _busy=$((_busy + 1)) ;;
         esac
     done
-    if [ "$_busy" -eq 0 ]; then
+    if [ "$_busy" -gt 0 ]; then
+        log "waiting for $_busy working container(s) to finish"
+    elif [ ! -r "$FFWATCH" ]; then
+        # No ffwatch to ask, so the containers are the whole answer. Same reasoning as the
+        # skipped drain above: a broken ffwatch.py is exactly when an update has to land.
         break
+    elif _left=$(as_owner python3 "$FFWATCH" quiet 2>/dev/null); then
+        log "containers are down and the host has finished publishing"
+        break
+    else
+        log "containers are down; waiting for the host: ${_left:-work still in flight}"
     fi
     if [ "$(date +%s)" -ge "$_deadline" ]; then
-        log "$_busy container(s) are still working after ${DRAIN_TIMEOUT}s."
-        log "STANDING DOWN rather than killing them; the next trigger will try again."
-        exit 0
+        log "still not quiet after ${DRAIN_TIMEOUT}s — FORCING the update."
+        _forced=1
+        # SOFT, EVEN WHEN FORCING, and this is the whole difference between an update that
+        # interrupts a run and one that destroys it. Every container here is PID 1 running a task
+        # whose trap harvests the workspace out of a tmpfs and hands the Unity licence seat back.
+        # `docker stop --timeout` runs both. `rm -f` would run neither, and the tmpfs is the only
+        # copy of the work.
+        for _c in $(docker_ ps --filter label=ffbox.workload --format '{{.Names}}' 2>/dev/null); do
+            log "stopping $_c — up to ${FORCE_STOP_GRACE}s for its harvest and licence return"
+            docker_ stop --timeout "$FORCE_STOP_GRACE" "$_c" >/dev/null 2>&1 \
+                || log "WARNING: could not stop $_c"
+        done
+        # AND THEN THE HOST GETS ITS TURN, bounded. Those stops just handed every launch thread a
+        # finished container, and publish() -- where the push lives -- takes seconds, not minutes.
+        # Waiting a little here is what makes a forced update give up on the AGENT rather than on
+        # the work the agent already did.
+        _settle=$(( $(date +%s) + FORCE_SETTLE ))
+        while [ -r "$FFWATCH" ] && [ "$(date +%s)" -lt "$_settle" ]; do
+            if _left=$(as_owner python3 "$FFWATCH" quiet 2>/dev/null); then
+                log "the host settled after the forced stop"
+                break
+            fi
+            log "settling: ${_left:-work still in flight}"
+            sleep 5
+        done
+        break
     fi
-    log "waiting for $_busy working container(s) to finish"
     sleep 15
 done
-unset _busy _c _deadline
-log "nothing is running; safe to stop"
+unset _busy _c _deadline _left _settle
+if [ "$_forced" = 1 ]; then
+    log "proceeding with the update after a forced stop"
+else
+    log "nothing is running; safe to stop"
+fi
 
 log "stopping ffbox.target"
 sudo_systemctl stop ffbox.target || log "WARNING: stop reported a failure; continuing"

@@ -22,22 +22,37 @@ intervention, and manual intervention on a running build server is not free.
   `PartOf=ffbox.target` — `ffwatch`, `ffweb` **and `ffdiscord-listener`** — so all three come
   back on the new code, with the new plugin cache already in place because stage 5 ran first.
 
-**IT MAY DECIDE NOT TO UPDATE AT ALL, and that is the correct behaviour (2026-09-01).** Before
-it stops anything it drains BOTH lanes — `ffwatch drain` and `ffgithubrunners drain` — and then:
+**IT WAITS UP TO AN HOUR BEFORE IT STOPS ANYTHING (revised 2026-09-01).** Before it stops
+anything it drains BOTH lanes — `ffwatch drain` and `ffgithubrunners drain` — and then:
 
 - **idle containers are destroyed.** A staged agent container and a registered-but-jobless CI
   runner hold a workspace and no work; they are cheap to recreate, and keeping one across a merge
   is how a container ends up serving a turn through the OLD task script, since its mounts point
   at inodes the merge replaced.
-- **a container with work in it is never killed.** It gets the whole window, and if it is still
-  going at the end the UPDATE stands down and the next tick tries again.
+- **a container with work in it is never killed**, and neither is the host-side thread behind
+  it. A container is where the agent works; the branch push, the pull request and the Discord
+  reply happen on the host after it exits, and a restart does not survive them. The updater
+  polls `ffwatch quiet` for that second half.
+- **at the end of the hour the update goes ahead**, with `docker stop` and a two-minute grace so
+  each task's trap can harvest its workspace and return the Unity seat, then five minutes for
+  the host to publish what those stops released.
 
-So "a push is live on the next tick" is no longer reliably true. A CI job takes up to 90 minutes,
-and a push behind one simply waits. The journal says so plainly — `waiting for N working
-container(s) to finish`, then either `nothing is running; safe to stop` or `STANDING DOWN rather
-than killing them`. **Read that before concluding a push did not land.** Do not intervene; that
-is the rule this whole note exists for, and it applies twice as hard when the reason for the
-delay is a job somebody is waiting on.
+So "a push is live on the next tick" is not reliably true — a CI job takes up to 90 minutes and a
+push behind one waits — but it IS live within about an hour. The journal says so plainly:
+`waiting for N working container(s) to finish`, then `containers are down; waiting for the host`,
+then `nothing is running; safe to stop` or `still not quiet after 3600s — FORCING the update`.
+**Read that before concluding a push did not land.** Do not intervene; that is the rule this whole
+note exists for.
+
+**The bug that produced all of this, worth knowing because the shape recurs.** The drain used to
+destroy every container carrying the `ffbox.pool` label. That label goes on at creation and stays
+through the rename at dispatch, so the sweep took the container serving a live turn as well: the
+forced removal missed it under its new name, and the `rmtree` behind it did not. On 2026-09-01
+that deleted conversation 30 turn 5's spool while the agent was working in it. `out/` is
+host-owned and went; `claude/` is 0700 under the container's subuid and survived, which is why
+the transcript came home and the result did not. The agent verified 774/774 clean and the thread
+was told "the run failed / no branch". **A label says what a thing IS, never what it is DOING.
+`out/owner` is the file that answers "busy".**
 
 **`ffbox-egress` is NOT `PartOf=ffbox.target`**, deliberately: stopping the pipeline must not
 take the fence down, and the proxy has to be up before ffwatch starts a container rather than

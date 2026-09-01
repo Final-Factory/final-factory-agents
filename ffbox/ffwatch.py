@@ -3326,6 +3326,24 @@ class Watcher:
             warm.append(c)
         return warm
 
+    def pool_unclaimed(self, containers=None):
+        """Staged containers NOBODY HAS SPOKEN FOR — the ones a shutdown may destroy.
+
+        pool_warm() asks the stricter question, "can this serve a turn right now", and excludes
+        a container still extracting its tar. This asks the only question a shutdown cares
+        about: is anything lost by destroying it. A half-extracted container holds no turn and
+        is as free to take as a fully warm one.
+
+        `out/owner` is the whole test, and it has to be. The `ffbox.pool` LABEL says nothing:
+        it is set at creation and survives the rename at dispatch, so every container this pool
+        ever staged carries it for life, busy or idle. Deciding by the label is what cost
+        conversation 30 its turn-5 answer — see pool_drop.
+        """
+        if containers is None:
+            containers = self.pool_containers()
+        return [c for c in containers
+                if not os.path.exists(self.pool_owner_path(c["id"]))]
+
     def pool_branch(self):
         """Which branch the pool stages. Follows base_ref unless told otherwise, because a pool
         staged on a branch no turn asks for serves nothing at all."""
@@ -3438,11 +3456,46 @@ class Watcher:
         Watcher._unreapable.discard(path)
         return True
 
-    def pool_drop(self, pool_id):
-        """Destroy a staged container and forget it. Free, because it holds no work."""
-        subprocess.run([self.cfg["docker"], "rm", "-f", f"ffbox-pool-{pool_id}"],
-                       capture_output=True, text=True, timeout=60)
+    def pool_drop(self, pool_id, force=False):
+        """Destroy a staged container and forget it. Free, because it holds no work.
+
+        A SOFT STOP FIRST, never `rm -f` alone. pool-task.sh is PID 1 and execs the turn task
+        in place precisely so that a stop reaches ITS traps — the workspace harvest and the
+        Unity licence return. SIGKILL runs neither, and a seat that is never handed back is one
+        the next run waits out.
+
+        AND IT WILL NOT DELETE A CLAIMED SPOOL. `out/owner` means a run owns this directory:
+        the container writes result.json, stream.jsonl, the verification report and the work
+        bundle into `out/`, and ffbox reads them FROM THE HOST after the container exits.
+        Deleting it under a live run is not tidying up, it is the loss of everything the run
+        produced.
+
+        Written after 2026-09-01, when it was. The updater's drain swept `pool_containers()` —
+        by label — and so dropped the container serving conversation 30's turn 5 along with the
+        two idle ones. The forced removal of `ffbox-pool-<id>` missed it, because dispatch had
+        renamed it to `ffbox-<run_id>`, and the rmtree did not: `out/` is host-owned and went,
+        while `claude/` is 0700 under the container's subuid and survived. The agent ran to
+        completion, verified 774/774 clean, and ffbox then found no `.container-rc`, scored the
+        run 70 and reported "the run failed / no branch — the run changed no files". The answer
+        existed and nothing could read it.
+
+        An operator naming one id by hand means it and passes force=True. Nothing automatic may.
+        """
+        name = f"ffbox-pool-{pool_id}"
+        grace = max(1, int(self.cfg["kill_grace_secs"]))
+        for argv, patience in (([self.cfg["docker"], "stop", "--timeout", str(grace), name],
+                                grace + 60),
+                               ([self.cfg["docker"], "rm", "-f", name], 60)):
+            try:
+                subprocess.run(argv, capture_output=True, text=True, timeout=patience)
+            except (OSError, subprocess.SubprocessError) as exc:
+                log(f"pool: {argv[1]} on {name}: {exc}")
+        if not force and os.path.exists(self.pool_owner_path(pool_id)):
+            log(f"pool: {pool_id} is CLAIMED — its container is gone but its spool stays; "
+                f"the run that owns it still has output in there")
+            return False
         shutil.rmtree(self.pool_dir(pool_id), ignore_errors=True)
+        return True
 
     def pool_stage(self):
         """Start one staged container. Returns its id, or None.
@@ -6346,25 +6399,83 @@ class Watcher:
     # drain and resume  (design/self_update_design.txt section 4)
     # ======================================================================================
 
-    def drain(self, wait=False, timeout=None, on_wait=None):
-        """Stop launching, optionally wait for the containers already running to finish.
+    # What a shutdown has to wait for, and the phrase each count is reported as.
+    SETTLE_LABELS = (("runs", "run(s) in a container"),
+                     ("turns", "turn(s) still publishing on the host"),
+                     ("outbound", "reply(s) not yet delivered"))
 
-        Returns the number of runs still in flight — 0 means the machine is quiet and safe to
-        stop. The updater calls this before it touches the checkout.
+    def settling(self):
+        """Everything still in flight, in the THREE places a shutdown can lose work.
+
+        A container is only the first half of a turn. Everything durable happens on the HOST
+        after it exits: ffbox harvests the work bundle out of the run directory, and ffwatch's
+        launch thread sweeps the transcript home, records the verification, PUSHES THE BRANCH,
+        opens the pull request and composes the reply. None of that is a queue — it is a thread
+        — so a `systemctl stop` landing in the middle of it loses the push, and the run's work
+        goes with the tmpfs the container was using.
+
+        So "quiet" is not "no containers", and it is not running_counts() either. That column
+        goes terminal BEFORE publish() runs: finish_run() records exit_code and terminal_state,
+        and only then verifies, publishes and replies. The TURN row is what closes last, in
+        finish_turn(), so the turn row is what a shutdown has to wait for.
+
+          runs      run rows with no terminal_state: a container this box still owns.
+          turns     turns marked running: a launch thread still doing the above. A QUEUED turn
+                    is deliberately not counted — nothing launches under a drain, so waiting on
+                    one would never end.
+          outbound  replies composed and not yet sent. The softest of the three, because these
+                    ARE durable: the row is in the database and the next daemon start sends it.
+                    Counted anyway, because a shutdown that lands between "the agent answered"
+                    and "Discord has the answer" is exactly what looks, to the person who
+                    asked, like nothing happened.
+
+        ONLY WHAT THE SENDER WILL SEND BY ITSELF. Under approve_before_send a `pending` row is
+        not waiting on this machine at all — it is waiting on a person, possibly for days — and
+        counting it would mean every update on such a box waited out the whole window and then
+        forced, every time. So the states counted are the ones send_pending() acts on given the
+        configuration it is actually running under.
+        """
+        sendable = ("('pending','approved')" if not self.cfg.get("approve_before_send")
+                    else "('approved')")
+        return {
+            "runs": self.running_counts(),
+            "turns": int(self.db.scalar(
+                "SELECT COUNT(*) FROM turn WHERE status='running'", (), 0)),
+            "outbound": int(self.db.scalar(
+                f"SELECT COUNT(*) FROM outbound WHERE status IN {sendable}", (), 0)),
+        }
+
+    @staticmethod
+    def settling_phrase(counts):
+        """Reads `1 run in a container, 2 replies not yet delivered`, or `nothing`."""
+        said = [f"{counts[key]} {label}" for key, label in Watcher.SETTLE_LABELS
+                if counts.get(key)]
+        return ", ".join(said) if said else "nothing"
+
+    def drain(self, wait=False, timeout=None, on_wait=None):
+        """Stop launching, optionally wait for the work already under way to finish.
+
+        Returns how much is still in flight — 0 means the machine is quiet and safe to stop.
+        The updater calls this before it touches the checkout.
+
+        A SOFT SHUTDOWN, AND ONLY OF WHAT IS IDLE. Draining destroys the staged containers
+        nobody has claimed and NOTHING ELSE; a container serving a turn is left to finish, and
+        so is the host-side thread publishing behind it. See settling() for why the second half
+        is not the same question as the first, and pool_drop() for what it cost to get this
+        wrong.
 
         THREE WAYS THIS ENDS, and only one of them is the timeout:
 
-          * quiet — no run row has terminal_state NULL, which is exactly "no container this
-            machine still owns" (the predicate running_counts() already uses);
+          * quiet — settling() reads zero on all three counts;
           * NO DAEMON, NO DRAIN — nobody is launching, so there is nothing to wait for. Decided
             with the same lock probe daemon_alive() uses for `ffbox "prompt"`, not by reading a
             pid. This is the case that matters when ffwatch is the thing that is broken: a
             daemon killed hard leaves non-terminal rows that nothing will ever settle, and
             waiting the full ceiling for containers that died hours ago would stall the very
             update meant to fix it;
-          * the ceiling — computed, not guessed. launch() gives its subprocess
-            warmup_secs + agent_secs + 300, so no run outlives that; the caller's default adds
-            slack on top. A run still alive past it is one ffwatch itself is already killing.
+          * the ceiling — the caller's window. What happens at the end of it is the CALLER'S
+            decision and not this function's: the updater stops the stragglers itself, softly,
+            and goes ahead. All this does is stop waiting and say what was left.
 
         The flag goes down FIRST, before any waiting, so nothing new starts while we wait.
         """
@@ -6372,33 +6483,43 @@ class Watcher:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(f"{now_iso()} pid {os.getpid()}\n")
-        # STAGED CONTAINERS GO NOW, and this is not housekeeping. pool-task.sh, the turn task
-        # and ffverify are bind-mounted from the working copy, live, and the updater
+        # THE IDLE STAGED CONTAINERS GO NOW, and this is not housekeeping. pool-task.sh, the
+        # turn task and ffverify are bind-mounted from the working copy, live, and the updater
         # fast-forwards that copy immediately after draining — so a container staged before the
-        # merge would dispatch into code that changed under it. They hold no turn, so destroying
-        # them costs nothing but the tar they will extract again afterwards.
-        dropped = 0
-        for c in self.pool_containers():
+        # merge would dispatch into code that changed under it. An unclaimed one holds no turn,
+        # so destroying it costs nothing but the tar it extracts again afterwards.
+        #
+        # CLAIMED IS NOT IDLE. This used to sweep pool_containers(), which is the LABEL, and the
+        # label is on every container this pool ever staged for the whole of its life — dispatch
+        # renames the container but cannot take the label off. So the sweep included the one
+        # serving a run. pool_unclaimed() asks `out/owner` instead, which is the file dispatch
+        # actually writes, and nothing here may go back to asking docker.
+        containers = self.pool_containers()
+        unclaimed = self.pool_unclaimed(containers)
+        for c in unclaimed:
             self.pool_drop(c["id"])
-            dropped += 1
-        if dropped:
-            log(f"draining: destroyed {dropped} staged container(s)")
+        if unclaimed:
+            log(f"draining: destroyed {len(unclaimed)} idle staged container(s)")
+        busy = len(containers) - len(unclaimed)
+        if busy:
+            log(f"draining: leaving {busy} staged container(s) alone — a turn is using them")
 
-        total = self.running_counts()
-        log(f"draining: {path} written; {total} run(s) in flight")
+        counts = self.settling()
+        log(f"draining: {path} written; {self.settling_phrase(counts)} in flight")
         if not wait:
-            return total
+            return sum(counts.values())
         if not self.daemon_alive():
             log("draining: no ffwatch daemon holds the lock — nothing is launching; not waiting")
             return 0
         deadline = time.monotonic() + float(timeout) if timeout else None
         while True:
-            total = self.running_counts()
+            counts = self.settling()
+            total = sum(counts.values())
             if total == 0:
                 log("draining: quiet")
                 return 0
             if deadline is not None and time.monotonic() >= deadline:
-                log(f"draining: TIMED OUT with {total} run(s) still in flight")
+                log(f"draining: TIMED OUT with {self.settling_phrase(counts)} still in flight")
                 return total
             if on_wait:
                 on_wait(total)
@@ -6830,11 +6951,12 @@ def build_parser():
     sub.add_parser("run", help="the daemon: tail events.jsonl and schedule turns")
     sub.add_parser("status", help="conversations, in-flight runs, the outbound queue")
     sub.add_parser("send", help="flush the outbound queue once, then exit")
-    sp = sub.add_parser("drain", help="stop launching; --wait until the running containers end")
+    sp = sub.add_parser("drain", help="stop launching; --wait until the work in flight ends")
     sp.add_argument("--wait", action="store_true",
                     help="block until nothing is in flight (or --timeout expires)")
-    sp.add_argument("--timeout", type=int, default=7200,
-                    help="seconds to wait before giving up (default 7200)")
+    sp.add_argument("--timeout", type=int, default=3600,
+                    help="seconds to wait before giving up (default 3600)")
+    sub.add_parser("quiet", help="exit 0 when nothing is in flight, 1 while anything is")
     sub.add_parser("resume", help="remove the drain flag and start launching again")
     sp = sub.add_parser("pool", help="staged containers waiting for a request")
     sp.add_argument("action", nargs="?", default="status",
@@ -6911,12 +7033,34 @@ def main(argv=None):
         print(f"sent {watcher.send_pending()} outbound row(s)")
         return 0
     if args.cmd == "drain":
-        # Exit 1 on a timeout so the updater can SAY it stopped a busy machine. It stops the
-        # target either way — see design/self_update_design.txt section 3, choice 3: the drain
-        # is an optimisation over a hard stop and is never allowed to block the update.
+        # SETTING THE FLAG IS THE JOB, and a busy machine is not a failure at it. This used to
+        # exit 1 whenever anything was in flight, which is why every update on a busy box logged
+        # "WARNING: could not set the agent drain flag" over a drain that had worked perfectly —
+        # seen on 2026-09-01. What is in flight goes to stdout for the caller to read.
+        #
+        # --wait keeps the old contract, because there it means something: exit 1 is "the window
+        # expired with work still going", the one thing the updater has to be able to tell. It
+        # stops the target either way — design/self_update_design.txt section 3, choice 3: the
+        # drain is an optimisation over a hard stop and never blocks the update.
         left = watcher.drain(wait=args.wait, timeout=args.timeout)
-        print(f"{left} run(s) in flight")
-        return 1 if left else 0
+        print("quiet" if left == 0 else f"{left} still in flight")
+        return 1 if (args.wait and left) else 0
+    if args.cmd == "quiet":
+        # The predicate the updater polls between "the containers are down" and "safe to stop".
+        # It is a question, so the ANSWER is the exit code and the detail is for the journal.
+        #
+        # NO DAEMON, NOTHING TO WAIT FOR — the same rule `drain --wait` has, and it belongs here
+        # for the same reason: a hard-killed ffwatch leaves run and turn rows that nothing will
+        # ever settle, and the update that would repair the machine must not be the thing that
+        # waits an hour on them.
+        counts = watcher.settling()
+        total = sum(counts.values())
+        if total and not watcher.daemon_alive():
+            print(f"no ffwatch daemon holds the lock; {watcher.settling_phrase(counts)} will "
+                  f"never settle on its own")
+            return 0
+        print(f"{watcher.settling_phrase(counts)} in flight")
+        return 1 if total else 0
     if args.cmd == "resume":
         print("drain flag removed" if watcher.resume() else "no drain flag was set")
         return 0
@@ -6929,12 +7073,16 @@ def main(argv=None):
             print(f"staging {pool_id}" if pool_id else "nothing staged; see the log")
             return 0 if pool_id else 1
         if args.action == "drop":
-            ids = [args.id] if args.id else [c["id"] for c in watcher.pool_containers()]
+            # NAMING ONE IS AN INSTRUCTION; naming none is a request to tidy up. So an explicit
+            # id may take a container mid-turn and its spool with it — an operator asking for
+            # that has a reason — and the bare form only ever takes what nothing has claimed.
+            explicit = bool(args.id)
+            ids = [args.id] if explicit else [c["id"] for c in watcher.pool_unclaimed()]
             for pool_id in ids:
-                watcher.pool_drop(pool_id)
+                watcher.pool_drop(pool_id, force=explicit)
                 print(f"dropped {pool_id}")
             if not ids:
-                print("nothing staged")
+                print("nothing staged is idle")
             return 0
         lines = watcher.pool_status()
         print("\n".join(lines) if lines else "the pool is off (idle_agents: 0)")

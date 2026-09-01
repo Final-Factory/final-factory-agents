@@ -6662,22 +6662,61 @@ def test_a_turn_falls_back_to_a_cold_launch():
     check("and the matching branch is", w.pool_claim_for("develop") == "b1", None)
 
 
-def test_draining_destroys_what_is_staged():
+def test_draining_destroys_what_is_idle_and_nothing_else():
     """The updater drains and then fast-forwards the checkout, and pool-task.sh, the turn task
     and ffverify are all bind-mounted from that checkout, live. A container staged before the
-    merge would dispatch into code that changed under it, whatever its own timer says."""
-    print("pool: draining")
+    merge would dispatch into code that changed under it, whatever its own timer says. So the
+    IDLE ones go.
+
+    THE ONE SERVING A TURN DOES NOT, and this test exists because it used to. `ffbox.pool` is
+    set at creation and survives the rename at dispatch, so a sweep over
+    `docker ps --filter label=ffbox.pool` includes the container running a turn. On 2026-09-01
+    that swept conversation 30's turn 5 along with the two idle ones: `docker rm -f
+    ffbox-pool-<id>` missed the container (dispatch had renamed it to `ffbox-<run_id>`) and the
+    rmtree behind it did not. `out/` is host-owned and went — result.json, stream.jsonl, the
+    work bundle, and the `.container-rc` ffbox scores the run from — while `claude/` is 0700
+    under the container's subuid and survived. The agent ran to completion and verified 774/774
+    clean; ffbox found no exit code, scored the run 70, and the harness posted "the run failed /
+    no branch — the run changed no files".
+
+    `out/owner` is the file dispatch actually writes, and it is the only thing entitled to
+    answer "is this container busy".
+    """
+    print("pool: draining takes the idle ones and leaves the busy one")
     case = Case("pooldrain", base_fixture())
     w = case.watcher
+    containers = [{"name": "ffbox-pool-d1", "id": "d1", "branch": "master"},
+                  {"name": "ffbox-d30t5-873beba0", "id": "d2", "branch": "master"},
+                  {"name": "ffbox-pool-d3", "id": "d3", "branch": "master"}]
+    w.pool_containers = lambda: list(containers)
+    for pool_id in ("d1", "d2", "d3"):
+        os.makedirs(os.path.join(w.pool_dir(pool_id), "out"), exist_ok=True)
+    # d2 is dispatched: the host claimed it by creating out/owner, docker renamed it, and its
+    # spool now holds the only copy of everything the run has produced.
+    open(w.pool_owner_path("d2"), "w").close()
+    answer = os.path.join(w.pool_dir("d2"), "out", "result.json")
+    with open(answer, "w", encoding="utf-8") as fh:
+        fh.write('{"result": "774/774 passed"}')
+
     dropped = []
-    w.pool_containers = lambda: [{"name": "c1", "id": "d1", "branch": "master"},
-                                 {"name": "c2", "id": "d2", "branch": "master"}]
-    w.pool_drop = lambda pool_id: dropped.append(pool_id)
+    w.pool_drop = lambda pool_id, force=False: dropped.append(pool_id)
     w.drain()
-    check("every staged container is destroyed by a drain", dropped == ["d1", "d2"], dropped)
+    check("a drain destroys the staged containers nobody has claimed",
+          dropped == ["d1", "d3"], dropped)
+    check("and never the one a turn is using", "d2" not in dropped, dropped)
     check("and the flag is down so nothing stages another",
           os.path.exists(w.cfg["drain_switch"]), None)
-    w.pool_drop = lambda pool_id: None
+
+    # The guard underneath the caller, with the real pool_drop this time: even told to drop d2
+    # by something that should not have, the run's output survives.
+    w.pool_drop = ffwatch.Watcher.pool_drop.__get__(w)
+    check("pool_drop refuses to delete a claimed spool", w.pool_drop("d2") is False, None)
+    check("so the run's output is still on disk", os.path.exists(answer), answer)
+    check("an unclaimed spool goes without asking", w.pool_drop("d1") is True, None)
+    check("and force is how an operator naming one by hand means it anyway",
+          w.pool_drop("d2", force=True) is True and not os.path.exists(w.pool_dir("d2")), None)
+
+    w.pool_drop = lambda pool_id, force=False: None
     check("the keeper stages nothing while draining", w.keep_pool() is None, None)
 
 
@@ -6771,6 +6810,91 @@ def test_the_project_directory_survives_a_workspace_move():
                     os.chmod(os.path.join(base, d), 0o755)
                 except OSError:
                     pass
+
+
+def test_a_shutdown_waits_for_the_host_not_only_for_the_containers():
+    """A container is the FIRST HALF of a turn. The branch push is in the second half.
+
+    finish_run records exit_code and terminal_state and only THEN records the verification,
+    pushes the branch, opens the pull request and composes the reply. So `run.terminal_state IS
+    NOT NULL` — the predicate the updater used to stop on — is already true while the push is
+    still to come, and that work is a thread rather than a queue: `systemctl stop ffbox.target`
+    in the middle of it loses the push, and the run's tree went with the container's tmpfs.
+
+    finish_turn() is what closes last, so the turn row is what a shutdown has to wait for.
+    """
+    print("drain: the host is the other half of a turn")
+    case = Case("drainhost")
+    w = case.watcher
+    conv_id = w.upsert_conversation("7200", kind="ask", channel_id=ASK_CHANNEL,
+                                    title="a turn that is still publishing")
+    cur = w.db.execute(
+        "INSERT INTO turn(conversation_id, seq, trigger, lane, status, queued_at)"
+        " VALUES(?,1,'message','dev','running',?)", (conv_id, ffwatch.now_iso()))
+    turn_id = cur.lastrowid
+    w.db.execute("INSERT INTO run(turn_id, ffbox_run_id, terminal_state, exit_code)"
+                 " VALUES(?,'d30t5-873beba0','done',0)", (turn_id,))
+    check("the container is over as far as the run row is concerned",
+          w.running_counts() == 0, w.running_counts())
+    counts = w.settling()
+    check("but the turn is still publishing, so the machine is NOT quiet",
+          sum(counts.values()) == 1 and counts["turns"] == 1, counts)
+    check("and it says which half in words the journal can carry",
+          "publishing" in w.settling_phrase(counts), w.settling_phrase(counts))
+
+    w.db.execute("UPDATE turn SET status='done', ended_at=? WHERE id=?",
+                 (ffwatch.now_iso(), turn_id))
+    w.db.execute("INSERT INTO outbound(conversation_id, action, payload_json, nonce, status,"
+                 " created_at) VALUES(?,'post','{}','n-7200','pending',?)",
+                 (conv_id, ffwatch.now_iso()))
+    check("an answer composed and not yet delivered is not quiet either",
+          w.settling()["outbound"] == 1, w.settling())
+
+    # A row waiting on a PERSON is not this machine's work, and holding the update for it would
+    # mean every update on such a box waited out the window and then forced, every time.
+    w.cfg["approve_before_send"] = True
+    check("a row held for approval waits on a human, not on the updater",
+          w.settling()["outbound"] == 0, w.settling())
+    w.cfg["approve_before_send"] = False
+    check("and counts again the moment the sender would send it by itself",
+          w.settling()["outbound"] == 1, w.settling())
+
+    w.db.execute("UPDATE outbound SET status='sent' WHERE nonce='n-7200'")
+    check("with all three at zero the machine is quiet",
+          sum(w.settling().values()) == 0 and w.settling_phrase(w.settling()) == "nothing",
+          w.settling())
+
+    upd = open(os.path.join(HERE, "update_ffbox.sh"), encoding="utf-8").read()
+    code = "\n".join(l for l in upd.splitlines() if not l.lstrip().startswith("#"))
+    check("and the updater asks both questions, not just docker's",
+          '"$FFWATCH" quiet' in code and "label=ffbox.workload" in code, None)
+
+
+def test_the_updater_forces_softly_rather_than_standing_down():
+    """The window ends in a SOFT stop and an update, not in a stand-down.
+
+    Standing down was the old behaviour and it is the wrong trade on a box that is busy for
+    hours at a time: the update that never lands is the one that would have fixed the thing
+    making it busy. Forcing is not killing, though — every one of these containers is PID 1
+    running a task whose trap harvests the workspace out of a tmpfs and hands the Unity licence
+    seat back, and the host then needs a moment to publish what those stops released.
+    """
+    print("update: the window ends in a soft stop")
+    upd = open(os.path.join(HERE, "update_ffbox.sh"), encoding="utf-8").read()
+    code = "\n".join(l for l in upd.splitlines() if not l.lstrip().startswith("#"))
+    check("the window is an hour", "FFBOX_DRAIN_TIMEOUT:-3600" in code, None)
+    check("and nothing stands the update down at the end of it",
+          "STANDING DOWN" not in upd, None)
+    loop = code.partition("_deadline=$(( $(date +%s) + DRAIN_TIMEOUT ))")[2] \
+               .partition('log "stopping ffbox.target"')[0]
+    check("nothing in the wait exits before the merge", "exit 0" not in loop, loop)
+    force = code.partition("_forced=1")[2].partition("_settle=")[0]
+    check("the stragglers get docker stop with a real grace",
+          'stop --timeout "$FORCE_STOP_GRACE"' in force, force)
+    check("and never rm -f, which would skip the harvest and the licence return",
+          "rm -f" not in force, force)
+    check("the host gets a bounded window of its own afterwards",
+          "FORCE_SETTLE" in code and '"$FFWATCH" quiet' in code, None)
 
 
 def test_every_lane_agrees_on_the_workspace_path():
@@ -7236,7 +7360,6 @@ def main():
         test_a_crashed_pooled_run_gives_its_transcript_back,
         test_a_cold_launch_short_of_memory_evicts_a_staged_container,
         test_a_turn_falls_back_to_a_cold_launch,
-        test_draining_destroys_what_is_staged,
         test_memory_is_read_from_meminfo_not_from_dev_shm,
         test_the_finish_handler_reaches_the_agent_and_its_work,
         test_a_run_that_ran_out_of_time_still_says_so,
@@ -7354,6 +7477,9 @@ def main():
         test_a_submission_cannot_name_a_branch_the_conversation_does_not_own,
         test_the_mirror_is_only_written_inside_the_pipelines_own_namespace,
         test_the_project_directory_survives_a_workspace_move,
+        test_draining_destroys_what_is_idle_and_nothing_else,
+        test_a_shutdown_waits_for_the_host_not_only_for_the_containers,
+        test_the_updater_forces_softly_rather_than_standing_down,
     ]
     for fn in tests:
         try:
