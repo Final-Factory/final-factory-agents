@@ -245,19 +245,11 @@ else
 fi
 
 # The waiting ones go now. Both are cheap to recreate and neither is doing anything.
-if [ -r "$FFWATCH" ]; then
-    # `grep -c` exits 1 when it counts nothing, so a `|| echo 0` fallback would append a SECOND
-    # zero and leave "0\n0" in the variable -- not a number, and the `[ -gt ]` below would then
-    # fail under `set -e`. Count the lines instead, which cannot fail.
-    _dropped=$(as_owner python3 "$FFWATCH" pool drop 2>/dev/null | grep '^dropped' | wc -l)
-    _dropped=${_dropped:-0}
-    # `if` rather than `[ ... ] && log ...`: under `set -e` that idiom aborts the updater on the
-    # ordinary case where nothing was staged, because the list's status is the failed test's.
-    if [ "$_dropped" -gt 0 ]; then
-        log "destroyed $_dropped staged agent container(s); nothing was using them"
-    fi
-    unset _dropped
-fi
+#
+# NOTHING HERE DROPS THE AGENT POOL, because `ffwatch drain` above already did: it destroys every
+# staged container as part of draining and says so ("draining: destroyed N staged container(s)").
+# This used to call `ffwatch pool drop` as well, which found nothing every time -- one line of
+# output in the journal claiming a job the previous line had already done. One place, not two.
 for _c in $(docker_ ps --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null); do
     # `docker top | grep Runner.Worker` is the same test slot.sh's own reaper uses, and it reads
     # the container rather than a marker file a SIGKILLed supervisor may have left behind.
