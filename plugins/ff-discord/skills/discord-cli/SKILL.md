@@ -91,11 +91,11 @@ is the only signal in this pipeline for which that is true.
 
 ## Configuration
 
-`~/.config/ffdiscord/config.json`, mode 0600, never in a repo. `FFDISCORD_HOME` relocates the
-whole directory, which is how a container gets its own copy.
+The `discord` section of `~/.config/ffbox/config.json`, mode 0600, never in a repo.
+`FFBOX_CONFIG_DIR` relocates the file, which is how a container gets its own copy.
 
 ```json
-{
+"discord": {
   "app_token": "<the Bot tab's token — not the Application ID, not the public key>",
   "server_id": "<right-click the server name > Copy Server ID>",
   "channels": { "<alias>": "<channel id, or \"\" to resolve it by name>" },
@@ -103,6 +103,12 @@ whole directory, which is how a container gets its own copy.
   "me": "ben"
 }
 ```
+
+Moved into that file on 2026-09-01, from a `config.json` of its own in
+`~/.config/ffbox/discord/`. The `channels` table and the ffwatch `watch` block that gives those
+aliases their meaning were in two files that had to be edited together, and every reader had to
+open both. `ffdiscord set <key> <value>` writes into the section; everything else in the file —
+ffwatch's settings, the container limits, the CI runner pool — is carried through untouched.
 
 `channels` maps an alias to that channel's snowflake id. The alias is what the ffwatch `watch`
 block calls the channel, which is what says what it MEANS; the id says which channel it IS.
@@ -122,8 +128,10 @@ renames them in place. Discord's API still says "guild", so the URL paths are un
 from the file. `me` is the attribution `ask` uses; without it the CLI refuses to post rather
 than send an anonymous message.
 
-Cursors live beside it in `state.json`, locked for concurrent writers (`fcntl` on POSIX,
-`msvcrt` on Windows). **Cursors are per machine, so exactly one machine may own each loop.**
+Cursors live in `~/.config/ffbox/discord/state.json` — that directory is this CLI's STATE now
+that the config has moved out of it, and `FFDISCORD_HOME` still relocates it. Locked for
+concurrent writers (`fcntl` on POSIX, `msvcrt` on Windows), as the config file is.
+**Cursors are per machine, so exactly one machine may own each loop.**
 Two machines running the same loop both see a question as unread and both answer it.
 
 Creating the bot, the intents, the channel permissions, and the ids: the game repo's

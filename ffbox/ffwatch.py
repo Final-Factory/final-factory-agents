@@ -207,14 +207,17 @@ def _ffdiscord_home():
 
 
 FFDISCORD_HOME = _ffdiscord_home()
-FFDISCORD_CONFIG = os.path.join(FFDISCORD_HOME, "config.json")
 
-# ffbox's own machine config: everything ffwatch and ffweb need, in the directory that already
-# holds secrets.env and the kill switch. The Discord file next door keeps what is genuinely
-# Discord's — token, guild, channels, mentions — because the ffdiscord CLI reads that file on
-# its own account.
+# ONE CONFIG FILE FOR THE BOX, in the directory that already holds secrets.env and the kill
+# switch. Everything ffwatch and ffweb need is here, and since 2026-09-01 so is what is
+# genuinely Discord's — token, server, channels, mentions, trust — in a "discord" section the
+# ffdiscord CLI reads on its own account. It had a config.json of its own next door until then,
+# which put the alias table and the "watch" block that gives those aliases their meaning in two
+# files that had to be edited together. ~/.config/ffbox/discord still holds Discord STATE: the
+# read cursors, the doorbell, the listener's lock.
 FFBOX_CONFIG_DIR = os.path.expanduser(os.environ.get("FFBOX_CONFIG_DIR", "~/.config/ffbox"))
 FFBOX_CONFIG = os.path.join(FFBOX_CONFIG_DIR, "config.json")
+DISCORD_SECTION = "discord"
 
 # Fixed namespace so session_id = uuid5(FFBOX_NS, "discord:" + thread_id) is reproducible on
 # any machine, from nothing but the thread id. It must never change: a new namespace silently
@@ -590,16 +593,15 @@ def _read_config_json(path):
 
 
 def load_config():
-    """DEFAULTS, then the legacy Discord-file block, then ~/.config/ffbox/config.json, then env.
+    """DEFAULTS, then ~/.config/ffbox/config.json, then env.
 
     A missing config file is not an error — `ffwatch init` seeds one, and the offline suite
     runs with nothing installed at all.
     """
-    raw = _read_config_json(FFDISCORD_CONFIG)
     ffbox_raw = _read_config_json(FFBOX_CONFIG)
     # Keys may sit at the top level of the ffbox file or under "ffwatch". Both spellings are
-    # accepted so a file moved verbatim out of the Discord config still reads, and so a hand
-    # edit does not have to guess. Anything that is not a setting we know is ignored.
+    # accepted so a hand edit does not have to guess which one this file wants. Anything that
+    # is not a setting we know is ignored.
     ffbox_block = dict(ffbox_raw)
     ffbox_block.update(ffbox_raw.get("ffwatch") or {})
     # THE AGENT CONTAINER'S OWN SETTINGS, in a section of their own since 2026-09-01 -- the
@@ -628,8 +630,7 @@ def load_config():
     # filter already drops it, which is exactly right -- those settings belong to the runners and
     # ffbox/runners/lib/config.sh is what reads them.
     ffbox_block = {k: v for k, v in ffbox_block.items() if k in DEFAULTS}
-    cfg = _deep_merge(DEFAULTS, raw.get("ffwatch", {}))
-    cfg = _deep_merge(cfg, ffbox_block)
+    cfg = _deep_merge(DEFAULTS, ffbox_block)
     for env_name, (key, caster) in ENV_OVERRIDES.items():
         val = os.environ.get(env_name)
         if val:
@@ -665,13 +666,14 @@ def load_config():
     if not gh.get("token"):
         gh["token"] = os.environ.get(gh.get("token_env") or "GH_TOKEN") or None
     cfg["github"] = gh
-    # The Discord-side config (channel aliases, guild) is read-only context for us; ffdiscord
-    # itself resolves aliases, so we never duplicate the id table here. `trust` rides along for
-    # the same reason it lives in that file at all: the LISTENER has to answer "is this an
-    # operator" and reads no other config, so the table cannot live on this side.
+    # The Discord-side settings (channel aliases, server, trust) are read-only context for us;
+    # ffdiscord itself resolves aliases, so we never duplicate the id table here.
     # server_id is the current key name and guild_id the pre-2026-08-24 one; both are carried
     # because this is a read-only copy for context and nothing here decides which is canonical.
-    cfg["_discord"] = {k: raw.get(k)
+    discord_raw = ffbox_raw.get(DISCORD_SECTION) or {}
+    if not isinstance(discord_raw, dict):
+        discord_raw = {}
+    cfg["_discord"] = {k: discord_raw.get(k)
                        for k in ("server_id", "guild_id", "channels", "mentions", "trust")}
     return cfg
 
@@ -747,14 +749,15 @@ def discord_channels(cfg):
     Disk wins on a key both have, because disk is the newer of the two by construction.
     """
     merged = dict((cfg.get("_discord") or {}).get("channels") or {})
-    on_disk = _read_config_json(FFDISCORD_CONFIG).get("channels")
+    section = _read_config_json(FFBOX_CONFIG).get(DISCORD_SECTION)
+    on_disk = section.get("channels") if isinstance(section, dict) else None
     if isinstance(on_disk, dict):
         merged.update(on_disk)
     return merged
 
 
 def alias_for_channel(cfg, channel_id):
-    """Reverse the Discord config's alias -> id table. None when nothing claims this channel.
+    """Reverse the "discord" section's alias -> id table. None when nothing claims this channel.
 
     A conversation row carries channel ids, and for a forum thread it carries the PARENT
     channel, which is exactly the one the watch entry is about.
@@ -895,7 +898,7 @@ def config_warnings(cfg):
         raw = ((cfg.get("_discord") or {}).get("trust") or {})
         present = isinstance(raw, dict) and raw.get("operators")
         out.append(
-            "trust.operators in the Discord config is "
+            "discord.trust.operators in the config is "
             + ("present but holds no numeric ids (usernames are not trust keys)" if present
                else "missing")
             + ": NOBODY is an operator and every message is treated as a player's")
@@ -2918,7 +2921,7 @@ class Watcher:
                 if alias not in self._sweep_warned:
                     self._sweep_warned.add(alias)
                     hint = ("" if target != alias else
-                            f"; watch.{alias} has no id in the Discord config's channels "
+                            f"; watch.{alias} has no id in the config's discord.channels "
                             f"table and no channel on the server is named for it. Fill it in "
                             f"with 'ffdiscord set channels.{alias} <id>', or drop the alias "
                             f"from the watch block")

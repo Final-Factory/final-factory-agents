@@ -4,7 +4,7 @@
 The agent loops (`/ask-claude`, `/discord-triage`) pull via REST with an idempotent
 cursor. That is correct but poll-only. This daemon adds the push half: it holds one
 Discord Gateway websocket open and appends a single JSON line to
-~/.config/ffdiscord/events.jsonl whenever something the loops care about happens:
+~/.config/ffbox/discord/events.jsonl whenever something the loops care about happens:
 
   - a human message lands in a watched text channel   -> kind "message"
   - a new thread appears in a watched forum           -> kind "thread"
@@ -31,7 +31,7 @@ own authenticated `author.id` on the dispatch — never from message content. A 
 merely CLAIMING to be Ben or Lothsahn is worthless (see discord-answerer's untrusted-input
 rules); the Gateway's author field is not spoofable without compromising the account, so
 it's the one signal in this whole pipeline actually safe to key elevated trust off of.
-The ids come from `trust.operators` in the same config as everything else, with
+The ids come from `discord.trust.operators` in the same config as everything else, with
 `mentions.lothsahn` read as a fallback for a machine that predates that table — never
 hardcoded, and never a username, which is renameable.
 
@@ -49,8 +49,10 @@ Usage:
   python scripts/discord/ffdiscord_listener.py --once-ready        # connect, prove READY, exit
   python scripts/discord/ffdiscord_listener.py --max-events 1      # exit after N real events (testing)
 
-Files (all under ~/.config/ffdiscord/): events.jsonl (the doorbell), listener.log,
-listener.lock (single-instance guard). One listener per machine; the lock enforces it.
+Files (all under ~/.config/ffbox/discord/, which FFDISCORD_HOME relocates): events.jsonl (the
+doorbell), listener.log, listener.lock (single-instance guard). One listener per machine; the
+lock enforces it. The config it reads is not here — it is the "discord" section of
+~/.config/ffbox/config.json, via ffdiscord.load_config.
 """
 
 from __future__ import annotations
@@ -70,7 +72,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-from ffdiscord import API, CONFIG_DIR, UA, load_config
+from ffdiscord import API, FFDISCORD_HOME, UA, load_config
 
 try:
     import fcntl
@@ -81,9 +83,9 @@ try:
 except ImportError:  # pragma: no cover - POSIX
     msvcrt = None
 
-EVENTS_PATH = os.path.join(CONFIG_DIR, "events.jsonl")
-LOG_PATH = os.path.join(CONFIG_DIR, "listener.log")
-LOCK_PATH = os.path.join(CONFIG_DIR, "listener.lock")
+EVENTS_PATH = os.path.join(FFDISCORD_HOME, "events.jsonl")
+LOG_PATH = os.path.join(FFDISCORD_HOME, "listener.log")
+LOCK_PATH = os.path.join(FFDISCORD_HOME, "listener.lock")
 
 # GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES. None of the three is privileged.
 # DIRECT_MESSAGES is what makes an operator DM ring at all; without it a DM to the bot is
@@ -105,7 +107,7 @@ def log(msg):
     line = f"{now_iso()} {msg}"
     print(line, flush=True)
     try:
-        os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+        os.makedirs(FFDISCORD_HOME, mode=0o700, exist_ok=True)
         with open(LOG_PATH, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
     except OSError:
@@ -545,7 +547,7 @@ def get_gateway_url(token):
 def acquire_instance_lock():
     """One listener per machine. Returns the held file handle (kept open for the
     process lifetime) or exits if another listener already holds it."""
-    os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+    os.makedirs(FFDISCORD_HOME, mode=0o700, exist_ok=True)
     fh = open(LOCK_PATH, "a+")
     try:
         if fcntl is not None:

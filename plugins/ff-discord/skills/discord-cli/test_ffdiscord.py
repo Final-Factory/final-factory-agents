@@ -262,10 +262,30 @@ def check(name, cond, detail=""):
         FAILURES.append(name)
 
 
+# THE CONFIG IS A SECTION OF THE FFBOX CONFIG (2026-09-01), not a file of its own. These two
+# keep every case below reading and writing the shape the CLI actually reads: one config.json
+# per scratch home, with the Discord keys under "discord". The scratch home doubles as
+# FFBOX_CONFIG_DIR and FFDISCORD_HOME — the same directory the real box uses for both, one
+# level apart — so a case that writes a config and a case that writes a cursor still collide
+# the way they do in production.
+def write_cfg(home, cfg_dict, **rest):
+    """Write {"discord": cfg_dict} to home/config.json. `rest` is anything else in the file."""
+    with open(os.path.join(home, "config.json"), "w") as fh:
+        json.dump({**rest, "discord": cfg_dict}, fh)
+
+
+def read_cfg(home, whole=False):
+    """The "discord" section back off disk, or the whole document with whole=True."""
+    with open(os.path.join(home, "config.json")) as fh:
+        doc = json.load(fh)
+    return doc if whole else doc["discord"]
+
+
 def run(home, *argv, expect_code=0, stdin_text=None):
     env = dict(os.environ)
     env["FFDISCORD_API"] = f"http://127.0.0.1:{PORT[0]}"
     env["FFDISCORD_HOME"] = home
+    env["FFBOX_CONFIG_DIR"] = home
     env["FFDISCORD_TOKEN"] = "TESTTOKEN"
     proc = subprocess.run(
         [sys.executable, os.path.join(HERE, "ffdiscord.py"), *argv],
@@ -288,8 +308,7 @@ def main():
                      "ask_claude": ASKCLAUDE, "agent_testing": ""},
         "mentions": {"ben": BEN, "lothsahn": LOTH},
     }
-    with open(os.path.join(tmp, "config.json"), "w") as fh:
-        json.dump(cfg, fh)
+    write_cfg(tmp, cfg)
 
     print("channels")
     p = run(tmp, "channels")
@@ -398,9 +417,7 @@ def main():
     check("refuses to post unattributed when 'me' is unset",
           len(POSTED) == n_before and "'me' is not set" in p.stderr, p.stderr)
 
-    cfg_me = {**cfg, "me": "ben"}
-    with open(os.path.join(tmp, "config.json"), "w") as fh:
-        json.dump(cfg_me, fh)
+    write_cfg(tmp, {**cfg, "me": "ben"})
 
     p = run(tmp, "ask", "lothsahn", "--text", "does the barge path look right to you?",
             "--context", "working on mass driver loading")
@@ -512,13 +529,13 @@ def main():
 
     print("doctor with a bad token")
     env_home = tempfile.mkdtemp(prefix="ffdiscord-bad-")
-    with open(os.path.join(env_home, "config.json"), "w") as fh:
-        json.dump({**cfg, "token": "WRONG"}, fh)
+    write_cfg(env_home, {**cfg, "token": "WRONG"})
     proc = subprocess.run(
         [sys.executable, os.path.join(HERE, "ffdiscord.py"), "doctor"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         env={**os.environ, "FFDISCORD_API": f"http://127.0.0.1:{PORT[0]}",
-             "FFDISCORD_HOME": env_home, "FFDISCORD_TOKEN": "WRONG"},
+             "FFDISCORD_HOME": env_home, "FFBOX_CONFIG_DIR": env_home,
+             "FFDISCORD_TOKEN": "WRONG"},
     )
     check("reports a revoked/bad token clearly",
           "revoked" in proc.stderr or "401" in proc.stderr, proc.stderr)
@@ -534,15 +551,15 @@ def main():
         env = {k: v for k, v in os.environ.items() if not k.startswith("FFDISCORD_")}
         env["FFDISCORD_API"] = f"http://127.0.0.1:{PORT[0]}"
         env["FFDISCORD_HOME"] = home
+        env["FFBOX_CONFIG_DIR"] = home
         env.update(env_extra)
         return subprocess.run(
             [sys.executable, os.path.join(HERE, "ffdiscord.py"), *argv],
             capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
 
-    def home_with(cfg_dict):
+    def home_with(cfg_dict, **rest):
         home = tempfile.mkdtemp(prefix="ffdiscord-keys-")
-        with open(os.path.join(home, "config.json"), "w") as fh:
-            json.dump(cfg_dict, fh)
+        write_cfg(home, cfg_dict, **rest)
         return home
 
     live = {"channels": {"bug_reports": FORUM, "dev_chat": DEVCHAT, "ask_claude": ASKCLAUDE},
@@ -586,12 +603,10 @@ def main():
           "nothing was saved" in p.stdout, p.stdout)
     check("reports an alias with no matching channel",
           "nope_not_here" in p.stdout and "no channel matches" in p.stdout, p.stdout)
-    with open(os.path.join(blank_home, "config.json")) as fh:
-        check("and really did not write", json.load(fh)["channels"]["dev_chat"] == "")
+    check("and really did not write", read_cfg(blank_home)["channels"]["dev_chat"] == "")
 
     p = run_bare(blank_home, "resolve-channels", "--write")
-    with open(os.path.join(blank_home, "config.json")) as fh:
-        written = json.load(fh)
+    written = read_cfg(blank_home)
     check("--write fills the blank in", written["channels"]["dev_chat"] == DEVCHAT, p.stdout)
     check("leaves an already-set alias alone",
           written["channels"]["ask_claude"] == ASKCLAUDE)
@@ -617,15 +632,39 @@ def main():
     # ...and the lookup happens ONCE. The name match is a round trip to /guilds/<id>/channels
     # on every command otherwise, and worse, it leaves the config permanently unable to say
     # which channel it means: the answer lives on Discord, where a rename changes it.
-    with open(os.path.join(blank2, "config.json")) as fh:
-        after = json.load(fh)
+    after = read_cfg(blank2)
     check("and the id it found is written back to the config",
           after["channels"]["ask_claude"] == ASKCLAUDE, after["channels"])
     check("the save is announced on stderr, not mixed into the command's output",
           "resolved channels.ask_claude" in p.stderr and "resolved" not in p.stdout,
           p.stderr)
-    check("nothing else in the file was disturbed",
+    check("nothing else in the section was disturbed",
           after["app_token"] == "TESTTOKEN" and after["server_id"] == GUILD, after)
+
+    # THE FILE HAS OTHER OWNERS. ffwatch's watch block, the container limits and the CI runner
+    # pool share this document, and a write that rebuilt it from the section alone would delete
+    # them — the whole box, silently unconfigured, because a channel id got filled in.
+    shared = home_with({"app_token": "TESTTOKEN", "server_id": GUILD,
+                        "channels": {"ask_claude": ""}},
+                       watch={"ask_claude": {"kind": "ask", "ping": False}},
+                       max_concurrent_runs=6)
+    run_bare(shared, "read", "ask_claude", "--limit", "1")
+    doc = read_cfg(shared, whole=True)
+    check("a write-back carries the rest of the ffbox config through untouched",
+          doc.get("max_concurrent_runs") == 6
+          and (doc.get("watch") or {}).get("ask_claude", {}).get("kind") == "ask", doc)
+    check("and still wrote the id it resolved",
+          doc["discord"]["channels"]["ask_claude"] == ASKCLAUDE, doc.get("discord"))
+
+    # `set` goes through the same read-modify-write, and is the command an operator runs by
+    # hand on a live box with everything else already in the file.
+    run_bare(shared, "set", "channels.dev_chat", DEVCHAT)
+    doc = read_cfg(shared, whole=True)
+    check("`set` writes into the section without touching the rest of the file",
+          doc["discord"]["channels"]["dev_chat"] == DEVCHAT
+          and doc.get("max_concurrent_runs") == 6, doc)
+    check("and does not persist a value that only came from the environment",
+          "FFDISCORD_APP_TOKEN" not in doc["discord"], doc["discord"])
 
     # An alias nobody DECLARED is resolved for the one command and not remembered: the config
     # is where a box says which channels it is for, and a name typed at a prompt is not that.
@@ -633,16 +672,15 @@ def main():
     p = run_bare(undeclared, "read", "#ask-claude", "--limit", "1")
     check("a bare #channel-name still resolves for the command", p.returncode == 0,
           p.stdout + p.stderr)
-    with open(os.path.join(undeclared, "config.json")) as fh:
-        check("but is not written into the channels table",
-              json.load(fh)["channels"] == {})
+    check("but is not written into the channels table",
+          read_cfg(undeclared)["channels"] == {})
 
     print("concurrent cursor writes (two sessions on one machine)")
     conc = tempfile.mkdtemp(prefix="ffdiscord-conc-")
-    with open(os.path.join(conc, "config.json"), "w") as fh:
-        json.dump(cfg, fh)
+    write_cfg(conc, cfg)
     env = {**os.environ, "FFDISCORD_API": f"http://127.0.0.1:{PORT[0]}",
-           "FFDISCORD_HOME": conc, "FFDISCORD_TOKEN": "TESTTOKEN"}
+           "FFDISCORD_HOME": conc, "FFBOX_CONFIG_DIR": conc,
+           "FFDISCORD_TOKEN": "TESTTOKEN"}
     # The always-on answerer and the periodic triage loop advance different cursors at
     # the same time; neither may erase the other.
     procs = [
@@ -662,7 +700,7 @@ def main():
     # Channel names and player messages routinely contain emoji; a cp1252 console raises
     # UnicodeEncodeError on the first one unless the CLI forces UTF-8 on its streams.
     env = {**os.environ, "FFDISCORD_API": f"http://127.0.0.1:{PORT[0]}",
-           "FFDISCORD_HOME": tmp, "FFDISCORD_TOKEN": "TESTTOKEN",
+           "FFDISCORD_HOME": tmp, "FFBOX_CONFIG_DIR": tmp, "FFDISCORD_TOKEN": "TESTTOKEN",
            "PYTHONIOENCODING": "cp1252"}
     pr = subprocess.run([sys.executable, os.path.join(HERE, "ffdiscord.py"), "channels"],
                         capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)

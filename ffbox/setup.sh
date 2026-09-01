@@ -419,9 +419,9 @@ printf '\n'
 # because the CLI reads both and this check exists only to decide whether to print the steps.
 if ! python3 -c "
 import json,sys
-cfg=json.load(open(sys.argv[1]))
+cfg=json.load(open(sys.argv[1])).get('discord') or {}
 sys.exit(0 if any((cfg.get(k) or '').strip() for k in ('app_token','token')) else 1)" \
-     "${FFDISCORD_HOME:-$HOME/.config/ffbox/discord}/config.json" 2>/dev/null \
+     "${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/config.json" 2>/dev/null \
    && [ -z "${FFDISCORD_APP_TOKEN:-}" ] && [ -z "${FFDISCORD_TOKEN:-}" ]; then
   cat <<EOF
 MANUAL STEPS REMAINING
