@@ -90,6 +90,20 @@ SCHEMA_VERSION = 11
 # and being wrong on the generous side only means staging one fewer container than it could.
 POOL_WORKSPACE_BYTES = 24 * 1024 * 1024 * 1024
 
+# WHERE THE REPOSITORY IS INSIDE A RUN CONTAINER. The reason it is CI's runner path rather than a
+# tidy /workspace is in ffbox's own comment above the tmpfs mount: Unity's package resolution
+# cache records absolute paths, so a workspace restored anywhere else makes UPM re-resolve from
+# the registry on every editor launch -- which is how a fence that had not been restarted came to
+# report itself as `compiled=false` on four runs. The two have to agree; test_ffwatch checks that
+# they do.
+CONTAINER_WORKSPACE = "/opt/actions-runner/_work/FinalFactory/FinalFactory"
+
+# Claude Code's project directory name for that cwd, which is where it writes the session
+# transcript. Every character outside [A-Za-z0-9-] becomes a dash, so the leading slash and the
+# runner's `_work` produce a DOUBLED one at `runner--work`. Derived rather than typed, and the
+# rule was measured against Claude Code 2.1.252 rather than assumed.
+CONTAINER_PROJECT_SLUG = re.sub(r"[^A-Za-z0-9-]", "-", CONTAINER_WORKSPACE)
+
 ADDED_COLUMNS = [
     ("conversation", "is_thread", "INTEGER NOT NULL DEFAULT 0"),
     ("outbound", "attempts", "INTEGER NOT NULL DEFAULT 0"),
@@ -3134,7 +3148,7 @@ class Watcher:
     def mem_available_bytes():
         """MemAvailable, NOT `df /dev/shm`.
 
-        `--tmpfs /workspace` is a tmpfs Docker CREATES for the container; it is not a directory
+        The workspace tmpfs is one Docker CREATES for the container; it is not a directory
         under /dev/shm and is not charged to it. Measured on 2026-08-31 with one run in flight:
         df said 2.1M used of 378G while that run's workspace held 24G and /proc/meminfo's Shmem
         read 23.2 GiB. A check written against df would report hundreds of gigabytes free until
@@ -3330,12 +3344,12 @@ class Watcher:
         """Put the session this turn resumes where the staged container will look for it.
 
         Claude Code writes the transcript to $CLAUDE_CONFIG_DIR/projects/<cwd slug>/<id>.jsonl,
-        and cwd inside is always /workspace, so the slug is always "-workspace". A cold run
-        mounts the conversation's own directory and the file is simply there; a pooled container
-        was created before anyone knew which conversation it would serve, so the one file the
-        run needs is copied in and moved back afterwards.
+        and cwd inside is always CONTAINER_WORKSPACE, so the slug is always
+        CONTAINER_PROJECT_SLUG. A cold run mounts the conversation's own directory and the file
+        is simply there; a pooled container was created before anyone knew which conversation it
+        would serve, so the one file the run needs is copied in and moved back afterwards.
         """
-        dest_dir = os.path.join(container_claude, "projects", "-workspace")
+        dest_dir = os.path.join(container_claude, "projects", CONTAINER_PROJECT_SLUG)
         os.makedirs(dest_dir, exist_ok=True)
         if not (session or {}).get("resume"):
             self.share_with_container(container_claude)
@@ -3365,10 +3379,10 @@ class Watcher:
         finds rather than the one id it expected.
         """
         moved = 0
-        src_dir = os.path.join(self.pool_dir(pool_id), "claude", "projects", "-workspace")
+        src_dir = os.path.join(self.pool_dir(pool_id), "claude", "projects", CONTAINER_PROJECT_SLUG)
         if not os.path.isdir(src_dir):
             return 0
-        dest_dir = os.path.join(self.conv_dir(conv_id), "claude", "projects", "-workspace")
+        dest_dir = os.path.join(self.conv_dir(conv_id), "claude", "projects", CONTAINER_PROJECT_SLUG)
         os.makedirs(dest_dir, exist_ok=True)
         for src in glob.glob(os.path.join(src_dir, "*.jsonl")):
             dest = os.path.join(dest_dir, os.path.basename(src))
@@ -3969,14 +3983,14 @@ class Watcher:
     def transcript_path(self, conv_id, session_id, base=None):
         """Where this session's JSONL is, while it is being written.
 
-        cwd inside the container is always /workspace, so Claude Code's project slug is always
-        "-workspace" — deterministic even though the workspace underneath differs. `base` is the
+        cwd inside the container is always CONTAINER_WORKSPACE, so Claude Code's project slug
+        is always the same — deterministic even though the tree underneath differs. `base` is the
         CLAUDE_CONFIG_DIR the container actually had: the conversation's own for a cold run, and
         a staged container's spool for a pooled one, which is a directory that did not know
         which conversation it would serve when it was created.
         """
         base = base or os.path.join(self.conv_dir(conv_id), "claude")
-        return os.path.join(base, "projects", "-workspace", f"{session_id}.jsonl")
+        return os.path.join(base, "projects", CONTAINER_PROJECT_SLUG, f"{session_id}.jsonl")
 
     def ffbox_cmd(self):
         path = self.cfg.get("ffbox") or os.path.join(HERE, "ffbox")

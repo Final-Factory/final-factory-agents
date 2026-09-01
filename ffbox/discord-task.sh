@@ -26,7 +26,7 @@ export HOME
 # finds nothing, which is the intended outcome rather than a missing mount.
 export PATH="/usr/local/bin:${PATH}"
 
-WORKSPACE=${FFBOX_WORKSPACE:-/workspace}
+WORKSPACE=${FFBOX_WORKSPACE:-/opt/actions-runner/_work/FinalFactory/FinalFactory}
 FFBOX_OUT=${FFBOX_OUT:-/ffbox/out}
 JOB_FILE=${FFBOX_JOB_FILE:-/ffbox/job.json}
 FFBOX_ATTACHMENTS=${FFBOX_ATTACHMENTS:-/ffbox/attachments}
@@ -230,8 +230,12 @@ PRE_AGENT_HEAD=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo "")
 
 # The session transcript is the conversation's memory across turns, and it lives on the HOST
 # in the bind mount under /ffbox/claude. Claude Code writes it to
-# $CLAUDE_CONFIG_DIR/projects/<cwd-slug>/<session>.jsonl, and cwd here is always /workspace,
-# so the slug is always "-workspace" and the host can find the file without guessing.
+# $CLAUDE_CONFIG_DIR/projects/<cwd-slug>/<session>.jsonl, and cwd here is always the one
+# workspace path, so the slug is always the same string and the host can find the file without
+# guessing. Every character outside [A-Za-z0-9-] becomes a dash, which for the runner path means
+# a DOUBLED one at `runner--work` -- measured against Claude Code 2.1.252, not assumed.
+# ffwatch.py derives it once as CONTAINER_PROJECT_SLUG; the two have to agree, and
+# test_ffwatch.py checks that they do.
 export CLAUDE_CONFIG_DIR=/ffbox/claude
 mkdir -p "$CLAUDE_CONFIG_DIR"
 
@@ -286,7 +290,7 @@ share_transcript_loop() {
 # THE WORKSPACE IS DELIBERATELY LEFT UNTRUSTED, and claude.log says so on every run:
 #
 #   Ignoring N permissions.allow entries from .claude/settings.json: this workspace has not
-#   been trusted. ... set projects["/workspace"].hasTrustDialogAccepted: true
+#   been trusted. ... set projects["<the workspace>"].hasTrustDialogAccepted: true
 #
 # That line reads like a misconfiguration and is not one. Nothing here seeds the flag, on
 # purpose. `.claude/settings.json` in the game repo is a DEVELOPER'S WORKSTATION config — at
@@ -324,6 +328,12 @@ with open(job_path, "r", encoding="utf-8") as fh:
 
 caps = job.get("capabilities") or {}
 model = job.get("model") or {}
+
+# Where the repository is inside this container. ffbox passes it; the default matches the one
+# WORKSPACE above falls back to, and ffwatch.py's CONTAINER_WORKSPACE, because a prompt that
+# names the wrong path sends the agent looking for a tree that is not there.
+WORKSPACE = (os.environ.get("FFBOX_WORKSPACE")
+             or "/opt/actions-runner/_work/FinalFactory/FinalFactory")
 
 # Ported from 059 runner.py. The read-only lanes report what they found and whether a change
 # is genuinely required; the write lanes report what they changed and whether they are
@@ -482,7 +492,7 @@ PREAMBLE_LOCAL = (
     "person reading your output — at that machine's own shell, or from the web page. There "
     "is no Discord thread on the other end of this and nothing you write is posted anywhere. "
     "Everything else is an ordinary dev turn and it ends the way one does: the repository is "
-    "checked out at /workspace in a container that is destroyed when you exit, and what "
+    "checked out at " + WORKSPACE + " in a container that is destroyed when you exit, and what "
     "survives it is the branch you leave behind, which the harness pushes to origin and — "
     "when its own test run passes and you set `confident` — proposes as a pull request "
     "against develop."

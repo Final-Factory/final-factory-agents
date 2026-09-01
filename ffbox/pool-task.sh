@@ -32,7 +32,7 @@
 # on for nothing. Everything here is checked.
 set -uo pipefail
 
-WORKSPACE=${FFBOX_WORKSPACE:-/workspace}
+WORKSPACE=${FFBOX_WORKSPACE:-/opt/actions-runner/_work/FinalFactory/FinalFactory}
 FFBOX_OUT=${FFBOX_OUT:-/ffbox/out}
 FFBOX_IN=${FFBOX_IN:-/ffbox/in}
 TURN_TASK=${FFBOX_TURN_TASK:-/ffbox/turn-task.sh}

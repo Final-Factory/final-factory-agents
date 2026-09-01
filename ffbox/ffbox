@@ -253,7 +253,7 @@ Options:
                        already inside the image. Sets FFBOX_ENTRY.
   --job-file FILE      Mount FILE read-only at /ffbox/job.json for the task to read.
   --mount SPEC         Extra bind mount, HOST:CONTAINER[:ro]. Repeatable. Nested paths under
-                       /workspace work; Docker creates the intermediate directories.
+                       the workspace work; Docker creates the intermediate directories.
   --run-id ID          Use ID for the run instead of a timestamp, so the caller owns the
                        ffbox-<ID> container name and can address exactly it later.
   --stage-pool ID      Start a container that fills its workspace and then WAITS for a request,
@@ -716,12 +716,44 @@ done
 # left the tree owned by an unknown group, the agent could not write a single file outside .git,
 # and it reported the workspace as root-owned. entrypoint.sh drops to uid 1000 keeping GROUP 0,
 # which is exactly what this hands it. Found on the second real run.
+
+# THE WORKSPACE PATH IS CI'S PATH, and that is the entire reason it is not /workspace.
+#
+# Unity caches its package resolution in Library/PackageManager/projectResolution.json, and that
+# file records ABSOLUTE paths -- the project, its Packages/manifest.json and packages-lock.json,
+# and the editor's BuiltInPackagesCombined.sha1. The cache entry is CI's finished workspace, so
+# every one of those paths is the runner's. Restore it anywhere else and not one of them exists,
+# UPM throws the whole cached resolution away, and it re-resolves from the registry on EVERY
+# editor launch.
+#
+# WHAT THAT MEANS FOR A RUN. A cold resolve reads package TARBALLS, not the extracted
+# Library/PackageCache, so the editor image's offline tgz repo has to carry each package at
+# exactly the locked version. It carries 27 of this project's 37 registry packages. The other
+# ten go to the registry: entities 1.4.7 against the image's 1.4.6, collections 2.6.7 against
+# 2.6.6, cinemachine, ide.visualstudio, localization, services.multiplayer, entities.graphics,
+# plus jobs, pipeline and vectorgraphics which the image does not carry at all.
+#
+# So every editor launch reached over the fence for ten tarballs it already had extracted, and
+# runs 26, 27, 35 and 36 died at `unity exit 1 after 6s` with compiled=false when the fence was
+# refusing that host. THE FENCE WAS THE PROXIMATE CAUSE THERE and is fixed separately (63ad268,
+# 30e62b1); a staged container has compiled and passed 774 tests since. What is fixed here is
+# why the fence mattered at all -- a run that never resolves cannot be broken by a registry it
+# never asks, by an allowlist entry nobody restarted, or by Unity's CDN having a bad afternoon.
+#
+# Mounted at the runner's path all three inputs line up, the editor image being shared by both
+# lanes, and UPM does not resolve at all. CI mounts its own tmpfs at /opt/actions-runner/_work
+# (ffbox/runners/lib/config.sh), so nothing on the HOST is at this path and the two lanes cannot
+# collide: they are different containers with different tmpfs. Docker creates the intermediate
+# directories.
+WORKSPACE_PATH=/opt/actions-runner/_work/FinalFactory/FinalFactory
+
 WORKSPACE_ARGS=(
-    --tmpfs "/workspace:size=${WORKSPACE_SIZE},exec,mode=0755,uid=1000,gid=0"
+    --tmpfs "$WORKSPACE_PATH:size=${WORKSPACE_SIZE},exec,mode=0755,uid=1000,gid=0"
     -v "$CACHE_ENTRIES:/ffcache:ro"
     -v "$MIRROR_REPO_PATH:/ffmirror:ro"
 )
 WORKSPACE_ENV=(
+    -e "FFBOX_WORKSPACE=$WORKSPACE_PATH"
     -e "FFBOX_CACHE_ENTRY=/ffcache/$(basename "$ENTRY")"
     -e "FFBOX_MIRROR=/ffmirror"
     -e "FFBOX_REF=$REF"

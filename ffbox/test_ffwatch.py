@@ -359,7 +359,11 @@ for i, a in enumerate(argv):
     if a == "--mount" and argv[i + 1].endswith(":/ffbox/claude"):
         claude_dir = argv[i + 1].rsplit(":", 1)[0]
 if claude_dir:
-    proj = os.path.join(claude_dir, "projects", "-workspace")
+    # The slug Claude Code derives from the container's cwd. A LITERAL on purpose: this stub
+    # stands in for the container, and a stub that imported the constant would agree with
+    # ffwatch by construction instead of testing that they agree.
+    proj = os.path.join(claude_dir, "projects",
+                        "-opt-actions-runner--work-FinalFactory-FinalFactory")
     os.makedirs(proj, exist_ok=True)
     session = job["session"]["id"]
     # Each turn appends NEW records to the same session file; the uuids carry the turn number
@@ -1827,7 +1831,7 @@ def test_container_argv_is_valid():
     # CAPABILITIES, pinned in test_read_only_capabilities against a real run.
     check("the tool string in job.json reaches the command line verbatim",
           "--tools" in argv and argv[argv.index("--tools") + 1] == "Read,Grep,Glob,Bash", argv)
-    # Without this the agent cannot open a single attachment. cwd is /workspace, and a Read
+    # Without this the agent cannot open a single attachment. cwd is the workspace, and a Read
     # outside the working directory is a permission request that `-p` has nobody to answer —
     # so it is denied, and a turn whose whole content is a screenshot gets answered "I could
     # not see it". Happened for real on conversation 21 (2026-08-24).
@@ -6475,7 +6479,7 @@ def test_a_pooled_run_never_loses_the_conversations_memory():
     w = case.watcher
     conv_id = w.upsert_conversation("88001", kind="ask", channel_id=ASK_CHANNEL)
 
-    src = os.path.join(w.pool_dir("s1"), "claude", "projects", "-workspace")
+    src = os.path.join(w.pool_dir("s1"), "claude", "projects", ffwatch.CONTAINER_PROJECT_SLUG)
     os.makedirs(src, exist_ok=True)
     with open(os.path.join(src, "SESSION.jsonl"), "w", encoding="utf-8") as fh:
         fh.write('{"uuid":"u1","type":"assistant"}\n')
@@ -6515,7 +6519,7 @@ def test_a_crashed_pooled_run_gives_its_transcript_back():
         "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, pool_id)"
         " VALUES(?,?,?,?,?)", (turn_id, "d1t1-crash", "ffbox-d1t1-crash", "SESS", "k9"))
 
-    src = os.path.join(w.pool_dir("k9"), "claude", "projects", "-workspace")
+    src = os.path.join(w.pool_dir("k9"), "claude", "projects", ffwatch.CONTAINER_PROJECT_SLUG)
     os.makedirs(src, exist_ok=True)
     with open(os.path.join(src, "SESS.jsonl"), "w", encoding="utf-8") as fh:
         fh.write('{"uuid":"u1","type":"assistant"}\n')
@@ -6612,8 +6616,59 @@ def test_draining_destroys_what_is_staged():
     check("the keeper stages nothing while draining", w.keep_pool() is None, None)
 
 
+def test_every_lane_agrees_on_the_workspace_path():
+    """The workspace is at CI's runner path, and eight files have to say so identically.
+
+    Unity's package resolution cache (Library/PackageManager/projectResolution.json) records
+    absolute paths taken from whatever machine produced the tree, and the tree here is CI's.
+    Restore it under any other path and UPM discards the cache and re-resolves from the registry
+    on every editor launch — which is what the egress fence refused on runs 26, 27, 35 and 36,
+    each reporting compiled=false without a line of the diff being wrong.
+
+    So the path is load-bearing, and a single file left on /workspace does not fail loudly: the
+    container-side default would point at a directory the tmpfs is not at, and the host would
+    look for a transcript under a slug nothing writes."""
+    print("the workspace path")
+    ws = ffwatch.CONTAINER_WORKSPACE
+
+    ffbox_src = io.open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    check("ffbox mounts the tmpfs at the runner path",
+          f"WORKSPACE_PATH={ws}\n" in ffbox_src
+          and '--tmpfs "$WORKSPACE_PATH:size=' in ffbox_src, None)
+    check("ffbox tells the container where it is",
+          '-e "FFBOX_WORKSPACE=$WORKSPACE_PATH"' in ffbox_src, None)
+
+    # Every script that runs INSIDE the container falls back to the same path when the variable
+    # is missing, so a hand-run container lands where a dispatched one does.
+    for name, var in (("entrypoint.sh", "WORKSPACE"), ("restore-workspace.sh", "WORKSPACE"),
+                      ("harvest-workspace.sh", "WORKSPACE"), ("run-as-user.sh", "WORKSPACE"),
+                      ("pool-task.sh", "WORKSPACE"), ("discord-task.sh", "WORKSPACE")):
+        body = io.open(os.path.join(HERE, name), encoding="utf-8").read()
+        check(f"{name} defaults to the runner path",
+              f"{var}=${{FFBOX_WORKSPACE:-{ws}}}" in body, None)
+    verify = io.open(os.path.join(HERE, "ffverify.sh"), encoding="utf-8").read()
+    check("ffverify.sh defaults to the runner path",
+          "PROJECT=${FFVERIFY_PROJECT:-${FFBOX_WORKSPACE:-%s}}" % ws in verify, None)
+
+    # The transcript slug is Claude Code's, derived from that cwd: everything outside
+    # [A-Za-z0-9-] becomes a dash, which doubles it where the path has /_. Measured against
+    # Claude Code 2.1.252. The host reads the transcript from this directory and the container
+    # writes it there, so a wrong value is a run that looks like it never started.
+    check("the project slug is the one Claude Code derives from that cwd",
+          ffwatch.CONTAINER_PROJECT_SLUG == "-opt-actions-runner--work-FinalFactory-FinalFactory",
+          ffwatch.CONTAINER_PROJECT_SLUG)
+
+    # Nothing anywhere still says /workspace, in a default or in a prompt the agent reads.
+    for name in ("ffbox", "entrypoint.sh", "restore-workspace.sh", "harvest-workspace.sh",
+                 "run-as-user.sh", "pool-task.sh", "discord-task.sh", "ffverify.sh"):
+        body = io.open(os.path.join(HERE, name), encoding="utf-8").read()
+        stale = [ln for ln in body.splitlines()
+                 if "/workspace" in ln and not ln.lstrip().startswith("#")]
+        check(f"{name} has no /workspace left outside a comment", not stale, stale[:3])
+
+
 def test_memory_is_read_from_meminfo_not_from_dev_shm():
-    """`--tmpfs /workspace` is a tmpfs Docker CREATES; it is not a directory under /dev/shm and
+    """The workspace tmpfs is one Docker CREATES; it is not a directory under /dev/shm and
     is not charged to it. Measured on 2026-08-31 with one run in flight: df said 2.1M used of
     378G while that run's workspace held 24G and Shmem read 23.2 GiB. A check written against df
     would report hundreds of gigabytes free until the machine died."""
@@ -6753,6 +6808,7 @@ def main():
         test_a_run_that_changed_nothing_is_not_verified,
         test_the_agent_picks_the_branch_its_work_is_for,
         test_the_pull_request_targets_the_branch_the_work_is_based_on,
+        test_every_lane_agrees_on_the_workspace_path,
     ]
     for fn in tests:
         try:
