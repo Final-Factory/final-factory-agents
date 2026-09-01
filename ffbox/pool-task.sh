@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+#
+# ffbox's POOL task: fill the workspace before anybody has asked for anything, wait for a
+# request, then become an ordinary turn. Invoked by entrypoint.sh as PID 1 when ffbox is called
+# with --stage-pool; not meant to be run directly.
+#
+# WHY THIS EXISTS. Measured on 2026-08-31, from ffwatch writing job.json to the container writing
+# .agent-started: 40 and 41 seconds on two consecutive turns, out of a 71-second answer. Almost
+# none of it is the model. It is `docker run`, a 22 GiB tar onto a fresh tmpfs, a recursive chown
+# over 89,664 files and a fetch from the mirror -- all of which can happen before the request
+# exists, because none of it depends on what was asked.
+#
+# WHAT DOES NOT CHANGE. One prompt per container, still: this script waits once, hands over once,
+# and the container is destroyed after. Nothing a run wrote is ever seen by a later run, the
+# workspace is still a tmpfs the host cannot see, and the turn that eventually runs here is the
+# same discord-task.sh with the same job.json that a cold run gets.
+#
+# HOW A JOB REACHES A CONTAINER THAT IS ALREADY RUNNING. A container's mounts are fixed when it
+# is created, and every per-turn input is normally a mount. So staging creates a directory for
+# this container on the host and mounts it empty:
+#
+#   /ffbox/in      READ-ONLY to us, written by the host at dispatch: job.json, prompt.txt,
+#                  attachments/, env, and `dispatch` last of all
+#   /ffbox/out     ours, and the only thing that outlives the container
+#
+# Read-only is the container's view, not the host's, which is the whole trick: the host goes on
+# writing into a directory this container cannot alter.
+#
+# design/ffbox_idle_agents_design.txt sections 3 and 7.
+#
+# No `set -e`: a staged container that dies on an unchecked command is a container the host waits
+# on for nothing. Everything here is checked.
+set -uo pipefail
+
+WORKSPACE=${FFBOX_WORKSPACE:-/workspace}
+FFBOX_OUT=${FFBOX_OUT:-/ffbox/out}
+FFBOX_IN=${FFBOX_IN:-/ffbox/in}
+TURN_TASK=${FFBOX_TURN_TASK:-/ffbox/turn-task.sh}
+# Four hours by default, and the host decides: it is passed in at stage time, so the deadline a
+# container enforces is the one that was configured when it was staged.
+TTL=${FFBOX_IDLE_TTL_SECS:-14400}
+POLL=${FFBOX_POOL_POLL_SECS:-1}
+
+log() { printf '[pool] %s\n' "$*"; }
+die() { printf '[pool] ERROR: %s\n' "$*" >&2; exit 1; }
+
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=safe.directory
+export GIT_CONFIG_VALUE_0="$WORKSPACE"
+
+# --- staged ------------------------------------------------------------------------------------
+#
+# entrypoint.sh already did the expensive half: it ran restore-workspace.sh as root, before
+# dropping privilege, exactly as it does for a cold run. There is deliberately nothing to do here
+# but record what came out of it, so that staging and a cold start cannot diverge.
+[ -d "$WORKSPACE/.git" ] || die "nothing was restored into $WORKSPACE"
+staged_at=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo "")
+[ -n "$staged_at" ] || die "the restored workspace has no HEAD"
+
+{
+    printf 'commit=%s\n' "$staged_at"
+    printf 'entry=%s\n' "$(basename "${FFBOX_CACHE_ENTRY:-unknown}")"
+    printf 'ref=%s\n' "${FFBOX_REF:-}"
+    printf 'staged_at=%s\n' "$(date -Is)"
+    printf 'ttl_secs=%s\n' "$TTL"
+} > "$FFBOX_OUT/staged"
+
+log "staged on ${FFBOX_REF:-?} at ${staged_at:0:12}, waiting up to ${TTL}s for a request"
+
+# --- the wait, and the one file that settles the race with the deadline -------------------------
+#
+# The host may be deciding to dispatch into this container at the same moment the deadline
+# passes. Both sides create `out/owner` with O_EXCL and whoever wins says what happens next --
+# the host dispatches, or this container retires. `set -o noclobber` plus a redirect is that
+# create; there is no second check to get wrong and no lock to leak.
+#
+# `out` rather than `in` because `in` is read-only to us. Nothing untrusted is running inside a
+# staged container at this point, which is what makes a container-writable handshake acceptable
+# here and would not make it acceptable once the agent is up.
+claim_owner() {
+    ( set -o noclobber; : > "$FFBOX_OUT/owner" ) 2>/dev/null
+}
+
+deadline=$(( $(date +%s) + TTL ))
+while [ ! -e "$FFBOX_IN/dispatch" ]; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+        if claim_owner; then
+            log "idle for ${TTL}s and unclaimed; retiring so the host can stage a fresher one"
+            exit 0
+        fi
+        # The host got there first, so a dispatch is on its way and the deadline no longer
+        # applies: a request must never be met by a container that is walking out. Pushed far
+        # enough ahead that this cannot spin, and left in place rather than disarmed so a host
+        # that claimed and then died does not leave a container waiting for ever.
+        log "the deadline passed but the host has claimed this container; waiting for the job"
+        deadline=$(( $(date +%s) + 900 ))
+    fi
+    sleep "$POLL"
+done
+
+waited=$(( TTL - (deadline - $(date +%s)) ))
+log "dispatched after ~${waited}s idle"
+
+# --- what the host handed us --------------------------------------------------------------------
+#
+# Parsed rather than sourced. The host is trusted, but a file that is executed is a channel that
+# has to be reasoned about every time somebody edits either end, and a loop over KEY=VALUE is not
+# harder to write. Only FFBOX_* keys are honoured, so this cannot set PATH or LD_PRELOAD even by
+# accident.
+if [ -r "$FFBOX_IN/env" ]; then
+    while IFS='=' read -r _k _v; do
+        [ -n "$_k" ] || continue
+        case "$_k" in
+            FFBOX_*) export "$_k=$_v" ;;
+            \#*)     ;;
+            *)       log "ignoring an unexpected key in the dispatch env: $_k" ;;
+        esac
+    done < "$FFBOX_IN/env"
+fi
+
+# --- sync to what the turn asked for -------------------------------------------------------------
+#
+# The mirror is a live read-only mount, so a container staged four hours ago sees every commit
+# fetched since. This is the same fetch-and-reset a cold run does, run by the same script, which
+# is the point: a pooled run and a cold run land on the same tree by the same path.
+#
+# It is not always forwards. A follow-up turn carries conversation.base_sha, which pins turn 1's
+# commit, so this can reset backwards onto a commit from days ago -- and a cold run would pay the
+# identical reset from an identical tar, so there is nothing to prefer between them.
+log "syncing to ${FFBOX_TARGET_SHA:-${FFBOX_REF:-HEAD}}"
+_t0=$(date +%s)
+if ! /ffbox/restore-workspace.sh --resync; then
+    # Say so in the one place the host reads, because a container that fails here has already
+    # been claimed and the turn behind it is waiting on an answer.
+    printf 'the pooled workspace could not be synced to the requested commit\n' \
+        > "$FFBOX_OUT/pool_error.txt"
+    die "resync failed"
+fi
+log "synced in $(( $(date +%s) - _t0 ))s to $(git -C "$WORKSPACE" rev-parse --short HEAD 2>/dev/null)"
+
+# --- become an ordinary turn -----------------------------------------------------------------
+#
+# exec, so the turn task is PID 1 and `docker stop` reaches ITS traps: the harvest and the Unity
+# licence return. A fork here would leave this script as PID 1 holding a signal handler that
+# knows nothing about either.
+export FFBOX_JOB_FILE="${FFBOX_JOB_FILE:-$FFBOX_IN/job.json}"
+export FFBOX_ATTACHMENTS="${FFBOX_ATTACHMENTS:-$FFBOX_IN/attachments}"
+export FFBOX_PROMPT_FILE="${FFBOX_PROMPT_FILE:-$FFBOX_IN/prompt.txt}"
+export FFBOX_OUT
+
+[ -r "$TURN_TASK" ] || die "no turn task mounted at $TURN_TASK"
+log "handing over to $(basename "$TURN_TASK")"
+exec bash "$TURN_TASK"
