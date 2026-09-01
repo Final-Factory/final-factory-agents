@@ -213,6 +213,16 @@ DEFAULTS = {
     "ffverify": os.path.join(HERE, "ffverify.sh"),
     "plugins_dir": os.path.join(REPO_ROOT, "plugins"),
     "plugin": "ff-discord",
+    # WHAT THE AGENT READS, and not where its work goes. It was `develop` from ffwatch's first
+    # commit, uncommented, and nobody chose it: it is the git-flow reflex, and it predates
+    # publish_bases below, which moved the base decision to the agent — it branches from
+    # origin/master or origin/develop, ffbox reads that back out of the commit graph at harvest,
+    # and the pull request follows. So this decides the SOURCE in front of an agent when it
+    # answers, and a player asking why something behaves the way it does is running master.
+    # Answering out of develop is answering about the released game from unreleased code, and
+    # being confidently wrong in a way the person reading cannot catch.
+    # design/ffbox_idle_agents_design.txt section 6a.
+    #
     # KEEP THIS EQUAL TO THE FIRST KEY OF publish_bases BELOW. This is where the clone starts;
     # that is what the agent is told to branch from by default. When they disagree, the default
     # course of action is a cross-base checkout inside the container, and between master and
@@ -271,7 +281,9 @@ DEFAULTS = {
         # more. A run that based itself on develop gets a pull request into develop; see
         # publish_bases above and pr_base() below. Tracks the first key of publish_bases,
         # because "we could not tell" should land on the same branch as "we did not decide",
-        # and pr_base() ancestry-checks it before using it either way.
+        # and pr_base() ancestry-checks it before using it either way — a fallback that is not
+        # an ancestor of the pushed branch yields no pull request rather than one aimed at a
+        # stranger.
         "base": "master",
         # Host-side only, and never passed into a container. This absence, not the deny list,
         # is what makes "nothing merges" true (design section 17).
