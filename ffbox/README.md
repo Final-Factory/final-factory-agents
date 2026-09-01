@@ -211,12 +211,25 @@ journalctl -u ffbox-update -f               # what it did
 touch ~/.config/ffbox/update.disabled       # pause updates while you work on the box
 ```
 
-Five things worth knowing:
+Six things worth knowing:
 
-- **It drains before it stops.** No new containers, then it waits (up to two hours) for the
-  ones already running to finish on their own. This matters because ffbox bind-mounts the
-  container's task script and `ffverify` from this checkout, live, for the whole run — a merge
-  mid-run really would change them underneath a container.
+- **It drains before it stops.** No new containers, then it waits up to an hour for two things
+  to go quiet: the containers already running, and the host-side work behind them. This matters
+  because ffbox bind-mounts the container's task script and `ffverify` from this checkout, live,
+  for the whole run, so a merge mid-run really would change them underneath a container.
+
+  The second half is easy to forget. A container is where the agent works, but the branch push,
+  the pull request and the Discord reply all happen on the host after it exits, in an ffwatch
+  thread that a restart does not survive. `ffwatch quiet` is the question the updater polls, and
+  it counts turns that are still publishing and replies not yet delivered as well as containers.
+
+- **At the end of the hour it goes ahead anyway, softly.** It used to stand down and leave the
+  box on old code for as long as the box stayed busy, which is backwards: the update that never
+  lands is often the one that would have fixed whatever is keeping it busy. So the stragglers
+  get `docker stop` with a two-minute grace, which is enough for the task's trap to harvest the
+  workspace out of its tmpfs and hand the Unity licence seat back, and then the host gets five
+  minutes to finish publishing what those stops released. `FFBOX_DRAIN_TIMEOUT`,
+  `FFBOX_FORCE_STOP_GRACE` and `FFBOX_FORCE_SETTLE_SECS` are the three numbers.
 - **It refuses a dirty working tree** and says so, rather than stashing or resetting. On a
   machine where you are editing, updates stop until you commit.
 - **It re-runs setup rather than guessing from the diff.** Both setups: `ffbox/setup.sh` and
@@ -1120,9 +1133,16 @@ reset on one turn, never a wrong answer. The deadline stops applying the moment 
 dispatched, and the race between the two is settled by one `O_EXCL` file: host and container both
 try to create `out/owner`, and whoever wins decides what happens next.
 
-**A drain destroys every staged one.** Not housekeeping: `pool-task.sh`, the turn task and
+**A drain destroys every IDLE staged one.** Not housekeeping: `pool-task.sh`, the turn task and
 `ffverify` are bind-mounted from this checkout, live, and the self-updater fast-forwards it
 immediately after draining.
+
+A container serving a turn is left alone, and the file that decides which is which is
+`out/owner`, never the `ffbox.pool` label. The label goes on at creation and stays for the life
+of the container, rename and all, so a sweep by label takes the busy one too. That is what
+happened on 2026-09-01: the drain deleted a live run's spool directory, ffbox found no exit code
+or output where it had left them, and a turn that finished and verified clean was reported as
+"the run failed".
 
 **The pool is never a dependency.** An empty pool, a container staged on another branch, a run
 with mounts a staged container does not have, `--direct`, and `pool.idle: 0` all fall through

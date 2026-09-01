@@ -164,6 +164,29 @@ lost, and the queue drives the work forward the moment the new code is up.
 until it reads zero. It writes only the flag file, never the database, so it does not violate
 "ffwatch is the SOLE writer to ffwatch.db" — the daemon keeps writing, and this reads.
 
+DRAINING DESTROYS THE IDLE STAGED CONTAINERS AND NOTHING ELSE. Revised 2026-09-01; it used to
+destroy every container carrying the `ffbox.pool` label, and that label is set at creation and
+survives the rename at dispatch, so the sweep included the one serving a turn. `pool_drop` then
+removed the spool directory the run was writing into. See section 4a.
+
+WHAT COUNTS AS QUIET IS NOT "NO CONTAINERS". Also 2026-09-01. A container is the first half of a
+turn; the durable half runs on the host after it exits — ffbox harvests the work bundle out of
+the run directory, and ffwatch's launch thread sweeps the transcript home, records the
+verification, pushes the branch, opens the pull request and composes the reply. That is a
+thread, not a queue, so `systemctl stop ffbox.target` in the middle of it loses the push.
+
+And `run.terminal_state IS NOT NULL` does not mark the end of it: finish_run() records the exit
+code first and publishes afterwards. The TURN row closes last, in finish_turn(). So the predicate
+is three counts, exposed as `ffwatch quiet` (exit 0 when quiet, 1 while anything is left):
+
+  runs      run rows with no terminal_state — a container this box still owns.
+  turns     turns marked running — a launch thread still harvesting, pushing or replying.
+            Queued turns are deliberately not counted: nothing launches under a drain, so
+            waiting on one would never end.
+  outbound  replies composed and not yet sent, and only those the sender will send by itself.
+            Under approve_before_send a `pending` row waits on a person, possibly for days, and
+            counting it would make every update on such a box wait out the whole window.
+
 TWO THINGS THAT BOUND THE WAIT:
 
   * NO DAEMON, NO DRAIN. If ffwatch is not running, `drain --wait` returns at once. It decides
@@ -173,10 +196,47 @@ TWO THINGS THAT BOUND THE WAIT:
     settle; without this check the updater would wait the full ceiling for containers that
     died hours ago. That is precisely the broken-ffbox case requirement 2 exists for.
 
-  * THE CEILING IS COMPUTED, NOT GUESSED. From fact (e), no run outlives
-    warmup_secs + agent_secs + 300. The default timeout is that sum plus slack, rounded to
-    7200 seconds. A run still alive past it is one ffwatch itself is already killing, and the
-    updater is right to stop waiting and stop the target.
+  * THE CEILING IS AN HOUR, and it is a policy rather than an arithmetic result. It used to be
+    the computed one — from fact (e) no run outlives warmup_secs + agent_secs + 300, so the
+    default was that sum plus slack, rounded to 7200 — but the number that matters is not how
+    long a run can take, it is how long the box may go without the code somebody pushed. An hour
+    covers any agent turn and all but the longest CI job.
+
+
+4a. What happens at the end of the window
+-----------------------------------------
+
+THE UPDATE GOES AHEAD. Until 2026-09-01 it stood down instead and waited for the next tick,
+which is the wrong trade on a box that is busy for hours at a stretch: the update that never
+lands is often the one that would have fixed whatever is keeping it busy.
+
+FORCING IS NOT KILLING. Every remaining container is PID 1 running a task whose trap harvests the
+workspace out of a tmpfs and hands the Unity licence seat back, so the updater stops each one
+with `docker stop --timeout` and a real grace (FFBOX_FORCE_STOP_GRACE, default 120 — the same
+floor ffbox uses for its own timeout stops, which is the licence round trip). `rm -f` would run
+neither trap, and the tmpfs is the only copy of the run's work.
+
+Those stops then hand every launch thread a finished container, so the host gets a bounded window
+of its own to publish what they released (FFBOX_FORCE_SETTLE_SECS, default 300). Publishing takes
+seconds, not minutes; the point of waiting at all is that a forced update should give up on the
+AGENT, never on the work the agent already did.
+
+WHAT IT COST TO LEARN THIS. On 2026-09-01 the drain destroyed the pool container serving
+conversation 30's turn 5, by label, while it was working. The forced removal missed the container
+because dispatch had renamed it; the rmtree behind it did not. `out/` is host-owned and went —
+result.json, stream.jsonl, the work bundle and the `.container-rc` ffbox scores the run from —
+while `claude/` is 0700 under the container's subuid and survived, which is why the transcript
+came home and nothing else did. The agent ran to completion and verified 774/774 clean. ffbox
+found no exit code, scored the run 70, and the harness posted "the run failed / no branch — the
+run changed no files" into the thread. Nothing was lost from git, because that turn changed no
+files; a turn that had changed files would have lost them.
+
+Two rules came out of it, and both are enforced by tests:
+
+  * `out/owner` decides whether a staged container is busy. The `ffbox.pool` label cannot, and
+    nothing may go back to asking it.
+  * `pool_drop` refuses to delete a claimed spool. An operator naming one id by hand passes
+    force=True and means it; nothing automatic may.
 
 WHO REMOVES THE FLAG. Three places, deliberately overlapping, because a stranded flag means a
 silently idle build server:
@@ -253,7 +313,9 @@ holding no root.
   2. ffwatch resume                        (lift a flag stranded by a previous run)
   3. git fetch --prune origin; exit 0 if:
        kill switch present | working tree dirty | HEAD == origin/BRANCH
-  4. ffwatch drain --wait --timeout 7200   (failure logged, never fatal)
+  4. ffwatch drain                         (sets the flag, drops the idle staged containers)
+     then poll: busy containers, then `ffwatch quiet`, up to FFBOX_DRAIN_TIMEOUT
+     at the ceiling: docker stop each straggler, let the host settle, go on (section 4a)
   5. systemctl stop ffbox.target
   6. OLD_SHA=$(git rev-parse HEAD); git merge --ff-only origin/BRANCH
   7. act on the diff (section 5)
@@ -330,7 +392,9 @@ because the flock is what keeps the next tick from starting.
                         the second is what a human debugging on the box wants.
   cadence               OnBootSec=5min, OnUnitActiveSec=5min, RandomizedDelaySec=1min,
                         Persistent=true so a machine that was off catches up.
-  drain timeout         FFBOX_DRAIN_TIMEOUT, default 7200 (section 4).
+  drain timeout         FFBOX_DRAIN_TIMEOUT, default 3600 (section 4).
+  forced stop grace     FFBOX_FORCE_STOP_GRACE, default 120 (section 4a).
+  forced settle window  FFBOX_FORCE_SETTLE_SECS, default 300 (section 4a).
 
 PRIVILEGE. Revised 2026-08-25; this section used to say the opposite and the reasoning was
 wrong. The unit runs as @USER@, unprivileged, and reaches for root exactly twice, through
