@@ -942,6 +942,67 @@ secrets, and it can still reach the two vendors those belong to.
 `docs/docker-security-model.md` is the full account, including the gaps this README does not
 cover.
 
+### Idle agents: a container that is already warm
+
+A request used to wait about forty seconds before the model read a word of it. Measured on
+2026-08-31, from ffwatch writing `job.json` to the container writing `.agent-started`: 40s and
+41s on two consecutive turns, out of a 71-second answer. Almost none of it was the model — it is
+`docker run`, a 22 GiB tar onto a fresh tmpfs, a recursive chown over 89,664 files and a fetch
+from the mirror, none of which depends on what was asked.
+
+So it happens before the asking. `idle_agents` containers sit with their workspace filled and
+wait; a request that finds one starts the agent in **1.2 seconds**, measured on this box.
+
+```json
+"idle_agents": 1,              // how many wait while nothing is happening. 0 is off
+"idle_agent_ttl_secs": 14400,  // what one waits before retiring, enforced inside it
+"pool_ref": null               // which branch to stage; null follows base_ref
+```
+
+```bash
+python3 ffbox/ffwatch.py pool          # what is staged, on what, and how old
+python3 ffbox/ffwatch.py pool stage    # stage one now, ignoring idle_agents
+python3 ffbox/ffwatch.py pool drop     # destroy them all, or one by id
+```
+
+**One prompt per container, still.** A staged container serves one request and dies, so nothing
+a run wrote is ever seen by a later run and the workspace is still a tmpfs the host cannot see.
+What changed is only when the filling happens.
+
+**There are no slots.** ffgithubrunners numbers its slots because a systemd template unit needs a
+stable instance; nothing here outlives a container, so staging creates one directory named for
+the container and deletes it with the container. A container's mounts are fixed when it is
+created, so that directory is how a job reaches one that is already running: the host writes
+`job.json`, the attachments and an env file into `in/`, and `dispatch` last. `in/` is read-only
+to the container and written by the host, which is the whole trick — read-only is the
+container's view, not the host's. At dispatch the container is renamed to `ffbox-<run id>`, so
+every existing handle keeps working.
+
+**What it costs is memory.** A staged container holds its whole workspace resident, 22 GiB for
+master. The keeper checks `MemAvailable` before staging and keeps back enough for
+`max_concurrent_runs` cold launches, and a cold launch that is short of memory **evicts** a
+staged container rather than failing: the pool must never be why a real turn cannot start. Note
+that `--tmpfs /workspace` is a tmpfs Docker creates, so it is NOT charged to `/dev/shm` — with a
+run in flight `df` reported 2.1M used of 378G while that run held 24G. `/proc/meminfo` is the
+number that means anything here.
+
+**It retires itself.** After `idle_agent_ttl_secs` unclaimed, the container exits and the keeper
+stages a fresher one; the host compares nothing. That covers the workspace drifting from head, a
+newer CI cache entry and a rebuilt image all at once, and the cost when it bites is a longer
+reset on one turn, never a wrong answer. The deadline stops applying the moment a request is
+dispatched, and the race between the two is settled by one `O_EXCL` file: host and container both
+try to create `out/owner`, and whoever wins decides what happens next.
+
+**A drain destroys every staged one.** Not housekeeping: `pool-task.sh`, the turn task and
+`ffverify` are bind-mounted from this checkout, live, and the self-updater fast-forwards it
+immediately after draining.
+
+**The pool is never a dependency.** An empty pool, a container staged on another branch, a run
+with mounts a staged container does not have, `--direct`, and `idle_agents: 0` all fall through
+to a cold launch, which is exactly what this did before.
+
+Design: `design/ffbox_idle_agents_design.txt`.
+
 ### The egress filter
 
 A run gets no internet. It joins `ffbox-net`, a Docker `--internal` bridge with no default route,
