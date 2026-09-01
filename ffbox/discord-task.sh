@@ -204,15 +204,22 @@ else
     log "ffdiscord: absent, as intended — the host composes and posts this turn's reply"
 fi
 
-# NO LICENCE IS ACQUIRED HERE. It used to be, unconditionally, before the agent had even
-# started — and returning it costs a second full editor launch on the way out. Measured on
-# conversation 29 turn 4 (2026-08-31), a plain "are you there?" question: the agent finished at
-# 03:53:08 and the reply did not reach Discord until 03:55:20, and all of that was a Unity
-# licence round trip for a run that changed no files and skipped the suite.
+# THE LICENCE IS TAKEN UP FRONT, and for a pooled container it was taken before this script
+# existed. pool-task.sh activates while it stages -- after the workspace is filled and synced,
+# before it goes idle -- and hands the seat across its `exec` into this task, so what happens here
+# is a no-op that logs one line. Only a COLD run pays the round trip, and it pays it in warm-up,
+# before .agent-started, where it belongs.
 #
-# Licensing is now the job of whatever actually launches the editor — the verify block below,
-# and ffverify itself for an agent that runs it mid-turn. A question pays nothing, which is
-# what makes the bot feel like a bot rather than a build.
+# THIS REVERSES THE LAZY ACQUISITION of 2026-08-31, deliberately. That change was right when every
+# container was cold: a plain "are you there?" paid for a licence it never used, measured on
+# conversation 29 turn 4 as 2m09s between the agent finishing and the reply reaching Discord. The
+# pool moves that cost off the request path instead of avoiding it, which is better than either --
+# the seat is there before the question is, and every turn gets an editor without asking.
+#
+# It is fatal here, unlike in the pool. A turn that cannot get a seat cannot verify, and a run that
+# discovers that 4000 lines into an editor log has already wasted the request.
+ensure_unity_license
+
 cd "$WORKSPACE" || exit 1
 
 # What the workspace looked like before the agent existed, and the only reason it is read here
@@ -770,8 +777,6 @@ except Exception:
 print(v.get('assemblies') or '')
 " "$JOB_FILE" 2>/dev/null || echo "")
 
-    # HERE, not at the top of the task: we now know the suite is actually going to run.
-    ensure_unity_license
     if ! command -v ffverify >/dev/null 2>&1; then
         log "ERROR: no ffverify on PATH; this lane cannot be verified"
         python3 -c "

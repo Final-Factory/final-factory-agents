@@ -26,7 +26,21 @@
 # A seat is held only while the step runs, so an idle slot holds none.
 # shellcheck shell=bash
 
-FFBOX_ACTIVATED=0
+# INHERITED, NOT ASSUMED ZERO. A seat can be taken by one process and handed to another: the pool
+# activates while it stages and then `exec`s the turn task, which is the SAME process with a new
+# image, and that task has to know it already holds one rather than taking a second.
+FFBOX_ACTIVATED=${FFBOX_ACTIVATED:-0}
+
+# WHO TOOK IT, so that only they give it back. Both variables are exported once a seat is held, so
+# every CHILD inherits them -- and a child must not return a seat its parent is still using.
+# ffverify is exactly that child: an agent may run it mid-turn, it sources this file, and its EXIT
+# trap would otherwise hand back the licence the turn is still holding and leave the rest of the
+# run unlicensed.
+#
+# The pid is the right discriminator because `exec` PRESERVES it: pool-task.sh activates as pid 1
+# and the turn task it execs is still pid 1, so the handoff works, while ffverify is a fork with a
+# pid of its own and gives back only what it took itself.
+FFBOX_LICENCE_OWNER=${FFBOX_LICENCE_OWNER:-}
 
 if ! declare -F log >/dev/null 2>&1; then
     log() { printf '[unity-license] %s\n' "$*"; }
@@ -42,7 +56,7 @@ mkdir -p "$(dirname "$FFBOX_LICENSE_LOG")"
 
 return_license() {
     local rc=$?
-    if [ "$FFBOX_ACTIVATED" = 1 ]; then
+    if [ "$FFBOX_ACTIVATED" = 1 ] && [ "$FFBOX_LICENCE_OWNER" = "$$" ]; then
         log "returning the Unity seat"
         if ! unity-editor -logFile /dev/stdout -quit -returnlicense \
                 -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" \
@@ -69,6 +83,8 @@ activate_unity() {
                 -password "$UNITY_PASSWORD" \
                 -projectPath /BlankProject >>"$FFBOX_LICENSE_LOG" 2>&1; then
             FFBOX_ACTIVATED=1
+            FFBOX_LICENCE_OWNER=$$
+            export FFBOX_ACTIVATED FFBOX_LICENCE_OWNER
             log "activated"
             return 0
         fi
@@ -118,10 +134,23 @@ decode_serial_from_ulf() {
     return 0
 }
 
-# Activate, or fail the job. A job that starts Unity unlicensed does not fail: it runs, produces
-# nothing usable, and the reason is buried 4000 lines into an editor log. Fail here instead.
-ensure_unity_license() {
+# TRY to take a seat. Returns 0 on success, 78 for missing credentials, 79 when activation failed.
+# NEVER EXITS -- see ensure_unity_license below for the caller that wants it to.
+#
+# Two callers want two different things from the same work. A turn cannot do its job unlicensed and
+# should die loudly; a POOL container that fails to get a seat is still a perfectly good warm
+# workspace, and retiring it over a licensing hiccup would turn one bad round trip into an empty
+# pool. Splitting the attempt from the dying is the whole reason this function exists separately.
+try_unity_license() {
     local missing="" v
+
+    # ALREADY HOLDING ONE. The pool takes a seat while it stages and hands it across the exec, and
+    # ffverify may be run by an agent whose turn already has one. Both reach here; neither should
+    # spend a second editor launch discovering that the answer is yes.
+    if [ "$FFBOX_ACTIVATED" = 1 ]; then
+        log "already holding a seat (taken by pid ${FFBOX_LICENCE_OWNER:-?})"
+        return 0
+    fi
 
     # No serial, but a licence to decode one out of: do what game-ci does.
     if [ -z "${UNITY_SERIAL:-}" ]; then
@@ -137,11 +166,20 @@ ensure_unity_license() {
         log "       UNITY_SERIAL may be empty on purpose: on a Personal licence the serial is"
         log "       carried inside UNITY_LICENSE, and this script decodes it. If UNITY_SERIAL is"
         log "       still missing here, UNITY_LICENSE was empty or not a readable .ulf."
-        exit 78
+        return 78
     fi
     if ! activate_unity; then
         log "ERROR: activation failed after 5 attempts"
         tail -50 "$FFBOX_LICENSE_LOG" >&2 || true
-        exit 79
+        return 79
     fi
+    return 0
+}
+
+# Activate, or fail the job. A job that starts Unity unlicensed does not fail: it runs, produces
+# nothing usable, and the reason is buried 4000 lines into an editor log. Fail here instead.
+ensure_unity_license() {
+    local rc=0
+    try_unity_license || rc=$?
+    [ "$rc" -eq 0 ] || exit "$rc"
 }

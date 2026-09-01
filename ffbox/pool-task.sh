@@ -65,6 +65,34 @@ staged_at=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo "")
     printf 'ttl_secs=%s\n' "$TTL"
 } > "$FFBOX_OUT/staged"
 
+# --- the Unity seat, taken NOW rather than when a turn arrives ----------------------------------
+#
+# The workspace is filled and synced and this container is about to go idle, which makes this the
+# one moment in its life when nothing is waiting on it. Activation is an online round trip and a
+# full editor launch; paying it here means a dispatched turn pays nothing, which is the whole
+# reason the pool exists.
+#
+# THIS REVERSES THE LAZY ACQUISITION of 2026-08-31. That change was right when every container was
+# cold: a plain question paid a licence round trip it never used, and the reply was measured 2m09s
+# behind the agent finishing. With a warm pool the cost moves off the request path entirely rather
+# than being avoided, so the reason for deferring it is gone.
+#
+# A STAGED CONTAINER NOW HOLDS A SEAT, which section 12 of the idle-agents design says it does not.
+# That is the deliberate trade: `idle_agents` seats are held while the box is quiet, bounded by the
+# same number as the pool and returned when a container retires or is dispatched and finishes. It
+# is affordable precisely because the machine ids are per slot now -- the licence sees a small
+# recycled set of machines rather than one per container.
+#
+# NEVER FATAL HERE. A container that cannot get a seat is still a warm workspace, and a turn
+# dispatched into it will try again through the turn task's own ensure_unity_license. Retiring the
+# container instead would turn a licensing hiccup into an empty pool.
+. /ffbox/unity-license.sh
+if try_unity_license; then
+    log "holding a Unity seat for whatever is dispatched here"
+else
+    log "WARNING: could not take a Unity seat; the turn dispatched here will try again"
+fi
+
 log "staged on ${FFBOX_REF:-?} at ${staged_at:0:12}, waiting up to ${TTL}s for a request"
 
 # --- the wait, and the one file that settles the race with the deadline -------------------------
