@@ -580,6 +580,18 @@ def load_config():
     # LAST, so the section wins over a stray copy at the top level. Flattened rather than nested
     # so nothing downstream has to know a key moved: cfg["agent_secs"] is still cfg["agent_secs"].
     ffbox_block.update(ffbox_raw.get("ffagent") or {})
+    # THE POOL'S TWO NUMBERS live in a "pool" object inside each lane's section, so the agent and
+    # the runners describe themselves the same way: `idle` is how many wait warm while nothing is
+    # happening, `max` is that lane's own ceiling. Mapped here onto the flat key the rest of this
+    # file already uses, so no call site has to know the shape.
+    #
+    # pool.max IS NOT READ. The agent lane has no per-lane ceiling today -- only the box-wide
+    # max_concurrent_runs, which CI counts against too -- and it is seeded at -1 to say so. The
+    # key exists now so the two sections have one shape, and so wiring it up later is a code
+    # change rather than another config move.
+    _agent_pool = (ffbox_raw.get("ffagent") or {}).get("pool") or {}
+    if "idle" in _agent_pool:
+        ffbox_block["idle_agents"] = _agent_pool["idle"]
     # `githubrunner` needs no line here and must not get one: it is not in DEFAULTS, so this
     # filter already drops it, which is exactly right -- those settings belong to the runners and
     # ffbox/runners/lib/config.sh is what reads them.

@@ -274,11 +274,17 @@ for key, value in (
         "agent_secs": 1800,
         "warmup_secs": 3600,
         "kill_grace_secs": 10,
-        # Containers that fill a workspace before a request exists, so one that arrives finds
-        # a warm one: 1.2s from dispatch to the agent starting, against 40s cold. 0 is off.
-        # Each staged container counts against max_concurrent_runs above AND holds a Unity
-        # seat, taken after it syncs and before it goes idle.
-        "idle_agents": 1,
+        # THE POOL, in the same shape the runners use. idle is how many containers fill a
+        # workspace before any request exists, so one that arrives finds a warm one: 1.2s from
+        # dispatch to the agent starting, against 40s cold, and 0 is off. Each staged container
+        # counts against max_concurrent_runs above AND holds a Unity seat, taken after it syncs
+        # and before it goes idle.
+        #
+        # max is NOT WIRED UP and -1 says so. This lane has no ceiling of its own -- only the
+        # box-wide max_concurrent_runs, which CI counts against too. The key is here so both
+        # sections have one shape and so giving the agent lane its own ceiling later is a code
+        # change rather than another config move.
+        "pool": {"idle": 1, "max": -1},
         # What a staged container waits before retiring. Passed in at stage time, so the
         # deadline it enforces is the one configured when it was staged.
         "idle_agent_ttl_secs": 14400,
@@ -344,8 +350,12 @@ for key, value in (
         "pids_limit": 4096,
     }),
     ("githubrunner", {
-        "slots": 1,
-        "idle_pool": 1,
+        # THE SAME TWO NUMBERS, and they mean different things. max is the CEILING: the most
+        # jobs that can run at once, under the box-wide max_concurrent_runs. idle is the
+        # STANDING COST: how many runners sit registered and waiting while nothing is happening.
+        # A slot with no container holds no registration and GitHub has never heard of it, so a
+        # quiet machine carries idle runners, not max of them.
+        "pool": {"idle": 1, "max": 1},
         "watchdog_minutes": 120,
         "image": "ffbox:latest",
         "labels": ["Linux", "X64", "ffgithubrunners"],
@@ -485,19 +495,22 @@ ffbox["_help"] = {
              "warmup_secs and kill_grace_secs are three separate clocks: the model's working "
              "time from the .agent-started marker, everything before it, and how long a "
              "container gets to finish after it is told to stop -- conflating them makes a slow "
-             "Unity import look like a hung agent. idle_agents is how many containers fill a "
+             "Unity import look like a hung agent. pool.idle is how many containers fill a "
              "workspace before any request exists (1.2s to dispatch against 40s cold); each one "
-             "counts against max_concurrent_runs and holds a Unity seat. idle_agent_ttl_secs is "
-             "how long one waits before retiring, and pool_ref which branch it stages (null "
-             "follows base_ref).",
+             "counts against max_concurrent_runs and holds a Unity seat. pool.max is NOT wired "
+             "up, and -1 says so: this lane has no ceiling of its own, only the box-wide "
+             "max_concurrent_runs, and the key is there so both lanes describe their pool the "
+             "same way. idle_agent_ttl_secs is how long a staged container waits before "
+             "retiring, and pool_ref which branch it stages (null follows base_ref).",
     "githubrunner": "ffgithubrunners' settings, which lived in githubrunners/config.json until "
              "2026-09-01 -- one file per box, so there is one place to look. Anything absent "
              "falls back to the default in ffbox/runners/lib/config.sh, and "
-             "FFGITHUBRUNNERS_<KEY> in the environment beats both. The two anybody changes are "
-             "slots (the ceiling: the most CI jobs at once, under the box-wide "
-             "max_concurrent_runs above) and idle_pool (the standing cost: runners registered "
-             "and waiting while nothing is happening). `ffgithubrunners slots N` and `idle N` "
-             "write them here. The mirror addresses, network names and daemon paths are NOT "
+             "FFGITHUBRUNNERS_<KEY> in the environment beats both. The two anybody changes are in "
+             "\"pool\": max (the ceiling: the most CI jobs at once, under the box-wide "
+             "max_concurrent_runs above) and idle (the standing cost: runners registered and "
+             "waiting while nothing is happening -- a slot with no container holds no "
+             "registration and GitHub has never heard of it). `ffgithubrunners slots N` and "
+             "`idle N` write them here. The mirror addresses, network names and daemon paths are NOT "
              "seeded on purpose: they are infrastructure lib/config.sh owns.",
 }
 

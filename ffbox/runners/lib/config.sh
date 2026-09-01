@@ -73,6 +73,18 @@ if sub is None:
 if not isinstance(sub, dict):
     sys.stderr.write('ffgithubrunners: %s: "%s" must be an object\n' % (path, section))
     sys.exit(1)
+# THE POOL'S TWO NUMBERS, in a "pool" object so this lane and the agent lane describe themselves
+# the same way: `idle` is how many runners wait registered while nothing is happening, `max` is
+# this lane's ceiling -- the most jobs that can run at once, under the box-wide
+# max_concurrent_runs. Mapped onto the flat names the rest of this file uses, so nothing
+# downstream has to know the shape changed.
+pool = sub.get("pool")
+if isinstance(pool, dict):
+    if "idle" in pool:
+        sub["idle_pool"] = pool["idle"]
+    if "max" in pool:
+        sub["slots"] = pool["max"]
+
 for key, value in sub.items():
     if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key) or key.startswith('_'):
         continue

@@ -159,7 +159,12 @@ except FileNotFoundError:
     cfg = {}
 if not isinstance(cfg.get(section), dict):
     cfg[section] = {}
-cfg[section][os.environ["KEY"]] = int(os.environ["VAL"])
+# INTO THE "pool" OBJECT, which is where both lanes keep the same two numbers: idle is how many
+# wait warm, max is this lane's ceiling. The keys this writes are `idle` and `max`; lib/config.sh
+# maps them onto idle_pool and slots for everything that reads them.
+if not isinstance(cfg[section].get("pool"), dict):
+    cfg[section]["pool"] = {}
+cfg[section]["pool"][os.environ["KEY"]] = int(os.environ["VAL"])
 tmp = path + ".tmp"
 with open(tmp, "w") as fh:
     json.dump(cfg, fh, indent=2, sort_keys=True); fh.write("\n")
@@ -180,8 +185,8 @@ cmd_slots() {
     idle, which is all it has room for. Lower it with: ffgithubrunners idle N"
     fi
 
-    set_config_int slots "$_n"
-    say "slots = $_n in $FFGHR_CONFIG (the most jobs that can run at once)"
+    set_config_int max "$_n"
+    say "pool.max = $_n in $FFGHR_CONFIG (the most jobs that can run at once)"
 
     # This is the ONE thing here that writes /etc/systemd/system, so it is the one thing that asks
     # for sudo. Enabling and disabling unit instances is not something a flag file can do.
@@ -207,8 +212,8 @@ cmd_idle() {
     [ "$_n" -le "$SLOTS" ] || die "idle $_n is above the ceiling of $SLOTS slots.
        Raise the ceiling first: ffgithubrunners slots $_n"
 
-    set_config_int idle_pool "$_n"
-    say "idle_pool = $_n in $FFGHR_CONFIG"
+    set_config_int idle "$_n"
+    say "pool.idle = $_n in $FFGHR_CONFIG"
     say "waiting slots pick this up within ${POOL_POLL_SECONDS}s; nothing needs restarting"
     if [ "$_n" -lt "$IDLE_POOL" ]; then
         say "the $IDLE_POOL already registered are left alone; they retire as they take jobs"
