@@ -145,15 +145,24 @@ cmd_status() {
 # One integer key in config.json, written through a temporary file and renamed. The rename is
 # what lets a waiting slot re-read the file at any moment without ever seeing half of it.
 set_config_int() {
-    KEY=$1 VAL=$2 CFG="$FFGHR_CONFIG" python3 - <<'PY'
+    KEY=$1 VAL=$2 CFG="$FFGHR_CONFIG" SECTION="$FFGHR_CONFIG_SECTION" python3 - <<'PY'
 import json, os
-path = os.environ["CFG"]
-with open(path) as fh:
-    cfg = json.load(fh)
-cfg[os.environ["KEY"]] = int(os.environ["VAL"])
+path, section = os.environ["CFG"], os.environ["SECTION"]
+# The runners live in a SECTION of the box's one config file now, so this reads the whole file,
+# edits one key inside that object and writes the whole file back. ffwatch's own settings sit
+# beside it and must come through untouched -- which is why this is a load-edit-dump rather than
+# anything that rewrites the parts it understands.
+try:
+    with open(path) as fh:
+        cfg = json.load(fh)
+except FileNotFoundError:
+    cfg = {}
+if not isinstance(cfg.get(section), dict):
+    cfg[section] = {}
+cfg[section][os.environ["KEY"]] = int(os.environ["VAL"])
 tmp = path + ".tmp"
 with open(tmp, "w") as fh:
-    json.dump(cfg, fh, indent=2); fh.write("\n")
+    json.dump(cfg, fh, indent=2, sort_keys=True); fh.write("\n")
 os.replace(tmp, path)
 PY
 }

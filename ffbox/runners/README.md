@@ -68,7 +68,7 @@ ffgithubrunners logs [N]            the RUNNER's log for one slot (not the job's
 ```
 
 Only `slots N` needs privilege, and it asks for it: it enables and disables systemd unit instances.
-Everything else is a flag file or one number in `config.json` that `slot.sh` reads before it mints
+Everything else is a flag file or one number in the `githubrunner` section of `config.json` that `slot.sh` reads before it mints
 a JIT config, which is why a drained slot stays running and idle rather than being stopped, and why
 no account here has a sudoers entry.
 
@@ -165,7 +165,10 @@ entitlements while the first five are running, that is the licence talking, not 
 
 ```
 ~/.config/ffbox/githubrunners/
-  config.json          slots, idle_pool, watchdog, image, labels, org, the App's two ids
+  (config.json)        GONE since 2026-09-01. slots, idle_pool, watchdog, image, labels, org
+                       and the App's two ids are now the "githubrunner" section of
+                       ~/.config/ffbox/config.json -- one config file per box. 05-discord-setup.sh
+                       folds an old one in and deletes it.
   github-app.pem       the private key, 0600, at a fixed path nothing records
   secrets.env          empty on an App install; only a PAT goes here
   drain, slot-N.stop   the flag files behind drain and slot stop

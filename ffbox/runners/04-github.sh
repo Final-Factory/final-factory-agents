@@ -94,25 +94,31 @@ if [ ! -e "$FFGHR_SECRETS" ]; then
   install -m 0600 "$HERE/secrets.env.example" "$FFGHR_SECRETS"
   say "created $FFGHR_SECRETS (mode 600) from the template"
 fi
-if [ ! -e "$FFGHR_CONFIG" ]; then
-  install -m 0644 "$HERE/config.json.example" "$FFGHR_CONFIG"
-  say "created $FFGHR_CONFIG from the template"
-fi
+# NO TEMPLATE TO INSTALL ANY MORE. The runners' settings are a section of the box's one config
+# file, seeded by 05-discord-setup.sh along with everything else in it, so there is nothing for
+# this stage to create. set_config below writes into that section, creating it if the machine has
+# somehow reached here without it.
 
 # Set one key in config.json. python3 rather than sed, because a JSON file edited by line is a
 # JSON file that eventually is not one. This reflows the file; the _comment keys survive, which is
 # where the explanations live.
 set_config() {
   _k=$1; _v=$2
-  KEY="$_k" VAL="$_v" CFG="$FFGHR_CONFIG" python3 - <<'PY'
+  KEY="$_k" VAL="$_v" CFG="$FFGHR_CONFIG" SECTION="$FFGHR_CONFIG_SECTION" python3 - <<'PY'
 import json, os
 path, key, val = os.environ["CFG"], os.environ["KEY"], os.environ["VAL"]
-with open(path) as fh:
-    cfg = json.load(fh)
-cfg[key] = int(val) if val.isdigit() else val
+section = os.environ["SECTION"]
+try:
+    with open(path) as fh:
+        cfg = json.load(fh)
+except FileNotFoundError:
+    cfg = {}
+if not isinstance(cfg.get(section), dict):
+    cfg[section] = {}
+cfg[section][key] = int(val) if val.isdigit() else val
 tmp = path + ".tmp"
 with open(tmp, "w") as fh:
-    json.dump(cfg, fh, indent=2)
+    json.dump(cfg, fh, indent=2, sort_keys=True)
     fh.write("\n")
 os.replace(tmp, path)
 PY
