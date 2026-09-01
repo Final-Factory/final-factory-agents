@@ -69,7 +69,8 @@
 # objects. carried no traffic in 27 hours of jobs.
 #
 # SAFE BECAUSE main.yml IS THE ONLY WORKFLOW BEHIND THIS FENCE. activation.yml is on
-# ubuntu-latest, deploy.yml on self-hosted, determinism-nightly.yml on finalfactory-mode2-windows.
+# ubuntu-latest and determinism-nightly.yml on finalfactory-mode2-windows; deploy.yml was on
+# self-hosted and was deleted on 2026-09-01.
 # main.yml's two jobs use actions/checkout and actions/upload-artifact and nothing else, both
 # pinned by SHA and both in the image cache.
 #

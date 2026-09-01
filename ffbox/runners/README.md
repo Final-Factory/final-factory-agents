@@ -194,21 +194,25 @@ reaches ffbox's containers.
 
 ## The current state of this machine
 
-The slots carry `Linux`, `X64` and `ffgithubrunners` and **not** `self-hosted`. That is permanent,
-not a cutover state: `ffgithubrunners` is carried only by these runners and `self-hosted` only by
-the four legacy ones, so the two sets never overlap and neither needs relabelling.
+The slots carry `Linux`, `X64` and `ffgithubrunners` and **not** `self-hosted`. That is permanent:
+`ffgithubrunners` is carried only by these runners, so nothing else can land on them by accident.
 
-Until `main.yml` is merged with `runs-on: ffgithubrunners`, nothing routes here and the old runners
-serve every job. `ffgithubrunners status` says so in as many words.
+**The cutover is done.** `main.yml` runs on `ffgithubrunners` as of 2026-09-01. Its two halves could
+never have been separated — the steps call `/opt/ffghr/unity-license.sh`, which exists only inside
+the container, so they would fail immediately on the old runners; the `runs-on` line and the steps
+landed together.
 
-**The cutover is one commit to `main.yml`**, and its two halves cannot be separated: the new steps
-call `/opt/ffghr/unity-license.sh`, which exists only inside the container, so they fail
-immediately on the old runners. The `runs-on` line and the steps land together or not at all.
+`deploy.yml` was **deleted** on 2026-09-01, and it was the last workflow asking for `self-hosted`.
+It could not have succeeded if dispatched: it passes no `customImage`, so game-ci picks a
+per-platform image whose StandaloneOSX leg lacks the Mac module it needs, and it drives
+`game-ci/unity-builder`, a Docker action that shells out to `docker run` — which this container
+deliberately cannot do. Restoring player builds means rewriting it away from `unity-builder` the way
+`main.yml` was rewritten away from `unity-test-runner`, not reverting the delete.
 
-`deploy.yml` needs no edit. It asks for `self-hosted`, which only the legacy runners carry, so it
-keeps landing on them. Those runners stay until `deploy.yml` is dealt with separately: it passes no
-`customImage`, so game-ci picks a per-platform image and its StandaloneOSX leg needs a Mac module
-this image does not have.
+**So the four legacy host runners now serve no workflow in this repository and can be
+decommissioned.** They were being kept alive for `deploy.yml` alone; see
+`docs/ci-runner-security-findings.md` F3, where they are the runners still holding `.credentials`
+on disk.
 
 ## The egress allowlist
 
