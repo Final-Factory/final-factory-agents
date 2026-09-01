@@ -1445,8 +1445,13 @@ def test_timeout_is_terminal():
     # person who asked gets told an answer is not coming, in words that mean something to them.
     # The correction above it is the classifier having failed closed, which this fixture also
     # does; the clock itself is named nowhere.
+    #
+    # PUBLIC_TIMED_OUT rather than PUBLIC_NO_ANSWER since 2026-08-31. Both withhold everything
+    # this test cares about; what changed is that the run out of time no longer claims something
+    # broke and no longer tells the asker to try the same question again, which would spend the
+    # same ceiling a second time.
     check("the public reply says an answer is not coming, and never names the clock",
-          payload["text"].endswith(ffwatch.PUBLIC_NO_ANSWER)
+          payload["text"].endswith(ffwatch.PUBLIC_TIMED_OUT)
           and "clock" not in payload["text"], payload["text"][:300])
     check("and the clock that stopped it is on the record instead",
           "agent clock" in (turn["error"] or ""), dict(turn))
@@ -1781,7 +1786,7 @@ def test_container_argv_is_valid():
     enforces."""
     print("container argv")
     task = open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
-    body = task.split("<<'PYEOF'\n", 1)[1].split("\nPYEOF\n", 1)[0]
+    body = task.split("<<'ARGVEOF'\n", 1)[1].split("\nARGVEOF\n", 1)[0]
     builder = os.path.join(TMPROOT, "argv_builder.py")
     with open(builder, "w", encoding="utf-8") as fh:
         fh.write(body)
@@ -2737,7 +2742,7 @@ def test_a_failed_public_run_attaches_nothing_either():
         "SELECT * FROM outbound WHERE action='post'")[0]["payload_json"])
     check("the fixture really is the trap: the summary is over HEAD_CAP",
           len(leak) > ffwatch.HEAD_CAP, len(leak))
-    check("the head withholds it", payload["text"] == ffwatch.PUBLIC_NO_ANSWER, payload["text"])
+    check("the head withholds it", payload["text"] == ffwatch.PUBLIC_TIMED_OUT, payload["text"])
     check("and no file is sent carrying it instead", not payload.get("files"), payload)
     check("nothing was even written to disk for it",
           not os.path.exists(os.path.join(run_dir, "summary.md")), run_dir)
@@ -2832,9 +2837,13 @@ def test_a_public_venue_never_publishes_a_failed_runs_output():
     text = ffwatch.compose_head(None, turn, "failed", boom, verdict, None, job)
     check("none of it reaches the thread", "API Error" not in text and "500" not in text, text)
     check("and what does is the plain no-answer note", text == ffwatch.PUBLIC_NO_ANSWER, text)
-    check("a timed-out run is treated the same way",
-          ffwatch.compose_head(None, turn, "timed_out", boom, verdict, "agent", job)
-          == ffwatch.PUBLIC_NO_ANSWER, text)
+    # The same withholding, a different sentence: a timeout is not a breakage and must not
+    # invite the identical question back through the identical ceiling.
+    timed = ffwatch.compose_head(None, turn, "timed_out", boom, verdict, "agent", job)
+    check("a timed-out run withholds just as much",
+          "API Error" not in timed and "500" not in timed, timed)
+    check("but says it ran out of time rather than that something broke",
+          timed == ffwatch.PUBLIC_TIMED_OUT, timed)
     check("while a run that ended done still answers with its summary",
           ffwatch.compose_head(None, turn, "done", {}, {"summary": "the belt is fine"}, None,
                                job) == "the belt is fine", text)
@@ -4992,8 +5001,8 @@ def build_container_argv(job, tmpname):
     lifted out and executed here instead: same code, real job files, no container.
     """
     text = io.open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
-    start = text.index("<<'PYEOF'\n") + len("<<'PYEOF'\n")
-    block = text[start:text.index("\nPYEOF", start)]
+    start = text.index("<<'ARGVEOF'\n") + len("<<'ARGVEOF'\n")
+    block = text[start:text.index("\nARGVEOF", start)]
     job_path = os.path.join(TMPROOT, tmpname + ".job.json")
     argv_path = os.path.join(TMPROOT, tmpname + ".argv")
     with io.open(job_path, "w", encoding="utf-8") as fh:
@@ -5001,7 +5010,7 @@ def build_container_argv(job, tmpname):
     saved = sys.argv
     sys.argv = ["builder", job_path, argv_path]
     try:
-        exec(compile(block, "discord-task.sh:PYEOF", "exec"), {"__name__": "__main__"})
+        exec(compile(block, "discord-task.sh:ARGVEOF", "exec"), {"__name__": "__main__"})
     finally:
         sys.argv = saved
     with io.open(argv_path, "rb") as fh:
@@ -6368,8 +6377,153 @@ def test_the_pull_request_targets_the_branch_the_work_is_based_on():
           "CHOOSE WHAT YOU BRANCH FROM" not in preamble_for(dict(JOB_SKELETON), "nobases"))
 
 
+
+def test_the_finish_handler_reaches_the_agent_and_its_work():
+    """The three things a run's ending has to do, and the bash rule that decides whether any of
+    them happen.
+
+    `docker stop` sends SIGTERM to PID 1 and to nothing else, and bash does not run a trap while
+    it is waiting on a FOREGROUND child — it waits for the child, then runs the handler. So an
+    agent invoked in the foreground is not stopped by its own ceiling, and nothing after it runs
+    either: docker's SIGKILL arrives 120 seconds later and no trap survives that.
+
+    Both halves are asserted here. The bash semantics are demonstrated rather than described,
+    because the reason the code is shaped this way is not visible in the code; and the shape
+    itself is checked in discord-task.sh, because that is the thing a later edit could quietly
+    undo.
+    """
+    print("finish handler")
+    script = os.path.join(TMPROOT, "trapshape.sh")
+
+    def handler_delay(launch):
+        """Seconds between the TERM and the handler running, for one launch shape."""
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write("#!/usr/bin/env bash\n"
+                     "trap 'echo TRAP >> \"$1\"; exit 9' EXIT INT TERM\n"
+                     + launch + "\n")
+        marker = os.path.join(TMPROOT, "trapshape.out")
+        if os.path.exists(marker):
+            os.remove(marker)
+        proc = subprocess.Popen(["bash", script, marker])
+        time.sleep(1)
+        started = time.monotonic()
+        proc.terminate()
+        proc.wait(timeout=30)
+        return time.monotonic() - started
+
+    foreground = handler_delay("sleep 6")
+    backgrounded = handler_delay('sleep 6 & _p=$!; wait "$_p"')
+    check("a foreground child defers the handler until it finishes",
+          foreground > 3, foreground)
+    check("a backgrounded child lets it run at once", backgrounded < 2, backgrounded)
+
+    task = open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
+    check("so the agent is backgrounded",
+          '"${ARGV[@]}" > "$FFBOX_OUT/stream.jsonl" 2> "$FFBOX_OUT/claude.log" &' in task, None)
+    check("and waited on by pid, not by a bare wait that the sharer would never end",
+          'wait "$FFBOX_AGENT_PID"' in task, None)
+
+    # ONE trap, composing everything. unity-license.sh installs `trap return_license EXIT INT
+    # TERM` when it is sourced; a second bare trap here would replace it and leak the seat.
+    check("the task installs exactly one trap of its own",
+          task.count("\ntrap ") == 1, task.count("\ntrap "))
+    handler = task.split("_ffbox_finish() {", 1)[1].split("\n}", 1)[0]
+    for what in ("_ffbox_stop_agent", "lift_result", "harvest-workspace.sh", "return_license"):
+        check(f"and its handler calls {what}", what in handler, handler)
+    check("the agent is stopped before its tree is bundled",
+          handler.index("_ffbox_stop_agent") < handler.index("harvest-workspace.sh"), handler)
+    check("and the licence comes back after the harvest, which is the shorter job",
+          handler.index("harvest-workspace.sh") < handler.index("return_license"), handler)
+
+
+def test_a_discord_run_can_publish_at_all():
+    """The regression that made every Discord and web run unable to publish anything.
+
+    The ramdrive migration moved harvesting off the host and into the container, and gave it to
+    run-as-user.sh only — so from ee9ab14 until 2026-08-31 discord-task.sh, which is the task
+    ffwatch actually launches, never called harvest-workspace.sh. No work.bundle meant
+    ffbox_validate_harvest found nothing to publish, which ffwatch reports as "the run changed
+    no files", so the failure was invisible: conversation 30 turn 1 worked for 939 seconds, made
+    a branch and changed two files, and its run row says nothing changed.
+
+    A check on the file rather than on a live run, because the thing that broke was a call site
+    going missing, and no stub-level test of ffwatch could have seen it.
+    """
+    print("a discord run can publish")
+    for name in ("discord-task.sh", "run-as-user.sh"):
+        task = open(os.path.join(HERE, name), encoding="utf-8").read()
+        check(f"{name} harvests the workspace before the container dies",
+              "/ffbox/harvest-workspace.sh" in task, name)
+        check(f"{name} guards it on there being a restored workspace to harvest",
+              "FFBOX_CACHE_ENTRY" in task, name)
+
+
+def test_a_run_that_ran_out_of_time_still_says_so():
+    """Every front door gets an answer, and none of them is told that something broke.
+
+    result.json is written when the agent returns, so a killed agent leaves none. The container
+    writes a stub from its finish handler now; this covers the host side, which has to hold up
+    for a run killed before it could write even that.
+    """
+    print("timeout replies")
+    job = {"run_id": "d1t1-slow", "session": {"id": "S"}, "classification": {}, "messages": [],
+           "limits": {"agent_secs": 1800, "warmup_secs": 3600}}
+
+    public = {"venue": "public", "failed_closed": 0, "failed_closed_reason": None}
+    text = ffwatch.compose_head(None, public, "timed_out", {}, {}, "agent", job)
+    check("a public thread is told it ran out of time, not that something broke",
+          text == ffwatch.PUBLIC_TIMED_OUT, text)
+    check("and is not invited to ask the identical question again",
+          "again" not in ffwatch.PUBLIC_TIMED_OUT.lower(), ffwatch.PUBLIC_TIMED_OUT)
+
+    private = {"venue": "private", "failed_closed": 0, "failed_closed_reason": None}
+    text = ffwatch.compose_head(None, private, "timed_out", {}, {}, "agent", job)
+    check("a private venue is told which clock", "agent clock" in text, text)
+    check("and what the ceiling was, so the number to change is in the reply",
+          "30 minutes" in text, text)
+
+    # The ceiling comes out of the run's own job.json, not the live config, so a config edited
+    # since the run started cannot rewrite what that run was actually given.
+    text = ffwatch.compose_head(None, private, "timed_out", {}, {}, "agent",
+                                dict(job, limits={"agent_secs": 900}))
+    check("out of the job the run was launched with", "15 minutes" in text, text)
+
+
+def test_a_verification_that_never_ran_does_not_read_as_one_that_failed():
+    """⚠️ NOT VERIFIED on a timed-out run used to say "the container produced no verification
+    report", which reads as a suite that ran and went wrong. Nothing ran: the finish handler
+    harvests and returns the licence, and does not verify a tree the agent was killed inside."""
+    print("verification evidence")
+    case = Case("verifevidence", base_fixture())
+    conv_id = case.watcher.upsert_conversation("77001", kind="ask", channel_id=ASK_CHANNEL)
+    cur = case.watcher.db.execute(
+        "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
+        " VALUES(?,1,'fix','timed_out',?,'private')", (conv_id, ffwatch.now_iso()))
+    turn = case.watcher.db.one("SELECT * FROM turn WHERE id=?", (cur.lastrowid,))
+    run_dir = os.path.join(case.watcher.conv_dir(conv_id), "runs", "r1")
+    os.makedirs(run_dir, exist_ok=True)
+    # A run that changed files and produced no report: the case that gets a synthesised row.
+    with open(os.path.join(run_dir, "changed_files.txt"), "w", encoding="utf-8") as fh:
+        fh.write("Assets/Belt.cs\n")
+    cur = case.watcher.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name) VALUES(?,?,?)",
+        (turn["id"], "r1", "ffbox-r1"))
+    run_row = cur.lastrowid
+
+    case.watcher.record_verification(run_row, turn, run_dir, "agent")
+    row = case.watcher.db.one("SELECT * FROM verification WHERE run_id=?", (run_row,))
+    check("the row says the run was stopped before anything could be verified",
+          "stopped on the agent clock" in (row["evidence"] or ""), dict(row))
+    check("and does not claim a report went missing",
+          "produced no verification report" not in (row["evidence"] or ""), dict(row))
+
+
 def main():
     tests = [
+        test_the_finish_handler_reaches_the_agent_and_its_work,
+        test_a_discord_run_can_publish_at_all,
+        test_a_run_that_ran_out_of_time_still_says_so,
+        test_a_verification_that_never_ran_does_not_read_as_one_that_failed,
         test_a_mention_only_channel_stays_quiet,
         test_the_gate_declines_a_message_that_asks_nothing,
         test_the_gate_answers_when_it_is_unsure,

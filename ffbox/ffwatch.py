@@ -281,7 +281,14 @@ DEFAULTS = {
 
     # ceilings (design section 8). Three separate clocks; conflating them makes a slow Unity
     # import look like a hung agent.
-    "agent_secs": 900,
+    # THE MOST TIME ONE REQUEST MAY SPEND IN THE AGENT, and the only ceiling that decides when
+    # a person stops waiting. Raised from 900 on 2026-08-31, together with the three repairs
+    # that made it mean anything: until then the ceiling signalled PID 1 and nothing acted on
+    # it, the run's work was thrown away, and the caller was told that something broke.
+    # design/ffbox_idle_agents_design.txt section 8. It bounds the AGENT PHASE and not the
+    # request: warm-up and verification have their own clocks, deliberately, because a slow
+    # Unity import and a hung agent are indistinguishable under one timer.
+    "agent_secs": 1800,
     "warmup_secs": 3600,
     "kill_grace_secs": 10,
 
@@ -4020,6 +4027,16 @@ class Watcher:
                                          "result.json")) or {}
         raw = result.get("result")
         if not isinstance(raw, (str, dict)):
+            # SILENCE IS NOT AN ANSWER, and it is what a stopped run used to give: result.json
+            # is written when the agent returns, so an agent killed by its ceiling left none and
+            # `ffbox "..."` printed an empty line after fifteen minutes. The container writes a
+            # stub from its finish handler now, but a run killed before it could — or one from
+            # before that landed — still arrives here with nothing, and the terminal state is
+            # enough to say what happened.
+            if run["terminal_state"] == "timed_out":
+                return ("The run was stopped on its ceiling before it finished, so there is no "
+                        "summary. What it did up to that point is in the transcript: "
+                        f"{self.cfg['web_host']}:{self.cfg['web_port']}/run/{run['id']}")
             return ""
         verdict = _parse_verdict(raw)
         summary = (verdict.get("summary") or "").strip()
@@ -4176,9 +4193,18 @@ class Watcher:
             changed = (_read_text(os.path.join(run_dir, "changed_files.txt")) or "").strip()
             if not changed:
                 return None
-            reason = ("verification hit its own ceiling and was stopped"
-                      if timeout_kind == "verify"
-                      else "the container produced no verification report")
+            # THREE DIFFERENT THINGS, and the generic one used to speak for all of them.
+            # compose_head prints this as ⚠️ NOT VERIFIED, which on a run stopped by the agent
+            # clock reads as a suite that failed when nothing ever got as far as running one:
+            # the container's finish handler harvests and returns the licence, and does not
+            # verify a tree the agent was killed in the middle of editing.
+            if timeout_kind == "verify":
+                reason = "verification hit its own ceiling and was stopped"
+            elif timeout_kind:
+                reason = (f"the run was stopped on the {timeout_kind} clock before anything "
+                          "could be verified")
+            else:
+                reason = "the container produced no verification report"
             report = {"ran": False, "compiled": None, "evidence": reason}
         cur = self.db.execute(
             "INSERT INTO verification(run_id, ran, compiled, compile_errors, tests_run,"
@@ -5305,6 +5331,15 @@ PUBLIC_NO_ANSWER = ("Something broke on my end and this one never got an answer.
 # broke when it did not invites a re-ask that burns another run for the same silence.
 PUBLIC_NOTHING_TO_SAY = "I had a look at this one and came back with nothing worth saying."
 
+# A turn stopped by the agent clock, which is a different thing from a run that broke and wants
+# saying differently. PUBLIC_NO_ANSWER used to cover this case and got both halves wrong: nothing
+# broke, and "try asking again" invites a repeat of a question that has already spent the whole
+# ceiling and would spend it again. What is useful to a player is that the shape of the question
+# is the part they can change.
+PUBLIC_TIMED_OUT = ("This one ran past the time I am allowed to spend on a single request, so I "
+                    "stopped part way through and there is no answer to give. A narrower "
+                    "question usually gets through.")
+
 
 def answer_is_publishable(turn, terminal):
     """Does this reply carry the agent's own words at all?
@@ -5410,7 +5445,10 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # thread as though it were the reply.
         correction = public_correction(turn, verification, publish or {})
         if not answer_is_publishable(turn, terminal):
-            answer = PUBLIC_NO_ANSWER
+            # A run stopped by its own ceiling is not a run that broke, and saying so costs
+            # nothing: `terminal` already distinguishes them, and the two want opposite advice
+            # about whether to ask again.
+            answer = PUBLIC_TIMED_OUT if terminal == "timed_out" else PUBLIC_NO_ANSWER
         else:
             answer = body or PUBLIC_NOTHING_TO_SAY
         return f"{correction}\n\n{answer}" if correction else answer
@@ -5433,6 +5471,14 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         said = f"the run {terminal.replace('_', ' ')}"
         if timeout_kind:
             said += f" on the {timeout_kind} clock"
+            # WHICH CEILING, so the operator reads the number they would have to change rather
+            # than going to look it up. Out of job.json's own limits block, which is what the
+            # run was actually launched with, and not out of the live config, which may have
+            # been edited since.
+            _ceiling = (job.get("limits") or {}).get(
+                {"agent": "agent_secs", "warmup": "warmup_secs"}.get(timeout_kind, ""))
+            if _ceiling:
+                said += f" after {human_gap(_ceiling)}"
         if detail:
             said += f": {detail}"
         lines.append(said[:300])
