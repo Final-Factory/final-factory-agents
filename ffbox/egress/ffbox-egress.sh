@@ -60,8 +60,24 @@ die()  { printf 'ffbox-egress: %s\n' "$*" >&2; exit 1; }
 # normal case — it would have sent every command in this file to the ROOT daemon, quietly, to
 # build a fence in a network namespace nothing runs in.
 #
-# docker is called by name. Which daemon it reaches is DOCKER_HOST's business, set by the unit
-# and by the profile.d line, never guessed at here.
+# WHICH DAEMON, DEFAULTED HERE RATHER THAN LEFT TO THE ENVIRONMENT -- the same fix ffbox's own
+# header carries, for the same reason, arrived at the same way.
+#
+# This used to say the daemon was "DOCKER_HOST's business, set by the unit and by the profile.d
+# line, never guessed at here". The unit does set it. The profile.d line only reaches a LOGIN
+# shell. So a hand-run from any other shell fell through to the current docker CONTEXT, which on
+# this account is still `rootless` -> /run/user/1015/docker.sock -- a daemon that holds no run,
+# no CI job and no workload of any kind, only a leftover copy of this very proxy.
+#
+# Measured on 2026-09-01, and it cost most of a night: `ffbox-egress.sh up` typed by hand rebuilt
+# the fence on that daemon, printed "ffbox-egress is up" and listed the new allowlist, and the
+# real fence went on refusing the host that had just been added to it. The allowlist entry was
+# then read back OUT of the same wrong container and reported as verified. Everything about the
+# output was true and none of it was about the fence any run uses.
+DOCKER_HOST=${DOCKER_HOST:-unix://${FFBOX_DOCKER_SOCK:-/run/ffbox-container/docker.sock}}
+export DOCKER_HOST
+
+# docker is called by name, on the daemon named above.
 docker_() {
     docker "$@"
 }
