@@ -1910,7 +1910,7 @@ class App:
               (conv["base_sha"] or "—")[:12], conv["github_issue"] or "—",
               pr_link(conv["github_pr"])]]))
         head.append(self._branch_note(conv))
-        head.append(self._resume_note(conv))
+        head.append(self._identity_note(conv))
         head.append(self._close_button(conv))
         head.append(table(AGG_HEADERS, [agg_cells(agg)]))
 
@@ -1981,27 +1981,35 @@ class App:
         bits.append("</div>")
         return "".join(bits)
 
-    def _resume_note(self, conv):
-        """THE HANDLE FOR TAKING THIS CONVERSATION OVER BY HAND, where that gets decided.
+    def _identity_note(self, conv):
+        """THE TWO IDS THIS CONVERSATION ANSWERS TO, in front of somebody who has already
+        opened it and is weighing whether to take it over.
 
-        `ffresume <session>` used to ride under every private Discord reply, which is the one
-        place it is no use: it is a command typed at a machine holding the box's state
-        directory, and Discord is not that. It went out whether or not anybody would ever
-        resume that run. Here it is one line, under the branch, in front of a person who has
-        already opened the conversation and is weighing whether to take it over.
+        This line used to read `resume ffresume <session>`, and it named a command that does
+        not exist on this box: scripts/ffresume.* is feature 059, code-complete and never
+        deployed, so the one actionable-looking thing on the page was the one thing nobody
+        could run. The ids under it were always the real content.
 
-        The session boundary comes with it rather than keeping a column of its own, because it
-        is a fact ABOUT this handle and not about the conversation: a resume lands in the
+        The session id IS the transcript — it is the filename under
+        conversations/<id>/claude/projects/<slug>/ — so it is what a resume by hand opens and
+        what a grep through the state directory matches on. The number beside it is the
+        conversation, the same one in this page's URL, and it is what the ffwatch subcommands
+        take: `ffwatch submit --conversation 30`. Neither can be worked out from the other by
+        looking at it, so the line carries both.
+
+        The session boundary comes with them rather than keeping a column of its own, because
+        it is a fact ABOUT the session id and not about the conversation: a resume lands in the
         CURRENT session, and nothing said before a rotation is in it. That seam is what "the
         agent forgot what we said in turn 3" looks like from the outside.
         """
         session = conv["session_id"]
         if not session:
-            # Nothing to resume: a conversation whose first run has not started, or one that
-            # never got a session at all. A handle with a blank where the id goes is worse than
-            # no handle — it looks like a command somebody could paste.
+            # A conversation whose first run has not started, or one that never got a session
+            # at all. The line is the pair or it is nothing: half of it, with a blank where the
+            # session goes, reads as an id somebody could paste.
             return ""
-        bits = ["<div class=\"note resume\">resume <code>ffresume ", esc(session), "</code>"]
+        bits = ["<div class=\"note ids\">conversation <code>", esc(session), "</code> (",
+                esc(conv["id"]), ")"]
         if conv["rotated_at_seq"]:
             bits.append(" <span class=\"muted\">gen " + esc(conv["session_generation"])
                         + ", rotated at turn " + esc(conv["rotated_at_seq"]) + "</span>")
