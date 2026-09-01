@@ -6434,45 +6434,21 @@ def test_the_finish_handler_reaches_the_agent_and_its_work():
           foreground > 3, foreground)
     check("a backgrounded child lets it run at once", backgrounded < 2, backgrounded)
 
-    task = open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
-    check("so the agent is backgrounded",
-          '"${ARGV[@]}" > "$FFBOX_OUT/stream.jsonl" 2> "$FFBOX_OUT/claude.log" &' in task, None)
-    check("and waited on by pid, not by a bare wait that the sharer would never end",
-          'wait "$FFBOX_AGENT_PID"' in task, None)
-
-    # ONE trap, composing everything. unity-license.sh installs `trap return_license EXIT INT
-    # TERM` when it is sourced; a second bare trap here would replace it and leak the seat.
-    check("the task installs exactly one trap of its own",
-          task.count("\ntrap ") == 1, task.count("\ntrap "))
-    handler = task.split("_ffbox_finish() {", 1)[1].split("\n}", 1)[0]
-    for what in ("_ffbox_stop_agent", "lift_result", "harvest-workspace.sh", "return_license"):
-        check(f"and its handler calls {what}", what in handler, handler)
-    check("the agent is stopped before its tree is bundled",
-          handler.index("_ffbox_stop_agent") < handler.index("harvest-workspace.sh"), handler)
-    check("and the licence comes back after the harvest, which is the shorter job",
-          handler.index("harvest-workspace.sh") < handler.index("return_license"), handler)
-
-
-def test_a_discord_run_can_publish_at_all():
-    """The regression that made every Discord and web run unable to publish anything.
-
-    The ramdrive migration moved harvesting off the host and into the container, and gave it to
-    run-as-user.sh only — so from ee9ab14 until 2026-08-31 discord-task.sh, which is the task
-    ffwatch actually launches, never called harvest-workspace.sh. No work.bundle meant
-    ffbox_validate_harvest found nothing to publish, which ffwatch reports as "the run changed
-    no files", so the failure was invisible: conversation 30 turn 1 worked for 939 seconds, made
-    a branch and changed two files, and its run row says nothing changed.
-
-    A check on the file rather than on a live run, because the thing that broke was a call site
-    going missing, and no stub-level test of ffwatch could have seen it.
-    """
-    print("a discord run can publish")
+    # What the harvest itself does, and the trap ordering around it, is
+    # test_every_task_script_harvests_its_own_workspace's job. This is only about whether that
+    # trap can RUN on the path that matters most: an agent stopped at its ceiling.
     for name in ("discord-task.sh", "run-as-user.sh"):
         task = open(os.path.join(HERE, name), encoding="utf-8").read()
-        check(f"{name} harvests the workspace before the container dies",
-              "/ffbox/harvest-workspace.sh" in task, name)
-        check(f"{name} guards it on there being a restored workspace to harvest",
-              "FFBOX_CACHE_ENTRY" in task, name)
+        check(f"{name} backgrounds the agent so the handler can reach it",
+              "FFBOX_AGENT_PID=$!" in task, None)
+        check(f"{name} waits on that pid, not on a bare wait that another child would hold",
+              'wait "$FFBOX_AGENT_PID"' in task, None)
+    task = open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
+    handler = task.split("_ffbox_finish() {", 1)[1].split("\n}", 1)[0]
+    check("and the handler kills it before the tree is bundled",
+          handler.index("_ffbox_stop_agent") < handler.index("harvest-workspace.sh"), handler)
+    check("and leaves a result for the caller, which a killed agent never writes",
+          "lift_result" in handler, handler)
 
 
 def test_a_run_that_ran_out_of_time_still_says_so():
@@ -6723,7 +6699,6 @@ def main():
         test_draining_destroys_what_is_staged,
         test_memory_is_read_from_meminfo_not_from_dev_shm,
         test_the_finish_handler_reaches_the_agent_and_its_work,
-        test_a_discord_run_can_publish_at_all,
         test_a_run_that_ran_out_of_time_still_says_so,
         test_a_verification_that_never_ran_does_not_read_as_one_that_failed,
         test_a_mention_only_channel_stays_quiet,
