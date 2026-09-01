@@ -243,11 +243,23 @@ _ffghr_set CAP_ADD          cap_add          'CHOWN,FOWNER,DAC_OVERRIDE'
 # machines ever, and the next job on that slot presents the same one and reuses its entitlement —
 # which is exactly why sequential jobs work today on the pinned id despite leaks.
 #
-#   per-slot   the default: sha256 of the host name and the slot, first 32 hex
-#   image      leave the image's baked-in constant alone. What ffbox's own agent lane does, and
-#              the way back if this turns out to interact badly with the licence.
-#   <32 hex>   that exact id, for a machine that needs to present a specific one.
-_ffghr_set MACHINE_ID       machine_id       per-slot
+# SUPERSEDED 2026-09-01, AND THE DEFAULT IS NOW image. Everything above is about ONLINE activation,
+# which neither lane does any more: the licence is a .ulf FILE mounted into the container
+# (ffbox/unity-offline-license.sh) and resolved from local files with no call to Unity. Exit 198 was
+# the activation endpoint refusing a concurrent registration, so with no call there is nothing to
+# refuse and no reason to vary the id.
+#
+# IT WOULD NOW BREAK THE LICENCE RATHER THAN PROTECT IT. A .ulf binds to exactly one
+# /etc/machine-id, so a container presenting a per-slot id matches nothing and finds no entitlement.
+#
+#   <32 hex>   the default, and it is OUR constant (46696e616c466163746f72792d666662, ASCII
+#              "FinalFactory-ffb") rather than the image's: ffbox/unity-offline-license.sh mints the
+#              licence against exactly this value, so it does not depend on a number game-ci owns.
+#              KEEP IN LOCKSTEP with FFBOX_MACHINE_ID_CONST there and with ffbox/lib-workloads.sh.
+#   image      leave the image's baked-in constant alone.
+#   per-slot   sha256 of the host name and the slot, first 32 hex. The old default; correct only
+#              for a lane that has gone back to online activation.
+_ffghr_set MACHINE_ID       machine_id       46696e616c466163746f72792d666662
 
 # Prints the id for a slot, or returns 1 when nothing should be overridden. The container's
 # entrypoint validates this again before it writes anything: it is the thing that runs as root.
@@ -271,6 +283,18 @@ ffghr_machine_id() {
             fi ;;
     esac
 }
+
+# --- the Unity licence ----------------------------------------------------------------------------
+#
+# ONE FILE, SHARED WITH ffbox's OWN LANE, and that is the point rather than an economy: both lanes
+# run containers built from the same image presenting the same /etc/machine-id, so one .ulf is
+# valid in both. ffbox/unity-offline-license.sh mints and installs it; slot.sh mounts it read-only.
+#
+# A CI JOB'S UNITY SECRETS STILL ARRIVE FROM THE WORKFLOW, out of repository secrets, because
+# main.yml names them in its env: block and changing a workflow file needs a token scope this box
+# deliberately lacks. unity-license.sh prefers the mounted file, so those secrets go unused the
+# moment this exists -- but they are still handed to the job, and only editing main.yml stops that.
+FFGHR_UNITY_ULF=${FFGHR_UNITY_ULF:-$FFBOX_CONFIG_DIR/unity/Unity_lic.ulf}
 
 # --- egress, per section 3 --------------------------------------------------------------------
 # ffbox is on 10.80.0.0/24. These must not overlap it: both fences live in the same daemon.

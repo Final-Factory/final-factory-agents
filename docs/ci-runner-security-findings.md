@@ -313,6 +313,13 @@ likely ones.
 workflow asks for them. Anyone with write access can print them. Nothing at the runner layer
 changes this; it is a question about who has write access to the org.
 
+> **Narrowed 2026-09-01, but not closed.** The Unity secrets are no longer *needed*: both lanes now
+> mount an offline `.ulf` licence and `unity-license.sh` prefers it, so a job never reads them. They
+> are still *handed* to the job, because `main.yml` names them in its `env:` block and editing a
+> workflow file needs a token scope this box deliberately lacks. Removing those four lines from
+> `main.yml` is what actually closes this, and it is now a safe edit rather than a breaking one.
+> `GITHUB_TOKEN` is unaffected and stays.
+
 **A job gets root inside its own container or guest.** Intended. The container is the boundary,
 not the account inside it.
 

@@ -434,22 +434,52 @@ if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
     exit 78
 fi
 
-# A Unity .ulf does not contain a usable license for the container: game-ci extracts the 27-char
-# serial out of it and activates online with that. Replicate the decode here so the secrets file
-# can hold either UNITY_SERIAL directly or a path to the .ulf.
-if [ -z "${UNITY_SERIAL:-}" ] && [ -n "${UNITY_LICENSE_FILE:-}" ]; then
-    if [ ! -r "$UNITY_LICENSE_FILE" ]; then
-        echo "ffbox: cannot read UNITY_LICENSE_FILE=$UNITY_LICENSE_FILE" >&2
-        exit 78
-    fi
-    # <DeveloperData Value="base64"/> — decode, then drop 4 leading garbage bytes.
-    UNITY_SERIAL=$(sed -n 's/.*<DeveloperData Value="\([^"]*\)".*/\1/p' "$UNITY_LICENSE_FILE" \
-                   | head -1 | base64 -d 2>/dev/null | cut -c5-)
-    export UNITY_SERIAL
-    if [ ${#UNITY_SERIAL} -ne 27 ]; then
-        echo "ffbox: extracted a ${#UNITY_SERIAL}-char serial from $UNITY_LICENSE_FILE; expected 27" >&2
-        exit 78
-    fi
+# --- the Unity licence ---------------------------------------------------------------------------
+#
+# A FILE, MOUNTED READ-ONLY. NOT A CREDENTIAL.
+#
+# This used to decode a 27-character serial out of the .ulf and pass it in beside UNITY_EMAIL and
+# UNITY_PASSWORD, so that the container could perform an online activation on start. It does not any
+# more, and nothing here reads those variables even when secrets.env still defines them: a container
+# that runs `claude -p --dangerously-skip-permissions` over text strangers wrote should not hold a
+# Unity account password, and everything in /proc/self/environ is readable by everything in the
+# container. See ffbox/unity-offline-license.sh for how the file is minted and why one file serves
+# every container.
+#
+# MISSING IS A WARNING RATHER THAN A REFUSAL, deliberately. The container says so far more usefully
+# than this can -- unity-license.sh knows whether a fallback credential exists and what the machine
+# id mismatch would look like -- and refusing here would also block the `--task` runs that never
+# launch an editor at all.
+UNITY_ULF=${FFBOX_UNITY_ULF_HOST:-$HOME/.config/ffbox/unity/Unity_lic.ulf}
+
+# REFRESHED HERE, AT THE MOMENT A CONTAINER IS ABOUT TO BE MADE, and that timing is the whole point.
+# A Personal .ulf carries a rolling ~24-hour UpdateDate rather than an annual expiry, so the question
+# is never "is it still valid" in the abstract -- it is "will it still be valid for the life of the
+# container I am about to start". Only the thing creating the container knows that moment has come,
+# which is why this is not a timer.
+#
+# A POOL WORKER IS THE CASE THAT MOTIVATES IT: it is staged hours before it has a turn, so it wants a
+# licence with room to spare rather than one that lapses while it sits idle.
+#
+# QUIET AND FAST WHEN THERE IS NOTHING TO DO -- one sed over a small file, no docker, no network --
+# and NEVER FATAL: a refresh that fails must not stop a run, because the licence in hand may well be
+# good enough and unity-license.sh inside the container reports the truth far better than a guess
+# made out here.
+_FFBOX_LICTOOL=$(dirname "$0")/unity-offline-license.sh
+if [ -x "$_FFBOX_LICTOOL" ]; then
+    sh "$_FFBOX_LICTOOL" ensure "${FFBOX_LICENCE_MIN_HOURS:-4}" 2>&1 | sed 's/^/[ffbox] /' || :
+fi
+
+UNITY_LICENCE_ARGS=()
+if [ -r "$UNITY_ULF" ]; then
+    UNITY_LICENCE_ARGS=(
+        -v "$UNITY_ULF:/ffbox/unity/Unity_lic.ulf:ro"
+        -e "FFBOX_UNITY_ULF=/ffbox/unity/Unity_lic.ulf"
+    )
+else
+    echo "ffbox: WARNING: no Unity licence at $UNITY_ULF" >&2
+    echo "       Any run that starts the editor will fail. Mint one with:" >&2
+    echo "         sh ffbox/unity-offline-license.sh mint" >&2
 fi
 
 # --- preflight ------------------------------------------------------------------------------------
@@ -817,8 +847,8 @@ RUN_ARGS=(
     "${PROMPT_MOUNT[@]}"
     "${DOCKER_MOUNTS[@]}"
     "${ENTRY_ENV[@]}"
+    "${UNITY_LICENCE_ARGS[@]}"
     -e CLAUDE_CODE_OAUTH_TOKEN
-    -e UNITY_SERIAL -e UNITY_EMAIL -e UNITY_PASSWORD
     -e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
     -e DISABLE_AUTOUPDATER=1
     -e FFBOX_OUTPUT_FORMAT="$OUTPUT_FORMAT"

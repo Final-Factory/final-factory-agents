@@ -184,4 +184,30 @@ export USER="$user"
 export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0=safe.directory
 export GIT_CONFIG_VALUE_0="$WORKSPACE"
+
+# THE UNITY LICENCE, STAGED WHILE WE ARE STILL ROOT. This has to happen HERE and cannot be left to
+# unity-license.sh in the task, which is the obvious place for it.
+#
+# The .ulf is mounted read-only from the host at mode 600. Under the rootless daemon the host account
+# maps to root in here, so the file arrives owned by root and readable by root ALONE -- and the task
+# runs as uid 1000. It would find the mount unreadable, report "no Unity licence available", and the
+# run would die at its first editor with a message about a file that is plainly right there.
+#
+# Measured 2026-09-01: CI (which stays root) licensed fine while the agent lane failed with exit 78
+# on the identical mount. Copying it across as root, owned by the run user, is what makes the two
+# lanes behave the same.
+#
+# WIDENING THE HOST FILE INSTEAD WOULD BE WRONG. It is a licence; 600 on the host is correct, and the
+# container is where the copy belongs.
+if [ -n "${FFBOX_UNITY_ULF:-}" ] && [ -r "${FFBOX_UNITY_ULF}" ]; then
+    _licdir="$home/.local/share/unity3d/Unity"
+    if mkdir -p "$_licdir" && cp "$FFBOX_UNITY_ULF" "$_licdir/Unity_lic.ulf"; then
+        chown -R "$uid:$gid" "$home/.local" 2>/dev/null || :
+        chmod 600 "$_licdir/Unity_lic.ulf" 2>/dev/null || :
+        echo "[ffbox] Unity licence staged for $user"
+    else
+        echo "[ffbox] WARNING: could not stage the Unity licence into $_licdir" >&2
+    fi
+fi
+
 exec setpriv --reuid="$user" --regid="$gid" --init-groups bash "$TASK"

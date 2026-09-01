@@ -113,6 +113,19 @@
 # lands in the SNI log with the name it asked for. See docs/egress.md.
 ~^productionresultssa[0-9]{1,2}\.blob\.core\.windows\.net$   blob.core.windows.net
 
+# --- CANDIDATES FOR REMOVAL, 2026-09-01 ------------------------------------------------------------
+# The licence became an offline .ulf on this date (ffbox/unity-offline-license.sh), and the offline
+# resolver makes NO call to Unity's licensing service. So the ACTIVATION half of the block below --
+# license.unity3d.com, activation.unity3d.com, api.unity.com, id.unity.com, accounts.unity3d.com --
+# should now carry no traffic at all.
+#
+# NOT DELETED YET, ON PURPOSE, and this file's own rule is why: "Do not guess. Put the proxy in log
+# mode for a few real runs." Do that, confirm those five are silent across real runs, and then drop
+# them. An entry nothing uses is only extra reach.
+#
+# KEEP core.cloud.unity3d.com AND public-cdn.cloud.unity3d.com REGARDLESS. The licensing client
+# fetches public-cdn.cloud.unity3d.com/config/production on every start even with a valid local
+# licence -- observed directly on 2026-09-01 -- so that one is load-bearing on the offline path too.
 # --- Unity licensing --------------------------------------------------------------------------------
 # CONFIRMED 2026-08-29 by a real activation that succeeded on the first attempt and returned its
 # seat. Four of these carried traffic: license.unity3d.com, activation.unity3d.com,

@@ -173,14 +173,23 @@ stage() { printf '\n######## %s\n\n' "$*"; }
 
 # True only when every value stage 3 actually needs has been filled in. Sourced in a subshell so
 # the secrets never enter this script's own environment, and so a malformed file cannot abort it.
+#
+# NO UNITY CREDENTIALS IN THIS TEST ANY MORE. As of 2026-09-01 the licence is a .ulf FILE that
+# ffbox/unity-offline-license.sh mints and no container is handed a Unity password; the thing to be
+# ready is therefore the file, not a pair of secrets. It is checked separately below rather than
+# here, because the fix for a missing one is a command rather than an edit to this file.
 secrets_ready() {
   ( set +u
     . "$SECRETS" 2>/dev/null || exit 1
     [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]                            || exit 1
-    [ -n "$UNITY_EMAIL" ] && [ -n "$UNITY_PASSWORD" ]            || exit 1
-    [ -n "$UNITY_SERIAL" ] || [ -n "$UNITY_LICENSE_FILE" ]       || exit 1
   ) 2>/dev/null
 }
+
+# The offline Unity licence. Absent is not a reason to refuse stage 3 -- everything else it does is
+# still worth doing -- but it IS a reason to say so plainly, because the first run that starts an
+# editor is where it would otherwise surface.
+UNITY_ULF_PATH=${FFBOX_UNITY_ULF_HOST:-$HOME/.config/ffbox/unity/Unity_lic.ulf}
+unity_licence_ready() { [ -r "$UNITY_ULF_PATH" ]; }
 
 stage "0/7  secrets"
 
@@ -401,6 +410,22 @@ if [ -n "$SKIPPED" ]; then
   stage "SKIPPED — these need root, and this run had no way to ask for it"
   printf '%s\n\n' "$SKIPPED"
   printf '  Run them yourself when convenient. Everything else above is already applied.\n'
+fi
+
+# THE UNITY LICENCE, WHICH NOTHING ELSE IN THIS SCRIPT CAN SUPPLY. It needs a human with a browser
+# once, and until it exists every run that starts an editor fails. Said here rather than at stage 0
+# because it is a command to run, not a file to edit, and this is where the remaining manual steps
+# are collected.
+if ! unity_licence_ready; then
+  stage "Unity licence — NOT INSTALLED"
+  cat <<EOF
+  No .ulf at $UNITY_ULF_PATH, so any run that starts the editor will fail.
+  It is a one-time manual activation and needs no Unity password afterwards:
+
+    sh $ROOT/unity-offline-license.sh mint      # asks for your Unity account, once
+    sh $ROOT/unity-offline-license.sh verify 3
+
+EOF
 fi
 
 stage "setup complete"

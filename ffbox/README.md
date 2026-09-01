@@ -405,76 +405,223 @@ It uses `setpriv` rather than `su` deliberately: `setpriv` execs, leaving the ru
 so `docker stop` delivers SIGTERM straight to it and the return-license trap fires. `su` forks and
 forwards signals unreliably, which would leak a Unity seat on every stopped container.
 
-## Unity licensing, and the seat trap
+## Unity licensing
 
-The mechanism is counterintuitive, so it's worth stating plainly:
+**No container holds a Unity credential.** The licence is a `.ulf` file, mounted read-only, and
+that is the whole mechanism. This section used to describe an online serial activation performed
+inside every container from `UNITY_EMAIL` and `UNITY_PASSWORD`; that ended on 2026-09-01 and the
+reasoning is worth keeping, because the old design looks reasonable until you say it out loud.
 
-**The `.ulf` file never enters the container.** game-ci's action digs the base64 `DeveloperData`
-blob out of the ULF XML, decodes it, drops 4 garbage bytes, and recovers a **27-character
-serial**. Personal and Pro then take the identical code path — an online activation:
+### Why it changed
 
-```bash
-unity-editor -quit -serial "$UNITY_SERIAL" \
-  -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" -projectPath /BlankProject
+A Unity account password was being handed to a container that runs
+`claude -p --dangerously-skip-permissions` over text strangers wrote. `docs/docker-security-model.md`
+opens by assuming that container is hostile, and anything in it can read the environment of
+anything else out of `/proc/self/environ`. It was also not a narrow credential: the same identity
+owns the Asset Store account, the publisher account and the org membership, and having it in there
+meant 2FA on that account would have broken CI.
+
+### Why a file is enough
+
+Unity's licensing client resolves entitlements from **local files**, with no call to Unity:
+
+```
+Rebuilding resolvers from local files
+Skipping directory watcher for: /root/.local/share/unity3d/Unity/*.ulf
+    -- Unity.Licensing.Client 1.18.1 --debug --showEntitlements, 2026-09-01
 ```
 
-Consequences:
+So a mounted `.ulf` is a complete substitute for the credential. It is read at
+`$HOME/.local/share/unity3d/Unity/*.ulf` — a glob, and `$HOME`-relative, which is why the file is
+mounted at a fixed `/ffbox/unity/Unity_lic.ulf` and **copied** into place by `unity-license.sh`
+rather than mounted at the destination: CI runs as root and the agent lane drops privilege to a
+user `entrypoint.sh` creates at run time, so the destination is not knowable at `docker run` time.
 
-- **`UNITY_EMAIL` and `UNITY_PASSWORD` are required even for a Personal license.**
-- `/BlankProject` is supplied by the *action*, not the image. The base image has no such
-  directory, so the Dockerfile creates a minimal one.
-- **Every activation consumes a seat, and only an explicit `-returnlicense` gives it back.**
-  game-ci returns the license as an ordinary step, so a cancelled job never reaches it — that is
-  how CI quietly leaks seats. Here it's an `EXIT`/`INT`/`TERM` trap, and the host script uses
-  `docker stop` (SIGTERM, 120s grace) rather than `docker kill`.
-- We deliberately **do not** copy game-ci's `dbus-uuidgen > /etc/machine-id` step. That makes every
-  container look like a brand-new machine to Unity's licensing service — fine for a few CI runs a
-  day, ruinous for an agent loop, which would burn a fresh seat every single run. So every ffbox
-  container inherits the machine id baked into the GameCI base image
-  (`576562626572264761624c65526f7578`, which decodes to `Webber&GabLeRoux`) and they all look
-  like **one machine**.
-- **Concurrent runs under that one identity work.** This section used to say the opposite: that
-  two Unity runs at once were a race rather than two seats, because activation state is
-  machine-level and the first container to exit fires `-returnlicense` for the shared identity.
-  It also said, honestly, that whether concurrent activation worked at all was untested here.
-  It has since been tested — four game-ci containers in parallel, no licensing trouble.
+### One licence, not one per slot
 
-  **REWRITTEN 2026-09-01, because "no licensing trouble" was luck rather than a property.** Two
-  containers presenting the same `/etc/machine-id` are ONE machine to Unity, a Personal licence
-  holds one seat per machine, and the second concurrent activation dies with "Found 0 entitlement
-  groups and 0 free entitlements", exit 198. ffgithubrunners measured that on 2026-08-29 and
-  fixed it with per-slot ids; the agent lane did not, and got away with it only because the
-  ceiling was two and licensing had been deferred to whatever launched an editor, which made two
-  overlapping activations rare rather than impossible.
+A `.ulf` binds to `/etc/machine-id` and to nothing else. Measured by generating activation requests
+across varying hostnames and ids:
 
-  Both lanes now derive an id from a claimed slot — `ffghr-<host>-slot-<n>` against
-  `ffbox-<host>-agent-<n>`, different salts, so the two numberings cannot collide. Per slot
-  rather than game-ci's per-container `dbus-uuidgen`, because an activation registers a machine
-  and only `-returnlicense` gives it back: a random id makes every leaked seat permanent, while a
-  recycled one is reclaimed by whatever takes the number next. See `ffbox/lib-workloads.sh`.
+| hostname | `/etc/machine-id` | resulting `MachineID` |
+|---|---|---|
+| `hostA` | image default | `D7nTUnjNAmtsUMcnoyrqkgIbYdM=` |
+| `hostB` | image default | `D7nTUnjNAmtsUMcnoyrqkgIbYdM=` |
+| `hostA` | custom | `zkMD9rIiV9nJzzFO8d7kcHxuHBM=` |
 
-  **`max_concurrent_runs` is the ceiling on CONTAINERS, and it is the box's rather than one
-  lane's.** Agent runs, staged pool containers and ffgithubrunners' CI jobs all count against it:
-  same daemon, same size of workspace, and RAM is what runs out. Each lane also has its own
-  ceiling under it, `pool.max` in its section. A separate `max_unity_runs` existed until
-  2026-08-25, from when Unity was optional per run; it counted exactly the same runs and was
-  deleted.
+Hostname does not bind; machine-id does. Every container presents the base image's pinned constant
+(`576562626572264761624c65526f7578`, "Webber&GabLeRoux"), which game-ci pins for exactly this
+purpose — so **one** licence serves all of them.
 
-  One edge is still worth knowing rather than fearing: the return-licence trap fires on exit for
-  an identity every container shares. The likely reason four in parallel is fine is that the
-  licence is checked when the editor **starts** rather than continuously, so if this ever bites
-  it will look like an activation failure in a container that was already alive, not a test
-  dying mid-run. `activate_unity` retries five times with backoff, so that failure is slow
-  rather than fatal.
+### The per-slot machine id is gone, and why that is not a regression
+
+Both lanes used to derive `/etc/machine-id` from a claimed slot. That existed solely to stop a
+second **concurrent online activation** dying with "Found 0 entitlement groups and 0 free
+entitlements", exit 198 — a refusal from Unity's activation endpoint. The offline path makes no
+such call, so there is nothing to refuse.
+
+It would now be actively wrong: a container presenting a per-slot id matches no licence and finds
+no entitlement at all. `machine_id` therefore defaults to `image` on both lanes; `per-slot` remains
+available for a lane deliberately put back on online activation. The slot itself is still claimed —
+it labels the container and bounds the pool as before.
+
+This also retires nine machine registrations (six agent slots plus three CI) against a single
+Personal entitlement, down to one.
+
+### The seat trap, and what is left of it
+
+Every **online** activation consumed a seat that only came back on an explicit `-returnlicense`,
+which is how CI quietly leaks them: game-ci returns the licence in an ordinary later step that a
+cancelled job never reaches. `unity-license.sh` installed it as an `EXIT`/`INT`/`TERM` trap instead,
+and the host uses `docker stop` (SIGTERM, 120s grace) rather than `docker kill`.
+
+**The offline path takes no seat**, so it arms none of that — a `.ulf` is not consumed by being
+read. The trap survives only for the online fallback, guarded by the licence mode, because
+`-returnlicense` needs the very credentials this change removed.
+
+### Managing the licence
+
+```bash
+sh ffbox/unity-offline-license.sh mint      # asks for your Unity account, ONCE
+sh ffbox/unity-offline-license.sh status    # what is installed, what it binds, when it expires
+sh ffbox/unity-offline-license.sh verify 3  # prove N containers share it concurrently
+sh ffbox/unity-offline-license.sh return    # hand the entitlement back
+```
+
+### Why `mint` and not the `.alf` upload
+
+The obvious route is Unity's manual activation flow — generate an `.alf`, upload it at
+`license.unity3d.com/manual`, download the `.ulf`. **That page has served Pro licences only since
+August 2023:**
+
+> Unity no longer supports manual activation of Personal licenses.
+
+The editor still ships `-createManualActivationFile` and the licensing client still advertises
+`--generate-alf-request`, so the request generates perfectly and then has nowhere to go — which is
+exactly how you waste an afternoon. game-ci hit the same wall
+([game-ci/documentation#408](https://github.com/game-ci/documentation/issues/408)) and now routes
+Personal users through Unity Hub, which produces a `.ulf` bound to the **Hub's** machine rather than
+a container's, so it does not help here either.
+
+`--activate-ulf` does work. It authenticates, then writes a `.ulf` bound to whatever
+`/etc/machine-id` the process presents — so running it in a throwaway container that presents the
+pinned id yields a file valid in every run container.
+
+`alf` survives as a diagnostic: it is the only way to see what a licence *would* bind to without
+taking one.
+
+### The credential did not vanish, it moved
+
+`mint` authenticates. The gain is not that no credential exists anywhere — it is that the credential
+is used by **one container you started deliberately, which exits seconds later**, instead of sitting
+in the environment of every agent container that reads text strangers wrote. It is never written to
+disk, never enters this host's shell history or argv, and appears in the argv of exactly one process
+in a container holding nothing else.
+
+An access token (`UNITY_ACCESS_TOKEN`) is accepted in place of the password and is the better input:
+it expires and is revocable without a password reset. It is also the way past 2FA, which
+`--username`/`--password` cannot handle.
+
+### Why the host does not mint it
+
+The natural question is whether the host could generate the licence, so no container ever sees a
+credential at all. It cannot, and the reasons are worth recording so this is not re-litigated:
+
+- **The host has no Unity.** No `/opt/unity`, no `unity-editor`, no licensing client — this box runs
+  the editor only inside containers. Minting on the host would mean installing ~11 GB of editor
+  there purely to run one activation.
+- **The host presents its own `/etc/machine-id`**, which is not the one containers present. A licence
+  minted on the host would bind to the host and be worthless in a container. There is no flag that
+  says "bind to this other id": the client reads the id of the process it is running as, and the
+  route that lets you *submit* a binding — the `.alf` upload — is the one Unity withdrew for
+  Personal.
+- **The host is worse company for a secret.** `GH_TOKEN` and the Discord bot token live there, and
+  they are deliberately kept out of every container. Adding a Unity password to that set moves the
+  credential toward the machine's most sensitive process table, not away from it.
+- **The same binary sees it either way.** Unity's licensing client is what receives the password;
+  running it on the host rather than in a container does not change what is trusted, only where.
+
+What *is* worth doing is making the mint container demonstrably minimal, and it is: no capabilities,
+read-only root filesystem, tmpfs for the only writable paths, 256 PIDs, 2 GB, and none of the
+workspace, cache, mirror, prompt or job mounts a run gets. It executes one binary and exits. That is
+a different thing from the agent container in every respect except the image it shares.
+
+### How often it renews, and why it is automatic
+
+**A Personal `.ulf` does not expire annually.** Measured on the real licence, 2026-09-01:
+
+```
+<StartDate  Value="2018-10-28T00:00:00" />
+<UpdateDate Value="2026-09-02T22:55:56" />     <- tomorrow
+...and no StopDate at all
+```
+
+A rolling ~24-hour `UpdateDate` and no hard stop. Unity expects the licensing client to refresh it
+online; a container with no credentials cannot, so **the host refreshes and the container only ever
+reads the result.**
+
+Renewal is **demand-driven, not a timer.** Every container launch calls:
+
+```
+ffbox/unity-offline-license.sh ensure 4
+```
+
+which reads one date out of a small file — no docker, no network — and re-activates only when under
+four hours remain. A pool worker is the case that motivates the threshold: it is staged hours before
+it has a turn, so it needs a licence with room to spare rather than one that lapses while it sits
+idle. `ensure` is never fatal: a failed refresh must not stop a run, because the licence in hand may
+still be fine and `unity-license.sh` inside the container reports the truth far better than a guess
+made outside it.
+
+This needs `UNITY_EMAIL`/`UNITY_PASSWORD` (or `UNITY_ACCESS_TOKEN`) in `secrets.env`, **host-side
+only** — the same posture `GH_TOKEN` and the Discord token already have. Leave them blank and the
+licence cannot renew itself; `mint` prompts instead.
+
+You only re-mint by hand if the machine id constant changes or the account changes.
+
+### The `--update-license` trap
+
+The licensing client advertises exactly the command you would want:
+
+```
+--update-license   Update Unity license file on the current machine.
+```
+
+**It does not refresh a ULF.** Run against a real, valid, resolving licence it reports
+`No license activation found for this computer. (UnityEntitlementLicense.xml)` — it services Unity's
+*newer* entitlement format — and returns having changed nothing. The `UpdateDate` was byte-identical
+before and after.
+
+So `refresh` re-runs `--activate-ulf`, and **verifies the `UpdateDate` actually moved** rather than
+trusting the exit status. The machine id is unchanged, so Unity reissues to the same registration
+instead of spending another machine slot; there is no return-then-mint, which would open a window
+with no licence for no gain.
+
+### The privilege-drop trap
+
+The `.ulf` is mounted read-only at mode 600. Under the rootless daemon the host account maps to root
+inside the container, so the file arrives **owned by root and readable by root alone** — and the
+agent lane's task runs as uid 1000 after `setpriv`. CI (which stays root) licensed fine while the
+agent lane failed with exit 78 on the identical mount.
+
+`entrypoint.sh` therefore copies the licence into the run user's home *while it is still root*, and
+`install_offline_license` checks that destination **before** the mount — so the normal agent-lane case
+is a licence already in place and a mount it cannot read. Widening the host file would be the wrong
+fix; it is a licence, and 600 on the host is correct.
+
+### What still has Unity secrets
+
+`.github/workflows/main.yml` names `UNITY_EMAIL`, `UNITY_PASSWORD` and `UNITY_LICENSE` in its `env:`
+block, out of repository secrets. A CI job prefers the mounted `.ulf` and never uses them, but they
+are still handed to it — and `docs/ci-runner-security-findings.md` records that anyone who can write
+a workflow can print them. Closing that means editing `main.yml`, which needs a token scope this box
+deliberately lacks.
 
 **Every run gets an editor, and there is no way to ask for one without.** The web prompt box
-included, `ffbox "..."` included — a worker asked what something's actual
-power draw is should be able to go and look rather than infer from source and hedge. The old
-`--no-unity` bought a faster start and is gone; the warm `Library/` every clone inherits is what
-makes that affordable. See `design/trusted_ingress_design.txt` section 13.
+included, `ffbox "..."` included — a worker asked what something's actual power draw is should be
+able to go and look rather than infer from source and hedge. The old `--no-unity` bought a faster
+start and is gone; the warm `Library/` every clone inherits is what makes that affordable. See
+`design/trusted_ingress_design.txt` section 13.
 
-If you have access to a Unity Licensing Server or a floating license, that sidesteps seat
-exhaustion entirely and is worth preferring.
 
 ## Host setup
 
