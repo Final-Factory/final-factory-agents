@@ -7,6 +7,22 @@ path: `ffwatch.launch()`, `ffbox`, `entrypoint.sh`, `restore-workspace.sh`, `dis
 Effort: **S** under an hour, **M** an afternoon, **L** a day or more, **?** unknown until something
 is measured.
 
+## Status, 2026-09-01
+
+G, H, A, B, C, D and E are **implemented**; F is implemented except F4 and F6, which want a
+stub-container fixture that does not exist yet. B5, the gate the rest was conditional on, came
+back at **1.2 seconds** from dispatch to the agent starting, against a 40-second cold launch, with
+the resync inside the warm container at 0s.
+
+Two things are NOT verified on live traffic yet, and both need the deploy: ffwatch claiming a
+staged container for a real Discord turn, and the transcript sweep on a run that crashes. The
+pieces either side of each are covered offline, and `ffbox --stage-pool` / `--dispatch` was driven
+end to end by hand with a real agent answer.
+
+G1 is worth knowing about separately. 0404c0f fixed the missing harvest independently while this
+was being written, but left the agent in the foreground, so its trap still could not fire on the
+path its own message describes — an agent stopped at its ceiling. That half is here.
+
 ## What already exists
 
 Worth knowing before estimating.
