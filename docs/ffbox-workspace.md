@@ -96,6 +96,13 @@ Every one of these was found by running the thing, not by testing its parts.
 4. **The host could not write its own derivation** — and silently read the container's copy
    instead, defeating the whole re-derivation. `umask 002` in the harvest, and a failed write is
    now fatal.
+5. **Only one task script harvested.** The trap went into `run-as-user.sh`, ffbox's default
+   task; every Discord run is launched with `--task discord-task.sh`, which is a different
+   PID 1 and inherited nothing. For the four hours between that commit and the ramdrive
+   becoming the only path, nothing noticed — then every Discord run began throwing its commits
+   away and reporting "the run changed no files" over work it had actually done. A task script
+   owns its own harvest; `test_every_task_script_harvests_its_own_workspace` now checks each
+   one for the call, a single trap covering `EXIT INT TERM`, and the licence return after it.
 
 ### Accepted limitation
 

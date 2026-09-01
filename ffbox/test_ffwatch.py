@@ -4728,6 +4728,38 @@ def test_the_classifier_runs_in_a_sandbox():
           "injection markers" in out.getvalue(), out.getvalue())
 
 
+def test_every_task_script_harvests_its_own_workspace():
+    """The workspace is a container tmpfs, so a task script that does not harvest loses the
+    run's work outright — and a task script is PID 1's whole world, so the hook cannot be
+    inherited from anywhere.
+
+    This is a rule about what must EXIST in each of several files, which is exactly the shape
+    that goes wrong quietly. It did: the in-container harvest landed in run-as-user.sh alone,
+    the ramdrive became the only path hours later, and every Discord run between then and the
+    fix reported "the run changed no files" over commits it had made and thrown away. Nothing
+    failed, nothing logged an error, and the reply looked like an idle turn.
+    """
+    print("every task script harvests")
+    for name in ("run-as-user.sh", "discord-task.sh"):
+        task = io.open(os.path.join(HERE, name), encoding="utf-8").read()
+        code = "\n".join(ln for ln in task.splitlines() if not ln.strip().startswith("#"))
+        check(f"{name} runs harvest-workspace.sh", "/ffbox/harvest-workspace.sh" in code)
+        # ON TERM, not just EXIT. A run killed at its agent ceiling is precisely the one whose
+        # commits are worth keeping, and that path arrives as a signal.
+        traps = [ln for ln in code.splitlines() if ln.strip().startswith("trap ")]
+        check(f"{name} installs exactly one trap, so nothing replaces anything",
+              len(traps) == 1, "; ".join(traps))
+        check(f"{name} harvests on a signal as well as on exit",
+              traps and all(sig in traps[0] for sig in ("EXIT", "INT", "TERM")), traps)
+        # The licence return is what the one trap displaced, so it has to be called by hand.
+        # Leaking a Unity seat per run is the failure this ordering exists to prevent.
+        handler = traps[0].split()[1].strip("'\"") if traps else ""
+        body = code.split(handler + "() {")[1].split("\n}\n")[0] if handler in code else ""
+        check(f"{name}'s trap returns the Unity licence too", "return_license" in body, body)
+        check(f"{name} harvests before it gives the licence back",
+              body.index("harvest-workspace.sh") < body.index("return_license"), body)
+
+
 def test_destructive_docker_calls_name_the_container():
     """Design section 14 rule 2, checked against the source because it is a rule about what
     must NOT exist: there is deliberately no 'find stray Unity processes and work out which are
@@ -6435,6 +6467,7 @@ def main():
         test_a_thread_in_an_ordinary_channel_is_swept,
         test_a_container_sees_only_its_own_conversation,
         test_the_classifier_runs_in_a_sandbox,
+        test_every_task_script_harvests_its_own_workspace,
         test_destructive_docker_calls_name_the_container,
         test_the_run_is_on_the_filtered_network,
         test_the_agent_names_the_branch_it_publishes,

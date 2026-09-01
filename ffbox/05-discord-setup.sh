@@ -252,7 +252,10 @@ for key, value in (
     # Left as "~/ffbox-state" unless overridden, so the file stays portable between machines
     # with different home paths.
     ("state_dir", os.environ.get("FFWATCH_STATE_DIR", "~/ffbox-state")),
-    ("base_ref", "develop"),
+    # Where a run's clone starts. Must match the first key of ffwatch's publish_bases, which is
+    # what the agent is told to branch from by default; disagreeing costs a cross-base checkout
+    # and a full Unity reimport inside every container.
+    ("base_ref", "master"),
     ("agent_secs", 900),
     ("warmup_secs", 3600),
     ("kill_grace_secs", 10),
