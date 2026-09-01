@@ -101,8 +101,8 @@ ffbox_workload_count() {
 # Is there room for one more? Prints the reason when there is not, so every caller reports the
 # same thing in the same words.
 #
-# CALL THIS WITH THE LOCK HELD. On its own it is a question whose answer expires immediately;
-# ffbox_workload_admit below is the one that is safe to act on.
+# CALL THIS WITH THE LOCK HELD -- ffbox_workload_lock_acquire below. On its own it is a question
+# whose answer expires the moment it is given.
 ffbox_workload_has_room() {
     _wl_have=$(ffbox_workload_count)
     _wl_want=$(ffbox_workload_max)
@@ -115,57 +115,16 @@ ffbox_workload_has_room() {
     return 1
 }
 
-# Run a command that creates ONE container, under the shared lock, if there is room for it.
-#
-#     ffbox_workload_admit agent docker run -d --label ffbox.workload=agent ...
-#
-# Returns the command's own status, or 77 when the box is full and the command was not run. 77
-# rather than 1 so a caller can tell "no room" from "docker failed", which are different things to
-# a scheduler: one is worth retrying in a moment and the other is not.
-#
-# THE LOCK IS HELD ACROSS THE CREATE, which is the whole point -- see the header. It is released
-# the moment docker returns, NOT when the container exits: every creator here starts a container
-# that outlives the command (`-d`, or a backgrounded foreground run), so the lock covers the gap
-# between counting and the container existing to be counted, and nothing longer.
-#
-# flock releases on process death, so a creator that is SIGKILLed mid-admission does not wedge the
-# other lane. That is why this is a lock file and not a marker file with a reaper.
-ffbox_workload_admit() {
-    _wl_kind=${1:?ffbox_workload_admit needs a kind}
-    shift
-    mkdir -p "$FFBOX_WL_CONFIG_DIR" 2>/dev/null || :
-    if ! command -v flock >/dev/null 2>&1; then
-        # Not fatal and loud about it. A box without flock still runs; it just cannot promise the
-        # two lanes will not both admit the last place at the same instant.
-        ffbox_wl_log "WARNING: no flock; admitting $_wl_kind without the shared lock"
-        ffbox_workload_has_room || { unset _wl_kind; return 77; }
-        "$@"
-        return $?
-    fi
-    (
-        flock 9 || exit 76
-        ffbox_workload_has_room || exit 77
-        "$@"
-    ) 9>>"$FFBOX_WL_LOCK"
-    _wl_rc=$?
-    if [ "$_wl_rc" -eq 76 ]; then
-        ffbox_wl_log "WARNING: could not take $FFBOX_WL_LOCK; refusing rather than overshooting"
-        _wl_rc=77
-    fi
-    unset _wl_kind
-    return $_wl_rc
-}
-
 # --- the long-running case ----------------------------------------------------------------------
 #
-# ffbox_workload_admit above runs a command and returns, which fits `docker run -d`. A COLD AGENT
-# RUN does not: its `docker run` stays in the foreground for the whole run, backgrounded by the
-# caller so a clock loop can watch it, and holding the lock for that long would stop the other lane
-# admitting anything for the length of a run.
+# ACQUIRE, DECIDE, CREATE, RELEASE -- as four steps rather than one call, because every creator
+# here needs to do something between deciding and creating: claim a slot, derive the machine id
+# from it, and record the container against it. A cold agent run also keeps its `docker run` in the
+# foreground for the whole run, backgrounded so a clock loop can watch it, and a lock held that
+# long would stop the other lane admitting anything for the length of a run.
 #
-# So the three steps are separate here, and the caller releases as soon as the container EXISTS
-# rather than when it exits. The window the lock has to cover is "counted, but not yet visible to
-# the next count", and that is all it covers.
+# The caller releases as soon as the container EXISTS, not when it exits. The window the lock has
+# to cover is "counted, but not yet visible to the next count", and that is all it covers.
 #
 # These use fd 9 in the CALLER's shell rather than a subshell, on purpose: a subshell cannot hand
 # back the `$!` of a process the caller has to `wait` on.
@@ -202,5 +161,103 @@ ffbox_workload_await_container() {
         sleep 0.5
     done
     unset _wl_name _wl_pid _wl_tries _wl_docker
+    return 0
+}
+
+# --- agent slots, and the Unity machine id they name ---------------------------------------------
+#
+# WHY THE AGENT LANE NEEDS A NUMBER AT ALL. Unity's licensing service identifies a machine by
+# /etc/machine-id, and game-ci's base image pins that to one constant for every container built from
+# it. That pin is right for a .ulf licence FILE, which is bound to a machine; it is wrong for the
+# personal SERIAL activation this project does, where two containers presenting the same id are ONE
+# machine holding ONE entitlement and the second concurrent activation dies with "Found 0
+# entitlement groups and 0 free entitlements", exit 198. ffgithubrunners measured that on
+# 2026-08-29 and fixed it per slot. The agent lane never did, and it does take a seat: whenever a
+# turn verifies (discord-task.sh's verify block) and on every plain `ffbox` run (run-as-user.sh).
+# At two concurrent runs the window was narrow enough never to have bitten. At six it is not.
+#
+# PER SLOT AND NOT PER CONTAINER, which is where this deliberately parts company with game-ci's
+# `dbus-uuidgen`. An activation registers a machine and only -returnlicense gives it back, so a
+# container that is SIGKILLed leaks one: with a random id per container every leak is permanent,
+# because that machine never comes back, while an id derived from a small recycled set bounds the
+# registrations and lets the next container on that number reuse the entitlement.
+#
+# THE TWO LANES CANNOT COLLIDE, and it costs nothing to be sure of it: ffgithubrunners derives from
+# 'ffghr-<host>-slot-<n>' and this derives from 'ffbox-<host>-agent-<n>'. Different strings, so
+# agent 2 and CI slot 2 are different machines, and neither lane has to know the other's numbering.
+FFBOX_SLOT_DIR=${FFBOX_SLOT_DIR:-$FFBOX_WL_CONFIG_DIR/slots}
+
+ffbox_agent_machine_id() {
+    _wl_n=${1:?ffbox_agent_machine_id needs a slot}
+    _wl_host=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo host)
+    printf 'ffbox-%s-agent-%s' "$_wl_host" "$_wl_n" | sha256sum | cut -c1-32
+    unset _wl_n _wl_host
+}
+
+# A claim is a file naming the container that holds the number. THE FILE IS NOT THE TRUTH -- the
+# container is. A number is free when its file is absent OR when the thing the file names is gone,
+# which is the same rule ffgithubrunners applies to its busy markers and for the same reason:
+#
+#     THE MARKER IS ONLY EVER TRUSTED FOR A CONTAINER THAT IS STILL RUNNING, which is what makes
+#     a stale one harmless in both directions.
+#
+# That is what makes this survive a SIGKILL with no reaper and no lock held for the length of a
+# run. It matters most for a STAGED container, which nothing outlives: `ffbox --stage-pool` starts
+# it detached and returns, so there is no process anywhere that could hold a lock on its behalf.
+#
+# THE FILE HOLDS AN ID ONCE THERE IS ONE, not a name, because `docker rename` moves the name and
+# dispatch renames every pooled container to its run. An id does not move.
+ffbox_slot_claim_file() { printf '%s/agent-%s\n' "$FFBOX_SLOT_DIR" "${1:?}"; }
+
+# Claim the lowest free number for a container about to be created, or return 1.
+# CALL THIS WITH THE ADMISSION LOCK HELD: choosing a number and creating the container that holds
+# it must be one act, or two creators pick the same one.
+ffbox_agent_slot_claim() {
+    _wl_for=${1:?ffbox_agent_slot_claim needs the container name}
+    _wl_docker=${FFBOX_DOCKER:-docker}
+    mkdir -p "$FFBOX_SLOT_DIR" 2>/dev/null || :
+    # One listing for the whole scan: ids and names of everything running, ours or not.
+    _wl_live=$( { "$_wl_docker" ps -q --no-trunc; "$_wl_docker" ps --format '{{.Names}}'; } \
+                2>/dev/null | tr '\n' ' ')
+    _wl_max=$(ffbox_workload_max)
+    _wl_i=1
+    while [ "$_wl_i" -le "$_wl_max" ]; do
+        _wl_f=$(ffbox_slot_claim_file "$_wl_i")
+        if [ ! -e "$_wl_f" ]; then
+            printf '%s\n' "$_wl_for" > "$_wl_f" && { printf '%s\n' "$_wl_i"; \
+                unset _wl_for _wl_docker _wl_live _wl_max _wl_i _wl_f; return 0; }
+        else
+            _wl_held=$(cat "$_wl_f" 2>/dev/null)
+            case " $_wl_live " in
+                *" $_wl_held "*) : ;;   # still held by something that is running
+                *)
+                    # Stale: whatever held it is gone, so the number and its entitlement come back.
+                    printf '%s\n' "$_wl_for" > "$_wl_f" && { printf '%s\n' "$_wl_i"; \
+                        unset _wl_for _wl_docker _wl_live _wl_max _wl_i _wl_f _wl_held; return 0; } ;;
+            esac
+        fi
+        _wl_i=$((_wl_i + 1))
+    done
+    unset _wl_for _wl_docker _wl_live _wl_max _wl_i _wl_f _wl_held
+    return 1
+}
+
+# Record the container's ID against a claim, once docker has told us what it is. Best effort: a
+# claim still holding a NAME is only wrong after a rename, and the next scan treats it as stale,
+# which costs a recycled number rather than a collision.
+ffbox_agent_slot_confirm() {
+    _wl_n=${1:?}; _wl_id=${2:-}
+    [ -n "$_wl_id" ] || { unset _wl_n _wl_id; return 0; }
+    printf '%s\n' "$_wl_id" > "$(ffbox_slot_claim_file "$_wl_n")" 2>/dev/null || :
+    unset _wl_n _wl_id
+    return 0
+}
+
+# Hand a number back the moment a creation fails, rather than leaving it claimed by a container
+# that never existed. The scan would recycle it anyway; this just does not make the next caller
+# wait for that.
+ffbox_agent_slot_release() {
+    [ -n "${1:-}" ] || return 0
+    rm -f "$(ffbox_slot_claim_file "$1")" 2>/dev/null || :
     return 0
 }

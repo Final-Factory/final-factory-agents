@@ -36,6 +36,35 @@ case "${FFBOX_MODE:-agent}" in
     *)     echo "ffbox: FFBOX_MODE must be 'agent' or 'ci', got '${FFBOX_MODE}'" >&2; exit 2 ;;
 esac
 
+# --- the Unity machine id ------------------------------------------------------------------------
+#
+# WRITTEN BEFORE ANYTHING ELSE STARTS, and by the only thing in here that is root.
+#
+# The header above says this lane deliberately does NOT randomize the id the way game-ci's action
+# does, and that stays true -- a fresh id per container makes every leaked seat permanent. What was
+# missing is the other half: the image's id is a CONSTANT shared by every container built from it,
+# so two runs that both reach an editor are one machine to Unity's licensing service and the second
+# activation dies with "Found 0 entitlement groups and 0 free entitlements", exit 198. That is not
+# hypothetical; ffgithubrunners measured it and entrypoint-ci.sh has done this since.
+#
+# The value is derived from a claimed SLOT on the host (ffbox/lib-workloads.sh) and passed in, so
+# the licence sees a small recycled set of machines rather than one per run. Empty means "leave the
+# image's alone", which is what a box that has not enabled this asks for.
+#
+# VALIDATED HERE because this runs as root and writes a file the whole container trusts. Anything
+# that is not 32 hex characters is ignored, loudly, and the image's own id stands.
+if [ -n "${FFBOX_MACHINE_ID:-}" ]; then
+    if printf '%s' "$FFBOX_MACHINE_ID" | grep -qE '^[0-9a-f]{32}$'; then
+        printf '%s\n' "$FFBOX_MACHINE_ID" > /etc/machine-id
+        mkdir -p /var/lib/dbus
+        ln -sf /etc/machine-id /var/lib/dbus/machine-id
+        echo "[ffbox] machine id set to $FFBOX_MACHINE_ID"
+    else
+        echo "[ffbox] WARNING: FFBOX_MACHINE_ID is not 32 hex characters; keeping the image's" >&2
+    fi
+fi
+unset FFBOX_MACHINE_ID
+
 WORKSPACE=${FFBOX_WORKSPACE:-/workspace}
 
 if [ ! -d "$WORKSPACE" ]; then

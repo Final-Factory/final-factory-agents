@@ -342,7 +342,19 @@ if [ -r "$FFBOX_DIR/lib-workloads.sh" ]; then
     . "$FFBOX_DIR/lib-workloads.sh"
 else
     echo "ffbox: WARNING: $FFBOX_DIR/lib-workloads.sh is missing; running with no shared ceiling" >&2
-    ffbox_workload_admit() { shift; "$@"; }
+    # STUBS THAT MEAN "BEHAVE THE WAY THIS DID BEFORE THE CEILING EXISTED", not stubs that refuse.
+    # A missing helper must not be able to stop the box running anything, so: room for everything,
+    # no lock, slot 0, and an EMPTY machine id -- which entrypoint.sh reads as "leave the image's
+    # own id alone", exactly what every container did until now.
+    ffbox_workload_lock_acquire() { return 0; }
+    ffbox_workload_lock_release() { return 0; }
+    ffbox_workload_has_room() { return 0; }
+    ffbox_workload_await_container() { return 0; }
+    ffbox_agent_slot_claim() { printf '0\n'; }
+    ffbox_agent_machine_id() { printf '\n'; }
+    ffbox_agent_slot_confirm() { return 0; }
+    ffbox_agent_slot_release() { return 0; }
+    FFBOX_WORKLOAD_LABEL=ffbox.workload
 fi
 if [ "$DIRECT" = 0 ] && [ -z "$TASK" ] && [ -z "$JOB_FILE" ] && [ -z "$STAGE_POOL$DISPATCH" ] \
    && [ -r "$FFWATCH_PY" ]; then
@@ -746,19 +758,56 @@ if [ -n "$STAGE_POOL" ]; then
     # ADMITTED LIKE ANY OTHER CONTAINER. A staged container has been asked to do nothing, and it
     # still holds a 22 GiB workspace; the ceiling is about what the box is carrying, not about
     # what the container has been told to do.
-    ffbox_workload_admit pool \
-    docker run --rm -d \
-        --name "ffbox-pool-${STAGE_POOL}" \
-        --label "$FFBOX_WORKLOAD_LABEL=pool" \
-        --label "ffbox.pool=${REF}" \
-        --label "ffbox.pool.id=${STAGE_POOL}" \
-        "${RUN_ARGS[@]}" \
-        -v "$POOL_IN:/ffbox/in:ro" \
-        -v "$OUT:/ffbox/out" \
-        -e "FFBOX_IN=/ffbox/in" \
-        -e "FFBOX_IDLE_TTL_SECS=$IDLE_TTL" \
-        "$IMAGE" >/dev/null
-    _rc=$?
+    #
+    # THE SLOT IS CLAIMED HERE, UNDER THE SAME LOCK, and it has to be: the id this container will
+    # present to Unity is derived from the number, and choosing one has to be inseparable from
+    # creating the container that holds it. It is claimed at STAGE time and kept for the whole
+    # idle life of the container, because /etc/machine-id is written when a container STARTS and
+    # this one starts hours before it has a turn.
+    _POOL_SLOT=""
+    _rc=0
+    if ! ffbox_workload_lock_acquire; then
+        echo "ffbox: could not take the admission lock; not staging" >&2
+        _rc=77
+    elif ! ffbox_workload_has_room; then
+        ffbox_workload_lock_release
+        _rc=77
+    else
+        _POOL_SLOT=$(ffbox_agent_slot_claim "ffbox-pool-${STAGE_POOL}")
+        if [ -z "$_POOL_SLOT" ]; then
+            # Every number is held by something that is running. The ceiling should have caught
+            # this first, so it means the two disagree -- say so rather than staging an unnumbered
+            # container that would collide with a live one at the licence.
+            echo "ffbox: no free agent slot; not staging" >&2
+            ffbox_workload_lock_release
+            _rc=77
+        else
+            _MID=$(ffbox_agent_machine_id "$_POOL_SLOT")
+            _CID=$(docker run --rm -d \
+                --name "ffbox-pool-${STAGE_POOL}" \
+                --label "$FFBOX_WORKLOAD_LABEL=pool" \
+                --label "ffbox.pool=${REF}" \
+                --label "ffbox.pool.id=${STAGE_POOL}" \
+                --label "ffbox.slot=${_POOL_SLOT}" \
+                "${RUN_ARGS[@]}" \
+                -v "$POOL_IN:/ffbox/in:ro" \
+                -v "$OUT:/ffbox/out" \
+                -e "FFBOX_IN=/ffbox/in" \
+                -e "FFBOX_IDLE_TTL_SECS=$IDLE_TTL" \
+                -e "FFBOX_MACHINE_ID=$_MID" \
+                "$IMAGE")
+            _rc=$?
+            if [ "$_rc" -eq 0 ]; then
+                # By ID rather than by name, because dispatch renames this container to its run
+                # and an id does not move.
+                ffbox_agent_slot_confirm "$_POOL_SLOT" "$_CID"
+                echo "[ffbox] agent slot ${_POOL_SLOT} (Unity sees this slot as its own machine)"
+            else
+                ffbox_agent_slot_release "$_POOL_SLOT"
+            fi
+            ffbox_workload_lock_release
+        fi
+    fi
     set -e
     # 77 is the ceiling refusing, not docker failing, and the keeper reads it to tell a box that
     # is full from a box that is broken. Neither is fatal to anything: the pool simply stays
@@ -828,14 +877,31 @@ else
         echo "ffbox: the box is at its container ceiling; not starting ffbox-${RUN_ID}" >&2
         exit 77
     fi
+    # The number this run presents to Unity, claimed inside the same lock for the same reason as
+    # the staged path above. A cold run reaches an editor whenever it verifies, and two runs on
+    # one machine id is the exit-198 collision ffgithubrunners already measured.
+    RUN_SLOT=$(ffbox_agent_slot_claim "ffbox-${RUN_ID}")
+    if [ -z "$RUN_SLOT" ]; then
+        ffbox_workload_lock_release
+        echo "ffbox: no free agent slot; not starting ffbox-${RUN_ID}" >&2
+        exit 77
+    fi
+    RUN_MACHINE_ID=$(ffbox_agent_machine_id "$RUN_SLOT")
+    echo "[ffbox] agent slot ${RUN_SLOT} (Unity sees this slot as its own machine)"
     docker run --rm \
         --name "ffbox-${RUN_ID}" \
         --label "$FFBOX_WORKLOAD_LABEL=agent" \
+        --label "ffbox.slot=${RUN_SLOT}" \
         "${RUN_ARGS[@]}" \
         -v "$OUT:/ffbox/out" \
+        -e "FFBOX_MACHINE_ID=$RUN_MACHINE_ID" \
         "$IMAGE" &
     DOCKER_PID=$!
     ffbox_workload_await_container "ffbox-${RUN_ID}" "$DOCKER_PID"
+    # The id, now that there is one. A container that never came up leaves the claim naming it,
+    # and the next scan recycles the number because nothing by that name is running.
+    ffbox_agent_slot_confirm "$RUN_SLOT" \
+        "$(docker inspect --format '{{.Id}}' "ffbox-${RUN_ID}" 2>/dev/null)"
     ffbox_workload_lock_release
 fi
 
