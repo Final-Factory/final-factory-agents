@@ -37,6 +37,22 @@ esac
 
 . "$HERE/lib/config.sh"
 
+# THE BOX'S CEILING, shared with the agent lane. `slots` above is still this lane's own limit on
+# how many of ITS places may be busy; this is the limit on how many containers the machine holds
+# altogether, agent runs and staged agent containers included. Both lanes create containers on the
+# same daemon and neither could see the other until this existed.
+#
+# Missing file is survivable for the same reason it is in ffbox: warn, no-op, carry on.
+if [ -r "$HERE/../lib-workloads.sh" ]; then
+    . "$HERE/../lib-workloads.sh"
+else
+    echo "slot.sh: WARNING: ../lib-workloads.sh is missing; running with no shared ceiling" >&2
+    ffbox_workload_lock_acquire() { return 0; }
+    ffbox_workload_lock_release() { return 0; }
+    ffbox_workload_has_room() { return 0; }
+    FFBOX_WORKLOAD_LABEL=ffbox.workload
+fi
+
 log() { printf '[slot %s] %s\n' "$SLOT" "$*"; }
 
 # --- state that teardown needs, set as we go -----------------------------------------------------
@@ -48,6 +64,10 @@ STAGE=""
 # exit path in between, teardown included. Defined here because teardown calls it.
 POOL_FD_OPEN=0
 pool_unlock() {
+    # The SHARED ceiling lock is taken alongside this one and covers the same window -- counted,
+    # then created -- so it is released here too and by every path that reaches here, teardown
+    # included. Unconditional: releasing one that was never taken is a no-op.
+    ffbox_workload_lock_release
     [ "$POOL_FD_OPEN" = 1 ] || return 0
     POOL_FD_OPEN=0
     exec 7>&-
@@ -203,8 +223,21 @@ wait_for_a_place() {
             continue
         fi
         if ffghr_pool_admit; then
-            log "starting a runner ($(pool_summary))"
-            return 0
+            # THIS LANE HAS A PLACE. Whether the BOX does is a second question, and it is asked
+            # under a second lock held across the same window -- see lib-workloads.sh. Ordering is
+            # always pool lock then ceiling lock; the agent lane takes only the ceiling lock, so
+            # there is no cycle to deadlock on.
+            if ffbox_workload_lock_acquire && ffbox_workload_has_room; then
+                log "starting a runner ($(pool_summary))"
+                return 0
+            fi
+            pool_unlock
+            if [ "$_announced" != full ]; then
+                log "this lane has a place, but the box is at its container ceiling; waiting"
+                _announced=full
+            fi
+            sleep "$POOL_POLL_SECONDS"
+            continue
         fi
         pool_unlock
 
@@ -331,6 +364,7 @@ log "starting $CNAME (workspace tmpfs $WORKSPACE_SIZE at $WORK_FOLDER, caps +$CA
 docker run -d \
     --name "$CNAME" \
     --hostname "$CNAME" \
+    --label "$FFBOX_WORKLOAD_LABEL=ci" \
     --label ffghr.supervisor.pid="$$" \
     --label ffghr.slot="$SLOT" \
     --label ffghr.runner.id="$RUNNER_ID" \

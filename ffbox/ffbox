@@ -329,6 +329,21 @@ fi
 # debugging the container itself.
 FFBOX_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 FFWATCH_PY=${FFWATCH_PY:-$FFBOX_DIR/ffwatch.py}
+
+# THE BOX'S CEILING, shared with the CI lane. Every container this script creates is counted
+# against it, and the count includes ffgithubrunners' containers because they hold the same kind of
+# workspace on the same daemon. lib-workloads.sh has the why, including why admission lives at the
+# point of creation rather than in either scheduler.
+#
+# Sourcing it is not optional, but a MISSING file is survivable: an old checkout, or somebody
+# running ffbox out of a directory holding only the script. Warn, define the no-op and carry on --
+# the alternative is a box that cannot start anything because a helper is absent.
+if [ -r "$FFBOX_DIR/lib-workloads.sh" ]; then
+    . "$FFBOX_DIR/lib-workloads.sh"
+else
+    echo "ffbox: WARNING: $FFBOX_DIR/lib-workloads.sh is missing; running with no shared ceiling" >&2
+    ffbox_workload_admit() { shift; "$@"; }
+fi
 if [ "$DIRECT" = 0 ] && [ -z "$TASK" ] && [ -z "$JOB_FILE" ] && [ -z "$STAGE_POOL$DISPATCH" ] \
    && [ -r "$FFWATCH_PY" ]; then
     ROUTE=("python3" "$FFWATCH_PY" "submit" "--wait")
@@ -728,8 +743,13 @@ if [ -n "$STAGE_POOL" ]; then
     # can serve with one `docker ps` and no bookkeeping of its own.
     echo "[ffbox] staging a pool container on ${REF} (ttl ${IDLE_TTL}s)"
     set +e
+    # ADMITTED LIKE ANY OTHER CONTAINER. A staged container has been asked to do nothing, and it
+    # still holds a 22 GiB workspace; the ceiling is about what the box is carrying, not about
+    # what the container has been told to do.
+    ffbox_workload_admit pool \
     docker run --rm -d \
         --name "ffbox-pool-${STAGE_POOL}" \
+        --label "$FFBOX_WORKLOAD_LABEL=pool" \
         --label "ffbox.pool=${REF}" \
         --label "ffbox.pool.id=${STAGE_POOL}" \
         "${RUN_ARGS[@]}" \
@@ -740,6 +760,13 @@ if [ -n "$STAGE_POOL" ]; then
         "$IMAGE" >/dev/null
     _rc=$?
     set -e
+    # 77 is the ceiling refusing, not docker failing, and the keeper reads it to tell a box that
+    # is full from a box that is broken. Neither is fatal to anything: the pool simply stays
+    # smaller than it was asked to be until something finishes.
+    if [ "$_rc" -eq 77 ]; then
+        echo "[ffbox] not staging: the box is at its container ceiling" >&2
+        exit 77
+    fi
     [ "$_rc" -eq 0 ] || { echo "ffbox: could not stage ffbox-pool-${STAGE_POOL}" >&2; exit "$_rc"; }
     echo "[ffbox] staged ffbox-pool-${STAGE_POOL}"
     exit 0
@@ -787,12 +814,29 @@ if [ -n "$DISPATCH" ]; then
     docker wait "ffbox-${RUN_ID}" > "$POOL_DIR/$DISPATCH/.container-rc" 2>/dev/null &
     DOCKER_PID=$!
 else
+    # THE CEILING, TAKEN THE LONG WAY ROUND. This `docker run` is not detached -- it stays in the
+    # foreground for the whole run so the clock loop below can watch it -- so the lock cannot wrap
+    # it the way it wraps a staged container. Acquire, count, start, wait for the container to
+    # exist, release: the window the lock has to cover is "counted but not yet countable", and
+    # holding it any longer would stop CI admitting anything for the length of a run.
+    if ! ffbox_workload_lock_acquire; then
+        echo "ffbox: could not take the admission lock; refusing rather than overshooting" >&2
+        exit 77
+    fi
+    if ! ffbox_workload_has_room; then
+        ffbox_workload_lock_release
+        echo "ffbox: the box is at its container ceiling; not starting ffbox-${RUN_ID}" >&2
+        exit 77
+    fi
     docker run --rm \
         --name "ffbox-${RUN_ID}" \
+        --label "$FFBOX_WORKLOAD_LABEL=agent" \
         "${RUN_ARGS[@]}" \
         -v "$OUT:/ffbox/out" \
         "$IMAGE" &
     DOCKER_PID=$!
+    ffbox_workload_await_container "ffbox-${RUN_ID}" "$DOCKER_PID"
+    ffbox_workload_lock_release
 fi
 
 TIMEOUT_KIND=
