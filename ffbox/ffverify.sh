@@ -56,15 +56,21 @@ TAG=
 ASSEMBLIES=${FFVERIFY_ASSEMBLIES-FFEditorTests}
 UNITY=${FFVERIFY_UNITY:-unity-editor}
 
-# THIS SCRIPT LAUNCHES THE EDITOR, SO THIS SCRIPT GETS THE LICENCE. discord-task.sh used to
-# acquire one at the top of every run whether or not anything Unity-shaped happened, which made
-# a question that changed no files pay two editor launches — one to activate, one for the trap
-# to return — after the agent had already answered.
+# THIS SCRIPT LAUNCHES THE EDITOR, SO THIS SCRIPT MAKES SURE THERE IS A LICENCE -- which is not
+# the same as taking one, and the difference is the whole history here. For a while this was the
+# only place that acquired, because acquiring at the top of every turn made a question that
+# changed no files pay two editor launches, one to activate and one for the trap to return, after
+# the agent had already answered.
 #
-# Sourcing unity-license.sh installs its own EXIT trap, so an agent-invoked ffverify returns
-# what it took, and a run that never calls this never holds a seat at all. ensure_unity_license
-# is a no-op when the environment already has what it needs, so the harness call after the
-# agent exits costs nothing extra.
+# SUPERSEDED 2026-09-01, and the shape that replaced it is better than either. The seat is now
+# taken UP FRONT again -- but by the pool, while it stages, before a request exists -- so a turn
+# does not pay for it and does not have to defer it. What reaches here is a run that already holds
+# one, and ensure_unity_license says so and returns.
+#
+# THE TRAP IS STILL SOURCED AND IT STILL MATTERS, but it no longer fires for a seat somebody else
+# took: return_license gives one back only to the pid that activated it, and this is a fork of the
+# turn task rather than the turn task itself. An agent-invoked ffverify that DOES take its own seat
+# still returns it, which is the case this was written for.
 if [ -r /ffbox/unity-license.sh ] && ! declare -F ensure_unity_license >/dev/null 2>&1; then
     . /ffbox/unity-license.sh
 fi
@@ -119,7 +125,10 @@ if [ -n "$ASSEMBLIES" ]; then
     ASM_ARGS=(-assemblyNames "$ASSEMBLIES")
 fi
 
-# The seat, taken as late as possible and only by a caller that is really about to use it.
+# The seat. Usually already held -- by the pool since 2026-09-01, or by the turn task on a cold
+# run -- in which case this logs one line and returns. It stays a real call for the case where
+# neither happened, because an editor started unlicensed produces nothing usable and says so 4000
+# lines into a log nobody reads.
 if declare -F ensure_unity_license >/dev/null 2>&1; then
     ensure_unity_license
 fi
