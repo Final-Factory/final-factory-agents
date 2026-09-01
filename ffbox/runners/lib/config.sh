@@ -3,7 +3,9 @@
 # Three layers, least specific first, exactly as ffbox does it:
 #
 #   1. the defaults below
-#   2. ~/.config/ffbox/githubrunners/config.json, if it exists
+#   2. the "githubrunner" section of ~/.config/ffbox/config.json -- ONE file for the whole box
+#      since 2026-09-01. The old githubrunners/config.json is still read when that section is
+#      absent, so a checkout can run ahead of its machine's migration.
 #   3. FFGITHUBRUNNERS_* in the environment
 #
 # The env layer is last so a one-off can override a machine's config without editing it, which is
@@ -31,26 +33,56 @@
 # that blast radius, so it lives one level down where nothing of ffbox's reads it.
 FFBOX_CONFIG_DIR=${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}
 FFGHR_CONFIG_DIR=${FFGITHUBRUNNERS_CONFIG_DIR:-$FFBOX_CONFIG_DIR/githubrunners}
-FFGHR_CONFIG=${FFGITHUBRUNNERS_CONFIG:-$FFGHR_CONFIG_DIR/config.json}
+# ONE CONFIG FILE FOR THE BOX, and this lane is a section in it rather than a file of its own.
+# Until 2026-09-01 there were two: ~/.config/ffbox/config.json for ffwatch and ffweb, and this
+# directory's config.json for the runners -- which meant two templates to keep in step with two
+# sets of defaults, and they had already drifted (the runner template still named the image
+# `ffghrunner:latest`, retired when both systems moved to one build).
+#
+# The old path is still READ when the section is absent, so a checkout that runs ahead of its
+# machine's migration keeps working. 05-discord-setup.sh folds one into the other and deletes the
+# old file; everything here only has to cope with both existing.
+FFGHR_CONFIG=${FFGITHUBRUNNERS_CONFIG:-$FFBOX_CONFIG_DIR/config.json}
+FFGHR_CONFIG_SECTION=${FFGITHUBRUNNERS_CONFIG_SECTION:-githubrunner}
+FFGHR_CONFIG_LEGACY=${FFGITHUBRUNNERS_CONFIG_LEGACY:-$FFGHR_CONFIG_DIR/config.json}
 FFGHR_SECRETS=${FFGITHUBRUNNERS_SECRETS:-$FFGHR_CONFIG_DIR/secrets.env}
 
 # Emit `_cfg_<key>=<value>` for every scalar in config.json, shell-quoted. Keys that are not
 # plain identifiers are skipped rather than being allowed to inject an assignment; the file is
 # ours, but eval'ing something derived from a file is worth being careful about regardless.
 _ffghr_load_json() {
-    [ -r "$FFGHR_CONFIG" ] || return 0
-    _out=$(python3 - "$FFGHR_CONFIG" <<'PY'
-import json, re, shlex, sys
-try:
-    with open(sys.argv[1]) as fh:
-        cfg = json.load(fh)
-except Exception as exc:
-    sys.stderr.write("ffgithubrunners: %s: %s\n" % (sys.argv[1], exc))
+    [ -r "$FFGHR_CONFIG" ] || [ -r "$FFGHR_CONFIG_LEGACY" ] || return 0
+    _out=$(python3 - "$FFGHR_CONFIG" "$FFGHR_CONFIG_SECTION" "$FFGHR_CONFIG_LEGACY" <<'PY'
+import json, os, re, shlex, sys
+
+path, section, legacy = sys.argv[1], sys.argv[2], sys.argv[3]
+
+
+def load(p):
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p) as fh:
+            return json.load(fh)
+    except Exception as exc:
+        sys.stderr.write("ffgithubrunners: %s: %s\n" % (p, exc))
+        sys.exit(1)
+
+
+cfg = load(path)
+if cfg is not None and not isinstance(cfg, dict):
+    sys.stderr.write("ffgithubrunners: %s: top level must be an object\n" % path)
     sys.exit(1)
-if not isinstance(cfg, dict):
-    sys.stderr.write("ffgithubrunners: %s: top level must be an object\n" % sys.argv[1])
-    sys.exit(1)
-for key, value in cfg.items():
+sub = (cfg or {}).get(section)
+if not isinstance(sub, dict):
+    # NO SECTION YET: either this machine has not been migrated, or it never had runner settings
+    # at all. Falling back to the old file is what lets the two states coexist for an update
+    # cycle; a machine with neither gets the defaults in this file, which is correct.
+    sub = load(legacy) or {}
+    if not isinstance(sub, dict):
+        sys.stderr.write("ffgithubrunners: %s: top level must be an object\n" % legacy)
+        sys.exit(1)
+for key, value in sub.items():
     if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key) or key.startswith('_'):
         continue
     if isinstance(value, bool) or value is None:
@@ -130,9 +162,9 @@ _ffghr_set CONTAINER_USER   container_user   ffbox-container
 _ffghr_set DOCKER_SOCK      docker_sock      /run/ffbox-container/docker.sock
 _ffghr_set WORK_FOLDER      work_folder      /opt/actions-runner/_work
 # THE SHARED SETTING, so a box holds one answer to "how big may a workspace get" rather than two
-# that drift. ~/.config/ffbox/config.json is read by ffbox for its agent workspace; this falls back
-# to the same key, and githubrunners/config.json still overrides when CI genuinely wants a
-# different ceiling from the agent.
+# that drift. The top level of config.json is what ffbox reads for its agent workspace; this falls
+# back to that, and a workspace_size inside the "githubrunner" section still overrides it when CI
+# genuinely wants a different ceiling from the agent.
 _ffghr_shared_cfg() {
     _sc=${FFBOX_CONFIG_JSON:-${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/config.json}
     [ -r "$_sc" ] || return 0

@@ -241,6 +241,29 @@ ffbox_path = os.environ["FFBOX_CONFIG_JSON"]
 discord = read(discord_path)
 ffbox = read(ffbox_path)
 
+# THE RUNNERS' OWN CONFIG FILE, folded into a section of this one and then removed. Same shape
+# as the ffwatch-block move below it and for the same reason: one file per box, so there is one
+# place to look and one template to keep honest.
+#
+# BEFORE THE SEEDING, so a machine's real values beat the defaults seeded further down -- a box
+# running six slots must not come out of this migration set back to one.
+#
+# _comment keys are dropped rather than carried: they were that file's documentation, and this
+# file documents itself through the "_help" block instead.
+ghr_legacy = os.path.join(os.path.dirname(ffbox_path), "githubrunners", "config.json")
+ghr_moved = []
+ghr_old = read(ghr_legacy)
+if ghr_old:
+    ghr_section = ffbox.setdefault("githubrunner", {})
+    if not isinstance(ghr_section, dict):
+        raise SystemExit(f'{ffbox_path}: "githubrunner" must be an object')
+    for key, value in ghr_old.items():
+        if key.startswith("_") or key in ghr_section:
+            continue
+        ghr_section[key] = value
+        ghr_moved.append(key)
+    ghr_moved.sort()
+
 moved = sorted(k for k in (discord.get("ffwatch") or {}) if k not in ffbox)
 for key, value in (discord.get("ffwatch") or {}).items():
     ffbox.setdefault(key, value)
@@ -310,6 +333,38 @@ for key, value in (
     ("watch", {
         "example_channel": {"kind": "ask", "forum": False, "venue": "public",
                             "engage": "mention", "ping": False},
+    }),
+    # ONE FILE FOR THE BOX. ffgithubrunners used to keep its own config.json beside its secrets,
+    # which meant two templates, two sets of defaults to keep in step, and they had drifted --
+    # the runner template still named the image `ffghrunner:latest`, retired when both systems
+    # moved to one build. These are lib/config.sh's real defaults, and everything absent from
+    # here falls back to that file, so this seeds the knobs an operator turns rather than all
+    # forty-odd internal paths.
+    #
+    # THE FULL SET IS DELIBERATELY NOT HERE. slots and idle_pool are the two anybody changes;
+    # the mirror addresses, network names, log directory and daemon root are infrastructure that
+    # lib/config.sh owns and nothing should be tempted to fork into a config file.
+    ("githubrunner", {
+        "slots": 1,
+        "idle_pool": 1,
+        "watchdog_minutes": 120,
+        "image": "ffbox:latest",
+        "labels": ["Linux", "X64", "ffgithubrunners"],
+        "org": "Final-Factory",
+        "runner_group_id": 1,
+        # The App's two ids, written here by 04-github.sh. They identify an App, they do not
+        # authenticate as one, so they are configuration rather than secrets; the private key is
+        # a file beside secrets.env. Null when a PAT is used instead.
+        "app_id": None,
+        "app_installation_id": None,
+        "memory": "72g",
+        "pids_limit": 4096,
+        "workspace_size": "40g",
+        "machine_id": "per-slot",
+        "cache_dir": "/opt/ffcache",
+        "cache_keep": 10,
+        "cache_quota": "250G",
+        "cache_sync": "standard",
     }),
 ):
     if key not in ffbox:
@@ -429,6 +484,15 @@ ffbox["_help"] = {
              "container itself. Passed in at stage time, so the deadline a container enforces is "
              "the one configured when it was staged; a change reaches existing ones as they "
              "retire. It stops applying the moment a request is dispatched into it.",
+    "githubrunner": "ffgithubrunners' settings, which lived in githubrunners/config.json until "
+             "2026-09-01 -- one file per box, so there is one place to look. Anything absent "
+             "falls back to the default in ffbox/runners/lib/config.sh, and "
+             "FFGITHUBRUNNERS_<KEY> in the environment beats both. The two anybody changes are "
+             "slots (the ceiling: the most CI jobs at once, under the box-wide "
+             "max_concurrent_runs above) and idle_pool (the standing cost: runners registered "
+             "and waiting while nothing is happening). `ffgithubrunners slots N` and `idle N` "
+             "write them here. The mirror addresses, network names and daemon paths are NOT "
+             "seeded on purpose: they are infrastructure lib/config.sh owns.",
     "pool_ref": "Which branch the pool stages. null follows base_ref, which is what almost "
              "everything should do — a pool staged on a branch no turn asks for serves nothing, "
              "and a turn that wants another branch launches cold rather than checking out the "
@@ -447,8 +511,19 @@ for alias in pinged:
 
 write(ffbox_path, ffbox)
 write(discord_path, discord)
+
+# ONLY NOW. write() is atomic and the values are in it, so the old file has nothing left to
+# lose -- doing this any earlier would put the app ids nowhere at all if the write then failed.
+if ghr_old:
+    try:
+        os.unlink(ghr_legacy)
+    except OSError as exc:
+        print(f"  could not delete {ghr_legacy}: {exc}; it is now ignored and can go by hand")
 if moved:
     print("[discord-setup]   moved out of the Discord config: " + ", ".join(moved))
+if ghr_moved:
+    print("[discord-setup]   folded githubrunners/config.json into \"githubrunner\" and deleted "
+          "it: " + ", ".join(ghr_moved))
 if renamed:
     print("[discord-setup]   renamed keys: " + ", ".join(renamed))
 print("[discord-setup]   seeded ffwatch keys: " + (", ".join(seeded) or "(nothing new)"))
