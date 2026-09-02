@@ -30,9 +30,9 @@ keeps working; `github.token_env` in `config.json` overrides the name entirely.
 `ffwatch`'s GitHub client makes exactly two requests, and the class has no merge method by
 design:
 
-- `POST /repos/Final-Factory/FinalFactory/pulls` (`ffbox/ffwatch.py:1747`)
-- `GET /repos/Final-Factory/FinalFactory/pulls?head={owner}:{branch}&state=open`
-  (`ffbox/ffwatch.py:1756`)
+- `POST /repos/Final-Factory/FinalFactory/pulls` (`ffbox/ffwatch.py:1999`)
+- `GET /repos/Final-Factory/FinalFactory/pulls?head={owner}:{branch}&state=all`
+  (`ffbox/ffwatch.py:2007`)
 
 Nothing else in `ffwatch.py` sends an `Authorization` header.
 
@@ -41,20 +41,31 @@ Resource owner: `Final-Factory`. Repository access: **only** `Final-Factory/Fina
 | Permission | Level |
 | --- | --- |
 | Pull requests | Read and write |
+| Contents | **Read** |
 | Metadata | Read (mandatory, added for you) |
 
 Every other permission stays at No access.
 
-Contents write is deliberately absent, and not merely unnecessary. Merging a pull request needs
-contents:write alongside pull-requests:write, so a token holding both is a token that can merge.
-Capped here, the process that reads text written by strangers and turns it into a pull request
-cannot merge one no matter what calls it — a third leg under "nothing merges, ever", beside the
-`GitHub` class having no merge method and the container holding no credential at all.
+CONTENTS **READ** IS REQUIRED AND WAS MISSING UNTIL 2026-09-02. `POST /pulls` reads the head and
+base refs before it will create anything, and a fine-grained token without contents:read cannot
+read them — the endpoint answers `422 Validation Failed` with `"not all refs are readable"`,
+while the `GET` above keeps working, so the token looks fine right up until the moment it has to
+open something. This box carried such a token and had therefore never opened a pull request; the
+publication reconcile is what surfaced it, by being the first thing that retried one.
+
+CONTENTS **WRITE** IS STILL DELIBERATELY ABSENT, and that is the line that matters. Merging a
+pull request needs contents:write alongside pull-requests:write, so a token holding both is a
+token that can merge; read alone cannot move a branch or merge anything. Capped here, the
+process that reads text written by strangers and turns it into a pull request cannot merge one
+no matter what calls it — a third leg under "nothing merges, ever", beside the `GitHub` class
+having no merge method and the container holding no credential at all.
 
 The branch push does not go through this token in any case. See below.
 
 Failure mode with too little: the run finishes, the branch is pushed, and the turn reports
-`pushed but no PR` with the API error.
+`pushed but no PR` with the API error. The reconcile records the same error and then stops
+asking until ffwatch restarts, so fixing the token means restarting ffwatch (or waiting for the
+next update) to have it retry.
 
 ## 2. The push credential — the one that can actually write code
 

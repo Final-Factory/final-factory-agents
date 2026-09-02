@@ -2084,6 +2084,12 @@ class Watcher:
     def __init__(self, cfg, dry_run=False):
         self.cfg = cfg
         self._bot_id = _UNSET
+        # BRANCHES GITHUB HAS ALREADY REFUSED ON THE MERITS, so the sweep asks once rather than
+        # every fifteen minutes forever. Per process and not persisted, deliberately: what puts
+        # a branch in here is usually something an operator then goes and fixes — a token
+        # missing the permission the endpoint needs, a base that is not there — and a restart is
+        # how the fix takes effect without anybody having to clear a flag.
+        self._reconcile_refused = set()
         self.dry_run = bool(dry_run or cfg.get("dry_run"))
         self.state_dir = cfg["state_dir"]
         self.db = Db(os.path.join(self.state_dir, "ffwatch.db"))
@@ -6502,6 +6508,8 @@ class Watcher:
         verdict = self.run_verdict(run)
         if not verdict.get("confident"):
             return {"branch": branch}
+        if branch in self._reconcile_refused:
+            return {"branch": branch}
         gh = GitHub(self.cfg)
         if not gh.token or not gh.repo:
             return {"branch": branch}
@@ -6528,8 +6536,20 @@ class Watcher:
                 self.pr_body(run["id"], conv, {"run_id": run["ffbox_run_id"]}, verdict),
                 base=base)
         except GitHubError as exc:
+            # A VALIDATION FAILURE IS NOT A BLIP. 403 and 429 never reach here — the client
+            # treats those as the secondary rate limit they usually are and retries — so what is
+            # left in the 4xx range is GitHub saying this request will not work: a base that is
+            # not there, a head it cannot read, a token without the permission the endpoint
+            # needs. Asking again in fifteen minutes produces the same error and nothing else,
+            # and the observed cost of not remembering was two failed POSTs every sweep for as
+            # long as the conversation stayed inside the window.
+            #
+            # RECORDED WHERE A HUMAN LOOKS, because "the harness is quietly not retrying this"
+            # is only a good outcome if the reason is somewhere they can read it.
+            if 400 <= (exc.status or 0) < 500:
+                self._reconcile_refused.add(branch)
             log(f"reconcile: GitHub refused a PR for {branch}: {exc}")
-            return {"branch": branch}
+            return self._no_pr(run["id"], conv, branch, f"GitHub refused the PR: {exc}"[:200])
 
         self.db.execute("UPDATE run SET pr_number=?, pr_url=?, no_pr_reason=NULL WHERE id=?",
                         (pr.get("number"), pr.get("url"), run["id"]))

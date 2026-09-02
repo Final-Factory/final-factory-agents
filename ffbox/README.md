@@ -1258,7 +1258,13 @@ and the agent cannot touch:
   from origin, only a run whose own push never succeeded: a merged PR takes its branch with it,
   and re-pushing every absent name would resurrect it every fifteen minutes forever.
   `reconcile_secs` (a week) drops conversations nobody has touched since — by then the branch is
-  a person's to decide about, not the harness's to keep retrying at them.
+  a person's to decide about, not the harness's to keep retrying at them. A pull request GitHub
+  refuses on the merits — a 4xx that is not the rate limit — is remembered for the life of the
+  process rather than retried each pass: what causes one is usually a permission an operator has
+  to go and change, and a restart is how that fix takes effect. The first sweep on the build
+  server found exactly that, and `CREDENTIALS.md` now carries it: `GH_PR_TOKEN` needs
+  contents:**read** or `POST /pulls` answers "not all refs are readable" while every other call
+  it makes keeps working.
 - **A pull request a human closed stays closed.** `pull_request_for` asks for every state, not
   just open ones, because "is there somewhere to add commits" and "has anybody already ruled on
   this branch" are different questions and the open-only filter silently answers the second one
