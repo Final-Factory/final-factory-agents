@@ -10,6 +10,13 @@
 #   ffbox/ffstatus.sh --watch    refresh every 5s until ^C
 #   ffbox/ffstatus.sh --json     the same reading as one JSON document
 #
+# AND WHAT THE BOX ITSELF HAS LEFT, because every number below is a count of containers and a
+# container is not the unit that runs out. RAM is. A workspace is a tmpfs, so it is resident
+# memory rather than disk -- Shmem in /proc/meminfo, reported here as `in workspaces` -- and the
+# ceiling is set on the assumption of roughly 22 GiB per container. A box at four of ten
+# containers and out of memory is a box whose ceiling is wrong, and that is only visible if the
+# two are on the same screen.
+#
 # TWO SOURCES, AND NEITHER IS BOOKKEEPING. Live state comes from `docker ps` on the ffbox daemon
 # for the same reason lib-workloads.sh counts there: a supervisor killed with SIGKILL leaves its
 # container running and its records stale, and the container is what still holds the RAM. Wanted
@@ -40,7 +47,12 @@ POOL_DIR=${FFBOX_POOL_DIR:-$HOME/ffbox-state/pool}
 # marker is what does: written by the supervisor that owns the container when its runner
 # takes a job. Trusted only for a container that is still running, which is automatic here
 # because the names come from `docker ps` -- a leftover marker names nothing we listed.
-FFGHR_STATE=${FFGITHUBRUNNERS_CONFIG_DIR:-${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/githubrunners}/state
+CONFIG_HOME=${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}
+FFGHR_STATE=${FFGITHUBRUNNERS_CONFIG_DIR:-$CONFIG_HOME/githubrunners}/state
+# THE CI LANE'S DRAIN FLAG, hardcoded relative to the config dir the way update_ffbox.sh
+# hardcodes it. The agent lane's is configurable (ffwatch's drain_switch) and comes out of the
+# config below; this one has no setting to read.
+FFGHR_DRAIN=${FFGITHUBRUNNERS_CONFIG_DIR:-$CONFIG_HOME/githubrunners}/drain
 
 # US, THE UNIT SEPARATOR, RATHER THAN A PIPE. Every field here is a name somebody else chose --
 # a container name, a git ref off a label -- and a ref may legally contain most punctuation. A
@@ -77,7 +89,7 @@ fi
 # A box with no config file must still show the numbers it is actually running under.
 read_config() {
     python3 - "$CONFIG" <<'PY' 2>/dev/null
-import json, sys
+import json, os, sys
 
 try:
     with open(sys.argv[1]) as fh:
@@ -108,6 +120,17 @@ for cls, d_idle, d_max in (("ffagent", 1, -1), ("ffdev", 1, 3)):
     print("%s_ref=%s" % (cls, block.get("pool_ref") or block.get("base_ref") or "master"))
     print("%s_net=%s" % (cls, block.get("network") or ("bridge" if cls == "ffdev" else "ffbox-net")))
 
+# WHERE THE AGENT LANE'S DRAIN FLAG LIVES. Configurable, so it is read rather than assumed:
+# ffwatch's own DEFAULTS carry this path and a box may have moved it.
+#
+# PRINTED ONLY WHEN THE CONFIG SETS IT. The fallback belongs in the shell, which knows what
+# $FFBOX_CONFIG_DIR was pointed at; a default of "~/.config/ffbox/draining" written here looked
+# right and sent every lookup to the real home directory even when the caller had moved the
+# config dir somewhere else, so a drained agent lane read as running.
+_drain = cfg.get("drain_switch")
+if _drain:
+    print("drain_switch=%s" % os.path.expanduser(_drain))
+
 ci = (cfg.get("githubrunner") or {}).get("pool") or {}
 print("ci_idle=%d" % max(0, num(ci.get("idle"), 1)))
 print("ci_max=%d" % max(0, num(ci.get("max"), 1)))
@@ -125,6 +148,63 @@ for _c in ffagent ffdev; do
     : "${CFG[${_c}_ref]:=master}"
 done
 : "${CFG[ci_idle]:=1}"; : "${CFG[ci_max]:=1}"
+: "${CFG[drain_switch]:=$CONFIG_HOME/draining}"
+
+# GiB with one decimal, the way `free -h` says it. Integer arithmetic on purpose: this runs on
+# every refresh of a --watch, and there is no reason to start awk for a division.
+# ROUNDED, NOT TRUNCATED, and the tenth is the reason this is spelled out rather than being a
+# division. ffweb renders the same numbers through Python, whose formatting rounds; a shell that
+# truncated printed 262.8G beside the page's 262.9G, which is exactly the kind of small
+# disagreement that makes an operator stop trusting both readings. Tenths first so the carry at
+# .95 lands in the whole number instead of printing a tenth of 10.
+human_kb() {
+    local kb=${1:-0} tenths
+    if [ "$kb" -ge 1048576 ]; then
+        tenths=$(( (kb * 10 + 524288) / 1048576 ))
+        printf '%d.%01dG' $((tenths / 10)) $((tenths % 10))
+    elif [ "$kb" -ge 1024 ]; then
+        printf '%dM' $((kb / 1024))
+    else
+        printf '%dK' "$kb"
+    fi
+}
+
+# --- what the machine itself has left -----------------------------------------------------------
+#
+# STRAIGHT OUT OF /proc, with no tool in between. `free` and `uptime` parse differently across
+# distributions and neither is present in every container this might be copied into; the files
+# they read have had the same format for twenty years.
+#
+# USED IS TOTAL MINUS AVAILABLE, not total minus free. Free excludes the page cache, which the
+# kernel hands back on demand, so it reads as a machine in trouble whenever it is merely warm.
+# MemAvailable is the kernel's own answer to "what could a new process actually get", and it
+# already accounts for the part of the cache that is pinned.
+#
+# SHMEM IS THE INTERESTING NUMBER HERE and it is why this section exists at all. Every workspace
+# is a tmpfs on /dev/shm, so a staged container's 22 GiB is resident memory that no amount of
+# cache pressure will reclaim -- it is not disk, and it is not counted anywhere else on this
+# screen.
+LOAD1= LOAD5= LOAD15= CORES= MEM_TOTAL_KB= MEM_AVAIL_KB= MEM_USED_KB= SHMEM_KB=
+
+read_machine() {
+    LOAD1= LOAD5= LOAD15= CORES= MEM_TOTAL_KB= MEM_AVAIL_KB= MEM_USED_KB= SHMEM_KB=
+    if [ -r /proc/loadavg ]; then
+        read -r LOAD1 LOAD5 LOAD15 _ < /proc/loadavg
+    fi
+    CORES=$(nproc 2>/dev/null) || CORES=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null) || CORES=
+    if [ -r /proc/meminfo ]; then
+        local key value
+        while read -r key value _; do
+            case "$key" in
+                MemTotal:)     MEM_TOTAL_KB=$value ;;
+                MemAvailable:) MEM_AVAIL_KB=$value ;;
+                Shmem:)        SHMEM_KB=$value ;;
+            esac
+        done < /proc/meminfo
+        [ -n "$MEM_TOTAL_KB" ] && [ -n "$MEM_AVAIL_KB" ] &&
+            MEM_USED_KB=$(( MEM_TOTAL_KB - MEM_AVAIL_KB ))
+    fi
+}
 
 human_secs() {
     local s=${1:-0}
@@ -132,6 +212,52 @@ human_secs() {
     if [ "$s" -ge 3600 ]; then printf '%dh%02dm' $((s / 3600)) $(((s % 3600) / 60))
     elif [ "$s" -ge 60 ]; then printf '%dm' $((s / 60))
     else printf '%ds' "$s"; fi
+}
+
+# --- is the box being worked on? -----------------------------------------------------------------
+#
+# WHY THIS IS ON THE HEADER LINE. An empty pool and a container count of zero mean two entirely
+# different things depending on the answer: a box mid-update is SUPPOSED to look empty, because
+# a drain is exactly "finish what you are doing and take nothing new". Without this, the healthy
+# middle of an update reads as an outage and somebody goes looking for a fault that is not there.
+#
+# THREE SIGNALS, MOST SPECIFIC FIRST. The systemd unit is the timer-driven path, which is how
+# this box updates every five minutes; the process check catches a hand-run update, which is how
+# an operator does it; the drain flags catch both the window where the updater is waiting for
+# work to finish AND a `ffwatch drain` somebody set by hand with no update behind it.
+#
+# THE UPDATE LOCK IS DELIBERATELY NOT ONE OF THEM. `flock -n` on $CONFIG_DIR/update.lock would
+# answer the question exactly -- and would also TAKE the lock for the instant it held it, and
+# update_ffbox.sh acquires that same lock with -n and exits "another update is already running"
+# when it cannot. A status command that can cause a scheduled update to be skipped is not a
+# status command.
+MAINT_STATE=running MAINT_REASON=
+
+read_maintenance() {
+    MAINT_STATE=running MAINT_REASON=
+
+    local unit
+    unit=$(systemctl is-active ffbox-update.service 2>/dev/null)
+    case "$unit" in
+        # `is-active` exits non-zero for a oneshot that is still ACTIVATING, which is what an
+        # update in progress looks like for its whole hour -- so the word is matched rather than
+        # the exit status, and --quiet cannot be used here.
+        active|activating|reloading)
+            MAINT_STATE=updating; MAINT_REASON="the ffbox-update unit is $unit"; return ;;
+    esac
+    if pgrep -f '/update_ffbox[.]sh' >/dev/null 2>&1; then
+        MAINT_STATE=updating; MAINT_REASON="update_ffbox.sh is running"; return
+    fi
+
+    local lanes= verb=is
+    [ -e "${CFG[drain_switch]}" ] && lanes="the agent lane"
+    if [ -e "$FFGHR_DRAIN" ]; then
+        [ -n "$lanes" ] && verb=are
+        lanes="${lanes:+$lanes and }the CI lane"
+    fi
+    if [ -n "$lanes" ]; then
+        MAINT_STATE=updating; MAINT_REASON="$lanes $verb drained -- launching nothing new"
+    fi
 }
 
 # --- gather -------------------------------------------------------------------------------------
@@ -145,6 +271,8 @@ CI_BUSY=0 CI_WAITING=0 WORKLOADS=0 WIDEST=4 GATHER_ERR=
 
 gather() {
     local now; now=$(date +%s)
+    read_machine
+    read_maintenance
     ROWS=(); INFRA=(); SPARES=(); RUNS=()
     CI_BUSY=0; CI_WAITING=0; WORKLOADS=0; WIDEST=4; GATHER_ERR=
 
@@ -219,7 +347,40 @@ gather() {
 
 # --- the terminal reading -------------------------------------------------------------------
 render_text() {
-    printf '\n%sffbox on %s%s  %s%s%s\n' "$B" "$(hostname -s)" "$N" "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$N"
+    local state_mark=$GRN
+    [ "$MAINT_STATE" = updating ] && state_mark=$YEL
+    printf '\n%sffbox on %s%s  %s%s%s  %s(%s)%s\n' \
+        "$B" "$(hostname -s)" "$N" "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$N" \
+        "$state_mark" "$MAINT_STATE" "$N"
+    # The reason on the next line, because "updating" alone sends somebody to the journal to
+    # find out which of the three things it is.
+    [ -n "$MAINT_REASON" ] && printf '  %s%s%s\n' "$DIM" "$MAINT_REASON" "$N"
+
+    # --- the machine ------------------------------------------------------------------------
+    if [ -n "$LOAD1" ] || [ -n "$MEM_TOTAL_KB" ]; then
+        printf '\n%sMACHINE%s\n\n' "$B" "$N"
+        if [ -n "$LOAD1" ]; then
+            # Amber once the one-minute average passes the core count: past that the queue is
+            # longer than the machine is wide. Integer part only -- this is a threshold, not a
+            # measurement, and ${x%.*} beats starting awk for it.
+            local load_mark=$N
+            [ -n "$CORES" ] && [ "${LOAD1%.*}" -ge "$CORES" ] 2>/dev/null && load_mark=$YEL
+            printf '  %-9s %s%s %s %s%s' "load" "$load_mark" "$LOAD1" "$LOAD5" "$LOAD15" "$N"
+            [ -n "$CORES" ] && printf '  %sacross %s cores%s' "$DIM" "$CORES" "$N"
+            printf '\n'
+        fi
+        if [ -n "$MEM_TOTAL_KB" ] && [ "$MEM_TOTAL_KB" -gt 0 ]; then
+            local pct=$(( MEM_USED_KB * 100 / MEM_TOTAL_KB ))
+            local mem_mark=$GRN
+            [ "$pct" -ge 75 ] && mem_mark=$YEL
+            [ "$pct" -ge 90 ] && mem_mark=$RED
+            printf '  %-9s %s%s of %s used (%s%%)%s' "memory" "$mem_mark" \
+                "$(human_kb "$MEM_USED_KB")" "$(human_kb "$MEM_TOTAL_KB")" "$pct" "$N"
+            [ -n "$SHMEM_KB" ] && printf '  %s%s of it in container workspaces%s' \
+                "$DIM" "$(human_kb "$SHMEM_KB")" "$N"
+            printf '\n'
+        fi
+    fi
 
     local box_max=${CFG[box_max]} colour=$GRN
     [ "$WORKLOADS" -ge "$box_max" ] && colour=$RED
@@ -284,6 +445,10 @@ render_text() {
 render_json() {
     {
         printf 'B%s%s%s%s\n' "$SEP" "$WORKLOADS" "$SEP" "${CFG[box_max]}"
+        printf 'T%s%s%s%s\n' "$SEP" "$MAINT_STATE" "$SEP" "$MAINT_REASON"
+        printf 'M%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+            "$SEP" "$LOAD1" "$SEP" "$LOAD5" "$SEP" "$LOAD15" "$SEP" "$CORES" \
+            "$SEP" "$MEM_TOTAL_KB" "$SEP" "$MEM_USED_KB" "$SEP" "$SHMEM_KB"
         local cls
         for cls in ffagent ffdev; do
             printf 'P%s%s%s%s%s%s%s%s%s%s\n' "$SEP" "$cls" \
@@ -304,7 +469,9 @@ import json, sys
 
 SEP = "\x1f"
 doc = {"host": sys.argv[1], "generated_at": sys.argv[2],
-       "box": {"used": 0, "max": 0}, "pools": [], "containers": [], "infrastructure": []}
+       "box": {"used": 0, "max": 0}, "machine": {},
+       "maintenance": {"state": "running", "reason": ""},
+       "pools": [], "containers": [], "infrastructure": []}
 
 def num(text):
     try:
@@ -319,6 +486,19 @@ for line in sys.stdin.read().splitlines():
     f = rest.split(SEP)
     if tag == "B":
         doc["box"] = {"used": num(f[0]), "max": num(f[1])}
+    elif tag == "T":
+        doc["maintenance"] = {"state": f[0] or "running", "reason": f[1]}
+    elif tag == "M":
+        # A load average is the one non-integer on this page. None rather than 0.0 when /proc
+        # was unreadable, so a consumer can tell "no answer" from "an idle machine".
+        def dec(text):
+            try:
+                return float(text)
+            except (TypeError, ValueError):
+                return None
+        doc["machine"] = {"load1": dec(f[0]), "load5": dec(f[1]), "load15": dec(f[2]),
+                          "cores": num(f[3]), "mem_total_kb": num(f[4]),
+                          "mem_used_kb": num(f[5]), "shmem_kb": num(f[6])}
     elif tag == "P":
         doc["pools"].append({"class": f[0], "idle": num(f[1]), "waiting": num(f[2]),
                              "busy": num(f[3]), "max": num(f[4])})
