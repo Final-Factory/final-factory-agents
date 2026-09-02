@@ -3802,15 +3802,18 @@ class Watcher:
                 continue
             d = self.pool_dir(pool_id)
             held = glob.glob(os.path.join(d, "claude", "projects", "*", "*.jsonl"))
+            if held and self.sweep_finished_spool(pool_id):
+                held = glob.glob(os.path.join(d, "claude", "projects", "*", "*.jsonl"))
             if held:
                 # ONCE PER SPOOL PER PROCESS. The reaper runs on every poll and this branch is
-                # taken every time until a restart sweeps the transcript, so saying it each pass
+                # taken every time until something sweeps the transcript, so saying it each pass
                 # buries every other line in the journal without adding a fact.
                 if pool_id not in Watcher._held_logged:
                     Watcher._held_logged.add(pool_id)
-                    log(f"pool: {pool_id} is gone but still holds a transcript; leaving it for "
-                        f"recovery to sweep")
+                    log(f"pool: {pool_id} is gone and still holds a transcript this pass could "
+                        f"not sweep; leaving it alone")
                 continue
+            Watcher._held_logged.discard(pool_id)
             if self._rmtree_spool(d):
                 gone += 1
                 # It is gone, so a future spool that somehow reused the id would be news again.
@@ -4076,6 +4079,47 @@ class Watcher:
             except OSError as exc:
                 log(f"pool: could not sweep {src}: {exc}")
         return moved
+
+    def sweep_finished_spool(self, pool_id):
+        """Take the transcript out of a spool whose run is OVER, so the reaper can delete it.
+
+        THE CASE NOBODY OWNED. pool_reap refuses to delete a spool holding a transcript, which
+        is right -- it is the only copy of that conversation's memory. It used to defer to
+        recover(), and recover() sweeps only the spools of runs it is RECOVERING, which is
+        `terminal_state IS NULL`. A run that FINISHED, whose container is gone, and whose
+        transcript did not make it home at the end of the run, fell between the two: the reaper
+        would not delete it and recovery would never look at it.
+
+        Found on the live box on 2026-09-02 -- three leaked spools, one of them 3.0M and
+        twenty-one hours old, every one belonging to a run whose terminal_state is 'done'. The
+        reaper had logged its refusal for one of them 33,644 times, which the once-per-process
+        guard then made quiet without making it stop. Quiet and leaking is worse than noisy and
+        leaking, so this is the half that actually stops it.
+
+        RETURNS whether it is this function's case at all, not whether it succeeded -- the
+        caller re-checks the directory, because a partial move still leaves something behind and
+        `sweep_session_out` reports its own failures.
+
+        TWO CASES ARE DELIBERATELY NOT OURS and both return False:
+
+          no run row     a staged container that died before it was ever dispatched. It has no
+                         conversation to sweep into, and anything in its claude directory
+                         belongs to nobody.
+          still running  terminal_state IS NULL. recover() owns that one, and it does more than
+                         move a file: it requeues the turn so the work is not lost. Sweeping it
+                         from here would take the transcript out from under that path.
+        """
+        run = self.db.one(
+            "SELECT r.id AS id, r.ffbox_run_id AS ffbox_run_id,"
+            " r.terminal_state AS terminal_state, t.conversation_id AS conversation_id"
+            " FROM run r JOIN turn t ON t.id=r.turn_id WHERE r.pool_id=?", (pool_id,))
+        if run is None or run["terminal_state"] is None:
+            return False
+        moved = self.sweep_session_out(pool_id, run["conversation_id"])
+        if moved:
+            log(f"pool: swept {moved} transcript(s) out of finished run "
+                f"{run['ffbox_run_id']}'s spool {pool_id}; it had been left behind")
+        return True
 
     def stage_attachments_into(self, pool_in, att_dir):
         """Copy what a player uploaded into the spool a staged container is already reading."""
