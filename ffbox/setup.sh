@@ -188,7 +188,7 @@ secrets_ready() {
 # The offline Unity licence. Absent is not a reason to refuse stage 3 -- everything else it does is
 # still worth doing -- but it IS a reason to say so plainly, because the first run that starts an
 # editor is where it would otherwise surface.
-UNITY_ULF_PATH=${FFBOX_UNITY_ULF_HOST:-$HOME/.config/ffbox/unity/Unity_lic.ulf}
+UNITY_ULF_PATH=${FFBOX_UNITY_ULF_HOST:-/opt/ffcache/unity/Unity_lic.ulf}
 unity_licence_ready() { [ -r "$UNITY_ULF_PATH" ]; }
 
 stage "0/7  secrets"

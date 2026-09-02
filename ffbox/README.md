@@ -521,6 +521,36 @@ An access token (`UNITY_ACCESS_TOKEN`) is accepted in place of the password and 
 it expires and is revocable without a password reset. It is also the way past 2FA, which
 `--username`/`--password` cannot handle.
 
+### One licence, and where it lives
+
+`/opt/ffcache/unity/Unity_lic.ulf`, owned by this account with group `ffbox-container`, setgid,
+`2770`. **There is exactly one copy and nothing syncs anything to anywhere.**
+
+It is not under `~/.config/ffbox` with the other configuration, and the reason is not taste. The
+bind mount is performed by the rootless Docker daemon, which runs as **ffbox-container** — a
+different account from the one running ffbox. `~/.config/ffbox` is mode 700, so that daemon cannot
+traverse it, and a licence there fails the *mount*: the container never starts at all. That took out
+both lanes on 2026-09-01 — CI runners looped registering and releasing, every runner showed offline,
+and jobs sat pending.
+
+So the split is by who has to read it, not by what kind of file it is:
+
+| | lives in | read by |
+|---|---|---|
+| `secrets.env` | `~/.config/ffbox`, mode 700 | the host only, never mounted |
+| `Unity_lic.ulf` | `/opt/ffcache/unity`, group `ffbox-container` | mounted into every container |
+
+`/opt/ffcache/entries` already had exactly this ownership for exactly this reason; the licence
+follows the pattern rather than inventing one.
+
+**Group-writable, not just readable**, because minting writes here *through a container* — the mint
+container's root maps to `ffbox-container` on that daemon, so it writes as the group.
+
+**Do not keep a second copy.** `mint` and `refresh` write only to the path above, so any other copy
+stops tracking within a day — a Personal `.ulf` refreshes roughly daily — while still looking
+authoritative. `status` warns if it finds the pre-relocation one under `~/.config`. Editing a copy
+does nothing; there is no sync, by design.
+
 ### Why the host does not mint it
 
 The natural question is whether the host could generate the licence, so no container ever sees a
