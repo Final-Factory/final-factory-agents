@@ -1136,6 +1136,21 @@ the skills merely advise:
   reply time `conversation.branch` is claimed either way and the two cases are
   indistinguishable from the row, so it is recorded on the run as `branch_existed` at the
   moment of the push and read back rather than inferred.
+- **A pull request the sweep opened is announced too.** The footer only ever reached a reply,
+  and the second look below has none: it finishes a branch an earlier turn stranded, usually on
+  the catchup tick with no turn running at all. Conversation 38 on 2026-09-02 is the shape —
+  branch pushed in an hour when the box held no pull-request token, so the reply said "no PR
+  could be opened"; the sweep found the pull request twenty minutes later and recorded it in the
+  run row, the conversation row and the daemon log, and told the thread nothing. So the sweep
+  now posts the same sentence out of the same `publish_facts` and the same `publish_footer`,
+  with the pull request appended only at a private venue — the split `compose_head` makes. It
+  addresses the thread rather than a person: nobody asked anything, so there is no mention and,
+  in a thread, no reply-to. Once only, because the pass that records the pull request is the
+  only one that reaches this — every later sweep returns at the recorded-PR guard. And never
+  for the run whose reply is still being composed: `finish_run` names it, so a pull request the
+  second look recovers for the turn in flight is left to that turn's own footer instead of being
+  said twice. A merged or closed pull request is recorded silently, because "pending dev review"
+  would be false of both.
 - **A turn stopped by a rate ceiling still answers, once.** `blocked` is terminal and never
   retried, so a job that hits its daily cap would otherwise lose its 👀 and go quiet forever.
   It gets a fixed one-line reply instead, composed on the host: no run, no container and no
@@ -1288,6 +1303,8 @@ and the agent cannot touch:
   server found exactly that, and `CREDENTIALS.md` now carries it: `GH_PR_TOKEN` needs
   contents:**read** or `POST /pulls` answers "not all refs are readable" while every other call
   it makes keeps working.
+  **What it opens, it says.** A pull request that arrives here has no reply to ride on, so the
+  sweep posts the footer itself; see "A pull request the sweep opened is announced too" above.
 - **A pull request a human closed stays closed.** `pull_request_for` asks for every state, not
   just open ones, because "is there somewhere to add commits" and "has anybody already ruled on
   this branch" are different questions and the open-only filter silently answers the second one

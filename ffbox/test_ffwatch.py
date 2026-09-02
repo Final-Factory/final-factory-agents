@@ -8631,6 +8631,93 @@ def test_the_reconcile_opens_the_pull_request_the_run_could_not():
           and GH_STATE["requests"][asked:] == [], GH_STATE["requests"][asked:])
 
 
+def _posts(case):
+    return [json.loads(r["payload_json"])["text"]
+            for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+
+
+def test_the_second_look_tells_the_thread_where_the_fix_went():
+    """A pull request the sweep opened is announced, because no reply is going to announce it.
+
+    OBSERVED ON THE BUILD SERVER, conversation 38, 2026-09-02. The branch was pushed in an hour
+    when the box held no pull-request token, so the reply said "no PR could be opened". The
+    sweep found the pull request twenty minutes later and recorded it — in the run row, in the
+    conversation row, in the daemon's log — and said nothing to the thread. The next message on
+    the thread was still arguing about the missing credential, and the person who reported the
+    bug was never told the fix had somewhere to be reviewed.
+
+    publish_footer is the answer to "where did my fix go", and it only ever reached a reply.
+    This is the same sentence on the path that has no reply.
+    """
+    print("publication: the second look tells the thread")
+    case = bug_case("reconcilesay", venue="private")
+    git_origin(case)
+    token = case.watcher.cfg["github"]["token"]
+    case.watcher.cfg["github"]["token"] = ""
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    branch = conv["branch"]
+    before = _posts(case)
+    check("the reply the turn posted says there is no pull request",
+          any("no PR" in t for t in before) and not any("pending dev review" in t
+                                                        for t in before), before)
+
+    case.watcher.cfg["github"]["token"] = token         # the credential arrives
+    check("the sweep opens it", case.watcher.reconcile_publications() == 1)
+    run = _latest_run(case)
+    said = _posts(case)[len(before):]
+    check("and the thread is told, in one message and no more", len(said) == 1, said)
+    check("in the words a reply would have used",
+          said[0] == (f"Fix created on `{branch}`, pending dev review"
+                      f" · PR #{run['pr_number']} {run['pr_url']}"), said[0])
+    check("addressed to the thread rather than to a person, and silent",
+          json.loads(case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")[-1]
+                     ["payload_json"]).get("mention") is None,
+          case.rows("SELECT * FROM outbound ORDER BY id")[-1]["payload_json"])
+
+    asked = len(_posts(case))
+    check("a second sweep says nothing, because the pull request is recorded now",
+          case.watcher.reconcile_publications() == 0 and len(_posts(case)) == asked,
+          _posts(case)[asked:])
+
+    # THE PUBLIC SHAPE DROPS THE LINK, exactly as compose_head does: a player reading a bug
+    # thread has nowhere to click it and the branch name is the part that costs them nothing.
+    case.watcher.db.execute("UPDATE turn SET venue='public' WHERE conversation_id=?",
+                            (conv["id"],))
+    case.watcher.announce_publication(
+        case.rows("SELECT * FROM conversation")[0], run["id"])
+    check("a public venue gets the branch and not the pull request",
+          _posts(case)[-1] == f"Fix created on `{branch}`, pending dev review",
+          _posts(case)[-1])
+
+
+def test_the_turn_that_gets_its_own_pull_request_back_says_it_once():
+    """The second look inside a turn is not announced twice.
+
+    finish_run calls reconcile_publication BEFORE composing the reply, so a pull request it
+    opens for the run in flight is already in the row publish_facts reads a moment later — the
+    footer says it, and a second message saying the same thing would be the harness telling the
+    thread twice. Only a pull request that lands on an OLDER run has no reply to ride on.
+
+    Arranged the way it happens: GitHub refuses publish()'s POST once, and the reconcile that
+    follows it in the same finish_run succeeds.
+    """
+    print("publication: the run that recovers its own pull request says it once")
+    case = bug_case("reconcilesame", venue="private")
+    git_origin(case)
+    GH_STATE["fail_post"].append(500)
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    run = _latest_run(case)
+    check("publish() could not open it, and the second look in the same turn did",
+          run["pr_number"] and run["no_pr_reason"] is None, run)
+    check("nothing was left armed on the mock", GH_STATE["fail_post"] == [],
+          GH_STATE["fail_post"])
+    footers = [t for t in _posts(case) if "pending dev review" in t]
+    check("the thread is told once, by the reply", len(footers) == 1, footers)
+    check("and that one line carries the pull request the second look opened",
+          f"· PR #{run['pr_number']} " in footers[0], footers[0])
+
+
 def test_the_reconcile_pushes_work_the_run_could_not():
     """The push half. A bundle on disk and a remote that was unreachable is recoverable work.
 
@@ -8901,6 +8988,8 @@ def main():
         test_the_updater_forces_softly_rather_than_standing_down,
         test_a_pull_request_a_human_closed_is_not_reopened,
         test_the_reconcile_opens_the_pull_request_the_run_could_not,
+        test_the_second_look_tells_the_thread_where_the_fix_went,
+        test_the_turn_that_gets_its_own_pull_request_back_says_it_once,
         test_the_reconcile_pushes_work_the_run_could_not,
         test_the_reconcile_re_runs_the_gate_rather_than_waiting_it_out,
         test_a_pull_request_github_refuses_on_the_merits_is_not_retried_forever,
