@@ -6787,6 +6787,48 @@ def test_a_verification_that_never_ran_does_not_read_as_one_that_failed():
 
 
 
+def test_the_transcript_is_shared_before_the_host_first_looks():
+    """The writer opens the transcript's mode, and it has to do it fast.
+
+    Claude Code creates the session JSONL 0600 as the container's own mapped subuid, so the host
+    cannot read it until the container chmods it. share_transcript_loop does that -- but it
+    starts one line before the agent is exec'd, when there is no transcript yet, so its first
+    pass finds nothing. At a flat five-second cadence the file then existed unreadable for the
+    rest of that sleep, and ffwatch polls every two seconds.
+
+    The tell was in the record: EXACTLY TWO "could not index the live transcript" warnings on
+    every pooled run (31, 32, 33, 37, 39, 41, 42, 43, 45, 46) -- the shape of a fixed window,
+    two polls inside one sleep, not of a failure. Nothing was lost; the live view was blind for
+    five seconds and the journal took two lines per run.
+
+    So the loop polls fast until the first transcript appears and settles afterwards. Asserted on
+    the source: this is shell, and the behaviour is a cadence rather than a value anything
+    returns.
+    """
+    print("task: the transcript is shared promptly")
+    task = io.open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
+    code = "\n".join(ln for ln in task.splitlines() if not ln.strip().startswith("#"))
+    loop = code.partition("share_transcript_loop() {")[2].partition("\n}")[0]
+
+    check("the loop has a fast phase before its steady one",
+          "sleep 0.2" in loop and "sleep 5" in loop, loop)
+    check("which ends as soon as a transcript exists",
+          "transcript_present" in loop, loop)
+    check("and the fast phase is bounded, so a run that never writes one stops spinning",
+          "-lt 150" in loop, loop)
+    # The steady cadence survives: it is what catches a compaction rewriting the path as a new
+    # 0600 inode, which is the case the loop existed for before any of this.
+    check("the steady loop still runs afterwards, for the compaction case",
+          loop.rstrip().endswith("done") and loop.count("share_transcript_now") >= 2, loop)
+    check("transcript_present is defined before the loop that calls it",
+          code.index("transcript_present()") < code.index("share_transcript_loop()"), None)
+    # And it is still only the transcripts: .claude.json, remote-settings.json and sessions/ are
+    # 0600 for their own reasons and nothing on the host reads them.
+    now = code.partition("share_transcript_now() {")[2].partition("\n}")[0]
+    check("and still only the transcripts are opened up",
+          "chmod -R" not in now and ".jsonl" in now, now)
+
+
 def test_the_reaper_says_a_held_spool_once():
     """A spool the reaper cannot delete is skipped on EVERY pass, and the reaper runs on every
     poll. Saying so each time buries the journal.
@@ -8100,6 +8142,7 @@ def test_the_mirror_is_only_written_inside_the_pipelines_own_namespace():
 def main():
     tests = [
         test_every_agent_container_carries_its_class,
+        test_the_transcript_is_shared_before_the_host_first_looks,
         test_the_reaper_says_a_held_spool_once,
         test_an_ffdev_turn_runs_under_ffdevs_numbers,
         test_the_two_agent_classes_are_configured_independently,

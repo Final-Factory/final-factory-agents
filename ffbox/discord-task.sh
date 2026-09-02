@@ -280,7 +280,46 @@ share_transcript_now() {
     return 0
 }
 
+# Has claude created the transcript yet? A glob rather than `ls`, so a directory holding
+# nothing costs no process.
+transcript_present() {
+    local d="$CLAUDE_CONFIG_DIR/projects"
+    local f
+    for f in "$d"/*/*.jsonl; do
+        [ -e "$f" ] && return 0
+    done
+    return 1
+}
+
+# TIGHT UNTIL THE FILE EXISTS, THEN SETTLE, and the first half is the whole point.
+#
+# This loop starts one line before claude is exec'd, so its first pass runs when there is no
+# transcript to share -- the file appears a moment later, at 0600, and at a flat five-second
+# cadence it then sits unreadable until pass two. ffwatch polls every two seconds, so the host
+# gets two or three failed reads in that window and logs a PermissionError for each.
+#
+# Measured across every pooled run in the record (runs 31, 32, 33, 37, 39, 41, 42, 43, 45, 46):
+# EXACTLY TWO warnings each, every time, which is the shape of a fixed window rather than a
+# failure -- two ffwatch polls at two seconds inside one five-second sleep. The transcript was
+# always indexed correctly from the third poll on, so this was never lost data; it was a
+# five-second hole in the live view and two lines of noise per run.
+#
+# Polling every 200ms until the first transcript appears closes it to under a second. After
+# that the mode is sticky and the five-second cadence is only there to catch a compaction
+# rewriting the path as a new 0600 inode, which is what it was always for.
+#
+# THE FAST PHASE IS BOUNDED. A run whose agent dies before writing anything, or one whose
+# transcript never appears for any other reason, must not spin here for the length of the run:
+# after 30 seconds it gives up on seeing a first file and falls through to the ordinary loop,
+# which goes on covering the compaction case either way.
 share_transcript_loop() {
+    local waited=0
+    while [ "$waited" -lt 150 ]; do
+        share_transcript_now
+        transcript_present && break
+        waited=$((waited + 1))
+        sleep 0.2
+    done
     while :; do
         share_transcript_now
         sleep 5

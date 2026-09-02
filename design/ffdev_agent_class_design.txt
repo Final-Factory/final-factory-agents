@@ -463,6 +463,9 @@ Live, on the box, after the deploy: an ffdev prompt from the page dispatches int
 container and not an ffagent one (`ffwatch pool` before and after, and the run row's `pool_id`),
 and a second turn on that conversation goes the same way without being asked.
 
+BOTH CONFIRMED on 2026-09-02, with three containers warm on one branch and only their class to
+tell them apart. See the status block in the tasks file for the journal trace.
+
 
 14. Open
 --------

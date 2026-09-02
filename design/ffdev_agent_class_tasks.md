@@ -8,25 +8,61 @@ config seeding.
 
 Effort: **S** under an hour, **M** an afternoon, **L** a day or more.
 
-## Status, 2026-09-01
+## Status: IMPLEMENTED and verified on live traffic, 2026-09-02
 
-**A through G are implemented and every offline suite passes** — `test_ffwatch.py`,
-`test_ffweb.py`, `test_golden_lock.py`, `runners/test_pool.sh`, `runners/test_pin.sh`.
+A through G are implemented, H1-H4 are verified on the live box, and **H5 is closed as
+obsolete** rather than done — see below. Every offline suite passes: `test_ffwatch.py`,
+`test_ffweb.py`, `runners/test_pool.sh`, `runners/test_pin.sh`. (`test_golden_lock.py` no
+longer exists; master removed it with `update-golden.sh`.)
 
-Six new tests cover the change: the classes resolve independently (A6), every agent container
-carries its class label (B4), each class counts only its own containers and the keeper tops the
-two up separately (C7), a conversation's class is settled when it opens and survives to turn 2
-(D5), an ffdev turn reaches ffbox on ffdev's clocks and records them in job.json (E8), and the
-dropdown is on the prompt box and nowhere else (F5). Three existing tests changed with the
-behaviour: the pool-admission test is now per class, the cold-fallback test carries classes, and
-`test_a_cold_launch_short_of_memory_evicts_a_staged_container` became
-`test_a_launch_never_destroys_a_warm_container`.
+Deployed by the self-updater at 2026-09-02 00:07, `f75820d -> 4ca6e7d`. The migration ran
+clean: schema **v14** (v13 was taken by the attach watermark while this was in flight),
+`conversation.agent_class` present, all 49 existing conversations backfilled to `ffagent`,
+zero NULLs.
 
-The `ffdev` section is in this box's `~/.config/ffbox/config.json` as well as in the template.
-The live services run from `/opt/final-factory-agents`, a different checkout, so nothing here is
-live yet.
+**What the live verification actually showed.** Conversation 50 was opened as ffdev from the
+web page. Three containers were warm at that moment, all staged on `master`, identical but for
+their class -- ffagent `3cb3c8d5`, ffdev `111f4475`, ffagent `5091d7d3`. The turn took the
+ffdev one:
 
-**H is not done and cannot be**: it needs this checkout deployed and the daemon restarted.
+    00:07:48  pool: staging ffdev 111f4475 on master
+    00:11:56  run d50t1-a2574a1a: agent=ffdev lane=dev ... pooled
+    00:11:56  pool: staging ffdev d7919721 on master
+
+and the keeper immediately restaged ffdev rather than a third ffagent. The continuation (turn
+2, run `d50t2-fecc8a54`) took ffdev container `ea559019` **without being asked** -- nothing on
+the follow-up path carries a class -- resumed the same session id with no host-rendered
+summary standing in, and the agent confirmed the context survived. job.json on both runs records
+`turn.agent_class: ffdev` with ffdev's clocks.
+
+**H5 is obsolete, not skipped.** It asked for a full box to be observed queueing rather than
+evicting. What it was really guarding is the ABSENCE of an action, and that is already pinned
+where it can regress: `test_a_launch_never_destroys_a_warm_container` asserts `launch()`
+contains no `pool_drop`, no `pool_warm` and no `pool_has_room`, and that nothing anywhere asks
+`pool_has_room` for zero containers. There is no code left that could evict, so there is no
+behaviour under contention to discover -- a full box has only the queueing path to take.
+Manufacturing saturation on a live build server to watch nothing happen is not worth the
+containers it would cost.
+
+## Follow-ups found while verifying, and their state
+
+- **The live transcript window: FIXED (2026-09-02).** Every pooled run logged exactly two
+  `could not index the live transcript ... PermissionError` warnings. Not a broken index, as
+  first reported here: `share_transcript_loop` starts one line before the agent is exec'd, so
+  its first pass finds no transcript, and at a flat five-second cadence the file then existed
+  at 0600 for the rest of that sleep while ffwatch polled every two seconds. Two polls, two
+  lines, every run. The loop now polls every 200ms until the first transcript appears (bounded
+  at 30s) and settles into the five-second cadence afterwards, which is what covers a
+  compaction rewriting the path as a new 0600 inode. Measured on a standalone harness: shared
+  250ms after the file appears, against a window of up to five seconds.
+- **Leaked pool spools: OPEN.** Three directories on the live box that nothing will ever
+  remove -- `13c6506a` (3.0M, holds a transcript), `2819f072` (146K) and `9c82d7c0` (166K).
+  All three belong to runs whose `terminal_state` is `done`. `pool_reap` skips the first
+  because it holds a transcript and defers to "recovery", but `recover()` only sweeps spools
+  belonging to runs with `terminal_state IS NULL` -- of which there are none -- so that
+  deferral never comes. The other two fail `_rmtree_spool` with "Directory not empty" on
+  subdirectories owned by the container's subuid. Both branches log once per process now, so
+  the leak is quiet rather than noisy, which is a fix to the noise and not to the leak.
 
 ## What already exists
 
@@ -208,23 +244,22 @@ Worth knowing before estimating.
   start") — rewrite it to say the turn queues instead.
 - **G2** The `_help` text in config.json (via A5) and the `--help` strings in ffwatch and ffbox.
 
-## H — verify on the box (S, but only after a deploy)
+## H — verify on the box (DONE, except H5 which is obsolete)
 
-Design section 13's live half. Offline tests cover every branch of the routing; none of them
-proves a real ffdev container gets built, staged and dispatched into.
-
-- **H1** After the restart, `python3 ffbox/ffwatch.py pool` shows two blocks and stages one of
-  each class. `docker ps --filter label=ffbox.agent.class` shows the label on both.
-- **H2** An ffdev prompt from the web page dispatches into the ffdev container and not the ffagent
-  one: `ffwatch pool` before and after, and the `pool_id` on the run row matching the ffdev
-  container's id.
-- **H3** The second turn of that conversation goes to ffdev without being asked — the dropdown is
-  not offered on the reply box, and nothing in the follow-up path carries a class.
-- **H4** An ffagent prompt in the same window still claims an ffagent container, so the two are
-  actually separate rather than both resolving to whatever is warm.
-- **H5** Fill the box (CI plus runs) and confirm a queued turn WAITS instead of a warm container
-  disappearing — the E4 behaviour, on real traffic. This is the one that cannot be faked offline,
-  because what it asserts is the absence of an action.
+- **H1** ✓ `ffwatch pool` reports two blocks and both classes stage; `docker ps --filter
+  label=ffbox.agent.class` shows the label on each. (Run the CLI with `DOCKER_HOST` set, or it
+  talks to the wrong daemon and reports zero staged — the systemd unit supplies it.)
+- **H2** ✓ An ffdev prompt from the page dispatched into ffdev container `111f4475` while two
+  ffagent containers sat warm on the same branch.
+- **H3** ✓ Turn 2 of that conversation took ffdev `ea559019` without being asked, resumed the
+  same session id, and carried its context.
+- **H4** ✓ ffagent conversations kept claiming ffagent containers throughout.
+- **H5** ~~Fill the box and confirm a queued turn waits~~ — **OBSOLETE.** It was written to
+  observe the absence of an eviction under contention, and there is no longer any code that
+  could evict: `test_a_launch_never_destroys_a_warm_container` pins that `launch()` holds no
+  `pool_drop`, no `pool_warm` and no `pool_has_room`, and that nothing asks `pool_has_room` for
+  zero containers. A full box has only the queueing path left to take, so saturating a live
+  build server would demonstrate nothing the test does not already hold.
 
 ## Verified as needing no change
 
