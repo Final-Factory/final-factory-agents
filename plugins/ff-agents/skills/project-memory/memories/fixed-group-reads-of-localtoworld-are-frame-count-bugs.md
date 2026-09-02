@@ -53,19 +53,28 @@ fixed it by writing the matrix itself; the spawn path had no such fix.
    no KNN component (`PlayerAuthoring.cs:193-200`); the player's participation lives on the
    heartbeat-driven `PlayerSimulationObject` (`PlayerSimulationObject.cs:79-83`).
 
-5. The class is GUARDED at the reader side since game-repo `fbac32eb4` (2026-09-01, 055 R37g):
-   `Assets/Tests/Transforms/FixedGroupLocalToWorldReaderGuardTest.cs` classifies every
-   `FinalFactoryFixedStepSystemGroup<>` pre-/post-transform-pass from its attribute chain by
-   reflection, and keeps a CENSUS of every system in a pre-pass fixed group
-   (Initialization/Early/PreTransform/ConnectorMovement) that reads `LocalToWorld`, detected by
-   the union of a reflection channel (fields of the system and nested types, generics flattened)
-   and a comment-stripped source channel. A new reader trips it; the fix is to derive the pose
-   like `KnnChunkPoses.Read`, or add a census entry with the file:line read site and a reason.
-   Post-pass readers are excluded because their own frame's pass precedes them. The census had 26
-   entries at landing, 24 `Unreviewed` (pinned count) — adjudicating an entry means flipping its
-   Status and decrementing the pin, never loosening the detector. Lesson from the leg's design: a
-   guard proposed alongside a fix design that was later SUPERSEDED (writer-side → reader-side)
-   guards the wrong invariant; re-derive the guard from the fix that landed.
+5. The class is CLOSED TWICE since game-repo `8ae83fc21` (2026-09-02, 055 R37g):
+   - (a) `HeartbeatTransformComposeSystem` (`Assets/Scripts/FFSystems/Transforms/`,
+     `FFFixedInitializationGroup` OrderFirst) reruns `LocalToFFWorldSystem`'s own two jobs at the
+     start of every heartbeat, filtered to chunks whose LocalTransform/PostTransformMatrix
+     changed since the per-frame pass last ran, so every fixed group reads composed matrices
+     whatever the frame count (~0.002 ms per pass in the 034 profiles); (b) readers that do NOT
+     write `LocalTransform` derive the pose anyway — `KnnChunkPoses` (chunk-shaped) or
+     `EntityWorldPose` (lookup-shaped, `FFSystems/Knn/`), with
+     `DeterministicEntityPosition.Resolve`/`ResolveHit` overloads for player substitution.
+   - THE RULE THAT COST A LEG: a job that WRITES `LocalTransform` in parallel (`LinearMotionJob`,
+     `ChaseJob`) must NOT derive another entity's pose from a `ComponentLookup<LocalTransform>` in
+     the same job. Unity rejects it at schedule time as aliasing (the writeable
+     `ComponentTypeHandle<LocalTransform>` "is the same ComponentLookup" as the lookup — 21
+     fixtures failed), and for an integrator it is a genuine race: the looked-up entity may be
+     another mover mid-integration on another thread, so the read returns a pre- or
+     post-integration pose by thread timing. Those jobs need the START-of-heartbeat pose, which a
+     composed `LocalToWorld` is; they keep reading it under the sweep's guarantee.
+     `[NativeDisableContainerSafetyRestriction]` would have silenced the check and shipped the
+     race.
+   - `FixedGroupLocalToWorldReaderGuardTest` keeps the census (22 entries, all Reviewed, pin 0);
+     the sweep is listed as the writer it is; a new pre-pass reader still fails the suite until
+     derived or reviewed.
 
 Sibling classes: [[055-liveness-and-comparison-surface-lessons]] (the R34b/R35 KD-tree INPUT-ORDER
 fork — same system, different input property) and

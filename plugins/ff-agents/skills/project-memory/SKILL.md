@@ -74,6 +74,7 @@ worktrees and apply to ALL branches.
 - [Mirror implementations need a golden fixture](memories/mirror-implementation-golden-fixture.md) — a report-only set (or any logic) reimplemented in more than one language (C#/shell/python) drifts silently without a shared golden fixture pinned in every mirror, plus a test that they agree
 - [Hand-rolled test double must mirror or say so](memories/hand-rolled-test-double-must-mirror-or-say-so.md) — a test double that deliberately reproduces a production shape (055 R37 KnnLateSpawnTransformPassWitnessTest mirroring AttackingShipSpawnerSystem) must name the real-system test covering the actual code path, or the mirror can go vacuous silently when either side changes
 - [`cmd | tee log || true` clobbers PIPESTATUS](memories/shell-tee-pipestatus.md) — the exit code is always 0 regardless of `cmd`'s real result; use `set +e`/`set -e` around the pipe instead
+- [Guard tests follow the landed fix, not the proposed one](memories/guard-tests-follow-the-landed-fix-not-the-proposed-one.md) — a guard written alongside a proposed fix design encodes that design's invariant (055 R37: a writer-side guard would have failed the reader-side fix that actually landed at `7304103d6`); re-derive from what shipped, and treat a census guard's unreviewed count as the deliverable to adjudicate, not noise to silence
 
 ## Gameplay diagnosis & live-test recipes
 
