@@ -1353,6 +1353,19 @@ def ack_local_id(turn_id):
     return f"ack:{turn_id}"
 
 
+def ack_pending_local_id(discord_id):
+    """The `local_id` an acknowledgement wears between going out and its turn existing.
+
+    KEYED ON THE MESSAGE, because at the moment the mark is sent there is no turn to key it on
+    — that is the whole point of sending it then — and because the message is the thing that
+    survives resettle(). The selector can move a batch into a different conversation or split it
+    into a new one, and the mark follows the message into whichever conversation ends up
+    answering it. claim_ack re-keys the row to `ack:<turn_id>` once there is a turn, so
+    clear_ack goes on reading exactly one shape.
+    """
+    return f"ack-msg:{discord_id}"
+
+
 def ack_off_local_id(turn_id):
     """Marker on the removal, so a turn cannot queue two of them."""
     return f"ack-off:{turn_id}"
@@ -3683,21 +3696,166 @@ class Watcher:
         ids = ",".join(str(m["id"]) for m in msgs)
         self.db.execute(f"UPDATE message SET gate='none', gate_reason=? WHERE id IN ({ids})",
                         (reason[:300],))
+        # Anything already marked gives the mark back. Only a split can get here wearing one;
+        # see clear_marks.
+        self.clear_marks(msgs)
         log(f"conversation {conv['id']}: no turn for {len(msgs)} message(s) — {reason}")
         return None
 
+    # ======================================================================================
+    # the acknowledgement
+    # ======================================================================================
+    #
+    # 👀 MEANS "I HAVE DECIDED TO ANSWER THIS", and it is worth only what its promptness is
+    # worth. It used to be queued at the END of create_turn, which put it behind resettle() --
+    # and resettle is a Claude call. Measured on the build server 2026-09-02: a ping to
+    # conversation 34 was ingested at 21:14:12 and marked at 21:14:31, and the nineteen seconds
+    # between were one haiku selector call deciding WHICH conversation the message continues.
+    # Every message in the journal carrying an `S4 band` line paid 12 to 19 seconds for it;
+    # every message without one was marked in the same second it was ingested.
+    #
+    # So the mark now goes on before the selector runs. What makes that safe is that the two
+    # decisions are independent: the selector answers WHERE the message files, and the mark
+    # answers WHETHER we are answering it, which for a forced turn is settled by
+    # always_a_turn() from facts about the messages themselves.
+
+    def mark_working(self, conv, msg):
+        """Put the 👀 on this message now. Returns the outbound row id, or None.
+
+        SENT HERE RATHER THAN LEFT FOR THE NEXT send_pending, because the caller is about to
+        block: create_turn goes straight from this into resettle(), which is fifteen seconds of
+        model call, and a row queued but not sent would sit behind exactly the wait this exists
+        to get in front of. It goes out through _send_row, so it passes the same kill switch,
+        dry-run, approval queue, backoff and rate limits the batch sender applies.
+
+        IDEMPOTENT ON THE MESSAGE. A conversation whose batch the selector splits gets a second
+        create_turn on the next pass for the half that moved; finding the row already there is
+        the normal case, not an error, and Discord treats a repeated PUT of the same reaction as
+        a no-op anyway.
+        """
+        if is_local_conversation(conv):
+            return None
+        local_id = ack_pending_local_id(msg["discord_id"])
+        existing = self.db.one("SELECT id FROM outbound WHERE local_id=? ORDER BY id DESC"
+                               " LIMIT 1", (local_id,))
+        if existing is not None:
+            return existing["id"]
+        nonce = self.record_outbound(None, conv["id"], "react", {
+            "channel": reply_channel(conv), "message": msg["discord_id"],
+            "emoji": ACK_EMOJI, "local_id": local_id})
+        if nonce is None:
+            return None
+        row = self.db.one("SELECT * FROM outbound WHERE nonce=?", (nonce,))
+        if row is None or self.killed():
+            return None
+        self._send_row(row, bool(self.cfg.get("approve_before_send")))
+        return row["id"]
+
+    def claim_ack(self, turn_id, conv, msg):
+        """Give this turn the mark that is already on its message, or queue one if there is none.
+
+        Re-keying rather than queueing a second row is what keeps clear_ack unchanged: it looks
+        up `ack:<turn_id>`, and it must find the row that actually went to Discord, or it would
+        take nothing off and leave the 👀 on a finished turn forever.
+
+        The conversation is restamped at the same time. The mark may have been sent while the
+        messages were still sitting in the conversation ingest provisionally chose, and the
+        selector may then have moved them; the row should name the conversation that answered.
+        """
+        row = self.db.one("SELECT * FROM outbound WHERE local_id=? ORDER BY id DESC LIMIT 1",
+                          (ack_pending_local_id(msg["discord_id"]),))
+        if row is not None:
+            payload = json.loads(row["payload_json"] or "{}")
+            payload["local_id"] = ack_local_id(turn_id)
+            self.db.execute(
+                "UPDATE outbound SET local_id=?, conversation_id=?, payload_json=? WHERE id=?",
+                (ack_local_id(turn_id), conv["id"],
+                 json.dumps(payload, ensure_ascii=False), row["id"]))
+            return row["id"]
+        # No early mark: a turn the gate reached without always_a_turn forcing it, or a path
+        # that does not mark at all. Queue it the way this always did.
+        self.record_outbound(None, conv["id"], "react", {
+            "channel": reply_channel(conv), "message": msg["discord_id"],
+            "emoji": ACK_EMOJI, "local_id": ack_local_id(turn_id)})
+        return None
+
+    def retire_ack(self, local_id, reason):
+        """Take a mark back off, whichever of its two states it is in. Returns rows queued.
+
+        The shared half of clear_ack, which is documented there: a mark that has not been
+        attempted is dropped where it stands by a compare-and-swap on `attempts`, so a turn that
+        ended within a poll of being created never flickers; one that is on the message (or
+        ambiguously so) gets an `unreact` queued instead.
+        """
+        ack = self.db.one("SELECT * FROM outbound WHERE local_id=? ORDER BY id DESC LIMIT 1",
+                          (local_id,))
+        if ack is None or ack["status"] == "dry":
+            return 0
+        payload = json.loads(ack["payload_json"] or "{}")
+        off_id = f"{local_id}:off"
+        if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=?", (off_id,), 0):
+            return 0
+        cur = self.db.execute(
+            "UPDATE outbound SET status='rejected', reject_reason=?, attempts=attempts+1"
+            " WHERE id=? AND attempts=0 AND status IN ('pending','approved')",
+            (reason, ack["id"]))
+        if cur.rowcount == 1:
+            log(f"dropped outbound {ack['id']} rather than marking and unmarking — {reason}")
+            return 0
+        if not payload.get("message") or not payload.get("emoji"):
+            return 0
+        payload["local_id"] = off_id
+        return 1 if self.record_outbound(None, ack["conversation_id"], "unreact", payload) else 0
+
+    def clear_marks(self, msgs):
+        """Take the 👀 off messages that turned out not to be getting a turn.
+
+        REACHABLE ONLY THROUGH A SPLIT. mark_working is called where always_a_turn has already
+        forced the turn, so the gate below it cannot decline the same batch. What it can do is
+        decline a DIFFERENT batch: the selector may move the addressed message into another
+        conversation and leave a plain one behind, and the leftover is then declined by the
+        mention-only rule with the mark already on it. Rare, and a 👀 that never becomes an
+        answer is exactly the thing that would teach a reader to stop trusting the mark.
+        """
+        cleared = 0
+        for m in msgs:
+            cleared += self.retire_ack(ack_pending_local_id(m["discord_id"]),
+                                       "the message got no turn after all")
+        return cleared
+
+    def pending_messages(self, conv_id):
+        """This conversation's unclaimed inbound messages, oldest first."""
+        return self.db.query(
+            "SELECT * FROM message WHERE conversation_id=? AND turn_id IS NULL"
+            " AND direction='in' AND is_bot=0 AND gate IS NULL"
+            " ORDER BY CAST(discord_id AS INTEGER)",
+            (conv_id,))
+
     def create_turn(self, conv):
+        # THE MARK GOES ON BEFORE THE SELECTOR, and this is the only thing above resettle().
+        #
+        # always_a_turn() is the harness's own always-answer list, and for a conversation that
+        # is not a thread it reduces to two facts about the messages themselves: somebody
+        # addressed the bot, or evidence came with it. Neither can be changed by moving those
+        # messages into another conversation, and the third rule -- opening a thread -- cannot
+        # apply here, because resettle() returns without doing anything for a thread and so
+        # there is no wait to get in front of. When it fires, the engagement gate below is
+        # skipped by construction (`gate` is false whenever `forced` is set), so the answer to
+        # "are we answering this" is already final and was reached without a model.
+        #
+        # Where it files is a separate question, and the only one resettle is asking.
+        early = self.pending_messages(conv["id"])
+        if (early and not conv["is_thread"] and not is_local_conversation(conv)
+                and self.always_a_turn(conv, early)):
+            self.mark_working(conv, early[-1])
+
         # THE LAST MOMENT ANYTHING MAY MOVE. After this a turn exists, the messages are claimed,
         # and a session is about to read them (design 4.3).
         if self.resettle(conv):
             conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv["id"],))
             if conv is None:
                 return None
-        msgs = self.db.query(
-            "SELECT * FROM message WHERE conversation_id=? AND turn_id IS NULL"
-            " AND direction='in' AND is_bot=0 AND gate IS NULL"
-            " ORDER BY CAST(discord_id AS INTEGER)",
-            (conv["id"],))
+        msgs = self.pending_messages(conv["id"])
         if not msgs:
             return None
         text = "\n\n".join((m["content"] or "") for m in msgs).strip()
@@ -3768,9 +3926,7 @@ class Watcher:
             # It comes off again in finish_turn, which is why the row is tagged with the turn:
             # the mark says a run is in flight, and once the turn is over that is no longer
             # true whatever it ended as.
-            self.record_outbound(None, conv["id"], "react", {
-                "channel": reply_channel(conv), "message": msgs[-1]["discord_id"],
-                "emoji": ACK_EMOJI, "local_id": ack_local_id(turn_id)})
+            self.claim_ack(turn_id, conv, msgs[-1])
         log(f"turn {turn_id} queued: lane={lane} conversation={conv['id']} "
             f"messages={len(msgs)} tier={tier} venue={venue}")
         return turn_id
@@ -7078,27 +7234,37 @@ class Watcher:
         approve = bool(self.cfg.get("approve_before_send"))
         sent = held = 0
         for row in rows:
-            if self.dry_run:
-                # design section 18: --dry-run marks every outbound row dry instead of sending.
-                self.db.execute("UPDATE outbound SET status='dry', sent_at=? WHERE id=?",
-                                (now_iso(), row["id"]))
-                continue
-            if approve and row["status"] != "approved":
-                held += 1
-                continue
-            if not self._send_due(row):
-                continue
-            reason = self._send_limited(row)
-            if reason:
-                log(f"outbound {row['id']} held: {reason}")
-                continue
-            if not self._claim_for_send(row):
-                continue
-            if self.send_one(row):
-                sent += 1
+            outcome = self._send_row(row, approve)
+            sent += 1 if outcome == "sent" else 0
+            held += 1 if outcome == "held" else 0
         if held:
             log(f"{held} outbound row(s) awaiting approval — release with: ffwatch approve <id>")
         return sent
+
+    def _send_row(self, row, approve):
+        """One row through every gate a send has to pass. "sent" | "held" | "skipped".
+
+        LIFTED OUT OF send_pending SO THE ACKNOWLEDGEMENT CAN USE IT TOO. mark_working sends a
+        single row the moment it is queued, and it has to be the same dry-run, approval,
+        backoff, rate-limit and claim path as the batch — a second sender that skipped any of
+        them would be a way to put something on Discord that the queue was holding back.
+        """
+        if self.dry_run:
+            # design section 18: --dry-run marks every outbound row dry instead of sending.
+            self.db.execute("UPDATE outbound SET status='dry', sent_at=? WHERE id=?",
+                            (now_iso(), row["id"]))
+            return "skipped"
+        if approve and row["status"] != "approved":
+            return "held"
+        if not self._send_due(row):
+            return "skipped"
+        reason = self._send_limited(row)
+        if reason:
+            log(f"outbound {row['id']} held: {reason}")
+            return "skipped"
+        if not self._claim_for_send(row):
+            return "skipped"
+        return "sent" if self.send_one(row) else "skipped"
 
     def _claim_for_send(self, row):
         """Take this row for THIS process, or leave it to whoever already has it.

@@ -9218,6 +9218,174 @@ def test_a_log_line_from_another_thread_cannot_land_inside_a_json_reply():
               parsed == {"id": "950000000000000001"}, parsed)
 
 
+def test_the_mark_goes_on_before_the_selector_is_asked():
+    """👀 must not wait behind resettle(), because resettle is a Claude call.
+
+    Measured on the build server 2026-09-02: a ping to conversation 34 was ingested at 21:14:12
+    and marked at 21:14:31. The nineteen seconds between were one haiku selector call deciding
+    which conversation the message continues -- a question that has nothing to do with whether
+    the message is being answered, which always_a_turn had already settled from the fact that
+    somebody addressed the bot.
+
+    The check is an ordering one and it is made from INSIDE the selector, because that is the
+    only place the two events can be told apart: by the time claim_turns returns, both have
+    happened either way.
+    """
+    print("the acknowledgement leads the selector")
+    mid = sflake(0, 1)
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(mid, "hey @max is the smelter meant to stall?")]
+    fixture["messages"][ASK_CHANNEL][0]["mentions"] = [{"id": BOT}]
+    case = Case("ack-before-selector", fixture)
+    case.cfg["watch"]["ask_claude"]["engage"] = "mention"
+    case.events(ask_event(mid))
+    case.watcher.drain_events()
+
+    seen = {}
+
+    def selector(conv, pending):
+        seen["asked"] = True
+        seen["reacts"] = sent_calls(case, "react")
+        seen["turns"] = case.rows("SELECT * FROM turn")
+        return conv["id"], "the stub agrees"
+
+    case.watcher.cluster_selector = selector
+    case.watcher.claim_turns()
+
+    check("the selector was actually consulted, so this test is not vacuous",
+          seen.get("asked"), seen)
+    check("the 👀 was already on Discord when the selector was asked",
+          seen.get("reacts") == [["react", ASK_CHANNEL, mid, ffwatch.ACK_EMOJI]],
+          seen.get("reacts"))
+    check("and it went out before any turn existed, which is what it can now promise",
+          seen.get("turns") == [], seen.get("turns"))
+    check("the turn is created after", len(case.rows("SELECT * FROM turn")) == 1,
+          case.rows("SELECT * FROM turn"))
+
+
+def test_the_turn_adopts_the_mark_rather_than_sending_a_second():
+    """One reaction on the wire, one row, and clear_ack still finds it.
+
+    The mark is queued keyed on the MESSAGE, because there is no turn yet. If create_turn then
+    queued its own the message would be reacted to twice and, worse, clear_ack would look up
+    `ack:<turn_id>`, find the row that never went anywhere, and leave the 👀 that DID go out
+    sitting on a finished turn forever.
+    """
+    print("the turn adopts the mark it was given")
+    mid = sflake(0, 1)
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(mid, "hey @max what does the splitter do?")]
+    fixture["messages"][ASK_CHANNEL][0]["mentions"] = [{"id": BOT}]
+    case = Case("ack-adopted", fixture)
+    case.cfg["watch"]["ask_claude"]["engage"] = "mention"
+    case.events(ask_event(mid))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+
+    reacts = case.rows("SELECT * FROM outbound WHERE action='react'")
+    check("exactly one reaction row exists", len(reacts) == 1, reacts)
+    check("and it reached Discord once",
+          sent_calls(case, "react") == [["react", ASK_CHANNEL, mid, ffwatch.ACK_EMOJI]],
+          sent_calls(case, "react"))
+    turn_id = case.rows("SELECT * FROM turn")[0]["id"]
+    check("the row was re-keyed to the turn, which is what clear_ack looks up",
+          reacts[0]["local_id"] == ffwatch.ack_local_id(turn_id), reacts[0]["local_id"])
+    check("and it names the conversation that answered",
+          reacts[0]["conversation_id"] == case.rows("SELECT * FROM conversation")[0]["id"],
+          reacts[0]["conversation_id"])
+
+    case.watcher.clear_ack(turn_id)
+    offs = case.rows("SELECT * FROM outbound WHERE action='unreact'")
+    check("the mark comes off when the turn ends", len(offs) == 1, offs)
+    case.watcher.clear_ack(turn_id)
+    check("and a second finish does not queue a second removal",
+          len(case.rows("SELECT * FROM outbound WHERE action='unreact'")) == 1,
+          case.rows("SELECT action, local_id FROM outbound"))
+
+
+def test_an_unforced_turn_still_does_not_flicker():
+    """The hoist is for forced turns only, and the no-flicker property is why.
+
+    A turn the engagement gate had to think about is not marked early: the gate is itself a
+    model call, so there is no wait to get in front of, and a turn that ends inside the same
+    pass -- every blocked one -- would otherwise be marked and unmarked for nothing. That
+    property is pinned in test_the_acknowledgement_comes_off_when_the_turn_ends; this says
+    plainly WHY it still holds, which is that nothing marked the message early.
+    """
+    print("an unforced turn is not marked early")
+    mid = sflake(0, 1)
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(mid, "does the smelter need power?")]
+    case = Case("ack-unforced", fixture, verdict={"engage": True, "reason": "a real question"})
+    case.events(ask_event(mid))
+    case.watcher.drain_events()
+    conv = case.rows("SELECT * FROM conversation")[0]
+    msgs = case.watcher.pending_messages(conv["id"])
+    check("nothing about this message forces a turn",
+          not case.watcher.always_a_turn(
+              case.rows("SELECT * FROM conversation")[0], msgs), msgs)
+    case.watcher.claim_turns()
+    check("so no mark went out ahead of the turn", not sent_calls(case, "react"), case.calls())
+    reacts = case.rows("SELECT local_id FROM outbound WHERE action='react'")
+    turn_id = case.rows("SELECT * FROM turn")[0]["id"]
+    check("and the mark it did queue is keyed on the turn, the way it always was",
+          [r["local_id"] for r in reacts] == [ffwatch.ack_local_id(turn_id)], reacts)
+
+
+def test_a_message_that_loses_its_turn_gives_the_mark_back():
+    """A 👀 that never becomes an answer teaches a reader to stop trusting the mark.
+
+    Only a split reaches this: mark_working runs where always_a_turn has already forced the
+    turn, so the gate cannot decline that same batch -- but it can decline a DIFFERENT one, when
+    the selector moves the addressed message out and leaves a plain message behind wearing the
+    mark. Driven directly here rather than through a contrived split, because the mechanism is
+    what matters and the split that produces it is three moving parts away.
+    """
+    print("a declined message gives its mark back")
+    mid = sflake(0, 1)
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(mid, "hey @max quick one")]
+    fixture["messages"][ASK_CHANNEL][0]["mentions"] = [{"id": BOT}]
+    case = Case("ack-given-back", fixture)
+    case.cfg["watch"]["ask_claude"]["engage"] = "mention"
+    case.events(ask_event(mid))
+    case.watcher.drain_events()
+    conv = case.rows("SELECT * FROM conversation")[0]
+    msgs = case.watcher.pending_messages(conv["id"])
+
+    case.watcher.mark_working(conv, msgs[-1])
+    check("the mark is on Discord",
+          sent_calls(case, "react") == [["react", ASK_CHANNEL, mid, ffwatch.ACK_EMOJI]],
+          sent_calls(case, "react"))
+    case.watcher.gate_declines(conv, msgs, "the selector took the message that forced this")
+    case.watcher.send_pending()
+    # An unreact goes out as `react ... --remove`; the CLI verb is the same one.
+    check("declining queues its removal",
+          sent_calls(case, "react")[-1]
+          == ["react", ASK_CHANNEL, mid, ffwatch.ACK_EMOJI, "--remove"],
+          sent_calls(case, "react"))
+
+    # And the other shape: a mark that has NOT reached Discord is dropped where it stands
+    # rather than sent and immediately unsent, the same rule clear_ack applies.
+    other = sflake(50, 2)
+    fixture2 = base_fixture()
+    fixture2["messages"][ASK_CHANNEL] = [message(other, "hey @max another")]
+    fixture2["messages"][ASK_CHANNEL][0]["mentions"] = [{"id": BOT}]
+    quiet = Case("ack-dropped", fixture2, approve=True)
+    quiet.cfg["watch"]["ask_claude"]["engage"] = "mention"
+    quiet.events(ask_event(other))
+    quiet.watcher.drain_events()
+    conv2 = quiet.rows("SELECT * FROM conversation")[0]
+    msgs2 = quiet.watcher.pending_messages(conv2["id"])
+    quiet.watcher.mark_working(conv2, msgs2[-1])
+    check("held behind the approval queue, it never reached Discord",
+          not sent_calls(quiet, "react"), quiet.calls())
+    quiet.watcher.gate_declines(conv2, msgs2, "no turn after all")
+    rows = quiet.rows("SELECT action, status FROM outbound")
+    check("so it is dropped rather than marked and unmarked",
+          [(r["action"], r["status"]) for r in rows] == [("react", "rejected")], rows)
+
+
 def main():
     tests = [
         test_every_agent_container_carries_its_class,
@@ -9382,6 +9550,10 @@ def main():
         test_an_explicit_ffdiscord_still_forks,
         test_a_failed_in_process_call_reads_like_a_failed_subprocess,
         test_a_log_line_from_another_thread_cannot_land_inside_a_json_reply,
+        test_the_mark_goes_on_before_the_selector_is_asked,
+        test_the_turn_adopts_the_mark_rather_than_sending_a_second,
+        test_an_unforced_turn_still_does_not_flicker,
+        test_a_message_that_loses_its_turn_gives_the_mark_back,
     ]
     for fn in tests:
         try:
