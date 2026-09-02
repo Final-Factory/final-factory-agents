@@ -6829,13 +6829,65 @@ def test_the_transcript_is_shared_before_the_host_first_looks():
           "chmod -R" not in now and ".jsonl" in now, now)
 
 
+def test_a_finished_runs_spool_is_swept_and_then_deleted():
+    """The case that fell between the reaper and recovery, and leaked three directories.
+
+    pool_reap will not delete a spool holding a transcript -- it is the only copy of that
+    conversation's memory. It used to defer to recover(), which sweeps only the spools of runs
+    it is recovering (terminal_state IS NULL). A run that FINISHED, whose container is gone, and
+    whose transcript did not make it home, was owned by neither: not deleted, never swept.
+
+    Live evidence, 2026-09-02: three leaked spools, one 3.0M and twenty-one hours old, all
+    belonging to 'done' runs, one of them logged 33,644 times before the once-per-process guard
+    made the leak quiet instead of stopping it.
+    """
+    print("pool: a finished run's spool is swept, then reaped")
+    case = Case("reapsweep", base_fixture())
+    w = case.watcher
+    w.pool_containers = lambda: []
+
+    # A finished pooled run whose transcript never made it out of the spool.
+    w.submit("a question", kind="web")
+    turn_id = w.db.scalar("SELECT id FROM turn ORDER BY id DESC LIMIT 1", (), 0)
+    conv_id = w.db.scalar("SELECT conversation_id FROM turn WHERE id=?", (turn_id,), 0)
+    w.db.execute("INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id,"
+                 " terminal_state, pool_id) VALUES(?,?,?,?,?,?)",
+                 (turn_id, "d1t1-left", "ffbox-d1t1-left", "sess-1", "done", "s1"))
+    tdir = os.path.join(w.pool_dir("s1"), "claude", "projects", ffwatch.CONTAINER_PROJECT_SLUG)
+    os.makedirs(tdir, exist_ok=True)
+    with open(os.path.join(tdir, "sess-1.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write('{"type":"user"}\n')
+
+    check("the reaper leaves nothing behind", w.pool_reap() == 1, None)
+    check("the spool is gone", not os.path.isdir(w.pool_dir("s1")), None)
+    home = os.path.join(w.conv_dir(conv_id), "claude", "projects",
+                        ffwatch.CONTAINER_PROJECT_SLUG, "sess-1.jsonl")
+    check("and the transcript went home rather than with it", os.path.exists(home), home)
+
+    # A run still in flight is NOT ours: recover() owns it, and it does more than move a file --
+    # it requeues the turn. Sweeping from here would take the transcript out from under it.
+    w.db.execute("INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id,"
+                 " terminal_state, pool_id) VALUES(?,?,?,?,?,?)",
+                 (turn_id, "d1t2-live", "ffbox-d1t2-live", "sess-2", None, "s2"))
+    tdir2 = os.path.join(w.pool_dir("s2"), "claude", "projects", ffwatch.CONTAINER_PROJECT_SLUG)
+    os.makedirs(tdir2, exist_ok=True)
+    open(os.path.join(tdir2, "sess-2.jsonl"), "w").close()
+    check("a run still in flight is left for recover()",
+          w.sweep_finished_spool("s2") is False, None)
+    check("so its transcript stays where recovery will look for it",
+          os.path.exists(os.path.join(tdir2, "sess-2.jsonl")), None)
+
+    # A spool with no run row was never dispatched: no conversation to sweep into.
+    check("a spool that was never dispatched is not ours either",
+          w.sweep_finished_spool("nosuch") is False, None)
+
+
 def test_the_reaper_says_a_held_spool_once():
-    """A spool the reaper cannot delete is skipped on EVERY pass, and the reaper runs on every
-    poll. Saying so each time buries the journal.
+    """A spool the reaper genuinely cannot clear is skipped on EVERY pass, and the reaper runs
+    on every poll. Saying so each time buries the journal.
 
     Measured on the live box on 2026-09-01: one orphan spool produced 33,644 identical lines in
-    twenty-one hours, one every two seconds, because recover() only sweeps at startup and the
-    condition therefore held until a restart. _unreapable next door already had this guard for
+    twenty-one hours, one every two seconds. _unreapable next door already had this guard for
     the other thing the reaper refuses to delete; this is the same rule for the other branch.
     """
     print("pool: a held spool is reported once")
@@ -6843,8 +6895,10 @@ def test_the_reaper_says_a_held_spool_once():
     w = case.watcher
     w.pool_containers = lambda: []
     ffwatch.Watcher._held_logged.discard("h1")
+    # Nothing this sweep can do with it: no run row, so no conversation to sweep into. That is
+    # what keeps it in the "cannot clear" branch this test is about.
+    w.sweep_finished_spool = lambda pool_id: False
 
-    # A spool whose container is gone but whose transcript nobody has swept yet.
     tdir = os.path.join(w.pool_dir("h1"), "claude", "projects", "p")
     os.makedirs(tdir, exist_ok=True)
     open(os.path.join(tdir, "s.jsonl"), "w").close()
@@ -6860,9 +6914,7 @@ def test_the_reaper_says_a_held_spool_once():
 
     held = [ln for ln in lines if "still holds a transcript" in ln]
     check("five passes over the same held spool say it once", len(held) == 1, lines)
-    check("and the line still names the spool and what will happen to it",
-          held and "h1" in held[0] and "recovery to sweep" in held[0], held)
-    # The spool is still there: quieting the message must not have quieted the refusal.
+    check("and the line names the spool", held and "h1" in held[0], held)
     check("the transcript was not deleted to silence the warning",
           os.path.exists(os.path.join(tdir, "s.jsonl")), None)
 
@@ -8143,6 +8195,7 @@ def main():
     tests = [
         test_every_agent_container_carries_its_class,
         test_the_transcript_is_shared_before_the_host_first_looks,
+        test_a_finished_runs_spool_is_swept_and_then_deleted,
         test_the_reaper_says_a_held_spool_once,
         test_an_ffdev_turn_runs_under_ffdevs_numbers,
         test_the_two_agent_classes_are_configured_independently,
