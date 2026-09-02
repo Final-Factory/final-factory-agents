@@ -60,6 +60,18 @@ FFGHR_DRAIN=${FFGITHUBRUNNERS_CONFIG_DIR:-$CONFIG_HOME/githubrunners}/drain
 # and it costs one variable.
 SEP=$'\x1f'
 
+# THE CLOCK HELPERS, SHARED WITH THE LANES THAT WRITE THE FILES. This script used to parse
+# out/staged itself, with a sed per key and a `date -d`, and the CI arm had no parser at all --
+# which is how the two lanes' readings start to disagree. Same reason `--json` exists: one reading
+# of the box, not two. A checkout without it degrades to a blank TTL column, which is what every
+# CI row showed until 2026-09-02 anyway.
+FFBOX_LIB_WORKLOADS=${FFBOX_LIB_WORKLOADS:-$(dirname -- "$0")/lib-workloads.sh}
+if [ -r "$FFBOX_LIB_WORKLOADS" ]; then
+    . "$FFBOX_LIB_WORKLOADS"
+else
+    ffbox_clock_left() { return 1; }
+fi
+
 WATCH=0
 INTERVAL=5
 JSON=0
@@ -260,6 +272,22 @@ read_maintenance() {
     fi
 }
 
+# Is the supervisor that owns this CI container still there? `docker inspect` for the label rather
+# than a marker file, because the label is set at `docker run` and cannot go stale while the
+# container lives. A container with no label predates the label and is left alone, exactly as
+# reap.sh leaves it alone.
+ci_supervisor_alive() {
+    local pid
+    pid=$("$DOCKER" inspect -f '{{index .Config.Labels "ffghr.supervisor.pid"}}' "${1:?}" 2>/dev/null) || pid=''
+    case "${pid:-}" in ''|*[!0-9]*) return 0 ;; esac
+    # /proc AND THE COMMAND LINE, character for character what reap.sh:53-57 does, and not
+    # `kill -0`: that answers EPERM for a process owned by another account, and it cannot tell a
+    # recycled pid from the supervisor that had it. Two readings of "is the enforcer there" that
+    # disagree would be worse than the blank column this replaces.
+    [ -r "/proc/$pid/cmdline" ] || return 1
+    tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q 'slot\.sh'
+}
+
 # --- gather -------------------------------------------------------------------------------------
 #
 # ONE PASS OVER THE BOX, into globals both renderers read. A record carries the TTL in seconds
@@ -270,7 +298,6 @@ declare -A SPARES=() RUNS=()
 CI_BUSY=0 CI_WAITING=0 WORKLOADS=0 WIDEST=4 GATHER_ERR=
 
 gather() {
-    local now; now=$(date +%s)
     read_machine
     read_maintenance
     ROWS=(); INFRA=(); SPARES=(); RUNS=()
@@ -301,11 +328,26 @@ gather() {
         ttl=''
         case "$workload" in
             ci)
+                # WHICH CLOCK FOLLOWS THE STATE, and both files are written by the supervisor that
+                # owns the container: `.busy` when its runner takes a job, `.idle` at mint. Before
+                # 2026-09-02 neither existed as a deadline -- the number lived in a shell variable
+                # inside slot.sh -- which is the whole reason this column was blank for CI rows.
                 lane=ci; class=''; ref=''
                 if [ -e "$FFGHR_STATE/$name.busy" ]; then
                     state=busy; CI_BUSY=$((CI_BUSY + 1))
+                    ttl=$(ffbox_clock_left "$FFGHR_STATE/$name.busy" 2>/dev/null) || ttl=''
                 else
                     state=waiting; CI_WAITING=$((CI_WAITING + 1))
+                    ttl=$(ffbox_clock_left "$FFGHR_STATE/$name.idle" 2>/dev/null) || ttl=''
+                fi
+                # A DEADLINE NOBODY IS ENFORCING IS NOT A DEADLINE. The CI clocks are held by the
+                # slot supervisor, not by the container, so a supervisor killed with SIGKILL leaves
+                # a container whose file still counts down and whose enforcer is gone; it runs
+                # until reap.sh notices the pid on its label is dead. Counting down to nothing is
+                # worse than saying nothing, so the row says `orphan` instead. Same test reap.sh
+                # makes, and the label it reads is the supervisor's pid rather than the slot.
+                if [ -n "$ttl" ] && ! ci_supervisor_alive "$name"; then
+                    ttl=''; state=orphan
                 fi ;;
             pool)
                 case "$name" in
@@ -318,13 +360,7 @@ gather() {
                         local out="$POOL_DIR/$poolid/out"
                         if [ -e "$out/staged" ]; then
                             state=warm
-                            local staged_at ttl_secs t0
-                            staged_at=$(sed -n 's/^staged_at=//p' "$out/staged" 2>/dev/null)
-                            ttl_secs=$(sed -n 's/^ttl_secs=//p' "$out/staged" 2>/dev/null)
-                            if [ -n "$staged_at" ] && [ -n "$ttl_secs" ]; then
-                                t0=$(date -d "$staged_at" +%s 2>/dev/null) &&
-                                    ttl=$(( t0 + ttl_secs - now ))
-                            fi
+                            ttl=$(ffbox_clock_left "$out/staged" 2>/dev/null) || ttl=''
                         else
                             state=filling
                         fi
@@ -397,9 +433,10 @@ render_text() {
         while IFS="$SEP" read -r l c n s st t r a; do
             local mark=$N
             case "$st" in
-                warm|waiting) mark=$GRN ;;
-                filling)      mark=$YEL ;;
-                claimed)      mark=$YEL ;;
+                warm|waiting)     mark=$GRN ;;
+                filling)          mark=$YEL ;;
+                claimed|retiring) mark=$YEL ;;
+                orphan)           mark=$RED ;;
             esac
             [ -n "$t" ] && t=$(human_secs "$t")
             printf "  %-6s %-8s %-${WIDEST}s %-5s ${mark}%-9s${N} %-7s %-7s %s\n" \

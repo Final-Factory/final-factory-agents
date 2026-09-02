@@ -1405,9 +1405,13 @@ places that must agree: `NAME_PREFIX` in `ffbox`, `CLASS_NAME_PREFIX` in `ffwatc
 sweep's `case`.
 
 **Reading all of that off the box:** `ffbox/ffstatus.sh` prints one table of every container
-that holds a workspace — agent runs, staged spares and CI jobs together, with each spare's slot,
+that holds a workspace — agent runs, staged spares and CI jobs together, with each one's slot,
 branch and remaining TTL — and a second table of what each pool was asked to hold (`idle`,
-`max`, and the box-wide `max_concurrent_runs` above both). Both lanes are reported in one
+`max`, and the box-wide `max_concurrent_runs` above both). The TTL column shows the clock that
+applies to that row: a spare's idle life, a waiting CI runner's time before it is recycled, or a
+busy one's watchdog measured from when its job started. A CI row reads `orphan` and shows no
+number when the supervisor holding that deadline is gone, because counting down to nothing is
+worse than saying nothing. Both lanes are reported in one
 vocabulary — WAITING is a container holding a workspace with no work in it, which is an agent
 spare or an idle registered CI runner — so for CI it reads ffgithubrunners' busy markers rather
 than counting every `ffghr-*` container as a job in flight. It reads `docker ps`,

@@ -479,7 +479,7 @@ os.environ["FFWEB_TEST_CALLS"] = CALLS
 FFSTATUS_DOC = {
     "host": "testbox",
     "generated_at": "2026-09-02T15:00:00+00:00",
-    "box": {"used": 3, "max": 10},
+    "box": {"used": 4, "max": 10},
     "maintenance": {"state": "running", "reason": ""},
     "machine": {"load1": 2.5, "load5": 3.25, "load15": 1.0, "cores": 40,
                 "mem_total_kb": 792528632, "mem_used_kb": 275619444,
@@ -495,8 +495,16 @@ FFSTATUS_DOC = {
          "uptime": "18 minutes"},
         {"lane": "agent", "class": "ffdev", "name": "ffbox-dev-t1-99aa", "slot": "5",
          "state": "running*", "ttl_secs": None, "ref": None, "uptime": "2 minutes"},
+        # A CI ROW CARRIES A TTL SINCE 2026-09-02, and this fixture said None for as long as the
+        # column was blank for every CI row -- which encoded the bug as expected output. A busy
+        # runner counts down the watchdog from when its JOB started; a waiting one counts down to
+        # being recycled onto a rebuilt image.
         {"lane": "ci", "class": None, "name": "ffghr-testbox-1-abcd", "slot": None,
-         "state": "busy", "ttl_secs": None, "ref": None, "uptime": "an hour"},
+         "state": "busy", "ttl_secs": 5040, "ref": None, "uptime": "an hour"},
+        # And one whose supervisor is gone: the deadline in its file is real and nothing is
+        # enforcing it, so ffstatus sends no number rather than a countdown to nothing.
+        {"lane": "ci", "class": None, "name": "ffghr-testbox-2-ef01", "slot": None,
+         "state": "orphan", "ttl_secs": None, "ref": None, "uptime": "3 hours"},
     ],
     "infrastructure": [{"name": "ffbox-egress", "status": "Up 37 hours"}],
 }
@@ -1204,10 +1212,16 @@ def test_the_box_page_reports_what_the_status_script_said():
               all(c["name"] in text for c in FFSTATUS_DOC["containers"]),
               [c["name"] for c in FFSTATUS_DOC["containers"] if c["name"] not in text])
         check("the container count rides on the heading it counts",
-              "<h2>containers <span class=\"count\">3/10</span></h2>" in text,
+              "<h2>containers <span class=\"count\">4/10</span></h2>" in text,
               text[text.find("<h2>containers"):][:80])
         check("a spare's remaining idle life is hours and minutes, not raw seconds",
               "3h42m" in text and "13359" not in text)
+        # THE CI COLUMN WAS BLANK UNTIL 2026-09-02, because the deadline lived in a shell
+        # variable inside slot.sh and nothing else could read it.
+        check("a CI runner's remaining time is on the page too, in the same shape",
+              "1h24m" in text and "5040" not in text)
+        check("and a container whose supervisor is gone shows no countdown at all",
+              'class="pill orphan"' in text)
         check("the state is a pill", 'class="pill warm"' in text)
         # Per row, and only inside the pools table: `ffagent` also names a column in the
         # container table above it, so a document-wide count would pass on the wrong markup.
