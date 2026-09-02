@@ -5347,7 +5347,12 @@ class Watcher:
         # ONLY WHEN THIS RUN DID NOT END WITH ONE, so the ordinary path — agent changes files,
         # verification passes, PR opens — costs nothing here at all.
         if not (published or {}).get("pr_url"):
-            self.reconcile_publication(conv["id"])
+            # THE RUN IN FLIGHT IS NAMED so a pull request opened for THIS run's own branch is
+            # left to the footer of the reply composed below, and one opened for a branch an
+            # earlier turn stranded — the case where this turn changed no files and publish()
+            # returned at its `not branch` guard — announces itself, because that reply has no
+            # branch of its own to print and would say nothing about it at all.
+            self.reconcile_publication(conv["id"], replying_run_id=run_row_id)
 
         self.index_transcript(run_row_id, conv["id"], job["session"]["id"])
         self.record_reply(run_row_id, conv, turn, run_dir, terminal, result, timeout_kind, job)
@@ -6392,9 +6397,14 @@ class Watcher:
                 return _parse_verdict(raw)
         return {}
 
-    def reconcile_publication(self, conv_id):
+    def reconcile_publication(self, conv_id, replying_run_id=None):
         """Finish publishing a conversation's work: push what was never pushed, open the pull
         request that was never opened. Returns what it found or changed, or None.
+
+        `replying_run_id` is the run whose reply is still being composed, when a turn is what
+        called this. A pull request that lands on THAT run needs no announcement of its own —
+        record_reply re-reads the row a moment later and the footer says it. One that lands on
+        an older run does: nothing else is going to mention it. See announce_publication.
 
         THE FIRST LOOK HAPPENS ONCE, and every way it can stop short strands a branch with
         nobody scheduled to come back to it:
@@ -6524,6 +6534,13 @@ class Watcher:
                     self.db.execute("UPDATE run SET pr_number=?, pr_url=?, no_pr_reason=NULL"
                                     " WHERE id=?",
                                     (existing.get("number"), existing.get("url"), run["id"]))
+                    # ANNOUNCED LIKE ONE THIS SWEEP OPENED. The thread does not care which
+                    # process created the pull request; it was told there was none, this is the
+                    # first moment the harness knows there is one, and the early return above
+                    # means it can only be told once. A merged or closed one is not announced:
+                    # "pending dev review" would be false of both.
+                    if run["id"] != replying_run_id:
+                        self.announce_publication(conv, run["id"])
                 log(f"reconcile: {branch} already has PR #{existing['number']} "
                     f"({'merged' if existing['merged'] else existing['state']}); recorded it "
                     f"and opened nothing")
@@ -6557,6 +6574,12 @@ class Watcher:
                         (str(pr.get("url") or pr.get("number") or ""), conv_id))
         log(f"reconcile: opened PR #{pr.get('number')} for {branch} -> {base} "
             f"{pr.get('url') or ''}".strip())
+        # THE THREAD IS TOLD, unless the turn that called this is about to say it itself. This
+        # is the whole point of the second look from where the reporter is standing: a branch
+        # that was stranded now has somewhere to be reviewed, and until this line the only
+        # record of that was the daemon's log and the web page.
+        if run["id"] != replying_run_id:
+            self.announce_publication(conv, run["id"])
         # `opened` and not merely a url, because the sweep counts what it CHANGED and every
         # other path above returns a url too — the one it found already open, the one a human
         # closed. A count that included those would report work on every pass forever.
@@ -6735,6 +6758,60 @@ class Watcher:
                 "base": row["pr_base"],
                 "no_branch_reason": row["no_branch_reason"],
                 "no_pr_reason": row["no_pr_reason"]}
+
+    def conversation_venue(self, conv):
+        """Public or private for a conversation with no turn in front of it.
+
+        compose_head reads the venue off the TURN, because a reply belongs to one. A pull
+        request that arrives on the catchup tick belongs to none, and the channel's declared
+        venue is the same answer every turn on it got. The newest turn is preferred anyway: a
+        DM derives its venue rather than declaring one, so `watch_alias` cannot answer for it.
+
+        Public by omission, the direction venue_for already falls.
+        """
+        seen = self.db.scalar(
+            "SELECT venue FROM turn WHERE conversation_id=? AND venue IS NOT NULL"
+            " ORDER BY id DESC LIMIT 1", (conv["id"],))
+        if seen in VENUES:
+            return seen
+        return venue_for(self.cfg, conv["watch_alias"])
+
+    def announce_publication(self, conv, run_row_id):
+        """Tell the thread about a pull request that no reply is going to mention. Returns 1/0.
+
+        publish() opens the PR inside the turn that produced the commits, and that turn's reply
+        carries publish_footer — so the announcement is already made and this is not called.
+        reconcile_publication() has no reply to ride on. It finishes a branch an earlier turn
+        stranded, usually on the catchup tick with no turn running at all, and it recorded the
+        pull request in the database and stopped there. The thread had been told "no PR could be
+        opened"; nothing ever told it otherwise, and the person who reported the bug was left
+        holding the exact question the footer exists to answer.
+
+        THE SAME SENTENCE THE REPLY WOULD HAVE CARRIED, out of the same publish_facts and the
+        same publish_footer, with the pull request appended only at a private venue — the split
+        compose_head makes, so a thread does not learn one vocabulary from a reply and another
+        from this. No correction is passed because there cannot be one: reconcile opens nothing
+        without re-running the verification gate and re-reading the verdict's confidence.
+
+        NO MENTION AND NO REPLY-TO IN A THREAD. This is not an answer to a message — nobody
+        asked anything — so it addresses the thread rather than a person. A conversation that is
+        a reply chain in a channel gets `reply_to`, because there it is the only thing that
+        keeps the line attached to the report it is about.
+        """
+        if is_local_conversation(conv):
+            return 0                # no Discord side; the run row and the web page are the record
+        facts = self.publish_facts(run_row_id)
+        if not facts.get("pr_url"):
+            return 0
+        line = publish_footer(facts, "")
+        if not line:
+            return 0                # no branch on the row: nothing this line could be about
+        if self.conversation_venue(conv) == "private":
+            line += f" · PR #{facts.get('pr_number')} {facts['pr_url']}"
+        payload = {"channel": reply_channel(conv), "text": line, "silent": True}
+        if not conv["is_thread"] and conv["root_message_id"]:
+            payload["reply_to"] = str(conv["root_message_id"])
+        return 1 if self.record_outbound(run_row_id, conv["id"], "post", payload) else 0
 
     def publish_line(self, turn_id):
         """One line of publication facts for the person who typed the prompt, or "".
