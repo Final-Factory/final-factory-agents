@@ -114,6 +114,9 @@ Three new files, one new flag, two new subcommands. Nothing else moves.
                                      by the updater. Outside the checkout, so a merge cannot
                                      touch it and a git-clean cannot delete it.
 
+  ~/.config/ffbox/update.config-sha  (added 2026-09-02) the sha256 of config.json as the
+                                     RUNNING services started on it. The second trigger.
+
   ffwatch drain [--wait] [--timeout N]   write the flag; optionally block until quiet.
   ffwatch resume                         remove the flag.
 
@@ -312,14 +315,16 @@ holding no root.
   1. flock, or exit 0                      (a trigger during a running update exits, section 7)
   2. ffwatch resume                        (lift a flag stranded by a previous run)
   3. git fetch --prune origin; exit 0 if:
-       kill switch present | working tree dirty | HEAD == origin/BRANCH
+       kill switch present | working tree dirty
+       | HEAD == origin/BRANCH AND config.json hashes to update.config-sha
   4. ffwatch drain                         (sets the flag, drops the idle staged containers)
      then poll: busy containers, then `ffwatch quiet`, up to FFBOX_DRAIN_TIMEOUT
      at the ceiling: docker stop each straggler, let the host settle, go on (section 4a)
   5. systemctl stop ffbox.target
-  6. OLD_SHA=$(git rev-parse HEAD); git merge --ff-only origin/BRANCH
+  6. OLD_SHA=$(git rev-parse HEAD); git merge --ff-only origin/BRANCH  (skipped if the trigger
+                                                                       was the config alone)
   7. act on the diff (section 5)
-  8. rm the drain flag
+  8. rm the drain flag; write config.json's hash to update.config-sha
   9. systemctl start ffbox.target
  10. report each unit's state and OLD_SHA -> HEAD
 
@@ -330,6 +335,30 @@ survives the merge. This also gives steps 7 and 9 clean access to the new tree.
 
 STEP 3 COMES BEFORE STEP 4 for cost: the common case is "nothing new", and that case must not
 drain the pipeline. It is a fetch and a rev-parse, nothing more.
+
+STEP 3 ASKS TWO QUESTIONS, NOT ONE (added 2026-09-02). config.json is read once per process —
+ffwatch's main() calls load_config() and the daemon then runs for weeks off that dict — so an
+edit to it is exactly as undeployed as an edit to a .py file, and it is NOT in git, so the SHA
+comparison never saw it. On 2026-09-02 an ffwatch that started at 04:18 was still holding the
+config as it stood before a 04:25 edit, and would have held it until an unrelated commit
+happened along. So the updater hashes the file and compares it against update.config-sha, and
+either trigger runs the SAME pass; the merge in step 6 is the only part that is conditional.
+
+  * A HASH, NOT AN MTIME. Step 7 re-runs setup.sh, whose config stage is setdefault the whole
+    way down, so the file is rewritten on every pass. An mtime trigger would restart the box
+    every tick.
+  * THE STAMP IS WRITTEN AT STEP 8, not at step 3. The drain can take an hour, and a config
+    edited during it is picked up by the step-9 start; stamping the step-3 value would spend a
+    second full drain-and-restart on settings that are already live. Written before the start
+    rather than after, so a start that fails does not leave the box owing a restart nothing
+    will ever tell it about.
+  * NO STAMP IS NOT A CHANGE. A fresh machine records the current hash and restarts nothing.
+    The alternative spends one whole drain on a config nobody touched, on every box, once.
+  * A MISSING OR UNHASHABLE config.json answers with a CONSTANT ("absent"), never the empty
+    string: the comparison is for inequality, and an empty answer differs from every stored
+    value forever — a box with no config restarting itself every five minutes.
+  * THE DIRTY-TREE REFUSAL COVERS THIS TRIGGER TOO. It is the same guard in the same place, and
+    a config edit does not get to bypass "someone is working on this checkout".
 
 A DIRTY TREE IS REFUSED, NEVER STASHED OR RESET. The working copy is someone's workspace; the
 updater has no business deciding that uncommitted work is expendable. Consequence to accept
@@ -453,6 +482,10 @@ containment, and this paragraph is the reason not to relax it.
   EDIT ffbox/test_ffwatch.py                the drain gate, and the drain-failure-does-not-
                                             block-the-update path
   EDIT ffbox/README.md                      how to trigger, pause and observe an update
+
+Added 2026-09-02:
+
+  NEW  ~/.config/ffbox/update.config-sha    written by the updater at step 8; the second trigger
 
 06-services.sh is the only place that learns about the new units, and it must not add them to
 ffbox.target — see section 3, choice 1.
