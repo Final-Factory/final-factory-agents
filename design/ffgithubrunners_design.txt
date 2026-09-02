@@ -78,9 +78,14 @@ slot.sh with the slot number as its argument:
      runner_group_id 1. Keep the returned runner id. Back off and retry on API errors.
   2. `docker run --rm` against ffbox-container's daemon with the flags in section 12, the JIT
      config in the environment, a --tmpfs workspace, and no bind mounts.
-  3. Wait for the container to exit, with a watchdog that sends TERM and waits before KILL so the
-     job's licence trap can return the Unity seat. The watchdog defaults to 120 minutes, above
-     main.yml's timeout-minutes: 90, so a job GitHub still wants is never killed here.
+  3. Wait for the container to exit, with TWO deadlines that send TERM and wait before KILL so the
+     job's licence trap can return the Unity seat. watchdog_minutes defaults to 120, measured FROM
+     THE MOMENT THE JOB STARTED and above main.yml's timeout-minutes: 90, so a job GitHub still
+     wants is never killed here. idle_minutes bounds a registered runner with no job, measured
+     from mint, and is cancelled outright when one arrives.
+     Until 2026-09-02 there was one deadline and it was measured from container launch, so this
+     paragraph was true of the intent and false of the code: a job landing on a runner that had
+     been waiting 118 minutes had two minutes to finish. design/ffbox_clocks_design.txt.
   4. Tee the container's output to /var/log/ffgithubrunners/slot-N.log, rotated. `--rm` would
      otherwise take the log with the container.
   5. Teardown, unconditionally: remove the container if it is still there, then DELETE the

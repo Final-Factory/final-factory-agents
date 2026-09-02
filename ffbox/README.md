@@ -1349,13 +1349,20 @@ wait; a request that finds one starts the agent in **1.2 seconds**, measured on 
 "ffagent": {
   "pool": { "idle": 1,         // how many wait while nothing is happening. 0 is off
             "max": -1 },       // this lane's ceiling; -1 means "the box's", max_concurrent_runs
-  "idle_agent_ttl_secs": 14400,// what one waits before retiring, enforced inside it
+  "idle_agent_ttl_secs": 14400,// what one waits before retiring. The keeper enforces it; the
+                               // container fails safe at this plus 900
   "pool_ref": null             // which branch to stage; null follows base_ref
 }
 ```
 
 Both lanes describe their pool the same way — `githubrunner.pool` has the same two keys, where
-`max` is the most CI jobs at once. The coercion is shared too: a negative `idle` is 0 (off), a
+`max` is the most CI jobs at once. **And both describe their clocks the same way**, in two files
+with two keys, `staged_at` and `ttl_secs`: an IDLE clock bounding a container that is holding a
+workspace and waiting for work, and a WORK clock bounding one that has some. The rule above both
+is that the idle clock may never fire while work is in flight — settled here by `out/owner`, and
+in the CI lane by the job's own busy marker. `ffbox/lib-workloads.sh` holds the format and the
+arithmetic for both, `ffstatus` reads it for both, and `design/ffbox_clocks_design.txt` is why
+the enforcer is nonetheless different on each side. The coercion is shared too: a negative `idle` is 0 (off), a
 negative `max` is `max_concurrent_runs`, and 0 is left alone on both because "no places" is a
 thing somebody may mean.
 
@@ -1479,12 +1486,27 @@ that the workspace tmpfs is one Docker creates, so it is NOT charged to `/dev/sh
 run in flight `df` reported 2.1M used of 378G while that run held 24G. `/proc/meminfo` is the
 number that means anything here.
 
-**It retires itself.** After `idle_agent_ttl_secs` unclaimed, the container exits and the keeper
-stages a fresher one; the host compares nothing. That covers the workspace drifting from head, a
-newer CI cache entry and a rebuilt image all at once, and the cost when it bites is a longer
+**The keeper retires it, and it can retire itself.** After `idle_agent_ttl_secs` unclaimed, the
+keeper stops the container and stages a fresher one. That covers the workspace drifting from head,
+a newer CI cache entry and a rebuilt image all at once, and the cost when it bites is a longer
 reset on one turn, never a wrong answer. The deadline stops applying the moment a request is
-dispatched, and the race between the two is settled by one `O_EXCL` file: host and container both
-try to create `out/owner`, and whoever wins decides what happens next.
+dispatched.
+
+The clock moved to the host on 2026-09-02, and it removed a race rather than moving one: the host
+is already the dispatcher, so retiring and dispatching became two decisions by one party. The
+keeper claims `out/owner` first, exactly as a dispatch does, and one that loses the `O_EXCL`
+create has lost to a container already walking out.
+
+**The container keeps a failsafe at the TTL plus fifteen minutes, and it is absolute.** A spare
+holds 22 GiB and a Unity seat, and a keeper that is not keeping must not mean both are held until
+somebody notices. It fires whether or not `out/owner` exists, because a claim that has not become
+a dispatch within the margin is a host that failed rather than a dispatch in progress — a real one
+lands about a second later. Before that it re-armed instead of exiting, so a keeper that claimed
+and then died left a container waiting for as long as it lived; the loop's own comment had claimed
+otherwise since it was written. Which is why the claim-then-stop order and the absolute failsafe
+have to land together: either alone is worse than neither.
+
+`ffbox/test_pool_task.sh` covers that offline, against the real script.
 
 **A drain destroys every IDLE staged one.** Not housekeeping: `pool-task.sh`, the turn task and
 `ffverify` are bind-mounted from this checkout, live, and the self-updater fast-forwards it

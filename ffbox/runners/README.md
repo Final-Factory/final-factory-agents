@@ -91,6 +91,40 @@ pool.max   3     the most jobs that can run at once, under max_concurrent_runs
 pool.idle  1     how many runners wait for work while nothing is happening
 ```
 
+### The two clocks
+
+```
+watchdog_minutes  120   the most a JOB may run, from the moment the job started
+idle_minutes      120   the most a registered runner may wait with no job, from mint
+```
+
+`watchdog_minutes` is above `main.yml`'s own `timeout-minutes: 90`, so a job GitHub still wants
+is never killed here. It is measured from the busy marker, which the supervisor already writes
+when its runner takes a job — so a supervisor restarted mid-job recovers the same deadline
+instead of granting a fresh two hours. **Until 2026-09-02 it was measured from container launch
+instead**, which meant every minute a runner spent registered and waiting was a minute the job
+did not get: one landing on a 118-minute-old container had two minutes, and about a quarter of
+jobs were starting with under thirty.
+
+`idle_minutes` is what recycles a runner nobody has given work to. What it is really for is the
+image: `ffbox:latest` is rebuilt within five minutes of a push and a running container keeps
+whatever it started with, so on a busy repository the updater's drain gets there first and this
+rarely fires. On a quiet week it is the only thing that moves a runner onto a rebuilt image,
+which is also what keeps the Actions runner new enough for GitHub to keep handing it jobs.
+
+0 means never recycle, not expire immediately. A value small enough to churn JIT registrations
+against GitHub's API is raised to a floor of 5.
+
+**Do not lower `idle_minutes` below `watchdog_minutes` casually.** While they are equal, a missed
+busy flip costs nothing: the container lands on the deadline it would have had anyway. Lower it
+and the `Runner.Worker` inference becomes load-bearing for whether a job survives, because a job
+the supervisor did not notice would be stopped at a deadline it never had. `slot.sh` takes one
+more look immediately before an idle stop for exactly this reason.
+
+Both deadlines are written to `state/<container>.{busy,idle}` rather than held in the
+supervisor's memory, so `ffstatus` can show them and a restart recovers them. A container whose
+supervisor is gone shows as `orphan` there rather than counting down to nothing.
+
 A supervisor starts a runner when **both** are true: the pool is below `pool.max`, and fewer than
 `pool.idle` of the runners in it are idle. Since 2026-09-01 a third condition sits above them
 both: the BOX must be under `max_concurrent_runs`, counting the agent lane's containers too. That
