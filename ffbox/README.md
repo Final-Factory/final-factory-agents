@@ -1404,6 +1404,16 @@ update window open and is then force-stopped. Adding a class means adding its pr
 places that must agree: `NAME_PREFIX` in `ffbox`, `CLASS_NAME_PREFIX` in `ffwatch.py`, and that
 sweep's `case`.
 
+**Reading all of that off the box:** `ffbox/ffstatus.sh` prints one table of every container
+that holds a workspace — agent runs, staged spares and CI jobs together, with each spare's slot,
+branch and remaining TTL — and a second table of what each pool was asked to hold (`idle`,
+`max`, and the box-wide `max_concurrent_runs` above both). Both lanes are reported in one
+vocabulary — WAITING is a container holding a workspace with no work in it, which is an agent
+spare or an idle registered CI runner — so for CI it reads ffgithubrunners' busy markers rather
+than counting every `ffghr-*` container as a job in flight. It reads `docker ps`,
+`~/.config/ffbox/config.json` and those markers, and writes nothing, so it is safe to run at any
+time; `--watch` refreshes it every five seconds.
+
 **What it costs is memory and a Unity seat.** A staged container holds its whole workspace
 resident, 22 GiB for master, and since 2026-09-01 it also holds a licence: `pool-task.sh`
 activates after the workspace is synced and before the container goes idle, so a dispatched turn
