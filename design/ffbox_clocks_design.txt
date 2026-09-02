@@ -1,0 +1,647 @@
+ffbox clocks: a deadline that is written down, and starts when the work does
+============================================================================
+
+2026-09-02.
+
+A CI job that lands on a runner container which has been idle for 118 minutes gets two minutes to
+finish, and is then stopped mid-step.
+
+`slot.sh` sets its watchdog deadline once, at line 464, immediately after `docker run` returns:
+
+    DEADLINE=$(( $(date +%s) + WATCHDOG_MINUTES * 60 ))
+
+`grep -n DEADLINE runners/slot.sh` returns exactly two hits, that assignment and the comparison at
+line 485. Nothing resets it. The `BUSY` flip that notices a job has started sits five lines above
+the comparison, at 475, and does not touch it. So the 120 minutes is measured from CONTAINER
+LAUNCH, and every minute the container spent registered and waiting for work is a minute the job
+does not get.
+
+The comment directly above the loop, at line 428, says the opposite:
+
+    # Above main.yml's timeout-minutes: 90, so a job GitHub still wants is never killed here. This
+    # exists for a container that is wedged rather than for one that is slow.
+
+That is also what the design says, at design/ffgithubrunners_design.txt:81-83. Both are describing
+a deadline that covers the job. The code has one that covers the container.
+
+The pool made the gap wide. A quiet box holds one registered idle runner; if nobody pushes, the
+watchdog recycles it at 120 minutes and a fresh one comes up in its place. Push times have nothing
+to do with that cycle, so the age of the container a job lands on is roughly uniform over
+[0, 120) minutes. About a quarter of jobs therefore start with less than thirty minutes of runway,
+against a workflow whose own `timeout-minutes` is 90.
+
+When it bites it does not look like a timeout. The job fails as a lost runner, with no
+`timeout-minutes` message to point at; slot.sh logs "killed by the watchdog after 120 minutes"
+(line 547), which reads as a wedged container rather than a healthy job that was ten minutes in;
+teardown deletes the registration and systemd brings a fresh slot up, so the box looks well
+afterwards. It may also leak a Unity seat, which is open item (d) in the runners design.
+
+The second symptom is in `ffstatus.sh`. Its TTL column is blank for every CI row, because `gather()`
+initialises `ttl` empty at line 301 and the `ci)` arm at 303 never fills it in. That is not an
+oversight in the renderer. The CI deadline exists only as a shell variable inside one host process,
+so there is nothing for a reader to read. The agent lane's spares show a TTL because
+`pool-task.sh` writes `staged_at` and `ttl_secs` into `out/staged` (lines 64-65) and ffstatus
+subtracts (lines 319-327).
+
+Both symptoms have one cause. This design fixes it once, in a shape both lanes use.
+
+
+1. What gets built
+------------------
+
+  1. Two named clocks in both lanes, with the same meanings on each side: an IDLE clock, which
+     bounds a container that is holding a workspace and waiting for work, and a WORK clock, which
+     bounds a container that has some.
+  2. One rule above both: the idle clock may never fire while work is in flight. The agent lane
+     has this by construction today; CI does not have it at all.
+  3. A CI work clock that starts when the job starts, from a timestamp that is already on disk.
+     This is the bug fix, and it restores what slot.sh:428 has always claimed.
+  4. A CI idle clock, which is new: `idle_minutes`, separate from `watchdog_minutes`, bounding how
+     long a registered runner waits before it is recycled onto a rebuilt image.
+  5. Every deadline written down in one format, in a file, so an enforcer that restarts recovers it
+     and a reader that is not the enforcer can show it.
+  6. The agent idle clock moved host-side, which removes a race rather than relocating one, behind
+     an in-container failsafe that keeps the property a host-side clock would otherwise lose.
+  7. One shared implementation of the format and the decision rule, in `lib-workloads.sh`, which is
+     already the layer both lanes share.
+  8. `ffstatus` and the web page showing a TTL for CI rows, which falls out of 5 rather than being
+     built.
+
+Not a goal: one enforcer for the whole box. Section 7 is why.
+
+
+2. Two clocks, and the rule that ties them
+------------------------------------------
+
+The two clocks answer different questions and want different numbers.
+
+The IDLE clock is about staleness and cost. A container waiting for work holds RAM (about 22 GiB
+for an agent spare's workspace), possibly a Unity seat, and a claim on the box's ceiling, and it
+gets less useful as it sits: its workspace drifts from head, the cache entry it came from is
+superseded, and `ffbox:latest` is rebuilt under it. Retiring it and staging a fresh one costs one
+warm-up on a machine that by definition has nothing else to do.
+
+The WORK clock is about a job that has stopped making progress. It is a much less frequent event
+and a much more expensive one to get wrong: firing early kills work somebody is waiting for. This
+is why the CI number is 120 against a workflow ceiling of 90, and why the agent lane splits its own
+into three phases with separate ceilings (`ffbox:223`, `WARMUP_TIMEOUT=3600`, `AGENT_TIMEOUT=1800`,
+`VERIFY_TIMEOUT=1800`), each measured from a marker the container writes rather than from launch.
+
+The rule that ties them is the one the idle-agents design already states, in section 7:
+
+    THE DEADLINE STOPS APPLYING AT DISPATCH. A container that has been sitting for three hours and
+    fifty-nine minutes serves its prompt with the whole of `agent_secs` in front of it, exactly as
+    a freshly staged one would.
+
+That is the property CI is missing. Its single deadline does both jobs, so a container that has
+been sitting for 118 minutes serves its job with two minutes in front of it.
+
+The agent lane gets this for free because its two clocks are enforced by different things: the
+container runs the idle clock and the host runs the work clocks, and the handover between them is
+an atomic file create. CI has one clock in one place doing both jobs, and no handover at all.
+
+Written out, with today's behaviour in the middle column:
+
+    lane      clock   today                              after
+    ------    -----   --------------------------------   ----------------------------------------
+    agent     idle    in-container, from stage time      host-side, from stage time; failsafe kept
+    agent     work    host-side, from .agent-started     unchanged
+    CI        idle    (none; the work clock stands in)   host-side, from mint time
+    CI        work    host-side, from CONTAINER LAUNCH   host-side, from the busy marker
+
+Only two cells change behaviour. The rest is naming what is already there so that one reader and
+one helper can serve both lanes.
+
+
+3. The deadline is a file, not a variable
+-----------------------------------------
+
+Every deadline in this system is written to disk, in one format, by whoever sets it. The process
+that enforces it holds no state of its own: each pass it reads the file, compares, and acts.
+
+This is not bookkeeping for its own sake. It is the direct lesson of the CI bug's second symptom.
+A deadline in a shell variable has three properties nobody chose:
+
+  - it cannot be read by anything else, so `ffstatus` shows a blank column and an operator has no
+    way to ask how long a container has left;
+  - it dies with the process holding it, so a SIGKILLed `ffgithubrunners@N` leaves a container with
+    no deadline at all, running until `reap.sh` notices the supervisor pid is gone on its
+    fifteen-minute timer;
+  - it cannot be checked by a test without running the supervisor.
+
+The format is the one `pool-task.sh` already writes:
+
+    staged_at=2026-09-02T14:31:07-04:00      when the clock started, ISO 8601 with an offset
+    ttl_secs=14400                            how long it runs for
+
+Two keys, and the deadline is their sum. Storing the start and the duration rather than the
+absolute expiry is what lets a reader show BOTH "forty minutes left" and "this has been up for
+three hours", which are the two things an operator actually asks. It also survives a config change
+honestly: a container carries the TTL it was created under, which is already the documented
+behaviour of `FFBOX_IDLE_TTL_SECS` (pool-task.sh:41, "the deadline a container enforces is the one
+that was configured when it was staged").
+
+Where each file lives:
+
+    agent idle   pool/<pool id>/out/staged            exists; add nothing
+    agent work   the .agent-started / .verify-started markers, plus the ceilings ffbox holds
+    CI idle      state/<container>.idle               new, written by slot.sh at mint
+    CI work      state/<container>.busy               EXISTS ALREADY and already carries the time
+
+That last line is the piece that makes this cheap. `ffghr_mark_busy` (runners/lib/config.sh:608)
+writes:
+
+    printf 'at=%s\n' "$(date -Is)" > "$(ffghr_busy_marker "${1:?}")"
+
+The moment a CI job starts is already recorded, in a file, in ISO 8601, by the supervisor, for the
+pool's own accounting. The work clock does not need new state. It needs to read the file that is
+already there.
+
+The agent work clocks stay as they are. They are markers plus in-process ceilings rather than
+`staged_at`/`ttl_secs` files, and converting them buys nothing: `ffbox` is the only reader, the
+run is in the foreground of the process holding the ceiling, and a restart of that process means
+the run is gone anyway. The rule in this section is about deadlines that outlive a poll, which the
+work clock of a foregrounded run does not.
+
+
+4. The CI work clock starts at the busy marker
+----------------------------------------------
+
+In the supervisor's wait loop, when `BUSY` flips, recompute the deadline:
+
+    if [ "$BUSY" = 0 ] && ffghr_container_busy "$CNAME"; then
+        BUSY=1
+        DEADLINE=$(( $(date +%s) + WATCHDOG_MINUTES * 60 ))
+        ...
+
+The flip already exists at slot.sh:475 and writes the marker two lines later. This is the
+direct analogue of `ffbox` measuring the agent clock from `.agent-started` rather than from
+`docker run`, and after it the comment at line 428 is true for the first time.
+
+The cost is one poll interval of slack. `ffghr_container_busy` is checked every
+`POOL_POLL_SECONDS`, five seconds, until the flip, so the job clock can start up to five seconds
+late. Against 120 minutes that is not worth a second mechanism.
+
+For restart-safety the deadline is derived from the marker rather than from the moment of the flip:
+
+    job deadline = at(state/<container>.busy) + watchdog_minutes
+
+A supervisor that restarts while a job is running re-reads the marker and lands on the same
+deadline the previous one had. Deriving it from "when I noticed" instead would give a restarted
+supervisor a fresh 120 minutes, which is the same class of bug as the one this fixes.
+
+AND WHEN THE MARKER CANNOT BE READ, THE FALLBACK IS TODAY'S RULE, not "no deadline": the
+container's start time plus `watchdog_minutes`. Section 12 is the argument; the short version is
+that an unbounded work clock is worse than a work clock that is merely too generous.
+
+Two behaviours follow that are worth stating because they are changes:
+
+A JOB CAN NOW OUTLIVE ITS CONTAINER'S IDLE DEADLINE, deliberately. A container minted at 09:00 with
+`idle_minutes: 120` that takes a job at 10:58 runs until 12:58 if it needs to. The idle clock is
+cancelled, not paused, exactly as the agent lane's is at dispatch. Since a CI container serves one
+job and exits, cancelling and resetting are the same observable thing.
+
+THE WATCHDOG'S MESSAGE HAS TO SAY WHICH CLOCK FIRED. Today "killed by the watchdog after 120
+minutes" covers both a wedged job and a recycled idle spare, and those want different reactions
+from whoever reads the journal. After this they are separate lines, and the kind goes into the
+teardown record the same way `ffbox` writes `warmup`, `agent` or `verify` into `ffbox-timeout`
+(ffbox:1153).
+
+
+5. The CI idle clock, which is new
+----------------------------------
+
+`githubrunner.idle_minutes`, default 120, bounding how long a registered runner waits with no job.
+
+It is not the same number as `watchdog_minutes` and should not be derived from it. The two are
+sized by different things: `watchdog_minutes` is 120 because main.yml's ceiling is 90, and
+`idle_minutes` is a staleness-versus-churn trade, the same one `idle_agent_ttl_secs` makes for
+agent spares. Starting them at the same value is a coincidence worth keeping only until somebody
+has a reason to move one.
+
+What the idle clock is FOR, on the CI side, is the image. `ffbox-update.timer` rebuilds
+`ffbox:latest` within five minutes of a push, and a registered runner goes on running whatever it
+started with. The updater destroys idle CI containers on any pass that has something to merge
+(update_ffbox.sh, the sweep that skips containers with a `Runner.Worker`), so on a busy repository
+the image is picked up quickly and this clock rarely fires. On a quiet week it is the only thing
+that recycles a runner onto a rebuilt image, which is also the thing that keeps the Actions runner
+version current enough for GitHub to keep handing it jobs.
+
+Enforcement is the same `docker stop`, and it must stay a stop rather than a kill: PID 1 in the
+container is the listener, so a TERM gives it a chance to shut down cleanly, and teardown deletes
+the registration either way. Whether an idle listener deregisters itself on TERM is not
+established; what is established is that a clean exit after a job does, which is why teardown's
+DELETE usually returns 404 (runners design section 4, step 5). There is no grace to shorten here
+just because the container is idle. An idle runner has no Unity seat and nothing to harvest, but
+it may have taken a job in the seconds since the last poll, so the idle path uses the same `docker
+stop -t 90` as the work path.
+
+WHICH LEAVES ONE RACE, and it is worth naming because it is the one thing the agent lane can settle
+and CI cannot. GitHub may assign a job to a runner in the instant between the idle deadline firing
+and the registration being deleted. There is no `out/owner` equivalent: the other party to the
+handshake is GitHub, and it does not participate. The window is the length of one `docker stop`
+plus one DELETE, seconds, against an idle period measured in hours, and the failure mode is one job
+failing as a lost runner. It can be narrowed by deleting the registration BEFORE stopping the
+container, which turns the window into the length of one API call, at the cost of a job in flight
+losing its registration if the busy check was wrong. Section 16 leaves the order open; the current
+teardown order (stop, then delete) is what ships until somebody measures.
+
+
+6. The agent idle clock moves to the host, behind a failsafe
+------------------------------------------------------------
+
+Today `pool-task.sh` counts its own TTL down and exits, and `ffwatch` compares nothing
+(README.md:1450, "the host compares nothing"; `pool_reap` at ffwatch.py:4033 only deletes the spool
+directories of containers that are already gone). Because both the host and the container can
+decide the spare's fate, they need an atomic arbiter, and that is what `out/owner` is: an O_EXCL
+create that both sides attempt, whoever wins says what happens next (pool-task.sh:100-125).
+
+Moving the clock to the host does not relocate that race. It REMOVES it. The host is already the
+dispatcher, so retire-and-dispatch become two decisions made by one party, serialised by the
+admission lock `lib-workloads.sh` already holds. The keeper walks the spool directories every pass
+in `pool_reap`; adding an expiry test there is a `stat` and a subtraction per spare, on state that
+is already on disk in `out/staged`.
+
+What it costs is the property a container-held clock has and a host-held one does not: a spare
+retires itself even when nothing is watching. That matters more here than it looks, because an
+agent spare holds about 22 GiB and, since 2026-09-01, a Unity seat. A stopped or crash-looping
+ffwatch would hold both until an operator noticed. That is exactly the weakness this design is
+fixing on the CI side, and importing it into the lane that does not have it would be a poor trade.
+
+So the container keeps its clock as a FAILSAFE, at `ttl_secs` plus a margin, and the host becomes
+the enforcer of record. In normal operation the host expires the spare first and the failsafe never
+runs. When the failsafe does run it means the keeper is not keeping, which is precisely when you
+want a container to hand back its seat without being asked.
+
+`out/owner` stays exactly as it is, and the keeper retires a spare the same way it dispatches into
+one: win the O_EXCL create first, then act. A keeper that loses the create has lost to a container
+that is already walking out, and does nothing.
+
+THE FAILSAFE MUST NOT BE GATED ON THAT CREATE, and this is the sharp edge of the whole section.
+`pool-task.sh` today, on reaching its deadline with `owner` already taken, logs "the host has
+claimed this container; waiting for the job" and pushes its own deadline 900 seconds
+(pool-task.sh:113-126). It then re-attempts a create that can never succeed, so it waits, and
+pushes, and waits, for as long as the container lives.
+
+Its own comment says otherwise, and the comment is the better design: "left in place rather than
+disarmed so a host that claimed and then died does not leave a container waiting for ever"
+(pool-task.sh:119-122). Re-arming at plus-900 is not what stops that; only exiting is. So what
+follows is not a new idea imposed on that loop, it is the loop's stated intent, which the code has
+never implemented because until now nothing made the case reachable. That is survivable today
+because the only thing that creates `owner` from the host side is a dispatch, which delivers
+`in/dispatch` about a second later. Make the keeper create `owner` on every RETIREMENT and the
+same loop becomes a trap: a keeper that claims and then dies, or whose `docker stop` fails,
+strands a container holding 22 GiB and a Unity seat, with its own failsafe permanently disarmed.
+That is strictly worse than what this replaces, and it is reachable by one crash at the wrong
+moment.
+
+So the container's failsafe is ABSOLUTE. At `ttl_secs` plus the margin it exits, whether or not
+`owner` exists, unless `in/dispatch` has actually arrived. A claim that has not been followed by a
+dispatch within the margin is not a dispatch in progress; it is a host that failed. The margin has
+to be long enough that a real dispatch is never cut off -- measured at about a second, against a
+margin of 900 -- and short enough that a stranded seat comes back the same hour. Start at
+`ttl_secs + 900`, which is the number `pool-task.sh` already uses for the same window.
+
+The 900-second push stays for the case it was written for, a claim that IS a dispatch. What changes
+is that it is no longer unbounded: it may be taken once, and the second expiry exits.
+
+THE KEEPER'S STOP NEEDS THE 120-SECOND FLOOR, and getting this wrong would leak a Unity seat on
+every retirement rather than on none. A spare has held a seat since 2026-09-01, and the trap that
+gives it back runs `unity-editor -quit -returnlicense`, an editor launch that ffbox and slot.sh
+both describe as taking tens of seconds: `ffbox:1146-1150` therefore floors its stop at 120
+whatever `kill_grace_secs` says, and `slot.sh:492` uses 90 for the same reason. Today the container
+retires itself with `exit 0`, so the trap runs with NO deadline at all. A host-side stop replaces
+"unbounded" with "however long the keeper allows", and the keeper must therefore apply the same
+floor ffbox does. `kill_grace_secs`, which defaults to 10, is the wrong number here: it is about an
+agent ignoring SIGTERM, not about a licence round trip.
+
+That is also a live bug in two places this design did not set out to touch. `pool_drop`
+(ffwatch.py:4156) stops a staged spare with `kill_grace_secs`, and `update_ffbox.sh:432` stops one
+with a hardcoded 10, and both have been doing it to seat-holding containers since 2026-09-01 --
+the updater on every pass that has something to merge, which on this box can be every five minutes.
+The floor argument in `ffbox:1147` was applied to the run path and never carried to these two. The
+consequence is bounded rather than permanent, because machine ids are per slot and the next
+container on that slot reuses the entitlement, but between the two a concurrent activation can find
+no free entitlement. Fixing it is two lines and does not wait for anything else here.
+
+One implementation constraint, from this repository's own history. Commit c693d67 is the admission
+lock riding into the run and costing the daemon three minutes of every pass, during which it
+drained no Discord events and sent no replies it had already composed; from Discord it looked like
+Max had stopped answering. The expiry TEST is cheap. The expiry ACTION is `docker stop --timeout`,
+which is not, and it must not run synchronously on the keeper's loop. Either hand it to the same
+background path staging uses, or bound it the way the speculative caller bounds its lock
+acquisition (`ffbox_workload_lock_acquire 30`). Nobody is waiting on a retirement, so "not this
+pass" is always an acceptable answer.
+
+
+7. Enforcement stays in each lane
+---------------------------------
+
+The maximal version of this design is one sweeper — ffwatch — owning idle expiry for both lanes.
+It would work mechanically. `update_ffbox.sh` already destroys idle CI containers from outside, and
+`slot.sh` copes with a container exiting for reasons it did not cause, because that is also what a
+finished job looks like to it.
+
+It is rejected because of what the CI lane is for. Today the two lanes share `lib-workloads.sh`,
+the daemon and the box's ceiling, and nothing else. CI keeps taking jobs while ffwatch is drained,
+wedged, mid-update or broken by a commit, and that independence is worth more than one fewer loop.
+A central sweeper would make every CI runner's lifetime depend on the health of the Discord daemon.
+
+So: two enforcers, one format, one decision rule. ffwatch's keeper expires agent spares;
+`slot.sh` expires its own container. Neither needs to know the other exists.
+
+This also settles what "sharing the implementation" can mean. The enforcers are in different
+languages and different process shapes: the keeper is a Python daemon holding every spare, and
+`slot.sh` is a POSIX shell supervisor holding exactly one container. There is no single enforcer to
+write. What is shared is the format, the arithmetic and the reader, which is section 8.
+
+
+8. What is actually shared
+--------------------------
+
+Four functions in `lib-workloads.sh`, in POSIX shell, on the deadline file:
+
+    ffbox_clock_write PATH SECS      write staged_at=<now> and ttl_secs=<secs>
+    ffbox_clock_start PATH           the start, as epoch seconds; empty if unreadable
+    ffbox_clock_left PATH            seconds remaining; negative when expired
+    ffbox_clock_expired PATH         exit 0 when it has passed
+
+`lib-workloads.sh` is the right home because it is already the file both lanes share for admission
+and counting, and because shell is callable from both sides: `slot.sh` sources it, and ffwatch
+already shells out to `ffbox` routinely through `ffbox_cmd()`. A Python reimplementation in ffwatch
+would be a second model of the same format, which is the pattern `update_ffbox.sh` describes
+rejecting when it stopped grepping diffs for triggers.
+
+The callers:
+
+    pool-task.sh          ffbox_clock_write on out/staged            (replaces its two printfs)
+    slot.sh               ffbox_clock_write on state/<c>.idle at mint
+    slot.sh               ffbox_clock_left  on state/<c>.busy for the job deadline
+    ffwatch pool_reap     ffbox_clock_expired on out/staged, via ffbox
+    ffstatus.sh           ffbox_clock_left for both lanes' TTL column
+    reap.sh               unchanged; orphan sweeping is a different question
+
+`ffstatus.sh` becomes a consumer instead of carrying its own parser. Its current spare-TTL block
+(lines 319-327) is a `sed` per key plus a `date -d`, written inline, and duplicating that for the
+CI arm is how the two readings start to disagree — which is the thing `--json` exists to prevent
+between the terminal and the web page, and which deserves the same treatment inside the script.
+
+
+9. What ffstatus and the web page get
+-------------------------------------
+
+The TTL column fills in for CI rows with no new plumbing: `gather()`'s `ci)` arm reads the idle or
+busy clock through the shared helper and sets `ttl`, and everything downstream already handles it.
+`render_json` emits `ttl_secs` per container today, and `ffweb.py:2147` already renders it through
+`fmt_ttl`, which prints `—` for null and `expired` for a negative.
+
+Which clock a CI row shows follows its state, and the states already exist:
+
+    waiting     the idle clock: how long before this runner is recycled
+    busy        the job clock: how long before the watchdog stops it
+
+That is more useful than one number would have been, and it is the same split the agent rows get
+(`warm` and `filling` show the idle clock; a dispatched run shows none, because its ceilings are
+per-phase and live in `ffbox`).
+
+One row will now show a TTL that nothing is enforcing: a CI container whose supervisor is dead. The
+container is real, the deadline in its file is real, and the process that would act on it is gone.
+`ffstatus` should say so rather than counting down to nothing. The test is the one `reap.sh:62-73`
+already makes, whether the pid on the `ffghr.supervisor.pid` label is alive, and the display is the
+word `orphan` in place of the number.
+
+
+10. The busy marker is an inference, and what that costs depends on one number
+------------------------------------------------------------------------------
+
+`ffghr_container_busy` is `docker top "$1" -o pid,comm | grep -q 'Runner\.Worker'`
+(runners/lib/config.sh:623). It is an inference from a vendor process name, polled every five
+seconds.
+
+Today a missed flip costs one miscounted idle runner: the pool believes a busy container is idle
+and runs one runner short until the job ends. The job itself is unaffected, because the single
+deadline fires at mint plus 120 whether the flip was seen or not.
+
+AFTER THIS CHANGE THE COST DEPENDS ENTIRELY ON `idle_minutes`. While it equals `watchdog_minutes`,
+which is what section 11 ships, a missed flip lands the container on exactly today's deadline: mint
+plus 120. Nothing is worse and the improvement is simply not delivered for that job. The moment
+somebody lowers `idle_minutes` below `watchdog_minutes` -- which open item (c) proposes, on the
+sound reasoning that its only real job is picking up a rebuilt image -- a missed flip stops being
+free and starts killing jobs early, at a deadline the job never had before.
+
+So the mitigations below are not what makes the default safe. What makes the default safe is the
+two numbers being equal. The mitigations are what has to be in place BEFORE the two numbers
+diverge, and open item (c) must not be closed until they are.
+
+Two mitigations, both cheap, and the design takes both:
+
+  1. The idle kill refuses to fire on a container whose age already exceeds `idle_minutes` by more
+     than one poll interval AND which has no busy marker but does have a `Runner.Worker`-shaped
+     process under any name. Cheap version: re-check `docker top` immediately before the stop, and
+     treat any exec'd process under the listener as work in flight.
+  2. The stop is a stop, with the full grace. A job killed in error still gets its licence trap.
+
+What would remove the fragility rather than bounding it is a signal the runner itself emits. The
+listener logs job acceptance to its own log, which slot.sh already tees to
+/var/log/ffgithubrunners/slot-N.log, so a line match there is a second and independent source. It
+is not free — the log format is the vendor's too — and it is left as open item (b).
+
+
+11. Configuration
+-----------------
+
+    githubrunner:
+      watchdog_minutes  120     bounds a job, from the busy marker. Above main.yml's 90.
+      idle_minutes      120     bounds a registered runner with no job, from mint.
+
+    ffagent / ffdev:
+      idle_agent_ttl_secs 14400 unchanged in meaning; now enforced by the keeper, with the
+                                container failing safe at this plus 900.
+
+`watchdog_minutes` keeps its name and its number. Its meaning changes from "container lifetime" to
+"job lifetime", which is what its own comment and the runners design have always said it was.
+
+`idle_minutes` is new and defaults to the same 120 the single clock effectively enforced, so a box
+that upgrades and changes nothing sees the same idle recycling it saw before, and only the job
+runway changes.
+
+Both are read by `lib/config.sh` through `_ffghr_set`, alongside `watchdog_minutes` at line 137,
+and both belong in the `githubrunner` section of `~/.config/ffbox/config.json` like everything else
+that lane reads since 2026-09-01.
+
+`watchdog_minutes` HAS A SECOND CONSUMER, and it is not the watchdog. `ffghr_cache_should_archive`
+(runners/lib/config.sh:471-475) ages out a cache claim with it: "a claim older than the watchdog
+belongs to a job that is gone". Re-basing the watchdog on the job rather than the container leaves
+that reader correct, and arguably more correct, because a claim is made BY a job and is now bounded
+by the same clock the job is. What it does change is the ceiling on a container's total life, which
+goes from `watchdog_minutes` to `idle_minutes + watchdog_minutes`; nothing reads that, but anybody
+reasoning about how long an `ffghr-*` container can exist has been able to say "two hours" until
+now and cannot after.
+
+THE TWO NUMBERS NEED COERCING, not just defaulting. `idle_minutes` at 0 is a legitimate wish (never
+recycle an idle runner) and must be read as "no idle deadline" rather than as "expire immediately",
+which is the coercion both pools already apply to a `pool.idle` of 0. A negative value is 0. And a
+very small value is a way to churn registrations against GitHub's API without meaning to, so the
+floor below which the config is refused rather than honoured is worth setting at the point the
+value is read.
+
+
+12. Failure modes
+-----------------
+
+THE SUPERVISOR DIES WITH A JOB RUNNING. Its deadline is in `state/<c>.busy`, so a restarted
+supervisor recovers it. If the supervisor does not come back, nothing enforces the job clock and
+`reap.sh` sweeps the container within fifteen minutes of its pid going away. That is a change in
+kind from today, where the deadline is simply lost.
+
+THE KEEPER DIES WITH SPARES STAGED. The container failsafe fires at `ttl_secs + 900` and the spare
+retires itself, returning its Unity seat through the `trap return_license EXIT INT TERM` that
+`unity-license.sh:115` arms and `pool-task.sh` inherits as pid 1. This is section 6's whole reason
+for keeping the failsafe.
+
+THE KEEPER CLAIMS `owner` AND THEN DIES, or its `docker stop` fails. The container sees a claim
+that never becomes a dispatch, takes its one 900-second push, and exits at the second expiry
+rather than waiting for a job that is not coming. Without the absolute failsafe of section 6 this
+is the case that strands a container for ever, and it is the single worst outcome available in
+this design.
+
+THE BUSY MARKER IS MISSED. Section 10. Bounded by the pre-stop re-check, not eliminated.
+
+A RETIREMENT IS STOPPED TOO FAST TO RETURN ITS SEAT. The keeper applies ffbox's 120-second floor
+rather than `kill_grace_secs`; below that the container is SIGKILLed part-way through
+`-returnlicense` and the seat is held until the slot's machine id is reused. Section 6.
+
+THE CLOCK FILE IS UNREADABLE OR MALFORMED, AND THE TWO CLOCKS FAIL IN OPPOSITE DIRECTIONS. This is
+the one place where a single rule would be wrong.
+
+For an IDLE clock, empty means no deadline and nothing is stopped. A missing file must never mean
+kill: the file is written at mint, and a write failure there is already non-fatal for the busy
+marker (slot.sh:480-482 logs and continues). The cost of failing this way is a container that
+lives too long, which the next update pass or a restart clears.
+
+For a WORK clock, no deadline means a WEDGED CONTAINER RUNS FOR EVER, holding a slot, a workspace
+and a Unity seat -- strictly worse than today, where it dies at mint plus 120. So the work clock
+falls back to the container's own start time plus `watchdog_minutes`, read from the daemon, which
+is exactly today's rule and is always bounded. The busy marker is an optimisation on top of that
+fallback, never the only source of it.
+
+That fallback also covers the deploy window: a marker written by the old supervisor carries no
+`ttl_secs`, the helper returns empty, and the job is bounded by the launch-based deadline it would
+have had anyway.
+
+A CONFIG CHANGE MID-LIFE. A container carries the TTL it was created under, because `ttl_secs` is
+in its file. Lowering `idle_minutes` does not retire anything already up, for the same reason
+lowering `idle_agents` does not: it is a target, not a headcount enforced downwards.
+
+THE IDLE KILL RACES A JOB ASSIGNMENT. Section 5. Seconds wide, one job fails as a lost runner,
+narrowable by reordering teardown, left open.
+
+
+13. Where this is worse than what it replaces
+---------------------------------------------
+
+Four places, and one of them is a whole phase.
+
+THE AGENT LANE GETS NO REPAIR, ONLY A REFACTOR. Section 6 moves a clock that works. The race it
+removes has produced no failure anybody has recorded: `out/owner` was written correctly the first
+time and has settled every dispatch since. What the move buys is one fewer party able to decide a
+spare's fate, and a second lane described in the same vocabulary as the first. What it costs is a
+new host-side stop path, a keeper that can strand a container if the failsafe is built wrong, and a
+lane whose RAM and Unity seats now come back on time only while ffwatch is healthy. The failsafe
+puts a floor under that, and the floor is the margin rather than the deadline: a keeper that dies
+at the wrong moment turns a four-hour spare into a four-hour-and-fifteen-minute one. That is a fair
+price for a simplification and a poor one for a repair, and this is a simplification. If only part
+of this design is built, section 6 is the part to leave out.
+
+TWO NUMBERS CAN BE SET AGAINST EACH OTHER. Today `watchdog_minutes` cannot be inconsistent with
+anything, because it is the only number there is. After this, `idle_minutes` below
+`watchdog_minutes` makes the busy-flip inference load-bearing for whether a job survives
+(section 10), and `idle_minutes` far above it makes a runner that GitHub stopped offering work to
+sit registered for a day. Neither is wrong enough to refuse, both are worth a line in the README,
+and the coercion in section 11 is what stops the obviously broken values.
+
+MORE STATE THAT CAN LIE. A `.idle` marker per container, a `retiring` state, an `orphan` display,
+and a TTL column that now carries a number for CI rows. Today that column is blank, which is
+honest: nothing knew the answer. A number read from a file the enforcer may not be reading is worse
+than a blank, which is why section 9 spends a paragraph on the orphan case and section 12 on the
+unreadable one. Every one of these is a new opportunity for the page and the box to disagree.
+
+A SEAT RETURN GAINS A DEADLINE IT DID NOT HAVE. Today a spare retiring itself runs
+`-returnlicense` from an EXIT trap with no clock on it at all. Under host-side expiry it gets
+whatever the keeper's `docker stop` allows, and the design sets that at ffbox's 120-second floor.
+That is generous against a round trip measured in tens of seconds, and it is still a bound where
+there was none. A licence server having a slow day now costs a seat that self-retirement would
+have waited out.
+
+A CONTAINER CAN LIVE TWICE AS LONG. `idle_minutes` then `watchdog_minutes` end to end is up to four
+hours where the ceiling has been two. Nothing reads that ceiling, but people do: "an ffghr
+container exists for at most two hours" has been a true sentence when reasoning about Unity seat
+exposure, about how long a JIT registration can sit on the org's runner page, and about cache
+claims. It stops being true, and the replacement sentence is longer.
+
+ONE THING THAT LOOKS WORSE AND IS NOT. The idle-expiry race with a job assignment (section 5) is
+not new. Today's watchdog stops an idle container at mint plus 120 and can collide with an
+assignment in flight in exactly the same way, with exactly the same outcome. This design neither
+creates that race nor removes it, and it should not be counted against it.
+
+
+14. What this does not do
+-------------------------
+
+It does not add a second clock to an agent RUN. The three phase ceilings in `ffbox` are already the
+right shape and already start at markers.
+
+It does not make the two lanes share an enforcer, a process, or a language. Section 7.
+
+It does not change what happens at expiry: `docker stop` with a grace, never `docker kill`, in both
+lanes, because in both lanes PID 1 has a trap that returns a Unity seat.
+
+It does not touch `reap.sh`. Orphan sweeping asks "is the supervisor gone", which is a different
+question from "has the deadline passed", and the two want different answers.
+
+It does not give ffwatch any role in the CI lane, or `slot.sh` any role in the agent lane.
+
+
+15. Files this touches
+----------------------
+
+    ffbox/lib-workloads.sh              + the four clock functions
+    ffbox/runners/slot.sh               work clock from the busy marker; idle clock written at
+                                        mint and enforced; which-clock in the log and teardown
+    ffbox/runners/lib/config.sh         idle_minutes via _ffghr_set
+    ffbox/pool-task.sh                  write through the helper; the failsafe becomes ABSOLUTE
+                                        rather than yielding to out/owner (section 6)
+    ffbox/ffwatch.py                    expiry test in pool_reap; the stop off the daemon's loop;
+                                        the 120s floor in pool_drop
+    ffbox/update_ffbox.sh               the 120s floor on the drain's stop of a staged spare
+    ffbox/ffstatus.sh                   ci arm fills in ttl; spare arm uses the helper; the
+                                        retiring and orphan states
+    ffbox/runners/test_pool.sh          both deadlines, and the marker-derived job clock
+    ffbox/test_ffwatch.py               keeper expiry, and that a claimed spare is never expired
+    ffbox/README.md                     the two-clock vocabulary in both lanes' sections
+    ffbox/runners/README.md             what watchdog_minutes now measures from
+    design/ffgithubrunners_design.txt   section 4 step 3, which states the wrong invariant
+
+
+16. Open questions
+------------------
+
+  a. Teardown order on an idle expiry: stop then delete (today), or delete then stop, which
+     narrows the assignment race at the cost of a mis-detected busy container losing its
+     registration. Wants one measurement of how GitHub answers a DELETE for a runner it has just
+     assigned a job to.
+  b. Whether the runner's own log gives a durable job-start signal, which would replace the
+     `Runner.Worker` inference in section 10 rather than bounding it.
+  c. Whether `idle_minutes` should default lower than 120 now that it no longer doubles as the job
+     bound. Its only real job is picking up a rebuilt image on a quiet week, and the updater
+     already does that within five minutes on any week that has a push. NOT CLOSEABLE ON ITS OWN:
+     lowering it below `watchdog_minutes` is what turns a missed busy flip from free into a killed
+     job (section 10), so (b) or the pre-stop re-check has to be in place and watched first.
+  d. Whether the agent failsafe margin of 900 is right, or whether it should scale with `ttl_secs`.
+     It is now doing two jobs: covering a dispatch in flight, which takes about a second, and
+     bounding how long a stranded claim holds a Unity seat, which wants to be short. Those pull in
+     the same direction, so 900 is probably generous rather than wrong, but the second job is new
+     with this design and 900 was chosen for the first.
+  e. Unchanged from the runners design: whether the watchdog's TERM reaches the licence trap
+     through the runner. This design makes the watchdog fire less often on real jobs, which lowers
+     the stakes but does not answer it.
