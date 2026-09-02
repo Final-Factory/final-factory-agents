@@ -348,3 +348,106 @@ ffbox_agent_slot_release() {
     rm -f "$(ffbox_slot_claim_file "$1")" 2>/dev/null || :
     return 0
 }
+
+# --- clocks ---------------------------------------------------------------------------------
+#
+# ONE DEADLINE FORMAT FOR BOTH LANES, and it is a FILE rather than a variable. That is the whole
+# point of it. A deadline held in a shell variable cannot be read by anything else -- ffstatus
+# showed a blank TTL column for every CI row for exactly that reason -- and it dies with the
+# process holding it, so a SIGKILLed supervisor leaves a container running with no deadline at all
+# until reap.sh notices its pid is gone. Every enforcer here is therefore stateless: each pass it
+# reads the file, compares, and acts.
+#
+# TWO KEYS, AND THE DEADLINE IS THEIR SUM:
+#
+#     staged_at=2026-09-02T14:31:07-04:00     when the clock started
+#     ttl_secs=14400                          how long it runs for
+#
+# The start and the duration rather than the absolute expiry, because a reader wants both "forty
+# minutes left" and "this has been up for three hours". It also carries the TTL a container was
+# created UNDER, so a config change applies to containers made afterwards and never retroactively.
+#
+# WHOEVER SETS THE DEADLINE WRITES THE FILE. pool-task.sh writes out/staged for an agent spare;
+# slot.sh writes state/<container>.idle at mint and state/<container>.busy when a job starts.
+# ffstatus and the keeper read them. design/ffbox_clocks_design.txt section 3.
+#
+# The file may carry other keys -- out/staged also records commit, entry and ref -- so these read
+# by field and never by shape.
+
+# Write (or rewrite) the two keys, preserving nothing: every caller here owns its own file.
+ffbox_clock_write() {
+    _wl_p=${1:?}; _wl_s=${2:?}
+    {
+        printf 'staged_at=%s\n' "$(date -Is)"
+        printf 'ttl_secs=%s\n' "$_wl_s"
+    } > "$_wl_p" 2>/dev/null || { unset _wl_p _wl_s; return 1; }
+    unset _wl_p _wl_s
+    return 0
+}
+
+# The start, as epoch seconds. EMPTY IS THE ANSWER FOR ANYTHING UNREADABLE -- a missing file, a
+# truncated one, a timestamp `date` will not parse -- and never 0, which would read as 1970 and
+# expire everything. Callers decide what empty means, and the two clocks decide differently:
+# see ffbox_clock_left.
+ffbox_clock_start() {
+    [ -r "${1:?}" ] || return 1
+    _wl_at=$(sed -n 's/^staged_at=//p' "$1" 2>/dev/null | head -1)
+    [ -n "$_wl_at" ] || { unset _wl_at; return 1; }
+    _wl_e=$(date -d "$_wl_at" +%s 2>/dev/null) || _wl_e=
+    [ -n "$_wl_e" ] || { unset _wl_at _wl_e; return 1; }
+    printf '%s\n' "$_wl_e"
+    unset _wl_at _wl_e
+    return 0
+}
+
+# Seconds remaining; negative once it has passed. Prints NOTHING and returns 1 when there is no
+# readable deadline, which is the case every caller has to handle explicitly.
+#
+# THE TWO CLOCKS FAIL IN OPPOSITE DIRECTIONS and this function deliberately does not choose for
+# them. For an IDLE clock, no deadline means nothing is stopped: the cost of being wrong that way
+# is a container that lives too long, which the next update pass clears. For a WORK clock, no
+# deadline would mean a wedged container runs for ever holding a slot, a workspace and a Unity
+# seat, so its caller falls back to the container's own start time instead. slot.sh's
+# work_deadline() is that fallback.
+ffbox_clock_left() {
+    _wl_st=$(ffbox_clock_start "${1:?}") || return 1
+    _wl_ttl=$(sed -n 's/^ttl_secs=//p' "$1" 2>/dev/null | head -1)
+    case "${_wl_ttl:-}" in
+        ''|*[!0-9]*) unset _wl_st _wl_ttl; return 1 ;;
+    esac
+    printf '%s\n' "$(( _wl_st + _wl_ttl - $(date +%s) ))"
+    unset _wl_st _wl_ttl
+    return 0
+}
+
+# Has it passed? A ttl_secs of 0 means NO DEADLINE rather than "expired immediately", the same
+# coercion both pools apply to a pool.idle of 0: "never recycle this" is a thing somebody may mean
+# and "kill it the moment it exists" is not.
+ffbox_clock_expired() {
+    _wl_l=$(ffbox_clock_left "${1:?}") || return 1
+    _wl_t=$(sed -n 's/^ttl_secs=//p' "$1" 2>/dev/null | head -1)
+    [ "${_wl_t:-0}" -gt 0 ] 2>/dev/null || { unset _wl_l _wl_t; return 1; }
+    [ "$_wl_l" -lt 0 ] || { unset _wl_l _wl_t; return 1; }
+    unset _wl_l _wl_t
+    return 0
+}
+
+# THE FLOOR UNDER EVERY STOP OF A CONTAINER THAT MAY HOLD A UNITY SEAT, in seconds.
+#
+# `docker stop` sends TERM and then KILLs after this. PID 1 in an agent container is our script,
+# and the trap it inherits from unity-license.sh runs `unity-editor -quit -returnlicense` -- an
+# editor launch, tens of seconds. ffbox has floored its own stop at 120 since every run started
+# holding an editor; pool_drop and update_ffbox.sh's drain did not, and have been stopping
+# seat-holding spares with ten seconds since staged containers started taking a seat on
+# 2026-09-01. kill_grace_secs is about an agent ignoring SIGTERM and is the wrong number here.
+FFBOX_LICENCE_STOP_FLOOR=${FFBOX_LICENCE_STOP_FLOOR:-120}
+
+# The larger of a caller's grace and that floor, so an operator who asked for longer still gets it.
+ffbox_stop_grace() {
+    _wl_g=${1:-0}
+    case "$_wl_g" in ''|*[!0-9]*) _wl_g=0 ;; esac
+    [ "$_wl_g" -ge "$FFBOX_LICENCE_STOP_FLOOR" ] || _wl_g=$FFBOX_LICENCE_STOP_FLOOR
+    printf '%s\n' "$_wl_g"
+    unset _wl_g
+    return 0
+}
