@@ -367,7 +367,12 @@ DEFAULTS = {
         "base": "master",
         # Host-side only, and never passed into a container. This absence, not the deny list,
         # is what makes "nothing merges" true (design section 17).
-        "token_env": "GH_TOKEN",
+        #
+        # NAMED FOR THE ONE THING IT MAY DO. A build box holds two GitHub credentials and the
+        # old name, GH_TOKEN, did not say which was which -- this one may only open pull
+        # requests, and the credential that can write code is the one git finds in
+        # ~/.git-credentials. See ffbox/CREDENTIALS.md.
+        "token_env": "GH_PR_TOKEN",
         "token": None,
     },
 
@@ -825,7 +830,13 @@ def load_config():
     # EnvironmentFile has to put it somewhere.
     gh = dict(cfg.get("github") or {})
     if not gh.get("token"):
-        gh["token"] = os.environ.get(gh.get("token_env") or "GH_TOKEN") or None
+        # token_env first, then GH_TOKEN, which is what secrets.env called this before
+        # 2026-09-02: a machine whose file predates the rename keeps opening pull requests
+        # rather than falling silently back to "pushed but no PR".
+        for _name in (gh.get("token_env") or "GH_PR_TOKEN", "GH_TOKEN"):
+            gh["token"] = os.environ.get(_name) or None
+            if gh["token"]:
+                break
     cfg["github"] = gh
     # The Discord-side settings (channel aliases, server, trust) are read-only context for us;
     # ffdiscord itself resolves aliases, so we never duplicate the id table here.
@@ -1587,7 +1598,7 @@ true. When in doubt, true.
 # is deliberately no second way to build one.
 #
 # This call reads text written by strangers and it runs ON THE HOST, not in a container. The
-# account it runs as owns the rootless Docker socket, the NOPASSWD zfs rules, GH_TOKEN and the
+# account it runs as owns the rootless Docker socket, the NOPASSWD zfs rules, GH_PR_TOKEN and
 # Claude credential, which makes it the most privileged model call in the pipeline — a run
 # inside ffbox is better isolated than this is.
 #
@@ -1683,7 +1694,7 @@ def classifier_invocation(cfg, prompt, schema):
     budget = cfg.get("classifier_budget_usd")
     if budget:
         argv += ["--max-budget-usd", str(budget)]
-    # PATH and HOME only. No GH_TOKEN, no FFWATCH_*, nothing else this daemon happens to be
+    # PATH and HOME only. No GH_PR_TOKEN, no FFWATCH_*, nothing else this daemon happens to be
     # holding. HOME has to stay because the OAuth credential lives there, which is the residual
     # this cannot close: a flag set is a policy boundary and not a kernel one. The only real
     # boundary is a process boundary (design/conversation_clustering_design.txt 6.4).

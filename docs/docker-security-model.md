@@ -102,7 +102,7 @@ task checks for a stray `ffdiscord` on PATH at startup and says so loudly if one
 
 Six things, in descending order of how much weight they carry.
 
-**No push credential anywhere in the container.** `GH_TOKEN` is host-side only. There is no
+**No push credential anywhere in the container.** `GH_PR_TOKEN` is host-side only. There is no
 authenticated remote in the clone. This is what makes "nothing merges" true.
 
 **The host builds the refspec.** `push_bundle()` in `ffwatch.py` pushes
