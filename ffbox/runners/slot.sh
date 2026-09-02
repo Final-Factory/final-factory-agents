@@ -106,6 +106,26 @@ teardown() {
         gh_post_check_run "$STAGE" 2>&1 \
             | while IFS= read -r _line; do log "$_line"; done || true
 
+        # THE ARTIFACT, for the same reason and by the same route. The job zipped it and handed
+        # over its runtime credential rather than PUTting to blob storage itself, so that
+        # productionresultssa*.blob.core.windows.net could come off the egress allowlist -- an
+        # entry whose regex admitted eleven unregistered Azure account names that anyone with a
+        # free account could have claimed.
+        #
+        # SAFE TO DO WITH A CREDENTIAL THE JOB SUPPLIED because the credential names its own
+        # repository: artifact-upload.py reads repository_id out of the token and refuses anything
+        # not in ARTIFACT_REPO_IDS. Measured 2026-09-02, the token is also not renewed mid-job and
+        # outlives it by design -- exp is job start plus 100 minutes against a 90 minute timeout --
+        # so it is still usable here, after the container has exited.
+        #
+        # BEST EFFORT LIKE EVERYTHING ELSE IN TEARDOWN. A failed upload costs an artifact; the
+        # registration delete below is the part that must not be skipped.
+        if [ -f "$STAGE/artifact-auth.json" ]; then
+            python3 "$HERE/lib/artifact-upload.py" "$STAGE" \
+                --allow-repository-ids "$ARTIFACT_REPO_IDS" 2>&1 \
+                | while IFS= read -r _line; do log "$_line"; done || true
+        fi
+
         ffghr_cache_with_lock ffghr_cache_promote "$STAGE" 2>&1 \
             | while IFS= read -r _line; do log "cache: $_line"; done || true
         ffghr_cache_with_lock ffghr_cache_prune 2>&1 \

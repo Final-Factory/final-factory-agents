@@ -154,6 +154,21 @@ _ffghr_set ORG              org              Final-Factory
 # Final-Factory is on the free plan, where Default is the only runner group and its id is 1.
 _ffghr_set RUNNER_GROUP_ID  runner_group_id  1
 
+# WHICH REPOSITORIES THIS HOST WILL UPLOAD AN ARTIFACT FOR, by numeric repository_id.
+#
+# A job hands the supervisor its Actions runtime credential and a zip, and the supervisor performs
+# the upload -- which is what lets productionresultssa*.blob.core.windows.net come off the egress
+# allowlist, an entry whose regex admitted eleven unregistered Azure account names anyone could
+# claim. lib/artifact-upload.py reads repository_id out of the TOKEN and refuses anything not
+# listed here, so a credential minted for someone else's repository cannot be aimed at this path.
+#
+# THE ID AND NOT THE NAME, deliberately: it is stable across a rename, and it is what the claim
+# carries. Final-Factory/FinalFactory is 623631450, measured from a live job on 2026-09-02.
+#
+# EMPTY MEANS UPLOAD NOTHING. Fail closed: a host with no list configured refuses rather than
+# uploading wherever it is pointed.
+_ffghr_set ARTIFACT_REPO_IDS artifact_repository_ids ''
+
 # The App's two ids are NOT secrets: they identify an App, they do not authenticate as one. The
 # private key is the secret, and it is a file. So the ids live in config.json with the rest of the
 # configuration, and secrets.env holds only a PAT for the machines that use one.
