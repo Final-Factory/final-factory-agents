@@ -47,9 +47,14 @@ about what a job reaches that it was not meant to.
 
 ### When trusted time ends, and what keeps it from ending sooner
 
-The boundary matters because the artifact fix path in X1 depends on running code before any
-untrusted code has run. Trusted time runs from job assignment through to the Unity step — but only
-because the restore step strips the git surface out of the cache tarball first:
+X1's fix path was designed around this boundary before the token turned out to carry its own
+repository, and no longer needs it — the host validates a claim rather than trusting a moment. The
+boundary is still worth writing down, because the next thing that wants to run code the container
+cannot have tampered with will reach for it, and because the invariant it rests on is easy to
+delete by accident.
+
+Trusted time runs from job assignment through to the Unity step — but only because the restore step
+strips the git surface out of the cache tarball first:
 
 ```sh
 # A PREVIOUS JOB WROTE THIS .git AND GIT EXECUTES PARTS OF IT. Hooks run on ordinary...
@@ -157,25 +162,37 @@ PUTs to a SAS the results service mints. There is no REST endpoint to create an 
 host cannot do it with its App token. `ACTIONS_RUNTIME_TOKEN` is issued to the runner at job
 assignment and cannot be minted through any API.
 
-**What does work** is to move the upload to the host and hand it the credential:
+**What does work** is to move the upload to the host and hand it the credential. Measured
+2026-09-02 from a real job, which simplified this considerably against the first draft:
 
-1. A trusted step, before Unity, writes the runtime token, `ACTIONS_RESULTS_URL`, the repository and
-   the `Actions.Results` GUIDs to the drop box, then BLOCKS until the supervisor acknowledges. It
-   has to be a local node action rather than a `run:` step: the runner injects those variables into
-   action environments only (`Runner.Worker/Handlers/NodeScriptActionHandler.cs`), which is why a
-   shell step cannot see them. Local, so it needs no entry in the image's action archive cache.
-2. The supervisor reads that file once, pins it, and never reads that path again.
-3. A trusted step after the tests writes the zip and `artifact.request`.
-4. The supervisor uploads with `@actions/artifact` driven from the host, checking the PINNED
-   repository against a configured list. Driving the official package rather than hand-rolling
-   Twirp is the whole maintenance story for an undocumented protocol GitHub has already replaced
-   once.
+1. A step writes the runtime token and `ACTIONS_RESULTS_URL` to the drop box. It has to be a local
+   node action rather than a `run:` step: the runner injects those into action environments only
+   (`Runner.Worker/Handlers/NodeScriptActionHandler.cs`), confirmed by a probe that read a
+   2510-character token out of one. Local, so it needs no entry in the image's action archive cache.
+2. The supervisor validates the token's OWN claims against a configured repository list, then
+   uploads with `@actions/artifact`. Driving the official package rather than hand-rolling Twirp is
+   the whole maintenance story for an undocumented protocol GitHub has already replaced once.
 
-**The handshake in step 1 is the design, not the polling.** An earlier sketch had the supervisor
-noticing the file within its five-second poll, which is a race: the step returns, the Unity step
-starts, and nothing orders those against the read. Blocking until the host acknowledges makes it
-ordering rather than timing, and workflow steps are sequential, so untrusted code cannot start
-until the step returns. `main.yml` already uses this idiom for `fetch.request` / `fetch.done`.
+**The token names its own repository, so the check is direct.** From a live job:
+
+```
+repository_id       623631450
+job_workflow_ref    Final-Factory/FinalFactory/.github/workflows/main.yml@refs/heads/master
+```
+
+Match `repository_id` -- numeric, and it survives a repository rename. A token minted for an
+attacker's own repository carries a different one and is refused on inspection.
+
+**This deleted three things the first draft needed**, all of which existed only to work around a
+repository claim that was wrongly believed to be absent: a trusted-time pin, a blocking handshake
+so that pin could not race untrusted code, and matching of `Actions.Results` GUIDs to bind a later
+token to an earlier one. None is necessary. The host can validate any token it is handed, whenever
+it is handed it, and a job cannot forge a claim inside a GitHub-signed JWT.
+
+**The credential also outlives the job**, so there is no refresh to handle. Measured across a
+complete successful editmode run: identical token before and after, `nbf 00:43:31Z`,
+`exp 02:28:31Z` -- job start plus exactly 100 minutes against `timeout-minutes: 90`. The lifetime
+is provisioned past the job's own ceiling.
 
 **What it buys and what it does not.** Blob comes off the container's allowlist and this finding
 stops existing. The blob connection still happens, from the host, which is already on the open

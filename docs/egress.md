@@ -331,27 +331,51 @@ Two consequences worth keeping:
   carries opaque plan and job GUIDs. Even full TLS interception with URL filtering does not fix
   it by path matching.
 
-This paragraph used to end by naming the one mechanism that would close it: terminate TLS and
-validate the **JWT claims** on outbound Actions requests, checking `repository` against
-`Final-Factory/FinalFactory`. **That fix does not exist, because that claim does not exist.**
+The paragraph above used to end by naming the one mechanism that would close this: terminate TLS
+and validate the **JWT claims** on outbound Actions requests, checking the repository and rejecting
+anything else.
 
-Checked on 2026-09-01 against a decoded `ACTIONS_RUNTIME_TOKEN` and against the runner's own code.
-The claims are `nameid`, `scp`, `IdentityTypeClaim`, two `schemas.xmlsoap.org` SID claims, `aui`,
-`sid`, `ac`, `acsl`, `orchid`, `iss`, `aud`, `nbf` and `exp`. There is no repository and no owner.
-The only run identity the token carries is two opaque GUIDs inside `scp`, in the form
-`Actions.Results:<workflowRunBackendId>:<workflowJobRunBackendId>`, which is exactly what
-`getBackendIdsFromToken` in `@actions/artifact` parses out of it. No public API maps either GUID
-back to a repository.
+**That was right, and a correction published here on 2026-09-01 saying it was impossible was
+wrong.** The wrong version claimed `ACTIONS_RUNTIME_TOKEN` carries no repository identity at all.
+It was written from a token decoded in a 2022 `actions/toolkit` issue, whose claim set really is
+just `nameid`, `scp`, `IdentityTypeClaim`, `aui`, `sid`, `ac`, `acsl`, `orchid`, `iss`, `aud`,
+`nbf`, `exp`. The format has changed since, and nobody checked a live one.
 
-The mix-up is worth naming so it is not made again: the token that DOES carry `repository`,
-`repository_owner` and the rest is the **OIDC** token, minted through
-`ACTIONS_ID_TOKEN_REQUEST_TOKEN` for federated login to a cloud provider. It is a different
-credential and it is not what artifact or Actions runtime traffic authenticates with.
+Measured on 2026-09-02, from a real job on this box, printed by a node action in the job itself:
 
-So MITM buys nothing here that narrowing does not. The hole is not merely unclosed by a name fence,
-it is unclosed by any inspection of the traffic, because the identity a filter would need to check
-is not in the request at any layer. What CAN be done is to stop needing the endpoint: see the
-artifact upload note below.
+```
+repository_id            623631450
+repository_owner_id      129895738
+repository_visibility    internal
+owner_id                 O_kgDOB74NOg
+job_workflow_ref         Final-Factory/FinalFactory/.github/workflows/main.yml@refs/heads/master
+job_workflow_sha         867b4a309190dd87b604417f4d7086bc89fc1b10
+run_id                   33577429364
+runner_id                369
+runner_type              self-hosted
+trust_tier               1
+iss                      https://token.actions.githubusercontent.com
+```
+
+`job_workflow_ref` carries the repository as a string. `repository_id` carries it as a stable
+numeric id, which is the better thing to match on because it survives a rename.
+
+The claim NOT present is one named exactly `repository`, which is what the wrong correction went
+looking for and reported as "absent". A probe that tests for one key and concludes the whole
+category is missing will confirm whatever you already believed.
+
+Two consequences, and the second is the useful one:
+
+- Full TLS interception with JWT validation WOULD scope Actions traffic to this repository. It
+  remains a decrypting proxy holding every credential on the box, so it is still a real trade
+  rather than a free win, but it is not the dead end this file briefly claimed.
+- **The same claims are readable without any interception at all**, by anything the token is handed
+  to. That is what makes the host-side artifact upload work: the supervisor validates
+  `repository_id` on the token a job gives it, and needs no trusted-time pin and no handshake to do
+  it. See the artifact upload note below.
+
+What has not changed: the fence itself still cannot do this. An SNI proxy sees a hostname, and the
+claims are inside the TLS.
 
 ## Removing the need instead of narrowing the reach (2026-08-31)
 
