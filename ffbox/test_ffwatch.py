@@ -1669,8 +1669,8 @@ def test_read_only_capabilities():
     check("ffbox is called with a working editor and the three clocks",
           not any("unity" in a for a in argv) and "--agent-timeout" in argv
           and "--warmup-timeout" in argv and "--kill-grace" in argv, argv)
-    check("the container name is owned by the host via --run-id",
-          run["container_name"] == f"ffbox-{run['ffbox_run_id']}", run)
+    check("the container name is owned by the host via --run-id, and names the agent class",
+          run["container_name"] == f"ffbox-agent-{run['ffbox_run_id']}", run)
     check("the conversation pins the base sha it was first cloned from",
           case.rows("SELECT base_sha FROM conversation")[0]["base_sha"].startswith("0579c37b8"))
 
@@ -5265,12 +5265,20 @@ def test_destructive_docker_calls_name_the_container():
                 continue
             if any(verb in stripped for verb in ("docker stop", "docker rm ")):
                 check(f"{name}: `{stripped[:60]}` addresses one exact name",
-                      "ffbox-${RUN_ID}" in stripped or "$name" in stripped
-                      or "container_name" in stripped, stripped)
+                      "$RUN_NAME" in stripped or "$POOL_NAME" in stripped
+                      or "$name" in stripped or "container_name" in stripped, stripped)
     check("ffwatch asks docker about one anchored name and nothing else",
           'f"name=^{name}$"' in sources["ffwatch.py"])
     check("the container ffbox stops is the one it named",
-          'docker stop --timeout 120 "ffbox-${RUN_ID}"' in sources["ffbox"])
+          'docker stop --timeout 120 "$RUN_NAME"' in sources["ffbox"])
+    # The names themselves, since they are now derived rather than literal: a class that loses
+    # its prefix would otherwise only show up as a failed dispatch on a live box.
+    check("ffbox derives one container-name prefix per agent class",
+          "NAME_PREFIX=ffbox-agent-" in sources["ffbox"]
+          and "NAME_PREFIX=ffbox-dev-" in sources["ffbox"])
+    check("ffwatch and ffbox agree on the per-class prefixes",
+          'CLASS_NAME_PREFIX = {"ffagent": "ffbox-agent-", "ffdev": "ffbox-dev-"}'
+          in sources["ffwatch.py"])
 
 
 UNITY_STUB = r'''#!/usr/bin/env python3

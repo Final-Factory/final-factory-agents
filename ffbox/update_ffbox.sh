@@ -411,11 +411,23 @@ while :; do
                     log "destroying idle runner $_c that appeared after the sweep"
                     docker_ rm -f "$_c" >/dev/null 2>&1 || :
                 fi ;;
-            ffbox-pool-*)
+            ffbox-agent-pool-*|ffbox-dev-pool-*|ffbox-pool-*)
                 # STILL UNDER ITS STAGING NAME, so dispatch never renamed it: it is waiting, not
                 # working, whatever `ffwatch drain` did or did not manage. The drain is not fatal
                 # if it fails to take, and one leftover staged container must not hold the update
                 # for the whole window and then be force-stopped over nothing.
+                #
+                # ONE PATTERN PER CLASS, and they must stay in step with CLASS_NAME_PREFIX in
+                # ffwatch.py and the NAME_PREFIX case in ffbox. A class whose staging name is
+                # missing here does not fail loudly: it falls to the `*)` arm below, is counted
+                # BUSY, holds the update window open for its whole length and is then force-
+                # stopped -- an idle spare taken for a live run.
+                #
+                # THE BARE `ffbox-pool-*` IS THE PRE-2026-09-02 NAME, kept for the one update
+                # that lands the class prefixes: the spare running at that moment was staged by
+                # the old ffbox and is still called that. It is safe to keep indefinitely --
+                # an old-style RUN was `ffbox-<run id>` and never matched this -- and the arm
+                # can go once no box can still be carrying a spare from before the rename.
                 log "destroying idle staged container $_c that the drain did not take"
                 docker_ stop --timeout 10 "$_c" >/dev/null 2>&1 || :
                 docker_ rm -f "$_c" >/dev/null 2>&1 || : ;;
