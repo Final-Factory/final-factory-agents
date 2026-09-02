@@ -231,6 +231,21 @@ def opt(name, default=None):
     return argv[argv.index(name) + 1] if name in argv else default
 
 
+# ffbox has subcommands this stub does not stand in for, and --stage-pool is the one the daemon
+# reaches for constantly: keep_pool() tops the warm pool up on every pass, so every test that
+# runs a pass staged one. Falling through to the run path meant crashing on the run-only
+# environment and handing ffwatch a traceback to log as "staging failed" -- 80 launches and ten
+# seconds of the suite, spent producing 46 tracebacks nothing asserts on. pool_stage() reads
+# only the exit code, so the refusal is identical said in one line.
+#
+# NOT a hole this hides: pool_stage() has no test of its own either way. The pool tests patch it
+# out and drive keep_pool()'s admission rule instead, so what a real staging call does to a real
+# container is unexercised here and always was.
+if "--stage-pool" in argv:
+    sys.stderr.write("stub ffbox does not stage pool containers\n")
+    sys.exit(1)
+
+
 run_id = opt("--run-id")
 job_path = opt("--job-file")
 out = os.path.join(os.environ["FFBOX_RESULTS"], run_id)
