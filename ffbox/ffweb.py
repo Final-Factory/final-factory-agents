@@ -1809,10 +1809,16 @@ class App:
             " (SELECT COUNT(*) FROM turn t WHERE t.conversation_id = c.id) AS turns,"
             " (SELECT COUNT(*) FROM message m WHERE m.conversation_id = c.id) AS messages"
             " FROM conversation c" + clause +
-            # Newest conversation first, by id rather than by last activity: id is the
-            # order they were STARTED in, and it never reshuffles under an operator
-            # reading the page while a two-week-old thread takes another turn.
-            " ORDER BY c.id DESC LIMIT 500",
+            # Most recently ACTIVE first, which is not the same as most recently opened:
+            # a thread from last week that a player just replied to belongs at the top,
+            # and by id it would be buried. COALESCE because a conversation that has
+            # never moved still has to sort somewhere, and where it was opened is the
+            # only stamp it has. The id tiebreak is load-bearing rather than decorative:
+            # stamps are second-resolution, and a batch that lands inside one second
+            # would otherwise come back in whatever order SQLite felt like, reshuffling
+            # between two renders of an unchanged table.
+            " ORDER BY COALESCE(c.last_activity_at, c.created_at) DESC, c.id DESC"
+            " LIMIT 500",
             params)
         aggs = conversation_aggregates(self.db)
 

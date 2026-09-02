@@ -658,21 +658,35 @@ def test_filters_actually_filter():
         srv.stop()
 
 
-def test_the_list_is_newest_conversation_first():
-    """Sorted by id descending, which is the order they were opened in.
+def test_the_list_is_most_recently_active_first():
+    """Sorted by last activity descending, with id descending underneath it.
 
-    Not by last activity: that reshuffles the page under whoever is reading it every time an
-    old thread takes another turn, so a row can move while it is being aimed at. The fixture
-    distinguishes the two — conversation 3 is the LEAST recently active and conversation 1 the
-    second most, so an activity sort would put 1 above 3 and this order would not appear.
+    Most recently ACTIVE, not most recently opened: conversation 1 was opened before 2 and 3
+    but spoke after both, so an id sort would bury it and this order would not appear.
+
+    The tie is the part worth a fixture of its own. The stamps are second-resolution and
+    ffwatch really does write a batch of them inside one second — on the live database eleven
+    bug reports share two stamps — so without the id tiebreak SQLite is free to hand those rows
+    back in a different order on every render, and a table nobody has touched reshuffles under
+    whoever is reading it. Conversation 5 is inserted here carrying conversation 1's exact
+    stamp to hold that down.
     """
-    srv = serve()
+    state, db_path = read_state_dir("order-state")
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute("INSERT INTO conversation(id, channel_id, thread_id, kind, title, state,"
+                     " is_thread, lane, created_at, last_activity_at)"
+                     " VALUES(5,'chan','thread-5','ask','Tied stamp','idle',1,'answer',"
+                     "'2026-08-20T11:00:00Z','2026-08-20T12:00:00Z')")
+    conn.close()
+    srv = Server(state, db_path, os.path.join(state, "blobs"), STUB_FFWATCH)
     try:
-        # read=all, because the list opens on unread and this is about order, not the queue.
-        _c, _h, body = srv.get("/?read=all")
-        table = text_of(body).split("<tbody>", 1)[-1].split("</tbody>", 1)[0]
-        ids = [int(m) for m in re.findall(r'<a href="/conversation/(\d+)">\1</a>', table)]
-        check("the conversation list runs newest id first", ids == [4, 3, 2, 1], ids)
+        # read=all, because the list opens on the unread queue and this is about order.
+        body = text_of(srv.get("/?read=all")[2])
+        rows = body.split("<tbody>", 1)[-1].split("</tbody>", 1)[0]
+        ids = [int(m) for m in re.findall(r'<a href="/conversation/(\d+)">\1<', rows)]
+        check("the conversation list runs most recently active first", ids == [4, 5, 1, 2, 3],
+              ids)
     finally:
         srv.stop()
 
@@ -2382,7 +2396,7 @@ def main():
         test_timeline_reads_as_a_conversation,
         test_filters_actually_filter,
         test_the_title_filter,
-        test_the_list_is_newest_conversation_first,
+        test_the_list_is_most_recently_active_first,
         test_read_and_unread,
         test_the_tick_goes_through_ffwatch,
         test_the_ui_cannot_write,
