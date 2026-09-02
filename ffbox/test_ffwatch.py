@@ -6829,6 +6829,41 @@ def test_the_transcript_is_shared_before_the_host_first_looks():
           "chmod -R" not in now and ".jsonl" in now, now)
 
 
+def test_the_verification_directory_is_left_deletable():
+    """ffverify creates a directory the HOST has to be able to delete afterwards.
+
+    It runs inside the container as its own mapped subuid, and `mkdir -p` takes its mode from
+    the umask: 0755, plus the setgid /ffbox/out carries, giving drwxr-sr-x <subuid>:
+    ffbox-container. The group gets r-x and no write -- and unlinking a file needs write on the
+    DIRECTORY holding it, not on the file. ffwatch runs as another uid in that group, so it
+    cannot empty the directory; _rmtree_spool then fails on the parent with "Directory not
+    empty" and the spool leaks.
+
+    Measured on the live box on 2026-09-02, on the real leftover: out/ is mode 2775 owned by the
+    host and writable by it, out/verification is 2755 owned by 1411719 and NOT writable by it.
+    Three spools were stuck on exactly that, holding nothing else once their transcripts had
+    been swept home.
+
+    The host cannot repair it either -- chmod is the owner's privilege -- so the writer opens the
+    mode, the same shape as share_transcript_now in discord-task.sh.
+    """
+    print("ffverify: the verification directory stays deletable")
+    src = io.open(os.path.join(HERE, "ffverify.sh"), encoding="utf-8").read()
+    code = "\n".join(ln for ln in src.splitlines() if not ln.strip().startswith("#"))
+
+    mk = code.index('mkdir -p "$OUT"')
+    tail = code[mk:mk + 400]
+    check("the directory is made group-writable right where it is created",
+          'chmod g+w "$OUT"' in tail, tail[:200])
+    # A caller pointing --out somewhere it does not own must not fail an otherwise fine
+    # verification run over a chmod.
+    line = [ln for ln in code.splitlines() if 'chmod g+w "$OUT"' in ln]
+    check("and a chmod it cannot do does not fail the run",
+          line and ("|| :" in line[0] or "|| true" in line[0]), line)
+    check("it happens before anything is written into it",
+          code.index('chmod g+w "$OUT"') < code.index('RESULTS="$OUT/'), None)
+
+
 def test_a_finished_runs_spool_is_swept_and_then_deleted():
     """The case that fell between the reaper and recovery, and leaked three directories.
 
@@ -8195,6 +8230,7 @@ def main():
     tests = [
         test_every_agent_container_carries_its_class,
         test_the_transcript_is_shared_before_the_host_first_looks,
+        test_the_verification_directory_is_left_deletable,
         test_a_finished_runs_spool_is_swept_and_then_deleted,
         test_the_reaper_says_a_held_spool_once,
         test_an_ffdev_turn_runs_under_ffdevs_numbers,
