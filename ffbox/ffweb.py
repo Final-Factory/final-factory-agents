@@ -1809,7 +1809,10 @@ class App:
             " (SELECT COUNT(*) FROM turn t WHERE t.conversation_id = c.id) AS turns,"
             " (SELECT COUNT(*) FROM message m WHERE m.conversation_id = c.id) AS messages"
             " FROM conversation c" + clause +
-            " ORDER BY COALESCE(c.last_activity_at, c.created_at) DESC, c.id DESC LIMIT 500",
+            # Newest conversation first, by id rather than by last activity: id is the
+            # order they were STARTED in, and it never reshuffles under an operator
+            # reading the page while a two-week-old thread takes another turn.
+            " ORDER BY c.id DESC LIMIT 500",
             params)
         aggs = conversation_aggregates(self.db)
 
