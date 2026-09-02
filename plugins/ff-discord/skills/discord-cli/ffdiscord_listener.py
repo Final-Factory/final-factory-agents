@@ -84,6 +84,10 @@ except ImportError:  # pragma: no cover - POSIX
     msvcrt = None
 
 EVENTS_PATH = os.path.join(FFDISCORD_HOME, "events.jsonl")
+# WHERE ffwatch LISTENS FOR A NUDGE. Derived from the events file rather than configured, so
+# there is no second path the two have to be kept agreeing about; ffwatch.doorbell_path()
+# computes the same name from its own events_path.
+DOORBELL_PATH = os.path.join(FFDISCORD_HOME, "doorbell.sock")
 LOG_PATH = os.path.join(FFDISCORD_HOME, "listener.log")
 LOCK_PATH = os.path.join(FFDISCORD_HOME, "listener.lock")
 
@@ -259,6 +263,10 @@ class Listener:
         self.token = token
         self.watch_ids = watch_ids  # channel id -> alias
         self.events_path = events_path
+        # BESIDE THE EVENTS FILE, whatever --events-path moved it to. A test that redirects the
+        # doorbell into its own tmpdir must not go on poking the real daemon's socket.
+        self.doorbell_path = os.path.join(os.path.dirname(os.path.abspath(events_path)),
+                                          "doorbell.sock")
         # Discord snowflakes, from config. The ONE signal in this pipeline safe to key elevated
         # trust off, because the gateway's author.id is not spoofable without owning the
         # account. Never a username: those are renameable.
@@ -292,7 +300,29 @@ class Listener:
             fh.write(json.dumps(event) + "\n")
         if kind != "catchup":
             self.event_count += 1
+        # AFTER THE WRITE, AND OUTSIDE THE `with`. The poke says "there is a line to read", so
+        # it must not be able to arrive before the line is flushed and visible. ffwatch would
+        # survive the other order -- drain_events stops at a partial line and the next poll
+        # picks it up -- but a wake that finds nothing is a wake wasted, and the ordering costs
+        # nothing to get right.
+        self.poke()
         log(f"event {kind} {alias} id={obj_id} author={author_id}")
+
+    def poke(self):
+        """Nudge ffwatch, which is probably asleep between passes.
+
+        BEST EFFORT, AND THE FAILURES ARE THE POINT. No daemon running, an ffwatch too old to
+        have bound the socket, a stale socket file, a full buffer -- every one of them raises
+        OSError here and every one of them means the same thing: the line is on disk, and the
+        poll finds it within poll_secs. The doorbell FILE is the protocol; this only decides
+        whether ffwatch waits out the sleep before reading it.
+        """
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+                sock.setblocking(False)
+                sock.sendto(b"1", self.doorbell_path)
+        except OSError:
+            pass
 
     def emit_catchup(self, reason):
         """Ring the doorbell once for 'anything might have arrived while we could not
