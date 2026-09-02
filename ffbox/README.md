@@ -1682,6 +1682,17 @@ from this directory as the sign-in backdrop; swap the file and the next login fo
 new one, with no restart. The one external program is `openssl`, run once to mint
 the certificate, because the standard library can serve TLS but cannot create an X.509.
 
+`/status` is the exception to "a page over the same database, and nothing else". It reports on
+the machine rather than on ffwatch.db, and it does that by running `ffbox/ffstatus.sh --json` —
+the same script an operator runs in a terminal — rather than by growing its own docker parsing.
+The rules for reading this box are fiddly enough (a dispatched spare still carries the pool
+label; an idle CI runner is a running container) that a second implementation would drift from
+the first, and an operator comparing the page against the terminal would have no way to know
+which one was lying. Nothing on the page acts: there are no buttons, because resizing a pool or
+stopping a container is ffwatch's and ffbox's to do. When the script cannot answer — docker
+down, the daemon wedged — the page says so in a sentence and stays a page, since that is exactly
+when somebody is looking at it.
+
 | route | what it is |
 |---|---|
 | `/` | conversations, filtered live by kind, state, verdict and lane (one value now) as the dropdowns change, plus a title box that narrows to the titles containing a typed word (Enter applies it) and a **show** dropdown that opens on the unread ones, with cost, tokens and the average warm-up and agent time per conversation. A **branch** column says which of them produced code, linked to the branch on GitHub. The id and the title both open the conversation, and each row has a button that ticks it read |
@@ -1689,6 +1700,7 @@ the certificate, because the standard library can serve TLS but cannot create an
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
+| `/status` | **the box**, and the one page here that reads no database: every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 

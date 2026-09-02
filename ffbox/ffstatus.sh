@@ -8,6 +8,7 @@
 #
 #   ffbox/ffstatus.sh            the tables
 #   ffbox/ffstatus.sh --watch    refresh every 5s until ^C
+#   ffbox/ffstatus.sh --json     the same reading as one JSON document
 #
 # TWO SOURCES, AND NEITHER IS BOOKKEEPING. Live state comes from `docker ps` on the ffbox daemon
 # for the same reason lib-workloads.sh counts there: a supervisor killed with SIGKILL leaves its
@@ -19,6 +20,12 @@
 # A DISPATCHED SPARE STILL CARRIES ffbox.workload=pool -- labels are fixed when a container is
 # created and dispatch only renames it -- so the lane here is read from the label AND the name:
 # `*-pool-*` is a spare waiting, anything else with that label is a turn that started warm.
+#
+# --json EXISTS SO THERE IS ONE READING OF THE BOX AND NOT TWO. ffweb's /status page runs this
+# script rather than growing its own docker parsing beside it: the two would agree on the day
+# they were written and drift the first time a label moved, and the version an operator trusts
+# would be whichever one they happened to be looking at. Everything below gathers once and then
+# renders twice, so the page and the terminal cannot disagree by construction.
 set -uo pipefail
 
 DOCKER_HOST=${DOCKER_HOST:-unix://${FFBOX_DOCKER_SOCK:-/run/ffbox-container/docker.sock}}
@@ -35,19 +42,30 @@ POOL_DIR=${FFBOX_POOL_DIR:-$HOME/ffbox-state/pool}
 # because the names come from `docker ps` -- a leftover marker names nothing we listed.
 FFGHR_STATE=${FFGITHUBRUNNERS_CONFIG_DIR:-${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/githubrunners}/state
 
+# US, THE UNIT SEPARATOR, RATHER THAN A PIPE. Every field here is a name somebody else chose --
+# a container name, a git ref off a label -- and a ref may legally contain most punctuation. A
+# separator that cannot appear in the data is one class of mangling that simply cannot happen,
+# and it costs one variable.
+SEP=$'\x1f'
+
 WATCH=0
 INTERVAL=5
+JSON=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -w|--watch) WATCH=1; shift; case "${1:-}" in ''|-*) ;; *) INTERVAL=$1; shift ;; esac ;;
+        -j|--json)  JSON=1; shift ;;
         -h|--help)
-            sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "ffstatus: unknown option $1" >&2; exit 2 ;;
     esac
 done
+# A document is a document; there is nothing to redraw. Said rather than silently ignored,
+# because a caller that asked for both wanted something this cannot give them.
+[ "$JSON" -eq 1 ] && WATCH=0
 
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "$JSON" -eq 0 ]; then
     B=$'\033[1m'; DIM=$'\033[2m'; GRN=$'\033[32m'; YEL=$'\033[33m'; RED=$'\033[31m'; N=$'\033[0m'
 else
     B=; DIM=; GRN=; YEL=; RED=; N=
@@ -116,42 +134,50 @@ human_secs() {
     else printf '%ds' "$s"; fi
 }
 
-render() {
+# --- gather -------------------------------------------------------------------------------------
+#
+# ONE PASS OVER THE BOX, into globals both renderers read. A record carries the TTL in seconds
+# rather than as "3h47m", because a number is what a renderer can decide how to say -- the
+# terminal wants the short form and a JSON consumer wants the number.
+declare -a ROWS=() INFRA=()
+declare -A SPARES=() RUNS=()
+CI_BUSY=0 CI_WAITING=0 WORKLOADS=0 WIDEST=4 GATHER_ERR=
+
+gather() {
     local now; now=$(date +%s)
+    ROWS=(); INFRA=(); SPARES=(); RUNS=()
+    CI_BUSY=0; CI_WAITING=0; WORKLOADS=0; WIDEST=4; GATHER_ERR=
+
+    local fmt="{{.Names}}${SEP}{{.Label \"ffbox.workload\"}}${SEP}{{.Label \"ffbox.agent.class\"}}"
+    fmt+="${SEP}{{.Label \"ffbox.pool\"}}${SEP}{{.Label \"ffbox.pool.id\"}}"
+    fmt+="${SEP}{{.Label \"ffbox.slot\"}}${SEP}{{.RunningFor}}${SEP}{{.Status}}"
 
     local ps
-    if ! ps=$("$DOCKER" ps --format \
-        '{{.Names}}|{{.Label "ffbox.workload"}}|{{.Label "ffbox.agent.class"}}|{{.Label "ffbox.pool"}}|{{.Label "ffbox.pool.id"}}|{{.Label "ffbox.slot"}}|{{.RunningFor}}|{{.Status}}' \
-        2>/dev/null); then
-        printf '%sffstatus: could not reach the ffbox daemon at %s%s\n' "$RED" "$DOCKER_HOST" "$N" >&2
+    if ! ps=$("$DOCKER" ps --format "$fmt" 2>/dev/null); then
+        GATHER_ERR="could not reach the ffbox daemon at $DOCKER_HOST"
         return 1
     fi
 
-    # rows[] is what gets printed; the counters beside it are what the pool table reports.
-    local -a rows=() infra=()
-    local -A spares=() runs=()
-    local ci_busy=0 ci_waiting=0 workloads=0 widest=4
-
     local name workload class ref poolid slot age status
-    while IFS='|' read -r name workload class ref poolid slot age status; do
+    while IFS="$SEP" read -r name workload class ref poolid slot age status; do
         [ -n "$name" ] || continue
         age=${age% ago}
         if [ -z "$workload" ]; then
-            infra+=("$name|$status")
+            INFRA+=("$name$SEP$status")
             continue
         fi
-        workloads=$((workloads + 1))
-        [ ${#name} -gt "$widest" ] && widest=${#name}
+        WORKLOADS=$((WORKLOADS + 1))
+        [ ${#name} -gt "$WIDEST" ] && WIDEST=${#name}
 
         local lane state ttl
-        ttl='-'
+        ttl=''
         case "$workload" in
             ci)
-                lane=ci; class='-'; ref='-'
+                lane=ci; class=''; ref=''
                 if [ -e "$FFGHR_STATE/$name.busy" ]; then
-                    state=busy; ci_busy=$((ci_busy + 1))
+                    state=busy; CI_BUSY=$((CI_BUSY + 1))
                 else
-                    state=waiting; ci_waiting=$((ci_waiting + 1))
+                    state=waiting; CI_WAITING=$((CI_WAITING + 1))
                 fi ;;
             pool)
                 case "$name" in
@@ -160,17 +186,16 @@ render() {
                         # written once the workspace is filled, `owner` once the host has claimed
                         # it (or the container has decided to retire).
                         lane=spare
-                        spares[$class]=$(( ${spares[$class]:-0} + 1 ))
+                        SPARES[$class]=$(( ${SPARES[$class]:-0} + 1 ))
                         local out="$POOL_DIR/$poolid/out"
                         if [ -e "$out/staged" ]; then
                             state=warm
-                            local staged_at ttl_secs
+                            local staged_at ttl_secs t0
                             staged_at=$(sed -n 's/^staged_at=//p' "$out/staged" 2>/dev/null)
                             ttl_secs=$(sed -n 's/^ttl_secs=//p' "$out/staged" 2>/dev/null)
                             if [ -n "$staged_at" ] && [ -n "$ttl_secs" ]; then
-                                local t0
                                 t0=$(date -d "$staged_at" +%s 2>/dev/null) &&
-                                    ttl=$(human_secs $((t0 + ttl_secs - now)))
+                                    ttl=$(( t0 + ttl_secs - now ))
                             fi
                         else
                             state=filling
@@ -178,49 +203,49 @@ render() {
                         [ -e "$out/owner" ] && state=claimed ;;
                     *)
                         # Renamed by dispatch: a turn that started from a warm workspace.
-                        lane=agent; state='running*'
-                        ref='-'
-                        runs[$class]=$(( ${runs[$class]:-0} + 1 )) ;;
+                        lane=agent; state='running*'; ref=''
+                        RUNS[$class]=$(( ${RUNS[$class]:-0} + 1 )) ;;
                 esac ;;
             agent)
-                lane=agent; state=running; ref='-'
-                runs[$class]=$(( ${runs[$class]:-0} + 1 )) ;;
+                lane=agent; state=running; ref=''
+                RUNS[$class]=$(( ${RUNS[$class]:-0} + 1 )) ;;
             *)
-                lane=$workload; state=running; ref='-' ;;
+                lane=$workload; state=running; ref='' ;;
         esac
-        [ -n "$class" ] || class='-'
-        [ -n "$ref" ] || ref='-'
-        [ -n "$slot" ] || slot='-'
-        rows+=("$lane|$class|$name|$slot|$state|$ttl|$ref|$age")
+        ROWS+=("$lane$SEP$class$SEP$name$SEP$slot$SEP$state$SEP$ttl$SEP$ref$SEP$age")
     done <<< "$ps"
+    return 0
+}
 
+# --- the terminal reading -------------------------------------------------------------------
+render_text() {
     printf '\n%sffbox on %s%s  %s%s%s\n' "$B" "$(hostname -s)" "$N" "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$N"
 
-    # --- containers ------------------------------------------------------------------------
     local box_max=${CFG[box_max]} colour=$GRN
-    [ "$workloads" -ge "$box_max" ] && colour=$RED
+    [ "$WORKLOADS" -ge "$box_max" ] && colour=$RED
     printf '\n%sCONTAINERS%s  %s%d of %d workspace containers%s\n\n' \
-        "$B" "$N" "$colour" "$workloads" "$box_max" "$N"
+        "$B" "$N" "$colour" "$WORKLOADS" "$box_max" "$N"
 
-    if [ ${#rows[@]} -eq 0 ]; then
+    if [ ${#ROWS[@]} -eq 0 ]; then
         printf '  %s(none — the box is idle)%s\n' "$DIM" "$N"
     else
-        printf "  %s%-6s %-8s %-${widest}s %-5s %-9s %-7s %-7s %s%s\n" \
+        printf "  %s%-6s %-8s %-${WIDEST}s %-5s %-9s %-7s %-7s %s%s\n" \
             "$DIM" LANE CLASS NAME SLOT STATE TTL REF UP "$N"
         # spares last: a run is what you are usually looking for.
-        printf '%s\n' "${rows[@]}" | sort -t'|' -k1,1 | while IFS='|' read -r l c n s st t r a; do
+        printf '%s\n' "${ROWS[@]}" | sort -t"$SEP" -k1,1 |
+        while IFS="$SEP" read -r l c n s st t r a; do
             local mark=$N
             case "$st" in
                 warm|waiting) mark=$GRN ;;
                 filling)      mark=$YEL ;;
                 claimed)      mark=$YEL ;;
             esac
-            printf "  %-6s %-8s %-${widest}s %-5s ${mark}%-9s${N} %-7s %-7s %s\n" \
-                "$l" "$c" "$n" "$s" "$st" "$t" "$r" "$a"
+            [ -n "$t" ] && t=$(human_secs "$t")
+            printf "  %-6s %-8s %-${WIDEST}s %-5s ${mark}%-9s${N} %-7s %-7s %s\n" \
+                "$l" "${c:--}" "$n" "${s:--}" "$st" "${t:--}" "${r:--}" "$a"
         done
     fi
 
-    # --- pools -----------------------------------------------------------------------------
     printf '\n%sPOOLS%s\n\n' "$B" "$N"
     # ONE VOCABULARY FOR BOTH LANES, because they hold the same kind of thing under two names:
     # an agent `spare` and an idle CI runner are both a container waiting for work, and both were
@@ -229,35 +254,111 @@ render() {
     printf '  %s%-10s %-6s %-9s %-6s %s%s\n' "$DIM" CLASS IDLE WAITING BUSY MAX "$N"
     local cls
     for cls in ffagent ffdev; do
-        local want=${CFG[${cls}_idle]} have=${spares[$cls]:-0} busy=${runs[$cls]:-0}
-        local cap=${CFG[${cls}_max]}
+        local want=${CFG[${cls}_idle]} have=${SPARES[$cls]:-0} busy=${RUNS[$cls]:-0}
         local mark=$GRN
         [ "$have" -lt "$want" ] && mark=$YEL
         printf '  %-10s %-6s %s%-9s%s %-6s %s\n' \
-            "$cls" "$want" "$mark" "$have" "$N" "$busy" "$cap"
+            "$cls" "$want" "$mark" "$have" "$N" "$busy" "${CFG[${cls}_max]}"
     done
     local ci_mark=$GRN
-    [ "$ci_waiting" -lt "${CFG[ci_idle]}" ] && ci_mark=$YEL
+    [ "$CI_WAITING" -lt "${CFG[ci_idle]}" ] && ci_mark=$YEL
     printf '  %-10s %-6s %s%-9s%s %-6s %s\n' \
-        ci "${CFG[ci_idle]}" "$ci_mark" "$ci_waiting" "$N" "$ci_busy" "${CFG[ci_max]}"
+        ci "${CFG[ci_idle]}" "$ci_mark" "$CI_WAITING" "$N" "$CI_BUSY" "${CFG[ci_max]}"
 
-    # --- infrastructure --------------------------------------------------------------------
-    if [ ${#infra[@]} -gt 0 ]; then
+    if [ ${#INFRA[@]} -gt 0 ]; then
         printf '\n%sINFRASTRUCTURE%s %s(holds no workspace, counts against nothing)%s\n\n' \
             "$B" "$N" "$DIM" "$N"
-        printf '%s\n' "${infra[@]}" | sort | while IFS='|' read -r n s; do
+        printf '%s\n' "${INFRA[@]}" | sort | while IFS="$SEP" read -r n s; do
             printf '  %-28s %s%s%s\n' "$n" "$DIM" "$s" "$N"
         done
     fi
     printf '\n'
 }
 
+# --- the same reading, as a document ----------------------------------------------------------
+#
+# TAGGED RECORDS INTO PYTHON, which does the quoting. Building JSON in shell means escaping
+# strings a stranger named -- a container name, a branch, a docker status line -- and getting
+# that subtly wrong is how a page ends up with broken markup or worse. json.dumps is right by
+# construction, so the shell's only job is to hand over fields it has already separated.
+render_json() {
+    {
+        printf 'B%s%s%s%s\n' "$SEP" "$WORKLOADS" "$SEP" "${CFG[box_max]}"
+        local cls
+        for cls in ffagent ffdev; do
+            printf 'P%s%s%s%s%s%s%s%s%s%s\n' "$SEP" "$cls" \
+                "$SEP" "${CFG[${cls}_idle]}" "$SEP" "${SPARES[$cls]:-0}" \
+                "$SEP" "${RUNS[$cls]:-0}" "$SEP" "${CFG[${cls}_max]}"
+        done
+        printf 'P%s%s%s%s%s%s%s%s%s%s\n' "$SEP" ci \
+            "$SEP" "${CFG[ci_idle]}" "$SEP" "$CI_WAITING" \
+            "$SEP" "$CI_BUSY" "$SEP" "${CFG[ci_max]}"
+        [ ${#ROWS[@]} -gt 0 ] && printf "C$SEP%s\n" "${ROWS[@]}"
+        [ ${#INFRA[@]} -gt 0 ] && printf "I$SEP%s\n" "${INFRA[@]}"
+    # THE PROGRAM COMES IN AS AN ARGUMENT, NOT ON STDIN. `python3 - <<PY` puts the heredoc on
+    # stdin, which is where the interpreter reads the program from -- so the records piped in
+    # from the block above were thrown away and this rendered an empty document that looked
+    # exactly like an idle box. -c leaves stdin to the pipe, which is the whole point of it here.
+    } | python3 -c '
+import json, sys
+
+SEP = "\x1f"
+doc = {"host": sys.argv[1], "generated_at": sys.argv[2],
+       "box": {"used": 0, "max": 0}, "pools": [], "containers": [], "infrastructure": []}
+
+def num(text):
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+for line in sys.stdin.read().splitlines():
+    if not line:
+        continue
+    tag, _, rest = line.partition(SEP)
+    f = rest.split(SEP)
+    if tag == "B":
+        doc["box"] = {"used": num(f[0]), "max": num(f[1])}
+    elif tag == "P":
+        doc["pools"].append({"class": f[0], "idle": num(f[1]), "waiting": num(f[2]),
+                             "busy": num(f[3]), "max": num(f[4])})
+    elif tag == "C":
+        doc["containers"].append({
+            "lane": f[0], "class": f[1] or None, "name": f[2], "slot": f[3] or None,
+            "state": f[4], "ttl_secs": num(f[5]), "ref": f[6] or None, "uptime": f[7]})
+    elif tag == "I":
+        doc["infrastructure"].append({"name": f[0], "status": f[1]})
+
+json.dump(doc, sys.stdout, indent=2, sort_keys=False)
+sys.stdout.write("\n")
+' "$(hostname -s)" "$(date -Is)"
+}
+
+# --- and what a failure looks like in each ------------------------------------------------------
+#
+# A CONSUMER MUST NOT HAVE TO GUESS. The terminal gets the sentence on stderr and a non-zero
+# status; --json gets a document with an `error` key and the same status, so ffweb can say what
+# went wrong on the page rather than rendering an empty table that looks like an idle box.
+fail() {
+    if [ "$JSON" -eq 1 ]; then
+        python3 -c 'import json,sys; json.dump({"error": sys.argv[1]}, sys.stdout); print()' \
+            "$GATHER_ERR"
+    else
+        printf '%sffstatus: %s%s\n' "$RED" "$GATHER_ERR" "$N" >&2
+    fi
+    exit 1
+}
+
 if [ "$WATCH" -eq 1 ]; then
     while :; do
         clear
-        render || exit 1
+        gather || fail
+        render_text
         sleep "$INTERVAL"
     done
 else
-    render
+    gather || fail
+    # if/else rather than `a && b || c`: a render_json that failed would fall through to
+    # render_text and print a table after the document.
+    if [ "$JSON" -eq 1 ]; then render_json; else render_text; fi
 fi

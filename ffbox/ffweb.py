@@ -56,10 +56,19 @@ FOUR THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the pag
    nothing signed it. HSTS is deliberately not sent: it would make that warning unbypassable
    on a certificate we already know is untrusted.
 
+ONE PAGE HERE IS NOT A VIEW OF THE DATABASE. `/status` reports on the MACHINE — the containers
+holding a workspace and the pool sizes behind them — and it gets that by running
+ffbox/ffstatus.sh, the same script an operator runs in a terminal, rather than by reading
+ffwatch.db or docker. The rules for counting this box are subtle enough that a second
+implementation here would drift from the one people check their work against, and the two
+disagreeing is worse than either being wrong. It reads and does not act: there is no button on
+that page, because resizing a pool or stopping a container belongs to ffwatch and ffbox.
+
 Standard library only — http.server, sqlite3 and ssl, no Flask, no CDN, no fonts, no network.
-The one external program is `openssl`, run once to mint the self-signed certificate, because
-the standard library can serve TLS but cannot create an X.509 certificate. The CSS is inline
-and the page works with the machine unplugged.
+The only foreign binary is `openssl`, run once to mint the self-signed certificate, because the
+standard library can serve TLS but cannot create an X.509 certificate; the other subprocesses
+are this project's own scripts, ffwatch.py and ffstatus.sh. The CSS is inline and the page works
+with the machine unplugged.
 """
 
 from __future__ import annotations
@@ -104,7 +113,7 @@ DEFAULT_GITHUB_REPO = "Final-Factory/FinalFactory"
 # Shown in the header so a person reading a page knows which build wrote it. The HTTP
 # server_version below is the protocol banner and moves for its own reasons; this is the
 # one a human is meant to read.
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 
 # A turn in one of these has stopped; anything else is still on its way. Kept in step with
 # ffwatch's own list by hand, because this process deliberately imports nothing from it — it
@@ -622,6 +631,23 @@ def fmt_secs(value):
     return f"{value / 60:.1f}m"
 
 
+def fmt_ttl(secs):
+    """A staged container's remaining idle life, in the shape ffstatus.sh prints it.
+
+    Not fmt_secs: these are hours, and "222.0m" is a number a reader has to do arithmetic on.
+    """
+    if secs is None:
+        return "—"
+    secs = int(secs)
+    if secs < 0:
+        return "expired"
+    if secs >= 3600:
+        return f"{secs // 3600}h{(secs % 3600) // 60:02d}m"
+    if secs >= 60:
+        return f"{secs // 60}m"
+    return f"{secs}s"
+
+
 def _row(row, key, default=None):
     """A column that may not be there yet.
 
@@ -927,6 +953,12 @@ form.mark button:hover { color: #d7dae0; border-color: #4a5261; }
 .pill.failed, .pill.timed_out, .pill.crashed, .pill.blocked { border-color: #a55; color: #e99; }
 .pill.done, .pill.sent { border-color: #468; color: #9bd; }
 .pill.pending, .pill.approved { border-color: #a83; color: #eb8; }
+/* The box page. A container WAITING for work is the good state on that page and reads green
+   like a running turn does; one that is still filling its workspace, or has been claimed and
+   not yet handed its job, is amber because it is a state nothing should sit in for long. */
+.pill.warm, .pill.waiting { border-color: #4a6; color: #7d9; }
+.pill.filling, .pill.claimed { border-color: #a83; color: #eb8; }
+.pill.busy { border-color: #468; color: #9bd; }
 .item { border-left: 3px solid #333a45; padding: 6px 12px; margin: 8px 0; background: #1a1e25; }
 .item.message { border-left-color: #468; }
 .item.message.out { border-left-color: #684; }
@@ -1006,7 +1038,7 @@ def page(title, body_parts, banner="", refresh=False):
         "<title>" + esc(title) + " — ffweb</title><style>" + STYLE + "</style></head><body>"
         "<header><span class=\"brand\">ffweb</span>"
         "<a href=\"/\">conversations</a><a href=\"/lanes\">tiers</a>"
-        "<a href=\"/outbound\">outbound</a>" + banner +
+        "<a href=\"/outbound\">outbound</a><a href=\"/status\">box</a>" + banner +
         "<span class=\"version\">v" + VERSION + "</span>" +
         # POST, not a link: a GET that ends a session is a logout any page on the internet can
         # trigger with an <img>. The same Origin check the action routes use covers this one.
@@ -1250,6 +1282,70 @@ class FfwatchActions:
         return self._run([("read" if read else "unread")] + [str(i) for i in ids])
 
 
+class BoxStatus:
+    """What the machine is holding right now — containers and pool sizes — by running
+    ffbox/ffstatus.sh --json.
+
+    NOT A SECOND IMPLEMENTATION, and that is the whole reason this class is three methods long
+    instead of a docker client. The rules for reading the box are genuinely fiddly: a dispatched
+    spare still carries ffbox.workload=pool because dispatch only renames it, an idle CI runner
+    is a running container that is distinguished from a busy one only by a marker file, and a
+    lane's `max` of -1 means the box ceiling. A copy of that here would agree with the script on
+    the day it was written and drift the first time a label moved — and an operator comparing the
+    page against the terminal would have no way to know which one was lying.
+
+    IT READS, IT DOES NOT ACT, so unlike FfwatchActions there is no flag in front of it: the
+    script opens no sockets, writes nothing, and takes no argument from the request. The argv is
+    fixed in _run and nothing from the URL reaches it, so there is no injection surface to guard.
+
+    A FAILURE IS A VALUE, NOT AN EXCEPTION. docker can be down, the daemon can be wedged, the
+    script can be missing on a checkout that predates it. Every one of those has to render as a
+    sentence on the page, because a status page that 500s when the thing it reports on is broken
+    is unavailable exactly when it is wanted.
+    """
+
+    def __init__(self, script, timeout=15):
+        self.script = script
+        self.timeout = timeout
+
+    def _run(self):
+        # bash explicitly rather than the shebang: the script is bash (arrays, associative
+        # arrays), and a checkout copied without its execute bit would otherwise fail here for a
+        # reason that has nothing to do with the box.
+        return subprocess.run(["bash", self.script, "--json"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=self.timeout)
+
+    def read(self):
+        """(status_dict, error_string). Exactly one of the two is falsy."""
+        if not os.path.isfile(self.script):
+            return None, f"no status script at {self.script}"
+        try:
+            proc = self._run()
+        except subprocess.TimeoutExpired:
+            # Nearly always a docker daemon that has stopped answering. Say that, because the
+            # useful next move is `systemctl status ffbox-docker`, not a page reload.
+            return None, (f"ffstatus.sh did not answer within {self.timeout}s — the docker "
+                          "daemon is most likely not responding")
+        except (OSError, subprocess.SubprocessError) as exc:
+            return None, f"{type(exc).__name__}: {exc}"
+        try:
+            doc = json.loads(proc.stdout or "")
+        except ValueError:
+            # The script failed before it could write a document -- a bash syntax error, a
+            # missing python3. Its stderr is the only thing that knows why, so it goes on the
+            # page rather than into a log nobody is reading.
+            detail = (proc.stderr or "").strip() or f"exit {proc.returncode}, no output"
+            return None, short(detail, 400)
+        # The documented failure shape: gather() could not reach the daemon and said so in the
+        # document itself.
+        if isinstance(doc, dict) and doc.get("error"):
+            return None, short(str(doc["error"]), 400)
+        if not isinstance(doc, dict):
+            return None, "ffstatus.sh returned something that is not a status document"
+        return doc, ""
+
+
+
 # ------------------------------------------------------------------------------------------
 # request handling
 # ------------------------------------------------------------------------------------------
@@ -1438,6 +1534,8 @@ class FFWebHandler(BaseHTTPRequestHandler):
             return self._send(200, app.page_lanes())
         if path == "/outbound":
             return self._send(200, app.page_outbound(query))
+        if path == "/status":
+            return self._send(200, app.page_status())
         m = re.fullmatch(r"/conversation/(\d+)", path)
         if m:
             body = app.page_conversation(int(m.group(1)), query)
@@ -1737,11 +1835,14 @@ def blob_content_type(filename, declared):
 
 class App:
     def __init__(self, db_path, blobs_dir, state_dir, ffwatch_py, enable_actions=False,
-                 quiet=False, origins=(), scheme="https", sessions=None):
+                 quiet=False, origins=(), scheme="https", sessions=None, ffstatus=None):
         self.db = ReadOnlyDb(db_path)
         self.blobs_dir = os.path.realpath(blobs_dir)
         self.state_dir = state_dir
         self.actions = FfwatchActions(ffwatch_py, state_dir, enabled=enable_actions)
+        # Beside this file unless a caller says otherwise. The box page reports on the machine
+        # ffweb is running on, so the script it runs is the one shipped in this checkout.
+        self.box = BoxStatus(ffstatus or os.path.join(HERE, "ffstatus.sh"))
         self.quiet = quiet
         self.self_origins = set(origins)
         # The scheme this process is actually serving. It decides two things and only two:
@@ -1945,6 +2046,82 @@ class App:
                 "reached the container has neither. The count in brackets is how many runs each "
                 "average covers.</p>")
         return page("tiers", ["<h1>trust tiers</h1>"] + body + [note])
+
+    # -- the box ------------------------------------------------------------------------
+
+    def page_status(self):
+        """What this machine is holding right now, and what its pools were told to hold.
+
+        THE ONLY PAGE HERE THAT DOES NOT READ ffwatch.db. Everything else on this site is a
+        view of rows the daemon wrote; this is a view of the machine, taken when the request
+        arrives. The two answer different questions and the difference matters when something
+        is wrong: the database says a turn was dispatched, and this says whether a container is
+        actually up and which pool it came out of.
+
+        NOTHING HERE IS ACTIONABLE, on purpose. Stopping a container, resizing a pool or
+        retiring a spare are all ffwatch's or ffbox's to do, and a button on this page would be
+        this process reaching around the daemon that owns the ceiling — the same argument that
+        keeps every write on this site behind a subprocess to ffwatch.
+        """
+        doc, err = self.box.read()
+        head = ["<h1>this box</h1>"]
+        if err:
+            # A sentence and a live page, rather than a 500. What breaks the status read is
+            # usually docker, which is also when somebody most wants to look at this page.
+            return page("box", head + ["<p class=\"note\">" + esc(err) + "</p>"], refresh=True)
+
+        box = doc.get("box") or {}
+        used, cap = box.get("used"), box.get("max")
+        head.append("<p class=\"note\">" + esc(str(doc.get("host") or "this box")) +
+                    " · read at " + esc(short(str(doc.get("generated_at") or ""), 40)) +
+                    " · " + esc(f"{used} of {cap}") + " containers hold a workspace "
+                    "(max_concurrent_runs, which both lanes count against)</p>")
+
+        rows = []
+        for c in doc.get("containers") or []:
+            rows.append([c.get("lane") or "—", c.get("class") or "—", c.get("name") or "—",
+                         c.get("slot") or "—", pill(c.get("state")),
+                         fmt_ttl(c.get("ttl_secs")), c.get("ref") or "—",
+                         c.get("uptime") or "—"])
+        body = ["<h2>containers</h2>",
+                table(["lane", "class", "name", "slot", "state", "ttl", "ref", "up"], rows),
+                "<p class=\"note\">A <code>spare</code> is a container that filled its "
+                "workspace before any request existed; <code>ttl</code> is what it has left "
+                "before it retires. <code>running*</code> is a turn that was dispatched into "
+                "one of those rather than launched cold — 1.2 seconds to start against about "
+                "40.</p>"]
+
+        prows = []
+        for pool in doc.get("pools") or []:
+            waiting, want = pool.get("waiting"), pool.get("idle")
+            cell = str(waiting)
+            if isinstance(waiting, int) and isinstance(want, int) and waiting < want:
+                cell = Raw(esc(str(waiting)) +
+                           " <span class=\"pill filling\">below target</span>")
+            prows.append([pool.get("class") or "—", want, cell, pool.get("busy"),
+                          pool.get("max")])
+        body += ["<h2>pools</h2>",
+                 table(["class", "idle", "waiting", "busy", "max"], prows),
+                 "<p class=\"note\">One vocabulary for both lanes, because they hold the same "
+                 "kind of thing under two names: <code>waiting</code> is a container with a "
+                 "workspace and no work in it — an agent spare, or a CI runner registered with "
+                 "GitHub and not running a job — and <code>busy</code> is one doing something. "
+                 "<code>idle</code> is how many waiting containers that pool is configured to "
+                 "keep. A <code>max</code> equal to the box ceiling is a lane with no ceiling "
+                 "of its own.</p>"]
+
+        infra = doc.get("infrastructure") or []
+        if infra:
+            body += ["<h2>infrastructure</h2>",
+                     table(["name", "status"],
+                           [[i.get("name") or "—", i.get("status") or "—"] for i in infra]),
+                     "<p class=\"note\">The egress proxies and the git mirror. Long-lived, "
+                     "hold no workspace, counted by nothing.</p>"]
+
+        # The minute tick, not the ten-second one. A pool refills in tens of seconds and a run
+        # lasts minutes, so a faster reload would spend more of this box's docker socket than
+        # it would tell anybody.
+        return page("box", head + body, refresh=True)
 
     # -- one conversation -------------------------------------------------------------------
 
@@ -2831,6 +3008,8 @@ def build_parser():
     p.add_argument("--blobs", help="blob store (default <state-dir>/blobs)")
     p.add_argument("--ffwatch", default=os.path.join(HERE, "ffwatch.py"),
                    help="ffwatch.py to invoke for submit/approve/reject")
+    p.add_argument("--ffstatus", default=os.path.join(HERE, "ffstatus.sh"),
+                   help="ffstatus.sh to run for the box page (default: beside this file)")
     p.add_argument("--enable-actions", action="store_true",
                    help="allow approve/reject on the outbound queue, which releases a reply "
                         "into a public Discord thread (off by default; the prompt box, which "
@@ -2878,7 +3057,7 @@ def main(argv=None):
                f"{scheme}://127.0.0.1:{args.port}"}
     app = App(db_path, blobs, state_dir, os.path.abspath(args.ffwatch),
               enable_actions=args.enable_actions, quiet=args.quiet, origins=origins,
-              scheme=scheme)
+              scheme=scheme, ffstatus=os.path.abspath(args.ffstatus))
     gaps = missing_columns(app.db)
     if gaps:
         sys.stderr.write(
