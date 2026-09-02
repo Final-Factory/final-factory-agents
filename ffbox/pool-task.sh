@@ -64,6 +64,10 @@ staged_at=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo "")
     printf 'staged_at=%s\n' "$(date -Is)"
     printf 'ttl_secs=%s\n' "$TTL"
 } > "$FFBOX_OUT/staged"
+# The last two keys are lib-workloads.sh's clock format, and the host reads them with
+# ffbox_clock_left: the keeper to decide this container has aged out, ffstatus to show how long it
+# has left. Written here rather than through ffbox_clock_write because this file carries three
+# more keys of its own and the helper owns two keys, not a file. Keep the names in step.
 
 # --- the Unity seat, taken NOW rather than when a turn arrives ----------------------------------
 #
@@ -86,7 +90,10 @@ staged_at=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo "")
 # NEVER FATAL HERE. A container that cannot get a seat is still a warm workspace, and a turn
 # dispatched into it will try again through the turn task's own ensure_unity_license. Retiring the
 # container instead would turn a licensing hiccup into an empty pool.
-. /ffbox/unity-license.sh
+# Overridable ONLY so the failsafe can be driven offline by test_pool_task.sh; every real
+# container gets the bind-mounted path. The loop below is the one piece of this script whose
+# failure mode is a container that never goes away, so it is worth being able to test.
+. "${FFBOX_UNITY_LICENSE:-/ffbox/unity-license.sh}"
 if try_unity_license; then
     log "holding a Unity seat for whatever is dispatched here"
 else
@@ -94,6 +101,7 @@ else
 fi
 
 log "staged on ${FFBOX_REF:-?} at ${staged_at:0:12}, waiting up to ${TTL}s for a request"
+log "(the keeper enforces that; this container's own failsafe is ${TTL}s plus a margin)"
 
 # --- the wait, and the one file that settles the race with the deadline -------------------------
 #
@@ -109,24 +117,50 @@ claim_owner() {
     ( set -o noclobber; : > "$FFBOX_OUT/owner" ) 2>/dev/null
 }
 
-deadline=$(( $(date +%s) + TTL ))
+# THE HOST IS THE ENFORCER NOW AND THIS IS THE FAILSAFE. Since 2026-09-02 the keeper compares
+# out/staged on its own pass and retires a spare that has aged out, which removes the race rather
+# than relocating it: the host is already the dispatcher, so retiring and dispatching became two
+# decisions by one party. What a host-side clock loses is that a spare retires itself when nothing
+# is watching -- and this one holds 22 GiB and a Unity seat -- so the container keeps a clock at
+# TTL plus a margin. In normal operation the keeper gets there first and none of this runs.
+FAILSAFE_MARGIN=${FFBOX_IDLE_FAILSAFE_MARGIN_SECS:-900}
+deadline=$(( $(date +%s) + TTL + FAILSAFE_MARGIN ))
+pushed=0
 while [ ! -e "$FFBOX_IN/dispatch" ]; do
     if [ "$(date +%s)" -ge "$deadline" ]; then
         if claim_owner; then
-            log "idle for ${TTL}s and unclaimed; retiring so the host can stage a fresher one"
+            log "idle for $(( TTL + FAILSAFE_MARGIN ))s and unclaimed; retiring. The keeper should"
+            log "have done this ${FAILSAFE_MARGIN}s ago, so something is wrong with it."
             exit 0
         fi
-        # The host got there first, so a dispatch is on its way and the deadline no longer
-        # applies: a request must never be met by a container that is walking out. Pushed far
-        # enough ahead that this cannot spin, and left in place rather than disarmed so a host
-        # that claimed and then died does not leave a container waiting for ever.
+        # THE HOST HAS CLAIMED US. Two things look like this and only one of them is a dispatch.
+        #
+        # A real dispatch writes job.json, the attachments and the env, then `dispatch` last, about
+        # a second later; the push exists so that arriving inside this branch is not a container
+        # walking out on a request. A RETIREMENT claims the same file and then stops us, and a
+        # keeper that dies between the two -- or whose `docker stop` fails -- leaves a claim that
+        # never becomes a dispatch.
+        #
+        # SO THE PUSH IS TAKEN ONCE. Until 2026-09-02 it was re-armed every time round, and the
+        # create it retried could never succeed once the file existed, so this waited and pushed
+        # and waited for as long as the container lived. The comment on it said the opposite --
+        # "left in place rather than disarmed so a host that claimed and then died does not leave a
+        # container waiting for ever" -- and re-arming is not what achieves that; exiting is. That
+        # was survivable while only a dispatch ever created `owner`. It is not once a retirement
+        # does, which is why the intent is now implemented rather than merely stated.
+        if [ "$pushed" = 1 ]; then
+            log "the host claimed this container ${FAILSAFE_MARGIN}s ago and never dispatched;"
+            log "it is not coming. Retiring rather than holding a workspace and a seat for ever."
+            exit 0
+        fi
+        pushed=1
         log "the deadline passed but the host has claimed this container; waiting for the job"
-        deadline=$(( $(date +%s) + 900 ))
+        deadline=$(( $(date +%s) + FAILSAFE_MARGIN ))
     fi
     sleep "$POLL"
 done
 
-waited=$(( TTL - (deadline - $(date +%s)) ))
+waited=$(( TTL + FAILSAFE_MARGIN - (deadline - $(date +%s)) ))
 log "dispatched after ~${waited}s idle"
 
 # --- what the host handed us --------------------------------------------------------------------

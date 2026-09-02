@@ -5287,6 +5287,15 @@ def test_destructive_docker_calls_name_the_container():
           'f"name=^{name}$"' in sources["ffwatch.py"])
     check("the container ffbox stops is the one it named",
           'docker stop --timeout 120 "$RUN_NAME"' in sources["ffbox"])
+    # THE LIST FORM THE LINE SCANNER CANNOT SEE. ffwatch builds its argv as a list, so
+    # `docker stop` never appears as a literal and the loop above walks straight past
+    # _pool_expire_one -- which is a stop of a named container added on 2026-09-02. Assert the
+    # shape directly rather than leaving the one call site the guard was written for uncovered.
+    check("the spare the keeper retires is the one it stops, by name",
+          '[self.cfg["docker"], "stop", "--timeout", str(grace), name]' in sources["ffwatch.py"])
+    # And that it outlasts a licence return, which kill_grace_secs at 10 does not.
+    check("and it stops it with at least the licence floor",
+          'max(1, int(self.cfg["kill_grace_secs"]), LICENCE_STOP_FLOOR)' in sources["ffwatch.py"])
     # The names themselves, since they are now derived rather than literal: a class that loses
     # its prefix would otherwise only show up as a failed dispatch on a live box.
     check("ffbox derives one container-name prefix per agent class",
@@ -8042,6 +8051,96 @@ def test_draining_destroys_what_is_idle_and_nothing_else():
           w.cfg["kill_grace_secs"] < ffwatch.LICENCE_STOP_FLOOR, None)
 
 
+def test_the_keeper_expires_a_stale_spare_and_never_a_claimed_one():
+    """The idle clock moved host-side on 2026-09-02. What must not move with it is the guarantee
+    that a container serving a turn is left alone, and that a keeper which loses the claim to a
+    container already retiring does nothing."""
+    print("pool: the keeper expires a stale spare and never a claimed one")
+    case = Case("poolexpire", base_fixture())
+    w = case.watcher
+    if True:
+        stopped = []
+        real_thread = ffwatch.threading.Thread
+
+        class Inline(real_thread):
+            """Run the retirement body on this thread, so the assertions do not race it."""
+            def start(self):
+                self.run()
+
+        containers = [{"id": "fresh", "name": "ffbox-agent-pool-fresh", "ref": "master",
+                       "class": "ffagent"},
+                      {"id": "stale", "name": "ffbox-agent-pool-stale", "ref": "master",
+                       "class": "ffagent"},
+                      {"id": "busy", "name": "ffbox-agent-t7-busy", "ref": "master",
+                       "class": "ffagent"},
+                      {"id": "filling", "name": "ffbox-agent-pool-filling", "ref": "master",
+                       "class": "ffagent"}]
+        for c in containers:
+            os.makedirs(os.path.join(w.pool_dir(c["id"]), "out"), exist_ok=True)
+
+        def staged(pool_id, age_secs, ttl=14400):
+            when = (ffwatch.datetime.now(ffwatch.timezone.utc)
+                    - ffwatch.timedelta(seconds=age_secs))
+            with open(os.path.join(w.pool_dir(pool_id), "out", "staged"), "w",
+                      encoding="utf-8") as fh:
+                fh.write(f"commit=abc123\nstaged_at={when.isoformat()}\nttl_secs={ttl}\n")
+
+        staged("fresh", 60)
+        staged("stale", 14400 + 60)
+        staged("busy", 14400 + 60)
+        # `busy` was dispatched: the host claimed it, and a dispatched container keeps its pool
+        # label, so anything sweeping by label rather than by out/owner would take a live turn.
+        open(w.pool_owner_path("busy"), "w").close()
+        # `filling` is still extracting its tar and has no deadline yet.
+
+        w.pool_containers = lambda: containers
+        ffwatch.threading.Thread = Inline
+        real_run = ffwatch.subprocess.run
+        ffwatch.subprocess.run = lambda argv, **kw: stopped.append(argv) or real_run(
+            [sys.executable, "-c", ""], capture_output=True)
+        try:
+            sent = w.pool_expire()
+        finally:
+            ffwatch.threading.Thread = real_thread
+            ffwatch.subprocess.run = real_run
+
+        names = [a[-1] for a in stopped if "stop" in a]
+        check("the keeper retires a spare that has aged out", sent == 1 and
+              names == ["ffbox-agent-pool-stale"], (sent, names))
+        check("and claims it first, exactly as a dispatch does",
+              os.path.exists(w.pool_owner_path("stale")), None)
+        check("a spare inside its idle life is left alone",
+              not os.path.exists(w.pool_owner_path("fresh")), None)
+        check("a dispatched container is never touched, whatever its label says",
+              "ffbox-agent-t7-busy" not in names, names)
+        check("and one still filling has no deadline to be past",
+              not os.path.exists(w.pool_owner_path("filling")), None)
+        graces = [int(a[a.index("--timeout") + 1]) for a in stopped if "--timeout" in a]
+        check("the stop outlasts a licence return", graces and
+              min(graces) >= ffwatch.LICENCE_STOP_FLOOR, graces)
+
+        # A ttl_secs of 0 is "never recycle this", the coercion both pools apply to pool.idle.
+        stopped.clear()
+        staged("fresh", 999999, ttl=0)
+        ffwatch.threading.Thread = Inline
+        ffwatch.subprocess.run = lambda argv, **kw: stopped.append(argv) or real_run(
+            [sys.executable, "-c", ""], capture_output=True)
+        try:
+            w.pool_expire()
+        finally:
+            ffwatch.threading.Thread = real_thread
+            ffwatch.subprocess.run = real_run
+        check("a ttl of 0 means no deadline rather than expired immediately", not stopped, stopped)
+
+        # An unreadable clock is not a deadline either. For an IDLE clock the safe failure is a
+        # container that lives too long; only the WORK clock falls back to something bounded.
+        with open(os.path.join(w.pool_dir("fresh"), "out", "staged"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("commit=abc123\nstaged_at=not-a-time\nttl_secs=nonsense\n")
+        check("and a malformed one is not a deadline at all",
+              w._clock_expired(os.path.join(w.pool_dir("fresh"), "out", "staged")) is False, None)
+
+
 def test_the_project_directory_survives_a_workspace_move():
     """Claude Code keeps everything for a project — transcripts and memory/ — in one directory
     named after the container's cwd. Moving the workspace renames it, and conversation 30 showed
@@ -9644,6 +9743,7 @@ def main():
         test_a_second_branch_is_refused_at_the_push,
         test_a_submission_cannot_name_a_branch_the_conversation_does_not_own,
         test_the_mirror_is_only_written_inside_the_pipelines_own_namespace,
+        test_the_keeper_expires_a_stale_spare_and_never_a_claimed_one,
         test_the_project_directory_survives_a_workspace_move,
         test_draining_destroys_what_is_idle_and_nothing_else,
         test_a_shutdown_waits_for_the_host_not_only_for_the_containers,
