@@ -204,7 +204,7 @@ EOF
 #
 # THE CREDENTIAL LIVES ON THE HOST AGAIN, AND THAT WAS ALWAYS FINE. The thing this whole change
 # removed is a Unity password inside a CONTAINER that runs a model over player-authored text. A
-# password in ~/.config/ffbox/secrets.env, mode 600, is the same posture GH_TOKEN and the Discord
+# password in ~/.config/ffbox/secrets.env, mode 600, is the same posture GH_PR_TOKEN and the Discord
 # bot token already have -- "HOST SIDE ONLY", never passed down -- and it is what lets the licence
 # renew itself instead of expiring at 3am.
 #
@@ -375,7 +375,7 @@ cmd_renew() {
 # runs the editor only inside containers, so there is no licensing client to run and no way to get
 # one without installing 11 GB of editor on the host purely to activate. The host also presents its
 # OWN /etc/machine-id (a licence minted there would bind to the wrong machine), and it is where
-# GH_TOKEN and the Discord token live -- so moving the credential there would put it in worse company,
+# GH_PR_TOKEN and the Discord token live -- so moving the credential there would put it in worse company,
 # not better. The binary that sees the password is Unity's either way; this confines it.
 #
 # THE CREDENTIAL NEVER TOUCHES THIS HOST'S DISK OR ARGV. It is read straight into a variable (with

@@ -584,7 +584,7 @@ class Case:
         # — so without this line the attach tests would pass on the build server, where that
         # file exists, and be silently skipped on a laptop where it does not.
         cfg["_config_read"] = True
-        # Whatever GH_TOKEN says on this machine, a test never talks to real GitHub and never
+        # Whatever GH_PR_TOKEN says on this machine, a test never talks to real GitHub and never
         # pushes into a real checkout. Cases that publish point these at their own fixtures.
         cfg["github"] = {"api_base": "http://127.0.0.1:9", "repo": "test/test",
                          "base": "develop", "token": None}
@@ -4590,7 +4590,7 @@ def test_the_selector_narrows_a_choice_it_cannot_widen():
     argv, env, cwd, stdin = ffwatch.classifier_invocation(
         case.cfg, "prompt", ffwatch.SELECTOR_SCHEMA)
     check("the selector goes through the same sandbox as the gate",
-          "--safe-mode" in argv and "--tools" in argv and "GH_TOKEN" not in env, argv)
+          "--safe-mode" in argv and "--tools" in argv and "GH_PR_TOKEN" not in env, argv)
     # AND ON THE SMALL MODEL. S4 now runs on every batch in its band rather than only when two
     # conversations were in reach, so what it costs is a standing per-turn number. It is one
     # tool-less haiku call; the full split is pinned in
@@ -4997,7 +4997,7 @@ def test_a_container_sees_only_its_own_conversation():
 
 def test_the_classifier_runs_in_a_sandbox():
     """The gate reads text written by strangers and runs ON THE HOST, as the account that owns
-    the Docker socket, the zfs rules, GH_TOKEN and the Claude credential.
+    the Docker socket, the zfs rules, GH_PR_TOKEN and the Claude credential.
 
     Asserted on the argv/env/cwd the builder returns rather than on a model call, so this is
     offline and costs nothing. Measured on 2026-08-30, `--tools ""` alone still loaded three
@@ -5027,13 +5027,13 @@ def test_the_classifier_runs_in_a_sandbox():
     check("the prompt goes on stdin, not argv",
           stdin == prompt and not any(prompt in a for a in argv), argv)
 
-    os.environ["GH_TOKEN"] = "ghp_ThisMustNotReachTheClassifier"
+    os.environ["GH_PR_TOKEN"] = "ghp_ThisMustNotReachTheClassifier"
     try:
         _, env2, _, _ = ffwatch.classifier_invocation(cfg, prompt, {"type": "object"})
     finally:
-        os.environ.pop("GH_TOKEN", None)
-    check("GH_TOKEN never reaches the classifier, even when the daemon holds it",
-          "GH_TOKEN" not in env2, sorted(env2))
+        os.environ.pop("GH_PR_TOKEN", None)
+    check("GH_PR_TOKEN never reaches the classifier, even when the daemon holds it",
+          "GH_PR_TOKEN" not in env2, sorted(env2))
     check("and neither does anything else the daemon happens to hold",
           not [k for k in env2 if k not in ("PATH", "HOME", "ANTHROPIC_API_KEY",
                                             "CLAUDE_CODE_OAUTH_TOKEN", "LANG", "LC_ALL")],

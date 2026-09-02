@@ -554,7 +554,7 @@ credential at all. It cannot, and the reasons are worth recording so this is not
   says "bind to this other id": the client reads the id of the process it is running as, and the
   route that lets you *submit* a binding — the `.alf` upload — is the one Unity withdrew for
   Personal.
-- **The host is worse company for a secret.** `GH_TOKEN` and the Discord bot token live there, and
+- **The host is worse company for a secret.** `GH_PR_TOKEN` and the Discord bot token live there, and
   they are deliberately kept out of every container. Adding a Unity password to that set moves the
   credential toward the machine's most sensitive process table, not away from it.
 - **The same binary sees it either way.** Unity's licensing client is what receives the password;
@@ -593,7 +593,7 @@ still be fine and `unity-license.sh` inside the container reports the truth far 
 made outside it.
 
 This needs `UNITY_EMAIL`/`UNITY_PASSWORD` (or `UNITY_ACCESS_TOKEN`) in `secrets.env`, **host-side
-only** — the same posture `GH_TOKEN` and the Discord token already have. Leave them blank and the
+only** — the same posture `GH_PR_TOKEN` and the Discord token already have. Leave them blank and the
 licence cannot renew itself; `mint` prompts instead.
 
 You only re-mint by hand if the machine id constant changes or the account changes.
@@ -932,7 +932,7 @@ Full design and rationale: `design/conversation_clustering_design.txt`.
 ### The classifier sandbox
 
 The engagement gate and the conversation selector both run `claude -p` ON THE HOST, as the
-account that owns the rootless Docker socket, the NOPASSWD `zfs` rules, `GH_TOKEN` and the
+account that owns the rootless Docker socket, the NOPASSWD `zfs` rules, `GH_PR_TOKEN` and the
 Claude credential. That makes them the most privileged model calls in the pipeline — better
 isolated inside a container than out here.
 
@@ -1228,7 +1228,7 @@ branch and no PR — and no test run either, since the container skips the suite
 changed nothing, which is what makes verification affordable on a typed question. A triage verdict of `AUTOFIX` enqueues a separate fix turn, deliberately
 re-based onto `develop` and told so in its prompt.
 
-`GH_TOKEN` is host-side only and never enters the container, which has no `gh` binary and no
+`GH_PR_TOKEN` is host-side only and never enters the container, which has no `gh` binary and no
 push credential. That, not the deny list, is what makes "nothing merges" true — and there is
 deliberately no merge method on the GitHub client. Note the scope of that claim: the container
 holds no *git* credential, but it does hold `CLAUDE_CODE_OAUTH_TOKEN` and the Unity account

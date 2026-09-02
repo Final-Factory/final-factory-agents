@@ -17,10 +17,15 @@ Fine-grained PATs against an org repository need an org owner to approve them th
 and they expire. Put the expiry date somewhere you will see it, because every failure mode
 below is silent or near-silent.
 
-## 1. `GH_TOKEN` — opens pull requests, nothing else
+## 1. `GH_PR_TOKEN` — opens pull requests, nothing else
 
 Lives in `~/.config/ffbox/secrets.env`, read from the environment by `ffwatch` and never written
 to `config.json` beside the channel ids. It never enters a container.
+
+The variable was called `GH_TOKEN` until 2026-09-02. The name now says what the token may do,
+because a box holds two GitHub credentials and the old one did not distinguish them. `ffwatch`
+still reads `GH_TOKEN` after `GH_PR_TOKEN`, so a machine whose `secrets.env` predates the rename
+keeps working; `github.token_env` in `config.json` overrides the name entirely.
 
 `ffwatch`'s GitHub client makes exactly two requests, and the class has no merge method by
 design:
@@ -40,16 +45,20 @@ Resource owner: `Final-Factory`. Repository access: **only** `Final-Factory/Fina
 
 Every other permission stays at No access.
 
-This is less than `ffbox/secrets.env.example` asks for. That file says `repo` scope, "or
-contents:write + pull requests:write". Contents write is not needed here: the branch push does
-not go through this token. See below.
+Contents write is deliberately absent, and not merely unnecessary. Merging a pull request needs
+contents:write alongside pull-requests:write, so a token holding both is a token that can merge.
+Capped here, the process that reads text written by strangers and turns it into a pull request
+cannot merge one no matter what calls it — a third leg under "nothing merges, ever", beside the
+`GitHub` class having no merge method and the container holding no credential at all.
+
+The branch push does not go through this token in any case. See below.
 
 Failure mode with too little: the run finishes, the branch is pushed, and the turn reports
 `pushed but no PR` with the API error.
 
 ## 2. The push credential — the one that can actually write code
 
-This is the credential the *host checkout* uses, not `GH_TOKEN`. `push_bundle` deliberately does
+This is the credential the *host checkout* uses, not `GH_PR_TOKEN`. `push_bundle` deliberately does
 not splice a token into the push URL, because argv is world-readable through `/proc`
 (`ffbox/ffwatch.py:5624`); it runs
 
@@ -93,7 +102,7 @@ git -C /opt/FinalFactory fetch origin      # prompts once, stores it
 The username is ignored by GitHub for token auth; any non-empty string works, the password is
 the token. The file must be mode 600.
 
-**Keep this token distinct from `GH_TOKEN`.** If both are the same value you have gained nothing
+**Keep this token distinct from `GH_PR_TOKEN`.** If both are the same value you have gained nothing
 by scoping either one, because the PR opener then also carries code write. Split, the PR token
 cannot write code at all, and the code-write token sits in a file that `ffwatch` never reads and
 no container ever sees.
@@ -147,6 +156,6 @@ is what makes "nothing merges, ever" true: a deny pattern like `Bash(git push*)`
 that `sh -c 'git push'` walks straight through, and it has been measured doing so. Publication
 is physically the host's job.
 
-Keeping `GH_TOKEN` down to pull-requests-write extends the same idea one step further. Even the
+Keeping `GH_PR_TOKEN` down to pull-requests-write extends the same idea one step further. Even the
 host process that reads text written by strangers and turns it into a pull request cannot move a
 branch, delete a ref, or touch another repository in the org.
