@@ -654,6 +654,21 @@ Confidence gates the pull request, not the branch. Work is always published so i
 lost; only the proposal to merge is withheld. No changed files means no branch left behind and
 no PR. Nothing merges, ever.
 
+A SECOND LOOK, NOT SCOPED TO ONE RUN (added 2026-09-02). The above happens once, inside the
+turn that produced the commits, and every way it can stop short strands a branch: a push that
+failed, GitHub down or tokenless for the seconds the PR was asked for, or a later turn that
+changed no files and so returned before it looked at the pull request at all. The harness
+therefore checks the whole conversation — after every turn that did not itself end with a PR,
+and on the fifteen-minute sweep — and finishes what publish started: pushes the bundle that
+never went, opens the PR that never opened.
+
+It finishes a job; it does not make a decision. The verification gate is re-run rather than
+assumed transient, so a change that failed its tests cannot acquire a pull request by waiting;
+and no pull request is opened for a head that has ever had one. A pull request a human closed
+without merging is a refusal, and the harness does not walk back through it — a conversation
+owns its branch for life, so reopening would make closing meaningless. Merged is not closed:
+commits pushed on top of a merged PR are a new proposal.
+
 GitHub credentials and push rights never enter the container. This, not the disallowed list,
 is what makes "nothing merges" true: section 7's measurements show the deny patterns are a
 tripwire rather than a boundary, so credential absence is carrying the weight here.

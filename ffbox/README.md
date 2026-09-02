@@ -1192,7 +1192,7 @@ and the agent cannot touch:
   conversation's pinned base sha, `--branch-prefix` is withheld so the harvest cannot rename a
   name a reviewer has already seen, and the preamble tells the agent it is standing on its own
   earlier work and must commit onto it. One conversation, one branch, one pull request —
-  `find_pull_request` finds the open one and adds commits to it rather than opening a second.
+  `pull_request_for` finds the open one and adds commits to it rather than opening a second.
 
   Before this, each publishing turn invented its own name. Conversation 30 took four turns at
   one bug and left two branches on origin — `…-phantom-stability-d30t3-…` based on develop and
@@ -1239,6 +1239,35 @@ and the agent cannot touch:
   commits before aiming anything. Branch, base, PR number and PR url are recorded from git and
   the API response, never parsed from the agent's summary, and stay correct when the summary
   contradicts them.
+- **The second look** (2026-09-02). `publish()` runs once, inside the turn that produced the
+  commits, and every way it can stop short used to strand a branch with nobody scheduled to come
+  back to it: a push that failed left `bundle_path` in the run row and nothing on the box ever
+  read that column again; GitHub being down or the token not being on the box yet recorded a
+  reason and gave up; and the turn that might have retried either changed no files, so
+  `publish()` returned at its `not branch` guard before it looked at a pull request at all.
+  `reconcile_publication()` is the look that comes back — after every turn that did not itself
+  end with a PR, and over every conversation on the `catchup_secs` tick. It pushes what was
+  never pushed (from the bundle still on disk) and opens the pull request that was never opened.
+
+  It can only ever finish a job `publish()` started, never make a decision `publish()` declined.
+  **It re-runs the verification gate**, so a change that failed its tests cannot acquire a pull
+  request by sitting still until a sweep comes past, and both refusals are decided from the
+  database and the run directory before any API call — a permanently gated conversation costs
+  the sweep two queries and a file read, not a request. **It opens nothing for a head that has
+  ever had a pull request**, in any state. And it will not re-push a name that is merely absent
+  from origin, only a run whose own push never succeeded: a merged PR takes its branch with it,
+  and re-pushing every absent name would resurrect it every fifteen minutes forever.
+  `reconcile_secs` (a week) drops conversations nobody has touched since — by then the branch is
+  a person's to decide about, not the harness's to keep retrying at them.
+- **A pull request a human closed stays closed.** `pull_request_for` asks for every state, not
+  just open ones, because "is there somewhere to add commits" and "has anybody already ruled on
+  this branch" are different questions and the open-only filter silently answers the second one
+  wrong. A conversation keeps its branch for life, so without this every follow-up message on
+  the thread would open another PR for the same head and closing them would never work — the
+  only way to be rid of the harness would be to delete the branch out from under work still
+  going on. The refusal is recorded as the run's `no_pr_reason`, naming the PR that was closed.
+  Merged is not closed: commits pushed on top of a merged pull request are a new proposal and
+  get one of their own.
 
 Confidence gates the pull request, not the branch: the work is always published so it cannot be
 lost with the ZFS clone, and only the proposal to merge is withheld. So does the base: a branch

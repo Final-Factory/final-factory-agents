@@ -3344,7 +3344,14 @@ class MockGitHub(BaseHTTPRequestHandler):
         head = ""
         if "head=" in self.path:
             head = self.path.split("head=", 1)[1].split("&")[0].split(":")[-1]
-        return self._send(200, [p for p in GH_STATE["pulls"] if p["_head"] == head])
+        # `state` is honoured rather than ignored because the whole point of asking for `all` is
+        # to see the pull requests a filter of `open` hides — a mock that returned everything to
+        # both queries would make the closed-PR tests below pass without the code being right.
+        want = "open"
+        if "state=" in self.path:
+            want = self.path.split("state=", 1)[1].split("&")[0]
+        return self._send(200, [p for p in GH_STATE["pulls"]
+                                if p["_head"] == head and want in ("all", p["state"])])
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -3359,7 +3366,8 @@ class MockGitHub(BaseHTTPRequestHandler):
         GH_STATE["next_number"] += 1
         pull = {"number": number,
                 "html_url": "https://github.com/Final-Factory/FinalFactory/pull/%d" % number,
-                "title": body.get("title"), "base": body.get("base"),
+                "title": body.get("title"), "base": body.get("base"), "state": "open",
+                "merged_at": None,
                 "_head": body.get("head"), "body": body.get("body")}
         GH_STATE["pulls"].append(pull)
         return self._send(201, pull)
@@ -8511,6 +8519,187 @@ def test_the_mirror_is_only_written_inside_the_pipelines_own_namespace():
           not case.watcher.mirror_carries("ffbox/never-existed"))
 
 
+def _pulls_for(branch):
+    return [p for p in GH_STATE["pulls"] if p["_head"] == branch]
+
+
+def _latest_run(case):
+    return case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                     " ORDER BY r.id DESC")[0]
+
+
+def test_a_pull_request_a_human_closed_is_not_reopened():
+    """Closing the pull request is a decision, and the next turn does not undo it.
+
+    A conversation keeps one branch for life, so without this every follow-up message on the
+    thread would open another pull request for the same head — and closing them would never
+    work. The only way to be rid of the harness would be to delete the branch out from under
+    work that is still going on.
+    """
+    print("publication: a closed pull request stays closed")
+    case = bug_case("closedpr", venue="private")
+    origin, host = git_origin(case)
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    branch = conv["branch"]
+    opened = _pulls_for(branch)
+    check("the first turn opened one", len(opened) == 1 and opened[0]["state"] == "open", opened)
+
+    opened[0]["state"] = "closed"           # a human closed it, and meant it
+    escalate(case, changed=["Assets/Merger.cs"], verify=PASSING_VERIFY)
+    run = _latest_run(case)
+    check("the next turn opens no second pull request for the same head",
+          len(_pulls_for(branch)) == 1, _pulls_for(branch))
+    check("and says why, naming the one that was closed",
+          str(opened[0]["number"]) in (run["no_pr_reason"] or "")
+          and "closed" in (run["no_pr_reason"] or ""), run["no_pr_reason"])
+    check("the work is still pushed, because only the proposal was ever withheld",
+          run["pushed"] == 1 and run["branch"] == branch, run)
+
+    # AND THE SWEEP DOES NOT UNDO IT EITHER. Normally it never gets that far — a recorded pull
+    # request ends the pass — so clear that and make it refuse from what GitHub actually says.
+    case.watcher.db.execute("UPDATE conversation SET github_pr=NULL WHERE id=?", (conv["id"],))
+    check("the sweep opens nothing for a head whose pull request a human closed",
+          case.watcher.reconcile_publications() == 0 and len(_pulls_for(branch)) == 1,
+          _pulls_for(branch))
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("and records the closed one, so it stops asking every fifteen minutes",
+          str(opened[0]["number"]) in (conv["github_pr"] or ""), conv["github_pr"])
+
+    # A MERGED ONE IS NOT A REFUSAL. The commits a later turn pushes on top of it are a new
+    # proposal and need somewhere to be reviewed.
+    opened[0]["state"], opened[0]["merged_at"] = "closed", "2026-09-01T00:00:00Z"
+    case.watcher.db.execute("UPDATE conversation SET github_pr=NULL WHERE id=?", (conv["id"],))
+    escalate(case, changed=["Assets/Loader.cs"], verify=PASSING_VERIFY)
+    check("work landing on top of a merged pull request gets one of its own",
+          len(_pulls_for(branch)) == 2, _pulls_for(branch))
+
+
+def test_the_reconcile_opens_the_pull_request_the_run_could_not():
+    """A branch published with nowhere to propose it does not stay that way.
+
+    The box had no pull-request token when the run finished — the same shape as GitHub being
+    down for the thirty seconds it was asked, and as a push that failed. publish() looked once,
+    recorded why, and would never have looked again: nothing schedules a second attempt, and the
+    turn that might have carried one changes no files.
+    """
+    print("publication: the second look opens what the run could not")
+    case = bug_case("reconcile", venue="private")
+    origin, host = git_origin(case)
+    token = case.watcher.cfg["github"]["token"]
+    case.watcher.cfg["github"]["token"] = ""
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    run, conv = _latest_run(case), case.rows("SELECT * FROM conversation")[0]
+    branch = conv["branch"]
+    check("the work is published anyway, so it cannot be lost with the clone",
+          run["pushed"] == 1 and branch, run)
+    check("but there is no pull request", run["pr_number"] is None, run)
+    check("and the reason says what was missing", "token" in (run["no_pr_reason"] or ""),
+          run["no_pr_reason"])
+
+    case.watcher.cfg["github"]["token"] = token         # the credential arrives
+    check("the sweep opens it", case.watcher.reconcile_publications() == 1)
+    pulls = _pulls_for(branch)
+    check("exactly one, for the branch that was already on the remote", len(pulls) == 1, pulls)
+    check("aimed at the base the work actually descends from", pulls[0]["base"] == "develop",
+          pulls[0])
+    check("titled by the agent's verdict, re-read from the run directory rather than guessed",
+          pulls[0]["title"] == CONFIDENT_VERDICT["pr_title"], pulls[0]["title"])
+    check("and carrying the harness's own verification numbers",
+          "compiled=True" in (pulls[0]["body"] or "") and "214" in (pulls[0]["body"] or ""),
+          (pulls[0]["body"] or "")[-300:])
+
+    run, conv = _latest_run(case), case.rows("SELECT * FROM conversation")[0]
+    check("the number and url come from the API response",
+          run["pr_number"] == pulls[0]["number"] and run["pr_url"] == pulls[0]["html_url"], run)
+    check("the stale reason is cleared, so nothing still says there is no PR",
+          run["no_pr_reason"] is None, run["no_pr_reason"])
+    check("and the conversation records it", str(pulls[0]["number"]) in (conv["github_pr"] or ""),
+          conv["github_pr"])
+
+    asked = len(GH_STATE["requests"])
+    check("a second sweep opens nothing and asks GitHub nothing at all",
+          case.watcher.reconcile_publications() == 0 and len(_pulls_for(branch)) == 1
+          and GH_STATE["requests"][asked:] == [], GH_STATE["requests"][asked:])
+
+
+def test_the_reconcile_pushes_work_the_run_could_not():
+    """The push half. A bundle on disk and a remote that was unreachable is recoverable work.
+
+    This is the case with no second chance at all before now: publish() writes bundle_path and,
+    if the push fails, NOTHING in the daemon ever reads that column again. The commits sit in a
+    run directory while the clone they came from is destroyed.
+    """
+    print("publication: the second look pushes what the run could not")
+    case = bug_case("repush", venue="private")
+    origin, host = git_origin(case)
+    case.watcher.cfg["push_remote"] = "nowhere"         # origin is unreachable for the turn
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    run, conv = _latest_run(case), case.rows("SELECT * FROM conversation")[0]
+    check("nothing was published", run["pushed"] == 0 and run["branch"] is None, run)
+    check("the conversation claimed no branch, because none exists to claim",
+          conv["branch"] is None, conv["branch"])
+    check("but the bundle is on disk, which is what makes this recoverable",
+          run["bundle_path"] and os.path.exists(run["bundle_path"]), run["bundle_path"])
+
+    case.watcher.cfg["push_remote"] = "origin"
+    case.watcher.reconcile_publications()
+    run, conv = _latest_run(case), case.rows("SELECT * FROM conversation")[0]
+    branch = conv["branch"]
+    check("the sweep pushes it", run["pushed"] == 1 and run["branch"] == branch, run)
+    check("and it really reaches the remote",
+          branch and f"refs/heads/{branch}" in
+          git_run("-C", host, "ls-remote", "--heads", "origin").stdout,
+          git_run("-C", host, "ls-remote", "--heads", "origin").stdout)
+    check("the conversation claims it, so its next turn continues on that branch",
+          conv["branch"] == branch, conv["branch"])
+    check("it is in the mirror, which is the only place a later run could see it",
+          case.watcher.mirror_carries(branch), branch)
+    check("the reason the failed push left behind is cleared",
+          run["no_branch_reason"] is None, run["no_branch_reason"])
+    check("and the push reads as the one that created the branch, not as an update to it",
+          run["branch_existed"] == 0, run["branch_existed"])
+    check("and the pull request follows in the same pass", run["pr_number"], run)
+
+
+def test_the_reconcile_re_runs_the_gate_rather_than_waiting_it_out():
+    """A change that failed its tests does not acquire a pull request by sitting still.
+
+    The gate of design section 14 is not negotiable by the agent, and it must not be negotiable
+    by the passage of time either — a sweep that assumed publish()'s refusal was transient would
+    be exactly that. Neither refusal costs an API call, which is what makes it safe to keep
+    asking every fifteen minutes for a week.
+    """
+    print("publication: the second look re-runs the gate")
+    case = bug_case("reconcilegate", venue="private")
+    git_origin(case)
+    failing = dict(PASSING_VERIFY, tests_passed=213, tests_failed=1,
+                   evidence="FF.BeltTests.Merges: expected 3 got 2")
+    escalate(case, changed=["Assets/Belt.cs"], verify=failing)
+    run = _latest_run(case)
+    check("the run published the branch and withheld the pull request",
+          run["pushed"] == 1 and run["pr_number"] is None, run)
+
+    asked = len(GH_STATE["requests"])
+    check("the sweep opens nothing for a change that failed its tests",
+          case.watcher.reconcile_publications() == 0)
+    check("and never asks GitHub, so a failing change costs nothing however long it sits",
+          GH_STATE["requests"][asked:] == [], GH_STATE["requests"][asked:])
+    check("the reason the run recorded still stands",
+          "test(s) failed" in (_latest_run(case)["no_pr_reason"] or ""),
+          _latest_run(case)["no_pr_reason"])
+
+    shy = bug_case("reconcileshy", venue="private")
+    git_origin(shy)
+    escalate(shy, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY,
+             verdict=dict(CONFIDENT_VERDICT, confident=False,
+                          confidence_reason="I could not reproduce the report"))
+    asked = len(GH_STATE["requests"])
+    check("nor for a change the agent said it was not confident in",
+          shy.watcher.reconcile_publications() == 0 and GH_STATE["requests"][asked:] == [],
+          GH_STATE["requests"][asked:])
+
+
 def main():
     tests = [
         test_every_agent_container_carries_its_class,
@@ -8659,6 +8848,10 @@ def main():
         test_draining_destroys_what_is_idle_and_nothing_else,
         test_a_shutdown_waits_for_the_host_not_only_for_the_containers,
         test_the_updater_forces_softly_rather_than_standing_down,
+        test_a_pull_request_a_human_closed_is_not_reopened,
+        test_the_reconcile_opens_the_pull_request_the_run_could_not,
+        test_the_reconcile_pushes_work_the_run_could_not,
+        test_the_reconcile_re_runs_the_gate_rather_than_waiting_it_out,
     ]
     for fn in tests:
         try:

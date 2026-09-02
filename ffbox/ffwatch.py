@@ -361,6 +361,13 @@ DEFAULTS = {
         os.path.join(os.environ.get("FFBOX_CACHE_DIR", "/opt/ffcache"),
                      "mirror", "FinalFactory.git")),
     "push_remote": "origin",
+    # HOW FAR BACK THE RECONCILE SWEEP LOOKS. publish() runs once, for the turn that produced
+    # the commits, and every way it can stop short — a push that failed, GitHub down for the
+    # thirty seconds the PR was being opened, a token that was not on the box yet — leaves a
+    # conversation stranded with nobody scheduled to look again. The sweep is that second look,
+    # and this bounds it: a conversation nobody has touched in a week has been moved on from by
+    # a human, and the harness re-deciding its publication is no longer help.
+    "reconcile_secs": 7 * 24 * 3600,
     "github": {
         "api_base": "https://api.github.com",
         "repo": "Final-Factory/FinalFactory",
@@ -1997,13 +2004,31 @@ class GitHub:
         })
         return {"number": created.get("number"), "url": created.get("html_url")}
 
-    def find_pull_request(self, head):
-        """An existing open PR for this branch, so a retried publish does not open a second."""
+    def pull_request_for(self, head):
+        """The pull request that decides what may happen to this branch next, or None.
+
+        EVERY STATE, not just open, and that is the whole point of the method. Asking for open
+        ones alone answers "is there somewhere to add commits" and silently answers "no" to the
+        different question a caller actually has, which is "has anybody already ruled on this
+        branch". A pull request a human CLOSED without merging is a decision — the harness
+        opening a fresh one for the same head walks straight back through a door somebody shut,
+        every time a turn lands or a sweep runs, and there is no way for them to make it stop
+        short of deleting the branch.
+
+        Open wins when there are several, because that is the one a caller can still add to;
+        otherwise the newest, which is what GitHub lists first. `merged` is reported separately
+        from `state` because the two closed pull requests mean opposite things: merged is work
+        that landed and says nothing about what a later commit may propose, while closed with
+        no merge is a refusal.
+        """
         owner = self.repo.split("/")[0]
-        found = self._request("GET", f"/repos/{self.repo}/pulls?head={owner}:{head}&state=open")
-        if isinstance(found, list) and found:
-            return {"number": found[0].get("number"), "url": found[0].get("html_url")}
-        return None
+        found = self._request("GET", f"/repos/{self.repo}/pulls?head={owner}:{head}&state=all")
+        if not isinstance(found, list) or not found:
+            return None
+        pull = next((p for p in found if p.get("state") == "open"), found[0])
+        return {"number": pull.get("number"), "url": pull.get("html_url"),
+                "state": pull.get("state") or "closed",
+                "merged": bool(pull.get("merged_at") or pull.get("merged"))}
 
 
 class ConversationLock:
@@ -5307,7 +5332,16 @@ class Watcher:
 
         if (job.get("verify") or {}).get("enabled"):
             self.record_verification(run_row_id, turn, run_dir, timeout_kind)
-        self.publish(run_row_id, turn, conv, run_dir, job, verdict)
+        published = self.publish(run_row_id, turn, conv, run_dir, job, verdict)
+        # THE SAME QUESTION, ASKED CONVERSATION-WIDE. publish() only ever looks at the run in
+        # front of it, and a turn that changed no files returns from it before it has looked at
+        # a pull request at all — so a branch an earlier turn pushed and failed to get a PR for
+        # is invisible to every turn after it. This is the look that is not scoped to one run.
+        #
+        # ONLY WHEN THIS RUN DID NOT END WITH ONE, so the ordinary path — agent changes files,
+        # verification passes, PR opens — costs nothing here at all.
+        if not (published or {}).get("pr_url"):
+            self.reconcile_publication(conv["id"])
 
         self.index_transcript(run_row_id, conv["id"], job["session"]["id"])
         self.record_reply(run_row_id, conv, turn, run_dir, terminal, result, timeout_kind, job)
@@ -6160,10 +6194,27 @@ class Watcher:
         title = (verdict.get("pr_title")
                  or f"{conv['title'] or conv['kind']}"[:72] or f"ffbox {job['run_id']}")
         try:
-            existing = gh.find_pull_request(branch)
-            pr = existing or gh.create_pull_request(branch, title[:72],
-                                                    self.pr_body(run_row_id, conv, job, verdict),
-                                                    base=base)
+            existing = gh.pull_request_for(branch)
+            # A HUMAN CLOSING THE PULL REQUEST IS A DECISION, and the next turn on the thread
+            # must not undo it. This conversation keeps its branch for life, so without this
+            # every follow-up message would open another pull request for the same head, and
+            # closing them would never work — the only way to be rid of the harness would be to
+            # delete the branch out from under work that is still going on.
+            #
+            # MERGED IS NOT CLOSED. That proposal landed; the commits this turn just pushed on
+            # top of it are a new one, and they need somewhere to be reviewed.
+            if existing and existing["state"] != "open" and not existing["merged"]:
+                self.db.execute(
+                    "UPDATE conversation SET github_pr=? WHERE id=? AND github_pr IS NULL",
+                    (str(existing.get("url") or existing.get("number") or ""), conv["id"]))
+                return self._no_pr(
+                    run_row_id, conv, branch,
+                    f"PR #{existing['number']} for this branch was closed without merging, so "
+                    f"the harness did not open another"[:200])
+            reuse = existing if (existing and existing["state"] == "open") else None
+            pr = reuse or gh.create_pull_request(branch, title[:72],
+                                                 self.pr_body(run_row_id, conv, job, verdict),
+                                                 base=base)
         except GitHubError as exc:
             log(f"ERROR: run {run_row_id}: could not open a PR for {branch}: {exc}")
             return self._no_pr(run_row_id, conv, branch, f"GitHub refused the PR: {exc}"[:200])
@@ -6307,6 +6358,232 @@ class Watcher:
         self.db.execute("UPDATE run SET no_pr_reason=? WHERE id=?", (reason, run_row_id))
         log(f"run {run_row_id}: {branch} pushed but no PR — {reason}")
         return {"branch": branch, "no_pr_reason": reason}
+
+    # -- the second look --------------------------------------------------------------------
+    # publish() runs once, inside the turn that produced the commits, and then nothing is ever
+    # scheduled to look at that branch again. Everything below is the look that comes back.
+
+    def run_verdict(self, run):
+        """The structured verdict a finished run returned, re-read from its run directory.
+
+        NOTHING STORES IT. finish_run parses it out of the container's result.json, hands it to
+        publish() and drops it, because publish() was the only thing that ever wanted it. A
+        reconcile happening an hour or a day later needs exactly the two things publish() took
+        from it — whether the agent was confident, and the title and body it wrote for the pull
+        request — so it goes back to the file rather than guessing at either. The run directory
+        outliving the run is not a new assumption; it is what patch_path and bundle_path already
+        rest on.
+        """
+        if run is None:
+            return {}
+        for column in ("bundle_path", "stream_path", "patch_path"):
+            path = run[column]
+            if not path:
+                continue
+            result = _read_json(os.path.join(os.path.dirname(path), "result.json")) or {}
+            raw = result.get("result")
+            if isinstance(raw, (str, dict)):
+                return _parse_verdict(raw)
+        return {}
+
+    def reconcile_publication(self, conv_id):
+        """Finish publishing a conversation's work: push what was never pushed, open the pull
+        request that was never opened. Returns what it found or changed, or None.
+
+        THE FIRST LOOK HAPPENS ONCE, and every way it can stop short strands a branch with
+        nobody scheduled to come back to it:
+
+          * the push failed — origin briefly unreachable, a fetch that timed out — and
+            `bundle_path` was written and then read by nothing, ever;
+          * GitHub was down, rate-limited, or the box had no token yet, for the few seconds the
+            pull request was being opened;
+          * the turn that would otherwise have retried both of those changed no files, so
+            publish() returned at its `not branch` guard long before it looked at either.
+
+        In all three the work is a proposal nobody is looking at, and until now the only thing
+        that fixed it was a person noticing.
+
+        WHAT IT WILL NOT DO, which is most of the design:
+
+        IT RE-RUNS THE VERIFICATION GATE rather than treating publish()'s refusal as transient.
+        A change that did not compile, or that failed a test, must not acquire a pull request by
+        sitting still until a sweep comes past — design section 14's gate is not negotiable by
+        the agent and it is not negotiable by the passage of time either.
+
+        IT OPENS NOTHING FOR A HEAD THAT HAS EVER HAD A PULL REQUEST. Not an open one, not a
+        merged one, and above all not one a human closed: this path has no new commits by
+        construction — it exists precisely because nothing new was published — so there is
+        nothing here to propose that has not been proposed already.
+
+        Between the two, this can only ever finish a job publish() started. It cannot make a
+        decision publish() declined to make.
+
+        NOT LOCKED, because both callers already hold what they need: finish_run runs on the
+        launch thread, which holds the conversation lock for the life of the run, and the sweep
+        takes the lock itself and skips a conversation it cannot get.
+        """
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+        if conv is None:
+            return None
+        # THE NEWEST RUN THAT HARVESTED A BUNDLE, which is the one whose commits the branch
+        # carries and the only one whose verification says anything about what is on it. A
+        # conversation that has only ever answered questions selects nothing here and costs one
+        # query.
+        run = self.db.one(
+            "SELECT r.* FROM run r JOIN turn t ON t.id = r.turn_id"
+            " WHERE t.conversation_id = ? AND r.bundle_path IS NOT NULL"
+            " ORDER BY r.id DESC LIMIT 1", (conv_id,))
+        if run is None:
+            return None
+
+        run_dir = os.path.dirname(run["bundle_path"])
+        named = (_read_text(os.path.join(run_dir, "branch.txt")) or "").strip()
+        owned = self.conversation_branch(conv)
+        # ONE CONVERSATION, ONE BRANCH — the same refusal publish() makes at the same moment and
+        # for the same reason: this is a place where a name can become a branch on origin.
+        # Publishing the odd one out under the conversation's name would offer origin work built
+        # from a different base, which is a non-fast-forward if we are lucky and an overwrite of
+        # reviewed work if we are not.
+        if owned and named and named != owned:
+            log(f"reconcile: conversation {conv_id} publishes as {owned} but its last bundle "
+                f"holds {named}; leaving both alone")
+            return None
+        branch = owned or named
+        if not branch:
+            return None
+
+        if not run["pushed"]:
+            # `pushed` AND NOT A LOOKUP ON ORIGIN, deliberately. The column answers the question
+            # that matters — did THIS run's commits ever reach the remote — and asking origin
+            # instead answers a different one, whether the NAME is there, in a way that gets
+            # deletion exactly backwards: a merged pull request takes its branch with it, and a
+            # reconcile that re-pushed every absent name would put it back every sweep, forever.
+            # A run whose push succeeded is done being pushed.
+            if not os.path.exists(run["bundle_path"]):
+                return None                 # the clone is long gone; there is nothing to send
+            ok, err = self.push_bundle(run["bundle_path"], branch)
+            if not ok:
+                log(f"reconcile: {branch} still could not be pushed: {err}")
+                self.db.execute("UPDATE run SET no_branch_reason=? WHERE id=?", (err, run["id"]))
+                return None
+            base, _ = self.pr_base(run["id"], run_dir, branch)
+            # `owned` carries the same meaning here as in publish(): read before the claim
+            # below, so it still says whether an earlier turn had already put this branch on
+            # origin — which is the difference between a reply that says a fix was created and
+            # one that says it was updated.
+            self.db.execute(
+                "UPDATE run SET branch=?, pushed=1, pr_base=?, branch_existed=?,"
+                " no_branch_reason=NULL WHERE id=?",
+                (branch, base, 1 if owned else 0, run["id"]))
+            self.db.execute("UPDATE conversation SET branch=? WHERE id=? AND branch IS NULL",
+                            (branch, conv_id))
+            self.mirror_take(branch)
+            log(f"reconcile: pushed {branch} for conversation {conv_id}")
+            run = self.db.one("SELECT * FROM run WHERE id=?", (run["id"],))
+
+        # A PULL REQUEST IS ALREADY RECORDED. Open, merged or closed by a human, it is the
+        # answer for this branch and this method has nothing to add to it.
+        if conv["github_pr"]:
+            return {"branch": branch}
+
+        # EVERY GATE BEFORE ANY NETWORK, so a conversation that is permanently and correctly
+        # without a pull request — the tests failed, the agent was not confident — costs this
+        # sweep two queries and a file read rather than an API call, every fifteen minutes, for
+        # as long as it stays inside the window.
+        base = run["pr_base"]
+        if base is None:
+            base, _ = self.pr_base(run["id"], run_dir, branch)
+            if base is None:
+                return {"branch": branch}
+            self.db.execute("UPDATE run SET pr_base=? WHERE id=?", (base, run["id"]))
+        gate_ok, _ = self.verification_gate(run["id"])
+        if not gate_ok:
+            return {"branch": branch}
+        verdict = self.run_verdict(run)
+        if not verdict.get("confident"):
+            return {"branch": branch}
+        gh = GitHub(self.cfg)
+        if not gh.token or not gh.repo:
+            return {"branch": branch}
+
+        try:
+            existing = gh.pull_request_for(branch)
+            if existing:
+                self.db.execute("UPDATE conversation SET github_pr=? WHERE id=?",
+                                (str(existing.get("url") or existing.get("number") or ""),
+                                 conv_id))
+                if existing["state"] == "open":
+                    self.db.execute("UPDATE run SET pr_number=?, pr_url=?, no_pr_reason=NULL"
+                                    " WHERE id=?",
+                                    (existing.get("number"), existing.get("url"), run["id"]))
+                log(f"reconcile: {branch} already has PR #{existing['number']} "
+                    f"({'merged' if existing['merged'] else existing['state']}); recorded it "
+                    f"and opened nothing")
+                return {"branch": branch, "pr_number": existing.get("number"),
+                        "pr_url": existing.get("url")}
+            title = (verdict.get("pr_title") or f"{conv['title'] or conv['kind']}"[:72]
+                     or f"ffbox {run['ffbox_run_id']}")
+            pr = gh.create_pull_request(
+                branch, title[:72],
+                self.pr_body(run["id"], conv, {"run_id": run["ffbox_run_id"]}, verdict),
+                base=base)
+        except GitHubError as exc:
+            log(f"reconcile: GitHub refused a PR for {branch}: {exc}")
+            return {"branch": branch}
+
+        self.db.execute("UPDATE run SET pr_number=?, pr_url=?, no_pr_reason=NULL WHERE id=?",
+                        (pr.get("number"), pr.get("url"), run["id"]))
+        self.db.execute("UPDATE conversation SET github_pr=? WHERE id=?",
+                        (str(pr.get("url") or pr.get("number") or ""), conv_id))
+        log(f"reconcile: opened PR #{pr.get('number')} for {branch} -> {base} "
+            f"{pr.get('url') or ''}".strip())
+        # `opened` and not merely a url, because the sweep counts what it CHANGED and every
+        # other path above returns a url too — the one it found already open, the one a human
+        # closed. A count that included those would report work on every pass forever.
+        return {"branch": branch, "pr_number": pr.get("number"), "pr_url": pr.get("url"),
+                "opened": True}
+
+    def reconcile_publications(self):
+        """The same second look over every conversation that might need one. Returns how many
+        pull requests it ended up with.
+
+        THE QUERY IS THE BOUND, and it is doing three jobs. A conversation that never harvested
+        a bundle has nothing to publish and never appears. One whose pull request is recorded —
+        open, merged, or closed by a human — is finished with this sweep permanently. And
+        `reconcile_secs` drops what is left after a week: nothing that stops publish() short
+        repairs itself later than that, so a branch nobody has touched since is a person's to
+        decide about rather than the harness's to keep retrying at them.
+
+        THE LOCK, because this runs on the daemon thread while launch threads are publishing on
+        their own. Without it a sweep landing in the seconds between a run's push and its
+        create_pull_request would see a branch with no pull request, quite correctly, and open
+        the second one this whole feature exists to prevent.
+        """
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(seconds=int(self.cfg["reconcile_secs"]))
+                  ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = self.db.query(
+            "SELECT DISTINCT c.id AS id FROM conversation c"
+            " JOIN turn t ON t.conversation_id = c.id"
+            " JOIN run r ON r.turn_id = t.id"
+            " WHERE r.bundle_path IS NOT NULL"
+            "   AND (c.github_pr IS NULL OR c.github_pr = '')"
+            "   AND COALESCE(c.last_activity_at, c.created_at, '') >= ?", (cutoff,))
+        opened = 0
+        for row in rows:
+            lock = ConversationLock(os.path.join(self.conv_dir(row["id"]), "lock"))
+            if not lock.acquire():
+                continue                    # a run of its own is in flight; it will publish
+            try:
+                result = self.reconcile_publication(row["id"]) or {}
+            except Exception as exc:  # noqa: BLE001 — one bad row must not stop the sweep
+                log(f"ERROR reconciling conversation {row['id']}: {type(exc).__name__}: {exc}")
+                continue
+            finally:
+                lock.release()
+            if result.get("opened"):
+                opened += 1
+        return opened
 
     def push_bundle(self, bundle, branch):
         """(ok, error). Fetch the run's commits out of the bundle and push them to the remote.
@@ -7077,6 +7354,9 @@ class Watcher:
         # is where it earns its keep, ticking every poll_secs while a container works.
         self.index_live_runs()
         self.join_launches()
+        # AFTER the join, so the runs this pass started have finished publishing and this sees
+        # what they actually left behind rather than racing them for it.
+        self.reconcile_publications()
         self.drain_events()
         self.claim_turns()
         self.send_pending()
@@ -7106,6 +7386,11 @@ class Watcher:
                     # No doorbell for this one. player_mention and lothsahn_directive have no
                     # cursor, so a mention arriving during listener downtime is otherwise lost.
                     self.sweep()
+                    # On the catchup tick and not every pass: what it repairs is a branch that
+                    # has been sitting there since a run finished, so nothing is gained by
+                    # asking every two seconds, and each conversation it does consider costs a
+                    # fetch or an API call.
+                    self.reconcile_publications()
                     last_sweep = time.time()
                 self.claim_turns()
                 self.schedule()
