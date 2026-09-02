@@ -130,6 +130,27 @@ FORMER_PROJECT_SLUGS = ("-workspace",)
 AGENT_CLASSES = ("ffagent", "ffdev")
 DEFAULT_AGENT_CLASS = "ffagent"
 
+# WHAT EACH CLASS'S CONTAINERS ARE CALLED, mirroring the same case in ffbox, which is the one
+# that actually names them at `docker run`. Both pools stage spares and both run turns, and
+# before 2026-09-02 every container of either class was `ffbox-pool-<id>` or `ffbox-<run id>`,
+# so `docker ps` could not tell a fenced ffagent spare from a bridged ffdev one.
+#
+# NOTHING SCHEDULES OFF THE NAME. pool_containers() still reads the ffbox.agent.class LABEL, and
+# idle-vs-busy is still `out/owner` -- see pool_unclaimed. These names are for the operator
+# reading `docker ps` and for the prefix sweeps in update_ffbox.sh.
+CLASS_NAME_PREFIX = {"ffagent": "ffbox-agent-", "ffdev": "ffbox-dev-"}
+
+
+def run_container_name(agent_class, run_id):
+    """What ffbox will call the container serving this run."""
+    return f"{CLASS_NAME_PREFIX[agent_class or DEFAULT_AGENT_CLASS]}{run_id}"
+
+
+def pool_container_name(agent_class, pool_id):
+    """What ffbox calls this class's staged spare, until dispatch renames it."""
+    return f"{CLASS_NAME_PREFIX[agent_class or DEFAULT_AGENT_CLASS]}pool-{pool_id}"
+
+
 ADDED_COLUMNS = [
     ("conversation", "is_thread", "INTEGER NOT NULL DEFAULT 0"),
     ("outbound", "attempts", "INTEGER NOT NULL DEFAULT 0"),
@@ -3997,14 +4018,29 @@ class Watcher:
         else; resolving the class would mean a `docker ps` inside a teardown path that runs when
         things are already going wrong. Both classes ship the same grace period, so this is a
         decision rather than a bug -- but it is the one place that will not notice if they ever
-        configure different ones. The container name is `ffbox-pool-<id>` for every class, which
-        is also what lets update_ffbox.sh sweep leftovers by name without knowing about classes.
+        configure different ones.
+
+        SO IT NAMES EVERY CLASS'S STAGING NAME AND STOPS WHICHEVER ANSWERS. Class prefixes
+        arrived on 2026-09-02 and there is no longer one name to try, but the id is still the
+        only input: two `docker rm` calls where there was one, the miss being a no-op on a name
+        that does not exist, and still no `docker ps` on this path.
+
+        DO NOT "IMPROVE" THIS INTO A LOOKUP BY `ffbox.pool.id`. That label is set at creation
+        and SURVIVES THE RENAME AT DISPATCH -- see pool_unclaimed -- so a label lookup would
+        match a container that is now serving a live turn and stop it. Matching a STAGING NAME
+        is what makes this safe: dispatch renames to `<prefix><run id>`, so a dispatched
+        container matches neither candidate and this walks past it, which is exactly the
+        property the flat name used to provide.
         """
-        name = f"ffbox-pool-{pool_id}"
+        names = [f"{prefix}pool-{pool_id}" for prefix in CLASS_NAME_PREFIX.values()]
         grace = max(1, int(self.cfg["kill_grace_secs"]))
-        for argv, patience in (([self.cfg["docker"], "stop", "--timeout", str(grace), name],
-                                grace + 60),
-                               ([self.cfg["docker"], "rm", "-f", name], 60)):
+        argvs = []
+        for name in names:
+            argvs.append(([self.cfg["docker"], "stop", "--timeout", str(grace), name],
+                          grace + 60, name))
+        for name in names:
+            argvs.append(([self.cfg["docker"], "rm", "-f", name], 60, name))
+        for argv, patience, name in argvs:
             try:
                 subprocess.run(argv, capture_output=True, text=True, timeout=patience)
             except (OSError, subprocess.SubprocessError) as exc:
@@ -4133,7 +4169,8 @@ class Watcher:
                 staged.append(pool_id)
                 # So the next class in the loop counts the one just started. It is not in
                 # `containers` -- that list was read before this pass staged anything.
-                containers.append({"name": f"ffbox-pool-{pool_id}", "id": pool_id,
+                containers.append({"name": pool_container_name(agent_class, pool_id),
+                                   "id": pool_id,
                                    "branch": self.pool_branch(agent_class),
                                    "class": agent_class})
         return staged
@@ -5158,13 +5195,14 @@ class Watcher:
             " base_sha, unity, tools, disallowed, allowed, stream_path, branch,"
             " transcript_dir, pool_id)"
             " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (turn["id"], run_id, f"ffbox-{run_id}", job["session"]["id"],
+            (turn["id"], run_id, run_container_name(cls, run_id), job["session"]["id"],
              1 if job["session"]["resume"] else 0, conv["base_sha"], 1,
              cap["tools"], ",".join(cap["disallowed"]),
              ",".join(cap.get("allowed") or []), os.path.join(run_dir, "stream.jsonl"), branch,
-             # The container name is ffbox-<run id> either way: a dispatched container is
-             # RENAMED as the job goes in, so recover() and container_live() need no idea that
-             # pooled runs exist. transcript_dir is the one thing that does differ.
+             # The container name is this CLASS's run name either way: a dispatched container
+             # is RENAMED as the job goes in, and ffbox derives both ends of that rename from
+             # the same class, so recover() and container_live() need no idea that pooled runs
+             # exist. transcript_dir is the one thing that does differ.
              container_claude if pool_id else None, pool_id))
         run_row_id = cur.lastrowid
 
@@ -5184,7 +5222,14 @@ class Watcher:
             # so what a player uploaded is COPIED into the spool the container is already
             # reading. Read-only to it, like the mount it replaces.
             self.stage_attachments_into(os.path.join(self.pool_dir(pool_id), "in"), att_dir)
-            cmd += ["--dispatch", pool_id, "--pool-dir", self.pool_dir()]
+            # --agent-class IS PASSED ON BOTH ROUTES, and since 2026-09-02 it has to be. It no
+            # longer only sets a label the staged container already carries: ffbox derives the
+            # CONTAINER NAME from it at both ends of the dispatch rename, so a dispatch that
+            # left it at the default would look for this class's spare under ffagent's name and
+            # exit 70 saying the container was gone. Still no --network here, for the reason
+            # below.
+            cmd += ["--dispatch", pool_id, "--pool-dir", self.pool_dir(),
+                    "--agent-class", cls]
         else:
             # A COLD CONTAINER IS LABELLED AND NETWORKED HERE. Both are creation-time facts, and
             # a dispatched one already carries the label and the network it was staged with --
@@ -5948,6 +5993,10 @@ class Watcher:
             "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, resumed,"
             " base_sha, unity, tools, stream_path, terminal_state, exit_code)"
             " VALUES(?,?,?,?,0,?,?,?,?,'done',0)",
+            # THE OLD FLAT NAME ON PURPOSE, not a class-prefixed one. These are runs from
+            # before the shell was an ingress; their containers really were called
+            # `ffbox-<name>` and are long gone. Recording what they are now called would be
+            # recording a name that never existed.
             (turn_id, name, f"ffbox-{name}", None,
              (_read_text(os.path.join(run_dir, "base_sha.txt")) or "").strip() or None,
              1 if os.path.exists(os.path.join(run_dir, "unity-license.log")) else 0,

@@ -577,6 +577,25 @@ case " $AGENT_CLASSES " in
     *)  echo "ffbox: --agent-class $AGENT_CLASS is not one of: $AGENT_CLASSES" >&2; exit 2 ;;
 esac
 
+# WHAT THIS CLASS'S CONTAINERS ARE CALLED. Both pools stage spares and both run turns, and until
+# 2026-09-02 every one of them was `ffbox-pool-<id>` or `ffbox-<run id>` whichever class it
+# served -- so `docker ps` could not tell a fenced ffagent spare from a bridged ffdev one, which
+# is the whole difference that matters when something is wrong with the network.
+#
+# DERIVED FROM THE CLASS, not passed in, so it cannot disagree with the ffbox.agent.class label
+# the same run carries. The label stays the thing ffwatch filters on -- a name is for the
+# operator reading `docker ps`, and nothing schedules off it.
+case "$AGENT_CLASS" in
+    ffagent) NAME_PREFIX=ffbox-agent- ;;
+    ffdev)   NAME_PREFIX=ffbox-dev- ;;
+    # Unreachable while this case mirrors AGENT_CLASSES above, which the check just enforced.
+    # Stated anyway: a class added to the list and forgotten here must not silently collide with
+    # another class's names.
+    *)  echo "ffbox: no container-name prefix for agent class $AGENT_CLASS" >&2; exit 2 ;;
+esac
+POOL_NAME="${NAME_PREFIX}pool-${STAGE_POOL:-$DISPATCH}"
+RUN_NAME="${NAME_PREFIX}${RUN_ID}"
+
 POOL_IN=
 FINAL_OUT=
 if [ -n "$STAGE_POOL$DISPATCH" ]; then
@@ -667,9 +686,9 @@ cleanup() {
 
     # Stop rather than kill: SIGTERM reaches run-as-user.sh as PID 1 so it can hand the Unity
     # activation seat back before dying. A killed container leaks the seat.
-    if docker ps -q --filter "name=ffbox-${RUN_ID}" | grep -q .; then
+    if docker ps -q --filter "name=${RUN_NAME}" | grep -q .; then
         echo "[ffbox] stopping container (allowing license return)..." >&2
-        docker stop --timeout 120 "ffbox-${RUN_ID}" >/dev/null 2>&1
+        docker stop --timeout 120 "$RUN_NAME" >/dev/null 2>&1
     fi
 
     if [ "$KEEP" = 1 ]; then
@@ -937,7 +956,7 @@ if [ -n "$STAGE_POOL" ]; then
         ffbox_workload_lock_release
         _rc=77
     else
-        _POOL_SLOT=$(ffbox_agent_slot_claim "ffbox-pool-${STAGE_POOL}")
+        _POOL_SLOT=$(ffbox_agent_slot_claim "$POOL_NAME")
         if [ -z "$_POOL_SLOT" ]; then
             # Every number is held by something that is running. The ceiling should have caught
             # this first, so it means the two disagree -- say so rather than staging an unnumbered
@@ -948,7 +967,7 @@ if [ -n "$STAGE_POOL" ]; then
         else
             _MID=$(ffbox_agent_machine_id "$_POOL_SLOT")
             _CID=$(docker run --rm -d \
-                --name "ffbox-pool-${STAGE_POOL}" \
+                --name "$POOL_NAME" \
                 --label "$FFBOX_WORKLOAD_LABEL=pool" \
                 --label "ffbox.pool=${REF}" \
                 --label "ffbox.pool.id=${STAGE_POOL}" \
@@ -980,8 +999,8 @@ if [ -n "$STAGE_POOL" ]; then
         echo "[ffbox] not staging: the box is at its container ceiling" >&2
         exit 77
     fi
-    [ "$_rc" -eq 0 ] || { echo "ffbox: could not stage ffbox-pool-${STAGE_POOL}" >&2; exit "$_rc"; }
-    echo "[ffbox] staged ffbox-pool-${STAGE_POOL}"
+    [ "$_rc" -eq 0 ] || { echo "ffbox: could not stage ${POOL_NAME}" >&2; exit "$_rc"; }
+    echo "[ffbox] staged ${POOL_NAME}"
     exit 0
 fi
 
@@ -1009,22 +1028,27 @@ if [ -n "$DISPATCH" ]; then
     [ -n "$JOB_FILE" ] && cp "$JOB_FILE" "$POOL_IN/job.json"
 
     # THE NAME MOVES WITH THE JOB. Every handle downstream -- the stop below, ffwatch's
-    # container_live(), anything an operator types -- expects ffbox-<run id>, and renaming is
-    # cheaper than teaching all of them that a pooled run is called something else. Verified on
+    # container_live(), anything an operator types -- expects this class's RUN name, and renaming
+    # is cheaper than teaching all of them that a pooled run is called something else. Verified on
     # this box's rootless daemon: a running container renames, and `docker ps --filter name=` and
     # `docker exec` follow it immediately.
-    if ! docker rename "ffbox-pool-${DISPATCH}" "ffbox-${RUN_ID}" 2>/dev/null; then
-        echo "ffbox: pool container ffbox-pool-${DISPATCH} is gone; nothing dispatched" >&2
+    #
+    # BOTH NAMES COME FROM THE SAME $AGENT_CLASS, which is why ffwatch passes --agent-class on the
+    # dispatch route too and not just the cold one. Dispatched under the wrong class this looks
+    # for another pool's spare, finds nothing, and exits 70 -- loudly, rather than renaming a
+    # container that is serving somebody else.
+    if ! docker rename "$POOL_NAME" "$RUN_NAME" 2>/dev/null; then
+        echo "ffbox: pool container ${POOL_NAME} is gone; nothing dispatched" >&2
         set -e
         exit 70
     fi
     : > "$POOL_IN/dispatch"
-    echo "[ffbox] dispatched into the pool container as ffbox-${RUN_ID}"
+    echo "[ffbox] dispatched into the pool container as ${RUN_NAME}"
 
     # `docker wait` prints the container's exit code and exits 0 itself, so the code has to come
     # out of its stdout rather than out of $?. Backgrounded so the clock loop below watches this
     # exactly as it watches a `docker run`.
-    docker wait "ffbox-${RUN_ID}" > "$POOL_DIR/$DISPATCH/.container-rc" 2>/dev/null &
+    docker wait "$RUN_NAME" > "$POOL_DIR/$DISPATCH/.container-rc" 2>/dev/null &
     DOCKER_PID=$!
 else
     # THE CEILING, TAKEN THE LONG WAY ROUND. This `docker run` is not detached -- it stays in the
@@ -1038,22 +1062,22 @@ else
     fi
     if ! ffbox_workload_has_room; then
         ffbox_workload_lock_release
-        echo "ffbox: the box is at its container ceiling; not starting ffbox-${RUN_ID}" >&2
+        echo "ffbox: the box is at its container ceiling; not starting ${RUN_NAME}" >&2
         exit 77
     fi
     # The number this run presents to Unity, claimed inside the same lock for the same reason as
     # the staged path above. A cold run reaches an editor whenever it verifies, and two runs on
     # one machine id is the exit-198 collision ffgithubrunners already measured.
-    RUN_SLOT=$(ffbox_agent_slot_claim "ffbox-${RUN_ID}")
+    RUN_SLOT=$(ffbox_agent_slot_claim "$RUN_NAME")
     if [ -z "$RUN_SLOT" ]; then
         ffbox_workload_lock_release
-        echo "ffbox: no free agent slot; not starting ffbox-${RUN_ID}" >&2
+        echo "ffbox: no free agent slot; not starting ${RUN_NAME}" >&2
         exit 77
     fi
     RUN_MACHINE_ID=$(ffbox_agent_machine_id "$RUN_SLOT")
     echo "[ffbox] agent slot ${RUN_SLOT} (Unity sees this slot as its own machine)"
     docker run --rm \
-        --name "ffbox-${RUN_ID}" \
+        --name "$RUN_NAME" \
         --label "$FFBOX_WORKLOAD_LABEL=agent" \
         --label "ffbox.slot=${RUN_SLOT}" \
         "${RUN_ARGS[@]}" \
@@ -1061,11 +1085,11 @@ else
         -e "FFBOX_MACHINE_ID=$RUN_MACHINE_ID" \
         "$IMAGE" &
     DOCKER_PID=$!
-    ffbox_workload_await_container "ffbox-${RUN_ID}" "$DOCKER_PID"
+    ffbox_workload_await_container "$RUN_NAME" "$DOCKER_PID"
     # The id, now that there is one. A container that never came up leaves the claim naming it,
     # and the next scan recycles the number because nothing by that name is running.
     ffbox_agent_slot_confirm "$RUN_SLOT" \
-        "$(docker inspect --format '{{.Id}}' "ffbox-${RUN_ID}" 2>/dev/null)"
+        "$(docker inspect --format '{{.Id}}' "$RUN_NAME" 2>/dev/null)"
     ffbox_workload_lock_release
 fi
 
@@ -1105,9 +1129,9 @@ if [ "$CLOCKS" = 1 ]; then
         # is larger wins, so an operator who asked for a longer grace still gets it.
         STOP_TIMEOUT=$KILL_GRACE
         [ "$STOP_TIMEOUT" -ge 120 ] || STOP_TIMEOUT=120
-        echo "[ffbox] $TIMEOUT_KIND ceiling exceeded — stopping ffbox-${RUN_ID}" >&2
+        echo "[ffbox] $TIMEOUT_KIND ceiling exceeded — stopping ${RUN_NAME}" >&2
         printf '%s\n' "$TIMEOUT_KIND" > "$OUT/ffbox-timeout"
-        docker stop --timeout "$STOP_TIMEOUT" "ffbox-${RUN_ID}" >/dev/null 2>&1
+        docker stop --timeout "$STOP_TIMEOUT" "$RUN_NAME" >/dev/null 2>&1
     fi
 fi
 

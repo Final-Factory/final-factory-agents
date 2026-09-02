@@ -1383,8 +1383,26 @@ reaper. The file records the container ID rather than its name, because dispatch
 created, so that directory is how a job reaches one that is already running: the host writes
 `job.json`, the attachments and an env file into `in/`, and `dispatch` last. `in/` is read-only
 to the container and written by the host, which is the whole trick — read-only is the
-container's view, not the host's. At dispatch the container is renamed to `ffbox-<run id>`, so
-every existing handle keeps working.
+container's view, not the host's. At dispatch the container is renamed from its staging name to
+its run name, so every existing handle keeps working.
+
+**Container names say which class they serve.** Since 2026-09-02 each agent class has its own
+prefix, so `docker ps` distinguishes a fenced `ffagent` container from a bridged `ffdev` one
+without inspecting labels:
+
+| | staged spare | dispatched run |
+|---|---|---|
+| `ffagent` | `ffbox-agent-pool-<pool id>` | `ffbox-agent-<run id>` |
+| `ffdev` | `ffbox-dev-pool-<pool id>` | `ffbox-dev-<run id>` |
+
+CI runners keep their own `ffghr-*` names and are not part of this. Nothing schedules off a
+name: `pool_containers()` still reads the `ffbox.agent.class` label and idle-vs-busy is still
+`out/owner`. The names matter to the operator reading `docker ps`, and to the prefix sweep in
+`update_ffbox.sh` that tells an idle spare from a live run — the one place where getting a
+prefix wrong costs something, because a spare it fails to recognise is counted busy, holds the
+update window open and is then force-stopped. Adding a class means adding its prefix in three
+places that must agree: `NAME_PREFIX` in `ffbox`, `CLASS_NAME_PREFIX` in `ffwatch.py`, and that
+sweep's `case`.
 
 **What it costs is memory and a Unity seat.** A staged container holds its whole workspace
 resident, 22 GiB for master, and since 2026-09-01 it also holds a licence: `pool-task.sh`
