@@ -3310,7 +3310,10 @@ def test_sender_accounts_for_mention_expansion():
 # to. git is not stubbed at all — publish() fetches from a bundle and pushes to a remote, and
 # a fake bundle would test nothing.
 
-GH_STATE = {"next_number": 41, "pulls": [], "requests": [], "fail_next": []}
+GH_STATE = {"next_number": 41, "pulls": [], "requests": [], "fail_next": [],
+            # Refuses the CREATE while the list call still works, which is the shape a
+            # token that may read pull requests but not repository contents actually has.
+            "fail_post": []}
 GH_SERVER = {"base": None}
 
 
@@ -3362,6 +3365,11 @@ class MockGitHub(BaseHTTPRequestHandler):
         if GH_STATE["fail_next"]:
             return self._send(GH_STATE["fail_next"].pop(0),
                               {"message": "You have exceeded a secondary rate limit"})
+        if GH_STATE["fail_post"]:
+            return self._send(GH_STATE["fail_post"].pop(0),
+                              {"message": "Validation Failed", "errors": [
+                                  {"resource": "PullRequest", "code": "custom",
+                                   "message": "not all refs are readable"}]})
         number = GH_STATE["next_number"]
         GH_STATE["next_number"] += 1
         pull = {"number": number,
@@ -8700,6 +8708,49 @@ def test_the_reconcile_re_runs_the_gate_rather_than_waiting_it_out():
           GH_STATE["requests"][asked:])
 
 
+def test_a_pull_request_github_refuses_on_the_merits_is_not_retried_forever():
+    """GitHub saying no is remembered, so the sweep asks once instead of every fifteen minutes.
+
+    OBSERVED ON THE BUILD SERVER the first time this shipped, 2026-09-02. Two conversations had
+    branches pushed and no pull request, from an hour when the box held no pull-request token.
+    The token was there by the time the sweep ran, and `POST /pulls` answered 422 "not all refs
+    are readable" for both — the fine-grained token could read pull requests but not repository
+    contents, which is what the create endpoint needs to read the head and base refs. That is a
+    permission a person has to go and change; nothing about asking again in fifteen minutes
+    makes it truer, and the sweep would have kept two failing POSTs a pass going for a week.
+
+    403 and 429 are deliberately not in this: the client already treats those as the secondary
+    rate limit they usually are and retries them itself.
+    """
+    print("publication: a refusal on the merits is remembered")
+    case = bug_case("reconcile422", venue="private")
+    git_origin(case)
+    token = case.watcher.cfg["github"]["token"]
+    case.watcher.cfg["github"]["token"] = ""
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    case.watcher.cfg["github"]["token"] = token
+
+    GH_STATE["fail_post"].append(422)
+    check("the sweep tries, and opens nothing", case.watcher.reconcile_publications() == 0)
+    run = _latest_run(case)
+    check("what GitHub actually said is recorded where a human reads it",
+          "422" in (run["no_pr_reason"] or "")
+          and "refs are readable" in (run["no_pr_reason"] or ""), run["no_pr_reason"])
+
+    asked = len(GH_STATE["requests"])
+    check("and the next sweep does not ask again",
+          case.watcher.reconcile_publications() == 0 and GH_STATE["requests"][asked:] == [],
+          GH_STATE["requests"][asked:])
+    check("nothing was left armed on the mock, so the refusal came from the memo",
+          GH_STATE["fail_post"] == [], GH_STATE["fail_post"])
+
+    # A RESTART TRIES ONCE MORE. The memo is per process precisely because the thing that fixes
+    # this is an operator changing a token, and nobody should have to clear a flag afterwards.
+    case.watcher._reconcile_refused.clear()
+    check("so a fixed permission takes effect on the next start",
+          case.watcher.reconcile_publications() == 1, GH_STATE["requests"][-1:])
+
+
 def main():
     tests = [
         test_every_agent_container_carries_its_class,
@@ -8852,6 +8903,7 @@ def main():
         test_the_reconcile_opens_the_pull_request_the_run_could_not,
         test_the_reconcile_pushes_work_the_run_could_not,
         test_the_reconcile_re_runs_the_gate_rather_than_waiting_it_out,
+        test_a_pull_request_github_refuses_on_the_merits_is_not_retried_forever,
     ]
     for fn in tests:
         try:
