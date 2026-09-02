@@ -158,6 +158,33 @@ unsaved scene work, so discarding the backups is always correct on this path.
 of value there. Note `osascript`/System Events cannot enumerate the dialog (no assistive
 access), so `sample` is the tool that works headlessly.
 
+### A compile error present at BOOT lands in native Safe Mode — no automation channel can click it (2026-09-02, 055 R37g review fix)
+
+A compile error already on disk when the editor launches trips Unity's native **Safe Mode**
+dialog. Nothing can dismiss it programmatically: the MCP bridge and the `unity-cli` Pipeline
+server both start only after the project finishes loading, and `scripts/launch-editor.sh`
+clears the scene-backup modal (above) but not this one. **Prevention: never relaunch the editor
+with a known compile error on disk — fix it first.**
+
+Recovery once a human has clicked **Enter Safe Mode**:
+
+1. Fix the error on disk.
+2. Safe Mode does **not** reliably auto-recompile on the change, and `unity recompile` fails
+   with `no pipeline descriptor` (the CLI's own channel isn't up yet either).
+3. What works is forcing a Refresh via a scripted keystroke:
+   ```sh
+   osascript -e 'tell application "Unity" to activate' -e 'delay 1' \
+     -e 'tell application "System Events" to keystroke "r" using command down'
+   ```
+4. A clean compile exits Safe Mode and the bridge starts (~30 s). The test framework may
+   **resume a persisted test run on its own** — if `run_tests` answers `tests_running`, read
+   `mcpforunity://editor/state` → `tests.current_job_id` and poll that job instead of starting a
+   new one.
+
+Case that surfaced this: two `CS0052`/`CS0050` "inconsistent accessibility" errors — a helper
+struct declared `internal` while a `public` job struct held it as a field — put the relaunched
+editor into Safe Mode.
+
 ### A stalled RUNNING editor (Windows): system + editor modals, and FindWindow lies
 
 (2026-08-11, BEAST, 049 toggles-join harness leg; cost ~40 min.) Same symptom family as the
