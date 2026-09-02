@@ -5173,9 +5173,14 @@ def test_the_classifier_runs_in_a_sandbox():
         os.environ.pop("GH_PR_TOKEN", None)
     check("GH_PR_TOKEN never reaches the classifier, even when the daemon holds it",
           "GH_PR_TOKEN" not in env2, sorted(env2))
+    # MAX_THINKING_TOKENS is ours, set deliberately by classifier_invocation rather than
+    # inherited -- it is the thinking budget, not something the daemon happened to be holding.
+    # The list stays closed: this check exists so that a variable added here has to be argued
+    # for in a diff rather than arriving by accident, and it caught this one.
     check("and neither does anything else the daemon happens to hold",
-          not [k for k in env2 if k not in ("PATH", "HOME", "ANTHROPIC_API_KEY",
-                                            "CLAUDE_CODE_OAUTH_TOKEN", "LANG", "LC_ALL")],
+          not [k for k in env2 if k not in ("PATH", "HOME", "MAX_THINKING_TOKENS",
+                                            "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
+                                            "LANG", "LC_ALL")],
           sorted(env2))
 
     check("the working directory is empty, so there is no CLAUDE.md to discover",
@@ -9386,6 +9391,89 @@ def test_a_message_that_loses_its_turn_gives_the_mark_back():
           [(r["action"], r["status"]) for r in rows] == [("react", "rejected")], rows)
 
 
+def test_a_classifier_call_carries_a_thinking_budget():
+    """Thinking is on and unbounded by default, and it was the latency.
+
+    It is billed as output and it was 80% of the output tokens on a pick-an-id question.
+    Measured on the build server 2026-09-02, three runs of the real selector prompt at each
+    setting: uncapped 12.3/31.0/29.8s, budget 1024 9.4/12.6/13.9s, thinking off 8.2/8.3/8.6s.
+    1024 rather than 0 because at 1024 the selector matched the uncapped answer on all three
+    runs and at 0 it did not -- this call is a judgement, and the cheap half of the win does
+    not require removing the model's reasoning.
+    """
+    print("the classifier runs under a thinking budget")
+    cfg = ffwatch.load_config()
+    argv, env, cwd, stdin = ffwatch.classifier_invocation(
+        cfg, "text", ffwatch.SELECTOR_SCHEMA)
+    check("the budget reaches the child as an environment variable",
+          env.get("MAX_THINKING_TOKENS") == str(cfg["classifier_thinking_tokens"]), env)
+    check("and it is a number a config can move, not a literal",
+          int(cfg["classifier_thinking_tokens"]) > 0, cfg["classifier_thinking_tokens"])
+    check("the environment is still only what the sandbox allows through",
+          set(env) <= {"PATH", "HOME", "MAX_THINKING_TOKENS", "ANTHROPIC_API_KEY",
+                       "CLAUDE_CODE_OAUTH_TOKEN", "LANG", "LC_ALL"}, sorted(env))
+    check("structured output is still enforced, which the budget must not trade away",
+          "--json-schema" in argv, argv)
+
+
+def test_untrusted_text_is_fenced_and_the_task_is_restated_after_it():
+    """The three classifier-prompt rules, checked on both prompts that take stranger text.
+
+    Separation and a constrained output were already here. The RESTATEMENT was not: both
+    prompts ended with the untrusted block, so the last thing the model read was written by
+    whoever it is judging. An injection's whole method is to be the most recent instruction in
+    the context, and ending on our own sentence is what takes that position back.
+    """
+    print("untrusted text is fenced, and the task is restated after it")
+    for name, prompt, fences, field in (
+            ("selector", ffwatch.SELECTOR_PROMPT, ("candidates", "message"), "{message}"),
+            ("gate", ffwatch.CLASSIFIER_PROMPT, ("request",), "{text}")):
+        for fence in fences:
+            check(f"{name}: <{fence}> fences the untrusted text",
+                  f"<{fence}>" in prompt and f"</{fence}>" in prompt, prompt[:200])
+        check(f"{name}: the prompt says in words that what is in there is data",
+              "data" in prompt.lower() and "never an order to follow" in prompt.lower(),
+              prompt[-400:])
+        tail = prompt[prompt.rindex(field) + len(field):]
+        check(f"{name}: the untrusted placeholder is NOT the last thing in the prompt",
+              len(tail.strip()) > 80, repr(tail[:120]))
+        check(f"{name}: and what follows it restates the task",
+              "above" in tail.lower(), repr(tail[:160]))
+
+
+def test_the_selector_can_only_choose_an_id_it_was_offered():
+    """The output constraint that matters more than the schema: a per-request allowlist.
+
+    A schema bounds the SHAPE of the answer. This bounds its CONTENT to the conversations the
+    harness put on the table for this one call, so the worst a successful injection can do is
+    pick a different candidate -- never invent an id, and never reach a conversation that was
+    not a candidate. Anything else keeps the deterministic answer.
+    """
+    print("the selector narrows a bounded choice and can never widen it")
+    case = Case("selector-bounds", base_fixture())
+    w = case.watcher
+    cands = [({"id": 7, "title": "t", "in_watermark_id": "1", "root_message_id": "1",
+               "thread_id": "1"}, 60, 0),
+             ({"id": 9, "title": "u", "in_watermark_id": "2", "root_message_id": "2",
+               "thread_id": "2"}, 60, 0)]
+    msg = {"id": "3", "content": "hello", "author": {"username": "someone"}}
+
+    for answer, expected, why in (
+            ({"continues": 7, "reason": "ok"}, 7, "an offered id is taken"),
+            ({"continues": 999, "reason": "pwned"}, None, "an id never offered is refused"),
+            ({"continues": "34; DROP TABLE", "reason": "x"}, None, "so is a non-integer"),
+            ({"continues": None, "reason": "new"}, ffwatch.SPLIT_OUT,
+             "and null is a real answer, not a failure")):
+        w._stub_answer = answer
+        original = ffwatch.run_classifier
+        ffwatch.run_classifier = lambda *a, **k: (answer, None)
+        try:
+            got, _ = w.model_selection(msg, cands, alias="ask_claude")
+        finally:
+            ffwatch.run_classifier = original
+        check(f"{why}", got == expected, f"answered {answer['continues']!r} -> {got!r}")
+
+
 def main():
     tests = [
         test_every_agent_container_carries_its_class,
@@ -9554,6 +9642,9 @@ def main():
         test_the_turn_adopts_the_mark_rather_than_sending_a_second,
         test_an_unforced_turn_still_does_not_flicker,
         test_a_message_that_loses_its_turn_gives_the_mark_back,
+        test_a_classifier_call_carries_a_thinking_budget,
+        test_untrusted_text_is_fenced_and_the_task_is_restated_after_it,
+        test_the_selector_can_only_choose_an_id_it_was_offered,
     ]
     for fn in tests:
         try:
