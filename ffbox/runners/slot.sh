@@ -79,8 +79,9 @@ pool_unlock() {
 teardown() {
     _rc=$?
     pool_unlock
-    # The pool counts a container, not a supervisor, so this marker has to go with the container.
+    # The pool counts a container, not a supervisor, so these markers go with the container.
     ffghr_clear_busy "$CNAME"
+    ffghr_clear_idle "$CNAME"
     # The claim outlives the decision on purpose, so a second slot cannot grant itself the same
     # entry while this job is still working. It has to come back here on EVERY exit path, or one
     # crashed run stops that branch being archived until the claim ages past the watchdog.
@@ -414,6 +415,15 @@ unset FFGHR_JITCONFIG
 # outlives this line would hold the lock for the length of the job.
 pool_unlock
 
+# THE IDLE DEADLINE, WRITTEN DOWN THE MOMENT THE CONTAINER EXISTS. On disk rather than in a
+# variable so a restarted supervisor recovers it, so reap.sh can sweep it, and so ffstatus can
+# show an operator how long this runner has before it is recycled. Non-fatal: a marker that
+# cannot be written means no idle deadline, which costs a container that lives too long and never
+# a container stopped early. See ffbox/lib-workloads.sh on why the two clocks fail in opposite
+# directions.
+ffghr_mark_idle "$CNAME" \
+    || log "WARNING: could not write the idle marker in $FFGHR_STATE_DIR; this runner has no idle deadline"
+
 # Container output goes to the FILE, not to this script's stdout. stdout is the journal, and a
 # Unity job log is tens of megabytes; the journal gets this script's own lines instead, which are
 # the ones anyone reads first.
@@ -425,8 +435,24 @@ LOGGER=$!
 
 # --- wait, with the watchdog ---------------------------------------------------------------------------
 
-# Above main.yml's timeout-minutes: 90, so a job GitHub still wants is never killed here. This
-# exists for a container that is wedged rather than for one that is slow.
+# TWO DEADLINES, AND WHICH ONE APPLIES IS WHETHER THIS CONTAINER HAS A JOB.
+#
+#   idle   IDLE_MINUTES from the moment the container was minted. It bounds a registered runner
+#          that nobody has given work to, and what it is really for is the image: ffbox:latest is
+#          rebuilt within five minutes of a push and a running container keeps whatever it started
+#          with. Cancelled outright the moment a job arrives.
+#   work   WATCHDOG_MINUTES from the moment the JOB started, read back out of the busy marker.
+#          Above main.yml's timeout-minutes: 90, so a job GitHub still wants is never killed here.
+#          This exists for a container that is wedged rather than for one that is slow.
+#
+# MEASURED FROM THE JOB, NOT FROM THE CONTAINER, and that is the whole of the fix here. Until
+# 2026-09-02 there was one deadline, set once at launch and never reset, so every minute a
+# container spent registered and waiting was a minute the job did not get: a job landing on a
+# 118-minute-old container had two minutes to finish. The comment on this line asserted the
+# opposite for months. The pool is what made the gap wide -- before it, a slot minted a runner and
+# GitHub handed it work seconds later -- and the arrival age is now roughly uniform over the idle
+# window, so about a quarter of jobs were starting with under thirty minutes against a workflow
+# ceiling of 90. design/ffbox_clocks_design.txt section 4.
 # THE JOB DECLARES, THE HOST GRANTS, AND NOBODY WAITS. The job writes branch.info as one of its
 # first steps; this loop is already awake every five seconds for the watchdog, so it decides while
 # the tests run — tens of minutes of slack — and drops cache.request into the same staging
@@ -461,7 +487,45 @@ decide_cache_archive() {
     fi
 }
 
-DEADLINE=$(( $(date +%s) + WATCHDOG_MINUTES * 60 ))
+# THE DEADLINE IS DERIVED, NOT REMEMBERED, so a supervisor restarted mid-job lands on the same one
+# its predecessor had. Holding it in a variable is what made the old bug invisible to everything
+# outside this process, ffstatus included.
+#
+# WHEN THE MARKER CANNOT BE READ THE FALLBACK IS THE CONTAINER'S OWN START, which is exactly the
+# pre-2026-09-02 rule and is always bounded. Never "no deadline": an unbounded work clock leaves a
+# wedged container holding a slot, a workspace and a Unity seat for ever, which is worse than the
+# bug this replaces. The marker write is already non-fatal below, so this path is reachable.
+# `|| :` INSIDE EACH SUBSTITUTION, not after it. `set -eu` is on, and an assignment is the last
+# command of an `a || b` list, so `[ -z "$x" ] && x=$(thing_that_fails)` would take the whole
+# supervisor down on a docker hiccup. The subshell swallowing its own failure is what makes an
+# empty answer an answer rather than an exit.
+container_started_at() {
+    _s=$(docker inspect -f '{{.State.StartedAt}}' "$CNAME" 2>/dev/null || :)
+    [ -n "$_s" ] || { unset _s; return 0; }
+    date -d "$_s" +%s 2>/dev/null || :
+    unset _s
+}
+
+work_deadline() {
+    _at=$(ffbox_clock_start "$(ffghr_busy_marker "$CNAME")" 2>/dev/null || :)
+    [ -n "$_at" ] || _at=$(container_started_at || :)
+    [ -n "$_at" ] || _at=$(date +%s)
+    echo $(( _at + WATCHDOG_MINUTES * 60 ))
+    unset _at
+}
+
+# READ BACK FROM THE MARKER rather than computed here, so this supervisor and a restarted one
+# agree, and so the number ffstatus shows is the number being enforced. A marker that could not be
+# written leaves no idle deadline at all, which is the safe direction for this clock.
+idle_deadline() {
+    _l=$(ffbox_clock_left "$(ffghr_idle_marker "$CNAME")" 2>/dev/null || :)
+    case "${_l:-}" in ''|*[!0-9-]*) unset _l; return 1 ;; esac
+    echo $(( $(date +%s) + _l ))
+    unset _l
+}
+
+DEADLINE=$(idle_deadline) || DEADLINE=
+DEADLINE_KIND=idle
 KILLED=0
 
 # WHETHER THIS CONTAINER HAS TAKEN A JOB, and the reason this loop is worth waking up for while
@@ -471,10 +535,37 @@ KILLED=0
 # signal, and it is this supervisor's container.
 BUSY=0
 
+# ONE MORE LOOK BEFORE AN IDLE STOP, and it is not the same question as the loop's own poll.
+#
+# `ffghr_container_busy` is a grep for a vendor process name over `docker top`, checked every
+# POOL_POLL_SECONDS. While IDLE_MINUTES equals WATCHDOG_MINUTES a missed flip costs nothing -- the
+# container lands on the deadline it would have had anyway -- but the moment somebody lowers
+# IDLE_MINUTES, a missed flip means stopping a container that HAS a job at a deadline that job
+# never had. This closes the five seconds between the last poll and the stop, and it is the gate
+# on open item (c) rather than a fix for anything visible today. Do not remove it as dead weight.
+idle_stop_ok() {
+    [ "$DEADLINE_KIND" = idle ] || return 0
+    if ffghr_container_busy "$CNAME"; then
+        log "the idle deadline passed but a job started under it; the work clock applies instead"
+        ffghr_mark_busy "$CNAME" || :
+        BUSY=1
+        DEADLINE=$(work_deadline)
+        DEADLINE_KIND=work
+        return 1
+    fi
+    return 0
+}
+
 while [ "$(docker inspect -f '{{.State.Running}}' "$CNAME" 2>/dev/null)" = true ]; do
     if [ "$BUSY" = 0 ] && ffghr_container_busy "$CNAME"; then
         BUSY=1
-        if ffghr_mark_busy "$CNAME"; then
+        # THE MARKER FIRST, THEN THE DEADLINE OFF IT. Order matters: work_deadline reads the file
+        # ffghr_mark_busy has just written, and falls back to the container's start only when that
+        # write failed. Doing it the other way round would silently take the fallback on every job.
+        ffghr_mark_busy "$CNAME" && MARKED=1 || MARKED=0
+        DEADLINE=$(work_deadline)
+        DEADLINE_KIND=work
+        if [ "$MARKED" = 1 ]; then
             log "job started; the pool is short an idle runner and will start one"
         else
             # Not fatal, and the failure is bounded: the pool over-counts this container as idle,
@@ -482,8 +573,15 @@ while [ "$(docker inspect -f '{{.State.Running}}' "$CNAME" 2>/dev/null)" = true 
             log "WARNING: could not write the busy marker in $FFGHR_STATE_DIR; the pool will count this slot as idle"
         fi
     fi
-    if [ "$(date +%s)" -ge "$DEADLINE" ]; then
-        log "WATCHDOG: $WATCHDOG_MINUTES minutes elapsed; stopping $CNAME"
+    if [ -n "$DEADLINE" ] && [ "$(date +%s)" -ge "$DEADLINE" ] && idle_stop_ok; then
+        # WHICH CLOCK, BECAUSE THEY WANT DIFFERENT REACTIONS. A work expiry is a job that stopped
+        # making progress and is worth looking at; an idle expiry is housekeeping and means the
+        # pool is about to mint a fresher runner. One message for both read as the first.
+        if [ "$DEADLINE_KIND" = work ]; then
+            log "WATCHDOG: the job has run $WATCHDOG_MINUTES minutes; stopping $CNAME"
+        else
+            log "IDLE: registered and unclaimed for $IDLE_MINUTES minutes; recycling $CNAME"
+        fi
         # TERM first, then KILL after the grace period. The grace is for the licence trap in the
         # job's shell to run `unity-editor -returnlicense`, which is an editor launch and takes
         # tens of seconds. Whether the signal actually reaches that trap through the runner is
@@ -543,8 +641,10 @@ done
 wait "$LOGGER" 2>/dev/null || true
 
 EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' "$CNAME" 2>/dev/null || echo unknown)
-if [ "$KILLED" = 1 ]; then
-    log "killed by the watchdog after $WATCHDOG_MINUTES minutes"
+if [ "$KILLED" = 1 ] && [ "$DEADLINE_KIND" = work ]; then
+    log "killed by the watchdog $WATCHDOG_MINUTES minutes into the job"
+elif [ "$KILLED" = 1 ]; then
+    log "recycled after $IDLE_MINUTES idle minutes; it never took a job"
 elif [ "$EXIT_CODE" = 0 ]; then
     log "job finished, container exited 0"
 else

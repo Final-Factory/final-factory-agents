@@ -99,18 +99,21 @@ done
 # HARMLESS UNTIL THE NAME COMES BACK, which it cannot: the container name carries a random nonce.
 # So this is tidiness rather than a fix, and it is cheap. The counting itself already ignores a
 # marker with no live container, which is what keeps the failure benign in the meantime.
+# BOTH SUFFIXES, ONE LOOP. `.idle` joined `.busy` on 2026-09-02 when the CI lane got two clocks,
+# and a per-container file that nothing deletes is a directory that grows for the life of the box.
 LIVE=$(docker ps --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null || true)
 if [ -d "$FFGHR_STATE_DIR" ]; then
-    for m in "$FFGHR_STATE_DIR"/*.busy; do
+    for m in "$FFGHR_STATE_DIR"/*.busy "$FFGHR_STATE_DIR"/*.idle; do
         [ -e "$m" ] || continue
-        cname=$(basename -- "$m" .busy)
+        kind=${m##*.}
+        cname=$(basename -- "$m" ".$kind")
         case " $LIVE " in
-            *" $cname "*) skip "$cname is running; keeping its busy marker"; continue ;;
+            *" $cname "*) skip "$cname is running; keeping its $kind marker"; continue ;;
         esac
         if [ "$DRY" = 1 ]; then
-            act "would remove the busy marker for $cname, which is gone"
+            act "would remove the $kind marker for $cname, which is gone"
         else
-            rm -f "$m" && act "removed the busy marker for $cname, which is gone"
+            rm -f "$m" && act "removed the $kind marker for $cname, which is gone"
         fi
     done
 fi

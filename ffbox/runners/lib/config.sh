@@ -42,6 +42,29 @@ FFGHR_CONFIG_DIR=${FFGITHUBRUNNERS_CONFIG_DIR:-$FFBOX_CONFIG_DIR/githubrunners}
 # this landed; code that reads a file nobody has is code nobody ever runs and nobody can test.
 # A machine with no section gets the defaults below, which is the same answer a fresh install
 # gets before 05-discord-setup.sh seeds it.
+# THE SHARED CLOCK HELPERS COME FROM ffbox's OWN LIBRARY, because the deadline format is one
+# format for both lanes and a second implementation of it here would be the thing that drifts.
+# Sourced from here rather than left to each caller: slot.sh already loads both, but reap.sh,
+# ffgithubrunners and test_pool.sh load only this file and still reach ffghr_mark_busy.
+#
+# Missing file is survivable the way it is in slot.sh -- warn once, no-op, carry on -- because a
+# checkout without lib-workloads.sh is a broken checkout and not a reason to stop taking jobs.
+# What is lost is the deadline IN the marker, and slot.sh's work_deadline then falls back to the
+# container's own start, which is exactly the pre-2026-09-02 rule.
+if ! command -v ffbox_clock_write >/dev/null 2>&1; then
+    _ffghr_here=$(CDPATH= cd -- "$(dirname -- "${0:-.}")" && pwd 2>/dev/null) || _ffghr_here=.
+    for _ffghr_wl in "$_ffghr_here/../lib-workloads.sh" "$_ffghr_here/../../lib-workloads.sh"                      "${FFGHR_LIB_WORKLOADS:-}"; do
+        [ -n "$_ffghr_wl" ] && [ -r "$_ffghr_wl" ] || continue
+        . "$_ffghr_wl"
+        break
+    done
+    unset _ffghr_here _ffghr_wl
+fi
+if ! command -v ffbox_clock_write >/dev/null 2>&1; then
+    echo "lib/config.sh: WARNING: lib-workloads.sh is missing; markers carry no deadline" >&2
+    ffbox_clock_write() { printf 'staged_at=%s\n' "$(date -Is)" > "${1:?}" 2>/dev/null; }
+fi
+
 FFGHR_CONFIG=${FFGITHUBRUNNERS_CONFIG:-$FFBOX_CONFIG_DIR/config.json}
 FFGHR_CONFIG_SECTION=${FFGITHUBRUNNERS_CONFIG_SECTION:-githubrunner}
 FFGHR_SECRETS=${FFGITHUBRUNNERS_SECRETS:-$FFGHR_CONFIG_DIR/secrets.env}
@@ -134,7 +157,42 @@ FFGHR_DEFAULT_SLOTS=1
 FFGHR_DEFAULT_IDLE_POOL=1
 _ffghr_set SLOTS            slots            "$FFGHR_DEFAULT_SLOTS"
 _ffghr_set IDLE_POOL        idle_pool        "$FFGHR_DEFAULT_IDLE_POOL"
+# TWO CLOCKS, AND THEY MEASURE FROM DIFFERENT MOMENTS.
+#
+# WATCHDOG_MINUTES bounds a JOB, from the moment that job started. 120 because main.yml's own
+# timeout-minutes is 90, so a job GitHub still wants is never killed locally. Until 2026-09-02 it
+# was measured from container launch instead, which meant a job landing on a runner that had been
+# registered and waiting for 118 minutes had two minutes to finish; design/ffbox_clocks_design.txt
+# section 4 has the whole account.
+#
+# IDLE_MINUTES bounds a REGISTERED RUNNER WITH NO JOB, from mint. It is a staleness-versus-churn
+# trade rather than a safety bound, and what it is really for is the image: ffbox:latest is
+# rebuilt within five minutes of a push and a running container keeps whatever it started with.
+# On a busy repository the updater's drain gets there first and this rarely fires; on a quiet week
+# it is the only thing that recycles a runner onto a rebuilt image, which is also what keeps the
+# Actions runner version new enough for GitHub to keep handing it jobs.
+#
+# THEY DEFAULT TO THE SAME NUMBER AND THAT IS NOT A COINCIDENCE WORTH KEEPING. 120 is what the
+# single clock effectively enforced, so a box that upgrades and changes nothing sees the idle
+# recycling it always saw and only the job runway changes. Lowering IDLE_MINUTES below
+# WATCHDOG_MINUTES is defensible and is open item (c) in the design -- but it is what makes the
+# `Runner.Worker` inference load-bearing for whether a job survives, so read section 10 first.
 _ffghr_set WATCHDOG_MINUTES watchdog_minutes 120
+_ffghr_set IDLE_MINUTES     idle_minutes     120
+# 0 IS "NEVER RECYCLE AN IDLE RUNNER", not "expire it immediately", the same coercion both pools
+# apply to a pool.idle of 0: no places is a thing somebody may mean and no time is not. Negative
+# is 0. And a value small enough to churn JIT registrations against GitHub's API is refused here
+# rather than honoured, because the mistake is silent and the API is somebody else's.
+FFGHR_MIN_IDLE_MINUTES=5
+case "$IDLE_MINUTES" in
+    ''|*[!0-9-]*) IDLE_MINUTES=120 ;;
+esac
+[ "$IDLE_MINUTES" -ge 0 ] 2>/dev/null || IDLE_MINUTES=0
+if [ "$IDLE_MINUTES" -gt 0 ] && [ "$IDLE_MINUTES" -lt "$FFGHR_MIN_IDLE_MINUTES" ]; then
+    echo "lib/config.sh: idle_minutes $IDLE_MINUTES is below the floor of" \
+         "$FFGHR_MIN_IDLE_MINUTES; using the floor" >&2
+    IDLE_MINUTES=$FFGHR_MIN_IDLE_MINUTES
+fi
 # ONE NAME. ffbox and the runners are the same image built from ffbox/Dockerfile; a second tag
 # was only ever another name for it, and two names meant two builds that drifted apart on every
 # rebuild. Pin CI to a different build by overriding this key, not by keeping a second tag alive.
@@ -605,9 +663,32 @@ _ffghr_set POOL_POLL_SECONDS pool_poll_seconds 5
 # reap.sh sweeps the leftovers.
 ffghr_busy_marker() { printf '%s/%s.busy\n' "$FFGHR_STATE_DIR" "${1:?}"; }
 
+# AND THE IDLE ONE, written at mint. Same directory, same sweeping rule in reap.sh, same two-key
+# format: what differs is only which question the deadline in it answers.
+ffghr_idle_marker() { printf '%s/%s.idle\n' "$FFGHR_STATE_DIR" "${1:?}"; }
+
+# THE MARKER IS ALSO THE JOB'S DEADLINE, which is why it is written in lib-workloads.sh's clock
+# format rather than the bare `at=` it carried until 2026-09-02. The moment a job starts was
+# already being recorded here for the pool's own accounting; the work clock needs no state of its
+# own, only this file read back. A supervisor restarted mid-job therefore recovers the same
+# deadline its predecessor had, instead of granting a fresh 120 minutes on every restart.
+#
+# Nothing ever read the old `at=` key except this function, so the rename breaks no consumer; a
+# marker left by an older supervisor simply has no deadline in it, and slot.sh's work_deadline
+# falls back to the container's own start, which is exactly the pre-2026-09-02 rule.
 ffghr_mark_busy() {
     mkdir -p "$FFGHR_STATE_DIR" 2>/dev/null || return 1
-    printf 'at=%s\n' "$(date -Is)" > "$(ffghr_busy_marker "${1:?}")" 2>/dev/null
+    ffbox_clock_write "$(ffghr_busy_marker "${1:?}")" "$(( ${WATCHDOG_MINUTES:-120} * 60 ))"
+}
+
+ffghr_mark_idle() {
+    mkdir -p "$FFGHR_STATE_DIR" 2>/dev/null || return 1
+    ffbox_clock_write "$(ffghr_idle_marker "${1:?}")" "$(( ${IDLE_MINUTES:-120} * 60 ))"
+}
+
+ffghr_clear_idle() {
+    [ -n "${1:-}" ] || return 0
+    rm -f "$(ffghr_idle_marker "$1")" 2>/dev/null || true
 }
 
 ffghr_clear_busy() {

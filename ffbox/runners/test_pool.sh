@@ -166,5 +166,83 @@ MACHINE_ID=not-a-machine-id
 ffghr_machine_id 1 >/dev/null 2>&1 && bad "a malformed id must be refused" || ok "a malformed id is refused rather than written"
 MACHINE_ID=per-slot
 
+# --- the two clocks -----------------------------------------------------------------------------
+#
+# THE BUG THIS IS THE REGRESSION TEST FOR. Until 2026-09-02 slot.sh set one deadline at container
+# launch and never reset it, so a job landing on a runner that had been registered and waiting for
+# 118 minutes had two minutes to finish before `docker stop -t 90`. The comment above the loop
+# asserted the opposite. What is exercised here is the arithmetic, in the same place and the same
+# way the supervisor does it; the loop itself needs a daemon and is not covered.
+printf '\nthe two clocks\n'
+
+WATCHDOG_MINUTES=120
+IDLE_MINUTES=120
+CNAME=ffghr-h-1-clock
+
+# slot.sh's own two functions, copied rather than sourced: slot.sh takes a slot number, mints a
+# JIT config and talks to a daemon before it defines them. If either changes there, change it here
+# — the point of this file is the arithmetic, and a copy that has drifted fails loudly.
+container_started_at() { printf '%s\n' "${STUB_STARTED_AT:-}"; }
+work_deadline() {
+    _at=$(ffbox_clock_start "$(ffghr_busy_marker "$CNAME")" 2>/dev/null || :)
+    [ -n "$_at" ] || _at=$(container_started_at || :)
+    [ -n "$_at" ] || _at=$(date +%s)
+    echo $(( _at + WATCHDOG_MINUTES * 60 ))
+}
+
+# A container minted 118 minutes ago that takes a job NOW.
+STUB_STARTED_AT=$(( $(date +%s) - 118 * 60 ))
+ffghr_mark_busy "$CNAME"
+_left=$(( $(work_deadline) - $(date +%s) ))
+[ "$_left" -gt $(( 119 * 60 )) ] \
+    && ok "a job on a 118-minute-old container gets the whole watchdog, not two minutes" \
+    || bad "the work clock is still measured from launch: ${_left}s left, want ~7200"
+
+# THE SAME DEADLINE AFTER A RESTART. Derived from the marker rather than from the moment the
+# supervisor noticed, so systemd restarting a supervisor mid-job does not grant a fresh 120.
+_first=$(work_deadline)
+sleep 1
+is "$(work_deadline)" "$_first" "a restarted supervisor recovers the same deadline"
+
+# NO MARKER FALLS BACK TO THE CONTAINER'S START, WHICH IS THE OLD RULE, and never to "no
+# deadline": an unbounded work clock leaves a wedged container holding a slot and a Unity seat.
+ffghr_clear_busy "$CNAME"
+is "$(work_deadline)" "$(( STUB_STARTED_AT + 120 * 60 ))" \
+    "an unreadable marker falls back to the container's start, still bounded"
+
+# An OLD marker, in the bare at= format a supervisor from before this wrote. Same fallback.
+printf 'at=%s\n' "$(date -Is)" > "$(ffghr_busy_marker "$CNAME")"
+is "$(work_deadline)" "$(( STUB_STARTED_AT + 120 * 60 ))" \
+    "a pre-2026-09-02 marker is not a deadline, and the fallback covers the deploy window"
+ffghr_clear_busy "$CNAME"
+
+# The idle clock is a separate file and a separate question.
+ffghr_mark_idle "$CNAME"
+_il=$(ffbox_clock_left "$(ffghr_idle_marker "$CNAME")")
+[ "$_il" -gt $(( 119 * 60 )) ] && ok "the idle clock starts at mint" || bad "idle clock: $_il"
+ffbox_clock_expired "$(ffghr_idle_marker "$CNAME")" \
+    && bad "a fresh idle marker must not be expired" || ok "and is not expired while it is fresh"
+
+printf 'staged_at=%s\nttl_secs=60\n' "$(date -Is -d '-1 hour')" > "$(ffghr_idle_marker "$CNAME")"
+ffbox_clock_expired "$(ffghr_idle_marker "$CNAME")" \
+    && ok "an old idle marker is expired" || bad "an hour past a 60s ttl must be expired"
+
+# 0 IS "NEVER RECYCLE", not "expire immediately" — the coercion both pools apply to pool.idle.
+printf 'staged_at=%s\nttl_secs=0\n' "$(date -Is -d '-1 hour')" > "$(ffghr_idle_marker "$CNAME")"
+ffbox_clock_expired "$(ffghr_idle_marker "$CNAME")" \
+    && bad "ttl_secs 0 must mean no deadline" || ok "an idle_minutes of 0 means never recycle"
+
+# A missing file is no deadline, and the caller must never read that as expired.
+ffghr_clear_idle "$CNAME"
+ffbox_clock_left "$(ffghr_idle_marker "$CNAME")" >/dev/null 2>&1 \
+    && bad "a missing marker must not answer" || ok "a missing idle marker has no deadline at all"
+
+# The floor under a value small enough to churn registrations against GitHub's API.
+FFGITHUBRUNNERS_IDLE_MINUTES=1 . "$HERE/lib/config.sh" 2>/dev/null
+is "$IDLE_MINUTES" 5 "an idle_minutes below the floor is raised to it"
+FFGITHUBRUNNERS_IDLE_MINUTES=0 . "$HERE/lib/config.sh" 2>/dev/null
+is "$IDLE_MINUTES" 0 "and 0 is left alone, because never recycling is a thing somebody may mean"
+unset FFGITHUBRUNNERS_IDLE_MINUTES
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -69,6 +69,20 @@ cmd_status() {
         printf 'drain      off\n'
     fi
 
+    # Remaining time as a short human string, or nothing at all when there is no readable
+    # deadline -- which is a real state (a marker that could not be written, or one left by a
+    # supervisor from before this existed) and reads better as silence than as a wrong number.
+    _ffghr_status_left() {
+        _l=$(ffbox_clock_left "${1:?}" 2>/dev/null || :)
+        case "${_l:-}" in ''|*[!0-9-]*) unset _l; return 0 ;; esac
+        if   [ "$_l" -lt 0 ];    then printf ', expired'
+        elif [ "$_l" -ge 3600 ]; then printf ', %dh%02dm left' $((_l / 3600)) $(((_l % 3600) / 60))
+        elif [ "$_l" -ge 60 ];   then printf ', %dm left' $((_l / 60))
+        else                          printf ', %ds left' "$_l"
+        fi
+        unset _l
+    }
+
     # THE POOL, NOT THE SLOT COUNT, is the first thing to read here now. A slot with no container
     # is the normal resting state of most of them, and an operator who does not know that reads
     # the per-slot lines below as five things being broken.
@@ -86,8 +100,15 @@ cmd_status() {
         _c=$(docker ps --filter "label=ffghr.slot=$_i" --format '{{.Names}} ({{.Status}})' 2>/dev/null | head -1)
         _what="waiting for a place in the pool"
         if [ -n "$_c" ]; then
-            if [ -e "$(ffghr_busy_marker "${_c%% *}")" ]; then _what="$_c BUSY"
-            else                                               _what="$_c idle"
+            # AND HOW LONG IT HAS, from the clock that actually applies to it. A busy container is
+            # counting down the watchdog from when its JOB started; an idle one is counting down
+            # to being recycled onto whatever image has been built since. Two questions, and
+            # before 2026-09-02 one number answered neither because it lived in a shell variable.
+            _cn=${_c%% *}
+            if [ -e "$(ffghr_busy_marker "$_cn")" ]; then
+                _what="$_c BUSY$(_ffghr_status_left "$(ffghr_busy_marker "$_cn")")"
+            else
+                _what="$_c idle$(_ffghr_status_left "$(ffghr_idle_marker "$_cn")")"
             fi
         fi
         printf '  slot %-3s unit %-10s%s %s\n' "$_i" "${_unit:-unknown}" "$_stop" "$_what"
