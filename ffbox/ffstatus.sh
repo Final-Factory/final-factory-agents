@@ -364,7 +364,12 @@ gather() {
                         else
                             state=filling
                         fi
-                        [ -e "$out/owner" ] && state=claimed ;;
+                        # OWNER MEANS SPOKEN FOR, AND SINCE 2026-09-02 THAT IS TWO THINGS. A
+                        # dispatch claims it, and so does the keeper on its way to retiring a
+                        # spare that has aged out; `retiring` is what the keeper leaves to tell
+                        # them apart, so a container being stopped does not read as a turn.
+                        [ -e "$out/owner" ] && state=claimed
+                        [ -e "$out/retiring" ] && { state=retiring; ttl=''; } ;;
                     *)
                         # Renamed by dispatch: a turn that started from a warm workspace.
                         lane=agent; state='running*'; ref=''

@@ -2289,6 +2289,10 @@ class Watcher:
         # not silence the message for the other -- an operator reading the journal wants to know
         # which pool could not be filled, not that some pool could not be.
         self._pool_squeeze_logged = {}
+        # Ids with a retirement thread in flight, so a keeper pass that comes round again while a
+        # `docker stop` is still running does not start a second one. Dropped in the thread's
+        # finally, which is what lets a later pass retry a stop that did not take.
+        self._pool_expiring = set()
         # PER CLASS TOO, and for the same reason: monotonic deadline before which the keeper
         # does not try this class again. Set only where a staging attempt actually failed.
         self._pool_stage_after = {}
@@ -4225,6 +4229,103 @@ class Watcher:
         need = (for_containers + self.workload_room()) * POOL_WORKSPACE_BYTES
         return avail >= need
 
+    def pool_expire(self):
+        """Retire staged containers whose idle clock has run out. Returns how many were sent.
+
+        THE HOST COMPARES NOW, AND UNTIL 2026-09-02 IT COMPARED NOTHING. The container ran its own
+        countdown in pool-task.sh and exited; the keeper only noticed the count had dropped. That
+        worked, and the reason to move it is that two parties could decide one container's fate,
+        which needed an atomic arbiter -- `out/owner`, created O_EXCL by whichever got there
+        first. The host is already the dispatcher, so moving the clock here makes retiring and
+        dispatching two decisions by ONE party and the race stops existing rather than moving.
+
+        THE CLAIM STILL COMES FIRST. pool_take is exactly what a dispatch does, and a keeper that
+        loses it has lost to a container already walking out, which is a container that needs
+        nothing from us. That is also why the container keeps a failsafe at its TTL plus a margin:
+        a spare holds 22 GiB and a Unity seat, and a keeper that is not keeping must not mean both
+        are held until somebody notices.
+
+        NOTHING BLOCKS THE CALLER. The compare is a stat; the ACT is stopping a container, up to
+        two minutes of it, and c693d67 is what that costs on this loop -- the admission lock rode into
+        a run and the daemon spent three minutes of every pass unable to drain a Discord event, so
+        from Discord it looked like Max had stopped answering. Nobody waits on a retirement, so it
+        goes to a thread and this returns.
+        """
+        sent = 0
+        for c in self.pool_containers():
+            pool_id = c["id"]
+            staged = os.path.join(self.pool_dir(pool_id), "out", "staged")
+            if not os.path.exists(staged):
+                continue                      # still filling; it has no deadline yet
+            if os.path.exists(self.pool_owner_path(pool_id)):
+                continue                      # dispatched, or already retiring
+            if pool_id in self._pool_expiring:
+                continue                      # a thread of ours is already stopping it
+            if not self._clock_expired(staged):
+                continue
+            if not self.pool_take(pool_id):
+                # Lost the claim between the test and here: a turn is being dispatched into it,
+                # or it decided to retire itself. Either way it is not ours to stop.
+                continue
+            self._pool_expiring.add(pool_id)
+            # SO THE PAGE DOES NOT CALL IT `claimed`. out/owner is the only thing entitled to say
+            # a spare is spoken for, and ffstatus reads exactly that -- which after this change
+            # covers two different things, a turn being dispatched and a retirement. A spare being
+            # stopped is not one somebody is waiting on, and a row that says otherwise sends an
+            # operator looking for a turn that does not exist.
+            try:
+                with open(os.path.join(self.pool_dir(pool_id), "out", "retiring"), "w",
+                          encoding="utf-8") as fh:
+                    fh.write(datetime.now(timezone.utc).isoformat() + "\n")
+            except OSError:
+                pass                          # cosmetic; the retirement itself does not need it
+            log(f"pool: {c['name']} has been staged past its idle life; retiring it")
+            threading.Thread(target=self._pool_expire_one, args=(pool_id, c["name"]),
+                             name=f"ffwatch-expire-{pool_id}", daemon=True).start()
+            sent += 1
+        return sent
+
+    def _pool_expire_one(self, pool_id, name):
+        """Stop one aged-out spare, off the daemon's loop. Never raises into the thread runner."""
+        try:
+            grace = max(1, int(self.cfg["kill_grace_secs"]), LICENCE_STOP_FLOOR)
+            subprocess.run([self.cfg["docker"], "stop", "--timeout", str(grace), name],
+                           capture_output=True, text=True, timeout=grace + 60)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"pool: could not stop {name}: {exc}")
+        except Exception as exc:                                  # noqa: BLE001
+            log(f"pool: retiring {name} failed: {exc}")
+        finally:
+            # The spool directory is left to pool_reap, which already refuses to delete one that
+            # still holds a transcript. Dropping the id here is what lets a later pass try again
+            # if the stop did not take.
+            self._pool_expiring.discard(pool_id)
+
+    @staticmethod
+    def _clock_expired(path):
+        """lib-workloads.sh's ffbox_clock_expired, in Python, on the same two keys.
+
+        THE FORMAT IS SHARED AND THE READING IS NOT, which is the one duplication this design
+        accepts: shelling out to `ffbox` once per staged container per poll is a fork the daemon's
+        loop does not need, and the format is two keys that have not changed since the pool
+        existed. Kept deliberately identical -- a ttl_secs of 0 is NO DEADLINE rather than expired
+        immediately, and anything unreadable is not a deadline at all, because for an idle clock
+        the safe failure is a container that lives too long.
+        """
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                fields = dict(
+                    line.split("=", 1) for line in fh.read().splitlines() if "=" in line)
+            ttl = int(fields.get("ttl_secs", "0").strip())
+            if ttl <= 0:
+                return False
+            started = datetime.fromisoformat(fields["staged_at"].strip())
+        except (OSError, ValueError, KeyError):
+            return False
+        if started.tzinfo is None:
+            started = started.astimezone()
+        return (datetime.now(timezone.utc) - started).total_seconds() > ttl
+
     def pool_reap(self):
         """Delete the spool directory of any container that is gone.
 
@@ -4457,6 +4558,10 @@ class Watcher:
         RETURNS A LIST, where it used to return one id or None: a pass can now stage one of each
         class, and a caller that wanted "did anything happen" gets a truthy list either way.
         """
+        # EXPIRE FIRST, THEN REAP, THEN TOP UP, and the order is the point: a container retired
+        # this pass frees a place the same pass wants to fill. Both are cheap here -- the expiry
+        # is a stat per spare and hands the actual stop to a thread.
+        self.pool_expire()
         self.pool_reap()
         if self.killed() or self.draining():
             return []
