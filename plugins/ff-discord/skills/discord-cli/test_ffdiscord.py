@@ -345,6 +345,8 @@ def main():
     p = run(tmp, "unseen", "ask_claude", "--key", "ask", "--mark")
     check("survives a 429 and retries", p.returncode == 0, p.stderr)
     check("shows the player question", "How do I power a smelter?" in p.stdout)
+    check("prints the author id, so a reply can @-mention them",
+          "author=" in p.stdout, p.stdout)
     check("filters out the bot's own messages", "thanks!" not in p.stdout)
     check("cursor passes the bot's own trailing message",
           "900000000000003003" in p.stderr, p.stderr)
@@ -372,6 +374,33 @@ def main():
     p = run(tmp, "post", "ask_claude", "--text", "reply", "--reply-to", "123")
     check("threads a reply via message_reference",
           POSTED[-1]["body"]["message_reference"]["message_id"] == "123")
+
+    print("post --mention (Max addresses whoever he is answering)")
+    p = run(tmp, "post", "ask_claude", "--text", "Out of range, move the receiver closer.",
+            "--silent", "--mention", BEN)
+    body = POSTED[-1]["body"]
+    check("the reply opens with the asker's mention",
+          body["content"].startswith(f"<@{BEN}> "), body["content"])
+    check("and pings them despite --silent, by naming just that one id",
+          body["allowed_mentions"] == {"parse": [], "users": [BEN]}, body["allowed_mentions"])
+
+    p = run(tmp, "post", "ask_claude", "--text", f"already asked <@{BEN}> about it",
+            "--silent", "--mention", BEN)
+    check("text that already mentions them is not given a second one",
+          POSTED[-1]["body"]["content"] == f"already asked <@{BEN}> about it",
+          POSTED[-1]["body"]["content"])
+
+    p = run(tmp, "post", "ask_claude", "--text", "hi", "--mention", f"<@{BEN}>")
+    check("a pasted <@id> is accepted as the id it contains",
+          POSTED[-1]["body"]["content"] == f"<@{BEN}> hi", POSTED[-1]["body"]["content"])
+    check("a non-silent post keeps parse:users, which Discord forbids alongside a users list",
+          POSTED[-1]["body"]["allowed_mentions"] == {"parse": ["users"]},
+          POSTED[-1]["body"]["allowed_mentions"])
+
+    n_before = len(POSTED)
+    p = run(tmp, "post", "ask_claude", "--text", "hi", "--mention", "ben", expect_code=1)
+    check("a display name is refused rather than posted as literal text",
+          len(POSTED) == n_before and "user id" in p.stderr, p.stderr)
 
     # Regression (2026-07-30): piped stdin text was decoded as cp1252, so UTF-8 multi-byte
     # characters double-encoded into mojibake before ever reaching the JSON body — an em dash

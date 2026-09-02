@@ -614,6 +614,23 @@ def expand_mentions(text, mentions):
     return text
 
 
+def lead_with_mention(text, user_id):
+    """Open a reply with "<@id>", so it is addressed to the person who wrote to us.
+
+    Discord renders the token as their name, and the caller pairs this with the
+    allowed_mentions whitelist below so it is a real notification even on a --silent post.
+    Already-mentioned text is left alone: an answer that names them in the body should not
+    also grow a duplicate ping on the front. "<@!id>" is the legacy nickname spelling and
+    counts as the same mention.
+    """
+    token = f"<@{user_id}>"
+    if not text:
+        return token
+    if token in text or f"<@!{user_id}>" in text:
+        return text
+    return f"{token} {text}"
+
+
 def check_length(text, what="message"):
     if text and len(text) > 2000:
         die(f"{what} is {len(text)} chars; Discord's limit is 2000. Split it.")
@@ -633,6 +650,12 @@ def message_summary(msg, body_chars=0):
     bot_tag = " [bot]" if author.get("bot") else ""
     stamp = fmt_time(msg.get("timestamp") or msg.get("id"))
     head = f"[{msg['id']}] {stamp}  {name}{bot_tag}"
+    # The author id, because every reply Max writes opens by @-mentioning whoever he is
+    # answering, and `post --mention <id>` is the only way to get that id into the message.
+    # A display name cannot be turned back into one: two players can share it, and a nickname
+    # is per-server and changes.
+    if author.get("id"):
+        head += f"  author={author['id']}"
     lines = [head]
     content = (msg.get("content") or "").strip()
     if content:
@@ -1062,12 +1085,24 @@ def cmd_post(client, args):
     content = read_text_arg(args.text)
     if not content and not args.file:
         die("nothing to post: pass --text, '-' to read stdin, or --file")
-    content = check_length(expand_mentions(content, client.cfg.get("mentions")))
+    content = expand_mentions(content, client.cfg.get("mentions"))
+    mention = (args.mention or "").strip().strip("<@!>")
+    if args.mention and not mention.isdigit():
+        die(f"--mention takes a Discord user id, not {args.mention!r}")
+    if mention:
+        content = lead_with_mention(content, mention)
+    content = check_length(content)
 
     payload = {"content": content or ""}
-    payload["allowed_mentions"] = (
-        {"parse": []} if args.silent else {"parse": ["users"]}
-    )
+    allowed = {"parse": []} if args.silent else {"parse": ["users"]}
+    if mention and args.silent:
+        # Discord rejects a body carrying both parse:["users"] and an explicit users list, so
+        # the whitelist is only set on the silent path — which is exactly where it earns its
+        # keep. --silent is the sender's blanket protection against an agent quoting "@ben"
+        # out of a code comment; naming one id keeps that protection and still lets the reply
+        # notify the person it is answering.
+        allowed["users"] = [mention]
+    payload["allowed_mentions"] = allowed
     if args.reply_to:
         payload["message_reference"] = {"message_id": args.reply_to}
     if args.nonce:
@@ -1458,6 +1493,8 @@ def build_parser():
     sp.add_argument("--reply-to", help="message id to reply to")
     sp.add_argument("--file", action="append", help="attach a file (repeatable)")
     sp.add_argument("--silent", action="store_true", help="suppress all pings")
+    sp.add_argument("--mention", help="Discord user id to open the message with, as a real "
+                                      "ping even under --silent (the person being replied to)")
     sp.add_argument("--dry-run", action="store_true", help="print instead of sending")
     sp.add_argument("--nonce", help="idempotency key sent with enforce_nonce, so a retry of "
                                     "this exact post cannot create a second message "

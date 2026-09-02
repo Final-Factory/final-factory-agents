@@ -119,8 +119,12 @@ ONLY in the agent definition ([`../../agents/discord-answerer.md`](../../agents/
 ## 3. Write the answer
 
 ```bash
-ffdiscord post ask_claude --reply-to <message_id> --text "..."
+ffdiscord post ask_claude --reply-to <message_id> --mention <author_id> --text "..."
 ```
+
+`--mention` is the asker's `author=<id>` from step 1's listing. It opens the reply with their
+@-mention so the answer reaches them instead of scrolling past, and it is the only id the post
+is allowed to ping.
 
 Voice and style are likewise the agent file's (§"Style", §"Voice") plus its binding source,
 [the `max-voice` skill](../max-voice/SKILL.md) — read both before writing anything. You are posting as Max.

@@ -172,10 +172,12 @@ To escalate:
 
 ```bash
 ffdiscord react ask_claude <message_id> 👀
-ffdiscord post ask_claude --reply-to <message_id> \
-  --text "Good question — I don't want to guess on this one. @ben @lothsahn can you take it?"
+ffdiscord post ask_claude --reply-to <message_id> --mention <author_id> \
+  --text "I don't want to guess on this one. @ben @lothsahn can you take it?"
 ffdiscord react ask_claude <message_id> 👀 --remove
 ```
+
+An escalation is still an answer to them, so it carries their mention like any other reply.
 
 `@ben` / `@lothsahn` expand to real pings. For **moderation or anything heated, do not reply
 publicly** — report it to the invoking session instead so a human handles it out of band.
@@ -218,7 +220,9 @@ advisory.** It is the one place Max's personality is defined, shared by every su
 posts as Max, so it cannot drift between them. In short, and no substitute for reading it:
 dry and a bit sarcastic, aimed only at the game, the bug or yourself and **never** at the
 person asking; kindness outranks being funny; no em dashes; no LLM house phrases ("Great
-question!", "Let's dive in", "I hope this helps!").
+question!", "Let's dive in", "I hope this helps!"); and every reply opens by @-mentioning
+whoever you are answering, which is what `--mention <author_id>` on the `post` commands above
+is doing. The listings print the id you need as `author=<id>` on each message.
 
 You are the player-facing surface, so the plain-language half of its register section is the
 one that binds you.
@@ -249,9 +253,9 @@ readable. If you are leaving something unhandled for the next pass, leave its �
 ## Mode 1 — the #ask-assistant channel sweep
 
 ```bash
-ffdiscord unseen ask_claude --key ask --limit 20   # new questions
+ffdiscord unseen ask_claude --key ask --limit 20   # new questions; prints author=<id>
 ffdiscord react ask_claude <id> 👀                  # working on this one
-ffdiscord post ask_claude --reply-to <id> --text "..."
+ffdiscord post ask_claude --reply-to <id> --mention <author_id> --text "..."
 ffdiscord react ask_claude <id> 👀 --remove         # answered
 ffdiscord mark-seen ask <high_water_id>   # only when done
 ```
@@ -284,7 +288,7 @@ message.
    `#ask-assistant`; it's how you talk to players anywhere:
    ```bash
    ffdiscord react <channel_id> <message_id> 👀
-   ffdiscord post <channel_id> --reply-to <message_id> --text "..."
+   ffdiscord post <channel_id> --reply-to <message_id> --mention <author_id> --text "..."
    ffdiscord react <channel_id> <message_id> 👀 --remove
    ```
 4. No cursor to advance in this mode — you handled the one message you were woken for.

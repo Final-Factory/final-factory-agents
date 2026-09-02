@@ -1338,6 +1338,25 @@ def turn_options(turn):
         return {}
 
 
+def reply_mention(conv, message):
+    """The user id a reply should open by @-mentioning, or None.
+
+    Max addresses the person he is answering, the way anyone in a busy channel does: the
+    answer arrives as a notification rather than as another line the asker has to notice.
+    Three cases get nothing. A DM already notifies, so a mention there is only noise. A bot
+    is not owed a ping and two bots addressing each other is how a loop starts. And a turn
+    with no inbound message has nobody to address.
+    """
+    if message is None or conv is None:
+        return None
+    if (conv["kind"] if not isinstance(conv, str) else conv) == "operator_dm":
+        return None
+    if message.get("is_bot"):
+        return None
+    uid = str(message.get("author_id") or "").strip()
+    return uid if uid.isdigit() else None
+
+
 def reply_channel(conv):
     """The channel id a reply for this conversation goes to.
 
@@ -4784,7 +4803,10 @@ class Watcher:
             parts += ["", "NOTE: classification failed, so this run is read-only by default: "
                           f"{job['failed_closed_reason']}"]
         parts += ["", "Write your reply for Discord in the structured verdict; the host posts "
-                      "it. Do not attempt to post anything yourself."]
+                      "it. Do not attempt to post anything yourself. It goes out addressed to "
+                      "the person who raised this turn: the host puts their @-mention on the "
+                      "front, from Discord's own author id, so do not write one yourself. You "
+                      "have not been given an id you could spell one with."]
         return "\n".join(parts)
 
     @staticmethod
@@ -5551,8 +5573,19 @@ class Watcher:
                                    (run_row_id,))
         head = compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
                             verification=verification, publish=self.publish_facts(run_row_id))
+        last = job["messages"][-1] if job["messages"] else None
         payload = {"channel": reply_channel(conv), "text": head, "silent": True,
-                   "reply_to": job["messages"][-1]["discord_id"] if job["messages"] else None}
+                   "reply_to": last["discord_id"] if last else None}
+        asker = reply_mention(conv, last)
+        if asker:
+            # The reply opens by @-mentioning whoever raised the turn, and the sender is told
+            # which id may ping so --silent still holds for every other name in the text. The
+            # id comes from the message row — Discord's own authenticated author.id — never
+            # from anything the container wrote, so a run cannot talk the harness into pinging
+            # somebody else. Prefixed HERE rather than left to the CLI so that split_for_discord
+            # measures the message that actually gets posted.
+            payload["mention"] = asker
+            payload["text"] = f"<@{asker}> {head}" if head else f"<@{asker}>"
         summary = (verdict.get("summary") or "").strip()
         if len(summary) > HEAD_CAP and answer_is_publishable(turn, terminal):
             # check_length DIES above 2000 characters rather than truncating, so the overflow
@@ -5916,7 +5949,10 @@ class Watcher:
             "run_id": (run["ffbox_run_id"] if run else f"turn{turn_id}"),
             "session": {"id": (run["session_id"] if run else conv["session_id"])},
             "classification": json.loads(turn["classification_json"] or "{}"),
-            "messages": [{"discord_id": last["discord_id"]}] if last else [],
+            # author_id and is_bot as well as the id, because record_reply addresses the
+            # asker: a run that never launched is the reply they are most likely to miss.
+            "messages": [{"discord_id": last["discord_id"], "author_id": last["author_id"],
+                          "is_bot": last["is_bot"]}] if last else [],
         }
         return self.record_reply(run["id"] if run else None, conv, turn,
                                  self.conv_dir(conv["id"]), "failed",
@@ -6676,6 +6712,8 @@ class Watcher:
         if not head and not files:
             raise SendRejected("nothing to post: no text and no files")
         args = ["post", channel, "--text", head]
+        if payload.get("mention") and self.mention_supported():
+            args += ["--mention", str(payload["mention"])]
         if not self.ping_allowed(payload, channel):
             # --silent ALWAYS, unless this is the one lane permitted to ping. `ffdiscord post`
             # expands @name into a real ping on a whole-word match, so an agent quoting "@ben"
@@ -6759,6 +6797,31 @@ class Watcher:
                 return head
             cut -= 200
         return footer.strip()
+
+    def mention_supported(self):
+        """Does the ffdiscord on this machine understand --mention?
+
+        Same cached probe as nonce_supported, and the same reason: the CLI is served from a
+        plugin cache that only refreshes on a version bump. Degrading is gentle here — the
+        reply still opens with "<@id>", which renders as the person's name — but under
+        --silent it will not notify them, which is the whole point of it.
+        """
+        cached = getattr(self, "_mention_ok", None)
+        if cached is not None:
+            return cached
+        ok = False
+        try:
+            proc = subprocess.run(ffdiscord_cmd(self.cfg) + ["post", "--help"],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=60)
+            ok = "--mention" in (proc.stdout or "")
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        if not ok:
+            log("WARNING: this ffdiscord has no --mention, so replies will name the asker "
+                "without notifying them. Update the plugin: sh registerAgents.sh")
+        self._mention_ok = ok
+        return ok
 
     def nonce_supported(self):
         """Does the ffdiscord on this machine understand --nonce?
