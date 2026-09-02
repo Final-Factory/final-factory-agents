@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import struct
 import sys
 import tempfile
@@ -454,6 +455,53 @@ check("and an alias nothing has heard of is told apart from one merely unresolve
       "unknown channel alias" in (_fatal or ""), _fatal)
 check("a raw snowflake is taken as itself",
       L.resolve_watch_ids(_cfg, ["333"], from_config=True)[0] == {"333": "333"})
+
+# ------------------------------------------------------------------------------------------
+# the wake
+# ------------------------------------------------------------------------------------------
+print("\nthe doorbell socket")
+
+# THE POKE IS A HINT AND THE FILE IS THE PROTOCOL. Everything below turns on that: the line is
+# written whether or not anybody is listening on the socket, so ffwatch's cursor still sees
+# every event even when the wake is lost. What the poke changes is only whether ffwatch waits
+# out poll_secs before reading it.
+_wake_dir = tempfile.mkdtemp(prefix="ffd-doorbell-")
+_wake_events = os.path.join(_wake_dir, "events.jsonl")
+_wl = L.Listener("tok", {"111": "agent_testing"}, _wake_events, resolve_unknown=False)
+_wl.bot_id = "999"
+check("the socket is derived from the events file, not from a second setting",
+      _wl.doorbell_path == os.path.join(_wake_dir, "doorbell.sock"), _wl.doorbell_path)
+
+# With nobody bound: the write must still happen and emit() must not raise.
+_wl.emit("message", "agent_testing", "111", "m1", "42")
+with open(_wake_events, encoding="utf-8") as fh:
+    _lines = [json.loads(x) for x in fh if x.strip()]
+check("a poke with no daemon listening is silently harmless",
+      len(_lines) == 1 and _lines[0]["id"] == "m1", _lines)
+
+# And with a daemon bound: the datagram arrives, and it arrives AFTER the line is on disk.
+_sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+_sock.bind(_wl.doorbell_path)
+_sock.settimeout(5)
+_wl.emit("message", "agent_testing", "111", "m2", "42")
+try:
+    _got = _sock.recv(64)
+except socket.timeout:
+    _got = None
+check("a bound daemon is poked", _got == b"1", _got)
+with open(_wake_events, encoding="utf-8") as fh:
+    _lines = [json.loads(x) for x in fh if x.strip()]
+check("and the line the poke is about was already on disk when it arrived",
+      len(_lines) == 2 and _lines[1]["id"] == "m2", _lines)
+
+# A socket file that is there but nothing is reading -- a daemon that died without cleaning up
+# -- is the case that would raise ECONNREFUSED on a stream socket. It must stay harmless.
+_sock.close()
+_wl.emit("message", "agent_testing", "111", "m3", "42")
+with open(_wake_events, encoding="utf-8") as fh:
+    _lines = [json.loads(x) for x in fh if x.strip()]
+check("a stale socket file nothing is reading does not break the doorbell",
+      len(_lines) == 3 and _lines[2]["id"] == "m3", _lines)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

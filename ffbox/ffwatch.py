@@ -39,16 +39,21 @@ Standard library only, by design — the whole Discord stack installs with a git
 from __future__ import annotations
 
 import argparse
+import contextlib
 import errno
 import fcntl
 import getpass
 import hashlib
+import importlib.util
 import inspect
+import io
 import json
 import os
 import re
 import glob
+import select
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -535,7 +540,17 @@ DEFAULTS = {
     # ffwatch spent 180 of every 185 seconds inside the one that could never succeed.
     "pool_stage_backoff_secs": 300,
     "catchup_secs": 900,
-    "poll_secs": 2,
+    # THE FALLBACK, NOT THE PATH A DISCORD MESSAGE TAKES. The listener pokes the daemon's
+    # doorbell socket the moment it appends to events.jsonl, so a message wakes the loop out of
+    # this sleep rather than waiting it out; what the number governs is everything with no
+    # doorbell of its own -- a run finishing, an outbound row that backed off, a pool that wants
+    # topping up. It was 2 while polling was the only way a message arrived at all.
+    #
+    # A LOST POKE COSTS THIS MANY SECONDS AND NOTHING ELSE, which is the property that lets it
+    # be raised: events.jsonl is still the whole protocol and the wake is a hint on top of it,
+    # so a listener too old to poke, a socket that could not be bound, or a datagram dropped on
+    # the floor all degrade to exactly the behaviour of the line above.
+    "poll_secs": 5,
 
     # agent
     "model": "opus",
@@ -1201,8 +1216,17 @@ def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# THE JOURNAL, HELD AS AN OBJECT RATHER THAN LOOKED UP THROUGH sys.stdout EACH TIME.
+# ffdiscord_run captures the CLI's output by swapping sys.stdout, and that swap is global to
+# the process: a log line written by the catchup worker or a launch thread while the loop held
+# the redirect would be captured INTO the buffer -- lost from the journal, and prepended to the
+# JSON that ffd_json is about to parse, which fails the call for a reason nothing in it names.
+# A saved reference is immune, and it is still the stream the reconfigure() above fixed up.
+_JOURNAL = sys.stdout
+
+
 def log(msg):
-    print(f"{now_iso()} [ffwatch] {msg}", flush=True)
+    print(f"{now_iso()} [ffwatch] {msg}", file=_JOURNAL, flush=True)
 
 
 # ------------------------------------------------------------------------------------------
@@ -1436,18 +1460,87 @@ def ffdiscord_cmd(cfg):
     return [sys.executable, FFDISCORD_PY]
 
 
+# ONE PROCESS, NOT SIXTEEN. Every Discord call ffwatch makes used to be a fork+exec of the CLI
+# and a fresh Python interpreter, then a TLS handshake, for what is one HTTPS GET. Measured on
+# the build server 2026-09-02: 0.9s a call as a subprocess against 0.19s in-process, and a
+# catchup sweep of two watched channels and thirteen threads is sixteen of them back to back --
+# 15.0s of the daemon's own loop, which is what a message arriving mid-sweep waited out.
+#
+# THE MODULE THAT SHIPS BESIDE US, deliberately, and it is the one behaviour change here.
+# ffdiscord_cmd() prefers whatever `ffdiscord` on PATH resolves to, which is the PLUGIN CACHE
+# copy -- a copy that refreshes only on a version bump and so drifts from the ffwatch.py it is
+# serving. nonce_supported() and mention_supported() exist entirely because of that drift.
+# ffwatch.py and ffdiscord.py live in one repository and are released together, so importing
+# the sibling makes the pair consistent by construction rather than by probe.
+#
+# An explicit $FFWATCH_FFDISCORD still wins and still forks: it names a FILE, the offline suite
+# points it at a stub, and a test that asked for a stub must get the stub.
+_inproc_lock = threading.Lock()
+_inproc_module = None       # the module, None for "not looked yet", False for "cannot"
+
+
+def ffdiscord_module(cfg):
+    """The sibling ffdiscord module, or None when this call has to fork."""
+    global _inproc_module
+    if cfg.get("ffdiscord"):
+        return None
+    if _inproc_module is None:
+        try:
+            spec = importlib.util.spec_from_file_location("ffwatch_ffdiscord", FFDISCORD_PY)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _inproc_module = mod
+        except Exception as exc:  # noqa: BLE001 — any import failure means "fork instead"
+            log(f"WARNING: could not import {FFDISCORD_PY} ({type(exc).__name__}: {exc}); "
+                f"falling back to running the CLI as a subprocess")
+            _inproc_module = False
+    return _inproc_module or None
+
+
+def ffdiscord_run(cfg, args, timeout=180):
+    """Run one ffdiscord command. Returns (returncode, stdout, stderr), like subprocess.run.
+
+    THE SHAPE IS THE SUBPROCESS'S ON PURPOSE. Both callers -- the read path through ffd_json
+    and the send path in send_one -- were written against a CompletedProcess, and send_one
+    records stderr verbatim into outbound.last_error. Reproducing that triple instead of
+    raising means the failure text a reply carries is the same sentence whichever way the call
+    went, including the 404 hint main() appends.
+
+    THE LOCK is what makes the in-process path safe to call from the catchup worker and the
+    daemon loop at once: capturing the CLI's output means swapping sys.stdout, which is global.
+    It is held for one call -- a fifth of a second -- so the loop's acknowledgement waits behind
+    at most one of the sweep's reads rather than behind the whole sweep.
+    """
+    mod = ffdiscord_module(cfg)
+    if mod is None:
+        cmd = ffdiscord_cmd(cfg) + list(args)
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=timeout)
+            return proc.returncode, proc.stdout, proc.stderr
+        except (OSError, subprocess.SubprocessError) as exc:
+            return 1, "", f"{type(exc).__name__}: {exc}"
+    out, err = io.StringIO(), io.StringIO()
+    rc = 0
+    with _inproc_lock:
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                mod.main([str(a) for a in args])
+        except SystemExit as exc:
+            # die() and argparse both leave this way, having already written the message.
+            rc = int(exc.code or 0) if isinstance(exc.code, int) else 1
+        except Exception as exc:  # noqa: BLE001 — an in-process call must not take the daemon
+            # down where a subprocess would merely have exited non-zero.
+            rc, _ = 1, err.write(f"{type(exc).__name__}: {exc}")
+    return rc, out.getvalue(), err.getvalue()
+
+
 def ffd_json(cfg, args, timeout=180):
-    cmd = ffdiscord_cmd(cfg) + list(args) + ["--json"]
+    rc, out, err = ffdiscord_run(cfg, list(args) + ["--json"], timeout=timeout)
+    if rc != 0:
+        raise FFDiscordError(f"{' '.join(args)}: exit {rc}: {(err or out).strip()[:300]}")
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=timeout)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise FFDiscordError(f"{' '.join(args)}: {type(exc).__name__}: {exc}") from exc
-    if proc.returncode != 0:
-        raise FFDiscordError(f"{' '.join(args)}: exit {proc.returncode}: "
-                             f"{(proc.stderr or proc.stdout).strip()[:300]}")
-    try:
-        return json.loads(proc.stdout or "null")
+        return json.loads(out or "null")
     except json.JSONDecodeError as exc:
         raise FFDiscordError(f"{' '.join(args)}: output was not JSON: {exc}") from exc
 
@@ -2127,6 +2220,13 @@ class Watcher:
         self.cursor_path = os.path.join(self.state_dir, "events.cursor.json")
         self._launches = []
         self._launch_lock = threading.Lock()
+        # THE WAKE AND THE CATCHUP WORKER. Both belong to run(); every other entry point --
+        # `ffwatch once`, the CLI subcommands, the offline suite -- leaves them exactly as they
+        # are here, which is what keeps a pass-at-a-time caller fully synchronous.
+        self._doorbell = None
+        self._catchup = None
+        self._catchup_async = False     # run() sets this; ingest_event reads it
+        self._catchup_wanted = False    # a `catchup` doorbell arrived; the loop starts a worker
         # index_transcript is called from TWO threads for the same run — the scheduler's live
         # pass while the container works, and the launch thread's final catch-up in finish_run.
         # Nothing in transcript_event is UNIQUE, so two overlapping passes would each read the
@@ -2702,6 +2802,15 @@ class Watcher:
                         "lothsahn_directive"):
                 return self.ingest_channel_message(ev)
             if kind == "catchup":
+                # THE DAEMON DEFERS IT, everyone else sweeps here and now. A catchup doorbell
+                # means "a listener just started, re-read everything watched" — the same
+                # fifteen seconds of network the timed tick costs, and drain_events is the
+                # first thing in the loop, so doing it inline is the loop blocking itself on
+                # the very call it was about to make asynchronously. Three of these landed on
+                # the build server on 2026-09-02 alone, one per listener restart.
+                if self._catchup_async:
+                    self._catchup_wanted = True
+                    return None
                 return self.sweep()
         except FFDiscordError as exc:
             # A doorbell we cannot service is a latency problem, not a correctness one: the
@@ -5890,7 +5999,11 @@ class Watcher:
                 return row["turn_id"]
             if timeout is not None and time.monotonic() - started > timeout:
                 return None
-            time.sleep(1 if drive else float(self.cfg["poll_secs"]))
+            # CAPPED AT A SECOND, and not poll_secs. What this polls is a row in a local
+            # SQLite file, which costs nothing; poll_secs was raised to five for the daemon,
+            # whose passes do real work, and inheriting that here would only make somebody
+            # watching `ffbox "prompt"` wait longer to be told what already happened.
+            time.sleep(1.0 if drive else min(1.0, float(self.cfg["poll_secs"])))
 
     def wait_for_turn(self, turn_id, *, timeout=None, drive=None, on_log=None):
         """Block until the turn reaches a terminal state. Returns the turn row.
@@ -5919,7 +6032,11 @@ class Watcher:
                 return turn
             if timeout is not None and time.monotonic() - started > timeout:
                 return turn
-            time.sleep(1 if drive else float(self.cfg["poll_secs"]))
+            # CAPPED AT A SECOND, and not poll_secs. What this polls is a row in a local
+            # SQLite file, which costs nothing; poll_secs was raised to five for the daemon,
+            # whose passes do real work, and inheriting that here would only make somebody
+            # watching `ffbox "prompt"` wait longer to be told what already happened.
+            time.sleep(1.0 if drive else min(1.0, float(self.cfg["poll_secs"])))
 
     def result_text(self, turn_id):
         """What the person who typed the prompt is waiting to read.
@@ -7084,13 +7201,10 @@ class Watcher:
             self._reject(row, str(exc))
             return False
 
-        cmd = ffdiscord_cmd(self.cfg) + args
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", timeout=180)
-            rc, out, err = proc.returncode, proc.stdout, proc.stderr
-        except (OSError, subprocess.SubprocessError) as exc:
-            rc, out, err = 1, "", f"{type(exc).__name__}: {exc}"
+        # THE SAME RUNNER THE READS GO THROUGH, so an acknowledgement costs one HTTPS PUT
+        # rather than a fork, an interpreter start and a PUT. This is the call the 👀 is
+        # waiting on and it is on the loop's own thread.
+        rc, out, err = ffdiscord_run(self.cfg, args)
 
         if rc != 0:
             return self._send_failed(row, (err or out or f"exit {rc}").strip()[:500])
@@ -7271,14 +7385,12 @@ class Watcher:
         cached = getattr(self, "_mention_ok", None)
         if cached is not None:
             return cached
-        ok = False
-        try:
-            proc = subprocess.run(ffdiscord_cmd(self.cfg) + ["post", "--help"],
-                                  capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", timeout=60)
-            ok = "--mention" in (proc.stdout or "")
-        except (OSError, subprocess.SubprocessError):
-            ok = False
+        # THROUGH ffdiscord_run, so the probe describes the copy that will actually be used.
+        # Asking a subprocess about --mention while the sends go in-process would report on
+        # the wrong file the moment those two resolve differently, which is the entire failure
+        # this probe exists to catch.
+        _, help_text, _ = ffdiscord_run(self.cfg, ["post", "--help"], timeout=60)
+        ok = "--mention" in (help_text or "")
         if not ok:
             log("WARNING: this ffdiscord has no --mention, so replies will name the asker "
                 "without notifying them. Update the plugin: sh registerAgents.sh")
@@ -7296,14 +7408,12 @@ class Watcher:
         cached = getattr(self, "_nonce_ok", None)
         if cached is not None:
             return cached
-        ok = False
-        try:
-            proc = subprocess.run(ffdiscord_cmd(self.cfg) + ["post", "--help"],
-                                  capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", timeout=60)
-            ok = "--nonce" in (proc.stdout or "")
-        except (OSError, subprocess.SubprocessError):
-            ok = False
+        # THROUGH ffdiscord_run, so the probe describes the copy that will actually be used.
+        # Asking a subprocess about --nonce while the sends go in-process would report on
+        # the wrong file the moment those two resolve differently, which is the entire failure
+        # this probe exists to catch.
+        _, help_text, _ = ffdiscord_run(self.cfg, ["post", "--help"], timeout=60)
+        ok = "--nonce" in (help_text or "")
         if not ok:
             log("WARNING: this ffdiscord has no --nonce, so a retried post could double-post. "
                 "Update the plugin: sh registerAgents.sh")
@@ -7507,6 +7617,11 @@ class Watcher:
     def once(self):
         """One full pass. This is what the offline suite drives.
 
+        SYNCHRONOUS, INCLUDING THE CATCHUP WORK, and that is the difference between this and
+        run(). A pass-at-a-time caller — the suite, `ffbox "prompt"` on a box with no daemon —
+        wants everything to have happened when it returns. The daemon moves the sweep onto a
+        worker instead, because there the cost is a message waiting.
+
         The trailing ingest + claim is design section 12's 'when the run finishes the scheduler
         checks for unclaimed messages and immediately queues the next turn' — three follow-ups
         posted while Claude was thinking become one queued turn, not three, and not zero.
@@ -7514,6 +7629,12 @@ class Watcher:
         self.recover()
         self.drain_events()
         self.claim_turns()
+        # NO EARLY send_pending() HERE, AND run() HAS ONE. The difference is not an oversight:
+        # this form runs the whole turn before it returns, so nothing is waiting on the
+        # acknowledgement and sending it early buys no latency at all — it only puts a 👀 on a
+        # message that is about to be answered in the same breath, and then takes it off again.
+        # clear_ack drops an unsent mark for exactly that reason. In the daemon a turn takes
+        # minutes and somebody IS waiting, which is why the call is there and not here.
         started = self.schedule()
         # AFTER scheduling, never before: a turn that could use a warm container should get the
         # one that is already there rather than wait behind the staging of another. keep_pool
@@ -7532,6 +7653,134 @@ class Watcher:
         self.send_pending()
         return started
 
+    # ======================================================================================
+    # the doorbell socket
+    # ======================================================================================
+    #
+    # A HINT, NEVER THE TRANSPORT. events.jsonl remains the whole protocol: the listener writes
+    # the line, and only then pokes this socket to say a line is there. Everything downstream
+    # still reads the file through the cursor, so a poke that is lost, doubled, late, or never
+    # sent at all costs latency and cannot cost an event — the same property the doorbell FILE
+    # was built for, extended to the wake on top of it. That is what lets the fallback sleep be
+    # five seconds instead of two.
+    #
+    # A DATAGRAM SOCKET rather than the two obvious alternatives. inotify would need ctypes and
+    # would not run on the macOS the offline suite is written on. A FIFO goes permanently
+    # readable at EOF when its last writer closes, which turns the select below into a hot
+    # loop, and the usual cure — holding a writer open on our own reader — is more trap than
+    # this is worth. A datagram has neither problem and needs no listener on the far end.
+
+    def doorbell_path(self):
+        """Beside events.jsonl, and derived from it rather than configured separately.
+
+        The listener and the daemon already have to agree on events_path or nothing works at
+        all, so deriving the socket from it adds no second thing to keep in step.
+        """
+        return os.path.join(os.path.dirname(os.path.abspath(self.cfg["events_path"])),
+                            "doorbell.sock")
+
+    def open_doorbell(self):
+        """Bind the wake socket. Returns it, or None to fall back to plain polling.
+
+        ONLY THE PROCESS HOLDING THE DAEMON LOCK MAY BIND. run() carries on after losing that
+        lock — it 'only follows along' — and a follower that bound would unlink the real
+        daemon's socket out from under it and then silently swallow every wake meant for it.
+        """
+        path = self.doorbell_path()
+        try:
+            os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+            if os.path.exists(path):
+                os.unlink(path)
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            sock.bind(path)
+            os.chmod(path, 0o600)
+            sock.setblocking(False)
+            log(f"doorbell socket at {path}; poll_secs={self.cfg['poll_secs']} is the fallback")
+            return sock
+        except OSError as exc:
+            log(f"WARNING: could not bind the doorbell socket at {path} ({exc}); "
+                f"falling back to polling every {self.cfg['poll_secs']}s")
+            return None
+
+    def wait_for_doorbell(self, secs):
+        """Sleep for `secs`, cut short by a poke from the listener."""
+        if self._doorbell is None:
+            time.sleep(secs)
+            return False
+        try:
+            ready = select.select([self._doorbell], [], [], secs)[0]
+        except (OSError, ValueError):
+            time.sleep(secs)
+            return False
+        if not ready:
+            return False
+        # COALESCE. Five messages posted together are one pass, not five — and a datagram left
+        # sitting in the buffer would make the next select return instantly, which is a loop
+        # that spins at full speed for as long as the backlog lasts.
+        try:
+            while True:
+                self._doorbell.recv(64)
+        except (BlockingIOError, OSError):
+            pass
+        return True
+
+    def close_doorbell(self):
+        if self._doorbell is None:
+            return
+        try:
+            self._doorbell.close()
+            os.unlink(self.doorbell_path())
+        except OSError:
+            pass
+        self._doorbell = None
+
+    # ======================================================================================
+    # the catchup worker
+    # ======================================================================================
+
+    def catchup_pass(self):
+        """The sweep and the publication reconcile — the two slow things on the catchup tick.
+
+        ON A WORKER THREAD IN THE DAEMON, because between them they are seconds to minutes of
+        network on a loop whose job is to answer within one. Measured on the build server
+        2026-09-02: sixteen sequential CLI calls for two watched channels and thirteen threads,
+        15.0s, every catchup_secs — and a Discord message that landed inside that window waited
+        the whole thing out before anything even read the doorbell.
+
+        Db already hands out a connection per thread over WAL, which is what launches have used
+        since they existed, so this is the pattern the daemon already runs on rather than a new
+        one. reconcile_publications takes each conversation's own lock, and takes it precisely
+        because it has always raced the launch threads.
+
+        WHAT THE THREAD COSTS: a sweep that ingests genuinely new messages can now be halfway
+        through when the loop's claim_turns runs, so a conversation that gained two of them may
+        get a turn for the first and batch the second into the next one. That is the same
+        outcome as the second message arriving a second later, which the follow-up path handles
+        every day. It is reachable only for messages that no doorbell announced — a listener
+        outage — because everything else is already ingested and deduped by discord_id.
+        """
+        self.sweep()
+        self.reconcile_publications()
+
+    def start_catchup(self):
+        """Kick off a catchup pass if one is not already running. Returns True if it started.
+
+        ONE AT A TIME. A sweep that is slower than catchup_secs must not have a second one
+        stacked behind it; the tick is 'make sure this has happened recently', not a queue.
+        """
+        if self._catchup is not None and self._catchup.is_alive():
+            return False
+
+        def guarded():
+            try:
+                self.catchup_pass()
+            except Exception as exc:  # noqa: BLE001 — a worker must never take the daemon down
+                log(f"ERROR in catchup: {type(exc).__name__}: {exc}")
+
+        self._catchup = threading.Thread(target=guarded, name="ffwatch-catchup", daemon=True)
+        self._catchup.start()
+        return True
+
     def run(self):
         log(f"ffwatch starting (pid {os.getpid()}) state={self.state_dir} "
             f"dry_run={self.dry_run}")
@@ -7539,6 +7788,7 @@ class Watcher:
         # drive the pipeline itself or just watch: two schedulers on one state directory would
         # contend for every conversation lock, and the loser would look hung.
         self._pidlock = open(self.daemon_pidfile(), "a+")
+        owns_lock = True
         try:
             fcntl.flock(self._pidlock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._pidlock.seek(0)
@@ -7546,45 +7796,58 @@ class Watcher:
             self._pidlock.write(f"{os.getpid()}\n")
             self._pidlock.flush()
         except OSError:
+            owns_lock = False
             log("WARNING: another ffwatch holds the daemon lock; this one only follows along")
+        if owns_lock:
+            self._doorbell = self.open_doorbell()
+        # THE WORKER IS LIVE FROM HERE, which is what routes a `catchup` doorbell off the loop
+        # as well: ingest_event asks for a catchup rather than sweeping inline once this is set.
+        self._catchup_async = True
         self.recover()
         last_sweep = 0.0
-        while True:
-            try:
-                self.drain_events()
-                if time.time() - last_sweep >= int(self.cfg["catchup_secs"]):
-                    # No doorbell for this one. player_mention and lothsahn_directive have no
-                    # cursor, so a mention arriving during listener downtime is otherwise lost.
-                    self.sweep()
-                    # On the catchup tick and not every pass: what it repairs is a branch that
-                    # has been sitting there since a run finished, so nothing is gained by
-                    # asking every two seconds, and each conversation it does consider costs a
-                    # fetch or an API call.
-                    self.reconcile_publications()
-                    last_sweep = time.time()
-                self.claim_turns()
-                self.schedule()
-                # AFTER scheduling, never before: a turn that could use a warm container should
-                # get the one already there rather than wait behind the staging of another.
-                #
-                # Here AND in once(), because this loop does not call once() — it drives the
-                # same steps itself. A hook added to only one of them reaches half the callers,
-                # which is exactly what happened the first time this landed: the keeper was in
-                # once(), the daemon ran run(), and the live box staged nothing at all while
-                # reporting "0 staged, 1 wanted". test_the_daemon_loop_keeps_the_pool covers it.
-                self.keep_pool()
-                # Every pass, so the web page shows the agent talking as it talks rather than
-                # in one lump when the container exits. finish_run indexes the same transcript
-                # once more at the end; both are idempotent by uuid.
-                self.index_live_runs()
-                self.send_pending()
-                self.live_launches()
-            except KeyboardInterrupt:
-                log("stopped by user")
-                return 0
-            except Exception as exc:  # noqa: BLE001 — a daemon must survive anything transient
-                log(f"ERROR in pass: {type(exc).__name__}: {exc}")
-            time.sleep(int(self.cfg["poll_secs"]))
+        try:
+            while True:
+                try:
+                    self.drain_events()
+                    if (self._catchup_wanted
+                            or time.time() - last_sweep >= int(self.cfg["catchup_secs"])):
+                        # No doorbell for this one. player_mention and lothsahn_directive have
+                        # no cursor, so a mention arriving during listener downtime is otherwise
+                        # lost. It runs on a worker; see catchup_pass.
+                        if self.start_catchup():
+                            self._catchup_wanted = False
+                            last_sweep = time.time()
+                    self.claim_turns()
+                    # BEFORE THE EXPENSIVE HALF, for the reason spelled out in once(): the
+                    # acknowledgement create_turn just queued is worth nothing late, and
+                    # everything below this line can block.
+                    self.send_pending()
+                    self.schedule()
+                    # AFTER scheduling, never before: a turn that could use a warm container
+                    # should get the one already there rather than wait behind the staging of
+                    # another.
+                    #
+                    # Here AND in once(), because this loop does not call once() — it drives the
+                    # same steps itself. A hook added to only one of them reaches half the
+                    # callers, which is exactly what happened the first time this landed: the
+                    # keeper was in once(), the daemon ran run(), and the live box staged
+                    # nothing at all while reporting "0 staged, 1 wanted".
+                    # test_the_daemon_loop_keeps_the_pool covers it.
+                    self.keep_pool()
+                    # Every pass, so the web page shows the agent talking as it talks rather
+                    # than in one lump when the container exits. finish_run indexes the same
+                    # transcript once more at the end; both are idempotent by uuid.
+                    self.index_live_runs()
+                    self.send_pending()
+                    self.live_launches()
+                except KeyboardInterrupt:
+                    log("stopped by user")
+                    return 0
+                except Exception as exc:  # noqa: BLE001 — a daemon must survive anything
+                    log(f"ERROR in pass: {type(exc).__name__}: {exc}")
+                self.wait_for_doorbell(float(self.cfg["poll_secs"]))
+        finally:
+            self.close_doorbell()
 
     # ======================================================================================
     # drain and resume  (design/self_update_design.txt section 4)
