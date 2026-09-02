@@ -110,6 +110,27 @@ case "$TAG" in
 esac
 
 mkdir -p "$OUT" || { echo "ffverify: cannot create $OUT" >&2; exit 2; }
+# THE HOST HAS TO BE ABLE TO DELETE THIS AFTERWARDS, and it cannot unless we say so here.
+#
+# This runs inside the container as its own mapped subuid (1411719 on the build box), and
+# `mkdir -p` takes the mode from the umask: 0755, plus the setgid the parent /ffbox/out carries,
+# which gives drwxr-sr-x <subuid>:ffbox-container. The group gets r-x and NO WRITE -- and
+# unlinking a file needs write on the DIRECTORY holding it, not on the file. So ffwatch, which
+# runs as uid 1015 and is in that group, cannot empty this directory; _rmtree_spool then fails
+# on the parent with "Directory not empty" and the whole spool leaks.
+#
+# IT CANNOT BE FIXED FROM THE HOST SIDE EITHER. chmod is the owner's privilege and 1015 does not
+# own a directory belonging to 1411719, so a repair there would fail silently. The WRITER opens
+# the mode. Same shape as share_transcript_now in discord-task.sh, and for the same reason.
+#
+# Found on the live box on 2026-09-02: three spools left behind holding nothing but this
+# directory -- 13c6506a, 2819f072 and 9c82d7c0 -- after the transcripts inside them had been
+# swept home correctly. The three verification files are 0644 and readable; it is the directory
+# bit that traps them.
+#
+# `|| :` because a caller pointing --out somewhere it does not own is not a reason to fail a
+# verification run that is otherwise fine.
+chmod g+w "$OUT" 2>/dev/null || :
 RESULTS="$OUT/TestResults-$TAG.xml"
 LOG="$OUT/unity-$TAG.log"
 JSON="$OUT/verification-$TAG.json"
