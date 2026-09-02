@@ -32,9 +32,11 @@ ffghr_mirror_ready() {
 
 # ffghr_mirror_fetch WANT -- bring the mirror up to at least WANT, if it is not there already.
 #
-# NEVER FATAL, and the reason matters: while github.com is still on the egress allowlist a job that
-# cannot get its commit here simply fetches it from GitHub as it always did. This is additive until
-# that entry is removed, so every failure path is "leave it to GitHub" rather than "fail the job".
+# NEVER FATAL, but do not read that as a fallback -- it stopped being one when github.com left the
+# egress allowlist on 2026-08-31. The rewrite in entrypoint-ci.sh is unconditional and applies at
+# fetch time, so a mirror that answers "not our ref" is terminal for that job; there is nowhere
+# else for it to look. What the non-fatal paths buy now is a clear failure in the job's own log
+# rather than a supervisor that stops serving requests, which is worth having but is not safety.
 ffghr_mirror_fetch() {
     _want=${1:-}
     ffghr_mirror_ready || { echo "no mirror at ${MIRROR_DIR:-<unset>}"; return 1; }
@@ -63,8 +65,19 @@ ffghr_mirror_fetch() {
         # refs/remotes/origin -- so refs/heads/* mirrored master alone and every job on develop or
         # a feature branch quietly fell back to github.com. It showed up in the git daemon log as
         # "not our ref e03e807...", which was develop HEAD, while the jobs still passed.
+        #
+        # PULL REFS TOO, and this is not optional now that github.com is off the allowlist. A
+        # pull_request run checks out refs/pull/N/merge -- a commit GitHub synthesizes by merging
+        # the head into the base, which lives ONLY in GitHub's copy and is reachable from no
+        # branch, so no refspec over refs/heads/* can ever drag it in. PR 496 died on exactly
+        # that: "upload-pack: not our ref 00341489e", our own git daemon answering honestly about
+        # a merge commit it had never been offered. /head is here as well because a fork's branch
+        # is not under our refs/heads at all, so it is the only name that commit has.
         timeout "$FFGHR_MIRROR_FETCH_TIMEOUT" \
-            git -C "$_repo" fetch --quiet --prune origin '+refs/heads/*:refs/heads/*' 2>/dev/null \
+            git -C "$_repo" fetch --quiet --prune origin \
+                '+refs/heads/*:refs/heads/*' \
+                '+refs/pull/*/head:refs/pull/*/head' \
+                '+refs/pull/*/merge:refs/pull/*/merge' 2>/dev/null \
             || { echo "mirror fetch failed"; return 1; }
 
         if [ -n "$_want" ] && ! git -C "$_repo" cat-file -e "${_want}^{commit}" 2>/dev/null; then
