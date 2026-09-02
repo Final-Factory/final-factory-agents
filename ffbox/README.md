@@ -57,13 +57,15 @@ Everything ffbox owns on a machine lives in one directory:
 
 ```
 ~/.config/ffbox/secrets.env        tokens, the Unity account
-~/.config/ffbox/config.json        EVERY setting this box has, in five parts: the pipeline at the
+~/.config/ffbox/config.json        EVERY setting this box has, in six parts: the pipeline at the
                                    top level (watch, rate_limits, web_host/web_port, and
                                    max_concurrent_runs, the ceiling on containers that BOTH lanes
                                    count against); "container" for what is true of a container
                                    whichever lane started it (workspace_size, memory,
-                                   pids_limit); "ffagent" for what governs a run (base_ref, the
-                                   three clocks, pool); "githubrunner" for the CI runners, which
+                                   pids_limit); "ffagent" and "ffdev", one per AGENT CLASS, for
+                                   what governs a run of that kind (base_ref, the three clocks,
+                                   pool) — independent of each other, no inheritance either way;
+                                   "githubrunner" for the CI runners, which
                                    kept their own file until 2026-09-01; and "discord" for the
                                    bot token, server, channel aliases, mentions and trust, which
                                    kept its own file until the same day. The "_help" block in it
@@ -1297,8 +1299,13 @@ path instead of being avoided. It is affordable because the machine ids are per 
 licence sees a small recycled set of machines rather than one per container.
 
 The keeper checks `MemAvailable` before staging and keeps back enough for the cold launches the
-ceiling still allows, and a cold launch that is short of memory **evicts** a staged container
-rather than failing: the pool must never be why a real turn cannot start. On top of that every
+ceiling still allows. **Nothing is evicted.** A cold launch that cannot get a place waits for one:
+`schedule()` leaves the turn queued and tries again next pass, and it starts when a run finishes
+and gives its place back. Until 2026-09-01 a launch that was short of memory destroyed a staged
+container to make room for itself, which was a trade inside one lane while there was only one
+pool; with two agent classes it is one worker type taking another's warm container, and the turn
+it is taken from then pays the forty seconds it was staged to save. What bounds containers is
+`max_concurrent_runs`, which every class and CI count against. On top of that every
 container now runs under a cgroup: `container.memory` and `container.pids_limit`, the same
 numbers CI has had all along and the agent lane had none of until 2026-09-01. Note
 that the workspace tmpfs is one Docker creates, so it is NOT charged to `/dev/shm` — with a
@@ -1323,11 +1330,55 @@ happened on 2026-09-01: the drain deleted a live run's spool directory, ffbox fo
 or output where it had left them, and a turn that finished and verified clean was reported as
 "the run failed".
 
-**The pool is never a dependency.** An empty pool, a container staged on another branch, a run
-with mounts a staged container does not have, `--direct`, and `pool.idle: 0` all fall through
-to a cold launch, which is exactly what this did before.
+**The pool is never a dependency.** An empty pool, a container staged on another branch or of
+another agent class, a run with mounts a staged container does not have, `--direct`, and
+`pool.idle: 0` all fall through to a cold launch, which is exactly what this did before.
 
 Design: `design/ffbox_idle_agents_design.txt`.
+
+### Agent classes: ffagent and ffdev
+
+There are two kinds of agent container, and a conversation picks one when it OPENS.
+
+```json
+"ffagent": { "base_ref": "master", "agent_secs": 1800, "pool": {"idle": 1, "max": -1}, … }
+"ffdev":   { "base_ref": "master", "agent_secs": 1800, "pool": {"idle": 1, "max": 3},  … }
+```
+
+Same keys, same meanings, one section each, and **no inheritance between them**: a box with no
+`ffdev` block gets ffwatch's built-in ffdev defaults rather than whatever `ffagent` is set to,
+and editing one class's clocks does not move the other's. They ship with the same numbers except
+the pool and are expected to diverge — ffdev onto `develop`, or with a longer agent clock — which
+is the whole reason the two are written out separately rather than one deriving from the other.
+
+Everything about a run is otherwise identical: same image, same task script, same capability set,
+same harvest, same one-prompt-per-container rule. What a class gets is a **pool of its own** and a
+**ceiling of its own**. `pool.max` caps that class's containers, runs and staged ones together;
+`max_concurrent_runs` still caps the box, and every class plus CI counts against it. Neither class
+can take the other's warm container — `pool_claim_for` matches on class as well as branch, and a
+miss falls through to a cold launch like every other miss.
+
+```bash
+python3 ffbox/ffwatch.py pool           # one block per class
+python3 ffbox/ffwatch.py pool stage ffdev
+```
+
+**Where the choice is made.** A dropdown on the web page's new-conversation prompt box, or
+`ffwatch submit --agent ffdev` at a terminal. It is written on the conversation and every later
+turn of that conversation reads it back, so there is deliberately no dropdown on the reply box
+and `--agent` is ignored with a note under `--conversation`. A conversation is pinned to a base
+sha, resumes one session transcript and owns one branch; moving its class mid-flight would change
+the clocks that session has been running under and, once the classes differ on `base_ref`, the
+tree its transcript has been citing `file.cs:214` positions against.
+
+Discord conversations are always `ffagent` — the class is chosen at the local ingress, and a
+thread has nobody to choose.
+
+Every agent container carries `ffbox.agent.class`, set at creation and surviving the rename at
+dispatch, and that label is what the two pools count and claim by. A container with no such label
+is ffagent, which is what everything staged before this existed was.
+
+Design: `design/ffdev_agent_class_design.txt`.
 
 ### The egress filter
 

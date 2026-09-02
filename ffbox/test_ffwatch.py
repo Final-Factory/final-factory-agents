@@ -6787,50 +6787,342 @@ def test_a_verification_that_never_ran_does_not_read_as_one_that_failed():
 
 
 
-def test_the_pool_only_stages_what_it_has_room_for():
-    """The admission rule, and the one that keeps it from crowding out the runs it serves.
+def test_an_ffdev_turn_runs_under_ffdevs_numbers():
+    """End to end: a conversation opened as ffdev reaches ffbox as ffdev, on ffdev's clocks.
 
-    Two conditions: fewer warm containers than asked for, AND fewer containers altogether than
-    max_concurrent_runs + idle_agents. The second is the whole reason the pool is safe to turn
-    on -- at 2 and 1 this box holds at most three agent containers, and the third only ever
-    exists because nothing is using the first two.
+    This is the join between the four halves -- the column, the config block, the ffbox argv and
+    job.json -- and it is the one that catches a class resolved in launch() but not threaded into
+    build_job(), which is where job["limits"] and the rebase target live.
+    """
+    print("ffdev: a turn runs under its own numbers")
+    case = Case("ffdevrun", base_fixture(), verdict="ok")
+    w = case.watcher
+    # Numbers nothing else on the box uses, so a value that leaked from the flat config or from
+    # ffagent's block is unmistakable rather than coincidentally equal.
+    w.cfg["agent_classes"]["ffdev"].update({"agent_secs": 4242, "warmup_secs": 4343,
+                                            "kill_grace_secs": 44, "base_ref": "develop"})
+
+    w.submit("implement the thing", kind="web", agent_class="ffdev")
+    w.schedule()
+    w.join_launches(120)
+
+    run = case.rows("SELECT * FROM run")[0]
+    run_dir = os.path.join(w.conv_dir(1), "runs", run["ffbox_run_id"])
+    argv = json.load(open(os.path.join(run_dir, "ffbox-argv.json"), encoding="utf-8"))
+    job = json.load(open(os.path.join(run_dir, "job.json"), encoding="utf-8"))
+
+    check("ffbox is told which class this container is",
+          argv[argv.index("--agent-class") + 1] == "ffdev", argv)
+    check("and gets ffdev's agent clock, not ffagent's",
+          argv[argv.index("--agent-timeout") + 1] == "4242", argv)
+    check("and ffdev's warm-up clock",
+          argv[argv.index("--warmup-timeout") + 1] == "4343", argv)
+    check("and ffdev's kill grace",
+          argv[argv.index("--kill-grace") + 1] == "44", argv)
+    # verify_secs is NOT per class: it bounds the harness's own verification after the agent has
+    # exited, which is the same Unity suite whichever container ran the turn.
+    check("but the verify clock is still the box's",
+          argv[argv.index("--verify-timeout") + 1] == str(w.cfg["verify_secs"]), argv)
+    check("and it started on ffdev's base branch",
+          argv[argv.index("--ref") + 1] == "develop", argv)
+
+    # job.json is what a run directory is read back from months later. Its limits used to come
+    # from the flat config, which would make an ffdev run RECORD ffagent's numbers while running
+    # under its own -- a record that disagrees with what happened.
+    check("job.json records the class that produced it",
+          job["turn"]["agent_class"] == "ffdev", job["turn"])
+    check("and the clocks it actually ran under",
+          job["limits"] == {"agent_secs": 4242, "warmup_secs": 4343,
+                            "kill_grace_secs": 44}, job["limits"])
+
+    # An ffagent conversation on the same box is unaffected by any of it.
+    w.submit("an ordinary question", kind="web")
+    w.schedule()
+    w.join_launches(120)
+    other = [r for r in case.rows("SELECT * FROM run ORDER BY id")
+             if r["ffbox_run_id"] != run["ffbox_run_id"]][0]
+    argv2 = json.load(open(os.path.join(w.conv_dir(2), "runs", other["ffbox_run_id"],
+                                        "ffbox-argv.json"), encoding="utf-8"))
+    check("an ffagent turn on the same box is unaffected",
+          argv2[argv2.index("--agent-class") + 1] == "ffagent"
+          and argv2[argv2.index("--agent-timeout") + 1] == str(
+              w.cfg["agent_classes"]["ffagent"]["agent_secs"]), argv2)
+
+
+def test_every_agent_container_carries_its_class():
+    """The label is what lets the two pools be counted and claimed apart, so it has to be on
+    every agent container without exception -- staged and cold.
+
+    IN THE SHARED ARGUMENT LIST rather than at the two `docker run` sites, because the value is
+    the same for both. ffbox.workload is genuinely different for the two (pool / agent) and
+    stays where it is; a label a caller can forget on one path is how the two pools would start
+    miscounting each other.
+    """
+    print("ffbox: the class label")
+    src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    run = src.partition("RUN_ARGS=(")[2].partition(")\n")[0]
+    check("the class label is in the shared argument list",
+          '--label "ffbox.agent.class=$AGENT_CLASS"' in run, run[:400])
+    check("so it cannot be on one container and off the other",
+          src.count('ffbox.agent.class=') == 1, None)
+    # The two workload values are per-site and must NOT have been folded in with it.
+    check("the workload label is still per-site, because it differs",
+          '$FFBOX_WORKLOAD_LABEL=pool' in src and '$FFBOX_WORKLOAD_LABEL=agent' in src, None)
+
+    check("--agent-class is parsed", "--agent-class)" in src, None)
+    check("and defaults to ffagent", "AGENT_CLASS=ffagent" in src, None)
+    check("and is documented in --help", "--agent-class NAME" in src, None)
+
+    # A name outside the set would become a label no pool filters on: the container would be
+    # built, hold a workspace and a Unity seat, and never be claimed by anything.
+    check("an unknown class is refused before anything is created",
+          'is not one of: $AGENT_CLASSES' in src
+          and src.index("AGENT_CLASSES") < src.index("RUN_ARGS=("), None)
+
+    # The names are mirrored in three files because neither ffbox (shell) nor ffweb (which
+    # shells out) can import ffwatch. They have to agree.
+    web = open(os.path.join(HERE, "ffweb.py"), encoding="utf-8").read()
+    check("ffbox names the same classes ffwatch does",
+          'AGENT_CLASSES="%s"' % " ".join(ffwatch.AGENT_CLASSES) in src, None)
+    check("and so does ffweb",
+          "AGENT_CLASSES = %r" % (ffwatch.AGENT_CLASSES,) in web
+          or 'AGENT_CLASSES = ("ffagent", "ffdev")' in web, None)
+
+
+def test_the_two_agent_classes_are_configured_independently():
+    """No inheritance between the classes, in either direction.
+
+    They ship with the same numbers and are expected to diverge, so a config file that sets one
+    must not move the other, and a file that omits ffdev entirely must give ffdev ITS OWN
+    defaults rather than whatever ffagent happens to be set to. A shared derivation would have
+    to be unpicked the first time somebody puts ffdev on develop.
+    """
+    print("config: the classes are independent")
+    root = os.path.join(TMPROOT, "classcfg")
+    os.makedirs(root, exist_ok=True)
+    path = os.path.join(root, "config.json")
+
+    def load(doc):
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh)
+        saved, ffwatch.FFBOX_CONFIG = ffwatch.FFBOX_CONFIG, path
+        try:
+            return ffwatch.load_config()
+        finally:
+            ffwatch.FFBOX_CONFIG = saved
+
+    # ffagent configured hard, no ffdev section at all.
+    cfg = load({"max_concurrent_runs": 6,
+                "ffagent": {"agent_secs": 999, "base_ref": "develop",
+                            "pool": {"idle": 2, "max": -1}}})
+    check("ffdev does not inherit ffagent's clocks",
+          ffwatch.class_cfg(cfg, "ffdev")["agent_secs"] == 1800, None)
+    check("nor its base branch",
+          ffwatch.class_cfg(cfg, "ffdev")["base_ref"] == "master", None)
+    check("and gets its own pool defaults, 1 idle and a ceiling of 3",
+          (ffwatch.class_cfg(cfg, "ffdev")["idle_agents"],
+           ffwatch.class_cfg(cfg, "ffdev")["agent_pool_max"]) == (1, 3), None)
+    check("ffagent still reads what the file said",
+          ffwatch.class_cfg(cfg, "ffagent")["agent_secs"] == 999, None)
+    # -1 is "no ceiling of my own", which is the box's.
+    check("and a negative max is the box's ceiling",
+          ffwatch.class_cfg(cfg, "ffagent")["agent_pool_max"] == 6, None)
+    # The flat keys still mean ffagent's, for every reader that predates classes.
+    check("the flat keys still mean ffagent's", cfg["agent_secs"] == 999, None)
+
+    # ffdev configured, ffagent left alone -- the other direction.
+    cfg = load({"max_concurrent_runs": 6,
+                "ffdev": {"base_ref": "develop", "agent_secs": 3600,
+                          "pool": {"idle": -5, "max": "two"}}})
+    check("ffdev reads its own section",
+          ffwatch.class_cfg(cfg, "ffdev")["base_ref"] == "develop", None)
+    check("and ffagent is untouched by it",
+          ffwatch.class_cfg(cfg, "ffagent")["base_ref"] == "master", None)
+    # The coercions run per class, on that class's own defaults.
+    check("a negative idle is off, not a negative number of containers",
+          ffwatch.class_cfg(cfg, "ffdev")["idle_agents"] == 0, None)
+    check("and a max that is not a number falls to THAT class's default",
+          ffwatch.class_cfg(cfg, "ffdev")["agent_pool_max"] == 3, None)
+
+    # An unknown name is a bug upstream, not an operator's typo: every caller gets its name from
+    # a validated argument, a validated form field or a NOT NULL column. Falling back would hide
+    # it and run the turn in the wrong kind of container.
+    raised = False
+    try:
+        ffwatch.class_cfg(cfg, "ffdevv")
+    except ValueError:
+        raised = True
+    check("an unknown class raises rather than falling back", raised, None)
+    check("and None is the default class",
+          ffwatch.class_cfg(cfg) is ffwatch.class_cfg(cfg, "ffagent"), None)
+
+
+def test_each_class_counts_only_its_own_containers():
+    """agent_workload_count splits the two classes and ignores CI.
+
+    Until classes there was one count, "everything that is not ci". With two of them that number
+    is wrong for BOTH -- each would see the other's containers as its own and throttle at half
+    its ceiling or less.
+    """
+    print("config: per-class container counts")
+    case = Case("classcount", base_fixture())
+    w = case.watcher
+    w.cfg["agent_classes"]["ffagent"]["agent_pool_max"] = 4
+    w.cfg["agent_classes"]["ffdev"]["agent_pool_max"] = 3
+
+    rows = [("agent", "ffagent"), ("pool", "ffagent"), ("agent", "ffdev"),
+            ("ci", ""), ("ci", ""),
+            # No class label: staged before classes existed, and ffagent's by construction.
+            ("pool", "")]
+    out = "".join(f"{w}\t{c}\n" for w, c in rows)
+
+    class _Proc:
+        returncode = 0
+        stdout = out
+    w_run = lambda *a, **k: _Proc()
+    saved = ffwatch.subprocess.run
+    ffwatch.subprocess.run = w_run
+    try:
+        check("ffagent counts its runs, its staged ones and the unlabelled one",
+              w.agent_workload_count("ffagent") == 3, None)
+        check("ffdev counts only its own", w.agent_workload_count("ffdev") == 1, None)
+        check("neither counts CI",
+              w.agent_workload_count("ffagent") + w.agent_workload_count("ffdev")
+              == len(rows) - 2, None)
+        check("and the room left is that class's ceiling minus its own",
+              (w.agent_room("ffagent"), w.agent_room("ffdev")) == (1, 2), None)
+    finally:
+        ffwatch.subprocess.run = saved
+
+    # A daemon that will not answer counts as FULL for the class that asked, on that class's own
+    # ceiling rather than the flat one: the caller is about to start a container, and the honest
+    # answer when we cannot count is "assume there is no room".
+    def _boom(*a, **k):
+        raise OSError("no daemon")
+    ffwatch.subprocess.run = _boom
+    try:
+        check("an unreachable daemon reads as that class being full",
+              (w.agent_room("ffagent"), w.agent_room("ffdev")) == (0, 0), None)
+    finally:
+        ffwatch.subprocess.run = saved
+
+
+def test_a_conversations_class_is_settled_when_it_opens():
+    """Chosen by the opening turn, read on every turn afterwards, and never moved.
+
+    A conversation is pinned to a base sha, resumes one session transcript and owns one branch.
+    Changing its class mid-flight would change the clocks that session has been running under
+    and, once the classes differ on base_ref, the tree its transcript has been citing file:line
+    positions against.
+    """
+    print("config: a conversation remembers its class")
+    case = Case("classconv", base_fixture())
+    w = case.watcher
+
+    w.submit("a dev question", kind="web", agent_class="ffdev")
+    w.submit("an ordinary question", kind="web")
+    dev = w.db.one("SELECT * FROM conversation WHERE title LIKE 'a dev%'")
+    plain = w.db.one("SELECT * FROM conversation WHERE title LIKE 'an ordinary%'")
+    check("the class is written on the conversation", dev["agent_class"] == "ffdev", None)
+    check("and the default is ffagent", plain["agent_class"] == "ffagent", None)
+    check("the reader agrees", w.conversation_class(dev) == "ffdev", None)
+
+    # A follow-up takes no class at all -- there is nothing to decide -- and the second turn of
+    # the conversation reads the same one the first did.
+    w.finish_turn(w.db.scalar("SELECT id FROM turn WHERE conversation_id=?", (dev["id"],), 0),
+                  "done")
+    w.follow_up(dev["id"], "and the other belt")
+    again = w.db.one("SELECT * FROM conversation WHERE id=?", (dev["id"],))
+    check("a follow-up does not move it", again["agent_class"] == "ffdev", None)
+
+    # upsert_conversation is shared with the Discord ingress, and its UPDATE branch must not
+    # touch the column: every later message in a thread upserts, and a class that could be moved
+    # by one is not settled.
+    w.upsert_conversation(dev["thread_id"], kind="web", channel_id=None, title="x",
+                          agent_class="ffagent")
+    check("and neither does a later upsert claiming otherwise",
+          w.db.one("SELECT * FROM conversation WHERE id=?",
+                   (dev["id"],))["agent_class"] == "ffdev", None)
+
+    # The writer refuses a name that is not a class, whatever route it came in by.
+    raised = False
+    try:
+        w.submit("nope", kind="web", agent_class="ffdevv")
+    except ValueError:
+        raised = True
+    check("submit refuses an unknown class", raised, None)
+
+    # A row read before the migration ran has no column at all; that reads as ffagent, which is
+    # what a database predating classes actually had.
+    check("an absent column reads as ffagent",
+          w.conversation_class({"nothing": 1}) == "ffagent", None)
+
+
+def test_the_pool_only_stages_what_it_has_room_for():
+    """The admission rule, per class, and the one that keeps a pool from crowding out the runs
+    it serves.
+
+    Two conditions for each class: fewer warm containers of THAT class than it asked for, AND
+    room under both the box's ceiling and its own. The classes do not arbitrate: there is no
+    round-robin and no shared per-pass budget, so a full ffagent pool does not stop ffdev being
+    staged and neither waits on the other.
     """
     print("pool: admission")
     case = Case("pooladmit", base_fixture())
     w = case.watcher
-    w.cfg["idle_agents"] = 1
-    w.cfg["max_concurrent_runs"] = 2
+    w.cfg["max_concurrent_runs"] = 4
+    w.cfg["agent_classes"]["ffagent"].update({"idle_agents": 1, "agent_pool_max": 4})
+    # ffdev's pool is OFF for the first half, so this reads as the one-class behaviour it
+    # replaces and the per-class assertions below are not confounded by a second pool filling.
+    w.cfg["agent_classes"]["ffdev"].update({"idle_agents": 0, "agent_pool_max": 3})
 
     staged = []
-    w.pool_stage = lambda: (staged.append(len(staged)) or f"p{len(staged)}")
+    w.pool_stage = lambda cls=None: (staged.append(cls) or f"p{len(staged)}")
     w.pool_has_room = lambda for_containers=1: True
     w.pool_reap = lambda: 0
 
-    containers, running = [], [0]
+    containers = []
     w.pool_containers = lambda: list(containers)
-    w.running_counts = lambda: running[0]
 
-    check("an empty pool stages one", w.keep_pool() is not None, staged)
-    containers.append({"name": "c1", "id": "a1", "branch": "master"})
-    check("and stops at idle_agents", w.keep_pool() is None, staged)
+    check("an empty pool stages one", w.keep_pool() == ["p1"], staged)
+    check("and it is the class that asked for it", staged == ["ffagent"], staged)
+    containers.append({"name": "c1", "id": "a1", "branch": "master", "class": "ffagent"})
+    check("and stops at that class's idle", w.keep_pool() == [], staged)
 
-    # One warm container taken by a turn: the pool is short again, and there is room for a
-    # replacement because 1 container + 1 run is still under 2 + 1.
+    # One warm container taken by a turn: that class is short again.
     os.makedirs(os.path.dirname(w.pool_owner_path("a1")), exist_ok=True)
     open(w.pool_owner_path("a1"), "w").close()
-    running[0] = 1
-    check("a claimed container makes the pool short, so another is staged",
-          w.keep_pool() is not None, staged)
+    check("a claimed container makes its own pool short, so another is staged",
+          w.keep_pool() == ["p2"], staged)
+    containers.append({"name": "c2", "id": "a2", "branch": "master", "class": "ffagent"})
 
-    # At the ceiling: two runs in flight and one container is 3, which is not less than 3.
-    containers.append({"name": "c2", "id": "a2", "branch": "master"})
-    running[0] = 2
-    check("but never past max_concurrent_runs + idle_agents", w.keep_pool() is None, staged)
+    # THE CLASS CEILING, not the box's: agent_pool_max 2 with two ffagent containers up.
+    w.cfg["agent_classes"]["ffagent"]["agent_pool_max"] = 2
+    check("but never past that class's own pool.max", w.keep_pool() == [], staged)
 
-    running[0] = 0
+    # TWO CLASSES AT ONCE, and the point of the whole change: ffagent is at its ceiling and
+    # ffdev is not, so ffdev is staged and ffagent is not. No round-robin decided this -- the
+    # two were simply asked separately.
+    w.cfg["agent_classes"]["ffdev"]["idle_agents"] = 1
+    check("a class at its ceiling does not stop the other being staged",
+          w.keep_pool() == ["p3"], staged)
+    check("and the one that was staged is the class with room", staged[-1] == "ffdev", staged)
+    containers.append({"name": "c3", "id": "b1", "branch": "master", "class": "ffdev"})
+
+    # A CLASS COUNTS ITS OWN CONTAINERS ONLY. ffdev has one warm and wants one, so it stops --
+    # and it must not be topped up on the strength of ffagent's two sitting beside it, nor
+    # starved by them.
+    check("each class counts only its own", w.keep_pool() == [], staged)
+
+    # THE BOX'S CEILING is the one thing they share.
+    w.cfg["agent_classes"]["ffagent"]["agent_pool_max"] = 4
+    w.cfg["agent_classes"]["ffdev"]["idle_agents"] = 3
+    w.workload_room = lambda: 0
+    check("and the box's ceiling stops both of them", w.keep_pool() == [], staged)
+
+    w.workload_room = lambda: 4
     w.pool_has_room = lambda for_containers=1: False
-    containers[:] = []
-    check("and never when the memory is not there", w.keep_pool() is None, staged)
+    check("and so does the memory the runs need", w.keep_pool() == [], staged)
 
 
 def test_the_daemon_loop_keeps_the_pool():
@@ -6956,36 +7248,43 @@ def test_a_crashed_pooled_run_gives_its_transcript_back():
           turn["status"] == "queued", dict(turn))
 
 
-def test_a_cold_launch_short_of_memory_evicts_a_staged_container():
-    """A staged container must never be the reason a real turn cannot start.
+def test_a_launch_never_destroys_a_warm_container():
+    """A turn that cannot get a place QUEUES. It does not take somebody else's warm container.
 
-    It exists to make turns faster, and a turn that fails to launch is infinitely slower than
-    one that launches cold. So the squeeze takes the thing that is only waiting in case somebody
-    asks something — one of them, not the whole pool, because one is what makes room for one.
+    Until 2026-09-01 launch() did the opposite: when pool_has_room said memory was short, a cold
+    launch destroyed one container out of pool_warm() to make room for itself. With one pool that
+    was a trade inside one lane. With two classes it is one worker type taking another's warm
+    container, and the turn it is taken from then pays a forty-second cold launch it did nothing
+    to deserve.
+
+    What bounds containers is max_concurrent_runs, which every class and CI count against.
+    schedule() already leaves a turn queued when there is no room and retries on the next pass,
+    and that is now the only answer anywhere in the daemon.
+
+    ASSERTED ON THE SOURCE, because what this tests is the ABSENCE of an action -- there is no
+    call to observe and no state to inspect afterwards.
     """
-    print("pool: eviction")
-    case = Case("poolevict", base_fixture())
-    w = case.watcher
-    w.cfg["idle_agents"] = 1
-    warm = [{"name": "c1", "id": "e1", "branch": "master"},
-            {"name": "c2", "id": "e2", "branch": "master"}]
-    dropped = []
-    w.pool_warm = lambda: list(warm)
-    w.pool_drop = lambda pool_id: dropped.append(pool_id)
-
+    print("pool: nothing is evicted")
     src = open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
     body = src.partition("def launch(self, turn_id)")[2].partition("\n    def ")[0]
-    check("launch evicts when it cannot claim and the memory is short",
-          "pool_has_room(for_containers=0)" in body and "evicting" in body, None)
-    check("and only when it did NOT get a container of its own",
-          body.index("pool_claim_for") < body.index("pool_has_room(for_containers=0)"), None)
 
-    # ONE, not all of them: one eviction makes room for one launch, and emptying the pool
-    # because a single turn was tight would spend the next forty seconds of every later turn
-    # restaging. The `break` is what says so, and it is easy to delete by accident.
-    loop = body.partition("for c in self.pool_warm():")[2].split("\n")[:6]
-    check("launch evicts exactly one container, not the whole pool",
-          any(ln.strip() == "break" for ln in loop), loop)
+    check("launch never drops a container", "pool_drop" not in body, None)
+    check("and does not ask whether it could make room by dropping one",
+          "pool_has_room" not in body, None)
+    check("and does not reach for the warm list at all", "pool_warm" not in body, None)
+
+    # The claim itself is still there, and still by class: what went is only the fallback that
+    # destroyed something when the claim missed.
+    check("it still claims a container of its own class",
+          "pool_claim_for(ref, cls)" in body, None)
+
+    # pool_has_room survives in the one place it withholds an optimisation rather than
+    # destroying one, and `for_containers=0` -- which only the eviction ever passed -- is gone.
+    keeper = src.partition("def keep_pool(self)")[2].partition("\n    def ")[0]
+    check("the keeper still refuses to stage into a squeeze",
+          "pool_has_room()" in keeper, None)
+    check("and nothing asks pool_has_room for zero containers any more",
+          "for_containers=0" not in src, None)
 
 
 def test_a_turn_falls_back_to_a_cold_launch():
@@ -6996,10 +7295,10 @@ def test_a_turn_falls_back_to_a_cold_launch():
     w = case.watcher
     w.pool_containers = lambda: []
 
-    w.cfg["idle_agents"] = 0
+    w.cfg["agent_classes"]["ffagent"]["idle_agents"] = 0
     check("with the pool off, nothing is claimed", w.pool_claim_for("master") is None, None)
 
-    w.cfg["idle_agents"] = 1
+    w.cfg["agent_classes"]["ffagent"]["idle_agents"] = 1
     check("with an empty pool, nothing is claimed", w.pool_claim_for("master") is None, None)
 
     # A warm container on the wrong branch is not a hit: the workspace is only warm for the
@@ -7007,10 +7306,66 @@ def test_a_turn_falls_back_to_a_cold_launch():
     # that would have picked the matching entry.
     os.makedirs(os.path.join(w.pool_dir("b1"), "out"), exist_ok=True)
     open(os.path.join(w.pool_dir("b1"), "out", "staged"), "w").close()
-    w.pool_containers = lambda: [{"name": "c", "id": "b1", "branch": "develop"}]
+    w.pool_containers = lambda: [{"name": "c", "id": "b1", "branch": "develop",
+                                  "class": "ffagent"}]
     check("a container staged on another branch is not used",
           w.pool_claim_for("master") is None, None)
     check("and the matching branch is", w.pool_claim_for("develop") == "b1", None)
+
+
+def test_one_class_never_takes_the_others_warm_container():
+    """The stricter half of the match, and the reason two pools are two pools.
+
+    An ffagent container staged on master is not an ffdev container staged on master. The two
+    classes exist in order to diverge -- different clocks, and eventually a different base
+    branch -- so serving an ffdev turn out of the ffagent pool would run it under numbers nobody
+    chose for it. Two pools that quietly serve each other are one pool.
+    """
+    print("pool: a class claims only its own")
+    case = Case("poolclass", base_fixture())
+    w = case.watcher
+    for cls in ffwatch.AGENT_CLASSES:
+        w.cfg["agent_classes"][cls]["idle_agents"] = 1
+
+    for pid in ("g1", "d1"):
+        os.makedirs(os.path.join(w.pool_dir(pid), "out"), exist_ok=True)
+        open(os.path.join(w.pool_dir(pid), "out", "staged"), "w").close()
+    w.pool_containers = lambda: [
+        {"name": "cg", "id": "g1", "branch": "master", "class": "ffagent"},
+        {"name": "cd", "id": "d1", "branch": "master", "class": "ffdev"},
+    ]
+
+    check("an ffdev turn takes the ffdev container", w.pool_claim_for("master", "ffdev") == "d1",
+          None)
+    check("and an ffagent turn takes the ffagent one",
+          w.pool_claim_for("master", "ffagent") == "g1", None)
+
+    # Those two claims each wrote an out/owner, which is what takes a container out of the warm
+    # list. Release them, or the rest of this reads an empty pool for a reason that has nothing
+    # to do with classes.
+    for pid in ("g1", "d1"):
+        os.unlink(w.pool_owner_path(pid))
+
+    # With only the other class's container warm, a turn falls through to a cold launch rather
+    # than taking it. pool_would_serve is the same rule with no side effect, and schedule() asks
+    # it before letting a turn start at all.
+    w.pool_containers = lambda: [
+        {"name": "cg", "id": "g1", "branch": "master", "class": "ffagent"}]
+    check("an ffdev turn will not take an ffagent container",
+          w.pool_claim_for("master", "ffdev") is None, None)
+    check("and would_serve agrees, without claiming anything",
+          w.pool_would_serve("master", "ffdev") is False
+          and w.pool_would_serve("master", "ffagent") is True, None)
+
+    # A container staged before classes existed carries no label, and pool_containers reads that
+    # as ffagent -- the pool that staged it, on the numbers it was staged with.
+    check("an unlabelled container reads as ffagent",
+          ffwatch.DEFAULT_AGENT_CLASS == "ffagent", None)
+
+    # And a class whose pool is switched off claims nothing, without touching the other's.
+    w.cfg["agent_classes"]["ffagent"]["idle_agents"] = 0
+    check("pool.idle 0 stops that class claiming",
+          w.pool_claim_for("master", "ffagent") is None, None)
 
 
 def test_draining_destroys_what_is_idle_and_nothing_else():
@@ -7068,7 +7423,7 @@ def test_draining_destroys_what_is_idle_and_nothing_else():
           w.pool_drop("d2", force=True) is True and not os.path.exists(w.pool_dir("d2")), None)
 
     w.pool_drop = lambda pool_id, force=False: None
-    check("the keeper stages nothing while draining", w.keep_pool() is None, None)
+    check("the keeper stages nothing while draining", w.keep_pool() == [], None)
 
 
 def test_the_project_directory_survives_a_workspace_move():
@@ -7704,13 +8059,19 @@ def test_the_mirror_is_only_written_inside_the_pipelines_own_namespace():
 
 def main():
     tests = [
+        test_every_agent_container_carries_its_class,
+        test_an_ffdev_turn_runs_under_ffdevs_numbers,
+        test_the_two_agent_classes_are_configured_independently,
+        test_each_class_counts_only_its_own_containers,
+        test_a_conversations_class_is_settled_when_it_opens,
         test_the_pool_only_stages_what_it_has_room_for,
         test_the_daemon_loop_keeps_the_pool,
         test_two_dispatchers_cannot_take_one_container,
         test_a_pooled_run_never_loses_the_conversations_memory,
         test_a_crashed_pooled_run_gives_its_transcript_back,
-        test_a_cold_launch_short_of_memory_evicts_a_staged_container,
+        test_a_launch_never_destroys_a_warm_container,
         test_a_turn_falls_back_to_a_cold_launch,
+        test_one_class_never_takes_the_others_warm_container,
         test_memory_is_read_from_meminfo_not_from_dev_shm,
         test_the_finish_handler_reaches_the_agent_and_its_work,
         test_a_run_that_ran_out_of_time_still_says_so,

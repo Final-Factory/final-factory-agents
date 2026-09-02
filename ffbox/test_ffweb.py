@@ -645,7 +645,7 @@ def test_filters_actually_filter():
         home = text_of(srv.get("/")[2])
         form = home.split("id=\"conversation-filters\"", 1)[-1].split("</form>", 1)[0]
         check("the conversation filter form is the one the script targets",
-              "id=\"conversation-filters\"" in home and form.count("<select") == 5, form[:200])
+              "id=\"conversation-filters\"" in home and form.count("<select") == 6, form[:200])
         check("no filter button outside <noscript>",
               ">filter</button>" not in re.sub(r'<noscript>.*?</noscript>', "", form, flags=re.S)
               and "<noscript><button type=\"submit\">filter</button></noscript>" in form)
@@ -704,8 +704,8 @@ def test_the_title_filter():
         form = home.split("id=\"conversation-filters\"", 1)[-1].split("</form>", 1)[0]
         check("the box comes back holding the word, escaped",
               '<input name="title" value="mass &quot;drivers&quot;"' in form, form[-300:])
-        check("and the form still has the five dropdowns beside it",
-              form.count("<select") == 5 and form.count("<input") == 1, form[:120])
+        check("and the form still has the six dropdowns beside it",
+              form.count("<select") == 6 and form.count("<input") == 1, form[:120])
     finally:
         srv.stop()
 
@@ -1159,6 +1159,78 @@ def test_actions_call_ffwatch_not_the_database():
         srv.stop()
 
 
+def test_the_agent_class_is_chosen_only_when_a_conversation_opens():
+    """The dropdown belongs to the prompt box and to nothing else.
+
+    A conversation's class is settled by the turn that opens it -- every later turn reads the
+    same one -- so offering the choice on the reply box would be offering a decision that cannot
+    be taken. The UI has to tell the truth about where the decision lives.
+    """
+    print("web: the agent class")
+    srv = serve()
+    try:
+        home = text_of(srv.get("/")[2])
+        box = home.split('action="/actions/prompt"', 1)[-1].split("</form>", 1)[0]
+        check("the prompt box offers the classes", 'name="agent"' in box, box[:200])
+        check("both of them", 'value="ffagent"' in box and 'value="ffdev"' in box, box[:300])
+        check("with ffagent selected", 'value="ffagent" selected' in box, box[:300])
+        # No blank option: the class is always one of its values, and an "any" would be a third
+        # state meaning the same as the default.
+        check("and no empty option", '<option value="">' not in box, box[:300])
+
+        # FILTER_SCRIPT hooks `#conversation-filters select`. The prompt box has no id, so
+        # picking a class does not submit the prompt. Asserted rather than left to the selector
+        # staying as it is.
+        check("picking a class does not submit the prompt box",
+              "conversation-filters" not in box, box[:200])
+
+        # The reply box on a conversation page has NO dropdown.
+        # A LOCAL conversation, so the reply box is actually rendered -- checking "no dropdown"
+        # against a page that has no reply box at all would pass for the wrong reason.
+        _c = sqlite3.connect(DB_PATH)
+        try:
+            _r = _c.execute("SELECT id FROM conversation WHERE kind IN ('shell','web')"
+                            " LIMIT 1").fetchone()
+        finally:
+            _c.close()
+        local_id = _r[0] if _r else None
+        check("there is a local conversation to reply to", local_id is not None, None)
+        conv = text_of(srv.get(f"/conversation/{local_id}")[2])
+        check("and its page really has a reply box",
+              'action="/actions/reply"' in conv, conv[:200])
+        reply = conv.split('action="/actions/reply"', 1)[-1].split("</form>", 1)[0]
+        check("the reply box does not offer it", 'name="agent"' not in reply, reply[:200])
+
+        # The POST route: default when absent, honoured when given, refused when unknown.
+        open(CALLS, "w").close()
+        srv.post("/actions/prompt", {"prompt": "a dev task", "agent": "ffdev"})
+        calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
+        check("a chosen class reaches ffwatch",
+              calls and calls[0][calls[0].index("--agent") + 1] == "ffdev", calls)
+
+        open(CALLS, "w").close()
+        srv.post("/actions/prompt", {"prompt": "a question"})
+        calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
+        check("an absent one is the default, not a refusal",
+              calls and calls[0][calls[0].index("--agent") + 1] == "ffagent", calls)
+
+        open(CALLS, "w").close()
+        code, _h, _b = srv.post("/actions/prompt", {"prompt": "hi", "agent": "ffdevv"})
+        check("an unknown class is refused", code == 400, code)
+        check("and nothing was run for it",
+              not [ln for ln in open(CALLS, encoding="utf-8") if ln.strip()], None)
+
+        # /actions/reply reads no class at all: there is no decision there to make, so one
+        # carried on a hand-built POST is ignored rather than honoured or refused.
+        src = open(os.path.join(HERE, "ffweb.py"), encoding="utf-8").read()
+        reply_route = src.partition('if path == "/actions/reply":')[2].partition(
+            'if path ==')[0]
+        check("the reply route never reads an agent field",
+              '"agent"' not in reply_route, reply_route[:200])
+    finally:
+        srv.stop()
+
+
 def test_the_prompt_box_needs_no_flag():
     """Starting a conversation is what the page is for, so the box is there for anyone who got
     past the login — no flag, and none of the guards around it weakened to get that.
@@ -1179,10 +1251,16 @@ def test_the_prompt_box_needs_no_flag():
               (hdr.get("Location") or "") == "/?sent=1", hdr.get("Location"))
         calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
         check("it shelled out to `ffwatch submit`, so ffwatch stays the sole writer",
-              calls and calls[0] == ["--state-dir", STATE, "submit", "--source", "web", "--",
+              calls and calls[0] == ["--state-dir", STATE, "submit", "--source", "web",
+                                     "--agent", "ffagent", "--",
                                      "what does the splitter do?"], calls)
         check("and said which front door it came through, so the record can tell",
               calls[0][calls[0].index("--source") + 1] == "web", calls)
+        # The class the conversation will run in, which the dropdown on the prompt box chose.
+        # A POST that names none takes the default rather than being refused, so an older
+        # cached page and a hand-built form both still work.
+        check("and which kind of container it asked for",
+              calls[0][calls[0].index("--agent") + 1] == "ffagent", calls)
 
         # No shell is involved: subprocess.run takes a list, so this is one argv element and
         # the semicolons are text. The check is that it arrives INTACT rather than split.
@@ -2294,6 +2372,7 @@ def main():
         test_a_long_subagent_chain_is_not_truncated,
         test_actions_are_off_by_default,
         test_actions_call_ffwatch_not_the_database,
+        test_the_agent_class_is_chosen_only_when_a_conversation_opens,
         test_the_prompt_box_needs_no_flag,
         test_a_conversation_can_be_answered_back,
         test_the_reply_box_says_a_follow_up_will_wait,

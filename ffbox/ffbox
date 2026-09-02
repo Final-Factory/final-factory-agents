@@ -167,6 +167,15 @@ BASE_REFS=
 TASK=
 JOB_FILE=
 RUN_ID_OVERRIDE=
+# WHICH KIND OF AGENT CONTAINER THIS IS. It goes on as a label and does nothing else here: both
+# classes run the same image, the same task and the same limits, and what differs is the config
+# section ffwatch read before it called us and the pool the container is staged into. The label
+# is what lets ffwatch count and claim the two pools apart afterwards.
+#
+# MIRRORS AGENT_CLASSES IN ffwatch.py, which is the original -- this is shell and cannot import
+# it. ffweb.py carries the third copy for the same reason.
+AGENT_CLASS=ffagent
+AGENT_CLASSES="ffagent ffdev"
 MOUNTS=()
 # --- the pool ------------------------------------------------------------------------------
 # A staged container fills its workspace before any request exists and then waits, so that a
@@ -265,6 +274,10 @@ Options:
   --pool-dir PATH      Where staged containers' spool directories live
                        (default ~/ffbox-state/pool).
   --idle-ttl N         How long a staged container waits before retiring (default 14400).
+  --agent-class NAME   Which kind of agent container this is: ffagent (default) or ffdev. Both
+                       run the same image, task and limits; the name goes on as a label so the
+                       two pools can be counted and claimed apart. ffwatch passes the class the
+                       conversation was opened with.
   --agent-timeout N    Seconds of AGENT working time (default 1800). The clock starts when the
                        task creates <out>/.agent-started, not when ffbox does.
   --warmup-timeout N   Seconds for everything before that marker (default 3600).
@@ -309,6 +322,7 @@ while [ $# -gt 0 ]; do
         --dispatch)       DISPATCH=${2:?--dispatch needs a pool id}; CLOCKS=1; shift 2 ;;
         --pool-dir)       POOL_DIR=${2:?--pool-dir needs a path}; shift 2 ;;
         --idle-ttl)       IDLE_TTL=${2:?--idle-ttl needs seconds}; shift 2 ;;
+        --agent-class)    AGENT_CLASS=${2:?--agent-class needs a name}; shift 2 ;;
         --agent-timeout)  AGENT_TIMEOUT=${2:?--agent-timeout needs seconds}; CLOCKS=1; shift 2 ;;
         --warmup-timeout) WARMUP_TIMEOUT=${2:?--warmup-timeout needs seconds}; CLOCKS=1; shift 2 ;;
         --verify-timeout) VERIFY_TIMEOUT=${2:?--verify-timeout needs seconds}; CLOCKS=1; shift 2 ;;
@@ -535,6 +549,16 @@ OUT="${RESULTS}/${RUN_ID}"
 #   in/     read-only to the container, written by the host at dispatch
 #   out/    the container's /ffbox/out, moved into the real run directory when the run ends
 #   claude/ CLAUDE_CONFIG_DIR for the one turn this container serves
+# REFUSED HERE, BEFORE ANYTHING IS CREATED. A name outside the set would otherwise become a
+# label no pool ever filters on: the container would be built, staged, hold a workspace and a
+# Unity seat, and never be claimed by anything -- a leak that looks like a working run until
+# somebody counts containers. ffwatch validates too, and its refusal is the one that matters
+# because it is the writer; this one catches a hand-run ffbox and a typo in a script.
+case " $AGENT_CLASSES " in
+    *" $AGENT_CLASS "*) ;;
+    *)  echo "ffbox: --agent-class $AGENT_CLASS is not one of: $AGENT_CLASSES" >&2; exit 2 ;;
+esac
+
 POOL_IN=
 FINAL_OUT=
 if [ -n "$STAGE_POOL$DISPATCH" ]; then
@@ -839,6 +863,12 @@ fi
 # starting no container at all.
 RUN_ARGS=(
     --hostname ffbox
+    # WHICH AGENT CLASS THIS CONTAINER SERVES. In the SHARED list rather than at the two
+    # `docker run` sites below, because the value is the same for a staged container and a cold
+    # run -- unlike ffbox.workload, which is genuinely `pool` for one and `agent` for the other
+    # and stays where it is. A label a caller can forget on one path is how the two pools would
+    # start miscounting each other.
+    --label "ffbox.agent.class=$AGENT_CLASS"
     --memory "$MEMORY"
     --pids-limit "$PIDS_LIMIT"
     --cap-drop=ALL
