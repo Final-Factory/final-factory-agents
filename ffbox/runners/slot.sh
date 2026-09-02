@@ -106,26 +106,6 @@ teardown() {
         gh_post_check_run "$STAGE" 2>&1 \
             | while IFS= read -r _line; do log "$_line"; done || true
 
-        # THE ARTIFACT, for the same reason and by the same route. The job zipped it and handed
-        # over its runtime credential rather than PUTting to blob storage itself, so that
-        # productionresultssa*.blob.core.windows.net could come off the egress allowlist -- an
-        # entry whose regex admitted eleven unregistered Azure account names that anyone with a
-        # free account could have claimed.
-        #
-        # SAFE TO DO WITH A CREDENTIAL THE JOB SUPPLIED because the credential names its own
-        # repository: artifact-upload.py reads repository_id out of the token and refuses anything
-        # not in ARTIFACT_REPO_IDS. Measured 2026-09-02, the token is also not renewed mid-job and
-        # outlives it by design -- exp is job start plus 100 minutes against a 90 minute timeout --
-        # so it is still usable here, after the container has exited.
-        #
-        # BEST EFFORT LIKE EVERYTHING ELSE IN TEARDOWN. A failed upload costs an artifact; the
-        # registration delete below is the part that must not be skipped.
-        if [ -f "$STAGE/artifact-auth.json" ]; then
-            python3 "$HERE/lib/artifact-upload.py" "$STAGE" \
-                --allow-repository-ids "$ARTIFACT_REPO_IDS" 2>&1 \
-                | while IFS= read -r _line; do log "$_line"; done || true
-        fi
-
         ffghr_cache_with_lock ffghr_cache_promote "$STAGE" 2>&1 \
             | while IFS= read -r _line; do log "cache: $_line"; done || true
         ffghr_cache_with_lock ffghr_cache_prune 2>&1 \
@@ -521,6 +501,29 @@ while [ "$(docker inspect -f '{{.State.Running}}' "$CNAME" 2>/dev/null)" = true 
     if [ -n "${STAGE:-}" ]; then
         ffghr_mirror_serve_request "$STAGE" 2>&1 \
             | while IFS= read -r _line; do log "mirror: $_line"; done || true
+    fi
+
+    # THE ARTIFACT UPLOAD, AND IT HAS TO BE HERE RATHER THAN IN TEARDOWN.
+    #
+    # The first version of this ran beside the check-run relay after the container exited, which
+    # cannot work and fails with a message that says so exactly:
+    #
+    #     CreateArtifact failed: HTTP 403 {"code":"permission_denied","msg":"job is completed"}
+    #
+    # The Actions service will not create an artifact for a job that has finished, so the upload
+    # has to happen while the job is still live -- which means from this loop, with the job
+    # WAITING on artifact.done, exactly as it already waits on fetch.done. The job holds itself
+    # open for us; that is the whole reason this is not in teardown.
+    #
+    # Up to one poll interval of job time, so 15s, plus the transfer. Measured artifact: 54 kB.
+    #
+    # artifact.done IS WRITTEN EITHER WAY, success or failure, so a job never waits out its whole
+    # budget on an upload that was never going to happen.
+    if [ -n "${STAGE:-}" ] && [ -f "$STAGE/artifact.request" ] && [ ! -f "$STAGE/artifact.done" ]; then
+        python3 "$HERE/lib/artifact-upload.py" "$STAGE" \
+            --allow-repository-ids "$ARTIFACT_REPO_IDS" 2>&1 \
+            | while IFS= read -r _line; do log "artifact: $_line"; done || true
+        printf 'done\n' > "$STAGE/artifact.done" 2>/dev/null || true
     fi
     # FIFTEEN SECONDS ONCE THERE IS A JOB, NOT FIVE. From then on this loop only has to notice two
     # things: a container that has exited, and a branch.info the job wrote near its start. The job
