@@ -145,6 +145,13 @@ DEFAULT_AGENT_CLASS = "ffagent"
 # reading `docker ps` and for the prefix sweeps in update_ffbox.sh.
 CLASS_NAME_PREFIX = {"ffagent": "ffbox-agent-", "ffdev": "ffbox-dev-"}
 
+# THE FLOOR UNDER ANY `docker stop` OF A CONTAINER THAT MAY HOLD A UNITY SEAT, in seconds, and
+# the same number ffbox:1146-1150 applies for the same reason: the trap that returns the seat is
+# an editor launch, and `docker stop --timeout` KILLs when it runs out. `kill_grace_secs` is a
+# different question -- how long an agent gets to notice SIGTERM -- and is far too short for this.
+# ffbox/lib-workloads.sh carries the shell side of it as FFBOX_LICENCE_STOP_FLOOR.
+LICENCE_STOP_FLOOR = 120
+
 
 def run_container_name(agent_class, run_id):
     """What ffbox will call the container serving this run."""
@@ -4341,7 +4348,19 @@ class Watcher:
         property the flat name used to provide.
         """
         names = [f"{prefix}pool-{pool_id}" for prefix in CLASS_NAME_PREFIX.values()]
-        grace = max(1, int(self.cfg["kill_grace_secs"]))
+        # THE LICENCE FLOOR, NOT kill_grace_secs, and the two are about different things. A staged
+        # spare has held a Unity seat since 2026-09-01: pool-task.sh activates before it goes idle
+        # so a dispatched turn never waits for one. The trap that gives that seat back runs
+        # `unity-editor -quit -returnlicense`, an editor launch measured in tens of seconds, and
+        # `docker stop --timeout` KILLs when it runs out. kill_grace_secs defaults to 10 and is
+        # about an agent ignoring SIGTERM, so every drop since 2026-09-01 has been SIGKILLing a
+        # container part-way through handing its seat back. ffbox:1146-1150 floors its own stop at
+        # 120 for exactly this and says so; that reasoning simply never reached here.
+        #
+        # Bounded rather than permanent, which is why nobody noticed: machine ids are per slot, so
+        # the next container on that slot presents the same id and reuses the entitlement. What it
+        # costs between times is a concurrent activation finding no free entitlement.
+        grace = max(1, int(self.cfg["kill_grace_secs"]), LICENCE_STOP_FLOOR)
         argvs = []
         for name in names:
             argvs.append(([self.cfg["docker"], "stop", "--timeout", str(grace), name],
