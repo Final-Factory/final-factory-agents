@@ -563,6 +563,12 @@ class Case:
         cfg["plugins_dir"] = os.path.join(self.root, "plugins")
         os.makedirs(os.path.join(cfg["plugins_dir"], "ff-discord"), exist_ok=True)
         cfg["approve_before_send"] = approve
+        # THE WATCH BLOCK ABOVE IS A DECISION, whatever the machine running the suite happens
+        # to have in ~/.config/ffbox/config.json. load_config sets this from whether a real
+        # config file was read, and stamp_watch_attachments only records a DETACH when one was
+        # — so without this line the attach tests would pass on the build server, where that
+        # file exists, and be silently skipped on a laptop where it does not.
+        cfg["_config_read"] = True
         # Whatever GH_TOKEN says on this machine, a test never talks to real GitHub and never
         # pushes into a real checkout. Cases that publish point these at their own fixtures.
         cfg["github"] = {"api_base": "http://127.0.0.1:9", "repo": "test/test",
@@ -583,6 +589,13 @@ class Case:
         self.cfg = cfg
         self.watcher = ffwatch.Watcher(cfg)
         self.watcher.init()
+        # EVERY CASE'S CHANNELS HAVE BEEN WATCHED FOREVER. init() stamps an attach watermark on
+        # an alias it has never seen before, and the suite mints its ids from a fixed 2025 base
+        # — so without this, every fixture message would read as "posted before the channel was
+        # attached", nothing would ever produce a turn, and the whole file would pass by being
+        # silent. '0' is the no-cutoff value a live box gives a channel it is already acting on.
+        # The attach tests stamp their own watermarks on top of this.
+        self.watcher.db.execute("UPDATE watch_attach SET watermark_id='0'")
 
     def db_exec(self, sql, params=()):
         self.watcher.db.execute(sql, params)
@@ -1173,6 +1186,230 @@ def test_evidence_and_thread_openings_never_reach_the_gate():
           len(turns) == 1, turns)
     check("and it is triage, not the answer lane the gate would have implied",
           turns[0]["lane"] == "dev", turns[0])
+
+
+def test_a_newly_attached_channel_answers_none_of_its_backlog():
+    """Attaching a channel that has been live for months must not answer what is already in it.
+
+    This is the #dev-chat regression: sweep() re-reads every watched channel with no notion of
+    when the watching started, so twelve old conversations arrived as new — and in a forum,
+    every one of them is a thread with no turn on it, which always_a_turn forces a turn for
+    whatever `engage` says. The watermark makes the backlog HISTORY rather than work: ingested,
+    kept, readable, and unable to cause a turn.
+    """
+    print("attaching a channel")
+    old_a, old_b = sflake(-9000, 1), sflake(-8000, 2)
+    fixture = base_fixture()
+    fixture["messages"][RANDOM_CHANNEL] = [
+        message(old_a, "does anyone know what the splitter does", channel=RANDOM_CHANNEL),
+        message(old_b, "hey @max any idea?", channel=RANDOM_CHANNEL),
+    ]
+    fixture["messages"][RANDOM_CHANNEL][1]["mentions"] = [{"id": BOT}]
+    bug_thread(fixture, "31000", "belt merger drops items",
+               [message(sflake(-7000, 3), "it drops one item in eight", channel="31000")])
+    fixture["thread_lists"][BUG_FORUM] = [{"id": "31000",
+                                           "name": "belt merger drops items"}]
+    case = Case("attach-backlog", fixture)
+
+    # The channel is added to the watch block exactly as a human adds it to the config, and the
+    # next ffwatch invocation — any of them, init() is what stamps — decides "from here".
+    case.cfg["watch"]["random_chat"] = {"kind": "ask", "forum": False,
+                                        "venue": "public", "engage": "mention"}
+    case.cfg["watch"]["bug_reports"]["engage"] = "mention"
+    case.watcher.db.execute("DELETE FROM watch_attach WHERE alias IN ('random_chat',"
+                            " 'bug_reports')")
+    case.watcher.init()
+    marks = {r["alias"]: int(r["watermark_id"])
+             for r in case.rows("SELECT * FROM watch_attach")}
+    check("a channel this box has never acted on is stamped with the moment it was attached",
+          marks["random_chat"] > int(sflake(0)), marks)
+    check("and the attach is automatic — no command anybody has to remember to run first",
+          "random_chat" in marks and "bug_reports" in marks, marks)
+    # From here the cutoff is pinned to the suite's own clock rather than the wall clock, so
+    # "after the attach" can be an id a few minutes later instead of eighteen months.
+    case.watcher.db.execute("UPDATE watch_attach SET watermark_id=?"
+                            " WHERE alias IN ('random_chat','bug_reports')", (sflake(0),))
+
+    case.watcher.sweep()
+    case.watcher.claim_turns()
+    check("nothing in the backlog is answered", case.rows("SELECT * FROM turn") == [],
+          case.rows("SELECT * FROM turn"))
+    check("not even the @-mention sitting in it",
+          not sent_calls(case), sent_calls(case))
+    check("and not the forum thread, which would otherwise force a turn by opening",
+          case.rows("SELECT * FROM turn") == [])
+
+    # ... but it is all HERE. The point of ingesting the backlog rather than skipping it.
+    convs = case.rows("SELECT * FROM conversation WHERE watch_alias IN"
+                      " ('random_chat','bug_reports')")
+    check("the conversations are created", len(convs) == 2, convs)
+    msgs = case.rows("SELECT * FROM message ORDER BY discord_id")
+    check("every backlog message is stored", len(msgs) == 3, msgs)
+    check("each one marked so no scheduler pass reconsiders it",
+          all(m["gate"] == "none" for m in msgs), msgs)
+    check("with a reason that names the attach rather than the engagement gate",
+          all("was attached" in (m["gate_reason"] or "") for m in msgs),
+          [m["gate_reason"] for m in msgs])
+
+    # And the reason to have kept it: what arrives NEXT is answered with the backlog behind it.
+    fresh = sflake(300, 6)
+    fixture = case.read_fixture()
+    fixture["messages"][RANDOM_CHANNEL].append(
+        message(fresh, "@max so what does it do?", channel=RANDOM_CHANNEL))
+    fixture["messages"][RANDOM_CHANNEL][-1]["mentions"] = [{"id": BOT}]
+    case.write_fixture(fixture)
+    case.events(ask_event(fresh, channel="random_chat", channel_id=RANDOM_CHANNEL))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    turns = case.rows("SELECT * FROM turn")
+    check("a message posted after the attach is answered normally", len(turns) == 1, turns)
+    convs = case.rows("SELECT * FROM conversation WHERE watch_alias='random_chat'")
+    check("and it CONTINUES the backlog conversation rather than opening a second one",
+          len(convs) == 1, convs)
+    job = case.watcher.build_job(turns[0], convs[0], "r1", os.path.join(case.root, "att"))
+    check("so the backlog reaches the agent as history, which is what it was kept for",
+          {old_a, old_b} <= {m["discord_id"] for m in job["history"]}, job["history"])
+    check("while the turn itself claims only the new message",
+          [m["discord_id"] for m in job["messages"]] == [fresh], job["messages"])
+
+
+def test_a_channel_already_in_use_is_not_cut_off():
+    """The upgrade case. Every long-lived box meets this code with channels it has been
+    answering for months and no watch_attach table at all; stamping those "now" would silence
+    whatever was posted while the daemon was restarting into the new version."""
+    print("attaching a channel already in use")
+    case = Case("attach-existing")
+    case.watcher.db.execute("DELETE FROM watch_attach")
+    case.db_exec("INSERT INTO conversation(thread_id, kind, state, watch_alias, created_at,"
+                 " last_activity_at) VALUES('44000','ask','idle','ask_claude',?,?)",
+                 (ffwatch.now_iso(), ffwatch.now_iso()))
+    case.watcher.init()
+    marks = {r["alias"]: r["watermark_id"] for r in case.rows("SELECT * FROM watch_attach")}
+    check("a channel with conversations already in the database gets no cutoff",
+          marks["ask_claude"] == "0", marks)
+    check("a channel with none is stamped from now",
+          int(marks["bug_reports"]) > int(sflake(0)), marks)
+
+    # Written once. A channel dropped from the watch block and put back months later has been
+    # attached since the first time, not since the second.
+    case.watcher.init()
+    again = {r["alias"]: r["watermark_id"] for r in case.rows("SELECT * FROM watch_attach")}
+    check("and a later start-up does not re-stamp it", again == marks, (marks, again))
+
+
+def test_a_channel_put_back_after_a_break_joins_as_a_new_one():
+    """The cutoff belongs to the TRANSITION into the watch block, not to the first sighting.
+
+    A channel watched, dropped, and picked up again five years later is a new channel by every
+    measure that matters, and the table having its name from last time must not be read as "we
+    have been listening all along" — that would answer five years of history in one pass, which
+    is the whole thing this exists to stop.
+    """
+    print("a channel put back after a break")
+    case = Case("attach-again")
+    first = case.rows("SELECT * FROM watch_attach WHERE alias='bug_reports'")[0]
+    check("it starts attached", first["attached"] == 1, first)
+
+    # Dropped from the watch block. Editing the config and restarting is what a human does;
+    # init() is the part of that this code sees.
+    del case.cfg["watch"]["bug_reports"]
+    case.watcher.init()
+    gone = case.rows("SELECT * FROM watch_attach WHERE alias='bug_reports'")[0]
+    check("dropping it from the watch block is recorded, not forgotten",
+          gone["attached"] == 0 and gone["detached_at"], gone)
+    check("and the row it left behind still names the channel",
+          gone["alias"] == "bug_reports", gone)
+
+    # ... and put back. The suite's ids are minted from a fixed 2025 base, so anything stamped
+    # from the wall clock is comfortably above every message in every fixture.
+    case.cfg["watch"]["bug_reports"] = {"kind": "bug_report", "forum": True,
+                                        "venue": "public", "engage": "mention"}
+    case.watcher.init()
+    again = case.rows("SELECT * FROM watch_attach WHERE alias='bug_reports'")[0]
+    check("putting it back attaches it again", again["attached"] == 1, again)
+    check("with a FRESH cutoff, not the one it had before",
+          int(again["watermark_id"]) > int(sflake(0)), again)
+    check("and no stale detached_at left on the row", again["detached_at"] is None, again)
+    check("the other channel was never touched",
+          case.rows("SELECT watermark_id FROM watch_attach WHERE alias='ask_claude'")[0]
+          ["watermark_id"] == "0")
+
+    # The conversations it left behind are exactly what would fool a "have I seen this alias"
+    # test, so pin that they do not.
+    case.db_exec("INSERT INTO conversation(thread_id, kind, state, watch_alias, created_at,"
+                 " last_activity_at) VALUES('45000','bug_report','idle','bug_reports',?,?)",
+                 (ffwatch.now_iso(), ffwatch.now_iso()))
+    case.cfg["watch"]["bug_reports"]["engage"] = "mention"
+    del case.cfg["watch"]["bug_reports"]
+    case.watcher.init()
+    case.cfg["watch"]["bug_reports"] = {"kind": "bug_report", "forum": True,
+                                        "venue": "public", "engage": "mention"}
+    case.watcher.init()
+    third = case.rows("SELECT * FROM watch_attach WHERE alias='bug_reports'")[0]
+    check("a re-attach is not talked out of its cutoff by the history it left behind",
+          int(third["watermark_id"]) >= int(again["watermark_id"]), (again, third))
+
+    # A config nobody could read is not a decision to stop watching anything.
+    case.cfg["_config_read"] = False
+    del case.cfg["watch"]["ask_claude"]
+    case.watcher.init()
+    check("an unreadable config detaches nothing",
+          case.rows("SELECT attached FROM watch_attach WHERE alias='ask_claude'")[0]
+          ["attached"] == 1)
+    case.cfg["_config_read"] = True
+
+
+def test_a_comment_on_a_pre_attach_thread_does_not_reopen_the_whole_report():
+    """The watermark's late half. A backlog thread's own messages are gated and never reach
+    always_a_turn — but the first comment posted in one AFTER the attach does, and the
+    thread-opening rule would read a six-month-old report with one '+1' on it as a report
+    opening now. That is the same surprise arriving a week late."""
+    print("a comment on a backlog thread")
+    old_msg = sflake(-9000, 1)
+    fixture = bug_thread(base_fixture(), "32000", "belt merger drops items",
+                         [message(old_msg, "it drops one item in eight", channel="32000")])
+    fixture["thread_lists"][BUG_FORUM] = [{"id": "32000",
+                                           "name": "belt merger drops items"}]
+    case = Case("attach-thread-comment", fixture)
+    case.cfg["watch"]["bug_reports"]["engage"] = "mention"
+    case.watcher.db.execute("UPDATE watch_attach SET watermark_id=? WHERE alias='bug_reports'",
+                            (sflake(0),))
+    case.watcher.sweep()
+    case.watcher.claim_turns()
+    check("the report itself is not answered", case.rows("SELECT * FROM turn") == [])
+
+    plus_one = sflake(100, 4)
+    fixture = case.read_fixture()
+    fixture["threads"]["32000"]["messages"].append(
+        message(plus_one, "+1, still happening", channel="32000"))
+    case.write_fixture(fixture)
+    case.events(thread_event("32000", plus_one))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    check("nor does a bare comment on it drag the whole report through triage",
+          case.rows("SELECT * FROM turn") == [], case.rows("SELECT * FROM turn"))
+    check("the comment is recorded, and says which rule kept it quiet",
+          "mention-only" in (case.rows("SELECT * FROM message WHERE discord_id=?",
+                                       (plus_one,))[0]["gate_reason"] or ""),
+          case.rows("SELECT gate_reason FROM message WHERE discord_id=?", (plus_one,)))
+
+    # A ping still works, and that is the escape hatch: an old thread wakes when somebody asks
+    # it to, with everything above it as context.
+    ping = sflake(200, 5)
+    fixture = case.read_fixture()
+    ping_msg = message(ping, "@max any thoughts on this one?", channel="32000")
+    ping_msg["mentions"] = [{"id": BOT}]
+    fixture["threads"]["32000"]["messages"].append(ping_msg)
+    case.write_fixture(fixture)
+    case.events(thread_event("32000", ping))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    turns = case.rows("SELECT * FROM turn")
+    check("a ping in a backlog thread is answered", len(turns) == 1, turns)
+    conv = case.rows("SELECT * FROM conversation WHERE thread_id='32000'")[0]
+    job = case.watcher.build_job(turns[0], conv, "r1", os.path.join(case.root, "att"))
+    check("with the original report as history", old_msg in
+          [m["discord_id"] for m in job["history"]], job["history"])
 
 
 def test_schema_idempotent():
@@ -7420,6 +7657,10 @@ def main():
         test_the_gate_declines_a_message_that_asks_nothing,
         test_the_gate_answers_when_it_is_unsure,
         test_evidence_and_thread_openings_never_reach_the_gate,
+        test_a_newly_attached_channel_answers_none_of_its_backlog,
+        test_a_channel_already_in_use_is_not_cut_off,
+        test_a_channel_put_back_after_a_break_joins_as_a_new_one,
+        test_a_comment_on_a_pre_attach_thread_does_not_reopen_the_whole_report,
         test_an_operator_in_public_gets_a_split_reply,
         test_a_player_never_gets_a_private_half,
         test_an_undeliverable_private_half_never_becomes_public,

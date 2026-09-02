@@ -319,3 +319,34 @@ CREATE TABLE IF NOT EXISTS outbound (
 
 CREATE INDEX IF NOT EXISTS idx_outbound_status ON outbound(status);
 CREATE INDEX IF NOT EXISTS idx_outbound_conversation ON outbound(conversation_id);
+
+-- WHEN THIS BOX STARTED WATCHING A CHANNEL (schema v13). One row per alias in the config's
+-- `watch` block, written by the first ffwatch invocation that sees the alias and never
+-- rewritten after that.
+--
+-- The problem it solves: sweep() re-reads every watched channel with no notion of when the
+-- watching began, so adding an alias that has been live for months made its entire visible
+-- history arrive as new — up to sweep_limit active threads, each of which "opens a thread"
+-- and is therefore answered whatever the engagement policy says. That is what happened to
+-- #dev-chat, and the only fix available at the time was to not attach the channel.
+--
+-- watermark_id is a Discord snowflake, so it is a TIME: nothing minted at or before it can
+-- produce a turn. '0' means no cutoff at all, which is what an alias gets on its FIRST sighting
+-- when the database already holds conversations for it — the upgrade path, where a channel this
+-- box has been answering for months meets this table for the first time.
+--
+-- `attached` is what makes a RE-attach different from a restart. A channel dropped from the
+-- watch block is recorded as detached rather than forgotten, so putting it back five years
+-- later stamps a fresh watermark and joins it as the new channel it has become. Without the
+-- flag, "have I seen this alias before" is the only question the table can answer, and the
+-- answer would be yes to a channel nobody has read in five years.
+--
+-- To take a cutoff back and let the backlog in, delete the row (or set watermark_id to '0')
+-- and restart: the next sweep re-reads the channel and nothing is gated.
+CREATE TABLE IF NOT EXISTS watch_attach (
+    alias        TEXT PRIMARY KEY,
+    attached_at  TEXT NOT NULL,
+    watermark_id TEXT NOT NULL,
+    attached     INTEGER NOT NULL DEFAULT 1,
+    detached_at  TEXT
+);
