@@ -5750,10 +5750,15 @@ class Watcher:
         run = self.db.one("SELECT id FROM run WHERE turn_id=? ORDER BY id DESC LIMIT 1",
                           (turn_id,))
         facts = self.publish_facts(run["id"]) if run else {}
+        # THE SAME RULE compose_head applies to a Discord reply, for the same reason: a run that
+        # changed no files was never going to publish one, so "no branch: ..." is the harness
+        # answering a question the prompt did not ask. A branch that DID get made still prints,
+        # and so does a push that failed with real work behind it.
+        if run and not facts.get("branch") and self.db.one(
+                "SELECT 1 FROM verification WHERE run_id=? AND skipped=1", (run["id"],)):
+            return ""
         if facts.get("branch"):
             line = f"branch {facts['branch']} pushed to {self.cfg['push_remote']}"
-            if facts.get("base"):
-                line += f", based on {facts['base']}"
             if facts.get("pr_url"):
                 return f"{line} · PR #{facts.get('pr_number')} {facts['pr_url']}"
             if facts.get("no_pr_reason"):
@@ -6758,6 +6763,14 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         return f"{correction}\n\n{answer}" if correction else answer
 
     publish = publish or {}
+    # A RUN THAT CHANGED NOTHING OWES NO PROVENANCE. The container skips the suite exactly when
+    # the tree came out the way it went in, so this is the harness's own answer to "did this run
+    # do anything to the code", and on an idle turn every row below it says the same nothing
+    # three times: no tests ran, no branch exists, and here is why it could not be bundled. None
+    # of that is news next to a summary whose whole content is "there was nothing to do" — it is
+    # the reply arguing with itself about work that was never attempted. The rows are still
+    # recorded and still on the page for anyone who wants them; they just stop being said.
+    idle = verification is not None and bool(verification["skipped"])
     lines = []
     if turn["failed_closed"]:
         # Visible, not buried: the run was given the least privilege because the harness could
@@ -6797,35 +6810,48 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # out loud rather than being quietly omitted — "we could not check" and "we did not
         # need to check" must not look the same to whoever reads the reply.
         if verification["skipped"]:
-            # Nothing to test. Not a warning: the run changed no files, which the branch line
-            # below says again in its own words.
-            lines.append("no code changed, so no tests were run")
+            # Nothing to test, and nothing to say about it: see `idle` above.
+            pass
         elif not verification["ran"]:
             lines.append("⚠️ NOT VERIFIED: " +
                          (verification["evidence"] or "the harness could not run the tests")
                          .splitlines()[0][:180])
-        else:
+        elif not verification["compiled"] or (verification["tests_failed"] or 0) > 0:
+            # ONLY THE FAILURES. A green row said `compiled ✓ · tests 214/214 ✓` under every
+            # successful turn, which is the harness telling the person who asked for a fix that
+            # the thing that always happens happened. What they need out of a passing run is
+            # where the code went; the numbers are the gate's own working, they are on the run
+            # page, and the pull request exists BECAUSE of them — an opened PR is already the
+            # statement that the suite passed. A failure is the other way round: nothing
+            # downstream shows it, it is why no pull request opened, and a summary claiming the
+            # work is ready is wrong next to it.
             compiled = "compiled ✓" if verification["compiled"] else "COMPILE FAILED ✗"
             tests = ""
             if verification["tests_run"]:
-                ok = (verification["tests_failed"] or 0) == 0
                 tests = (f" · tests {verification['tests_passed'] or 0}/"
-                         f"{verification['tests_run']} {'✓' if ok else '✗'}")
+                         f"{verification['tests_run']} ✗")
             lines.append(compiled + tests)
 
     if publish.get("branch"):
+        # THE NAME AND THE LINK, and nothing else. This is the one thing a reply owes a person
+        # who asked for a change: where the code is. The base it targets used to ride along
+        # here — a fix for the released build goes to master, not develop, and that seemed like
+        # the thing they would most want checked — but the pull request states its own base at
+        # the top of the page the link goes to, so the row was carrying an answer to a question
+        # the reader can only be asking with the PR already open in front of them.
         line = f"branch `{publish['branch']}`"
-        if publish.get("base"):
-            # Which branch this is FOR, and it is not always develop: a fix to the released
-            # build is based on master and proposed into master. Whoever reads the reply is the
-            # person who most needs to see that it went to the right one.
-            line += f" → `{publish['base']}`"
         if publish.get("pr_url"):
             line += f" · PR #{publish.get('pr_number')} {publish['pr_url']}"
         elif publish.get("no_pr_reason"):
             line += f" · no PR: {publish['no_pr_reason']}"
         lines.append(line)
-    elif publish.get("no_branch_reason"):
+    elif publish.get("no_branch_reason") and not idle:
+        # Only where a branch was actually expected. `no_branch_reason` covers two unlike things
+        # and the verification row tells them apart: an idle run, which was never going to
+        # publish anything, and a run whose files DID change and got out of the box — a push
+        # that failed, a harvest ffbox refused, work that could not be bundled. The second is
+        # lost work and has to be said. The first is the harness explaining why it did not do
+        # something nobody asked it to do.
         lines.append(f"no branch: {publish['no_branch_reason']}")
 
     if not body and not lines:
