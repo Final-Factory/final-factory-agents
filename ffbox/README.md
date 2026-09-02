@@ -195,8 +195,8 @@ not swept.
 Better than filling in `discord.app_token`: put `FFDISCORD_APP_TOKEN` in
 `~/.config/ffbox/secrets.env`,
 which both units read through `EnvironmentFile=` and which never enters a container — `ffbox`
-names the container's env vars one at a time and that is not one of them. Then re-run
-`sudo sh ffbox/06-services.sh --install` so the listener picks up the new watch list.
+names the container's env vars one at a time and that is not one of them. A token change is a
+restart, not a reinstall — the units read the file, they do not embed it.
 
 `ffdiscord doctor` reads the environment, not the secrets file, so source it first if the token
 lives there: `set -a; . ~/.config/ffbox/secrets.env; set +a`. It verifies the token, the server,
@@ -211,9 +211,14 @@ sh ffbox/restart_ffbox.sh                # restart all three, then report what c
 touch ~/.config/ffbox/discord.disabled   # kill switch: ffwatch launches nothing
 ```
 
-Re-run `06-services.sh --install` and `systemctl restart ffbox.target` after changing the watch list,
-the bind address or the units; `--check` tells you when what is installed no longer matches
-this checkout.
+**Changing the watch list is an edit and a restart** — `systemctl restart ffbox.target`, no root
+beyond the stop/start verbs 02-zfsSetup grants by name. The listener reads the watch block
+itself, and ffwatch has no config reload path, so both of them want the restart and neither
+wants a reinstall. Until 2026-09-02 the channel list was rendered into the listener's unit,
+which made adding a channel a root-owned unit edit; the unit now carries no channel at all.
+
+Re-run `06-services.sh --install` and restart after changing the bind address or the units;
+`--check` tells you when what is installed no longer matches this checkout.
 
 The bind address is config, not a constant. A machine with no opinion gets
 `https://127.0.0.1:8787`; the build server binds the address people actually read the queue
