@@ -75,7 +75,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a column added to
 # the schema file never reaches a database created before it. These are applied with ALTER on
@@ -182,6 +182,12 @@ ADDED_COLUMNS = [
     # comment in the schema file: it is what makes turn 4 continue turn 3's work instead of
     # opening a second branch beside it.
     ("conversation", "branch", "TEXT"),
+    # -- v13, the attach watermark ---------------------------------------------------------
+    # Both columns ship in the schema file's CREATE TABLE, so these only matter to a database
+    # that took v13 mid-flight, before the detach half of the rule existed. Two lines against
+    # a start-up that would otherwise abort on a missing column.
+    ("watch_attach", "attached", "INTEGER NOT NULL DEFAULT 1"),
+    ("watch_attach", "detached_at", "TEXT"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -437,6 +443,13 @@ DEFAULTS = {
     # A fresh machine gets its shape from 05-discord-setup.sh, which seeds one example entry
     # into the FILE, where it is visible and deletable.
     #
+    # AN ALIAS ADDED HERE IS WATCHED FROM NOW. Appearing in this block stamps an attach
+    # watermark (table watch_attach), and nothing posted before that instant can cause a turn —
+    # the backlog is ingested and kept as context, never answered. Removing an alias is recorded
+    # as a detach, so putting it back joins the channel afresh rather than from the first time
+    # it was ever listed. See stamp_watch_attachments; without any of this, attaching a channel
+    # that has been live for months answered its whole visible history in one pass.
+    #
     # Each entry: {"kind": ask|bug_report|suggestion, "forum": bool,
     #              "venue": public|private, "engage": all|mention, "ping": bool}
     # venue and engage are the two per-channel decisions of design/trusted_ingress_design.txt
@@ -631,6 +644,14 @@ def load_config():
     # ffbox/runners/lib/config.sh is what reads them.
     ffbox_block = {k: v for k, v in ffbox_block.items() if k in DEFAULTS}
     cfg = _deep_merge(DEFAULTS, ffbox_block)
+    # DID A CONFIG FILE ACTUALLY SPEAK? _read_config_json answers {} for missing, unreadable
+    # AND malformed alike, so "the watch block is empty" and "there is no config" arrive here
+    # looking identical — and stamp_watch_attachments has to tell them apart. An empty watch
+    # block is a decision to watch nothing, and dropping a channel from it is a detach; a
+    # config that could not be read is not a decision about anything, and must not be recorded
+    # as one. Deliberately falsey for an empty file too: a file with nothing in it has said
+    # nothing about which channels this box watches.
+    cfg["_config_read"] = bool(ffbox_raw)
     for env_name, (key, caster) in ENV_OVERRIDES.items():
         val = os.environ.get(env_name)
         if val:
@@ -791,6 +812,19 @@ def snowflake_secs(value):
     if n <= 0:
         return None
     return ((n >> 22) + DISCORD_EPOCH_MS) / 1000.0
+
+
+def snowflake_at(secs=None):
+    """The smallest snowflake that could have been minted at `secs` (default: now).
+
+    The inverse of snowflake_secs, for the one thing that needs to compare a WALL CLOCK to
+    message ids: the attach watermark. Discord hands out no id for "this instant", and asking
+    the API for the newest message in a channel would be a round trip that can fail at exactly
+    the moment the answer has to be recorded. The low 22 bits are zero, so the comparison is
+    "posted strictly after this instant" rather than a tie with a real id.
+    """
+    ms = int((time.time() if secs is None else secs) * 1000) - DISCORD_EPOCH_MS
+    return max(0, ms) << 22
 
 
 # S4. The model picks a PARENT FROM A SHORT LIST, or says new. Deliberately not a partition of
@@ -1840,6 +1874,11 @@ class Watcher:
             os.makedirs(d, exist_ok=True)
         self.db.init_schema()
         self.migrate_project_slugs()
+        # BEFORE ANYTHING INGESTS. Every subcommand runs init(), so the watermark for a
+        # newly-watched alias is in place no matter which one of them is the first to run
+        # after the config was edited — including `ffwatch status`, which is a fine thing to
+        # be the first: the cutoff wants to be the moment the box learned about the channel.
+        self.stamp_watch_attachments()
         return self.state_dir
 
     def migrate_project_slugs(self):
@@ -2063,6 +2102,120 @@ class Watcher:
     # ingest
     # ======================================================================================
 
+    # -- the attach watermark ---------------------------------------------------------------
+    # A CHANNEL IS ONLY EVER JOINED FROM NOW. sweep() re-reads every watched channel with no
+    # notion of when the watching started, so an alias added to the watch block arrived with
+    # its whole visible history: up to sweep_limit active threads, every one of them a thread
+    # with no turn on it, which always_a_turn forces a turn for whatever `engage` says. That is
+    # not a corner case, it is what happens every single time a live channel is attached — it
+    # happened to #dev-chat, and the workaround was to not attach channels.
+    #
+    # The fix is a per-alias watermark and a rule that nothing minted at or before it can cause
+    # a turn. What earns a watermark is the TRANSITION into the watch block, not the first
+    # sighting: a channel this box watched, dropped, and picked up again five years later is a
+    # new channel by every measure that matters, and joining it from its first attachment would
+    # answer five years of history in one pass — the very thing this exists to stop. So the
+    # table remembers whether each alias is CURRENTLY watched, and a re-attach is stamped like a
+    # first attach.
+    #
+    # Deliberately AUTOMATIC rather than an `ffwatch attach` somebody has to remember between
+    # editing the config and restarting the daemon: the failure mode of forgetting is the exact
+    # bug being fixed, and it is not recoverable once the replies are posted.
+
+    def stamp_watch_attachments(self):
+        """Follow the watch block's transitions. Idempotent; init() calls it.
+
+        Three states, and every subcommand runs this so the answer is current whichever one is
+        the first to run after the config was edited:
+
+          not in the table          a first attach — stamped now, and see below
+          in the table, attached    unchanged; the cutoff it already has is the right one
+          in the table, detached    a RE-attach — stamped now, exactly like a first one
+
+        An alias that ALREADY HAS CONVERSATIONS on its FIRST sighting is stamped '0', no
+        cutoff. That is the upgrade path and nothing else: every long-lived box meets this code
+        with channels it has been answering for months and a table that has never existed, and
+        stamping those "now" would silence whatever was posted while the daemon was restarting
+        into the new version. Once the table knows an alias, its own record answers instead —
+        which is why a re-attach is not fooled by the conversations it left behind.
+        """
+        watched = set(self.cfg.get("watch") or {})
+        rows = {r["alias"]: r for r in self.db.query("SELECT * FROM watch_attach")}
+
+        # THE DETACH HALF, and it is what makes a re-attach detectable at all. Skipped when no
+        # config file could be read: dropping an alias from the watch block is a decision, and
+        # a config that is missing, unreadable or malformed has made no decisions — recording
+        # one would detach every channel on the box over a stray comma, and the re-attach after
+        # the fix would then skip everything said while somebody was repairing the file.
+        if self.cfg.get("_config_read"):
+            for alias, row in sorted(rows.items()):
+                if alias in watched or not row["attached"]:
+                    continue
+                self.db.execute("UPDATE watch_attach SET attached=0, detached_at=?"
+                                " WHERE alias=?", (now_iso(), alias))
+                log(f"{alias} is no longer in the watch block — nothing there is read from "
+                    f"now on, and if it comes back it comes back as a new channel, from that "
+                    f"moment")
+
+        for alias in sorted(watched):
+            row = rows.get(alias)
+            if row and row["attached"]:
+                continue
+            mark = str(snowflake_at())
+            if row:
+                self.db.execute(
+                    "UPDATE watch_attach SET attached=1, attached_at=?, detached_at=NULL,"
+                    " watermark_id=? WHERE alias=?", (now_iso(), mark, alias))
+                log(f"watching {alias} again — it was dropped from the watch block on "
+                    f"{row['detached_at'] or 'an earlier run'}, so it joins as a new channel: "
+                    f"everything said there in the meantime is history and will never be "
+                    f"answered")
+                continue
+            prior = self.db.scalar(
+                "SELECT COUNT(*) FROM conversation WHERE watch_alias=?", (alias,), 0)
+            if prior:
+                mark = "0"
+            self.db.execute(
+                "INSERT OR IGNORE INTO watch_attach(alias, attached_at, watermark_id,"
+                " attached) VALUES(?,?,?,1)", (alias, now_iso(), mark))
+            if prior:
+                log(f"watching {alias}, which this box already has {prior} conversation(s) "
+                    f"in — no cutoff")
+            else:
+                log(f"watching {alias} from now: anything posted there before this moment is "
+                    f"history and will never be answered. It is still read and kept as "
+                    f"context. Delete its watch_attach row to take that back.")
+
+    def attach_watermark(self, alias):
+        """The snowflake this alias was attached at, as an int. 0 means no cutoff.
+
+        Not cached: the rows are written once at start-up and read once per ingested message,
+        which is nowhere near hot enough to be worth a cache that a test or a hand-edit could
+        then be lying to.
+        """
+        if not alias:
+            return 0
+        try:
+            return int(self.db.scalar(
+                "SELECT watermark_id FROM watch_attach WHERE alias=?", (alias,), "0") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def before_attach(self, alias, discord_id):
+        """Was this id minted at or before the moment `alias` was attached?
+
+        False whenever the answer is not clearly yes — an unwatched alias, no row, an id that
+        is not a snowflake. Every one of those is a channel this rule has nothing to say about,
+        and guessing "yes" there would silence live traffic.
+        """
+        mark = self.attach_watermark(alias)
+        if not mark:
+            return False
+        try:
+            return int(discord_id) <= mark
+        except (TypeError, ValueError):
+            return False
+
     def upsert_conversation(self, thread_id, *, kind, channel_id, guild_id=None, title=None,
                             root_message_id=None, opener=None, is_thread=False, alias=None):
         thread_id = str(thread_id)
@@ -2130,10 +2283,20 @@ class Watcher:
         discord_id = str(msg.get("id"))
         author = msg.get("author") or {}
         ref = msg.get("referenced_message") or {}
+        # PRE-ATTACH MESSAGES COME IN GATED, rather than not coming in at all. They are still
+        # this thread's history — the reply to a question asked next week reads better for
+        # having them — and keeping them means the conversation's in_watermark_id advances, so
+        # the sweep's next look at the thread is an incremental fetch rather than a full re-read
+        # of a backlog it has already seen. What they cannot do is cause a turn: create_turn
+        # only ever claims messages with gate IS NULL, which is the same door the engagement
+        # gate declines through.
+        alias = self.db.scalar("SELECT watch_alias FROM conversation WHERE id=?", (conv_id,))
+        stale = self.before_attach(alias, discord_id)
         cur = self.db.execute(
             "INSERT OR IGNORE INTO message(conversation_id, discord_id, direction, author_id,"
             " author_name, is_bot, content, referenced_discord_id, turn_id, created_at,"
-            " addressed, routed_by, routed_reason) VALUES(?,?,?,?,?,?,?,?,NULL,?,?,?,?)",
+            " addressed, routed_by, routed_reason, gate, gate_reason)"
+            " VALUES(?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
             (conv_id, discord_id, "in", str(author.get("id") or ""),
              author.get("global_name") or author.get("username") or "?",
              1 if author.get("bot") else 0, msg.get("content") or "",
@@ -2144,7 +2307,9 @@ class Watcher:
              1 if self.is_addressed(msg) else 0,
              # WHICH RULE PUT IT HERE. Recorded on every message, not only the ones a model
              # touched: a routing call nobody can inspect is one nobody can debug.
-             routed_by, (routed_reason or None)))
+             routed_by, (routed_reason or None),
+             "none" if stale else None,
+             (f"posted before {alias} was attached to this box" if stale else None)))
         if cur.rowcount == 0:
             return None                        # already ingested; a duplicate doorbell
         message_id = cur.lastrowid
@@ -2152,6 +2317,13 @@ class Watcher:
                         " WHERE id=? AND (in_watermark_id IS NULL OR CAST(in_watermark_id AS"
                         " INTEGER) < CAST(? AS INTEGER))",
                         (now_iso(), discord_id, conv_id, discord_id))
+        # THE BACKLOG'S ATTACHMENTS COME DOWN TOO, and that is a deliberate one-time cost —
+        # attaching a busy forum pulls every log and save zip in its visible history. Discord's
+        # attachment URLs are signed and expire, and nothing re-visits a message once it is
+        # ingested, so an evidence file skipped here is gone for good. The point of keeping the
+        # backlog at all is that a comment on an old report next month can be answered with
+        # that report in hand; answering it without the save file it turns on would be half a
+        # context. attachment_max_bytes still bounds each one.
         self.download_attachments(conv_id, message_id, msg)
         return message_id
 
@@ -3076,9 +3248,18 @@ class Watcher:
         # dropping the one message that matters. Asked as "has this thread been answered before"
         # rather than by matching the starter's id, because Discord gives a forum starter the
         # same id as its thread and a bundle does not always carry it.
+        #
+        # UNLESS THE THREAD PREDATES THE CHANNEL'S ATTACHMENT. A backlog thread's own messages
+        # are gated and never reach here, but the first comment posted in one AFTER the attach
+        # does — and this rule would read a six-month-old report with one "+1" on it as a report
+        # opening now and triage the whole thing. That is the same surprise the watermark exists
+        # to prevent, arriving a week late. A pre-attach thread falls through to the channel's
+        # engagement policy instead, so in a mention-only channel it takes a ping or a fresh
+        # attachment — both of which are rules above this one — to wake it.
         if conv["is_thread"] and not self.db.scalar(
                 "SELECT COUNT(*) FROM turn WHERE conversation_id=?", (conv["id"],), 0):
-            return "it opens a thread"
+            if not self.before_attach(conv["watch_alias"], conv["thread_id"]):
+                return "it opens a thread"
         return None
 
     def gate_declines(self, conv, msgs, reason):

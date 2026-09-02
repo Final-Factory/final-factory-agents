@@ -487,7 +487,12 @@ ffbox["_help"] = {
              "internals may be said out loud there; engage mention means only a message that "
              "@-mentions the bot (or replies to it) is considered. Both fall closed when "
              "omitted, and ffwatch logs which entry made it choose. ping is false unless "
-             "stated: mark your escalation channel true, and nothing else.",
+             "stated: mark your escalation channel true, and nothing else. AN ALIAS ADDED "
+             "HERE IS WATCHED FROM NOW: ffwatch records the moment it appears, and nothing "
+             "posted before that can produce a reply. The history is still read and kept as "
+             "context for whatever is said next -- it just never gets answered. Taking an "
+             "alias back out is recorded too, so putting it back later joins the channel "
+             "afresh from that moment rather than from the first time it was listed.",
     "max_concurrent_runs": "The ceiling on CONTAINERS, and it is the box's rather than one "
              "lane's: agent runs, staged pool containers and ffgithubrunners' CI jobs all count "
              "against it. They share a daemon, each holds a workspace of tens of GiB, and RAM is "

@@ -149,6 +149,44 @@ choose a `venue` or an `engage`, and logs when the whole block is empty; `ping` 
 not logged, because "cannot pull a person out of their evening" is what nearly every channel
 wants and warning about it everywhere would bury the two that matter.
 
+**A channel is joined from now, never from its history.** Adding an alias to the `watch` block
+stamps an attach watermark for it — a Discord snowflake, so it is an instant — and nothing
+posted at or before that instant can produce a turn. Everything the first sweep finds is still
+ingested: the conversations are created, the messages stored, the attachments downloaded, so a
+comment on one of those threads next month is answered with the report and its save file in
+hand. What the backlog cannot do is start a turn. It is stamped automatically because the
+failure mode of a command you have to remember between editing the config and restarting is the
+exact bug this prevents, and once the replies are posted there is no taking them back. Before
+this existed, attaching a live channel meant answering `sweep_limit` threads of history in one
+pass — which is what happened to #dev-chat, and why the workaround was to not attach channels at
+all.
+
+What earns a watermark is the TRANSITION into the watch block, not the first time this box ever
+saw the name. A channel watched, dropped, and picked up again five years later is a new channel
+by every measure that matters, so it is stamped again; removing an alias is recorded rather than
+forgotten, which is what makes a re-attach distinguishable from a restart at all.
+
+Three details worth knowing:
+
+- **A channel this box already has conversations for is stamped `0`, no cutoff — on its first
+  sighting only.** That is the upgrade path and nothing else: a channel it has been answering
+  for months meets this table for the first time, and a cutoff would silence whatever was
+  posted while the daemon was restarting into the new version. Once the table knows an alias
+  its own record answers instead, so a re-attach is not talked out of its cutoff by the
+  conversations it left behind.
+- **A config that could not be read detaches nothing.** Missing, unreadable and malformed all
+  parse to "no settings", and recording that as a decision would detach every channel on the
+  box over a stray comma — and then skip everything said while somebody repaired the file.
+- **A thread that predates the attach no longer counts as "opening a thread"**, the rule that
+  makes a forum report a turn whatever `engage` says. Without that, a six-month-old report with
+  one `+1` on it would be read as a report opening now and triaged in full. Such a thread falls
+  through to the channel's engagement policy instead, so in a mention-only channel it takes a
+  ping or a fresh attachment to wake it.
+
+To take a cutoff back and let the backlog in after all, delete the alias's row from
+`watch_attach` in `~/ffbox-state/ffwatch.db` (or set its `watermark_id` to `0`) and restart;
+the next sweep re-reads the channel with nothing gated.
+
 An alias whose id is still blank is passed to `ffdiscord` by name, which is what lets it
 resolve once and write the id back — after that the sweep asks for the snowflake. An alias that
 matches no channel at all is reported once per process, with the command that fixes it, and is
