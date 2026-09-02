@@ -113,6 +113,8 @@
 # Non-matching names under the suffix still resolve here and are refused by nginx, so an attempt
 # lands in the SNI log with the name it asked for. See docs/egress.md.
 # REMOVED 2026-09-02: the productionresultssa* regex, and with it every path to blob storage.
+# PUT BACK THE SAME DAY, NARROWED -- see RESTORED below. The reasoning here is kept because the
+# half of it about the namespace is still why the replacement looks the way it does.
 #
 # It was the last entry a job needed for anything but the Actions runtime, and it was the most
 # dangerous line in this file. `[0-9]{1,2}` admits 110 names -- sa0-sa9 AND sa00-sa99 -- and eleven
@@ -138,11 +140,13 @@
 # recur every few seconds for its whole life, and stop when it ends. That is the RUNNER retrying,
 # not a step, and one shard hammered rather than the thin spread across nineteen that normal use
 # produced. Most likely a Results API object: the step summary or the log archive.
+# ANSWERED LATER THE SAME DAY: the log archive. See RESTORED below.
 #
-# NOTHING HAS BROKEN YET. That job Succeeded, the tests ran, the check run posted and the artifact
-# uploaded through the host. Whatever wants blob fails quietly and the job does not care. The entry
-# STAYS OFF deliberately, to find out what degrades: keeping the fence tight and learning what
-# breaks beats restoring reach on a guess.
+# NOTHING HAS BROKEN YET -- true of the job, false of the record it left behind, and the distinction
+# is the whole lesson. That job Succeeded, the tests ran, the check run posted and the artifact
+# uploaded through the host, so every signal this file knew how to read said the removal was clean.
+# Its logs were already gone. "Find out what degrades" only works if you are watching the thing that
+# degrades, and nothing here was watching the log.
 #
 # WHERE TO LOOK, AND IT IS NOT THE DENY SINK. This file said "the name appears in the deny sink with
 # upstream=127.0.0.1:9", and that was wrong in a way that cost an hour of believing the removal was
@@ -154,6 +158,56 @@
 #
 # Live logs are not at risk: they ride *.actions.githubusercontent.com, measured at 271 connections
 # to pipelinesghubeus14 across roughly 55 jobs, and that entry is not going anywhere.
+
+# RESTORED 2026-09-02, NARROWED, AND FOR NOW. What needed this entry is the job LOG.
+#
+# WHAT THE REMOVAL COST. Opening a finished job's logs in the Actions UI returns
+# <Code>BlobNotFound</Code> from Azure -- an answer about a blob the runner never got to write. That
+# settles the question the removal left open. The 64 A-queries for productionresultssa17, starting
+# two seconds into a job before any workflow step, recurring every few seconds and stopping when the
+# job stopped, were the runner streaming its own log to a Results API blob.
+#
+# WHY THIS CANNOT BE MOVED TO THE HOST the way the artifact was. upload-artifact was a WORKFLOW
+# STEP, so it could be deleted and the supervisor could do the PUT while the job waited on
+# artifact.done. The log has no step to intercept: Runner.Worker uploads it itself, from inside the
+# container, with Azure.Storage.Blobs.dll shipped in /opt/actions-runner/bin. Nor can the supervisor
+# do it afterwards -- slot.sh already records what the Results API tells a finished job,
+# `403 permission_denied, "job is completed"`. There is no seam here, only the runner.
+#
+# FOR NOW, because the replacement is host-side capture rather than a better regex. The runner reads
+# ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT (confirmed in Runner.Common.dll, runner 2.337.0, in
+# ffbox:latest); with it set on the job container, the `docker logs -f` that slot.sh already runs
+# picks up the whole job log instead of the six listener lines it captures today. That gets the log
+# onto the host with no egress at all, and the supervisor can hand it to the existing
+# artifact-upload.py channel to put it on the run page. When that lands, this entry goes again.
+#
+# WHY THIS QUANTIFIER AND NOT THE OLD ONE. `[0-9]{1,2}` admitted 110 names, sa0-sa9 AND sa00-sa99,
+# eleven of which resolved nowhere and were free for anyone to claim. `(0|[1-9][0-9]?)` admits 100:
+# the padded sa00-sa09 are gone STRUCTURALLY rather than because they happened to be unregistered on
+# the day someone looked, since GitHub does not pad its shard numbers. `(?!22\.)` removes the one
+# unpadded name that still resolves nowhere. Swept 2026-09-02 from this box, all hundred:
+#
+#     for n in $(seq 0 99); do h=productionresultssa$n.blob.core.windows.net; \
+#         getent hosts "$h" >/dev/null || echo "claimable: $h"; done
+#
+# sa22 was the only line it printed. sa100 is NXDOMAIN too, so two digits is still the whole
+# namespace. RE-RUN THAT SWEEP whenever this entry is touched, and read a new name in its output as
+# an open door rather than a curiosity: every name this regex admits is an unauthenticated,
+# high-bandwidth HTTPS endpoint the moment the wrong person owns it.
+#
+# WHAT THE SWEEP DOES NOT PROVE. A name that resolves is owned by SOMEONE, and nothing visible from
+# out here says that someone is Microsoft. Only the nineteen shards real jobs have actually used
+# have positive evidence behind them. They are deliberately NOT written out as exact entries: a
+# shard GitHub adds next month would then lose its logs silently, which is the failure this whole
+# block is a record of.
+#
+# IF LOGS GO MISSING AGAIN it is a shard this regex does not admit, and THIS TIME the deny sink is
+# the right place to look. blob.core.windows.net resolves here again while this entry exists, so a
+# non-matching name reaches nginx and is logged with the name it asked for at upstream=127.0.0.1:9
+# -- which is exactly why the suffix goes to dnsmasq rather than being left to NXDOMAIN. A
+# three-digit shard is the one exception, dying at DNS with no sni= line. Read both halves:
+#     sh ffbox/runners/03-image.sh --egress-log     # allowed, deny-sink, AND the NXDOMAIN names
+~^productionresultssa(?!22\.)(0|[1-9][0-9]?)\.blob\.core\.windows\.net$   blob.core.windows.net
 
 # --- CANDIDATES FOR REMOVAL, 2026-09-01 ------------------------------------------------------------
 # The licence became an offline .ulf on this date (ffbox/unity-offline-license.sh), and the offline

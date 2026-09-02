@@ -117,7 +117,7 @@ it does not pad shard numbers -- and `sa22` returned nothing from two public res
 control lookup ruling out a wildcard zone. An Azure storage account name is free and first-come, so
 each was an allowlisted, unauthenticated, high-bandwidth endpoint waiting to be claimed.
 
-#### Still open: something in the runner asks for blob and is refused
+#### Closed: it was the job log, and it had already been lost for a day
 
 Measured on the first job after the removal: 64 A-queries for
 `productionresultssa17.blob.core.windows.net` from the job container, every one NXDOMAIN. They start
@@ -126,14 +126,39 @@ stop when it ends. That is the RUNNER retrying rather than a step, and one shard
 than the thin spread across nineteen that normal use produced. Most likely a Results API object:
 the step summary, or the log archive.
 
-**Nothing has broken.** That job Succeeded, tests ran, the check run posted, the artifact uploaded.
-Whatever wants blob fails quietly.
+**"Nothing has broken"** was written here and was wrong. That job Succeeded, tests ran, the check
+run posted, the artifact uploaded -- and its logs were already gone. Opening a finished job in the
+Actions UI returns:
 
-**Decision, 2026-09-02: leave it off and find out what degrades.** Keeping the fence tight and
-learning what breaks beats restoring reach on a guess. The thing to check is whether that run's
-logs and step summary render in the Actions UI. If something worth having is lost, the narrowed
-`([0-9]|[1-9][0-9])` quantifier is the fallback -- it removes the ten padded names for free and
-leaves `sa22` as the only claimable one.
+```xml
+<Error><Code>BlobNotFound</Code><Message>The specified blob does not exist.</Message></Error>
+```
+
+Azure answering for a blob the runner never got to write. **"Find out what degrades" only works if
+you are watching the thing that degrades**, and every signal this audit knew how to read -- job
+result, test output, check run, artifact -- is upstream of the log upload. A day of builds has no
+readable history.
+
+**It cannot be moved to the host the way the artifact was.** `upload-artifact` was a workflow STEP,
+so it could be deleted and the supervisor could do the PUT while the job waited on `artifact.done`.
+The log has no step to intercept: `Runner.Worker` uploads it from inside the container, with
+`Azure.Storage.Blobs.dll` shipped in `/opt/actions-runner/bin`. Nor can the supervisor do it
+afterwards -- `slot.sh` already records what the Results API tells a finished job,
+`403 permission_denied, "job is completed"`.
+
+**Decision, 2026-09-02, revised: the entry goes back, narrowed, as a stopgap.**
+`~^productionresultssa(?!22\.)(0|[1-9][0-9]?)\.blob\.core\.windows\.net$` admits 100 names instead
+of 110 and none that resolve nowhere: the padded ten are excluded structurally, `sa22` by the
+lookahead.
+
+**The replacement is host-side capture, not a better regex.** The runner reads
+`ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT` -- confirmed present in `Runner.Common.dll`, runner 2.337.0,
+in `ffbox:latest`. Set on the job container, the `docker logs -f` that `slot.sh:423` already runs
+picks up the whole job log rather than the six listener lines it captures today, with no egress
+whatsoever; `lib/artifact-upload.py` is generic enough to then put it on the run page on the job's
+own credential. The open question is log volume: `slot.sh` notes a Unity job log is tens of
+megabytes, against one file per slot on `daily / rotate 7 / copytruncate`. When that lands, this
+entry comes off again.
 
 #### The mistake this nearly hid, which is the reusable part
 

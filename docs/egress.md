@@ -123,7 +123,20 @@ Vendor-controlled namespace, fine. Customer-controlled namespace, an open door. 
 gets a regex pinned to the shape of the names actually observed:
 
 ```
-~^productionresultssa[0-9]{1,2}\.blob\.core\.windows\.net$   blob.core.windows.net
+~^productionresultssa(?!22\.)(0|[1-9][0-9]?)\.blob\.core\.windows\.net$   blob.core.windows.net
+```
+
+That quantifier is the second draft, and the first one is the lesson. `[0-9]{1,2}` looked pinned
+and was not: it admits `sa00`-`sa09` as well as `sa0`-`sa9`, and GitHub does not pad its shard
+numbers, so those ten were names the fence permitted and nobody would ever serve. Ten free accounts
+for the asking. `(0|[1-9][0-9]?)` cannot express a padded name at all, which is the difference
+between a rule and a coincidence; `(?!22\.)` drops the one unpadded name that still resolves
+nowhere. **Narrowing a namespace is not the same as emptying it** — check what your regex admits
+that nobody has registered:
+
+```bash
+for n in $(seq 0 99); do h=productionresultssa$n.blob.core.windows.net; \
+    getent hosts "$h" >/dev/null || echo "claimable: $h"; done
 ```
 
 Measured on 2026-08-31, the same name against each list:
@@ -144,7 +157,20 @@ just as well and tell you nothing about who tried.
 
 Braces are nginx block syntax, so the generator quotes the regex; unquoted, `{1,2}` fails with
 `unexpected "{"`. A regex containing `"` or `;` is refused outright — it would end the token early
-and inject config.
+and inject config. Negative lookahead works: nginx's PCRE takes `(?!22\.)`, verified on
+`ffbox-egress:latest` with a config test and eleven match cases.
+
+Test the image the fence actually runs, which is on **ffbox-container's daemon**, not the default
+one. `ffbox-egress:latest` exists on both and the default daemon's copy can be months stale — it
+predates `~regex` support entirely, so a valid regex entry comes back as `bad allowlist entry` with
+the two fields mashed together, which looks like a syntax error in your line and is not:
+
+```bash
+DOCKER_HOST=unix:///run/ffbox-container/docker.sock docker run --rm \
+    -e FFBOX_EGRESS_IP=127.0.0.1 \
+    -v "$PWD/ffbox/runners/egress/allowlist.txt:/etc/ffbox/allowlist.txt:ro" \
+    ffbox-egress:latest
+```
 
 ## Adding a host
 
