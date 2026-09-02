@@ -1074,7 +1074,7 @@ the skills merely advise:
   harness's own tests ran and passed, the branch and PR the work landed on, whether the run
   ended badly and why, and whether the engagement gate failed — all of it UNDER the answer,
   which is what the reader came for and what those lines are provenance for. At a **public**
-  venue it is the agent's answer alone. Neither shape carries the state, the run id, the lane,
+  venue it is the agent's answer alone, plus the branch footer below. Neither shape carries the state, the run id, the lane,
   the cost, the turn count, the classification or the session id — those are on the run row and
   on the web page, which is where somebody who wants them goes looking. The session id in
   particular is only usable at a machine holding the box's state directory, so it sits on the
@@ -1086,12 +1086,25 @@ the skills merely advise:
   so a public reply gains exactly one fixed sentence on the runs where the harness's own record
   contradicts it: verification failed, verification was owed and never ran, a pull request was
   blocked, the work never reached the remote at all, or the engagement gate failed. Fixed, never interpolated out of the evidence or
-  the reason, because branch names and test names are what the public shape exists to keep out.
-  A run the harness has no quarrel with says nothing extra. For the same reason a public reply
+  the reason, because test names and the gate's own working are what the public shape exists to
+  keep out. A run the harness has no quarrel with says nothing extra beyond the footer below.
+  For the same reason a public reply
   only carries `summary` when the run ended `done`: on any other ending that field holds
   whatever could be parsed out of the result, and for an API error it holds the error itself.
   The overflow attachment follows the same rule — withholding the text and attaching the whole
   of it would be no protection at all.
+- **A reply that ends in a branch says so, in both shapes.** `Fix created on \`<branch>\`,
+  pending dev review`, last line, under the answer and under the correction when there is one.
+  It is the one harness fact a PUBLIC reply states outright: the player who reported the bug
+  used to be told a fix had been made and never told where it went or that it was not in the
+  game yet, and "pending dev review" is the half that stops a thread reading like a release
+  note. The private shape carries the same sentence with the pull request on the end of it,
+  instead of the bare `branch \`<name>\`` row it used to print, so the two halves of a split
+  reply describe one branch in one vocabulary. Withheld on exactly the runs the correction
+  above fires for — a fix pending review is the opposite of what happened in every one of them
+  — and there the operator's half falls back to the bare name, because a run that went wrong is
+  when the branch is most worth having.
+
 - **A turn stopped by a rate ceiling still answers, once.** `blocked` is terminal and never
   retried, so a job that hits its daily cap would otherwise lose its 👀 and go quiet forever.
   It gets a fixed one-line reply instead, composed on the host: no run, no container and no

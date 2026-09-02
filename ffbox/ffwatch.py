@@ -7428,15 +7428,19 @@ BLOCKED_NOTE = ("That is my limit for the day, so I have not started on this one
 
 
 def public_correction(turn, verification, publish):
-    """The one line a PUBLIC reply is allowed beyond the agent's own words, or "".
+    """The one CORRECTION a public reply is allowed beyond the agent's own words, or "".
+
+    Not the only extra line any more — publish_footer adds a second on the runs this one stays
+    silent for, and it is deliberately the other way round: this line fires where the harness
+    disagrees, that one where it has nothing to disagree with.
 
     A public reply is the agent's prose, and prose is the one part of a reply the harness did
     not write. That is fine while the two agree. It is not fine when they do not: a summary
     saying "pushed the fix and opened a PR" reads as fact in a bug thread even when the tests
     failed and the harness refused to propose anything. The private shape answers that by
     printing what the harness knows next to what the agent said; the public shape cannot,
-    because branch names, test names and file paths are exactly what a player must not be
-    shown.
+    because test names, file paths and reasons out of the gate's own working are not what a
+    player is reading a bug thread for.
 
     So: nothing at all while the harness has no quarrel with the run, and ONE fixed sentence
     when it does. Fixed, never interpolated from `evidence` or `no_pr_reason`, because those
@@ -7474,6 +7478,33 @@ def public_correction(turn, verification, publish):
     return ""
 
 
+def publish_footer(publish, correction):
+    """The last line of a reply that ends with a fix waiting on a human, or "".
+
+    BOTH SHAPES CARRY THIS ONE, which makes it the only harness fact a public reply states
+    outright. The rest of the private provenance stays private for the reason it always did —
+    a player has no use for a test count or a base ref — but "where did my fix go" is the one
+    question the person who reported the bug is actually left holding, and the answer used to
+    exist only on the operator's half of the split. A branch name is short, it is the handle
+    the dev will use, and quoting it costs a player nothing.
+
+    NAMED BY THE BRANCH AND NOT BY THE PR because the branch is the thing this line is about:
+    the pull request rides along on the private line below, where the link is useful, and a
+    public reader has nowhere to click it anyway.
+
+    Withheld whenever the harness has a quarrel with the run — `correction` is exactly that
+    quarrel, already computed by the caller — because every one of those cases ends in the
+    opposite of a fix pending review: the tests failed, the suite never ran, the push went
+    nowhere, or the gate could not tell what was being asked. Saying "pending dev review"
+    under "nothing was put up for review" is the reply contradicting itself in the space of
+    two lines.
+    """
+    branch = (publish or {}).get("branch")
+    if not branch or correction:
+        return ""
+    return f"Fix created on `{branch}`, pending dev review"
+
+
 def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
                  verification=None, publish=None):
     """The reply body. TWO SHAPES, chosen by the turn's venue.
@@ -7508,6 +7539,7 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # that IS the error string. Posting it would put a stack-shaped line in a player's
         # thread as though it were the reply.
         correction = public_correction(turn, verification, publish or {})
+        footer = publish_footer(publish or {}, correction)
         if not answer_is_publishable(turn, terminal):
             # A run stopped by its own ceiling is not a run that broke, and saying so costs
             # nothing: `terminal` already distinguishes them, and the two want opposite advice
@@ -7515,7 +7547,11 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
             answer = PUBLIC_TIMED_OUT if terminal == "timed_out" else PUBLIC_NO_ANSWER
         else:
             answer = body or PUBLIC_NOTHING_TO_SAY
-        return f"{correction}\n\n{answer}" if correction else answer
+        out = f"{correction}\n\n{answer}" if correction else answer
+        # UNDER the answer, and under the correction when there is one. A run that pushed
+        # nothing is unchanged: this is the only line of the public shape that comes from the
+        # harness rather than from the agent, and it appears only where there is a branch.
+        return f"{out}\n\n{footer}" if footer else out
 
     publish = publish or {}
     # A RUN THAT CHANGED NOTHING OWES NO PROVENANCE. The container skips the suite exactly when
@@ -7594,7 +7630,13 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # the thing they would most want checked — but the pull request states its own base at
         # the top of the page the link goes to, so the row was carrying an answer to a question
         # the reader can only be asking with the PR already open in front of them.
-        line = f"branch `{publish['branch']}`"
+        # THE SAME SENTENCE THE PLAYER GETS, wherever it is true here too, so the two halves of
+        # a split reply do not describe the same branch in two different vocabularies. It is
+        # withheld on exactly the runs where the public shape withholds it — tests that failed,
+        # a proposal that never opened, a gate that could not decide — and there the bare name
+        # still prints, because an operator reading a run that went wrong needs the branch most.
+        line = (publish_footer(publish, public_correction(turn, verification, publish))
+                or f"branch `{publish['branch']}`")
         if publish.get("pr_url"):
             line += f" · PR #{publish.get('pr_number')} {publish['pr_url']}"
         elif publish.get("no_pr_reason"):
