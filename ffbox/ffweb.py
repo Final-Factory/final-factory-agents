@@ -2152,15 +2152,7 @@ class App:
         # moves into the note under the table, where there is room to say it once.
         body += ["<h2>containers <span class=\"count\">" + esc(f"{used}/{cap}") +
                  "</span></h2>",
-                table(["lane", "class", "name", "slot", "state", "ttl", "ref", "up"], rows),
-                "<p class=\"note\">A <code>spare</code> is a container that filled its "
-                "workspace before any request existed; <code>ttl</code> is what it has left "
-                "before it retires. <code>running*</code> is a turn that was dispatched into "
-                "one of those rather than launched cold — 1.2 seconds to start against about "
-                "40. The count beside the heading is against <code>max_concurrent_runs</code>, "
-                "the ceiling on containers holding a workspace — agent runs, staged spares and "
-                "CI jobs all count against the one number, because they share a daemon and RAM "
-                "is what runs out.</p>"]
+                table(["lane", "class", "name", "slot", "state", "ttl", "ref", "up"], rows)]
 
         prows = []
         for pool in doc.get("pools") or []:
@@ -2172,14 +2164,7 @@ class App:
             prows.append([pool.get("class") or "—", want, cell, pool.get("busy"),
                           pool.get("max")])
         body += ["<h2>pools</h2>",
-                 table(["class", "idle", "waiting", "busy", "max"], prows),
-                 "<p class=\"note\">One vocabulary for both lanes, because they hold the same "
-                 "kind of thing under two names: <code>waiting</code> is a container with a "
-                 "workspace and no work in it — an agent spare, or a CI runner registered with "
-                 "GitHub and not running a job — and <code>busy</code> is one doing something. "
-                 "<code>idle</code> is how many waiting containers that pool is configured to "
-                 "keep. A <code>max</code> equal to the box ceiling is a lane with no ceiling "
-                 "of its own.</p>"]
+                 table(["class", "idle", "waiting", "busy", "max"], prows)]
 
         infra = doc.get("infrastructure") or []
         if infra:
