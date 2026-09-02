@@ -309,12 +309,18 @@ check("a watched channel is never mistaken for a DM, whatever the payload carrie
 # no channel configured
 # --------------------------------------------------------------------------------------
 
-print("\nwatching nothing (the default):")
+print("\nwatching nothing:")
 
 _src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "ffdiscord_listener.py"), encoding="utf-8").read()
-check("--channels ships no default, so no channel is watched by accident",
-      'ap.add_argument("--channels", default="",' in _src)
+# The default is None, not "", and the difference carries a meaning: omitted reads the config's
+# watch block, `--channels ""` watches nothing wholesale whatever the config says. A default of
+# "" would collapse those two into one answer and take the escape hatch away.
+check("--channels defaults to the config rather than to a channel of its own",
+      'ap.add_argument("--channels", default=None,' in _src)
+check("an explicit empty string still means no channel",
+      L.watched_aliases({"watch": {"agent_testing": {}}}) == ["agent_testing"]
+      and [c.strip() for c in "".split(",") if c.strip()] == [])
 for _gone in ('"ask_claude"', '"bug_reports"', '"suggestions"', '"dev_chat"',
               'default="ask_claude'):
     check(f"and {_gone} is not baked in anywhere", _gone not in _src)
@@ -406,6 +412,48 @@ check("a DM is never mistaken for an unknown channel to resolve",
       events()[-1]["kind"] == "operator_dm", events())
 
 os.unlink(tmp.name)
+
+
+# --------------------------------------------------------------------------------------
+# where the channel list comes from
+# --------------------------------------------------------------------------------------
+# The list used to arrive ONLY as --channels, rendered into the systemd unit by
+# ffbox/06-services.sh out of the same config block. That made adding a channel a root-owned
+# unit edit, and let an installed unit lag a config change with nothing to notice.
+
+print("\nthe watch block")
+check("the aliases come back sorted, so the log and the unit agree on order",
+      L.watched_aliases({"watch": {"bug_reports": {}, "agent_testing": {}}})
+      == ["agent_testing", "bug_reports"])
+check("keys under an \"ffwatch\" object are read too, as ffwatch itself reads them",
+      L.watched_aliases({"ffwatch": {"watch": {"dev_chat": {}}}}) == ["dev_chat"])
+check("and nested wins over top level, matching ffwatch.load_config's merge order",
+      L.watched_aliases({"watch": {"top": {}}, "ffwatch": {"watch": {"nested": {}}}})
+      == ["nested"])
+check("a config with no watch block watches no channel wholesale",
+      L.watched_aliases({"discord": {"app_token": "x"}}) == [])
+check("nor does an empty one", L.watched_aliases({"watch": {}}) == [])
+check("and neither does junk in place of the block",
+      L.watched_aliases({"watch": ["agent_testing"]}) == [])
+
+# An alias with no id yet must not be able to kill the doorbell. 05-discord-setup.sh seeds one
+# per watched alias and they fill themselves in on first use, so the watch block legitimately
+# holds them; 06-services.sh used to protect the unit by rendering only the aliases that
+# already resolved, and that protection has to survive the move.
+_cfg = {"channels": {"agent_testing": "111", "example_channel": "", "bug_reports": "222"}}
+_ids, _fatal = L.resolve_watch_ids(_cfg, ["agent_testing", "example_channel", "bug_reports"],
+                                   from_config=True)
+check("an alias with no id yet is skipped rather than fatal when it came from the config",
+      _ids == {"111": "agent_testing", "222": "bug_reports"} and _fatal is None, (_ids, _fatal))
+_ids, _fatal = L.resolve_watch_ids(_cfg, ["agent_testing", "example_channel"],
+                                   from_config=False)
+check("while the same alias typed into --channels is fatal, as it always was",
+      _ids == {} and "has no id yet" in (_fatal or ""), (_ids, _fatal))
+_ids, _fatal = L.resolve_watch_ids(_cfg, ["nonsuch"], from_config=False)
+check("and an alias nothing has heard of is told apart from one merely unresolved",
+      "unknown channel alias" in (_fatal or ""), _fatal)
+check("a raw snowflake is taken as itself",
+      L.resolve_watch_ids(_cfg, ["333"], from_config=True)[0] == {"333": "333"})
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

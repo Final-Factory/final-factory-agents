@@ -64,19 +64,32 @@ pings a real person; a long summary fails the command instead of arriving cut in
 lock in `listener.lock` enforces it, and exit code 2 means one is already running.
 
 ```bash
-ffdiscord-listener                          # mentions and operator DMs only
-ffdiscord-listener --channels agent_testing # plus a wholesale sweep of that channel
+ffdiscord-listener                          # the config's watch block
+ffdiscord-listener --channels agent_testing # that channel instead, whatever the config says
+ffdiscord-listener --channels ""            # nothing wholesale: mentions and operator DMs only
 ffdiscord-listener --once-ready              # connect, prove READY, exit (smoke test)
 ```
 
-**`--channels` is the only thing that makes a channel sweep wholesale, and it has no default.**
-The Gateway's `GUILD_MESSAGES` intent is guild-wide — Discord has no per-channel subscription —
-so the listener sees every channel the bot can read and filters. A channel named here rings on
+**A channel is swept wholesale only if it is on the list, and no channel is built in.** The
+Gateway's `GUILD_MESSAGES` intent is guild-wide — Discord has no per-channel subscription — so
+the listener sees every channel the bot can read and filters. A channel on the list rings on
 every human message. **Everywhere else rings nothing at all, as of 2026-08-25** — an @-mention
 or a reply to the bot in an unlisted channel is logged and dropped, whoever sent it, operators
-included. An operator DM is unaffected, because a DM has no channel to list. On ffbox the list
-is rendered from the ffwatch `watch` block, so there is one place to add a channel and no
-built-in list to inherit.
+included. An operator DM is unaffected, because a DM has no channel to list.
+
+**Omitting `--channels` reads the `watch` block** of `~/.config/ffbox/config.json`, the same
+file the CLI already reads for the token, the alias table and the operator ids. That is the one
+place a channel is named on a box running ffwatch, so adding one is an edit and a restart.
+Until 2026-09-02 the list reached the listener only as `--channels`, rendered into the systemd
+unit by `ffbox/06-services.sh` out of that very block — which made watching one more channel a
+change to a root-owned unit file, needing a password and a service reinstall to move a setting
+that lives in a user-writable config. It also let an installed unit lag a config edit silently.
+The unit is now the same on every box and carries no channel at all.
+
+An alias in the block whose id is still blank is skipped with a warning rather than being
+fatal — those are normal, they fill themselves in on first use, and one of them must not take
+the whole doorbell down. An alias typed into `--channels` that resolves to nothing still exits
+2, because that one is a caller's mistake and worth seeing at once.
 
 Event kinds: `message`, `thread`, `thread_message`, `operator_dm`, `catchup`. The listener no
 longer emits `player_mention` or `lothsahn_directive`/`operator_directive`; ffwatch still

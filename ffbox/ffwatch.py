@@ -6729,8 +6729,50 @@ class Watcher:
         log(f"resumed: {path} removed")
         return True
 
+    def watch_status(self):
+        """What this box is attached to, and from when. The first thing `status` prints.
+
+        The declaration and the record are two different files — the watch block says what we
+        MEAN to read, watch_attach says what we have actually joined and at what instant — and
+        an attach watermark that nothing renders is a rule nobody can check. '0' in particular
+        reads as the Discord epoch to anyone looking at raw rows, when it means the opposite:
+        no cutoff at all.
+
+        An alias in the block with no row yet is the pending case, and worth its own line: the
+        config has been edited and this process has not stamped it, which on a running box means
+        ffwatch has not been restarted into the change.
+        """
+        rows = {r["alias"]: r for r in self.db.query("SELECT * FROM watch_attach")}
+        watched = self.cfg.get("watch") or {}
+        out = [f"watching: {len(watched)} channel(s)"
+               + ("" if watched else " — nothing is swept; only a mention or an operator DM"
+                                    " starts anything")]
+        for alias in sorted(watched):
+            entry = watch_entry(self.cfg, alias)
+            row = rows.get(alias)
+            if row is None:
+                when = "NOT ATTACHED YET — restart ffwatch to pick this up"
+            elif str(row["watermark_id"]) == "0":
+                when = f"attached {(row['attached_at'] or '')[:10]}, no cutoff"
+            else:
+                at = snowflake_secs(row["watermark_id"])
+                stamp = (datetime.fromtimestamp(at, timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+                         if at else row["watermark_id"])
+                when = f"attached {(row['attached_at'] or '')[:10]}, from {stamp}"
+            out.append(f"  {alias:<16} {entry.get('kind') or '-':<11}"
+                       f" {engage_for(self.cfg, alias):<8} {venue_for(self.cfg, alias):<8}"
+                       f" {'ping' if ping_for(self.cfg, alias) else '    '}  {when}")
+        # A row for a channel NOBODY watches is the other half of the record, and it is what
+        # says a re-attach will start over rather than resume.
+        for alias, row in sorted(rows.items()):
+            if alias not in watched:
+                out.append(f"  {alias:<16} {'—':<11} {'—':<8} {'—':<8}        "
+                           f"detached {(row['detached_at'] or '')[:10]}"
+                           f" — putting it back joins it afresh")
+        return out
+
     def status(self):
-        out = []
+        out = self.watch_status()
         convs = self.db.query(
             "SELECT c.*, (SELECT COUNT(*) FROM turn t WHERE t.conversation_id=c.id) AS turns,"
             " (SELECT COUNT(*) FROM message m WHERE m.conversation_id=c.id AND m.turn_id IS NULL)"

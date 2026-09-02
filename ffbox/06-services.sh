@@ -123,9 +123,12 @@ EGRESS_UNITS="ffbox-egress.service"
 # un-gate it. See design/rootless_docker_design.txt section 6.
 DOCKER_UNITS="ffbox-docker.service"
 
-# The listener watches whatever the config says to watch. Reading it back from the ffwatch block
-# means adding a channel there and re-installing is enough — no second place to edit, and no
-# unit quietly watching a channel the classifier no longer knows about.
+# NOTHING HERE RENDERS THE CHANNEL LIST ANY MORE. The listener reads the watch block itself, so
+# its unit is the same on every box and adding a channel is an edit plus a restart rather than a
+# root-owned unit edit. What that function also did was skip aliases whose ids were still blank,
+# so a half-configured channel could not crash-loop the daemon; the listener carries that rule
+# now (resolve_watch_ids, fatal only for a --channels the caller typed).
+#
 # The page's bind address, from the same config block, so the unit and a by-hand run agree.
 web_bind() {
     FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" python3 - <<'PY'
@@ -148,41 +151,6 @@ print("%s %s" % (block.get("web_host") or "127.0.0.1", block.get("web_port") or 
 PY
 }
 
-watched_channels() {
-    FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" python3 - <<'PY'
-import json, os
-
-
-def read(path):
-    try:
-        with open(path, encoding="utf-8") as fh:
-            loaded = json.load(fh)
-        return loaded if isinstance(loaded, dict) else {}
-    except Exception:
-        return {}
-
-
-cfg = read(os.environ["FFBOX_CONFIG_JSON"])
-block = dict(cfg)
-block.update(cfg.get("ffwatch") or {})
-
-# No fallback list. A default channel here is one nobody chose and everybody inherits, which
-# is the bug this whole path was rewritten to remove: the watch block is the only thing that
-# names a channel. Empty prints nothing, and render_units drops the flag entirely.
-#
-# Only aliases that ALREADY RESOLVE are rendered. The listener exits 2 on an alias it cannot
-# turn into a snowflake, and systemd would restart it into that same exit until StartLimitBurst
-# gave up — so a template whose ids are still blank (the example row, a channel added to watch
-# an hour before anyone copied its id) would take the whole doorbell down, mentions and
-# operator DMs included, rather than degrade. Those aliases are listed by `blanks` and in
-# MANUAL STEPS; they are not a reason for the daemon to be dead.
-discord = cfg.get("discord")
-channels = (discord.get("channels") if isinstance(discord, dict) else None) or {}
-ready = [a for a in sorted(block.get("watch") or {})
-         if str(channels.get(a) or "").strip().isdigit()]
-print(",".join(ready))
-PY
-}
 
 # THE TEMPLATES IN ffbox/systemd/ ARE THE ONLY SOURCE. They are rendered into a throwaway
 # directory and installed from there; nothing rendered is ever kept beside the config, because a
@@ -191,15 +159,6 @@ PY
 # nobody reads. Rendering never needs root — only installing does.
 render_units() {
     _dest=$1
-    # The whole ARGUMENT, not just its value: an empty watch block must render an ExecStart
-    # with no --channels at all, because `--channels` with nothing after it is an argparse
-    # error and the unit would crash-loop instead of watching nothing.
-    _channels=$(watched_channels)
-    if [ -n "$_channels" ]; then
-        _channels_arg="--channels $_channels"
-    else
-        _channels_arg=""
-    fi
     _webhost=$(web_bind | cut -d' ' -f1)
     _webport=$(web_bind | cut -d' ' -f2)
     # The rootless daemon's socket carries the OWNER's uid, not this process's: --install runs
@@ -232,7 +191,6 @@ render_units() {
             -e "s|@USER@|$RUN_USER|g" \
             -e "s|@GROUP@|$RUN_GROUP|g" \
             -e "s|@HOME@|$HOME|g" \
-            -e "s|@CHANNELS_ARG@|$_channels_arg|g" \
             -e "s|@FFDHOME@|$FFDISCORD_HOME|g" \
             -e "s|@WEBHOST@|$_webhost|g" \
             -e "s|@WEBPORT@|$_webport|g" \
@@ -244,11 +202,11 @@ render_units() {
 
 # --check answers ONE question, in an exit code: would installing right now change anything.
 #
-# It exists because the rendered units depend on the CONFIG as well as on this checkout — the
-# listener's --channels comes from the ffwatch watch block — so "did any file in git change"
-# cannot answer it. Somebody adding a channel by hand leaves the units stale with no commit to
-# notice, and the symptom is a listener still watching yesterday's channels. The updater runs
-# this on every pass and reinstalls when it says so.
+# It exists because the rendered units depend on the CONFIG as well as on this checkout, so
+# "did any file in git change" cannot answer it. The web page's bind address is the remaining
+# case; the listener's channel list was the other one until the listener started reading the
+# watch block itself, which is why adding a channel no longer needs root at all. The updater
+# runs this on every pass and reinstalls when it says so.
 #
 # No root needed: rendering is free, and only installing writes.
 if [ "$CHECK" = 1 ]; then
@@ -390,8 +348,7 @@ fi
 # --- no --install: report ------------------------------------------------------------------
 if ! command -v systemctl >/dev/null 2>&1; then
     say "no systemctl here. Run the daemons yourself:"
-    _c=$(watched_channels)
-    did "ffdiscord-listener${_c:+ --channels $_c}"
+    did "ffdiscord-listener"
     did "python3 $HERE/ffwatch.py run"
     did "python3 $HERE/ffweb.py"
     exit 0
@@ -408,8 +365,8 @@ for u in $DOCKER_UNITS $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
         st="$st, $(systemctl is-enabled "$u" 2>/dev/null | head -1 || echo unknown)"
         st="$st, $(systemctl is-active "$u" 2>/dev/null | head -1 || echo inactive)"
         # Re-rendering is free; installing needs root. An installed unit can therefore lag
-        # behind a config change silently, and the symptom is a listener still watching
-        # yesterday's channels.
+        # behind a config change silently — the bind address is what that costs now, the
+        # channel list having moved into the listener.
         if ! cmp -s "$UNIT_DIR/$u" "$TMP/$u"; then
             st="$st, STALE (differs from what this checkout renders)"
             STALE=1

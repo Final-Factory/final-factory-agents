@@ -72,7 +72,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-from ffdiscord import API, FFDISCORD_HOME, UA, load_config
+from ffdiscord import API, FFDISCORD_HOME, UA, load_config, read_ffbox_config
 
 try:
     import fcntl
@@ -569,16 +569,88 @@ def rotate_events_file(path, cap=1 << 20):
         pass
 
 
+def watched_aliases(doc=None):
+    """The channel aliases in the config's `watch` block, in order.
+
+    WHY THE LISTENER READS THIS ITSELF. The list used to arrive only as `--channels`, rendered
+    into the systemd unit by ffbox/06-services.sh from this very block — which turned "watch one
+    more channel" into a change to a root-owned unit file, needing a password and a service
+    reinstall to move a setting that lives in a user-writable config. It also meant an installed
+    unit could lag a config edit with no commit to notice, which is what `06-services.sh --check`
+    exists to catch. The listener already reads this file for the token, the alias table and the
+    operator ids; reading one more key from it costs nothing and makes a channel change a plain
+    restart.
+
+    Both spellings, because ffwatch accepts both: keys at the top level of the ffbox config, or
+    under an "ffwatch" object. Nested wins on a file that somehow has both, matching the order
+    ffwatch.load_config merges them in.
+
+    A machine with no ffbox config, or one with no watch block, gets [] — the same "mentions and
+    DMs only" the listener has always meant by an empty list.
+    """
+    doc = read_ffbox_config() if doc is None else doc
+    block = doc.get("watch")
+    nested = (doc.get("ffwatch") or {}).get("watch")
+    if isinstance(nested, dict):
+        block = nested
+    return sorted(block) if isinstance(block, dict) else []
+
+
+def resolve_watch_ids(cfg, names, from_config):
+    """(channel id -> alias, fatal message or None) for the aliases this listener will watch.
+
+    Two different mistakes, and telling them apart is the whole point of the message: an alias
+    the config has never heard of is a typo, while a DECLARED alias with an empty id is the
+    setup template working as intended and one command away from done. Saying "unknown channel
+    alias" about the second sends the reader to Discord's role editor to debug an id they simply
+    have not filled in. The listener does not resolve names itself — it holds no REST client and
+    this must not become a startup that talks to Discord before the websocket — so it names the
+    command that does.
+
+    FATAL ONLY WHEN A CALLER NAMED IT. `--channels` is somebody typing a list, and a name in it
+    that resolves to nothing is their mistake to see immediately.
+
+    The watch block is not that. It legitimately holds aliases whose ids are still blank —
+    05-discord-setup.sh seeds one per watched alias and they fill themselves in on first use, and
+    a channel added an hour before anyone copied its id looks exactly the same. Dying here would
+    take the whole doorbell down over one of them, operator DMs and mentions included, and
+    systemd would restart into the same exit until StartLimitBurst gave up. Skipping one alias
+    and saying so is a smaller failure than a dead listener, and it is the protection
+    06-services.sh used to provide by rendering only the aliases that already resolved.
+    """
+    watch_ids = {}
+    for name in names:
+        cid = str((cfg.get("channels") or {}).get(name, name) or "").strip()
+        if cid.isdigit():
+            watch_ids[cid] = name
+            continue
+        if name in (cfg.get("channels") or {}):
+            complaint = (f"channel alias '{name}' is declared but has no id yet. Run "
+                         f"'ffdiscord resolve-channels --write' to look it up by name, or "
+                         f"'ffdiscord set channels.{name} <channel id>'.")
+        else:
+            complaint = (f"unknown channel alias '{name}' and not a raw id. Configured "
+                         f"aliases: {', '.join(sorted(cfg.get('channels') or {})) or 'none'}.")
+        if not from_config:
+            return {}, complaint
+        log(f"WARNING: {complaint} Not watching it; the rest of the watch block stands.")
+    return watch_ids, None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    # NO DEFAULT CHANNEL. A default here is a channel somebody has to discover they are
-    # reading: the caller (06-services.sh, from the ffwatch watch block) is the only thing that
-    # knows what this box is for. With none given the listener still rings for an @-mention, a
-    # reply, an operator directive and an operator DM, because those are addressed to the bot
-    # by construction — it just sweeps no channel wholesale.
-    ap.add_argument("--channels", default="",
-                    help="comma-separated channel aliases or raw ids to watch "
-                         "(default: none — mentions and DMs only)")
+    # NO CHANNEL IS BUILT IN, and the config is where the list lives. Omitting --channels reads
+    # the `watch` block of ~/.config/ffbox/config.json, which is the one place a channel is
+    # named on a box that runs ffwatch; passing it names the channels directly and the block is
+    # not consulted. `--channels ""` is the third answer and the reason the default is None
+    # rather than "": watch nothing wholesale, whatever the config says.
+    #
+    # Whichever way the list arrives, an empty one still rings for an @-mention, a reply, an
+    # operator directive and an operator DM, because those are addressed to the bot by
+    # construction — it just sweeps no channel wholesale.
+    ap.add_argument("--channels", default=None,
+                    help="comma-separated channel aliases or raw ids to watch (default: the "
+                         "config's watch block; pass an empty string for none)")
     ap.add_argument("--events-path", default=EVENTS_PATH)
     ap.add_argument("--once-ready", action="store_true",
                     help="connect, prove READY, then exit 0 (smoke test)")
@@ -597,28 +669,16 @@ def main(argv=None):
               file=sys.stderr)
         return 2
 
-    watch_ids = {}
-    for name in [c.strip() for c in args.channels.split(",") if c.strip()]:
-        cid = str(cfg["channels"].get(name, name) or "").strip()
-        if not cid.isdigit():
-            # Two different mistakes, and telling them apart is the whole point of the
-            # message: an alias the config has never heard of is a typo, while a DECLARED
-            # alias with an empty id is the setup template working as intended and one
-            # command away from done. Saying "unknown channel alias" about the second sends
-            # the reader to Discord's role editor to debug an id they simply have not filled
-            # in. The listener does not resolve names itself — it holds no REST client and
-            # this must not become a startup that talks to Discord before the websocket — so
-            # it names the command that does.
-            if name in cfg["channels"]:
-                print(f"channel alias '{name}' is declared but has no id yet. Run "
-                      f"'ffdiscord resolve-channels --write' to look it up by name, or "
-                      f"'ffdiscord set channels.{name} <channel id>'.", file=sys.stderr)
-            else:
-                print(f"unknown channel alias '{name}' and not a raw id. Configured "
-                      f"aliases: {', '.join(sorted(cfg['channels'])) or 'none'}.",
-                      file=sys.stderr)
-            return 2
-        watch_ids[cid] = name
+    if args.channels is None:
+        names, source = watched_aliases(), "the config's watch block"
+    else:
+        names = [c.strip() for c in args.channels.split(",") if c.strip()]
+        source = "--channels"
+
+    watch_ids, fatal = resolve_watch_ids(cfg, names, from_config=args.channels is None)
+    if fatal:
+        print(fatal, file=sys.stderr)
+        return 2
 
     # trust.operators is the table; mentions.lothsahn is read as a fallback so a machine that
     # has not run the newer setup keeps working. Digit strings only: a username in this table
@@ -636,8 +696,12 @@ def main(argv=None):
     rotate_events_file(args.events_path)
     listener = Listener(cfg["app_token"], watch_ids, args.events_path,
                         operator_ids=operator_ids, debug=args.debug)
-    log(f"listener starting (pid {os.getpid()}) channels={args.channels} intents={INTENTS} "
-        f"operators={len(operator_ids)}")
+    # WHERE THE LIST CAME FROM, not just what it is. "a listener still watching yesterday's
+    # channels" is the symptom this whole arrangement keeps producing, and the first question
+    # when diagnosing it is which source the list was read out of.
+    log(f"listener starting (pid {os.getpid()}) "
+        f"channels={','.join(watch_ids.values()) or 'none'} (from {source}) "
+        f"intents={INTENTS} operators={len(operator_ids)}")
     if not args.once_ready:
         # Anything that arrived while no listener was running needs one sweep.
         listener.emit_catchup("listener startup")

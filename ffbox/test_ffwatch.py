@@ -1273,6 +1273,44 @@ def test_a_newly_attached_channel_answers_none_of_its_backlog():
           [m["discord_id"] for m in job["messages"]] == [fresh], job["messages"])
 
 
+def test_status_says_what_this_box_is_attached_to():
+    """An attach watermark nothing renders is a rule nobody can check, and '0' reads as the
+    Discord epoch to anyone looking at raw rows when it means the opposite."""
+    print("status: the watch block")
+    case = Case("status-watch")
+    case.cfg["watch"]["bug_reports"]["ping"] = True
+    case.cfg["watch"]["bug_reports"]["engage"] = "mention"
+    case.watcher.db.execute("UPDATE watch_attach SET watermark_id=? WHERE alias='bug_reports'",
+                            (sflake(0),))
+    lines = case.watcher.watch_status()
+    text = "\n".join(lines)
+    check("it counts the channels", lines[0].startswith("watching: 2 channel(s)"), lines[0])
+    check("a channel with no cutoff says so, rather than showing a bare 0",
+          "ask_claude" in text and "no cutoff" in text, text)
+    check("and one with a cutoff renders it as a date, not a snowflake",
+          "from 2025-08-12T" in text, text)
+    lines = case.watcher.watch_status()
+    text = "\n".join(lines)
+    check("the engagement policy is on the line, since it decides what wakes the channel",
+          "mention" in text and "all" in text, text)
+    check("so is ping, which is the one that can pull a person out of their evening",
+          "ping" in text, text)
+
+    # The two states a row can be in that the config alone cannot tell you.
+    case.cfg["watch"]["suggestions"] = {"kind": "suggestion", "forum": True,
+                                        "venue": "public", "engage": "mention"}
+    check("a channel in the config that this process has not stamped is called out",
+          "NOT ATTACHED YET" in "\n".join(case.watcher.watch_status()))
+    del case.cfg["watch"]["suggestions"]
+    del case.cfg["watch"]["bug_reports"]
+    case.watcher.init()
+    check("and a detached channel still appears, saying a re-attach starts over",
+          "detached" in "\n".join(case.watcher.watch_status()),
+          case.watcher.watch_status())
+    check("status itself leads with it",
+          case.watcher.status().startswith("watching:"), case.watcher.status()[:60])
+
+
 def test_a_channel_already_in_use_is_not_cut_off():
     """The upgrade case. Every long-lived box meets this code with channels it has been
     answering for months and no watch_attach table at all; stamping those "now" would silence
@@ -5874,8 +5912,17 @@ def test_systemd_units_hang_off_one_target():
     check("ffweb is part of the pipeline rather than an extra someone remembers to enable",
           "ffweb.service" in target)
     setup = open(os.path.join(HERE, "06-services.sh"), encoding="utf-8").read()
-    for token in ("@USER@", "@GROUP@", "@HOME@", "@FFWATCH@", "@FFWEB@", "@CHANNELS_ARG@",
-                  "@WEBHOST@", "@WEBPORT@", "@DOCKERSOCK@", "@WAITDOCKER@"):
+    # DERIVED FROM THE TEMPLATES, not a list kept by hand beside them. The hand-written list
+    # said @CHANNELS_ARG@ long enough for the placeholder to be deleted from every template and
+    # from the script, and the check still passed — it was asserting that the SCRIPT mentioned a
+    # token nothing used. Reading the placeholders out of the units answers the question that
+    # actually matters: is there one this script will leave in a live unit file.
+    placeholders = set()
+    for name in sorted(os.listdir(os.path.join(HERE, "systemd"))):
+        body = open(os.path.join(HERE, "systemd", name), encoding="utf-8").read()
+        placeholders |= set(re.findall(r"@[A-Z0-9_]+@", body))
+    check("the templates carry placeholders at all", placeholders, placeholders)
+    for token in sorted(placeholders):
         check(f"setup substitutes {token}", f"s|{token}|" in setup, )
 
     # THE UPDATER HOLDS NO ROOT. It fetches code off the internet every five minutes and then
@@ -7659,6 +7706,7 @@ def main():
         test_evidence_and_thread_openings_never_reach_the_gate,
         test_a_newly_attached_channel_answers_none_of_its_backlog,
         test_a_channel_already_in_use_is_not_cut_off,
+        test_status_says_what_this_box_is_attached_to,
         test_a_channel_put_back_after_a_break_joins_as_a_new_one,
         test_a_comment_on_a_pre_attach_thread_does_not_reopen_the_whole_report,
         test_an_operator_in_public_gets_a_split_reply,
