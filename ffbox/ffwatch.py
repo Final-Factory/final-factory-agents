@@ -3533,6 +3533,16 @@ class Watcher:
     # Spools this process has already complained about, so the reaper says it once rather than
     # on every pass. Class-level: it is about the path, not about a particular Watcher.
     _unreapable = set()
+    # THE SAME GUARD FOR THE OTHER THING THE REAPER REFUSES TO DELETE. A spool whose container is
+    # gone but whose transcript has not been swept is skipped on every pass, and the reaper runs
+    # on every poll -- so without this it writes one line every poll_secs for as long as the
+    # daemon is up. Measured on the live box on 2026-09-01: one orphan spool, 33,644 identical
+    # lines in twenty-one hours, one every two seconds. That is how a real warning becomes
+    # wallpaper, which is the argument _unreapable above was already written for.
+    #
+    # The condition itself is correct and stays: recover() sweeps these at startup, so the line
+    # is telling the truth about what will happen. It only needs saying once.
+    _held_logged = set()
 
     def pool_dir(self, pool_id=None):
         base = os.path.join(self.state_dir, "pool")
@@ -3782,11 +3792,18 @@ class Watcher:
             d = self.pool_dir(pool_id)
             held = glob.glob(os.path.join(d, "claude", "projects", "*", "*.jsonl"))
             if held:
-                log(f"pool: {pool_id} is gone but still holds a transcript; leaving it for "
-                    f"recovery to sweep")
+                # ONCE PER SPOOL PER PROCESS. The reaper runs on every poll and this branch is
+                # taken every time until a restart sweeps the transcript, so saying it each pass
+                # buries every other line in the journal without adding a fact.
+                if pool_id not in Watcher._held_logged:
+                    Watcher._held_logged.add(pool_id)
+                    log(f"pool: {pool_id} is gone but still holds a transcript; leaving it for "
+                        f"recovery to sweep")
                 continue
             if self._rmtree_spool(d):
                 gone += 1
+                # It is gone, so a future spool that somehow reused the id would be news again.
+                Watcher._held_logged.discard(pool_id)
         return gone
 
     @staticmethod

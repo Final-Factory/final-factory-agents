@@ -6787,6 +6787,46 @@ def test_a_verification_that_never_ran_does_not_read_as_one_that_failed():
 
 
 
+def test_the_reaper_says_a_held_spool_once():
+    """A spool the reaper cannot delete is skipped on EVERY pass, and the reaper runs on every
+    poll. Saying so each time buries the journal.
+
+    Measured on the live box on 2026-09-01: one orphan spool produced 33,644 identical lines in
+    twenty-one hours, one every two seconds, because recover() only sweeps at startup and the
+    condition therefore held until a restart. _unreapable next door already had this guard for
+    the other thing the reaper refuses to delete; this is the same rule for the other branch.
+    """
+    print("pool: a held spool is reported once")
+    case = Case("reaphush", base_fixture())
+    w = case.watcher
+    w.pool_containers = lambda: []
+    ffwatch.Watcher._held_logged.discard("h1")
+
+    # A spool whose container is gone but whose transcript nobody has swept yet.
+    tdir = os.path.join(w.pool_dir("h1"), "claude", "projects", "p")
+    os.makedirs(tdir, exist_ok=True)
+    open(os.path.join(tdir, "s.jsonl"), "w").close()
+
+    lines = []
+    saved = ffwatch.log
+    ffwatch.log = lambda m: lines.append(m)
+    try:
+        for _ in range(5):
+            w.pool_reap()
+    finally:
+        ffwatch.log = saved
+
+    held = [ln for ln in lines if "still holds a transcript" in ln]
+    check("five passes over the same held spool say it once", len(held) == 1, lines)
+    check("and the line still names the spool and what will happen to it",
+          held and "h1" in held[0] and "recovery to sweep" in held[0], held)
+    # The spool is still there: quieting the message must not have quieted the refusal.
+    check("the transcript was not deleted to silence the warning",
+          os.path.exists(os.path.join(tdir, "s.jsonl")), None)
+
+    ffwatch.Watcher._held_logged.discard("h1")
+
+
 def test_an_ffdev_turn_runs_under_ffdevs_numbers():
     """End to end: a conversation opened as ffdev reaches ffbox as ffdev, on ffdev's clocks.
 
@@ -8060,6 +8100,7 @@ def test_the_mirror_is_only_written_inside_the_pipelines_own_namespace():
 def main():
     tests = [
         test_every_agent_container_carries_its_class,
+        test_the_reaper_says_a_held_spool_once,
         test_an_ffdev_turn_runs_under_ffdevs_numbers,
         test_the_two_agent_classes_are_configured_independently,
         test_each_class_counts_only_its_own_containers,
