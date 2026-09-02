@@ -76,7 +76,16 @@ commits since CI's workspace tar through it. The golden clone in `ffbox/02-zfsSe
 the same credential, but that is a one-time setup step — `/opt/FinalFactory` is no longer on the
 run path at all, and nothing fetches it automatically.
 
-Resource owner: `Final-Factory`. Repository access: **only** `Final-Factory/FinalFactory`.
+Resource owner: `Final-Factory`. Repository access: `Final-Factory/FinalFactory` **and**
+`Final-Factory/final-factory-agents`, and nothing else.
+
+The second one is not part of publishing. `~/.git-credentials` matches by HOST, so whatever sits
+there is the credential for every github.com push on the box — and this box also pushes ffbox's
+own source, which lives in `final-factory-agents`. Scoped to FinalFactory alone, the token
+publishes agent work perfectly and refuses every `git push` of a change to ffbox itself with a
+403 that names the wrong repository. Two entries and `credential.useHttpPath`, or an SSH deploy
+key for the second repo, would keep the publish token down to one repository; both were weighed
+and neither was judged worth the moving parts for a public repo that only a human pushes to.
 
 | Permission | Level |
 | --- | --- |
