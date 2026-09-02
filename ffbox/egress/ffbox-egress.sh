@@ -51,6 +51,11 @@ MODE=${FFBOX_EGRESS_MODE:-enforce}
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ALLOWLIST=${FFBOX_EGRESS_ALLOWLIST:-$HERE/allowlist.txt}
 
+# WHERE THE SNI LOG GOES TO DIE, instead of nowhere. See archive_log below. Per-account by default,
+# which is right: the two lanes run this script as two different accounts and each keeps its own.
+ARCHIVE_DIR=${FFBOX_EGRESS_ARCHIVE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/ffbox-egress}
+ARCHIVE_KEEP=${FFBOX_EGRESS_ARCHIVE_KEEP:-20}
+
 say()  { printf '==> %s\n' "$*"; }
 skip() { printf '    %s\n' "$*"; }
 die()  { printf 'ffbox-egress: %s\n' "$*" >&2; exit 1; }
@@ -116,6 +121,34 @@ proxy_fingerprint() {
         "$(sha256sum "$ALLOWLIST" 2>/dev/null | cut -c1-64)"
 }
 
+# THE SNI LOG IS THE AUDIT TRAIL AND `docker rm -f` DESTROYS IT.
+#
+# Everything the fence has ever been asked for lives in the proxy container's stdout and nowhere
+# else. A recreate throws it away, so the record of what jobs reached for is only ever as old as
+# the last image update -- and this script is called from a timer, so that is not a human-scale
+# interval. Measured on 2026-09-01: a recreate landed in the middle of reading the log and took
+# roughly fifty-five jobs of history with it, including the blob traffic the reading was about.
+#
+# Archived on the way past rather than on a schedule, because the recreate is the only moment the
+# loss happens and it is the only moment we are guaranteed to be here for.
+#
+# BEST EFFORT AND NEVER FATAL. A fence that refuses to come up because it could not write a log
+# file is worse than one with a gap in its history.
+archive_log() {
+    docker_ inspect "$NAME" >/dev/null 2>&1 || return 0
+    mkdir -p "$ARCHIVE_DIR" 2>/dev/null || { skip "could not create $ARCHIVE_DIR; the log is lost"; return 0; }
+    _af="$ARCHIVE_DIR/$NAME-$(date -u +%Y%m%dT%H%M%SZ).log"
+    if docker_ logs "$NAME" > "$_af" 2>&1; then
+        say "archived $NAME's log to $_af ($(wc -l < "$_af" 2>/dev/null || echo 0) lines)"
+    else
+        rm -f "$_af" 2>/dev/null || true
+        return 0
+    fi
+    # Bounded, so an unattended timer cannot fill a disk with them.
+    ls -1t "$ARCHIVE_DIR/$NAME-"*.log 2>/dev/null | tail -n +"$((ARCHIVE_KEEP + 1))" \
+        | while IFS= read -r _old; do rm -f "$_old" 2>/dev/null || true; done
+}
+
 start_proxy() {
     docker_ image inspect "$IMAGE" >/dev/null 2>&1 \
         || die "image $IMAGE is not built. Run: sh $HERE/../01-dockerSetup.sh  (or docker build -t $IMAGE $HERE)"
@@ -140,6 +173,7 @@ start_proxy() {
     fi
     [ -z "$_have" ] || [ "$_have" = "$_want" ] || say "the image, mode or allowlist changed; recreating $NAME"
 
+    archive_log
     docker_ rm -f "$NAME" >/dev/null 2>&1 || true
 
     say "starting $NAME at $IP (mode=$MODE)"
@@ -187,6 +221,7 @@ cmd_up() {
 }
 
 cmd_down() {
+    archive_log
     docker_ rm -f "$NAME" >/dev/null 2>&1 && say "$NAME removed" || skip "$NAME was not running"
     skip "networks left in place — a half-removed fence is worse than none"
 }

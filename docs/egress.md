@@ -213,9 +213,33 @@ and cannot drift apart.
 | `FFBOX_EGRESS_IMAGE`     | `ffbox-egress:latest` |
 | `FFBOX_EGRESS_ALLOWLIST` | the script's own `allowlist.txt` |
 | `FFBOX_EGRESS_MODE`      | `enforce`           |
+| `FFBOX_EGRESS_ARCHIVE_DIR`  | `${XDG_STATE_HOME:-$HOME/.local/state}/ffbox-egress` |
+| `FFBOX_EGRESS_ARCHIVE_KEEP` | `20`                |
 
 Commands: `up`, `down`, `status`, `log`. `down` stops the proxy and leaves the networks, on the
 grounds that a half-removed fence is worse than none.
+
+## The log does not survive a recreate, so it is archived on the way past
+
+Everything the fence has been asked for lives in the proxy container's stdout and nowhere else.
+`docker rm -f` destroys it, and `up` recreates the container whenever the image, the mode or the
+allowlist changes — which on a timer is not a human-scale interval.
+
+Measured on 2026-09-01: `ffghr-egress` was recreated in the middle of reading its log, between one
+command and the next, and took about fifty-five jobs of history with it. The first read showed 271
+connections to `pipelinesghubeus14`, 137 to `broker`, 110 to `license.unity3d.com` and blob traffic
+spread across nineteen `productionresultssa*` shards. Thirty seconds later the container had a
+seventeen-line log and none of that was recoverable.
+
+`start_proxy` and `down` now call `archive_log` before removing the container, which copies the log
+to `$FFBOX_EGRESS_ARCHIVE_DIR/<name>-<UTC timestamp>.log` and keeps the newest
+`$FFBOX_EGRESS_ARCHIVE_KEEP`. Per-account by default, which is right: the two lanes run this script
+as two different accounts and each keeps its own history.
+
+Best effort throughout. A fence that refused to come up because it could not write a log file would
+be worse than one with a gap in its history, so every failure path here is a skipped archive rather
+than an error. The timestamp has second resolution, so two recreates inside one second write the
+same filename and the later wins; recreates are minutes apart at worst, so this has not mattered.
 
 ## Gotchas
 
