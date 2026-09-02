@@ -215,6 +215,10 @@ def build_fixture(root):
     # it; conversation 1 is what a reader is looking at when they ask where the code went.
     ex("UPDATE run SET pr_base='develop', changed_files=3 WHERE id=2")
     ex("UPDATE conversation SET branch='ffbox/run-b' WHERE id=1")
+    # ffwatch writes this in the same breath as run.pr_url when the pull request is opened, so
+    # the fixture carries both; the conversation column is what BOTH pages render their PR cell
+    # from, the list included.
+    ex("UPDATE conversation SET github_pr='https://github.com/x/y/pull/42' WHERE id=1")
 
     ex("INSERT INTO verification(id, run_id, ran, compiled, compile_errors, tests_run,"
        " tests_passed, tests_failed, results_path, evidence)"
@@ -2285,6 +2289,14 @@ def test_the_branch_is_shown_as_the_conversations_own():
         check("the list carries a branch column", ">branch<" in page, page[:600])
         check("and the conversation that has one shows it",
               "ffbox/run-b" in page or "run-b" in page, page[:600])
+        # The other half of the same question, one column over: published, and proposed?
+        check("the list carries a PR column right after the branch",
+              ">branch</th>" in page and ">PR</th>" in page
+              and page.index(">PR</th>") > page.index(">branch</th>")
+              and page.index(">msgs</th>") > page.index(">PR</th>"), page[:900])
+        check("and the PR is a link to the pull request, shown by number",
+              "https://github.com/x/y/pull/42" in page and "#42" in page,
+              [ln for ln in page.splitlines() if "pull/42" in ln][:3])
         # A conversation with no branch says nothing rather than saying "no branch": most
         # conversations are questions, and that is not news about one.
         code, _h, body = srv.get("/conversation/2")

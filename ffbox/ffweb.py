@@ -1861,15 +1861,21 @@ class App:
         # backfilled every conversation that predates it to ffagent, which is what those runs
         # actually were. That is also what lets it join the filter loop above unchanged, since
         # those dropdowns are built with SELECT DISTINCT over the data.
+        #
+        # PR sits beside the branch because it answers the second half of the same question:
+        # a branch says work was published, a PR says it was proposed for merge, and the gap
+        # between the two is the row a human has to act on. Same cell as the conversation page
+        # uses — conversation.github_pr, written when the PR is opened and holding a url when
+        # there is one — so the number links to the pull request from either place.
         body = [table(
-            ["id", "kind", "state", "lane", "agent", "verdict", "title", "branch", "msgs",
-             "turns"]
+            ["id", "kind", "state", "lane", "agent", "verdict", "title", "branch", "PR",
+             "msgs", "turns"]
             + AGG_HEADERS + ["last activity", "read"],
             [[link(f"/conversation/{r['id']}", r["id"]), r["kind"], pill(r["state"]),
               r["lane"] or "—", _row(r, "agent_class") or DEFAULT_AGENT_CLASS,
               r["verdict"] or "—",
               link(f"/conversation/{r['id']}", short(r["title"] or r["thread_id"], 70)),
-              branch_cell(_row(r, "branch")),
+              branch_cell(_row(r, "branch")), pr_link(_row(r, "github_pr")),
               r["messages"], r["turns"]]
              + agg_cells(aggs.get(r["id"]))
              + [r["last_activity_at"] or "—", mark_button(r["id"], r["is_read"], back)]
