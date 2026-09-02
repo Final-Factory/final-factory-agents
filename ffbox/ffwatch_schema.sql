@@ -247,7 +247,12 @@ CREATE TABLE IF NOT EXISTS run (
     -- The branch this run's work was based on, which is what its pull request targets. NULL
     -- when nothing was published, or when the base could not be established and the default
     -- was used.
-    pr_base             TEXT
+    pr_base             TEXT,
+    -- WAS THE BRANCH ALREADY ON ORIGIN when this run pushed to it? 0 for the turn that created
+    -- it, 1 for every later turn of the same conversation, which adds commits to a branch a
+    -- reviewer may already be reading. Written at publish time from conversation.branch, read
+    -- back by the reply so it says "created" or "updated" and never guesses which.
+    branch_existed      INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_run_turn ON run(turn_id);

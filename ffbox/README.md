@@ -1104,7 +1104,15 @@ the skills merely advise:
   above fires for — a fix pending review is the opposite of what happened in every one of them
   — and there the operator's half falls back to the bare name, because a run that went wrong is
   when the branch is most worth having.
-
+- **Created, or updated.** `Fix updated on ...` when the branch was already on origin, which is
+  every turn of a conversation after the one that made it: one conversation owns one branch, so
+  a thread that comes back with a second question gets a second push onto the branch the first
+  one made, and "created" said three times reads as three separate fixes rather than one that
+  grew. It is also what a reviewer part way through the branch needs — what they read yesterday
+  is not what is on it now. Which verb it takes is a fact only the publish knows, because by
+  reply time `conversation.branch` is claimed either way and the two cases are
+  indistinguishable from the row, so it is recorded on the run as `branch_existed` at the
+  moment of the push and read back rather than inferred.
 - **A turn stopped by a rate ceiling still answers, once.** `blocked` is terminal and never
   retried, so a job that hits its daily cap would otherwise lose its 👀 and go quiet forever.
   It gets a fixed one-line reply instead, composed on the host: no run, no container and no

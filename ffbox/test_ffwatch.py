@@ -3707,12 +3707,26 @@ def test_a_reply_that_ends_in_a_branch_says_where_the_fix_is():
     check("and the PR link stays on the operator's half",
           "https://example/45" not in text, text)
 
+    # THE SECOND TURN of the same conversation, pushing onto the branch the first one made. The
+    # only thing that changes is the verb, and it has to: one conversation owns one branch, so
+    # "created" said three times in a thread reads as three separate fixes, and a reviewer part
+    # way through the branch needs telling that it moved under them.
+    again = ffwatch.compose_head(None, turn, "done", {}, said, None, job, verification=green,
+                                 publish=dict(pub, branch_existed=True))
+    check("a later turn on the same branch says updated, not created",
+          again.endswith("Fix updated on `ffbox/d1t2`, pending dev review"), again)
+
     priv = ffwatch.compose_head(None, dict(turn, venue="private"), "done", {}, said, None, job,
                                 verification=green, publish=pub)
     check("the operator gets the same sentence, once, with the link on it",
           "Fix created on `ffbox/d1t2`, pending dev review · PR #45 https://example/45" in priv,
           priv)
     check("and not the old bare-name row beside it", "branch `ffbox/d1t2`" not in priv, priv)
+    check("the operator's longer line takes the same verb, with the same PR on it",
+          "Fix updated on `ffbox/d1t2`, pending dev review · PR #45 https://example/45" in
+          ffwatch.compose_head(None, dict(turn, venue="private"), "done", {}, said, None, job,
+                               verification=green, publish=dict(pub, branch_existed=True)),
+          pub)
 
     # The withholding half. Every one of these is a run the harness has a quarrel with, and
     # "pending dev review" under "nothing was put up for review" is the reply arguing with
@@ -8159,6 +8173,26 @@ def test_a_conversation_publishes_onto_one_branch():
     check("both runs point at the same base, so the second did not re-pick one",
           first["pr_base"] == second["pr_base"] == "develop",
           (first["pr_base"], second["pr_base"]))
+
+    # WHICH TURN MADE THE BRANCH is a fact only the publish knows: by reply time the claim has
+    # been written and both runs look alike from the row. So it is recorded there, and the two
+    # replies this conversation posted say different things because of it.
+    check("the run that made the branch recorded that it made it",
+          first["branch_existed"] == 0, first["branch_existed"])
+    check("and the one that added to it recorded that too",
+          second["branch_existed"] == 1, second["branch_existed"])
+    posted = [json.loads(r["payload_json"])["text"]
+              for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+    footers = [ln.split(" · ")[0] for t in posted for ln in t.splitlines()
+               if "pending dev review" in ln]
+    check("so the thread reads created once and updated after",
+          footers == [f"Fix created on `{branch}`, pending dev review",
+                      f"Fix updated on `{branch}`, pending dev review"],
+          footers)
+    check("and both lines carry the one pull request, which the second turn did not reopen",
+          all(f"· PR #{second['pr_number']} " in t for t in posted
+              if "pending dev review" in t) and first["pr_number"] == second["pr_number"],
+          (first["pr_number"], second["pr_number"]))
 
 
 def test_a_continuation_starts_on_the_branch_and_is_told_so():

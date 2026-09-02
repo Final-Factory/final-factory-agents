@@ -220,6 +220,13 @@ ADDED_COLUMNS = [
     # blank option in one and make filtering on 'ffagent' match none of the rows that predate
     # this. The v8 lane rewrite below exists because of exactly that property.
     ("conversation", "agent_class", "TEXT NOT NULL DEFAULT 'ffagent'"),
+    # -- v15, created or updated -------------------------------------------------------------
+    # Whether the branch this run pushed was already on origin. NOT NULL DEFAULT 0 for the same
+    # reason agent_class carries a default: every row that predates the column is backfilled as
+    # it goes, and 0 is the right answer for all of them — one branch per conversation only
+    # began at v12, so before it every publishing run made its own branch and every one of them
+    # created it.
+    ("run", "branch_existed", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -6110,7 +6117,14 @@ class Watcher:
         # not a PR follows: which branch the work is for is a fact about the work, and the
         # verification gate below can withhold the PR without making that fact unavailable.
         base, base_reason = self.pr_base(run_row_id, run_dir, branch)
-        self.db.execute("UPDATE run SET pushed=1, pr_base=? WHERE id=?", (base, run_row_id))
+        # `owned` IS THE ANSWER TO "did this run make the branch or add to one". It was read
+        # before the claim below, so it still says what the conversation looked like when the
+        # run started publishing: set means an earlier turn already put this branch on origin
+        # and a reviewer may be part-way through it, NULL means this push created it. Recorded
+        # rather than worked out at reply time, because by then the claim has been written and
+        # the two cases are indistinguishable from the row.
+        self.db.execute("UPDATE run SET pushed=1, pr_base=?, branch_existed=? WHERE id=?",
+                        (base, 1 if owned else 0, run_row_id))
         # THE CONVERSATION CLAIMS THE BRANCH, here and nowhere else, because here is the first
         # moment it names something that exists on origin. Everything that makes later turns
         # continue this work reads that column: run_ref starts them on it, launch() passes it as
@@ -6415,10 +6429,11 @@ class Watcher:
         if run_row_id is None:
             return {}
         row = self.db.one("SELECT branch, pushed, pr_number, pr_url, pr_base, no_branch_reason,"
-                          " no_pr_reason FROM run WHERE id=?", (run_row_id,))
+                          " no_pr_reason, branch_existed FROM run WHERE id=?", (run_row_id,))
         if row is None:
             return {}
         return {"branch": row["branch"] if row["pushed"] else None,
+                "branch_existed": bool(row["branch_existed"]),
                 "pr_number": row["pr_number"], "pr_url": row["pr_url"],
                 "base": row["pr_base"],
                 "no_branch_reason": row["no_branch_reason"],
@@ -7502,7 +7517,14 @@ def publish_footer(publish, correction):
     branch = (publish or {}).get("branch")
     if not branch or correction:
         return ""
-    return f"Fix created on `{branch}`, pending dev review"
+    # CREATED OR UPDATED, from the run row and never from the shape of anything else. One
+    # conversation owns one branch, so a thread that comes back with a second question gets a
+    # second push onto the branch the first one made, and telling somebody a fix was "created"
+    # for the third time reads as three separate fixes — the exact misreading this line exists
+    # to prevent. "Updated" also says the thing a reviewer needs: what they looked at yesterday
+    # is not what is on the branch now.
+    verb = "updated" if (publish or {}).get("branch_existed") else "created"
+    return f"Fix {verb} on `{branch}`, pending dev review"
 
 
 def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
