@@ -142,7 +142,13 @@ ffbox_workload_has_room() {
 #
 # These use fd 9 in the CALLER's shell rather than a subshell, on purpose: a subshell cannot hand
 # back the `$!` of a process the caller has to `wait` on.
+# $1, optional: seconds to wait before giving up. UNBOUNDED BY DEFAULT, which is right for a
+# caller that has been asked to do something -- a cold run waits its turn rather than failing a
+# person's turn over a busy box. A caller doing something SPECULATIVE passes a bound instead:
+# staging a warm container is an optimisation, "not this pass" is a fine answer, and blocking
+# forever on it is how a stuck lock became a stuck daemon (see the 9>&- note in ffbox).
 ffbox_workload_lock_acquire() {
+    _wl_wait=${1:-}
     command -v flock >/dev/null 2>&1 || return 0     # no flock: no lock, count anyway
     mkdir -p "$(dirname "$FFBOX_WL_LOCK")" 2>/dev/null || :
     # PROBE IN A SUBSHELL FIRST. `exec 9>>` on a path that cannot be opened does not hand back a
@@ -160,6 +166,13 @@ ffbox_workload_lock_acquire() {
         return 0
     fi
     exec 9>>"$FFBOX_WL_LOCK" || return 1
+    if [ -n "$_wl_wait" ]; then
+        # THE FD IS CLOSED ON THE WAY OUT of a failed bounded wait. Leaving it open would keep
+        # this shell holding a descriptor on the lock file it never acquired, and the release
+        # path is only reached by callers that took it.
+        flock -w "$_wl_wait" 9 || { exec 9>&- 2>/dev/null || :; return 1; }
+        return 0
+    fi
     flock 9 || return 1
     return 0
 }

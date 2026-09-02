@@ -526,6 +526,14 @@ DEFAULTS = {
         },
     },
     "pool_task": os.path.join(HERE, "pool-task.sh"),
+    # HOW LONG THE KEEPER LEAVES A CLASS ALONE AFTER A STAGING ATTEMPT FAILED. Staging runs on
+    # the daemon's own loop and `ffbox --stage-pool` is given a ceiling of its own, so a staging
+    # that hangs costs the daemon that ceiling in a pass where it drains no events, sends no
+    # replies and starts no runs. Retrying it every two seconds turns one stuck staging into a
+    # daemon that is never doing anything else. Measured on the build server 2026-09-02: an
+    # admission lock leaked into a cold run's `docker run` blocked every staging attempt, and
+    # ffwatch spent 180 of every 185 seconds inside the one that could never succeed.
+    "pool_stage_backoff_secs": 300,
     "catchup_secs": 900,
     "poll_secs": 2,
 
@@ -2129,6 +2137,9 @@ class Watcher:
         # not silence the message for the other -- an operator reading the journal wants to know
         # which pool could not be filled, not that some pool could not be.
         self._pool_squeeze_logged = {}
+        # PER CLASS TOO, and for the same reason: monotonic deadline before which the keeper
+        # does not try this class again. Set only where a staging attempt actually failed.
+        self._pool_stage_after = {}
         self._drain_logged = False
         # Sweep complaints are per-alias-per-process. The sweep runs every catchup_secs, so an
         # alias that cannot be resolved would otherwise write the same line to the journal four
@@ -4139,6 +4150,13 @@ class Watcher:
             want = int(class_cfg(self.cfg, agent_class).get("idle_agents") or 0)
             if want <= 0:
                 continue
+            # A CLASS WHOSE LAST ATTEMPT FAILED IS LEFT ALONE FOR A WHILE. This loop runs on the
+            # daemon's own thread and pool_stage blocks for as long as ffbox takes, so an
+            # attempt that cannot succeed is not merely a wasted call -- it is a pass in which
+            # nothing else the daemon does happens at all. Nothing is lost by waiting: a warm
+            # container is an optimisation, and a turn that finds no pool runs cold.
+            if time.monotonic() < self._pool_stage_after.get(agent_class, 0.0):
+                continue
             # COUNTS "WILL BE WARM", not "is warm", and the difference is deliberate: a container
             # still extracting its tar has no owner file and belongs in this count, or a pass
             # every two seconds would stage another twenty of them while the first one filled.
@@ -4165,6 +4183,12 @@ class Watcher:
                 continue
             self._pool_squeeze_logged[agent_class] = False
             pool_id = self.pool_stage(agent_class)
+            if not pool_id:
+                # pool_stage has already said what went wrong. This is how long the keeper
+                # believes it, and it is the difference between one stuck staging and a daemon
+                # that spends every pass inside one.
+                self._pool_stage_after[agent_class] = time.monotonic() + float(
+                    self.cfg["pool_stage_backoff_secs"])
             if pool_id:
                 staged.append(pool_id)
                 # So the next class in the loop counts the one just started. It is not in

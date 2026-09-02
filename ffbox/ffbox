@@ -949,7 +949,11 @@ if [ -n "$STAGE_POOL" ]; then
     # this one starts hours before it has a turn.
     _POOL_SLOT=""
     _rc=0
-    if ! ffbox_workload_lock_acquire; then
+    # BOUNDED, because staging is speculative. Nobody is waiting on a warm container, and a
+    # staging attempt that blocks is worse than one that does not happen: the keeper calls this
+    # from ffwatch's own loop, so a wait here is a wait on every reply the daemon has queued.
+    # The cold-run path below still waits without a bound -- there, somebody IS waiting.
+    if ! ffbox_workload_lock_acquire "${FFBOX_STAGE_LOCK_WAIT:-30}"; then
         echo "ffbox: could not take the admission lock; not staging" >&2
         _rc=77
     elif ! ffbox_workload_has_room; then
@@ -966,6 +970,10 @@ if [ -n "$STAGE_POOL" ]; then
             _rc=77
         else
             _MID=$(ffbox_agent_machine_id "$_POOL_SLOT")
+            # 9>&- for the same reason as the cold path below: fd 9 is the admission lock and
+            # nothing that outlives the release may carry it. `docker run -d` returns in a
+            # moment, so this has never leaked -- it is closed anyway, because the rule is
+            # about the descriptor and not about how long a particular command usually takes.
             _CID=$(docker run --rm -d \
                 --name "$POOL_NAME" \
                 --label "$FFBOX_WORKLOAD_LABEL=pool" \
@@ -978,7 +986,7 @@ if [ -n "$STAGE_POOL" ]; then
                 -e "FFBOX_IN=/ffbox/in" \
                 -e "FFBOX_IDLE_TTL_SECS=$IDLE_TTL" \
                 -e "FFBOX_MACHINE_ID=$_MID" \
-                "$IMAGE")
+                "$IMAGE" 9>&-)
             _rc=$?
             if [ "$_rc" -eq 0 ]; then
                 # By ID rather than by name, because dispatch renames this container to its run
@@ -1076,6 +1084,18 @@ else
     fi
     RUN_MACHINE_ID=$(ffbox_agent_machine_id "$RUN_SLOT")
     echo "[ffbox] agent slot ${RUN_SLOT} (Unity sees this slot as its own machine)"
+    # 9>&- CLOSES THE ADMISSION LOCK IN THE CHILD, and it is not optional. fd 9 is the lock,
+    # held open by `exec 9>>` in this shell, and a background command inherits every open
+    # descriptor -- so this `docker run`, which stays up for the whole run, kept the lock's open
+    # file description alive long after the release below closed OUR copy of it. flock is held
+    # until the LAST descriptor on that description goes, so the box's admission lock was held
+    # for the length of every cold run.
+    #
+    # WHAT THAT COST, measured on the build server 2026-09-02: `ffbox --stage-pool` blocks on
+    # `flock 9` with no timeout, so every pool staging attempted during a run waited forever and
+    # ffwatch killed it at its 180-second ceiling -- and keep_pool() runs on the daemon's own
+    # loop, so ffwatch froze for three minutes a pass. Reactions and replies that were composed
+    # and queued sat there. From Discord it looked exactly like Max had stopped answering.
     docker run --rm \
         --name "$RUN_NAME" \
         --label "$FFBOX_WORKLOAD_LABEL=agent" \
@@ -1083,7 +1103,7 @@ else
         "${RUN_ARGS[@]}" \
         -v "$OUT:/ffbox/out" \
         -e "FFBOX_MACHINE_ID=$RUN_MACHINE_ID" \
-        "$IMAGE" &
+        "$IMAGE" 9>&- &
     DOCKER_PID=$!
     ffbox_workload_await_container "$RUN_NAME" "$DOCKER_PID"
     # The id, now that there is one. A container that never came up leaves the claim naming it,

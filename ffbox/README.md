@@ -1412,6 +1412,27 @@ every container was cold and wrong once there was a warm pool — the cost moves
 path instead of being avoided. It is affordable because the machine ids are per slot, so the
 licence sees a small recycled set of machines rather than one per container.
 
+**The admission lock covers admission, not the run** (2026-09-02). Both lanes take one flock in
+`lib-workloads.sh` across "count, then `docker run`", and it is released the moment the container
+exists. That release used to be a lie on the cold-run path. fd 9 IS the lock, held open by
+`exec 9>>` in ffbox's shell; a background command inherits every open descriptor; and the cold
+run's `docker run` stays in the foreground of its own subshell for the whole turn. `exec 9>&-`
+closed ffbox's copy, flock held until the last descriptor on that open file description went, and
+the box's admission lock was therefore held for the length of every run. So every `docker run`
+created under the lock now closes it in the child with `9>&-`.
+
+What that cost is worth writing down, because none of it looked like a lock: `ffbox --stage-pool`
+waits for the same lock, `keep_pool()` calls it **on ffwatch's own loop**, and ffwatch kills a
+staging at 180 seconds — so with any run in flight the daemon spent three minutes of every pass
+inside a call that could never return, draining no Discord events and sending no replies it had
+already composed. From Discord it looked like Max had stopped answering. The CI lane took the same
+lock while holding its own pool lock, so all six runner slots sat on "another slot is still
+minting" at the same time. Two guards followed: the speculative caller passes a bound
+(`ffbox_workload_lock_acquire 30` — nobody is waiting on a warm container, and "not this pass" is
+a fine answer, while a cold run still waits unbounded because somebody IS waiting on it), and the
+keeper backs a class off for `pool_stage_backoff_secs` after a staging attempt fails, so one
+staging that cannot succeed can never again become a daemon that does nothing else.
+
 The keeper checks `MemAvailable` before staging and keeps back enough for the cold launches the
 ceiling still allows. **Nothing is evicted.** A cold launch that cannot get a place waits for one:
 `schedule()` leaves the turn queued and tries again next pass, and it starts when a run finishes
