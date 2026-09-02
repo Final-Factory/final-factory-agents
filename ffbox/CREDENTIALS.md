@@ -4,9 +4,13 @@ Three separate GitHub credentials live on a build box, and they are not intercha
 one exists because a different process needs to talk to GitHub, and each should be minted
 separately so that a leak of one does not carry the others' capabilities.
 
-Everything below was derived by reading the code that sends the requests, not from the older
-comments in `secrets.env.example`. Where those comments disagree with this file, this file is
-right and the discrepancy is noted.
+Everything below was derived by reading the code that sends the requests **and then probing the
+live tokens against the API**. Both halves are necessary, and the first alone is what left a
+box unable to open a pull request for weeks: the code says which endpoints are called, and it
+says nothing about which permissions those endpoints need. `POST /pulls` requires contents:read
+to read the refs it is being asked to join, and no part of the request mentions contents. See
+"Verify a token before you trust it" at the end. Where the older comments in
+`secrets.env.example` disagree with this file, this file is right and the discrepancy is noted.
 
 All three want to be **fine-grained** PATs. Classic scopes are far too coarse: `repo` alone
 carries code write, PR write, issues, releases, deploy keys and webhooks on every repository the
@@ -176,6 +180,41 @@ is what makes "nothing merges, ever" true: a deny pattern like `Bash(git push*)`
 that `sh -c 'git push'` walks straight through, and it has been measured doing so. Publication
 is physically the host's job.
 
-Keeping `GH_PR_TOKEN` down to pull-requests-write extends the same idea one step further. Even the
-host process that reads text written by strangers and turns it into a pull request cannot move a
-branch, delete a ref, or touch another repository in the org.
+Keeping `GH_PR_TOKEN` down to pull-requests-write plus contents-READ extends the same idea one
+step further. Even the host process that reads text written by strangers and turns it into a
+pull request cannot move a branch, delete a ref, merge anything, or touch another repository in
+the org. Contents read is the one capability it gained, on 2026-09-02, and it gained it because
+`POST /pulls` does not function without it. The line that carries the weight is contents:WRITE,
+which is what merging needs, and that is exactly where it has always been.
+
+
+## Verify a token before you trust it
+
+READING THE CODE IS NOT ENOUGH. The requests `ffwatch` sends are two lines of Python and neither
+mentions repository contents, so a token provisioned from the source alone passes every review
+and then fails the one call it exists to make. What it fails with is not obviously a permission
+problem either: `POST /pulls` answers
+
+    422 Validation Failed — "not all refs are readable"
+
+which reads like a bad branch name, while the `GET` beside it keeps returning 200. Probe the
+token against the API instead:
+
+    read -r TOK            # paste it; this keeps it out of argv and the shell history
+    probe() {
+      printf '%-52s %s\n' "$1" "$(curl -sS -o /dev/null -w '%{http_code}' \
+        -H "Authorization: Bearer $TOK" -H 'Accept: application/vnd.github+json' \
+        "https://api.github.com$1")"
+    }
+    probe /repos/Final-Factory/FinalFactory/pulls?state=open        # pull requests: read
+    probe /repos/Final-Factory/FinalFactory/contents/README.md      # contents: read
+    probe /repos/Final-Factory/FinalFactory/git/ref/heads/master    # contents: read (refs)
+
+All three must be **200** for `GH_PR_TOKEN`. A 403 on either of the last two is the 422 above,
+waiting to happen. `unset TOK` afterwards.
+
+A read-only probe cannot prove the WRITE half, and do not test that half by performing it — an
+unwanted pull request or check run is a real object somebody has to go and delete. Each token's
+write is proven by the job it exists for actually landing: a pull request appearing on the
+repository, a branch appearing on origin, a check run appearing on a PR. Watch for that the
+first time after minting or rotating one, because every failure mode here is silent.

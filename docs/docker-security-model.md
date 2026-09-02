@@ -124,6 +124,13 @@ does not name the branch at all.
 `pull_request_for` and nothing else. Its docstring says the absence is load-bearing. Adding one
 is a design change, not a feature.
 
+**And the token behind it could not merge even if there were one.** `GH_PR_TOKEN` is fine-grained
+and holds pull-requests:write plus contents:**read** — the second added 2026-09-02, because
+`POST /pulls` cannot read the head and base refs it is joining without it. Merging a pull request
+needs contents:**write**, which this token does not have and must not be given; read cannot move
+a branch or merge anything. `ffbox/CREDENTIALS.md` has the full permission set for all three of a
+box's GitHub credentials and a read-only probe for checking one.
+
 **The workspace never touches a host path, and it is gone when the run is.** It was a ZFS clone
 of golden until the ramdrive migration; it is now a tmpfs the container creates, sized by
 `container.workspace_size`, which the host cannot see and the kernel frees when the container
