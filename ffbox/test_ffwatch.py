@@ -1875,9 +1875,18 @@ def test_container_argv_is_valid():
     # outside the working directory is a permission request that `-p` has nobody to answer —
     # so it is denied, and a turn whose whole content is a screenshot gets answered "I could
     # not see it". Happened for real on conversation 21 (2026-08-24).
+    added = [argv[i + 1] for i, a in enumerate(argv) if a == "--add-dir"]
     check("the attachments directory is granted, or no turn can read one",
-          "--add-dir" in argv and argv[argv.index("--add-dir") + 1] == "/ffbox/attachments",
-          argv)
+          "/ffbox/attachments" in added, argv)
+    # And the plugin tree, for the same reason. --plugin-dir LOADS the plugin; it does not let
+    # Read open a file under it, and the prompt tells the agent the role and skills it must
+    # follow are "loaded from /ffbox/plugins/ff-discord". Without this the turn logs
+    # "Claude requested permissions to read from .../agents/discord-dev-agent.md, but you
+    # haven't granted it yet" and runs without the role text it was told to obey.
+    check("the plugin directory is granted, or the role and skill files cannot be opened",
+          "/ffbox/plugins/ff-discord" in added
+          and "--plugin-dir" in argv
+          and argv[argv.index("--plugin-dir") + 1] == "/ffbox/plugins/ff-discord", argv)
     check("turn 1 opens the session id rather than resuming",
           "--session-id" in argv and argv[argv.index("--session-id") + 1] == sid
           and "--resume" not in argv, argv)
