@@ -112,7 +112,34 @@
 #
 # Non-matching names under the suffix still resolve here and are refused by nginx, so an attempt
 # lands in the SNI log with the name it asked for. See docs/egress.md.
-~^productionresultssa[0-9]{1,2}\.blob\.core\.windows\.net$   blob.core.windows.net
+# REMOVED 2026-09-02: the productionresultssa* regex, and with it every path to blob storage.
+#
+# It was the last entry a job needed for anything but the Actions runtime, and it was the most
+# dangerous line in this file. `[0-9]{1,2}` admits 110 names -- sa0-sa9 AND sa00-sa99 -- and eleven
+# of those were UNREGISTERED when checked on 2026-09-01: sa00 through sa09, which GitHub will never
+# use because it does not pad its shard numbers, and sa22. Ninety-nine resolved; those eleven
+# returned nothing from two public resolvers, with a control lookup ruling out a wildcard zone.
+#
+# An Azure storage account name is free and claimed first-come. Anyone could have registered one of
+# the eleven and owned an allowlisted, unauthenticated, high-bandwidth HTTPS endpoint reachable
+# from every CI job on this box, with no GitHub credential involved and nothing in the SNI log to
+# tell it from an ordinary artifact upload. That is the exact failure the regex replaced a bare
+# *.blob.core.windows.net to prevent, surviving because narrowing the namespace did not empty it.
+#
+# It is gone because NOTHING NEEDS IT, not because it was narrowed further. actions/upload-artifact
+# was the only user; actions/cache stopped using blob when the host ffcache replaced it, and the
+# coverage upload had never uploaded anything at all. main.yml now hands its artifact to the
+# supervisor, which uploads it on the job's own credential from a host that is on the open internet
+# regardless, and refuses any repository_id not on its list. See docs/ci-egress-exfiltration-audit.md.
+#
+# WHAT TO EXPECT IF THIS WAS WRONG. Step summaries and the final log archive are Results API objects
+# with the same "mint a SAS, PUT to blob" shape as artifacts, and a connection-count trace could not
+# rule them out. If either needs blob, a job now fails LOUDLY and the name appears in the deny sink
+# with upstream=127.0.0.1:9:
+#     sh ffbox/runners/03-image.sh --egress-log
+# That is the measurement this removal exists to make. Live logs are not at risk either way: they
+# ride *.actions.githubusercontent.com, measured at 271 connections to pipelinesghubeus14 across
+# roughly 55 jobs, and that entry is not going anywhere.
 
 # --- CANDIDATES FOR REMOVAL, 2026-09-01 ------------------------------------------------------------
 # The licence became an offline .ulf on this date (ffbox/unity-offline-license.sh), and the offline
