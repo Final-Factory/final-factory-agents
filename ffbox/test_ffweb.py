@@ -658,6 +658,25 @@ def test_filters_actually_filter():
         srv.stop()
 
 
+def test_the_list_is_newest_conversation_first():
+    """Sorted by id descending, which is the order they were opened in.
+
+    Not by last activity: that reshuffles the page under whoever is reading it every time an
+    old thread takes another turn, so a row can move while it is being aimed at. The fixture
+    distinguishes the two — conversation 3 is the LEAST recently active and conversation 1 the
+    second most, so an activity sort would put 1 above 3 and this order would not appear.
+    """
+    srv = serve()
+    try:
+        # read=all, because the list opens on unread and this is about order, not the queue.
+        _c, _h, body = srv.get("/?read=all")
+        table = text_of(body).split("<tbody>", 1)[-1].split("</tbody>", 1)[0]
+        ids = [int(m) for m in re.findall(r'<a href="/conversation/(\d+)">\1</a>', table)]
+        check("the conversation list runs newest id first", ids == [4, 3, 2, 1], ids)
+    finally:
+        srv.stop()
+
+
 def test_the_title_filter():
     """A typed word narrows the list to the titles containing it.
 
@@ -2363,6 +2382,7 @@ def main():
         test_timeline_reads_as_a_conversation,
         test_filters_actually_filter,
         test_the_title_filter,
+        test_the_list_is_newest_conversation_first,
         test_read_and_unread,
         test_the_tick_goes_through_ffwatch,
         test_the_ui_cannot_write,
