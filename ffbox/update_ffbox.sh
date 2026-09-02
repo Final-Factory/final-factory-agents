@@ -14,10 +14,12 @@
 # 20:41. Editing a file is not deploying it.
 #
 # AND THE CONFIG IS A FILE. ~/.config/ffbox/config.json is read once per process, in ffwatch's
-# main(), so an edit to it is exactly as undeployed as an edit to a .py file — and it is not in
-# git, so until 2026-09-02 the SHA comparison below saw nothing and the box kept the old
-# settings until the next commit happened along. There are two triggers now: new commits, and a
-# config whose hash no longer matches the one the running processes started on.
+# main(); ~/.config/ffbox/secrets.env is read once per START, by systemd, as the EnvironmentFile
+# of all three units. So an edit to either is exactly as undeployed as an edit to a .py file —
+# and neither is in git, so until 2026-09-02 the SHA comparison below saw nothing and the box
+# kept the old settings until the next commit happened along. There are two triggers now: new
+# commits, and a watched file whose hash no longer matches the one the running processes
+# started on.
 #
 # WHY IT IS NOT PART OF ffbox.target. A bad commit that stops ffwatch from starting is exactly
 # when an update matters. Nothing here may depend on ffbox being healthy: the drain is an
@@ -90,8 +92,18 @@ CONFIG_DIR=${FFBOX_CONFIG_DIR:-$OWNER_HOME/.config/ffbox}
 KILL_SWITCH=$CONFIG_DIR/update.disabled
 DRAIN_SWITCH=$CONFIG_DIR/draining
 LOCK=$CONFIG_DIR/update.lock
-# The box's one config file, and the fingerprint of the copy the running services started on.
-CONFIG_FILE=$CONFIG_DIR/config.json
+# THE FILES THAT ONLY REACH A SERVICE THROUGH A PROCESS START, relative to CONFIG_DIR, and the
+# stamp holding the hash each one had when the running services started on it.
+#
+#   config.json   ffwatch calls load_config() once, in main(), then loops for weeks off that dict
+#   secrets.env   EnvironmentFile= in ffwatch, ffweb and ffdiscord-listener; systemd reads it
+#                 when it forks the unit and never again
+#
+# NOT the runners' ~/.config/ffbox/githubrunners/secrets.env, and not by oversight. That one is
+# sourced per invocation by the ffgithubrunners CLI rather than held by a daemon, and its slots
+# are in ffgithubrunners.target, which this script does not restart — watching it would earn a
+# restart of the wrong target.
+WATCHED_FILES="config.json secrets.env"
 CONFIG_STAMP=$CONFIG_DIR/update.config-sha
 
 log() { printf '[ffbox-update] %s\n' "$*"; }
@@ -126,18 +138,32 @@ sudo_systemctl() {
 }
 
 # A HASH, NOT AN MTIME. setup.sh runs on every update pass and its config stage is setdefault
-# the whole way down, so the file is opened and rewritten routinely; a touch that changes no
+# the whole way down, so config.json is opened and rewritten routinely; a touch that changes no
 # byte must not cost the box a drain and a restart.
+#
+# ONE LINE PER FILE, `name hash`, rather than a single hash over all of them. It costs nothing
+# and it is what lets the journal say WHICH file changed, which is the first thing an operator
+# reading that line wants to know. It also makes adding a file to the set a non-event: an entry
+# the stamp has never carried is recorded rather than treated as a change (see section 2).
 #
 # A missing or unhashable file answers with a CONSTANT rather than an empty string. The stamp is
 # compared for inequality, and an empty answer would differ from every stored value forever —
-# a machine with no config.json restarting itself every five minutes.
+# a machine with no config.json restarting itself every five minutes. The hashes stay out of the
+# log: secrets.env's is a fingerprint of a secret, and a journal is not where that goes.
 config_fingerprint() {
-    [ -r "$CONFIG_FILE" ] || { echo "absent"; return 0; }
-    _fp=$(sha256sum "$CONFIG_FILE" 2>/dev/null | cut -c1-64)
-    printf '%s\n' "${_fp:-unhashable}"
-    unset _fp
+    for _f in $WATCHED_FILES; do
+        if [ -r "$CONFIG_DIR/$_f" ]; then
+            _h=$(sha256sum "$CONFIG_DIR/$_f" 2>/dev/null | cut -c1-64)
+            printf '%s %s\n' "$_f" "${_h:-unhashable}"
+        else
+            printf '%s %s\n' "$_f" "absent"
+        fi
+    done
+    unset _f _h
 }
+
+# One file's hash out of a fingerprint, or "" when that fingerprint has no line for it.
+fingerprint_of() { printf '%s\n' "$2" | awk -v f="$1" '$1 == f { print $2 }'; }
 
 # ------------------------------------------------------------------------------------------
 # one at a time
@@ -247,22 +273,35 @@ fi
 CONFIG_NOW=$(config_fingerprint)
 CONFIG_WAS=$(cat "$CONFIG_STAMP" 2>/dev/null || echo "")
 CONFIG_CHANGED=0
-if [ -z "$CONFIG_WAS" ]; then
-    # NO STAMP IS NOT A CHANGE. Every machine that takes this commit, and anyone who deletes the
-    # file, would otherwise spend one whole drain-and-restart on a config nobody touched. Record
-    # what is there and let the next real edit be the trigger.
+CONFIG_UNSTAMPED=0
+CHANGED_LIST=
+for _f in $WATCHED_FILES; do
+    _was=$(fingerprint_of "$_f" "$CONFIG_WAS")
+    if [ -z "$_was" ]; then
+        # NEVER STAMPED IS NOT A CHANGE. It is a fresh machine, a deleted stamp, a file just
+        # added to WATCHED_FILES, or the single-hash stamp this script wrote before secrets.env
+        # joined the set. None of those is somebody editing something, and treating them as one
+        # spends a whole drain-and-restart on every box for a file nobody touched.
+        CONFIG_UNSTAMPED=1
+    elif [ "$_was" != "$(fingerprint_of "$_f" "$CONFIG_NOW")" ]; then
+        CONFIG_CHANGED=1
+        CHANGED_LIST="${CHANGED_LIST:+$CHANGED_LIST and }$_f"
+    fi
+done
+unset _f _was
+if [ "$CONFIG_UNSTAMPED" = 1 ]; then
+    # Recorded HERE as well as in section 6, because a pass that stops at "nothing to do" never
+    # reaches section 6 — and a file that is never stamped is a file whose edits never trigger.
     if [ "$DRY_RUN" = 1 ]; then
-        log "would record the current config fingerprint; no restart is owed for it"
+        log "would record the current fingerprints; no restart is owed for them"
     else
-        log "recording the current config fingerprint; no restart is owed for it"
+        log "recording the current fingerprints; no restart is owed for them"
         printf '%s\n' "$CONFIG_NOW" > "$CONFIG_STAMP"
     fi
-elif [ "$CONFIG_NOW" != "$CONFIG_WAS" ]; then
-    CONFIG_CHANGED=1
 fi
 
 if [ "$CODE_UPDATE" = 0 ] && [ "$CONFIG_CHANGED" = 0 ]; then
-    log "already current at $(printf %.12s "$OLD_SHA"), config unchanged — nothing to do"
+    log "already current at $(printf %.12s "$OLD_SHA"), watched files unchanged — nothing to do"
     exit 0
 fi
 if [ "$CODE_UPDATE" = 1 ]; then
@@ -270,7 +309,7 @@ if [ "$CODE_UPDATE" = 1 ]; then
     git_ log --oneline "$OLD_SHA..$NEW_SHA" | sed 's/^/    /'
 fi
 if [ "$CONFIG_CHANGED" = 1 ]; then
-    log "$CONFIG_FILE has changed since the services started — restarting to pick it up"
+    log "$CHANGED_LIST changed in $CONFIG_DIR since the services started — restarting to pick it up"
 fi
 
 if [ "$DRY_RUN" = 1 ]; then
@@ -535,7 +574,7 @@ lift_drain
 # leave the box owing a restart it will never be told about.
 # Never fatal, and for the usual reason: ffbox is STOPPED at this line, and an unwritable stamp
 # must not be what keeps it that way. The cost of failing here is one redundant restart.
-printf '%s\n' "$(config_fingerprint)" > "$CONFIG_STAMP" \
+config_fingerprint > "$CONFIG_STAMP" \
     || log "WARNING: could not write $CONFIG_STAMP; the next tick will restart again"
 log "starting ffbox.target"
 sudo_systemctl start ffbox.target || log "WARNING: start reported a failure"

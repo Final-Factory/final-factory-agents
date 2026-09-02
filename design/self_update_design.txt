@@ -114,8 +114,9 @@ Three new files, one new flag, two new subcommands. Nothing else moves.
                                      by the updater. Outside the checkout, so a merge cannot
                                      touch it and a git-clean cannot delete it.
 
-  ~/.config/ffbox/update.config-sha  (added 2026-09-02) the sha256 of config.json as the
-                                     RUNNING services started on it. The second trigger.
+  ~/.config/ffbox/update.config-sha  (added 2026-09-02) one `name hash` line per start-time-only
+                                     file — config.json and secrets.env — as the RUNNING
+                                     services started on them. The second trigger.
 
   ffwatch drain [--wait] [--timeout N]   write the flag; optionally block until quiet.
   ffwatch resume                         remove the flag.
@@ -316,7 +317,7 @@ holding no root.
   2. ffwatch resume                        (lift a flag stranded by a previous run)
   3. git fetch --prune origin; exit 0 if:
        kill switch present | working tree dirty
-       | HEAD == origin/BRANCH AND config.json hashes to update.config-sha
+       | HEAD == origin/BRANCH AND config.json + secrets.env hash to update.config-sha
   4. ffwatch drain                         (sets the flag, drops the idle staged containers)
      then poll: busy containers, then `ffwatch quiet`, up to FFBOX_DRAIN_TIMEOUT
      at the ceiling: docker stop each straggler, let the host settle, go on (section 4a)
@@ -336,24 +337,35 @@ survives the merge. This also gives steps 7 and 9 clean access to the new tree.
 STEP 3 COMES BEFORE STEP 4 for cost: the common case is "nothing new", and that case must not
 drain the pipeline. It is a fetch and a rev-parse, nothing more.
 
-STEP 3 ASKS TWO QUESTIONS, NOT ONE (added 2026-09-02). config.json is read once per process —
-ffwatch's main() calls load_config() and the daemon then runs for weeks off that dict — so an
-edit to it is exactly as undeployed as an edit to a .py file, and it is NOT in git, so the SHA
-comparison never saw it. On 2026-09-02 an ffwatch that started at 04:18 was still holding the
-config as it stood before a 04:25 edit, and would have held it until an unrelated commit
-happened along. So the updater hashes the file and compares it against update.config-sha, and
-either trigger runs the SAME pass; the merge in step 6 is the only part that is conditional.
+STEP 3 ASKS TWO QUESTIONS, NOT ONE (added 2026-09-02). Two files reach a service only through a
+process start. config.json is read once per process — ffwatch's main() calls load_config() and
+the daemon then runs for weeks off that dict — and secrets.env is read once per start, by
+systemd, as the EnvironmentFile= of all three units. So an edit to either is exactly as
+undeployed as an edit to a .py file, and neither is in git, so the SHA comparison never saw them.
+On 2026-09-02 an ffwatch that started at 04:18 was still holding the config as it stood before a
+04:25 edit, and would have held it until an unrelated commit happened along. So the updater
+hashes both and compares them against update.config-sha, and either trigger runs the SAME pass;
+the merge in step 6 is the only part that is conditional.
 
   * A HASH, NOT AN MTIME. Step 7 re-runs setup.sh, whose config stage is setdefault the whole
-    way down, so the file is rewritten on every pass. An mtime trigger would restart the box
-    every tick.
+    way down, so config.json is rewritten on every pass. An mtime trigger would restart the box
+    every tick. Confirmed the same day: the 04:35 pass left config.json with an 04:35 mtime and
+    an unchanged hash.
+  * ONE LINE PER FILE, `name hash`, so the journal can say WHICH file changed — the first thing
+    an operator reading that line wants to know — and so that adding a file to the watched set
+    is a non-event rather than a restart on every box.
+  * NOT the runners' ~/.config/ffbox/githubrunners/secrets.env. It is sourced per invocation by
+    the ffgithubrunners CLI rather than held by a daemon, and its slots live in
+    ffgithubrunners.target, which this script does not restart.
   * THE STAMP IS WRITTEN AT STEP 8, not at step 3. The drain can take an hour, and a config
     edited during it is picked up by the step-9 start; stamping the step-3 value would spend a
     second full drain-and-restart on settings that are already live. Written before the start
     rather than after, so a start that fails does not leave the box owing a restart nothing
     will ever tell it about.
-  * NO STAMP IS NOT A CHANGE. A fresh machine records the current hash and restarts nothing.
-    The alternative spends one whole drain on a config nobody touched, on every box, once.
+  * A LINE THE STAMP HAS NEVER CARRIED IS NOT A CHANGE. A fresh machine, a deleted stamp, a
+    newly watched file, or the single-hash stamp written before secrets.env joined the set: all
+    are recorded, none restarts anything. The alternative spends one whole drain on a file
+    nobody touched, on every box, once per addition.
   * A MISSING OR UNHASHABLE config.json answers with a CONSTANT ("absent"), never the empty
     string: the comparison is for inequality, and an empty answer differs from every stored
     value forever — a box with no config restarting itself every five minutes.
