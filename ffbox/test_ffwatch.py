@@ -3651,12 +3651,12 @@ def test_a_public_reply_is_corrected_when_the_harness_disagrees():
           ffwatch.compose_head(None, turn, "done", {}, honest, None, job, verification=skipped,
                                publish={"no_branch_reason": "the run changed no files"})
           == honest["summary"], honest)
+    clean = ffwatch.compose_head(None, turn, "done", {}, lying, None, job,
+                                 verification=dict(failed, tests_passed=214, tests_failed=0),
+                                 publish={"branch": "ffbox/d1t2", "pr_number": 45,
+                                          "pr_url": "https://example/45"})
     check("nor is a run that verified and published cleanly",
-          ffwatch.compose_head(None, turn, "done", {}, lying, None, job,
-                               verification=dict(failed, tests_passed=214, tests_failed=0),
-                               publish={"branch": "ffbox/d1t2", "pr_number": 45,
-                                        "pr_url": "https://example/45"})
-          == lying["summary"], lying)
+          clean.startswith(lying["summary"]) and "⚠️" not in clean, clean)
     check("nor is a lane that was never asked to verify anything",
           ffwatch.compose_head(None, turn, "done", {}, honest, None, job) == honest["summary"],
           honest)
@@ -3681,6 +3681,67 @@ def test_a_public_reply_is_corrected_when_the_harness_disagrees():
         publish={"no_branch_reason": "the range could not be bundled"})
     check("a run whose files changed still says where the work went",
           "no branch: the range could not be bundled" in real, real)
+
+
+def test_a_reply_that_ends_in_a_branch_says_where_the_fix_is():
+    """The one harness fact both shapes state: the branch, and that a person still has to look.
+
+    The public shape used to end at the agent's prose, so the player who reported the bug was
+    told a fix had been made and never told where it went or that it was not in the game yet.
+    "Pending dev review" is the second half and the more important one: nothing on a branch is
+    shipped, and a thread that says a fix exists without saying that reads like a release note.
+    """
+    print("reply: where the fix went, in both shapes")
+    job = {"run_id": "d1t2-fix", "session": {"id": "S"}, "classification": {}, "messages": []}
+    turn = {"venue": "public", "failed_closed": 0, "failed_closed_reason": None}
+    said = {"summary": "The merger drops the third lane. Fixed."}
+    green = {"skipped": 0, "ran": 1, "compiled": 1, "tests_run": 214, "tests_passed": 214,
+             "tests_failed": 0, "evidence": ""}
+    pub = {"branch": "ffbox/d1t2", "pr_number": 45, "pr_url": "https://example/45"}
+
+    text = ffwatch.compose_head(None, turn, "done", {}, said, None, job, verification=green,
+                                publish=pub)
+    check("the player is told the branch and that it is not reviewed yet",
+          text.endswith("Fix created on `ffbox/d1t2`, pending dev review"), text)
+    check("under the answer, not in front of it", text.startswith(said["summary"]), text)
+    check("and the PR link stays on the operator's half",
+          "https://example/45" not in text, text)
+
+    priv = ffwatch.compose_head(None, dict(turn, venue="private"), "done", {}, said, None, job,
+                                verification=green, publish=pub)
+    check("the operator gets the same sentence, once, with the link on it",
+          "Fix created on `ffbox/d1t2`, pending dev review · PR #45 https://example/45" in priv,
+          priv)
+    check("and not the old bare-name row beside it", "branch `ffbox/d1t2`" not in priv, priv)
+
+    # The withholding half. Every one of these is a run the harness has a quarrel with, and
+    # "pending dev review" under "nothing was put up for review" is the reply arguing with
+    # itself — so the sentence goes and the operator keeps the bare name.
+    red = dict(green, tests_passed=213, tests_failed=1, evidence="FF.BeltTests.Merges")
+    failed_pub = {"branch": "ffbox/d1t2", "no_pr_reason": "1 test(s) failed"}
+    hot = ffwatch.compose_head(None, turn, "done", {}, said, None, job, verification=red,
+                               publish=failed_pub)
+    check("a failed suite says nothing about a fix pending review",
+          "pending dev review" not in hot and "ffbox/d1t2" not in hot, hot)
+    check("and the operator still reads the branch, without the sentence",
+          "branch `ffbox/d1t2` · no PR: 1 test(s) failed" in ffwatch.compose_head(
+              None, dict(turn, venue="private"), "done", {}, said, None, job,
+              verification=red, publish=failed_pub), failed_pub)
+    check("a run that pushed nothing gains no footer at all",
+          ffwatch.compose_head(None, turn, "done", {}, said, None, job, verification=green,
+                               publish={}) == said["summary"], said)
+    check("nor does one the gate could not classify",
+          "pending dev review" not in ffwatch.compose_head(
+              None, dict(turn, failed_closed=1, failed_closed_reason="no model"), "done", {},
+              said, None, job, verification=green, publish=pub), pub)
+
+    # A run that broke still pushed what it had, and the branch is the only useful thing left
+    # to say about it — the answer is the fixed no-answer note, which names nothing.
+    broke = ffwatch.compose_head(None, turn, "failed", {}, {"summary": ""}, None, job,
+                                 verification=green, publish=pub)
+    check("a run that died with work already pushed still says where it is",
+          broke.startswith(ffwatch.PUBLIC_NO_ANSWER)
+          and broke.endswith("Fix created on `ffbox/d1t2`, pending dev review"), broke)
 
 
 def test_publish_opens_a_pull_request():
@@ -8517,6 +8578,7 @@ def main():
         test_the_reply_has_two_shapes,
         test_a_private_reply_never_composes_to_nothing,
         test_a_public_reply_is_corrected_when_the_harness_disagrees,
+        test_a_reply_that_ends_in_a_branch_says_where_the_fix_is,
         test_a_public_venue_never_publishes_a_failed_runs_output,
         test_a_failed_public_run_attaches_nothing_either,
         test_a_capped_lane_tells_a_channel_once_not_every_asker,
