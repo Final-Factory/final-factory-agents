@@ -1900,8 +1900,13 @@ def classifier_dir(cfg):
     return path
 
 
-def classifier_invocation(cfg, prompt, schema):
+def classifier_invocation(cfg, prompt, schema, structured=True):
     """(argv, env, cwd, stdin) for one sandboxed model call.
+
+    `structured` picks which of the two shapes this is. True passes --json-schema and the model
+    cannot answer off-shape; False leaves the flag off, appends the contract to the prompt in
+    prose, and leaves the checking to parse_classifier_output. run_classifier tries False first
+    because the flag costs two extra turns -- see the note there.
 
     THE ONLY PLACE A MODEL CALL IS BUILT. A flag set is a policy boundary, and it holds exactly
     as long as every future edit remembers all of it — so there is one function to audit and no
@@ -1910,8 +1915,13 @@ def classifier_invocation(cfg, prompt, schema):
     argv = [classifier_bin(cfg), "-p",
             "--model", cfg["classifier_model"],
             "--output-format", "json",
-            "--json-schema", json.dumps(schema),
             "--system-prompt", CLASSIFIER_SYSTEM_PROMPT]
+    if structured:
+        argv += ["--json-schema", json.dumps(schema)]
+    else:
+        # AFTER the restatement that closes the prompt, so the shape is the very last thing
+        # said and the untrusted block still has our sentence between it and the answer.
+        prompt = f"{prompt.rstrip()}\n\n{json_instruction(schema)}"
     for flag, value in CLASSIFIER_FLAGS:
         argv.append(flag)
         if value is not None:
@@ -1951,12 +1961,110 @@ def classifier_invocation(cfg, prompt, schema):
     return argv, env, classifier_dir(cfg), prompt
 
 
-def run_classifier(cfg, prompt, schema, what="gate"):
-    """Run one sandboxed call. Returns a parsed dict, or None with a reason on any failure.
+# THE OUTPUT CONTRACT, RENDERED FROM THE SCHEMA rather than written out beside it. A call that
+# carries no --json-schema has to ask for the shape in prose, and a prose copy that drifts from
+# the schema would not fail loudly -- it would just make every fast attempt miss validation and
+# fall back, turning the optimisation into a permanent second call nobody noticed.
+_JSON_HINTS = {
+    "integer": "an integer", "number": "a number", "string": "a string",
+    "boolean": "true or false", "null": "null", "object": "an object", "array": "an array",
+}
 
-    Never raises. Every caller decides for itself what a failure means; this only reports it.
+
+def json_instruction(schema):
+    """The 'reply with exactly this shape' paragraph for a call with no --json-schema."""
+    fields = []
+    for name, spec in (schema.get("properties") or {}).items():
+        types = spec.get("type")
+        types = types if isinstance(types, list) else [types]
+        hint = " or ".join(_JSON_HINTS.get(t, str(t)) for t in types if t)
+        if spec.get("maxLength"):
+            # ASKING FOR BREVITY, NOT JUST STATING THE CAP, and the difference is measurable.
+            # A model told only the limit writes right up against it: eight runs produced
+            # reasons of 132-195 characters against a 200 cap and one over it, so roughly an
+            # eighth of calls paid for the fallback to shorten a sentence. Adding "one short
+            # sentence" moved the same eight to 101-139 with none over. The field is a note a
+            # human reads; the cap is not the target.
+            hint += f", one short sentence, hard limit {spec['maxLength']} characters"
+        fields.append(f'"{name}": <{hint}>')
+    return ("Reply with exactly one JSON object and nothing else. No prose before or after it, "
+            "no code fence, no explanation:\n"
+            "{" + ", ".join(fields) + "}")
+
+
+def schema_violation(value, schema):
+    """None if `value` satisfies the schema, else a short reason. Returns the FIRST problem.
+
+    Covers the subset these two schemas use -- type, required, properties, maxLength -- and
+    nothing else. It is deliberately not a general JSON Schema implementation: what it has to
+    do is decide whether an unvalidated answer can be trusted as far as a validated one, and a
+    keyword it silently ignored would be exactly the gap that decision must not have.
     """
-    argv, env, cwd, stdin = classifier_invocation(cfg, prompt, schema)
+    types = schema.get("type")
+    if types is not None:
+        types = types if isinstance(types, list) else [types]
+        ok = False
+        for t in types:
+            if t == "object":
+                ok = ok or isinstance(value, dict)
+            elif t == "string":
+                ok = ok or isinstance(value, str)
+            elif t == "boolean":
+                ok = ok or isinstance(value, bool)
+            elif t == "integer":
+                # bool is an int in Python and must not pass as one here: `continues: true`
+                # would otherwise validate and then be used as a conversation id.
+                ok = ok or (isinstance(value, int) and not isinstance(value, bool))
+            elif t == "number":
+                ok = ok or (isinstance(value, (int, float)) and not isinstance(value, bool))
+            elif t == "null":
+                ok = ok or value is None
+            elif t == "array":
+                ok = ok or isinstance(value, list)
+        if not ok:
+            return f"expected {'/'.join(str(t) for t in types)}, got {type(value).__name__}"
+    if isinstance(value, str) and schema.get("maxLength") is not None:
+        if len(value) > int(schema["maxLength"]):
+            return f"string is {len(value)} chars, over the {schema['maxLength']} limit"
+    if isinstance(value, dict):
+        for name in schema.get("required") or []:
+            if name not in value:
+                return f"missing required field {name!r}"
+        for name, spec in (schema.get("properties") or {}).items():
+            if name in value:
+                why = schema_violation(value[name], spec)
+                if why:
+                    return f"{name}: {why}"
+    return None
+
+
+# A fenced block is the one wrapper worth unwrapping. It is still exactly the JSON that was
+# asked for, wearing markdown; anything else -- a sentence before it, two objects, a trailing
+# note -- is a response that did not follow the contract, and the fallback exists for those.
+_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.S)
+
+
+def parse_classifier_output(text, schema):
+    """(parsed, error). Strict: valid JSON, and it satisfies the schema, or it is a failure."""
+    body = (text or "").strip()
+    fenced = _FENCE.match(body)
+    if fenced:
+        body = fenced.group(1).strip()
+    if not body:
+        return None, "the model returned nothing"
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError as exc:
+        return None, f"output was not valid JSON ({exc.msg} at char {exc.pos})"
+    why = schema_violation(parsed, schema)
+    if why:
+        return None, f"output did not match the schema: {why}"
+    return parsed, None
+
+
+def classifier_attempt(cfg, prompt, schema, structured, what):
+    """One call. (parsed, error); never raises."""
+    argv, env, cwd, stdin = classifier_invocation(cfg, prompt, schema, structured=structured)
     if os.sep not in argv[0]:
         # Resolution failed, so this is about to be FileNotFoundError with a one-word message
         # that says nothing about why. Say where we looked instead.
@@ -1972,13 +2080,45 @@ def run_classifier(cfg, prompt, schema, what="gate"):
         return None, f"{what} exited {proc.returncode}"
     try:
         envelope = json.loads(proc.stdout)
-        result = envelope.get("result")
-        parsed = json.loads(result) if isinstance(result, str) else result
-    except (json.JSONDecodeError, TypeError, AttributeError):
-        return None, f"{what} output was not valid JSON"
-    if not isinstance(parsed, dict):
-        return None, f"{what} output did not match the schema"
-    return parsed, None
+    except json.JSONDecodeError:
+        return None, f"{what}: the CLI envelope was not JSON"
+    result = envelope.get("result")
+    if not isinstance(result, str):
+        # --json-schema hands back the object already parsed.
+        why = schema_violation(result, schema)
+        return (None, f"{what} output did not match the schema: {why}") if why else (result, None)
+    parsed, why = parse_classifier_output(result, schema)
+    return (None, f"{what} {why}") if why else (parsed, None)
+
+
+def run_classifier(cfg, prompt, schema, what="gate"):
+    """Run one classification. Returns a parsed dict, or None with a reason on any failure.
+
+    TWO SHAPES OF THE SAME CALL, fast one first. --json-schema is served to the model as a
+    StructuredOutput TOOL, which turns one turn into three and multiplies the thinking: measured
+    on the build server 2026-09-02, the same prompt took 2.3-2.6s over one turn asking for JSON
+    in prose against 8.6-10.4s over three turns under the flag. So the first attempt asks in
+    prose and validates the answer here; only an answer that does not parse, or does not satisfy
+    the schema, costs the second call that cannot get it wrong.
+
+    That is a strictly better trade than picking one: the fast path is checked by the same
+    schema the flag would have enforced, so a wrong-shaped answer is never returned -- it is
+    retried under the flag. The cost of a miss is one extra call on a turn that was going to be
+    slow anyway; the cost of never trying is every call paying triple.
+
+    STRICT ON PURPOSE. A response with a sentence in front of the JSON falls back rather than
+    being salvaged by a regex hunting for braces: a lenient reader is how a partly-followed
+    instruction becomes a confidently wrong classification, and the fallback is right there.
+    A markdown fence is the one exception, because that is the same JSON wearing a wrapper.
+
+    Never raises. Every caller decides for itself what a failure means; this only reports it.
+    """
+    parsed, error = classifier_attempt(cfg, prompt, schema, structured=False, what=what)
+    if parsed is not None:
+        return parsed, None
+    log(f"{what}: the schema-free call did not give usable JSON ({error}); "
+        f"retrying under --json-schema")
+    return classifier_attempt(cfg, prompt, schema, structured=True, what=what)
 
 
 # Words that only appear in a message trying to talk the gate into doing something it cannot.

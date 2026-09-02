@@ -9597,6 +9597,112 @@ def test_the_selector_can_only_choose_an_id_it_was_offered():
         check(f"{why}", got == expected, f"answered {answer['continues']!r} -> {got!r}")
 
 
+def test_the_classifier_tries_the_cheap_call_first_and_falls_back():
+    """One turn asking for JSON in prose, and --json-schema only when that does not parse.
+
+    The flag is served to the model as a StructuredOutput TOOL, so it turns one turn into three
+    and multiplies the thinking with it. Measured on the build server 2026-09-02 on the same
+    prompt: 5.2-6.7s over one turn asking in prose, 11.6-11.7s over three under the flag. The
+    fast answer is checked against the SAME schema the flag would have enforced, so nothing
+    wrong-shaped is ever returned -- it is retried under the flag instead.
+    """
+    print("the classifier tries the cheap call first")
+    cfg = ffwatch.load_config()
+    argv_fast, _, _, stdin_fast = ffwatch.classifier_invocation(
+        cfg, "BODY", ffwatch.SELECTOR_SCHEMA, structured=False)
+    argv_slow, _, _, stdin_slow = ffwatch.classifier_invocation(
+        cfg, "BODY", ffwatch.SELECTOR_SCHEMA, structured=True)
+    check("the fast shape carries no --json-schema", "--json-schema" not in argv_fast, argv_fast)
+    check("and asks for the shape in the prompt instead",
+          "exactly one JSON object" in stdin_fast, stdin_fast[-200:])
+    check("the fallback shape does carry it", "--json-schema" in argv_slow, argv_slow)
+    check("and does not repeat the request in prose",
+          stdin_slow == "BODY", stdin_slow)
+    check("the contract is rendered FROM the schema, so it cannot drift from it",
+          '"continues"' in stdin_fast and '"reason"' in stdin_fast
+          and "200" in stdin_fast, stdin_fast[-200:])
+    # THE ORDER MATTERS: the shape goes after the restatement, so the untrusted block still has
+    # our own sentence between it and the answer.
+    real = ffwatch.SELECTOR_PROMPT.format(candidates="id: 1", message="hi")
+    _, _, _, stdin_real = ffwatch.classifier_invocation(
+        cfg, real, ffwatch.SELECTOR_SCHEMA, structured=False)
+    check("the JSON contract comes after the closing restatement, not before it",
+          stdin_real.index("Classify the message above") < stdin_real.index("exactly one JSON"),
+          stdin_real[-300:])
+
+    # And the flow: a first call that parses is the only call.
+    calls = []
+
+    def fake(cfg_, prompt_, schema_, structured, what):
+        calls.append(structured)
+        if not structured:
+            return {"continues": 3, "reason": "ok"}, None
+        raise AssertionError("the fallback must not run when the fast call parsed")
+
+    original = ffwatch.classifier_attempt
+    ffwatch.classifier_attempt = fake
+    try:
+        parsed, err = ffwatch.run_classifier(cfg, "p", ffwatch.SELECTOR_SCHEMA, what="selector")
+    finally:
+        ffwatch.classifier_attempt = original
+    check("a usable first answer costs exactly one call", calls == [False], calls)
+    check("and is returned as-is", parsed == {"continues": 3, "reason": "ok"}, parsed)
+
+    # A first call that does not parse costs the second, under the flag.
+    calls = []
+
+    def fake_bad(cfg_, prompt_, schema_, structured, what):
+        calls.append(structured)
+        if not structured:
+            return None, "output was not valid JSON"
+        return {"continues": 5, "reason": "from the schema call"}, None
+
+    ffwatch.classifier_attempt = fake_bad
+    try:
+        parsed, err = ffwatch.run_classifier(cfg, "p", ffwatch.SELECTOR_SCHEMA, what="selector")
+    finally:
+        ffwatch.classifier_attempt = original
+    check("an unusable first answer falls back to the schema call", calls == [False, True], calls)
+    check("and the caller gets the answer that call produced",
+          parsed == {"continues": 5, "reason": "from the schema call"} and err is None, parsed)
+
+
+def test_the_fast_answer_is_held_to_the_schema_the_flag_would_have_enforced():
+    """Strict on purpose: unusable falls back, it is never salvaged.
+
+    A lenient reader -- a regex hunting for braces inside a sentence -- is how a
+    partly-followed instruction becomes a confidently wrong classification. The one wrapper
+    worth unwrapping is a markdown fence, because that is the same JSON wearing markdown.
+    """
+    print("the fast answer is validated as hard as the flag would have")
+    S = ffwatch.SELECTOR_SCHEMA
+    good = [('{"continues": 34, "reason": "ok"}', "a plain object"),
+            ('```json\n{"continues": null, "reason": "new"}\n```', "a fenced object"),
+            ('  {"continues": 7, "reason": "x"}  ', "whitespace around it")]
+    for raw, why in good:
+        parsed, err = ffwatch.parse_classifier_output(raw, S)
+        check(f"accepted: {why}", parsed is not None, err)
+    bad = [('Here you go: {"continues": 34, "reason": "x"}', "prose in front of it"),
+           ('{"continues": true, "reason": "x"}', "a bool where an integer is required"),
+           ('{"continues": "34", "reason": "x"}', "a string where an integer is required"),
+           ('{"reason": "x"}', "a missing required field"),
+           ('{"continues": 34, "reason": "' + "z" * 250 + '"}', "a reason over maxLength"),
+           ('not json at all', "text that is not JSON"),
+           ('', "an empty answer")]
+    for raw, why in bad:
+        parsed, err = ffwatch.parse_classifier_output(raw, S)
+        check(f"rejected: {why}", parsed is None, parsed)
+    # A bool passing as an integer is the one that would be silent: Python's bool IS an int, so
+    # `continues: true` would validate and then be used as a conversation id.
+    check("and a bool is specifically not an integer",
+          ffwatch.schema_violation(True, {"type": "integer"}) is not None,
+          ffwatch.schema_violation(True, {"type": "integer"}))
+    check("the gate's boolean field is checked the same way",
+          ffwatch.parse_classifier_output('{"engage": "no", "reason": "x"}',
+                                          ffwatch.CLASSIFIER_SCHEMA)[0] is None,
+          "a string passed as a boolean")
+
+
 def main():
     tests = [
         test_every_agent_container_carries_its_class,
@@ -9769,6 +9875,8 @@ def main():
         test_a_classifier_call_carries_a_thinking_budget,
         test_untrusted_text_is_fenced_and_the_task_is_restated_after_it,
         test_the_selector_can_only_choose_an_id_it_was_offered,
+        test_the_classifier_tries_the_cheap_call_first_and_falls_back,
+        test_the_fast_answer_is_held_to_the_schema_the_flag_would_have_enforced,
     ]
     for fn in tests:
         try:
