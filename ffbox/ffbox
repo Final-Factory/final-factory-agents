@@ -450,7 +450,9 @@ fi
 # than this can -- unity-license.sh knows whether a fallback credential exists and what the machine
 # id mismatch would look like -- and refusing here would also block the `--task` runs that never
 # launch an editor at all.
-UNITY_ULF=${FFBOX_UNITY_ULF_HOST:-$HOME/.config/ffbox/unity/Unity_lic.ulf}
+# /opt/ffcache, NOT ~/.config: the rootless daemon that performs this mount runs as ffbox-container
+# and cannot traverse a mode-700 home. See the long note in unity-offline-license.sh.
+UNITY_ULF=${FFBOX_UNITY_ULF_HOST:-/opt/ffcache/unity/Unity_lic.ulf}
 
 # REFRESHED HERE, AT THE MOMENT A CONTAINER IS ABOUT TO BE MADE, and that timing is the whole point.
 # A Personal .ulf carries a rolling ~24-hour UpdateDate rather than an annual expiry, so the question

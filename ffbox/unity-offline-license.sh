@@ -61,10 +61,35 @@ set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 IMAGE=${FFBOX_IMAGE:-ffbox:latest}
-# ${HOME%/} rather than $HOME: a trailing slash is legal in HOME and turns every path this script
-# prints into one with a "//" in it, which reads like a bug in a message whose whole job is to be
-# pasted back as a command.
-UNITY_DIR=${FFBOX_UNITY_DIR:-${HOME%/}/.config/ffbox/unity}
+# NOT UNDER $HOME, AND THIS COST AN OUTAGE ON 2026-09-01.
+#
+# The licence has to be BIND-MOUNTED, and the thing that performs the mount is the rootless docker
+# daemon, which runs as ffbox-container -- not as the account running this script. `~/.config/ffbox`
+# is mode 700, so that daemon cannot traverse it, and every `docker run` died with
+#
+#     error while creating mount source path '.../unity/Unity_lic.ulf':
+#     mkdir /home/FinalFactoryTester/.config/ffbox: permission denied
+#
+# which took out BOTH lanes: no CI container could start, so no runner ever registered and jobs sat
+# pending, and ffwatch reaches the same daemon through the same socket.
+#
+# Widening ~/.config/ffbox is not the fix -- secrets.env lives there and 700 is correct for it.
+# /opt/ffcache is the pattern this box already uses to hand files to that daemon: see
+# /opt/ffcache/entries, owned by this account with group ffbox-container and setgid.
+#
+# GROUP-WRITABLE (2770) BECAUSE MINTING WRITES HERE THROUGH A CONTAINER. The mint container's root
+# maps to ffbox-container on that daemon, so it needs to write as the group, not merely read.
+UNITY_DIR=${FFBOX_UNITY_DIR:-/opt/ffcache/unity}
+UNITY_GROUP=${FFBOX_UNITY_GROUP:-ffbox-container}
+
+# Create the directory with the ownership the daemon needs, every time, so a machine that has never
+# had one ends up right rather than 700-by-default.
+ensure_unity_dir() {
+    mkdir -p "$UNITY_DIR" 2>/dev/null || return 1
+    chgrp "$UNITY_GROUP" "$UNITY_DIR" 2>/dev/null || :
+    chmod 2770 "$UNITY_DIR" 2>/dev/null || :
+    return 0
+}
 ULF=$UNITY_DIR/Unity_lic.ulf
 
 # THE ID THE LICENCE IS BOUND TO, AND IT IS OURS RATHER THAN THE IMAGE'S.
@@ -113,6 +138,8 @@ machine_id_file() {
     _f=$UNITY_DIR/.machine-id
     mkdir -p "$UNITY_DIR" 2>/dev/null || :
     printf '%s\n' "$FFBOX_MACHINE_ID_CONST" > "$_f"
+    chgrp "$UNITY_GROUP" "$_f" 2>/dev/null || :
+    chmod 0644 "$_f" 2>/dev/null || :
     printf '%s\n' "$_f"
     unset _f
 }
@@ -129,8 +156,7 @@ machine_id_file() {
 # upload. Measured 2026-09-01; the bindings are identical either way.
 cmd_alf() {
     need_image
-    mkdir -p "$UNITY_DIR"
-    chmod 700 "$UNITY_DIR" 2>/dev/null || :
+    ensure_unity_dir
     say "generating an activation request (no network, no credentials)"
     docker run --rm --network none \
         -v "$(machine_id_file):/etc/machine-id:ro" \
@@ -419,8 +445,7 @@ EOF
     fi
     [ -n "$_tok" ] || [ -n "$_email" ] || die "no credential given; nothing to do"
 
-    mkdir -p "$UNITY_DIR"
-    chmod 700 "$UNITY_DIR" 2>/dev/null || :
+    ensure_unity_dir
 
     _midf=$(machine_id_file)
     say "requesting a licence for machine id $_actual"
@@ -461,7 +486,7 @@ EOF
     fi
 
     mv "$UNITY_DIR/.minted.ulf" "$ULF"
-    chmod 600 "$ULF"
+    chgrp "$UNITY_GROUP" "$ULF" 2>/dev/null || :; chmod 0640 "$ULF"
     say "minted $ULF"
     cmd_status
 }
@@ -537,10 +562,9 @@ cmd_install() {
          sh ffbox/unity-offline-license.sh mint"
     fi
 
-    mkdir -p "$UNITY_DIR"
-    chmod 700 "$UNITY_DIR" 2>/dev/null || :
+    ensure_unity_dir
     cp "$_src" "$ULF"
-    chmod 600 "$ULF"
+    chgrp "$UNITY_GROUP" "$ULF" 2>/dev/null || :; chmod 0640 "$ULF"
     say "installed $ULF (bound to $_bound)"
     cmd_status
 }
