@@ -46,6 +46,14 @@ GitHub entry at all, deliberately: its container never pushes, the host does. CI
 github.com, the Actions broker, LFS, artifact storage and the cache service, and putting those on
 ffbox's list would hand ffbox's containers a reach they do not have today.
 
+**Not everything on this box goes through one of them.** `ffdev` agent containers are created on
+the ordinary `bridge` and have no proxy, no allowlist and no filter — since 2026-09-02 the network
+is a per-class setting, `agent_classes.<class>.network` in `~/.config/ffbox/config.json`, and only
+`ffagent` is on `ffbox-net`. So an ffdev run leaves no trace in either proxy's log, and a "why is
+this host not being asked for" question about a dev turn has the same answer every time: it is not
+on this wire. `docs/docker-security-model.md`, "The class that is not fenced", is the argument for
+that; `ffbox/README.md` is where to change it back.
+
 Both proxies run on the same rootless daemon, so their subnets must not overlap. `03-image.sh`
 checks that and refuses rather than putting a job on the same wire as an ffbox run.
 

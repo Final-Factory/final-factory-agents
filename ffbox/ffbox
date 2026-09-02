@@ -151,6 +151,15 @@ RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
 # this machine's LAN address on port 22, under both daemons. Rootless disables the host
 # LOOPBACK, not the host's own IP. So `--network bridge` is not "the fence minus DNS filtering",
 # it is no fence.
+#
+# THE DEFAULT BELOW IS NOT WHAT PRODUCTION RUNS ON, and that is worth knowing before reading it
+# as policy. Since 2026-09-02 the network is a PER-CLASS setting: ffwatch reads
+# agent_classes.<class>.network out of config.json and passes --network explicitly on every
+# container it creates -- ffbox-net for ffagent, and `bridge` for ffdev, which is deliberately
+# unfenced so a dev turn can search the web and fetch what it needs. This default is what a
+# hand-run and `--direct` get, and it stays the fenced one because the safe answer is the one
+# you should have to opt out of. To hand-run an ffdev-shaped container, say so:
+#     ffbox --agent-class ffdev --network bridge ...
 NETWORK=${FFBOX_NETWORK:-ffbox-net}
 DNS=${FFBOX_DNS:-10.80.0.2}
 EGRESS_NAME=${FFBOX_EGRESS_NAME:-ffbox-egress}
@@ -169,7 +178,12 @@ JOB_FILE=
 RUN_ID_OVERRIDE=
 # WHICH KIND OF AGENT CONTAINER THIS IS. It goes on as a label and does nothing else here: both
 # classes run the same image, the same task and the same limits, and what differs is the config
-# section ffwatch read before it called us and the pool the container is staged into. The label
+# section ffwatch read before it called us and the pool the container is staged into.
+#
+# THE NETWORK IS PART OF THAT CONFIG SECTION and reaches us as --network, NOT derived from this
+# name. One place decides, and it is ffwatch reading config.json; this file would be a second
+# opinion that could disagree with it, which is how an ffdev container ends up fenced and an
+# operator ends up reading the wrong file to find out why. The label
 # is what lets ffwatch count and claim the two pools apart afterwards.
 #
 # MIRRORS AGENT_CLASSES IN ffwatch.py, which is the original -- this is shell and cannot import
@@ -234,8 +248,11 @@ Options:
   --json               Emit Claude's stream-json output instead of plain text.
   --image NAME         Container image to run (default: ffbox:latest).
   --network NAME       Docker network for the run (default: ffbox-net, the filtered one). Use
-                       "bridge" for unrestricted egress — it is the old behaviour, and it hands
-                       whatever runs in there the whole internet and this machine's LAN.
+                       "bridge" for unrestricted egress — it hands whatever runs in there the
+                       whole internet and this machine's LAN. ffwatch always passes this
+                       explicitly, from agent_classes.<class>.network in config.json: ffagent
+                       runs fenced on ffbox-net, ffdev runs on bridge. The default here is only
+                       what a hand-run gets.
   --ref REF            Check the workspace out at REF after restoring (a branch, tag or sha;
                        "develop" resolves to origin/develop when no local branch matches).
                        The resolved sha is written to <results>/base_sha.txt.
@@ -277,7 +294,8 @@ Options:
   --agent-class NAME   Which kind of agent container this is: ffagent (default) or ffdev. Both
                        run the same image, task and limits; the name goes on as a label so the
                        two pools can be counted and claimed apart. ffwatch passes the class the
-                       conversation was opened with.
+                       conversation was opened with. It does NOT pick the network — that comes
+                       from --network, which ffwatch also passes; see there.
   --agent-timeout N    Seconds of AGENT working time (default 1800). The clock starts when the
                        task creates <out>/.agent-started, not when ffbox does.
   --warmup-timeout N   Seconds for everything before that marker (default 3600).

@@ -4084,7 +4084,12 @@ def test_verification_results_path_is_per_invocation():
 
 
 def test_the_run_is_on_the_filtered_network():
-    """A run reaches Anthropic and Unity, and nothing else — including this host.
+    """An ffagent run reaches Anthropic and Unity, and nothing else — including this host.
+
+    FFAGENT, not "a run". Since 2026-09-02 the network is per class and ffdev is deliberately on
+    the open bridge, which is asserted separately in
+    test_each_class_is_created_on_its_own_network. What this one holds is that the FENCED class
+    is still fenced and that opting out stays an explicit, loud act rather than a fallback.
 
     Three separate claims, and the file that would quietly break each one:
 
@@ -6994,6 +6999,11 @@ def test_an_ffdev_turn_runs_under_ffdevs_numbers():
           argv[argv.index("--verify-timeout") + 1] == str(w.cfg["verify_secs"]), argv)
     check("and it started on ffdev's base branch",
           argv[argv.index("--ref") + 1] == "develop", argv)
+    # THE FENCE IS PART OF THE CLASS. A cold ffdev container is created on the open bridge, and
+    # ffbox is told so explicitly rather than being left to its own default -- which is the
+    # fenced one, deliberately, so that anything that forgets to pass this fails shut.
+    check("and on ffdev's network, the unfenced one",
+          argv[argv.index("--network") + 1] == "bridge", argv)
 
     # job.json is what a run directory is read back from months later. Its limits used to come
     # from the flat config, which would make an ffdev run RECORD ffagent's numbers while running
@@ -7016,6 +7026,8 @@ def test_an_ffdev_turn_runs_under_ffdevs_numbers():
           argv2[argv2.index("--agent-class") + 1] == "ffagent"
           and argv2[argv2.index("--agent-timeout") + 1] == str(
               w.cfg["agent_classes"]["ffagent"]["agent_secs"]), argv2)
+    check("and is still on the fenced network while ffdev is not",
+          argv2[argv2.index("--network") + 1] == "ffbox-net", argv2)
 
 
 def test_every_agent_container_carries_its_class():
@@ -7091,6 +7103,13 @@ def test_the_two_agent_classes_are_configured_independently():
     check("and gets its own pool defaults, 1 idle and a ceiling of 3",
           (ffwatch.class_cfg(cfg, "ffdev")["idle_agents"],
            ffwatch.class_cfg(cfg, "ffdev")["agent_pool_max"]) == (1, 3), None)
+    # THE NETWORK IS THE ONE PLACE THE TWO CLASSES SHIP DIFFERENT VALUES, so a defaults test is
+    # where a well-meant "make them consistent" edit gets caught. ffagent behind the egress
+    # proxy, ffdev on the open bridge, and neither derived from the other.
+    check("ffagent defaults to the fenced network",
+          ffwatch.class_cfg(cfg, "ffagent")["network"] == "ffbox-net", None)
+    check("and ffdev defaults to the unfenced one",
+          ffwatch.class_cfg(cfg, "ffdev")["network"] == "bridge", None)
     check("ffagent still reads what the file said",
           ffwatch.class_cfg(cfg, "ffagent")["agent_secs"] == 999, None)
     # -1 is "no ceiling of my own", which is the box's.
@@ -7113,6 +7132,21 @@ def test_the_two_agent_classes_are_configured_independently():
     check("and a max that is not a number falls to THAT class's default",
           ffwatch.class_cfg(cfg, "ffdev")["agent_pool_max"] == 3, None)
 
+    # A network that is set is honoured -- putting ffdev back behind the fence is a config edit
+    # and not a code change -- and one that is unusable falls back to THAT class's default. An
+    # empty string reaching the ffbox argv would be `--network ''`, which docker refuses, and
+    # the whole class would stop launching over a stray edit.
+    cfg = load({"max_concurrent_runs": 6,
+                "ffdev": {"network": "ffbox-net"},
+                "ffagent": {"network": "   "}})
+    check("a class's network is read from its own section",
+          ffwatch.class_cfg(cfg, "ffdev")["network"] == "ffbox-net", None)
+    check("and a blank one falls back to that class's default, never to empty",
+          ffwatch.class_cfg(cfg, "ffagent")["network"] == "ffbox-net", None)
+    cfg = load({"max_concurrent_runs": 6, "ffdev": {"network": 7}})
+    check("a network that is not a string falls back too",
+          ffwatch.class_cfg(cfg, "ffdev")["network"] == "bridge", None)
+
     # An unknown name is a bug upstream, not an operator's typo: every caller gets its name from
     # a validated argument, a validated form field or a NOT NULL column. Falling back would hide
     # it and run the turn in the wrong kind of container.
@@ -7124,6 +7158,71 @@ def test_the_two_agent_classes_are_configured_independently():
     check("an unknown class raises rather than falling back", raised, None)
     check("and None is the default class",
           ffwatch.class_cfg(cfg) is ffwatch.class_cfg(cfg, "ffagent"), None)
+
+
+def test_each_class_is_created_on_its_own_network():
+    """The egress fence is per class, and it is decided where the CONTAINER IS CREATED.
+
+    ffdev exists to do dev work, which means reading documentation, searching the web and
+    fetching a package, so it is created on the open `bridge`. ffagent serves text written by
+    strangers in a Discord forum and stays on `ffbox-net` behind the allowlist proxy.
+
+    A container's network cannot be changed after `docker run`, so exactly two code paths decide
+    it: pool_stage, asserted here, and launch's cold branch, asserted in
+    test_an_ffdev_turn_runs_under_ffdevs_numbers. Dispatch is deliberately neither -- it renames
+    a container that already exists, and a --network there would read as though it could move
+    one. That is also why a staged container is only ever claimed by a turn of its own class.
+    """
+    print("egress: each class is created on its own network")
+    case = Case("classnet", base_fixture(), verdict="ok")
+    w = case.watcher
+
+    seen = []
+
+    class _Done:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    class _Shim:
+        # The real module's exceptions, because pool_stage catches them by this name.
+        SubprocessError = subprocess.SubprocessError
+        TimeoutExpired = subprocess.TimeoutExpired
+
+        @staticmethod
+        def run(cmd, *a, **kw):
+            seen.append(list(cmd))
+            return _Done()
+
+    real, ffwatch.subprocess = ffwatch.subprocess, _Shim
+    try:
+        check("staging an ffdev container returns an id", w.pool_stage("ffdev") is not None, None)
+        check("and so does an ffagent one", w.pool_stage("ffagent") is not None, None)
+    finally:
+        ffwatch.subprocess = real
+
+    check("both stagings reached ffbox", len(seen) == 2, seen)
+    dev, agent = seen[0], seen[1]
+    check("the staged ffdev container is created on the unfenced network",
+          dev[dev.index("--network") + 1] == "bridge", dev)
+    check("and the staged ffagent container behind the proxy",
+          agent[agent.index("--network") + 1] == "ffbox-net", agent)
+    # The network and the class label have to agree, or the pool would hand a fenced container to
+    # a turn that was promised the internet -- or the reverse, which is the one that matters.
+    check("each one is labelled with the class whose network it got",
+          dev[dev.index("--agent-class") + 1] == "ffdev"
+          and agent[agent.index("--agent-class") + 1] == "ffagent", seen)
+
+    # A config edit moves it, with no code change: this is how ffdev goes back behind the fence.
+    w.cfg["agent_classes"]["ffdev"]["network"] = "ffbox-net"
+    seen.clear()
+    real, ffwatch.subprocess = ffwatch.subprocess, _Shim
+    try:
+        w.pool_stage("ffdev")
+    finally:
+        ffwatch.subprocess = real
+    check("and the config is what decides, not the class name",
+          seen[0][seen[0].index("--network") + 1] == "ffbox-net", seen)
 
 
 def test_each_class_counts_only_its_own_containers():
@@ -8286,6 +8385,7 @@ def main():
         test_the_reaper_says_a_held_spool_once,
         test_an_ffdev_turn_runs_under_ffdevs_numbers,
         test_the_two_agent_classes_are_configured_independently,
+        test_each_class_is_created_on_its_own_network,
         test_each_class_counts_only_its_own_containers,
         test_a_conversations_class_is_settled_when_it_opens,
         test_a_quiet_sweep_does_not_move_last_activity,

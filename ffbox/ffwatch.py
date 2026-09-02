@@ -432,7 +432,7 @@ DEFAULTS = {
 
     # WHAT GOVERNS A RUN, PER CLASS. One block per name in AGENT_CLASSES, and the keys are
     # exactly the ones a container's behaviour depends on: where its clone starts, the three
-    # clocks it is held to, and its pool.
+    # clocks it is held to, its pool, and the network it is put on.
     #
     # WRITTEN OUT TWICE RATHER THAN DERIVED. ffdev's numbers are ffagent's today except for the
     # pool, and it would be one line to say "ffdev is ffagent with these two changed". That line
@@ -447,6 +447,25 @@ DEFAULTS = {
     # max_concurrent_runs that CI counts against too. 3 rather than -1 on purpose -- dev turns
     # are the long ones, and three of them plus whatever CI is doing is as much of a
     # six-container box as one class should be able to take.
+    # THE NETWORK IS PER CLASS, since 2026-09-02, and it is the first thing the two classes
+    # actually disagree about. ffagent keeps the fence: ffbox-net is a Docker --internal bridge
+    # whose only occupant is the egress proxy, and a run on it reaches the names in
+    # ffbox/egress/allowlist.txt and nothing else. ffdev is on the ordinary bridge, which is the
+    # whole internet with no allowlist and no SNI filter -- a dev turn has to be able to read
+    # documentation, search the web and fetch a package, and an allowlist that has to be edited
+    # every time it needs a new host is not a fence, it is a queue.
+    #
+    # WHAT "bridge" COSTS, written down here rather than discovered later: it is not the fence
+    # minus DNS filtering, it is no fence. A container on the default bridge reaches this
+    # machine's own LAN address too -- measured on 2026-08-25, port 22 answered -- because
+    # rootless Docker disables the host LOOPBACK and not the host's IP. ffdev containers are
+    # therefore trusted the way a developer's own shell on this box is trusted, which is what
+    # they are for; ffagent, which serves text written by strangers in Discord, is not, and
+    # that is exactly why the key is per class rather than one switch for the box.
+    #
+    # Read at container CREATION only -- a cold run and a staged pool container. Dispatch renames
+    # a container that already exists, so its network was decided when it was staged, and the
+    # pools do not mix: pool_claim_for matches on class.
     "agent_classes": {
         "ffagent": {
             "base_ref": "master",
@@ -457,6 +476,7 @@ DEFAULTS = {
             "agent_pool_max": -1,
             "idle_agent_ttl_secs": 14400,
             "pool_ref": None,
+            "network": "ffbox-net",
         },
         "ffdev": {
             "base_ref": "master",
@@ -467,6 +487,7 @@ DEFAULTS = {
             "agent_pool_max": 3,
             "idle_agent_ttl_secs": 14400,
             "pool_ref": None,
+            "network": "bridge",
         },
     },
     "pool_task": os.path.join(HERE, "pool-task.sh"),
@@ -692,8 +713,9 @@ def _class_blocks(ffbox_raw, max_runs, to_int):
 
     Built the same way for every class and INDEPENDENTLY of every other: that class's defaults,
     deep-merged with that class's section of config.json, then the same two coercions the flat
-    keys get. A class with no section in the file resolves to its own defaults -- never to
-    another class's configured values, which is the whole of "there is no inheritance".
+    keys get plus a third that keeps `network` a usable docker network name. A class with no
+    section in the file resolves to its own defaults -- never to another class's configured
+    values, which is the whole of "there is no inheritance".
 
     `pool.idle` / `pool.max` are mapped onto the flat `idle_agents` / `agent_pool_max` names the
     pool code already uses, so the config file keeps one shape for both classes and the runners
@@ -720,6 +742,15 @@ def _class_blocks(ffbox_raw, max_runs, to_int):
                                              fallback["idle_agents"]))
         _m = to_int(block.get("agent_pool_max"), fallback["agent_pool_max"])
         block["agent_pool_max"] = max_runs if _m < 0 else _m
+        # THE NETWORK NAME IS NEVER ALLOWED TO BE EMPTY. It goes onto the ffbox argv as
+        # `--network <value>`, and an empty or non-string one there is not a container without a
+        # network, it is a docker invocation that fails -- which would take that whole class off
+        # the box on a stray edit. A bad value falls back to THIS class's default, so a typo in
+        # ffdev's section cannot quietly put ffdev behind ffagent's fence or the other way round.
+        _net = block.get("network")
+        if not isinstance(_net, str) or not _net.strip():
+            _net = fallback["network"]
+        block["network"] = _net.strip()
         out[name] = block
     return out
 
@@ -3935,9 +3966,14 @@ class Watcher:
         each class, because two 22 GiB extractions at once compete for the memory the runs they
         exist to serve need.
 
-        The class reaches the container as `--agent-class`, which puts it on as a label. The ref
-        and the TTL come from that class's block, so a class staged on another branch or retiring
-        on another schedule needs no code here.
+        The class reaches the container as `--agent-class`, which puts it on as a label. The ref,
+        the TTL and the network come from that class's block, so a class staged on another branch,
+        retiring on another schedule or fenced differently needs no code here.
+
+        THE NETWORK HAS TO BE SET HERE and not at dispatch: a container's network is fixed when
+        it is created, and dispatch renames a container that already exists. A staged ffdev
+        container is on the open bridge from the moment it is staged, which is fine because
+        pool_claim_for will only ever hand it to an ffdev turn.
         """
         agent_class = agent_class or DEFAULT_AGENT_CLASS
         ccfg = class_cfg(self.cfg, agent_class)
@@ -3951,6 +3987,7 @@ class Watcher:
             "--pool-dir", self.pool_dir(),
             "--ref", self.pool_branch(agent_class),
             "--agent-class", agent_class,
+            "--network", ccfg["network"],
             "--idle-ttl", str(int(ccfg["idle_agent_ttl_secs"])),
             "--task", self.cfg["pool_task"],
             # The turn task the container will eventually exec. Mounted now because a mount
@@ -5089,10 +5126,14 @@ class Watcher:
             self.stage_attachments_into(os.path.join(self.pool_dir(pool_id), "in"), att_dir)
             cmd += ["--dispatch", pool_id, "--pool-dir", self.pool_dir()]
         else:
-            # A COLD CONTAINER IS LABELLED HERE. A dispatched one already carries the label it
-            # was staged with, and pool_claim_for only hands back containers of this class, so
-            # the two routes agree.
+            # A COLD CONTAINER IS LABELLED AND NETWORKED HERE. Both are creation-time facts, and
+            # a dispatched one already carries the label and the network it was staged with --
+            # pool_claim_for only hands back containers of this class, so the two routes agree.
+            # Passing --network on the dispatch branch would be worse than useless: the container
+            # exists, docker would not move it, and the only thing it could change is which
+            # preflight ffbox runs.
             cmd += ["--agent-class", cls,
+                    "--network", ccfg["network"],
                     "--mount", f"{container_claude}:/ffbox/claude"]
         cmd += [
             # Nothing is mounted at /usr/local/bin/ffdiscord, on purpose. The container has
