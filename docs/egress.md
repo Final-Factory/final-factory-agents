@@ -331,10 +331,27 @@ Two consequences worth keeping:
   carries opaque plan and job GUIDs. Even full TLS interception with URL filtering does not fix
   it by path matching.
 
-The only mechanism that would: terminate TLS and validate the **JWT claims** on outbound Actions
-requests, checking `repository` against `Final-Factory/FinalFactory` and rejecting anything else.
-That is the sole thing MITM buys here that narrowing cannot. It is also a decrypting proxy holding
-every credential on the box, so it is a real trade rather than a free win.
+This paragraph used to end by naming the one mechanism that would close it: terminate TLS and
+validate the **JWT claims** on outbound Actions requests, checking `repository` against
+`Final-Factory/FinalFactory`. **That fix does not exist, because that claim does not exist.**
+
+Checked on 2026-09-01 against a decoded `ACTIONS_RUNTIME_TOKEN` and against the runner's own code.
+The claims are `nameid`, `scp`, `IdentityTypeClaim`, two `schemas.xmlsoap.org` SID claims, `aui`,
+`sid`, `ac`, `acsl`, `orchid`, `iss`, `aud`, `nbf` and `exp`. There is no repository and no owner.
+The only run identity the token carries is two opaque GUIDs inside `scp`, in the form
+`Actions.Results:<workflowRunBackendId>:<workflowJobRunBackendId>`, which is exactly what
+`getBackendIdsFromToken` in `@actions/artifact` parses out of it. No public API maps either GUID
+back to a repository.
+
+The mix-up is worth naming so it is not made again: the token that DOES carry `repository`,
+`repository_owner` and the rest is the **OIDC** token, minted through
+`ACTIONS_ID_TOKEN_REQUEST_TOKEN` for federated login to a cloud provider. It is a different
+credential and it is not what artifact or Actions runtime traffic authenticates with.
+
+So MITM buys nothing here that narrowing does not. The hole is not merely unclosed by a name fence,
+it is unclosed by any inspection of the traffic, because the identity a filter would need to check
+is not in the request at any layer. What CAN be done is to stop needing the endpoint: see the
+artifact upload note below.
 
 ## Removing the need instead of narrowing the reach (2026-08-31)
 
