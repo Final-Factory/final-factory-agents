@@ -87,6 +87,20 @@ CREATE TABLE IF NOT EXISTS conversation (
     -- is deliberately not true of run.branch, which is written at launch as the name the
     -- container was told to start on; `pushed` is what makes that one real.
     branch              TEXT,
+    -- WHICH KIND OF AGENT CONTAINER runs this conversation's turns: 'ffagent' or 'ffdev'.
+    --
+    -- SETTLED BY THE OPENING TURN and never moved afterwards, which is why the web page offers
+    -- the choice on its new-prompt box and not on its reply box. A conversation is pinned to a
+    -- base sha, resumes one session transcript and owns one branch; changing the class under it
+    -- would change the clocks that session has been running under and, once the two classes
+    -- differ on base_ref, the tree its transcript has been citing file:line positions against.
+    --
+    -- NOT NULL DEFAULT 'ffagent', so every conversation that predates classes reads as what it
+    -- actually was, and ffweb's SELECT DISTINCT filter dropdowns never see a blank.
+    --
+    -- Discord conversations are always 'ffagent': the class is chosen at the local ingress, and
+    -- a Discord thread has nobody to choose.
+    agent_class         TEXT NOT NULL DEFAULT 'ffagent',
     github_issue        TEXT,
     github_pr           TEXT,
     created_at          TEXT,

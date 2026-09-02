@@ -301,6 +301,27 @@ for key, value in (
         # second answer to configure: a pool staged on a branch no turn asks for serves nothing.
         "pool_ref": None,
     }),
+    # THE SECOND AGENT CLASS. Same keys as "ffagent" above, same meanings, and deliberately the
+    # same values except the pool: the two are separate config sections with no inheritance
+    # between them, so ffdev reads THIS and never ffagent's numbers. Editing one does not move
+    # the other, which is the point -- they exist in order to diverge.
+    #
+    # idle 1 / max 3: one ffdev container waits warm, and at most three exist at once, runs and
+    # staged ones together, underneath the box-wide max_concurrent_runs that CI counts against
+    # too. 3 rather than -1 because dev turns are the long ones.
+    #
+    # A conversation picks its class when it is opened -- the dropdown on the web page's new
+    # prompt box, or `ffwatch submit --agent ffdev` -- and every later turn of it runs in the
+    # same kind of container. Discord conversations are always ffagent.
+    ("ffdev", {
+        "base_ref": "master",
+        "agent_secs": 1800,
+        "warmup_secs": 3600,
+        "kill_grace_secs": 10,
+        "pool": {"idle": 1, "max": 3},
+        "idle_agent_ttl_secs": 14400,
+        "pool_ref": None,
+    }),
     # Turns per rolling 24 hours, keyed on TRUST TIER — who wrote the text, not which lane it
     # took. One budget across every kind of turn a player can cause. `operator` is null, which
     # ffwatch reads as no limit: an operator directive and a locally typed prompt are not the
@@ -520,6 +541,20 @@ ffbox["_help"] = {
              "to use the whole box while CI is quiet; a negative idle is read as 0, off. Zero "
              "is left alone on both, and means no places. idle_agent_ttl_secs is how long a staged container waits before "
              "retiring, and pool_ref which branch it stages (null follows base_ref).",
+    "ffdev": "The second AGENT CLASS: the same keys as \"ffagent\" and the same meanings, read "
+             "for a conversation that was started as ffdev instead. The two sections are "
+             "independent -- there is no inheritance, so a box with no \"ffdev\" block here gets "
+             "ffwatch's built-in ffdev defaults rather than whatever ffagent is set to, and "
+             "editing ffagent's clocks does not move ffdev's. They ship with the same numbers "
+             "except the pool, and are expected to diverge. Each class is staged into a pool of "
+             "its own and holds a ceiling of its own (pool.max), both underneath the box-wide "
+             "max_concurrent_runs that CI counts against as well; neither class can take the "
+             "other's warm container. A conversation's class is chosen when it is OPENED -- the "
+             "dropdown on the web page's new-prompt box, or `ffwatch submit --agent ffdev` -- "
+             "and every later turn of that conversation runs in the same kind of container, so "
+             "there is no dropdown when replying. Discord conversations are always ffagent. "
+             "Set pool.idle to 0 to turn this class's pool off; it still runs, cold, like "
+             "ffagent with no pool.",
     "discord": "What the ffdiscord CLI and the Gateway listener read: app_token, server_id, "
              "the channels alias -> id table, mentions, and trust.operators. It had a "
              "config.json of its own in the discord/ directory beside this file until "

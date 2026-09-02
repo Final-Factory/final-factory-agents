@@ -125,6 +125,18 @@ TEXTISH_TYPES = {"application/json", "application/xml", "application/x-ndjson"}
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
 
+# The kinds of agent container a conversation can be run in. Mirrors AGENT_CLASSES in ffwatch.py,
+# which is the definition and the only writer -- this file is deliberately importless of ffwatch
+# (it opens the database read-only and shells out for everything else), so the names are repeated
+# rather than shared, the same way LOCAL_KINDS is below.
+#
+# A WRONG COPY HERE IS VISIBLE, which is what makes the duplication safe: this list only decides
+# what the dropdown offers, and `ffwatch submit` refuses anything it does not know. A name that
+# drifted out of step would 400 in front of the operator rather than writing a conversation
+# nothing can run.
+AGENT_CLASSES = ("ffagent", "ffdev")
+DEFAULT_AGENT_CLASS = "ffagent"
+
 # Conversation kinds with no Discord side: a prompt typed at this box's shell, or into the
 # prompt box on this page. Their message ids are synthetic — minted by ffwatch to keep ordering
 # working — so this page must not label one "discord <id>". Mirrors LOCAL_KINDS in ffwatch.py,
@@ -1173,7 +1185,7 @@ class FfwatchActions:
             args += ["--reason", reason]
         return self._run(args)
 
-    def submit(self, prompt):
+    def submit(self, prompt, agent_class=DEFAULT_AGENT_CLASS):
         """Queue a shell-style turn from the page (design/trusted_ingress_design.txt s12).
 
         Same route as approve/reject and for the same reason: ffwatch owns the database and
@@ -1189,8 +1201,13 @@ class FfwatchActions:
         terminal prompt does and is not treated differently anywhere; it is here so the list
         can answer "did this come from the page or from a shell", which the record could not
         say before.
+
+        --agent is the one thing on this route that is OBEYED rather than recorded: it decides
+        which kind of container runs this conversation, now and on every later turn of it.
+        ffwatch validates it again and its refusal is the one that counts, since it is the
+        writer.
         """
-        return self._run(["submit", "--source", "web", "--", prompt])
+        return self._run(["submit", "--source", "web", "--agent", agent_class, "--", prompt])
 
     def follow_up(self, conversation_id, prompt):
         """Continue an existing conversation instead of opening another one.
@@ -1500,7 +1517,16 @@ class FFWebHandler(BaseHTTPRequestHandler):
                 return self._error(400, "an empty prompt is not a question")
             if len(prompt) > 16000:
                 return self._error(413, "prompt too long")
-            ok, out = app.actions.submit(prompt)
+            # WHICH KIND OF CONTAINER runs this conversation. Absent or empty is the default,
+            # so a hand-built POST and an older cached page both still work; anything else that
+            # is not a known class is refused here rather than passed on. ffwatch refuses it too
+            # and that is the refusal that counts -- this one exists so the page answers in a
+            # sentence instead of showing an operator a subprocess's stderr.
+            agent_class = (form.get("agent") or [""])[0].strip() or DEFAULT_AGENT_CLASS
+            if agent_class not in AGENT_CLASSES:
+                return self._error(400, f"{agent_class!r} is not an agent class; expected one "
+                                        f"of {', '.join(AGENT_CLASSES)}")
+            ok, out = app.actions.submit(prompt, agent_class)
             if ok:
                 # Nothing but the acknowledgement. `out` is ffwatch's own stdout — the config
                 # warnings it prints at startup, the conversation it opened, the turn it
@@ -1751,7 +1777,7 @@ class App:
 
     def page_conversations(self, query):
         filters = {k: (query.get(k) or [""])[0].strip() for k in
-                   ("kind", "state", "verdict", "lane")}
+                   ("kind", "state", "verdict", "lane", "agent_class")}
         # The title is typed rather than picked, because its values are unbounded: a
         # distinct-values dropdown over free text written by strangers would be as long as the
         # table it filters. So it matches a SUBSTRING, case-insensitively, and it matches what
@@ -1789,14 +1815,16 @@ class App:
 
         options = {col: [r[0] for r in self.db.query(
             f"SELECT DISTINCT {col} FROM conversation WHERE {col} IS NOT NULL"
-            f" AND {col} <> '' ORDER BY 1")] for col in ("kind", "state", "verdict", "lane")}
+            f" AND {col} <> '' ORDER BY 1")]
+            for col in ("kind", "state", "verdict", "lane", "agent_class")}
         # No filter button: FILTER_SCRIPT submits this form the moment a dropdown changes, so
         # picking a value IS applying it. The <noscript> button is the fallback for a browser
         # that will not run the script — without it those dropdowns would do nothing at all.
         form = ["<form class=\"filters\" id=\"conversation-filters\" method=\"get\" "
                 "action=\"/\">"]
-        for col in ("kind", "state", "verdict", "lane"):
-            form.append(select(col, filters[col], options[col]))
+        for col in ("kind", "state", "verdict", "lane", "agent_class"):
+            form.append(select(col, filters[col], options[col],
+                               label="agent" if col == "agent_class" else None))
         # No blank option: this filter is ALWAYS one of its three values, and an "any" that
         # meant the same as "all" would be a fourth way to say one of them. Labelled "show"
         # rather than "read", because a dropdown named read holding the value read reads as a
@@ -1820,11 +1848,17 @@ class App:
         # and render an em dash. The name is truncated from the LEFT of its readable part
         # rather than the right — every published name ends in `-<run id>` and begins with the
         # same `ffbox/` prefix, so the two ends are the least informative characters in it.
+        # agent_class needs no "or —": the column is NOT NULL with a default, and the migration
+        # backfilled every conversation that predates it to ffagent, which is what those runs
+        # actually were. That is also what lets it join the filter loop above unchanged, since
+        # those dropdowns are built with SELECT DISTINCT over the data.
         body = [table(
-            ["id", "kind", "state", "lane", "verdict", "title", "branch", "msgs", "turns"]
+            ["id", "kind", "state", "lane", "agent", "verdict", "title", "branch", "msgs",
+             "turns"]
             + AGG_HEADERS + ["last activity", "read"],
             [[link(f"/conversation/{r['id']}", r["id"]), r["kind"], pill(r["state"]),
-              r["lane"] or "—", r["verdict"] or "—",
+              r["lane"] or "—", _row(r, "agent_class") or DEFAULT_AGENT_CLASS,
+              r["verdict"] or "—",
               link(f"/conversation/{r['id']}", short(r["title"] or r["thread_id"], 70)),
               branch_cell(_row(r, "branch")),
               r["messages"], r["turns"]]
@@ -1855,9 +1889,21 @@ class App:
         conversation, the way a shell prompt does. Continuing one is _reply_box, on the
         conversation page, which is a different act with a different route.
         """
+        # THE CLASS DROPDOWN IS HERE AND NOWHERE ELSE. A conversation's class is settled by the
+        # turn that opens it and every later turn reads the same one, so offering the choice
+        # again on the reply box would be offering a decision that cannot be taken. See
+        # _reply_box, which has none.
+        #
+        # `blank=None`: the class is always one of its values, and an "any" would be a third
+        # state meaning the same as the default.
+        #
+        # FILTER_SCRIPT binds its change handler to `#conversation-filters select`, and this form
+        # has no id, so picking a class does not submit the form. A test asserts that rather than
+        # trusting the selector to stay as it is.
         return ("<form class=\"filters\" method=\"post\" action=\"/actions/prompt\">"
                 "<input name=\"prompt\" placeholder=\"Start a new conversation...\" "
                 "size=\"70\" autocomplete=\"off\">"
+                + select("agent", DEFAULT_AGENT_CLASS, AGENT_CLASSES, blank=None) +
                 "<button type=\"submit\">run</button></form>")
 
     def _totals_note(self):
@@ -2620,7 +2666,7 @@ def is_loopback(host):
 # traceback on a page rather than as a fixable message, so it is checked once at startup.
 REQUIRED_COLUMNS = {
     "conversation": ["kind", "state", "lane", "verdict", "title", "thread_id",
-                     "read_through"],
+                     "read_through", "agent_class"],
     "message": ["direction", "author_name", "content", "turn_id"],
     "attachment": ["filename", "content_type", "sha256", "blob_path", "kind"],
     "turn": ["seq", "lane", "status", "failed_closed", "parent_turn_id", "rebased_from",

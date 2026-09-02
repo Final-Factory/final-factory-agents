@@ -1,0 +1,473 @@
+ffdev: a second agent class, with a pool of its own
+===================================================
+
+2026-09-01.
+
+Today there is one kind of agent container. `ffagent` in config.json says what governs a run —
+the three clocks, the branch its clone starts on, the warm pool — and every turn on the box gets
+those numbers, whether it came from a Discord thread, a shell prompt or the web page. The pool is
+one pool. `agent_pool_max` is one ceiling.
+
+This adds a second: `ffdev`, configured the same way, staged into a pool of its own, and chosen
+per conversation from a dropdown on the web page. A conversation started as ffdev runs every one
+of its turns in an ffdev container. Everything else about the run is unchanged — same image, same
+task script, same capabilities, same harvest, same one-prompt-per-container rule.
+
+The point is not that ffdev behaves differently. It does not, on the day it lands. The point is
+that dev work and Discord traffic stop sharing a pool and a ceiling, and that the two can be given
+different clocks or a different base branch later by editing config.json rather than by editing
+ffwatch.
+
+
+1. What gets built
+------------------
+
+  1. An `ffdev` section in `~/.config/ffbox/config.json` and in the template that seeds it, with
+     the same keys `ffagent` has and the same values except `pool: {"idle": 1, "max": 3}`. It has
+     its own defaults in code and inherits nothing from `ffagent` at runtime.
+  2. An **agent class** dimension through ffwatch: config resolution, the pool, the ceilings, the
+     container labels, and the run record.
+  3. An `agent_class` column on `conversation`, written when the conversation is opened and read
+     on every turn of it afterwards.
+  4. A dropdown on ffweb's new-conversation prompt box, `ffagent` or `ffdev`, defaulting to
+     ffagent. Nowhere else: the reply box on an existing conversation has none.
+  5. `ffwatch submit --agent ffdev`, which is the route the dropdown takes and also what a person
+     at a terminal types.
+  6. Two warm pools, kept independently and sharing nothing but the box-wide
+     `max_concurrent_runs` that CI also counts against.
+  7. The removal of pool eviction. A turn that cannot get a place queues and waits for one
+     instead of destroying somebody's warm container to get it. This changes ffagent's behaviour
+     as well as ffdev's, and section 5 is the argument.
+
+Not a goal: a third class, or classes discovered from the config file at runtime. Two named
+classes are what is wanted and two are what the code will say. A third is a one-line addition to
+a tuple, and the shape below is built so that stays true, but nothing here scans config.json for
+sections it does not recognise — that would make a typo (`ffdevv`) into a silently-created pool.
+
+Not a goal: letting a Discord conversation pick a class. Discord conversations are ffagent, which
+is what they are today under another name.
+
+
+2. Why a class and not a flag on the turn
+-----------------------------------------
+
+The obvious cheaper thing is a per-submission option: `--agent ffdev` lands in `options_json`
+beside `--ref` and `--branch`, and `launch()` reads it. No column, no migration.
+
+It is wrong for the same reason `--ref` on a continuation is wrong, and the code already says so
+in `run_ref()`. A conversation is pinned to a base sha, resumes one session transcript, and owns
+one branch. A turn that changes the container class underneath it changes the clocks a session
+has been running under and, once the classes diverge on `base_ref`, the tree the transcript has
+been citing file:line positions against. Turn 5 would read turn 4's evidence against a different
+checkout.
+
+So the class belongs to the conversation, is settled by its opening turn, and is not offered
+again. That is also why the dropdown is only on the new-conversation box: the UI is telling the
+truth about where the decision lives.
+
+The class also has to reach the POOL, and a pool is staged before any turn exists. A per-turn
+flag cannot be matched against a warm container, because at stage time there is no turn to read
+it from. `pool_claim_for()` already matches on branch for this reason; class is the second
+attribute it has to match on.
+
+
+3. The config sections
+----------------------
+
+`ffdev` is a sibling of `ffagent` at the top level of config.json, with the same keys and the
+same `_help` treatment. Seeded by `05-discord-setup.sh`:
+
+    "ffdev": {
+      "base_ref": "master",
+      "agent_secs": 1800,
+      "warmup_secs": 3600,
+      "kill_grace_secs": 10,
+      "pool": {"idle": 1, "max": 3},
+      "idle_agent_ttl_secs": 14400,
+      "pool_ref": null
+    }
+
+It goes into the template `05-discord-setup.sh` seeds AND into the config.json already on this
+box. Every value except the pool block starts out the same as `ffagent`'s. The two numbers that
+differ are the ones asked for: one container waits warm, and at most three ffdev containers exist
+at once — runs and staged ones together, under the box's six.
+
+**There is no inheritance.** A missing `ffdev` section falls back to ffdev's built-in defaults in
+`ffwatch.DEFAULTS`, exactly the way a missing `ffagent` section falls back to ffagent's. It does
+not read `ffagent`'s configured values, and an edit to `ffagent`'s clocks does not move ffdev's.
+The two blocks start out with the same numbers written twice, on purpose: they are expected to
+diverge, and a shared derivation would have to be unpicked the first time they do.
+
+An operator who wants ffdev to have no pool writes `"pool": {"idle": 0}`, which is the same way
+`ffagent` is turned off today and means the same thing: no warm containers, cold launch every
+time, everything else unchanged.
+
+`max` at -1 keeps meaning "no ceiling of my own", coerced to `max_concurrent_runs`. `ffdev` ships
+with 3 rather than -1 on purpose. Dev turns are the long ones, and three of them plus whatever CI
+is doing is as much of a six-container box as one lane should be able to take.
+
+
+4. Resolving the config for a class
+-----------------------------------
+
+`load_config()` flattens `ffagent` over the top level and returns one dict. Every reader
+downstream does `cfg["agent_secs"]` and knows nothing about sections. That has to keep working,
+because most of the file is not about the container at all — the watch table, the send limits,
+the page's bind address, `max_concurrent_runs` — and none of it wants a class.
+
+So: `cfg` stays exactly what it is, flattened from `ffagent`, and gains one nested member.
+
+    cfg["agent_classes"] = {
+      "ffagent": {agent_secs, warmup_secs, kill_grace_secs, base_ref,
+                  idle_agents, agent_pool_max, idle_agent_ttl_secs, pool_ref},
+      "ffdev":   {the same keys},
+    }
+
+Each block is built the same way and independently: that class's defaults from
+`DEFAULTS["agent_classes"][name]`, merged with that class's section of config.json, then coerced.
+`class_cfg(cfg, name)` is a dict lookup that raises for a name that is not one of the two. There
+is no fallback to another class's block at any point — a missing section has already been filled
+in with its own defaults by the time anything asks.
+
+The coercions that `load_config()` runs once today — negative idle is 0, negative max is
+`max_concurrent_runs`, non-numeric is the default rather than a crash — run once per class, in the
+same place, over the same helper.
+
+`cfg["agent_secs"]` continuing to mean ffagent's is deliberate and is not a trap waiting to be
+sprung: the call sites that must become class-aware are enumerable and short (section 5), and
+every other reader of those keys — `pool_status`, the CLI, the timeout messages — is either about
+the default class or about a run whose class is already in hand. The alternative, making the flat
+keys disappear, is a rewrite of a file that has one job and does it.
+
+`AGENT_CLASSES = ("ffagent", "ffdev")` and `DEFAULT_AGENT_CLASS = "ffagent"` are module constants
+in ffwatch, and ffwatch's copy is the one that decides: it is the writer, and the CLI's `choices=`
+is where a bad name is actually refused.
+
+**The names appear in three files and cannot be shared between them.** ffweb does not import
+ffwatch — it shells out to `ffwatch.py` as a subprocess and reads the database directly — and
+`ffbox` is shell. So ffweb's dropdown and ffbox's `--agent-class` validation each carry their own
+literal copy. That is the pattern this codebase already uses for exactly this problem: ffweb.py:130
+carries `LOCAL_KINDS` with the comment "Mirrors LOCAL_KINDS in ffwatch.py". Each copy gets the same
+kind of comment, naming ffwatch as the original. A mirror that drifts costs a dropdown offering a
+name ffwatch will refuse, which is a visible 400 rather than a silent wrong answer.
+
+
+5. Two pools, kept separately
+-----------------------------
+
+They are two pools and not one pool with a field. Each has its own idle target, its own ceiling,
+its own branch to stage on and its own TTL, and neither arbitrates against the other: no
+round-robin, no shared per-pass budget, no rule about which one yields. The only thing they share
+is `max_concurrent_runs`, which both contribute to and which is the box's answer to "how many
+containers may exist". If the two together ask for more than the box has, the box refuses at
+`ffbox_workload_has_room()` under the admission lock, which is where every refusal already
+happens.
+
+The pool is a set of containers found by `docker ps --filter label=ffbox.pool`, with the branch
+carried on the `ffbox.pool` label. Nothing is written down on the host, which is what keeps the
+count from drifting. Class is carried the same way, on a new label.
+
+    ffbox.agent.class=ffagent|ffdev     on EVERY agent container, staged or cold
+
+On a staged container it goes on beside `ffbox.pool.id` at `--stage-pool`; on a cold run it goes
+on beside `ffbox.workload=agent`. Both are set at `docker create` and survive the rename at
+dispatch, like the labels next to them.
+
+A container with no such label is `ffagent`. That is what the ones running during the deploy will
+be, and it is the right answer for them.
+
+What changes, function by function:
+
+  `pool_containers()`        reads the third label into the dict it already returns.
+  `pool_warm()`              unchanged; it filters on `out/staged` and `out/owner`.
+  `pool_claim_for(ref, cls)` matches class as well as branch, and takes the first that matches
+                             both. A class miss is as ordinary as a branch miss: it falls through
+                             to a cold launch, which is what a box with an empty pool does today.
+  `pool_would_serve(ref,cls)` the same rule, no side effect, as now.
+  `pool_branch(cls)`         `pool_ref` or `base_ref`, from that class's block.
+  `pool_stage(cls)`          passes `--agent-class`, and takes the ref and TTL from that block.
+  `keep_pool()`              runs the existing keeper once per class, independently, in a fixed
+                             order. Per class: its own warm count, its own `idle` target, its own
+                             `agent_room(cls)`, and at most one staged per pass — the rule that is
+                             there today, applied per pool rather than shared between them.
+                             `workload_room()` is consulted by each, because it is the box's
+                             number and both classes count against it.
+  `agent_workload_count(cls)` counts containers whose `ffbox.agent.class` is `cls`. Today it
+                             counts everything whose workload label is not `ci`; with two classes
+                             that is the wrong number for both of them. Its "a daemon that will
+                             not answer counts as FULL" fallback returns THAT CLASS's
+                             `agent_pool_max`, not the flat one.
+  `agent_room(cls)`          that class's `agent_pool_max` minus the above.
+  `pool_status()`            one block per class, and the existing line shape per container.
+  `pool_drop()`              unchanged. An id is an id.
+  `pool_reap()`, the drain sweep, `recover()`  unchanged. They ask `out/owner` and the spool
+                             directory, neither of which knows about classes, and both of which
+                             are right not to.
+
+The spool directory stays flat under `<state_dir>/pool/<id>`. The id is unique across classes and
+the class is on the container; a second level of directory would be a second place for the two to
+disagree.
+
+`keep_pool()` returns a pool id or None today, and two callers plus two tests read that. Running
+it per class means it can now stage one of each in a pass, so it returns a LIST of the ids it
+staged, empty for none. `test_the_pool_only_stages_what_it_has_room_for` asserts
+`w.keep_pool() is not None` / `is None` and changes with it; `test_the_daemon_loop_keeps_the_pool`
+only checks that both daemon loops call it at all, and does not.
+
+**Nothing is evicted. A turn that cannot get a place waits for one.**
+
+`max_concurrent_runs` is what bounds how many workspaces exist, ffdev's containers count against
+it like everything else, and a box configured to allow more than it can hold dies. That is the
+expected outcome and not something a second pool changes, so nothing here reasons about free
+memory.
+
+`schedule()` already does the right thing and needs no argument made for it: a turn that finds
+`workload_room()` or `agent_room()` at zero, and no warm container that would serve it, stays
+queued and is tried again on the next pass. It starts when a run finishes and gives its place
+back.
+
+What contradicts that is the eviction block in `launch()`, and **it goes**. Today, when
+`pool_has_room(for_containers=0)` says memory is short, a cold launch destroys one container out
+of `pool_warm()` to make room for itself. With one pool that was a trade within one lane. With
+two it is one worker type taking another's warm container, and the turn it takes it from then
+pays a forty-second cold launch it did nothing to deserve. Waiting a few seconds for a place to
+free up is the better answer, and it is the answer `schedule()` already gives everywhere else.
+
+This is a change to ffagent's existing behaviour, not only to ffdev's, and it is deliberate. It
+removes the only path in the daemon that destroys a warm container to serve a different turn.
+
+`pool_has_room()` itself stays, in the one place it withholds an optimisation rather than
+destroying one: `keep_pool()`, where a memory squeeze means the daemon does not STAGE another
+speculative container. That has never been able to cost a real turn anything, and it is the same
+check with the same arithmetic. After this, `for_containers=0` has no caller.
+
+The backstop for a staged container nothing can use — wrong class, wrong branch, and the box
+otherwise full — is the one that already exists: `idle_agent_ttl_secs`, enforced by the container
+itself, after which it retires and the keeper stages a fresher one.
+
+
+6. The conversation remembers its class
+---------------------------------------
+
+Schema v14, one column, declared in the two places a conversation column has to be declared —
+`ffwatch_schema.sql` for a fresh database and `ADDED_COLUMNS` for one that already exists:
+
+    agent_class TEXT NOT NULL DEFAULT 'ffagent'
+
+**NOT NULL with a default, not a nullable column.** `init_schema` applies `ADDED_COLUMNS` as
+`ALTER TABLE … ADD COLUMN`, and SQLite fills every existing row with the default as it goes, so a
+long-lived database comes out of the migration with `agent_class = 'ffagent'` everywhere and the
+column is never NULL. Five added columns already do this (`conversation.is_thread`,
+`run.pushed`, `message.addressed` among them); it is the idiom here.
+
+The alternative — nullable, "NULL means ffagent", nothing rewritten — was the first draft and is
+wrong for a reason the codebase has already been bitten by. The filter dropdowns on the
+conversation list are built with `SELECT DISTINCT` over the column, not from a constant; the
+comment at `ffwatch.py:1292` says so, in the v8 migration that exists precisely because a stale
+value kept appearing in one. A nullable `agent_class` would put an empty option in that dropdown
+and, worse, filtering on `ffagent` would match no legacy row at all. Backfilling at migration
+makes the question disappear rather than answering it in three places.
+
+`conversation_class(conv)` is still the reader and is still guarded the way
+`conversation_branch()` is — but the guard is for the column being ABSENT, not NULL: ffwatch
+migrates on start and a caller can be holding a row read before that.
+
+`submit()` takes `agent_class=DEFAULT_AGENT_CLASS`, validates it against `AGENT_CLASSES`, and
+writes it on the conversation it opens. `follow_up()` does not take one at all — there is nothing
+to decide. The Discord ingress passes nothing and gets the column default, which is ffagent.
+
+`run` gains no column. The class is a property of the conversation and the run row already joins
+to it; a copy on the run would be a second answer that could disagree with the first. What the run
+row does record, already, is `pool_id`, which names the staged container it was dispatched into —
+and that container's class is on the container.
+
+
+7. What launch() does with it
+-----------------------------
+
+    cls  = self.conversation_class(conv)          # always one of AGENT_CLASSES
+    ccfg = class_cfg(self.cfg, cls)
+
+and then `ccfg` supplies, in place of `self.cfg`:
+
+  - `base_ref`, as the last rung of `run_ref()`'s ladder. The conversation's branch and its pinned
+    base sha still come first, so an existing conversation is unaffected by a class whose
+    `base_ref` differs.
+  - `agent_secs`, `warmup_secs`, `kill_grace_secs`, passed to ffbox as the three clocks, and used
+    for the outer `subprocess.run` timeout.
+  - the class itself, as `--agent-class` on the cold-launch path, so the container carries its
+    label.
+
+**`verify_secs` is not one of them and stays top-level.** `launch()` passes a FOURTH clock,
+`--verify-timeout`, out of `self.cfg["verify_secs"]` (`ffwatch.py:301`, `:4514`). It is not in the
+`ffagent` section of config.json and does not move into either class's block: it bounds the
+harness's own verification after the agent has exited, which is the same Unity suite whichever
+container ran the turn. Everything in this document that says "the three clocks" means the three
+that are in the section.
+
+`pool_claim_for(ref, cls)` decides whether this is a dispatch or a cold launch, and everything
+from there is what it is today.
+
+`build_job()` puts the class in `job.json` under `turn.agent_class`. Nothing in the container
+reads it yet. It is there so that a run directory harvested six months from now says which kind of
+container produced it, which is the question the record cannot answer otherwise.
+
+`build_job()` also holds two class-dependent readers that are nowhere near the clocks above and
+are the easiest thing in this design to leave behind. `job["limits"]` copies the three clocks out
+of the flat `self.cfg`, so an ffdev turn would RECORD ffagent's clocks while ffbox ran it on
+ffdev's — job.json is what a run directory is read back from later, and a record that disagrees
+with what happened is worse than no record. And `job["rebase"]["to"]` is `self.cfg["base_ref"]`,
+a string that goes into the agent's own prompt naming the branch it was re-based onto. Both take
+`ccfg`, so `build_job()` needs the class as well as `launch()` does.
+
+`schedule()`'s admission check becomes `agent_room(cls)` for the turn's own class, with
+`workload_room()` unchanged beside it. The `break` on a full box stays a `break`; a per-class
+`continue` would let an ffdev turn jump an ffagent turn that is waiting for the box, and the queue
+is in order for a reason.
+
+**Its query has to select the class**, and this is the easiest thing here to miss. `schedule()`
+reads its queue with
+
+    SELECT t.*, c.state AS conv_state, c.base_sha AS conv_base_sha FROM turn t JOIN conversation c …
+
+and never loads the conversation row itself — it works off that JOIN. Both of the things it now
+needs the class for are inside that loop: `agent_room(cls)`, and the ref handed to
+`pool_would_serve()`, whose last fallback is the class's `base_ref`. So the SELECT gains
+`c.agent_class AS conv_agent_class`. Without it the check silently runs against ffagent's numbers
+for every turn, the daemon's pre-check disagrees with what `launch()` then does, and the symptom
+is an ffdev turn that starts when it should have queued — visible only as a refusal from ffbox's
+admission lock much later.
+
+
+8. ffbox
+--------
+
+One new flag, `--agent-class NAME`, default `ffagent`. It does exactly one thing: adds
+`--label ffbox.agent.class=NAME` to the `docker create` for a staged container and for a cold run.
+It does not choose an image, a task, a mount or a limit — those come from `container` in
+config.json and are shared by both classes and by CI, and nothing here wants to change that.
+
+Validated against the same two names, so a typo is a refusal at the point of creation rather than
+a container nothing will ever claim.
+
+
+9. ffweb
+--------
+
+The prompt box grows a dropdown before the run button:
+
+    <form class="filters" method="post" action="/actions/prompt">
+      <input name="prompt" ...>
+      <select name="agent"> ffagent | ffdev </select>
+      <button type="submit">run</button>
+    </form>
+
+`FILTER_SCRIPT` binds change handlers to `#conversation-filters select` and this form has no id,
+so picking a class does not submit the form. That is checked by a test rather than left to the
+selector staying as it is.
+
+The auto-refresh tick defers while focus is in a `select`, and defers while the prompt box has
+text, so the ordinary sequence — pick a class, type, press run — is safe. A class picked and then
+abandoned for a minute resets to ffagent on the next tick. That is accepted: it is the same
+transience the filter dropdowns have, and the alternative is carrying the choice in the query
+string, which makes a POST form's control into a GET parameter for no gain.
+
+`/actions/prompt` reads `agent`, defaults an absent or empty value to `ffagent`, and refuses
+anything that is not one of the two names with a 400 — the same shape as the existing empty-prompt
+and over-length refusals. It passes `--agent <name>` to `ffwatch submit`. The validation is here
+AND in ffwatch, deliberately both: ffwatch is the writer and its refusal is the one that counts,
+and this one is so the page answers in a sentence instead of showing an operator a subprocess's
+stderr.
+
+`/actions/reply` gains nothing and reads nothing. A hand-built POST carrying `agent` at that route
+is ignored, not honoured and not refused — there is no decision there to make.
+
+On the conversation list, the class is a column beside `lane` and a filter beside it. The filter
+needs no special handling for old rows, because there are none: the column is NOT NULL with a
+default and the migration backfilled every existing conversation to `ffagent` (section 6). That is
+what lets it join the `("kind", "state", "verdict", "lane")` loop unchanged, since those dropdowns
+are built with `SELECT DISTINCT` over the data.
+
+
+10. ffwatch submit
+------------------
+
+    --agent {ffagent,ffdev}   which kind of container runs this conversation (default ffagent).
+                              Settled by the opening turn and read on every turn afterwards.
+
+Ignored with a note when `--conversation` is given, exactly as `--ref` and `--branch` are, and for
+the same reason spelled out in section 2. The note is the existing one-line stderr print, with the
+class named.
+
+
+11. What the box looks like afterwards
+--------------------------------------
+
+With `max_concurrent_runs: 6`, `ffagent.pool` at idle 2 / max -1, and `ffdev.pool` at idle 1 /
+max 3:
+
+  - Quiet box: three staged containers, two ffagent and one ffdev.
+  - Six ffagent turns at once is still allowed (max -1 means the box's six), and while they run
+    the ffdev pool cannot be topped up, because `workload_room()` is zero. It is topped up again
+    as they finish. The reverse is not symmetrical: ffdev can never hold more than three, so
+    there are always three places ffdev CANNOT take. Those places are not therefore ffagent's —
+    CI counts against the same six, and on a busy box it is CI holding them.
+  - A full box queues rather than evicts. An ffdev turn arriving with all six places taken waits
+    for one to come back, and so does an ffagent turn; neither can take the other's warm
+    container. The wait is however long the run ahead of it has left.
+  - Setting `ffdev.pool.max` above what the box can hold is an operator's decision and behaves the
+    way it does for every other number in this file: the containers are created until
+    `max_concurrent_runs` refuses, and a box configured past its own memory dies.
+
+The standing cost of this change is one more idle container: one more workspace, and one more
+Unity seat held by `pool-task.sh`'s activation. The seat is the part worth watching, since the
+machine ids are per slot and the slot claim is what keeps the licence seeing a small recycled set
+of machines.
+
+
+12. What does not change
+------------------------
+
+One prompt per container. The harvest, the branch-per-conversation rule and the PR gate. The
+capability set, which is one set for every run and is not a per-class thing — a class that needed
+different capabilities would be a different design and would have to argue for it. The egress
+filter. `container.memory`, `pids_limit` and `workspace_size`, which are per-container and shared
+with CI. The Discord ingress, the clustering, the sender, the rate limits.
+
+
+13. Testing
+-----------
+
+Offline, in `test_ffwatch.py` and `test_ffweb.py`, in the style already there:
+
+  - `class_cfg` returns ffdev's numbers for ffdev, ffdev's DEFAULTS for a config with no ffdev
+    section, and never ffagent's configured values for either. The coercions run per class (a
+    negative idle is 0; a negative max is `max_concurrent_runs`).
+  - `keep_pool` tops each class up to its own target independently, stages at most one per pass
+    per class, and stops that class when its `agent_room(cls)` or the shared `workload_room()` is
+    zero. A full ffagent pool does not stop ffdev being staged, and neither waits on the other.
+    The existing admission test is the fixture to extend.
+  - `pool_claim_for` will not hand an ffdev turn an ffagent container staged on the same branch,
+    and a class miss falls through to a cold launch rather than failing.
+  - `agent_workload_count` splits two classes correctly and counts an unlabelled container as
+    ffagent.
+  - A conversation's class survives to its second turn and a `--agent` on a continuation is
+    refused with a note.
+  - A launch that cannot claim a warm container destroys nothing. The existing eviction test is
+    the fixture to invert.
+  - An ffdev turn's job.json carries ffdev's `limits` and not ffagent's.
+  - ffweb: the dropdown is on the prompt box and not on the reply box; an unknown class is a 400;
+    the default reaches `ffwatch submit` as ffagent; picking a class does not submit the form.
+
+Live, on the box, after the deploy: an ffdev prompt from the page dispatches into an ffdev
+container and not an ffagent one (`ffwatch pool` before and after, and the run row's `pool_id`),
+and a second turn on that conversation goes the same way without being asked.
+
+
+14. Open
+--------
+
+Nothing here makes an ffdev run behave differently from an ffagent one, and at some point one of
+them should. The likely first divergence is `base_ref`: ffdev on `develop`, ffagent on `master`,
+which is a config edit and no code. The second is the agent clock, since dev turns are the ones
+that hit 1800 seconds. Both are deliberately left to config rather than guessed at now.

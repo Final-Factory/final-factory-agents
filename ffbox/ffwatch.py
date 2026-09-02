@@ -75,7 +75,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a column added to
 # the schema file never reaches a database created before it. These are applied with ALTER on
@@ -109,6 +109,26 @@ CONTAINER_PROJECT_SLUG = re.sub(r"[^A-Za-z0-9-]", "-", CONTAINER_WORKSPACE)
 # write to -- so moving the workspace renames the directory and orphans the lot. Migrated rather
 # than abandoned; see Watcher.migrate_project_slugs.
 FORMER_PROJECT_SLUGS = ("-workspace",)
+
+# THE KINDS OF AGENT CONTAINER THIS BOX RUNS, and the source of truth for the two names.
+#
+# A CLASS IS A POOL PLUS A SET OF NUMBERS. Both classes run the same image, the same task script
+# and the same capability set; what differs is the config section they read and the pool they are
+# staged into. `ffdev` exists so dev work and Discord traffic stop sharing a pool and a ceiling,
+# and so the two can be given different clocks or a different base branch by editing config.json
+# rather than this file. design/ffdev_agent_class_design.txt.
+#
+# NAMED, NOT DISCOVERED. Nothing scans config.json for sections it does not recognise: a typo
+# (`ffdevv`) would otherwise become a silently-created pool that stages containers no turn can
+# ever claim.
+#
+# MIRRORED IN TWO OTHER FILES and it cannot be otherwise -- ffweb shells out to this one rather
+# than importing it, and ffbox is shell. ffweb.py's AGENT_CLASSES and ffbox's own validation each
+# carry a copy naming this as the original, the way ffweb.py already mirrors LOCAL_KINDS. This
+# copy is the one that decides: `ffwatch submit --agent` is where a bad name is refused, because
+# this process is the only writer.
+AGENT_CLASSES = ("ffagent", "ffdev")
+DEFAULT_AGENT_CLASS = "ffagent"
 
 ADDED_COLUMNS = [
     ("conversation", "is_thread", "INTEGER NOT NULL DEFAULT 0"),
@@ -188,6 +208,18 @@ ADDED_COLUMNS = [
     # a start-up that would otherwise abort on a missing column.
     ("watch_attach", "attached", "INTEGER NOT NULL DEFAULT 1"),
     ("watch_attach", "detached_at", "TEXT"),
+    # -- v14, agent classes -----------------------------------------------------------------
+    # WHICH KIND OF CONTAINER runs this conversation's turns. Settled when the conversation is
+    # opened and never moved: a turn that changed class underneath a live conversation would
+    # change the clocks its session has been running under and, once the classes differ on
+    # base_ref, the tree its transcript has been citing file:line positions against.
+    #
+    # NOT NULL WITH A DEFAULT, so ALTER TABLE ADD COLUMN fills every existing row with 'ffagent'
+    # as it goes and this column is never NULL anywhere. That is not tidiness: ffweb's filter
+    # dropdowns are built with SELECT DISTINCT over the data, so a nullable column would put a
+    # blank option in one and make filtering on 'ffagent' match none of the rows that predate
+    # this. The v8 lane rewrite below exists because of exactly that property.
+    ("conversation", "agent_class", "TEXT NOT NULL DEFAULT 'ffagent'"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -375,6 +407,11 @@ DEFAULTS = {
     # a warm one. Measured on this box: 1.2 seconds from dispatch to the agent starting,
     # against 40 on a cold launch. 0 is off, and off is exactly the behaviour that predates
     # this. Re-read on the poll, so raising it takes effect without a restart.
+    #
+    # THESE FOUR ARE FFAGENT'S, FLATTENED. Every per-class key below lives twice: here at the
+    # top level, where it means ffagent's and where the readers that predate classes still find
+    # it, and in DEFAULTS["agent_classes"], which is what class_cfg() serves. load_config keeps
+    # the two agreed by building the flat copy from the ffagent section as it always did.
     "idle_agents": 1,
     # THIS LANE'S OWN CEILING on containers -- runs and staged ones together -- underneath the
     # box-wide max_concurrent_runs that CI also counts against. Negative means "no ceiling of my
@@ -387,6 +424,46 @@ DEFAULTS = {
     # Which branch to stage. null follows base_ref, and there is deliberately no second answer
     # to configure: a pool staged on a branch no turn asks for serves nothing.
     "pool_ref": None,
+
+    # WHAT GOVERNS A RUN, PER CLASS. One block per name in AGENT_CLASSES, and the keys are
+    # exactly the ones a container's behaviour depends on: where its clone starts, the three
+    # clocks it is held to, and its pool.
+    #
+    # WRITTEN OUT TWICE RATHER THAN DERIVED. ffdev's numbers are ffagent's today except for the
+    # pool, and it would be one line to say "ffdev is ffagent with these two changed". That line
+    # is the thing to avoid: the two classes exist BECAUSE they are expected to diverge -- ffdev
+    # onto develop, ffdev with a longer agent clock -- and a shared derivation has to be unpicked
+    # the first time one of them moves. There is no inheritance at runtime either: a config file
+    # with no "ffdev" section gets THESE defaults, never ffagent's configured values, so editing
+    # ffagent's clocks does not silently move ffdev's.
+    #
+    # ffdev's pool is idle 1 / max 3: one container waits warm, and at most three ffdev
+    # containers exist at once, runs and staged ones together, under the box-wide
+    # max_concurrent_runs that CI counts against too. 3 rather than -1 on purpose -- dev turns
+    # are the long ones, and three of them plus whatever CI is doing is as much of a
+    # six-container box as one class should be able to take.
+    "agent_classes": {
+        "ffagent": {
+            "base_ref": "master",
+            "agent_secs": 1800,
+            "warmup_secs": 3600,
+            "kill_grace_secs": 10,
+            "idle_agents": 1,
+            "agent_pool_max": -1,
+            "idle_agent_ttl_secs": 14400,
+            "pool_ref": None,
+        },
+        "ffdev": {
+            "base_ref": "master",
+            "agent_secs": 1800,
+            "warmup_secs": 3600,
+            "kill_grace_secs": 10,
+            "idle_agents": 1,
+            "agent_pool_max": 3,
+            "idle_agent_ttl_secs": 14400,
+            "pool_ref": None,
+        },
+    },
     "pool_task": os.path.join(HERE, "pool-task.sh"),
     "catchup_secs": 900,
     "poll_secs": 2,
@@ -605,6 +682,61 @@ def _read_config_json(path):
         return {}
 
 
+def _class_blocks(ffbox_raw, max_runs, to_int):
+    """The per-class config blocks, one per AGENT_CLASSES name. Never raises on a bad file.
+
+    Built the same way for every class and INDEPENDENTLY of every other: that class's defaults,
+    deep-merged with that class's section of config.json, then the same two coercions the flat
+    keys get. A class with no section in the file resolves to its own defaults -- never to
+    another class's configured values, which is the whole of "there is no inheritance".
+
+    `pool.idle` / `pool.max` are mapped onto the flat `idle_agents` / `agent_pool_max` names the
+    pool code already uses, so the config file keeps one shape for both classes and the runners
+    while no call site has to know a key is nested.
+    """
+    out = {}
+    for name in AGENT_CLASSES:
+        block = dict(DEFAULTS["agent_classes"][name])
+        section = ffbox_raw.get(name)
+        if not isinstance(section, dict):
+            section = {}
+        block.update({k: v for k, v in section.items() if k in block})
+        pool = section.get("pool")
+        if isinstance(pool, dict):
+            if "idle" in pool:
+                block["idle_agents"] = pool["idle"]
+            if "max" in pool:
+                block["agent_pool_max"] = pool["max"]
+        # A negative idle is off, not a negative number of containers; a negative max is "no
+        # ceiling of my own", which is the box's. Non-numeric is that class's default rather
+        # than a crash -- a config that says "two" must not take the daemon down.
+        fallback = DEFAULTS["agent_classes"][name]
+        block["idle_agents"] = max(0, to_int(block.get("idle_agents"),
+                                             fallback["idle_agents"]))
+        _m = to_int(block.get("agent_pool_max"), fallback["agent_pool_max"])
+        block["agent_pool_max"] = max_runs if _m < 0 else _m
+        out[name] = block
+    return out
+
+
+def class_cfg(cfg, name=None):
+    """The config block for one agent class. The ONE reader, and a plain dict lookup.
+
+    A name outside AGENT_CLASSES RAISES rather than falling back to the default, and that is
+    deliberate: every caller gets its name from a validated CLI argument, a validated form field
+    or a database column with a NOT NULL default, so a name that is not one of the two means a
+    bug upstream and not an operator's typo. Falling back would hide it and run the turn in the
+    wrong kind of container.
+
+    None IS the default class, for the callers that have nothing to say.
+    """
+    if name is None:
+        name = DEFAULT_AGENT_CLASS
+    if name not in AGENT_CLASSES:
+        raise ValueError(f"{name!r} is not an agent class; expected one of {AGENT_CLASSES}")
+    return (cfg.get("agent_classes") or DEFAULTS["agent_classes"])[name]
+
+
 def load_config():
     """DEFAULTS, then ~/.config/ffbox/config.json, then env.
 
@@ -630,10 +762,14 @@ def load_config():
     # happening, `max` is that lane's own ceiling. Mapped here onto the flat key the rest of this
     # file already uses, so no call site has to know the shape.
     #
-    # pool.max IS NOT READ. The agent lane has no per-lane ceiling today -- only the box-wide
-    # max_concurrent_runs, which CI counts against too -- and it is seeded at -1 to say so. The
-    # key exists now so the two sections have one shape, and so wiring it up later is a code
-    # change rather than another config move.
+    # pool.max IS READ, by agent_room(), and has been since the per-lane ceiling was wired up.
+    # The comment here used to say it was not, which was true only for the window between the key
+    # being added and being used. -1 still means "no ceiling of my own" and is coerced to
+    # max_concurrent_runs below.
+    #
+    # THIS PAIR IS FFAGENT'S ONLY. The same mapping is done per class in _class_blocks(), which
+    # is what class_cfg() serves; these two lines keep the FLAT keys meaning what they always
+    # meant, for the readers that predate classes.
     _agent_pool = (ffbox_raw.get("ffagent") or {}).get("pool") or {}
     if "idle" in _agent_pool:
         ffbox_block["idle_agents"] = _agent_pool["idle"]
@@ -675,6 +811,10 @@ def load_config():
     cfg["idle_agents"] = max(0, _int(cfg.get("idle_agents"), DEFAULTS["idle_agents"]))
     _max = _int(cfg.get("agent_pool_max"), DEFAULTS["agent_pool_max"])
     cfg["agent_pool_max"] = cfg["max_concurrent_runs"] if _max < 0 else _max
+    # THE SAME TWO COERCIONS, ONCE PER CLASS. Each class's block is built from ITS OWN defaults
+    # and ITS OWN section, with no cross-class fallback anywhere: a config with no "ffdev" gets
+    # DEFAULTS["agent_classes"]["ffdev"], not whatever ffagent happens to be configured as.
+    cfg["agent_classes"] = _class_blocks(ffbox_raw, cfg["max_concurrent_runs"], _int)
     cfg["state_dir"] = os.path.expanduser(cfg["state_dir"])
     cfg["kill_switch"] = os.path.expanduser(cfg["kill_switch"])
     cfg["drain_switch"] = os.path.expanduser(cfg["drain_switch"])
@@ -1860,7 +2000,10 @@ class Watcher:
         # same not-yet-inserted uuid and insert it twice, which renders as a duplicated turn.
         self._index_lock = threading.Lock()
         self._kill_switch_logged = False
-        self._pool_squeeze_logged = False
+        # PER AGENT CLASS. Two pools squeeze independently, so one class saying "no memory" must
+        # not silence the message for the other -- an operator reading the journal wants to know
+        # which pool could not be filled, not that some pool could not be.
+        self._pool_squeeze_logged = {}
         self._drain_logged = False
         # Sweep complaints are per-alias-per-process. The sweep runs every catchup_secs, so an
         # alias that cannot be resolved would otherwise write the same line to the journal four
@@ -2217,7 +2360,16 @@ class Watcher:
             return False
 
     def upsert_conversation(self, thread_id, *, kind, channel_id, guild_id=None, title=None,
-                            root_message_id=None, opener=None, is_thread=False, alias=None):
+                            root_message_id=None, opener=None, is_thread=False, alias=None,
+                            agent_class=DEFAULT_AGENT_CLASS):
+        """Find or create the conversation for a thread id.
+
+        `agent_class` is written ON CREATION ONLY and the UPDATE branch deliberately does not
+        touch it: a conversation's class is settled by its opening turn, and a later upsert --
+        which every subsequent message in a Discord thread performs -- must never move it. The
+        Discord ingress passes nothing and gets the default, which is what a Discord conversation
+        is.
+        """
         thread_id = str(thread_id)
         row = self.db.one("SELECT * FROM conversation WHERE thread_id=?", (thread_id,))
         if row:
@@ -2226,15 +2378,18 @@ class Watcher:
                 " watch_alias=COALESCE(watch_alias, ?) WHERE id=?",
                 (now_iso(), title, alias, row["id"]))
             return row["id"]
+        if agent_class not in AGENT_CLASSES:
+            raise ValueError(f"{agent_class!r} is not an agent class; expected one of "
+                             f"{AGENT_CLASSES}")
         cur = self.db.execute(
             "INSERT INTO conversation(guild_id, channel_id, thread_id, root_message_id, kind,"
             " title, opener_discord_id, state, is_thread, session_id, session_generation,"
-            " created_at, last_activity_at, watch_alias)"
-            " VALUES(?,?,?,?,?,?,?,'idle',?,?,1,?,?,?)",
+            " created_at, last_activity_at, watch_alias, agent_class)"
+            " VALUES(?,?,?,?,?,?,?,'idle',?,?,1,?,?,?,?)",
             (guild_id, str(channel_id) if channel_id else None, thread_id,
              str(root_message_id) if root_message_id else None, kind, title,
              str(opener) if opener else None, 1 if is_thread else 0,
-             session_id_for(thread_id), now_iso(), now_iso(), alias))
+             session_id_for(thread_id), now_iso(), now_iso(), alias, agent_class))
         log(f"conversation {cur.lastrowid} kind={kind} thread={thread_id} {title or ''}".strip())
         return cur.lastrowid
 
@@ -3390,7 +3545,8 @@ class Watcher:
         each serve" with no bookkeeping of our own to get out of step. It survives the rename at
         dispatch, which is why the label is not what tells idle from busy — `out/owner` is.
         """
-        fmt = '{{.Names}}\t{{.Label "ffbox.pool.id"}}\t{{.Label "ffbox.pool"}}'
+        fmt = ('{{.Names}}\t{{.Label "ffbox.pool.id"}}\t{{.Label "ffbox.pool"}}'
+               '\t{{.Label "ffbox.agent.class"}}')
         try:
             proc = subprocess.run(
                 [self.cfg["docker"], "ps", "--filter", "label=ffbox.pool",
@@ -3402,8 +3558,12 @@ class Watcher:
         out = []
         for line in (proc.stdout or "").splitlines():
             parts = line.rstrip("\n").split("\t")
-            if len(parts) == 3 and parts[1]:
-                out.append({"name": parts[0], "id": parts[1], "branch": parts[2]})
+            if len(parts) == 4 and parts[1]:
+                # AN EMPTY CLASS LABEL IS ffagent. That is what every container staged before
+                # classes existed carries, and it is the right answer for them: they were staged
+                # by the one pool there was, on the one set of numbers there was.
+                out.append({"name": parts[0], "id": parts[1], "branch": parts[2],
+                            "class": parts[3] or DEFAULT_AGENT_CLASS})
         return out
 
     def workload_count(self):
@@ -3436,37 +3596,58 @@ class Watcher:
         """Places left under the shared ceiling. Never negative."""
         return max(0, int(self.cfg["max_concurrent_runs"]) - self.workload_count())
 
-    def agent_workload_count(self):
-        """This lane's containers only: runs and staged ones, not CI's.
+    def agent_workload_count(self, agent_class=None):
+        """ONE CLASS's containers: its runs and its staged ones, not CI's and not the other's.
 
-        COUNTED FROM THE LABEL rather than by adding running_counts() to pool_containers(),
+        COUNTED FROM THE LABELS rather than by adding running_counts() to pool_containers(),
         because those two overlap. A staged container that has been dispatched keeps its
         ffbox.pool label AND gains a run row, so adding the two would count it twice and the
-        lane would throttle itself at half its ceiling.
+        class would throttle itself at half its ceiling.
 
-        `ffbox.workload` is agent, pool or ci, and the first two are ours.
+        `ffbox.workload` is agent, pool or ci; the first two are an agent class's and the third
+        is not ours at all. `ffbox.agent.class` then says WHICH class, and an empty one is
+        ffagent -- a container staged before classes existed belongs to the pool that staged it.
+
+        Until classes there was one count here, "everything that is not ci", and with two of them
+        that number is wrong for BOTH: each would see the other's containers as its own and stop
+        at half its ceiling, or less.
+
+        A daemon that will not answer counts as FULL for THIS class, which is that class's own
+        ceiling rather than the flat one -- the caller is about to start a container and the
+        honest answer when we cannot count is "assume there is no room".
         """
+        ccfg = class_cfg(self.cfg, agent_class)
         try:
             proc = subprocess.run(
                 [self.cfg["docker"], "ps", "--filter", "label=ffbox.workload",
-                 "--format", '{{.Label "ffbox.workload"}}'],
+                 "--format", '{{.Label "ffbox.workload"}}\t{{.Label "ffbox.agent.class"}}'],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         except (OSError, subprocess.SubprocessError) as exc:
-            log(f"pool: could not count this lane's containers: {exc}")
-            return int(self.cfg["agent_pool_max"])
+            log(f"pool: could not count {agent_class or DEFAULT_AGENT_CLASS} containers: {exc}")
+            return int(ccfg["agent_pool_max"])
         if proc.returncode != 0:
-            return int(self.cfg["agent_pool_max"])
-        return len([ln for ln in (proc.stdout or "").splitlines()
-                    if ln.strip() and ln.strip() != "ci"])
+            return int(ccfg["agent_pool_max"])
+        want = agent_class or DEFAULT_AGENT_CLASS
+        n = 0
+        for line in (proc.stdout or "").splitlines():
+            parts = line.rstrip("\n").split("\t")
+            workload = parts[0].strip() if parts else ""
+            if not workload or workload == "ci":
+                continue
+            got = (parts[1].strip() if len(parts) > 1 else "") or DEFAULT_AGENT_CLASS
+            if got == want:
+                n += 1
+        return n
 
-    def agent_room(self):
-        """Places left under THIS LANE's ceiling, which sits under the box's.
+    def agent_room(self, agent_class=None):
+        """Places left under THIS CLASS's ceiling, which sits under the box's.
 
-        Both have to hold: the lane cap stops the agent filling a shared box on its own, and
-        the box cap stops the two lanes together overcommitting it. A run may start only when
-        neither says no.
+        Both have to hold: the class cap stops one kind of agent filling a shared box on its own,
+        and the box cap stops every class and CI together overcommitting it. A run may start only
+        when neither says no.
         """
-        return max(0, int(self.cfg["agent_pool_max"]) - self.agent_workload_count())
+        ccfg = class_cfg(self.cfg, agent_class)
+        return max(0, int(ccfg["agent_pool_max"]) - self.agent_workload_count(agent_class))
 
     def pool_owner_path(self, pool_id):
         return os.path.join(self.pool_dir(pool_id), "out", "owner")
@@ -3498,10 +3679,16 @@ class Watcher:
             os.close(fd)
         return True
 
-    def pool_warm(self):
-        """Staged containers that are up, finished filling, and nobody has spoken for."""
+    def pool_warm(self, agent_class=None):
+        """Staged containers that are up, finished filling, and nobody has spoken for.
+
+        `agent_class` narrows to one class's pool; None is every class, which is what the
+        callers that only care whether a container exists at all still want.
+        """
         warm = []
         for c in self.pool_containers():
+            if agent_class is not None and c["class"] != agent_class:
+                continue
             d = self.pool_dir(c["id"])
             if not os.path.exists(os.path.join(d, "out", "staged")):
                 continue                      # still extracting
@@ -3528,10 +3715,15 @@ class Watcher:
         return [c for c in containers
                 if not os.path.exists(self.pool_owner_path(c["id"]))]
 
-    def pool_branch(self):
-        """Which branch the pool stages. Follows base_ref unless told otherwise, because a pool
-        staged on a branch no turn asks for serves nothing at all."""
-        return self.cfg.get("pool_ref") or self.cfg["base_ref"]
+    def pool_branch(self, agent_class=None):
+        """Which branch THIS CLASS's pool stages. Follows that class's base_ref unless told
+        otherwise, because a pool staged on a branch no turn asks for serves nothing at all.
+
+        Per class because base_ref is: the day ffdev moves to develop, its pool has to follow it
+        or every ffdev turn takes a cold launch while a warm master container sits beside it.
+        """
+        ccfg = class_cfg(self.cfg, agent_class)
+        return ccfg.get("pool_ref") or ccfg["base_ref"]
 
     @staticmethod
     def mem_available_bytes():
@@ -3664,6 +3856,13 @@ class Watcher:
         existed and nothing could read it.
 
         An operator naming one id by hand means it and passes force=True. Nothing automatic may.
+
+        CLASS-BLIND, AND IT KEEPS THE FLAT `kill_grace_secs`. It is handed an id and nothing
+        else; resolving the class would mean a `docker ps` inside a teardown path that runs when
+        things are already going wrong. Both classes ship the same grace period, so this is a
+        decision rather than a bug -- but it is the one place that will not notice if they ever
+        configure different ones. The container name is `ffbox-pool-<id>` for every class, which
+        is also what lets update_ffbox.sh sweep leftovers by name without knowing about classes.
         """
         name = f"ffbox-pool-{pool_id}"
         grace = max(1, int(self.cfg["kill_grace_secs"]))
@@ -3681,12 +3880,19 @@ class Watcher:
         shutil.rmtree(self.pool_dir(pool_id), ignore_errors=True)
         return True
 
-    def pool_stage(self):
-        """Start one staged container. Returns its id, or None.
+    def pool_stage(self, agent_class=None):
+        """Start one staged container of one class. Returns its id, or None.
 
-        ONE AT A TIME, by construction: the caller stages at most one per pass, because two
-        22 GiB extractions at once compete for the memory the runs they exist to serve need.
+        ONE AT A TIME PER CLASS, by construction: the caller stages at most one per pass for
+        each class, because two 22 GiB extractions at once compete for the memory the runs they
+        exist to serve need.
+
+        The class reaches the container as `--agent-class`, which puts it on as a label. The ref
+        and the TTL come from that class's block, so a class staged on another branch or retiring
+        on another schedule needs no code here.
         """
+        agent_class = agent_class or DEFAULT_AGENT_CLASS
+        ccfg = class_cfg(self.cfg, agent_class)
         pool_id = uuid.uuid4().hex[:8]
         d = self.pool_dir(pool_id)
         for sub in ("in", "out", "claude"):
@@ -3695,8 +3901,9 @@ class Watcher:
         cmd = self.ffbox_cmd() + [
             "--stage-pool", pool_id,
             "--pool-dir", self.pool_dir(),
-            "--ref", self.pool_branch(),
-            "--idle-ttl", str(int(self.cfg["idle_agent_ttl_secs"])),
+            "--ref", self.pool_branch(agent_class),
+            "--agent-class", agent_class,
+            "--idle-ttl", str(int(ccfg["idle_agent_ttl_secs"])),
             "--task", self.cfg["pool_task"],
             # The turn task the container will eventually exec. Mounted now because a mount
             # cannot be added later, and it is the same script a cold run gets.
@@ -3719,50 +3926,75 @@ class Watcher:
                 f"{(proc.stderr or '').strip()[:300]}")
             shutil.rmtree(d, ignore_errors=True)
             return None
-        log(f"pool: staging {pool_id} on {self.pool_branch()}")
+        log(f"pool: staging {agent_class} {pool_id} on {self.pool_branch(agent_class)}")
         return pool_id
 
     def keep_pool(self):
-        """Top the pool up to `idle_agents`, if there is room for one more.
+        """Top EACH class's pool up to its own `idle_agents`. Returns the ids staged, [] for none.
 
-        Two conditions, the second of which is what stops the pool crowding out the runs it
-        exists to serve: fewer warm containers than asked for, AND fewer containers altogether
-        than max_concurrent_runs + idle_agents.
+        TWO POOLS, KEPT SEPARATELY, and that is the whole shape of this. Each class gets its own
+        warm count, its own target, its own ceiling and its own one-per-pass limit; there is no
+        round-robin, no shared budget for the pass and no rule about which class yields to which.
+        A full ffagent pool does not stop ffdev being staged, and neither waits on the other.
 
-        Lowering idle_agents does NOT kill anything, for the same reason `ffgithubrunners idle`
-        does not: it is a target the keeper stops topping up, not a headcount enforced downwards.
-        The extras retire by serving one prompt each or by timing out.
+        What they DO share is the box: `workload_room()` counts every workspace-holding container
+        on the daemon, CI's included, and both classes are asked for it. If the two together want
+        more than the box has, ffbox refuses for real under the shared admission lock -- this only
+        keeps the daemon from asking.
+
+        Two conditions per class, the second of which is what stops a pool crowding out the runs
+        it exists to serve: fewer warm containers than asked for, AND room under both ceilings.
+
+        Lowering a class's `idle` does NOT kill anything, for the same reason `ffgithubrunners
+        idle` does not: it is a target the keeper stops topping up, not a headcount enforced
+        downwards. The extras retire by serving one prompt each or by timing out.
+
+        RETURNS A LIST, where it used to return one id or None: a pass can now stage one of each
+        class, and a caller that wanted "did anything happen" gets a truthy list either way.
         """
-        want = int(self.cfg.get("idle_agents") or 0)
         self.pool_reap()
-        if want <= 0 or self.killed() or self.draining():
-            return None
+        if self.killed() or self.draining():
+            return []
+        staged = []
         containers = self.pool_containers()
-        # COUNTS "WILL BE WARM", not "is warm", and the difference is deliberate: a container
-        # still extracting its tar has no owner file and belongs in this count, or a pass every
-        # two seconds would stage another twenty of them while the first one filled. pool_warm()
-        # is the stricter one, and it is stricter because a claim needs a workspace that is
-        # actually there.
-        warm = [c for c in containers if not os.path.exists(self.pool_owner_path(c["id"]))]
-        if len(warm) >= want:
-            return None
-        # THE BOX, NOT THE LANE. This used to be `len(containers) + running_counts() >=
-        # max_concurrent_runs + want`, which counted only agent containers and then allowed
-        # `want` more on top of the ceiling. The ceiling is now a total over both lanes and the
-        # pool lives under it like everything else: a staged container that has been asked to do
-        # nothing still holds its workspace, and CI holds the same kind on the same daemon.
-        #
-        # ffbox refuses for real, under the shared lock. This only keeps the daemon from asking.
-        if self.workload_room() <= 0 or self.agent_room() <= 0:
-            return None
-        if not self.pool_has_room():
-            if not self._pool_squeeze_logged:
-                log("pool: not staging — too little memory free to hold another workspace "
-                    "without eating into what the runs need")
-                self._pool_squeeze_logged = True
-            return None
-        self._pool_squeeze_logged = False
-        return self.pool_stage()
+        for agent_class in AGENT_CLASSES:
+            want = int(class_cfg(self.cfg, agent_class).get("idle_agents") or 0)
+            if want <= 0:
+                continue
+            # COUNTS "WILL BE WARM", not "is warm", and the difference is deliberate: a container
+            # still extracting its tar has no owner file and belongs in this count, or a pass
+            # every two seconds would stage another twenty of them while the first one filled.
+            # pool_warm() is the stricter one, and it is stricter because a claim needs a
+            # workspace that is actually there.
+            warm = [c for c in containers
+                    if c["class"] == agent_class
+                    and not os.path.exists(self.pool_owner_path(c["id"]))]
+            if len(warm) >= want:
+                continue
+            # THE BOX AND THEN THIS CLASS. workload_room() is re-read per class rather than
+            # hoisted, because a container staged for the class before this one has just taken
+            # one of its places and the next class must see that.
+            if self.workload_room() <= 0 or self.agent_room(agent_class) <= 0:
+                continue
+            if not self.pool_has_room():
+                # PER CLASS, so a squeeze that stops one does not silence the message for the
+                # other -- they are separate pools and an operator reading the journal wants to
+                # know which one could not be filled.
+                if not self._pool_squeeze_logged.get(agent_class):
+                    log(f"pool: not staging {agent_class} — too little memory free to hold "
+                        f"another workspace without eating into what the runs need")
+                    self._pool_squeeze_logged[agent_class] = True
+                continue
+            self._pool_squeeze_logged[agent_class] = False
+            pool_id = self.pool_stage(agent_class)
+            if pool_id:
+                staged.append(pool_id)
+                # So the next class in the loop counts the one just started. It is not in
+                # `containers` -- that list was read before this pass staged anything.
+                containers.append({"name": f"ffbox-pool-{pool_id}", "id": pool_id,
+                                   "branch": self.pool_branch(agent_class),
+                                   "class": agent_class})
+        return staged
 
     def stage_session_into(self, container_claude, conv_id, session):
         """Put the session this turn resumes where the staged container will look for it.
@@ -3836,81 +4068,106 @@ class Watcher:
         return n
 
     def pool_status(self):
-        """What is staged, in the two or three lines a person reading `status` wants.
+        """What is staged, per class, in the few lines a person reading `status` wants.
+
+        ONE BLOCK PER CLASS, because they are separate pools with separate targets and separate
+        branches: a single total would hide an ffdev pool that has been empty for a day behind a
+        healthy ffagent one.
 
         A staged container is not a conversation, a turn or a run, so it appears here and
         nowhere else: putting it in any of those lists would mean inventing a row for something
         that has no work and no history.
         """
-        want = int(self.cfg.get("idle_agents") or 0)
         containers = self.pool_containers()
-        if not want and not containers:
+        wants = {cls: int(class_cfg(self.cfg, cls).get("idle_agents") or 0)
+                 for cls in AGENT_CLASSES}
+        if not any(wants.values()) and not containers:
             return []
-        lines = [f"pool: {len(containers)} staged, {want} wanted, on {self.pool_branch()}"]
         now = datetime.now(timezone.utc)
-        for c in sorted(containers, key=lambda x: x["id"]):
-            d = self.pool_dir(c["id"])
-            staged = _read_text(os.path.join(d, "out", "staged")) or ""
-            commit = ""
-            for line in staged.splitlines():
-                if line.startswith("commit="):
-                    commit = line.split("=", 1)[1][:12]
-            state = "warming"
-            if os.path.exists(self.pool_owner_path(c["id"])):
-                state = "in use"
-            elif commit:
-                state = "warm"
-            age = ""
-            try:
-                secs = (now - datetime.fromtimestamp(
-                    os.path.getmtime(os.path.join(d, "out")), timezone.utc)).total_seconds()
-                age = f", {human_gap(secs)} old"
-            except OSError:
-                pass
-            lines.append(f"  {c['id']} {state} on {c['branch']}@{commit or '?'}{age}")
+        lines = []
+        for agent_class in AGENT_CLASSES:
+            mine = [c for c in containers if c["class"] == agent_class]
+            want = wants[agent_class]
+            if not want and not mine:
+                # A class that is switched off and holds nothing has nothing to report. One that
+                # is off but still holds a container does, because that container is real.
+                continue
+            lines.append(f"pool {agent_class}: {len(mine)} staged, {want} wanted, on "
+                         f"{self.pool_branch(agent_class)}")
+            for c in sorted(mine, key=lambda x: x["id"]):
+                d = self.pool_dir(c["id"])
+                staged = _read_text(os.path.join(d, "out", "staged")) or ""
+                commit = ""
+                for line in staged.splitlines():
+                    if line.startswith("commit="):
+                        commit = line.split("=", 1)[1][:12]
+                state = "warming"
+                if os.path.exists(self.pool_owner_path(c["id"])):
+                    state = "in use"
+                elif commit:
+                    state = "warm"
+                age = ""
+                try:
+                    secs = (now - datetime.fromtimestamp(
+                        os.path.getmtime(os.path.join(d, "out")), timezone.utc)).total_seconds()
+                    age = f", {human_gap(secs)} old"
+                except OSError:
+                    pass
+                lines.append(f"  {c['id']} {state} on {c['branch']}@{commit or '?'}{age}")
+        # THE MEMORY NOTE IS THE BOX'S, not a class's, so it is said once at the end rather than
+        # repeated under every block.
         avail = self.mem_available_bytes()
-        if avail is not None and not self.pool_has_room():
+        if lines and avail is not None and not self.pool_has_room():
             lines.append(f"  not staging: {avail // (1024 ** 3)} GiB available, which is not "
                          f"enough to hold another workspace and still start "
                          f"{self.cfg['max_concurrent_runs']} run(s)")
         return lines
 
-    def pool_claim_for(self, ref):
-        """A warm container this turn may use, claimed, or None.
+    def pool_claim_for(self, ref, agent_class=None):
+        """A warm container of THIS CLASS that this turn may use, claimed, or None.
 
-        BY BRANCH, because the workspace is only warm for the branch its cache entry came from:
-        a master-staged tree handed a develop turn checks out the whole divergence and Unity
-        re-imports it, which is slower than the cold run that would have picked the develop
-        entry. ffbox's own entry ladder chooses by branch and the pool has to agree with it.
+        BY CLASS AND BY BRANCH, and both for the same kind of reason. The workspace is only warm
+        for the branch its cache entry came from: a master-staged tree handed a develop turn
+        checks out the whole divergence and Unity re-imports it, which is slower than the cold
+        run that would have picked the develop entry. ffbox's own entry ladder chooses by branch
+        and the pool has to agree with it.
 
-        A miss is not a failure and is not logged as one. It is the ordinary state of a box
-        whose pool is empty, and every one of them falls through to a cold launch.
+        The class is the stricter half. An ffagent container is not an ffdev container even when
+        both are staged on master today: the two exist in order to diverge, and handing a turn
+        the wrong one would run it under the wrong clocks and, once the classes differ, the wrong
+        tree. Two pools that quietly serve each other are one pool.
+
+        A miss is not a failure and is not logged as one. It is the ordinary state of a box whose
+        pool is empty, and every one of them falls through to a cold launch.
         """
-        if int(self.cfg.get("idle_agents") or 0) <= 0:
+        agent_class = agent_class or DEFAULT_AGENT_CLASS
+        if int(class_cfg(self.cfg, agent_class).get("idle_agents") or 0) <= 0:
             return None
         want = (ref or "").replace("origin/", "")
         # A pinned sha asks for no branch in particular; the container resets to it from
         # wherever it is staged, and a cold run would pay the same reset from the same tar.
         looks_like_sha = len(want) >= 7 and all(c in "0123456789abcdef" for c in want.lower())
-        for c in self.pool_warm():
+        for c in self.pool_warm(agent_class):
             if not looks_like_sha and c["branch"] != want:
                 continue
             if self.pool_take(c["id"]):
                 return c["id"]
         return None
 
-    def pool_would_serve(self, ref):
-        """Is there a warm container this ref could use, WITHOUT claiming it?
+    def pool_would_serve(self, ref, agent_class=None):
+        """Is there a warm container of this class this ref could use, WITHOUT claiming it?
 
         The same matching rule as pool_claim_for and deliberately no side effect: this is asked
         while deciding whether a turn may start at all, and taking a container there would strand
         it if the turn then failed one of the checks below.
         """
-        if int(self.cfg.get("idle_agents") or 0) <= 0:
+        agent_class = agent_class or DEFAULT_AGENT_CLASS
+        if int(class_cfg(self.cfg, agent_class).get("idle_agents") or 0) <= 0:
             return False
         want = (ref or "").replace("origin/", "")
         looks_like_sha = len(want) >= 7 and all(c in "0123456789abcdef" for c in want.lower())
-        return any(looks_like_sha or c["branch"] == want for c in self.pool_warm())
+        return any(looks_like_sha or c["branch"] == want
+                   for c in self.pool_warm(agent_class))
 
     def running_counts(self):
         """How many runs are in flight.
@@ -3941,8 +4198,13 @@ class Watcher:
             return []
         self._drain_logged = False
         started = []
+        # c.agent_class COMES ALONG because this loop works off the JOIN and never loads the
+        # conversation row. Both things below that need the class are inside it: the ceiling it
+        # checks, and the ref it asks the pool about. Without it the daemon's pre-check would
+        # run on ffagent's numbers for every turn and disagree with what launch() then does.
         queued = self.db.query(
-            "SELECT t.*, c.state AS conv_state, c.base_sha AS conv_base_sha FROM turn t"
+            "SELECT t.*, c.state AS conv_state, c.base_sha AS conv_base_sha,"
+            " c.agent_class AS conv_agent_class FROM turn t"
             " JOIN conversation c ON c.id=t.conversation_id"
             " WHERE t.status='queued' ORDER BY t.queued_at, t.id")
         for turn in queued:
@@ -3960,9 +4222,11 @@ class Watcher:
             # BOTH CEILINGS, and a dispatch is exempt from both for the same reason: handing a
             # turn to a container that is already running creates nothing, so neither the box
             # nor this lane is asked for another place.
-            if (self.workload_room() <= 0 or self.agent_room() <= 0) and not self.pool_would_serve(
-                    (turn_options(turn).get("ref")
-                     or turn["conv_base_sha"] or self.cfg["base_ref"])):
+            turn_class = self.conversation_class(turn, "conv_agent_class")
+            if ((self.workload_room() <= 0 or self.agent_room(turn_class) <= 0)
+                    and not self.pool_would_serve(
+                        (turn_options(turn).get("ref") or turn["conv_base_sha"]
+                         or class_cfg(self.cfg, turn_class)["base_ref"]), turn_class)):
                 break
             cap = CAPABILITIES
             if turn["conv_state"] == "running":
@@ -4096,7 +4360,16 @@ class Watcher:
     # launch
     # ======================================================================================
 
-    def build_job(self, turn, conv, run_id, att_dir):
+    def build_job(self, turn, conv, run_id, att_dir, ccfg=None, agent_class=None):
+        """The job.json a container is handed.
+
+        `ccfg` and `agent_class` are this conversation's class and its config block. They are
+        passed in rather than re-derived so that the job and the ffbox argv launch() builds
+        beside it cannot disagree about which clocks this run is under. Defaulted for the tests
+        and any caller that has no conversation in hand.
+        """
+        agent_class = agent_class or self.conversation_class(conv)
+        ccfg = ccfg or class_cfg(self.cfg, agent_class)
         cap = CAPABILITIES
         msgs = self.db.query(
             "SELECT * FROM message WHERE turn_id=? ORDER BY CAST(discord_id AS INTEGER)",
@@ -4152,8 +4425,11 @@ class Watcher:
         job = {
             "schema": 1,
             "run_id": run_id,
+            # agent_class is recorded and read by nothing in the container. It is here so a run
+            # directory harvested months from now says which kind of container produced it,
+            # which is a question the record cannot otherwise answer.
             "turn": {"id": turn["id"], "seq": turn["seq"], "trigger": turn["trigger"],
-                     "lane": turn["lane"]},
+                     "lane": turn["lane"], "agent_class": agent_class},
             "conversation": {
                 "id": conv["id"], "kind": conv["kind"], "thread_id": conv["thread_id"],
                 "channel_id": conv["channel_id"], "guild_id": conv["guild_id"],
@@ -4191,7 +4467,10 @@ class Watcher:
             "note": turn["note"],
             # A deliberate re-base is announced in the turn's own prompt (design section 6), not
             # left for the model to notice that the line numbers moved.
-            "rebase": ({"from": turn["rebased_from"], "to": self.cfg["base_ref"]}
+            # THIS CLASS's base_ref: the string goes into the agent's own prompt as the branch
+            # it was re-based onto, so it has to name the branch this container actually started
+            # from.
+            "rebase": ({"from": turn["rebased_from"], "to": ccfg["base_ref"]}
                        if turn["rebased_from"] else None),
             # Harness-owned verification, run by the container task AFTER the agent exits. The
             # agent cannot turn this off: it is read from job.json, which is mounted read-only.
@@ -4250,9 +4529,14 @@ class Watcher:
                       "actor": turn["trust_actor"] or "",
                       "why": turn["trust_reason"] or ""},
             "venue": {"kind": turn["venue"] or "public"},
-            "limits": {"agent_secs": self.cfg["agent_secs"],
-                       "warmup_secs": self.cfg["warmup_secs"],
-                       "kill_grace_secs": self.cfg["kill_grace_secs"]},
+            # THIS CLASS's clocks, the same three launch() puts on the ffbox argv. Read from
+            # the flat config until 2026-09-01, which was right while there was one class and
+            # would now make an ffdev run RECORD ffagent's numbers while running under its own.
+            # job.json is what a run directory is read back from months later, and a record that
+            # disagrees with what happened is worse than no record.
+            "limits": {"agent_secs": ccfg["agent_secs"],
+                       "warmup_secs": ccfg["warmup_secs"],
+                       "kill_grace_secs": ccfg["kill_grace_secs"]},
             "out_dir": "/ffbox/out",
             "dry_run": self.dry_run,
         }
@@ -4440,6 +4724,29 @@ class Watcher:
         except (IndexError, KeyError):
             return None
 
+    @staticmethod
+    def conversation_class(conv, column="agent_class"):
+        """Which agent class runs this conversation's turns. Always one of AGENT_CLASSES.
+
+        GUARDED FOR AN ABSENT COLUMN, not for a NULL one. The column is NOT NULL with a default,
+        so no row has a NULL in it -- but ffwatch migrates the database on start and a caller can
+        be holding a row read before that ran, where the column is missing entirely. A database
+        that predates classes had one kind of container, and that kind was ffagent.
+
+        A value that is not a known class also reads as the default. Nothing writes one -- every
+        writer validates -- but this is called on the launch path, and a turn running under the
+        default beats a turn that does not run.
+
+        `column` is for schedule(), which reads a JOINed turn row where the conversation's column
+        arrives as `conv_agent_class`. The normalisation has to be the same in both places, so
+        there is one function rather than two that can drift.
+        """
+        try:
+            got = conv[column] if conv is not None else None
+        except (IndexError, KeyError):
+            return DEFAULT_AGENT_CLASS
+        return got if got in AGENT_CLASSES else DEFAULT_AGENT_CLASS
+
     def run_ref(self, turn, conv):
         """WHERE THIS RUN'S CLONE STARTS, and the one place that ladder is written.
 
@@ -4468,7 +4775,10 @@ class Watcher:
                 log(f"conversation {conv['id']}: ignoring --ref {override!r}; its work "
                     f"continues on {conv_branch}")
             return conv_branch
-        return override or conv["base_sha"] or self.cfg["base_ref"]
+        # THE CLASS'S base_ref, not the flat one: the day ffdev moves to develop, an ffdev
+        # conversation with no branch and no pinned sha has to start there.
+        return (override or conv["base_sha"]
+                or class_cfg(self.cfg, self.conversation_class(conv))["base_ref"])
 
     def mirror_carries(self, branch):
         """Is `branch` in the local git mirror, which is the only place a container can see it.
@@ -4546,6 +4856,12 @@ class Watcher:
         turn = self.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (turn["conversation_id"],))
         cap = CAPABILITIES
+        # WHICH KIND OF CONTAINER, settled when this conversation was opened. Everything below
+        # that is a clock, a base branch or a pool comes from `ccfg` rather than `self.cfg`;
+        # anything that is about the pipeline rather than the container still comes from the
+        # flat config, `verify_secs` included -- see build_job.
+        cls = self.conversation_class(conv)
+        ccfg = class_cfg(self.cfg, cls)
 
         run_id = f"d{conv['id']}t{turn['seq']}-{uuid.uuid4().hex[:8]}"
         conv_dir = self.conv_dir(conv["id"])
@@ -4568,7 +4884,7 @@ class Watcher:
         self.share_with_container(claude_dir)
 
 
-        job = self.build_job(turn, conv, run_id, att_dir)
+        job = self.build_job(turn, conv, run_id, att_dir, ccfg=ccfg, agent_class=cls)
         job_path = os.path.join(run_dir, "job.json")
         with open(job_path, "w", encoding="utf-8") as fh:
             json.dump(job, fh, indent=2, ensure_ascii=False)
@@ -4626,16 +4942,17 @@ class Watcher:
                     f"in neither the mirror nor {self.cfg['git_dir']}, so this turn cannot "
                     f"continue it. Nothing was run. Put the branch back, or close this "
                     f"conversation so the next message starts a new one.")
-        pool_id = self.pool_claim_for(ref)
-        if not pool_id and not self.pool_has_room(for_containers=0):
-            # A STAGED CONTAINER MUST NEVER BE THE REASON A REAL TURN CANNOT START. This launch
-            # is about to ask for a 22 GiB workspace and the machine is short; a container that
-            # is only waiting in case somebody asks something is exactly what should go first.
-            # One is enough to make room for one, so this does not empty the pool in a panic.
-            for c in self.pool_warm():
-                log(f"pool: evicting {c['id']} to make room for run {run_id}")
-                self.pool_drop(c["id"])
-                break
+        # NOTHING IS EVICTED HERE, AND THAT IS THE POINT. Until 2026-09-01 a cold launch that
+        # found memory short destroyed a warm container to make room for itself. With one pool
+        # that was a trade inside one lane. With two it is one class taking another's warm
+        # container, and the turn it is taken from then pays a forty-second cold launch it did
+        # nothing to deserve.
+        #
+        # What bounds containers is max_concurrent_runs, which every class and CI count against,
+        # and a turn that cannot get a place under it QUEUES: schedule() leaves it queued and
+        # tries again next pass, and it starts when a run finishes and gives its place back.
+        # That is the answer everywhere else in this daemon, and it is now the answer here.
+        pool_id = self.pool_claim_for(ref, cls)
         # THE CONTAINER'S CLAUDE DIRECTORY IS ITS OWN, because that mount was fixed before
         # anyone knew which conversation it would serve. The session the turn resumes is copied
         # in here and moved back when the run ends; a handful of megabytes, and the alternative
@@ -4683,17 +5000,24 @@ class Watcher:
             self.stage_attachments_into(os.path.join(self.pool_dir(pool_id), "in"), att_dir)
             cmd += ["--dispatch", pool_id, "--pool-dir", self.pool_dir()]
         else:
-            cmd += ["--mount", f"{container_claude}:/ffbox/claude"]
+            # A COLD CONTAINER IS LABELLED HERE. A dispatched one already carries the label it
+            # was staged with, and pool_claim_for only hands back containers of this class, so
+            # the two routes agree.
+            cmd += ["--agent-class", cls,
+                    "--mount", f"{container_claude}:/ffbox/claude"]
         cmd += [
             # Nothing is mounted at /usr/local/bin/ffdiscord, on purpose. The container has
             # no ffdiscord of any kind — not the real CLI (it would need a token) and not the
             # phase-2 outbox shim (it would let the container author a message). The ff-discord
             # skills invoke the CLI by name, so leaving PATH empty of it is exactly what makes
             # that skill text inert in here; both preambles tell the lane so up front.
-            "--agent-timeout", str(self.cfg["agent_secs"]),
-            "--warmup-timeout", str(self.cfg["warmup_secs"]),
+            "--agent-timeout", str(ccfg["agent_secs"]),
+            "--warmup-timeout", str(ccfg["warmup_secs"]),
+            # NOT PER CLASS. verify_secs bounds the harness's own verification after the agent
+            # has exited, which is the same Unity suite whichever container ran the turn, and it
+            # is not in either class's section of config.json.
             "--verify-timeout", str(self.cfg["verify_secs"]),
-            "--kill-grace", str(self.cfg["kill_grace_secs"]),
+            "--kill-grace", str(ccfg["kill_grace_secs"]),
         ]
         if job.get("plugin_dir"):
             cmd += ["--mount",
@@ -4726,14 +5050,15 @@ class Watcher:
         env = dict(os.environ)
         env["FFBOX_RESULTS"] = runs_dir          # so ffbox's OUT is exactly our run_dir
 
-        log(f"run {run_id}: lane={turn['lane']} tools={cap['tools']} "
-            f"resume={job['session']['resume']}")
+        log(f"run {run_id}: agent={cls} lane={turn['lane']} tools={cap['tools']} "
+            f"resume={job['session']['resume']} "
+            f"{'pooled' if pool_id else 'cold'}")
         started = time.monotonic()
         try:
             proc = subprocess.run(cmd, env=env, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace",
-                                  timeout=int(self.cfg["warmup_secs"])
-                                  + int(self.cfg["agent_secs"]) + 300)
+                                  timeout=int(ccfg["warmup_secs"])
+                                  + int(ccfg["agent_secs"]) + 300)
             rc, stderr = proc.returncode, proc.stderr
         except subprocess.TimeoutExpired:
             # ffbox owns the three clocks; this outer timeout only catches ffbox itself wedging.
@@ -5148,7 +5473,8 @@ class Watcher:
         finally:
             fh.close()
 
-    def submit(self, prompt, *, kind="shell", ref=None, branch=None, title=None):
+    def submit(self, prompt, *, kind="shell", ref=None, branch=None, title=None,
+               agent_class=DEFAULT_AGENT_CLASS):
         """A local prompt becomes a conversation, a message and a queued turn. Returns turn id.
 
         The SAME rows a Discord message produces, so everything downstream — scheduler,
@@ -5160,9 +5486,21 @@ class Watcher:
         kind takes the dev lane, the same capabilities and the same private venue. It exists
         so a page submission is distinguishable from a terminal one on the conversation list,
         which is a question people ask of the record and could not previously answer.
+
+        `agent_class` IS obeyed, and this is the only place it can be chosen. It is written on
+        the conversation and every later turn of that conversation reads it back, so the choice
+        made here decides which kind of container the whole conversation runs in. follow_up()
+        takes no such argument for exactly that reason.
         """
         if kind not in LOCAL_KINDS:
             raise ValueError(f"{kind!r} is not a local ingress; expected one of {LOCAL_KINDS}")
+        # VALIDATED HERE because this is the writer. ffweb checks too, so the page can answer in
+        # a sentence rather than showing an operator a subprocess's stderr, but a bad class must
+        # not reach the database whatever route it came in by: it would be written on a
+        # conversation, read on every later turn, and match no pool.
+        if agent_class not in AGENT_CLASSES:
+            raise ValueError(f"{agent_class!r} is not an agent class; expected one of "
+                             f"{', '.join(AGENT_CLASSES)}")
         prompt = (prompt or "").strip()
         if not prompt:
             raise ValueError("empty prompt")
@@ -5172,7 +5510,8 @@ class Watcher:
         first_line = prompt.splitlines()[0][:100]
         conv_id = self.upsert_conversation(
             key, kind=kind, channel_id=None, title=first_line,
-            root_message_id=key, opener=getpass.getuser(), is_thread=False)
+            root_message_id=key, opener=getpass.getuser(), is_thread=False,
+            agent_class=agent_class)
         self.insert_message(conv_id, {
             "id": key,
             "author": {"id": str(os.getuid()), "username": getpass.getuser(), "bot": False},
@@ -7214,7 +7553,13 @@ def build_parser():
     sp = sub.add_parser("pool", help="staged containers waiting for a request")
     sp.add_argument("action", nargs="?", default="status",
                     choices=["status", "stage", "drop"])
-    sp.add_argument("id", nargs="?", help="for drop: one pool id, or all of them if omitted")
+    # ONE OPTIONAL POSITIONAL, whose meaning already depends on `action`, so `stage` reads it as
+    # a class and `drop` as an id rather than the parser growing a second slot that is wrong for
+    # whichever verb did not want it.
+    sp.add_argument("target", nargs="?", metavar="ID|CLASS",
+                    help="for drop: one pool id, or all the idle ones if omitted. For stage: "
+                         "which agent class to stage (%s; default %s)."
+                         % ("/".join(AGENT_CLASSES), DEFAULT_AGENT_CLASS))
     sp = sub.add_parser("approve", help="release outbound rows held for approval")
     sp.add_argument("id", nargs="+", type=int, help="outbound row id(s) from `ffwatch status`")
     sp = sub.add_parser("submit", help="run a prompt through the pipeline (the local ingress)")
@@ -7230,6 +7575,14 @@ def build_parser():
                          "with its own transcript rather than meeting the question cold. "
                          "--source is not consulted — the front door is a property of the "
                          "conversation, which already exists.")
+    sp.add_argument("--agent", choices=list(AGENT_CLASSES), default=DEFAULT_AGENT_CLASS,
+                    metavar="CLASS",
+                    help="which kind of agent container runs this conversation: %s "
+                         "(default %s). Settled by the OPENING turn and read on every turn "
+                         "afterwards, so it is ignored with a note under --conversation. Each "
+                         "class has its own warm pool, its own ceiling and its own section in "
+                         "config.json."
+                         % ("/".join(AGENT_CLASSES), DEFAULT_AGENT_CLASS))
     sp.add_argument("--ref", help="check the workspace out at this ref (default: base_ref)")
     sp.add_argument("--branch",
                     help="name the branch this run starts on, instead of the run id. It is "
@@ -7322,15 +7675,25 @@ def main(argv=None):
             # Ignores idle_agents on purpose: this is somebody asking for one, not the keeper
             # deciding it wants one. It still respects the memory check, which is the rule that
             # keeps the pool from taking what the runs need.
-            pool_id = watcher.pool_stage()
-            print(f"staging {pool_id}" if pool_id else "nothing staged; see the log")
+            agent_class = args.target or DEFAULT_AGENT_CLASS
+            if agent_class not in AGENT_CLASSES:
+                print(f"ffwatch: {agent_class!r} is not an agent class; expected one of "
+                      f"{', '.join(AGENT_CLASSES)}", file=sys.stderr)
+                return 2
+            pool_id = watcher.pool_stage(agent_class)
+            print(f"staging {agent_class} {pool_id}" if pool_id
+                  else "nothing staged; see the log")
             return 0 if pool_id else 1
         if args.action == "drop":
             # NAMING ONE IS AN INSTRUCTION; naming none is a request to tidy up. So an explicit
             # id may take a container mid-turn and its spool with it — an operator asking for
             # that has a reason — and the bare form only ever takes what nothing has claimed.
-            explicit = bool(args.id)
-            ids = [args.id] if explicit else [c["id"] for c in watcher.pool_unclaimed()]
+            #
+            # BOTH CLASSES, on the bare form. "tidy up" means every idle staged container on the
+            # box, and a drop that quietly spared one class would leave containers an operator
+            # believes they have just destroyed.
+            explicit = bool(args.target)
+            ids = [args.target] if explicit else [c["id"] for c in watcher.pool_unclaimed()]
             for pool_id in ids:
                 watcher.pool_drop(pool_id, force=explicit)
                 print(f"dropped {pool_id}")
@@ -7338,7 +7701,8 @@ def main(argv=None):
                 print("nothing staged is idle")
             return 0
         lines = watcher.pool_status()
-        print("\n".join(lines) if lines else "the pool is off (idle_agents: 0)")
+        print("\n".join(lines) if lines
+              else "every pool is off (no class has a non-zero pool.idle)")
         return 0
     if args.cmd == "approve":
         done = watcher.approve(args.id)
@@ -7385,11 +7749,17 @@ def main(argv=None):
                     if getattr(args, opt) is not None:
                         print(f"ffwatch: --{opt} is ignored when continuing a conversation; "
                               f"the opening turn settled it", file=sys.stderr)
+                # --agent has a default rather than None, so "was it passed" is the comparison
+                # rather than "is it set". Same rule as --ref and --branch: the opening turn
+                # settled the class, and a later turn cannot move it.
+                if args.agent != DEFAULT_AGENT_CLASS:
+                    print(f"ffwatch: --agent is ignored when continuing a conversation; the "
+                          f"opening turn settled it", file=sys.stderr)
                 message_id, turn_id = watcher.follow_up(args.conversation, prompt)
             else:
                 message_id = None
                 turn_id = watcher.submit(prompt, kind=args.source, ref=args.ref,
-                                         branch=args.branch)
+                                         branch=args.branch, agent_class=args.agent)
         except ValueError as exc:
             print(f"ffwatch: {exc}", file=sys.stderr)
             return 2
