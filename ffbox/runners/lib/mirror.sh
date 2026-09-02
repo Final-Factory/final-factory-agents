@@ -104,11 +104,19 @@ ffghr_mirror_serve_request() {
     [ -f "$_stage/fetch.done" ] && return 1
 
     _want=$(head -1 "$_stage/fetch.request" 2>/dev/null | tr -d ' \r\n')
+    # EVERY CHARACTER, NOT THE FIRST EIGHT. This used to spell the check as eight literal [0-9a-f]
+    # classes followed by a length test, which accepted any 40-character string whose first eight
+    # happened to be hex: `aaaaaaaa$(id>/tmp/pwn)zzzzzzzzzzzzzzzzzz` passed both halves and reached
+    # git. Nothing came of it -- every use of $_want below is quoted, so there was no word
+    # splitting and no substitution, and a leading hex digit cannot be read as an option -- but the
+    # comment above claimed a property the code did not have, on a string that reaches a command
+    # line on the HOST, where the supervisor has full network access and the stored credential.
+    #
+    # The negative class is the whole check: one non-hex character anywhere and it is not a commit.
     case "$_want" in
-        [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
-            [ "${#_want}" = 40 ] || { echo "fetch.request is not a 40-hex commit; ignoring"; _want="" ;} ;;
         "") ;;
-        *) echo "fetch.request is not a commit id; ignoring"; _want="" ;;
+        *[!0-9a-f]*) echo "fetch.request is not a commit id; ignoring"; _want="" ;;
+        *) [ "${#_want}" = 40 ] || { echo "fetch.request is not a 40-hex commit; ignoring"; _want="" ;} ;;
     esac
 
     if ffghr_mirror_fetch "$_want"; then
