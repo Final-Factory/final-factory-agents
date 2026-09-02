@@ -297,7 +297,10 @@ ffghr_machine_id() {
 # main.yml names them in its env: block and changing a workflow file needs a token scope this box
 # deliberately lacks. unity-license.sh prefers the mounted file, so those secrets go unused the
 # moment this exists -- but they are still handed to the job, and only editing main.yml stops that.
-FFGHR_UNITY_ULF=${FFGHR_UNITY_ULF:-$FFBOX_CONFIG_DIR/unity/Unity_lic.ulf}
+# /opt/ffcache, NOT $FFBOX_CONFIG_DIR: the rootless daemon runs as ffbox-container and cannot
+# traverse a mode-700 home, so a licence under ~/.config fails the MOUNT and the container never
+# starts. See the long note in ffbox/unity-offline-license.sh.
+FFGHR_UNITY_ULF=${FFGHR_UNITY_ULF:-/opt/ffcache/unity/Unity_lic.ulf}
 
 # --- egress, per section 3 --------------------------------------------------------------------
 # ffbox is on 10.80.0.0/24. These must not overlap it: both fences live in the same daemon.
