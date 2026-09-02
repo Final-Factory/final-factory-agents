@@ -281,7 +281,7 @@ class Server:
     _session_seq = 0
 
     def __init__(self, state, db_path, blobs, ffwatch_py, enable_actions=False, tls=False,
-                 login=True, session_path=None, ttl=ffweb.SESSION_TTL_SECS):
+                 login=True, session_path=None, ttl=ffweb.SESSION_TTL_SECS, ffstatus=None):
         scheme = "https" if tls else "http"
         # The port has to be known BEFORE App is built: App copies the set it is given, so an
         # allowlist filled in afterwards would silently stay empty and every case here would
@@ -299,9 +299,11 @@ class Server:
             session_path = os.path.join(TMPROOT, f"sessions-{Server._session_seq}.json")
         self.session_path = session_path
         self.db_path = db_path
+        # NEVER the real ffstatus.sh unless a case asks for it: that one shells out to
+        # docker, and this file runs on machines that have none.
         self.app = ffweb.App(db_path, blobs, state, ffwatch_py,
                              enable_actions=enable_actions, quiet=True, origins=origins,
-                             scheme=scheme,
+                             scheme=scheme, ffstatus=ffstatus or STUB_FFSTATUS,
                              sessions=ffweb.Sessions(ttl=ttl, path=session_path))
         ctx = None
         self.client_ctx = None
@@ -469,6 +471,50 @@ os.chmod(STUB_FFWATCH, 0o755)
 CALLS = os.path.join(TMPROOT, "ffwatch-calls.log")
 os.environ["FFWEB_TEST_CALLS"] = CALLS
 
+# The stub ffstatus.sh. The real one runs `docker ps` against the box's daemon, which this file
+# has none of and wants none of — what is under test here is the PAGE: that it renders what the
+# script reported, and that it stays a page when the script cannot report anything. The document
+# is the shape ffbox/ffstatus.sh --json actually emits (one warm spare, one short pool, one busy
+# CI runner) and is fed through an env var so a case can change it without another stub.
+FFSTATUS_DOC = {
+    "host": "testbox",
+    "generated_at": "2026-09-02T15:00:00+00:00",
+    "box": {"used": 3, "max": 10},
+    "pools": [
+        {"class": "ffagent", "idle": 2, "waiting": 1, "busy": 0, "max": 10},
+        {"class": "ffdev", "idle": 1, "waiting": 1, "busy": 0, "max": 3},
+        {"class": "ci", "idle": 1, "waiting": 0, "busy": 1, "max": 3},
+    ],
+    "containers": [
+        {"lane": "spare", "class": "ffagent", "name": "ffbox-agent-pool-deadbeef",
+         "slot": "3", "state": "warm", "ttl_secs": 13359, "ref": "master",
+         "uptime": "18 minutes"},
+        {"lane": "agent", "class": "ffdev", "name": "ffbox-dev-t1-99aa", "slot": "5",
+         "state": "running*", "ttl_secs": None, "ref": None, "uptime": "2 minutes"},
+        {"lane": "ci", "class": None, "name": "ffghr-testbox-1-abcd", "slot": None,
+         "state": "busy", "ttl_secs": None, "ref": None, "uptime": "an hour"},
+    ],
+    "infrastructure": [{"name": "ffbox-egress", "status": "Up 37 hours"}],
+}
+FFSTATUS_STUB = r'''#!/usr/bin/env bash
+[ -n "${FFWEB_TEST_STATUS_RC:-}" ] && exit "$FFWEB_TEST_STATUS_RC"
+cat "$FFWEB_TEST_STATUS_DOC"
+'''
+STUB_FFSTATUS = os.path.join(STUB_DIR, "ffstatus_stub.sh")
+with open(STUB_FFSTATUS, "w", encoding="utf-8") as fh:
+    fh.write(FFSTATUS_STUB)
+os.chmod(STUB_FFSTATUS, 0o755)
+STATUS_DOC_PATH = os.path.join(TMPROOT, "ffstatus-doc.json")
+
+
+def write_status_doc(doc):
+    with open(STATUS_DOC_PATH, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh)
+
+
+write_status_doc(FFSTATUS_DOC)
+os.environ["FFWEB_TEST_STATUS_DOC"] = STATUS_DOC_PATH
+
 # The real thing, for the one case that has to prove the whole chain writes a row. Everywhere
 # else the stub is the point: it records argv and touches nothing, so "the UI delegated" is
 # asserted rather than inferred from a side effect that a stray UPDATE here would also produce.
@@ -476,7 +522,7 @@ REAL_FFWATCH = os.path.join(HERE, "ffwatch.py")
 
 # Every GET route, for the crawl tests. Kept in one place so a new route joins them by being
 # added here rather than by being remembered.
-ROUTES = ["/", "/lanes", "/outbound", "/outbound?status=pending",
+ROUTES = ["/", "/lanes", "/outbound", "/status", "/outbound?status=pending",
           "/?kind=bug_report", "/?state=closed", "/?verdict=ANSWERED", "/?lane=answer",
           "/?read=all", "/?read=read", "/?read=unread",
           "/conversation/1", "/conversation/2", "/conversation/3", "/conversation/4",
@@ -484,9 +530,9 @@ ROUTES = ["/", "/lanes", "/outbound", "/outbound?status=pending",
          ["/blob/" + d for d in BLOB_IDS.values()]
 
 
-def serve(enable_actions=False, db_path=None, ffwatch_py=None):
+def serve(enable_actions=False, db_path=None, ffwatch_py=None, ffstatus=None):
     return Server(STATE, db_path or DB_PATH, BLOBS, ffwatch_py or STUB_FFWATCH,
-                  enable_actions=enable_actions)
+                  enable_actions=enable_actions, ffstatus=ffstatus)
 
 
 
@@ -1133,6 +1179,77 @@ def test_a_long_subagent_chain_is_not_truncated():
           [n["uuid"] for n, _ in chain[:5]])
     check("descend is bounded", len(ffweb.descend(by_uuid["u0"], limit=10)) == 10)
     del order
+
+
+def test_the_box_page_reports_what_the_status_script_said():
+    """The page is a view of ffstatus.sh and nothing else.
+
+    ffweb does not read docker itself, on purpose: the rules for counting this box are subtle
+    (a dispatched spare still carries the pool label, an idle CI runner is a running container)
+    and a second implementation here would drift from the one an operator runs in a terminal.
+    So what is checked is the wiring — the document reaches the page, the numbers are the
+    script's, and a script that cannot answer leaves a page rather than a 500.
+    """
+    write_status_doc(FFSTATUS_DOC)
+    srv = serve()
+    try:
+        code, _hdr, body = srv.get("/status")
+        text = text_of(body)
+        check("the box page serves", code == 200, code)
+        check("every container the script listed is on it",
+              all(c["name"] in text for c in FFSTATUS_DOC["containers"]),
+              [c["name"] for c in FFSTATUS_DOC["containers"] if c["name"] not in text])
+        check("the box ceiling is stated as the script gave it", "3 of 10" in text)
+        check("a spare's remaining idle life is hours and minutes, not raw seconds",
+              "3h42m" in text and "13359" not in text)
+        check("the state is a pill", 'class="pill warm"' in text)
+        # Per row, and only inside the pools table: `ffagent` also names a column in the
+        # container table above it, so a document-wide count would pass on the wrong markup.
+        # Two of the three fixture pools are genuinely short — ffagent is one spare down, and
+        # ci has its idle runner busy with nothing yet minted behind it.
+        pools = text.split("<h2>pools</h2>", 1)[-1].split("<h2>infrastructure", 1)[0]
+        prow = {c: next((r for r in re.findall(r"<tr>(.*?)</tr>", pools, re.S)
+                         if f"<td>{c}</td>" in r), "") for c in ("ffagent", "ffdev", "ci")}
+        check("every pool the script reported has a row",
+              all(prow.values()), [c for c, r in prow.items() if not r])
+        check("a pool below its idle target is marked",
+              "below target" in prow["ffagent"] and "below target" in prow["ci"], prow)
+        check("and one holding what it was asked to is not",
+              "below target" not in prow["ffdev"], prow["ffdev"])
+        check("infrastructure is listed apart from the workspace containers",
+              "ffbox-egress" in text)
+        check("the nav offers the page from everywhere",
+              all('href="/status"' in text_of(srv.get(p)[2]) for p in ("/", "/lanes")))
+
+        # docker down, which is exactly when somebody opens this page.
+        os.environ["FFWEB_TEST_STATUS_RC"] = "1"
+        try:
+            code, _hdr, body = srv.get("/status")
+        finally:
+            os.environ.pop("FFWEB_TEST_STATUS_RC", None)
+        check("a script that fails still renders a page", code == 200, code)
+        check("and it says so rather than showing an empty box",
+              "exit 1" in text_of(body) or "no output" in text_of(body),
+              text_of(body)[-400:])
+
+        # The documented failure shape: the script reached the daemon and the daemon refused.
+        write_status_doc({"error": "could not reach the ffbox daemon at unix:///nope.sock"})
+        try:
+            code, _hdr, body = srv.get("/status")
+            check("an error document becomes the sentence on the page",
+                  code == 200 and "could not reach the ffbox daemon" in text_of(body), code)
+            check("and no container table is invented for it",
+                  "ffbox-agent-pool-deadbeef" not in text_of(body))
+        finally:
+            write_status_doc(FFSTATUS_DOC)
+
+        # Nothing on this page acts, so nothing on it may be a form.
+        code, _hdr, body = srv.get("/status")
+        check("the box page offers no actions",
+              "<form" not in text_of(body).replace('<form class="logout"', ""),
+              text_of(body).count("<form"))
+    finally:
+        srv.stop()
 
 
 def test_actions_are_off_by_default():
@@ -2416,6 +2533,7 @@ def main():
         test_blob_route_refuses_traversal,
         test_transcript_tree_nests_and_terminates,
         test_a_long_subagent_chain_is_not_truncated,
+        test_the_box_page_reports_what_the_status_script_said,
         test_actions_are_off_by_default,
         test_actions_call_ffwatch_not_the_database,
         test_the_agent_class_is_chosen_only_when_a_conversation_opens,
