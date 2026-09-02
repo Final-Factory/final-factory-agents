@@ -687,11 +687,11 @@ echo "[ffbox] run $RUN_ID"
 
 # --- workspace: CI's cache tar, then the commits since, from the local mirror -----------------
 #
-# WHAT THIS REPLACED. A run used to be a ZFS clone of golden: flock, update-golden.sh, zfs
-# snapshot, zfs clone. That needed /opt/FinalFactory to exist, to be current, and to carry a warm
-# Library that 04-warmLibrary.sh built by opening the project in Unity every five minutes. All of
-# it is gone. CI already writes a tar of a whole finished workspace -- worktree, .git and that
-# same Library -- and the local git mirror has the commits since.
+# WHAT THIS REPLACED. A run used to be a ZFS clone of golden: take the golden lock, fast-forward
+# /opt/FinalFactory to origin, zfs snapshot, zfs clone. That needed golden to exist, to be current,
+# and to carry a warm Library built by opening the project in Unity every five minutes. All of it
+# is gone, updater script included. CI already writes a tar of a whole finished workspace --
+# worktree, .git and that same Library -- and the local git mirror has the commits since.
 #
 # THE COST, MEASURED: about 35 seconds to restore a 22 GB entry onto the ramdrive, against a
 # near-instant copy-on-write clone. Not free, but the same order as the ZFS clone it replaced and

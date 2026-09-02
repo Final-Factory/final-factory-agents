@@ -60,9 +60,12 @@ git -C /opt/FinalFactory push origin refs/ffbox/<branch>:refs/heads/<branch>
 and lets git find a credential. `/opt/FinalFactory` has an https remote and
 `credential.helper store`, so the real answer is the token in `~/.git-credentials`.
 
-`FinalFactory` is private, so the same credential also serves every read: the golden clone in
-`ffbox/02-zfsSetup.sh:241`, `git fetch` and `git lfs fetch` in `ffbox/update-golden.sh`, and the
-mirror under `/opt/ffcache`.
+`FinalFactory` is private, so the same credential also serves the reads. The one on the run path
+is the local git mirror at `/opt/ffcache/mirror/FinalFactory.git`, which has a github.com remote
+and its own `credential.helper store` (`ffbox/runners/03-image.sh:177-186`); every run fetches the
+commits since CI's workspace tar through it. The golden clone in `ffbox/02-zfsSetup.sh:241` needs
+the same credential, but that is a one-time setup step — `/opt/FinalFactory` is no longer on the
+run path at all, and nothing fetches it automatically.
 
 Resource owner: `Final-Factory`. Repository access: **only** `Final-Factory/FinalFactory`.
 

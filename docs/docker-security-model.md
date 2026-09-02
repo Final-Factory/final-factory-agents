@@ -351,11 +351,12 @@ verification gate compiles and tests against `base_sha`, which is whatever `deve
 clone was taken, so a green, confident pull request can still be unmergeable. Nobody finds out
 until a human opens it.
 
-**4. Golden's fetch — FIXED, kept here for the record.** This used to read "the clone resolves
-`develop` to `origin/develop` out of golden's snapshot, and `ffbox` never fetches". It does now:
-`ffbox` runs `update-golden.sh --locked` before every clone, under a flock on the golden dataset,
-and REFUSES the run when golden cannot be brought to origin rather than cloning a checkout of
-unknown age. `--no-fetch` is the deliberate opt-out.
+**4. The base's freshness — FIXED, kept here for the record.** This used to read "the clone
+resolves `develop` to `origin/develop` out of golden's snapshot, and `ffbox` never fetches". A run
+no longer clones golden at all: it restores CI's workspace tar and fetches the tip from the local
+git mirror at `/opt/ffcache/mirror/FinalFactory.git`, and REFUSES the run when that fetch fails
+rather than working from an entry of unknown age. `--no-fetch` (`FFBOX_SKIP_FETCH=1`) is the
+deliberate opt-out.
 
 **5. Follow-up turns lose the previous turn's work.** There is no `git apply` in `ffwatch.py`;
 `changes.patch` is recorded and never replayed. Turn 2 clones fresh at the pinned `base_sha`,

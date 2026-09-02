@@ -144,9 +144,9 @@ GOLDEN_DS="${FF_DS}/golden"
 # as 65534 and ffbox/entrypoint.sh cannot map that to anything. Owned by ffbox-container, golden
 # appears as root inside the container, which is exactly how it behaved on the old daemon.
 #
-# Group write and setgid are what keep the OWNER able to work: update-golden.sh runs git in golden
-# and 04-warmLibrary.sh extracts Library into it, both as the owner, who reaches them through the
-# ffbox-container group.
+# Group write and setgid are what keep the OWNER able to work: the owner runs git in golden by
+# hand, and reaches it through the ffbox-container group. The automatic writers that used to need
+# this -- the golden updater and the Library warmer -- are both gone.
 #
 # The owner also needs git to accept a tree it does not own, in GLOBAL config — `-c` and
 # GIT_CONFIG_* are ignored for safe.directory by design. Both paths, because fetching FROM golden
