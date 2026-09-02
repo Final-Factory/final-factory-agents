@@ -593,6 +593,16 @@ cmd_status() {
         return 1
     fi
     say "container id: $_actual (matches)"
+
+    # THE PRE-RELOCATION COPY, IF THIS BOX EVER RAN THE VERSION THAT PUT IT UNDER $HOME. There is
+    # exactly ONE live licence and it is the one above; a leftover is not a backup and does not
+    # follow a refresh, so within a day it is a stale file that looks authoritative.
+    _legacy=${HOME%/}/.config/ffbox/unity/Unity_lic.ulf
+    if [ "$_legacy" != "$ULF" ] && [ -e "$_legacy" ]; then
+        say "NOTE: a leftover licence is still at $_legacy"
+        say "      Nothing reads it. It does NOT track refreshes and will go stale within a day."
+        say "      Delete it:  rm -rf $(dirname "$_legacy")"
+    fi
     return 0
 }
 
