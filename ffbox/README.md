@@ -1243,7 +1243,9 @@ deliberately no merge method on the GitHub client. Note the scope of that claim:
 holds no *git* credential, but it does hold `CLAUDE_CODE_OAUTH_TOKEN` and the Unity account
 secrets, and it can still reach the two vendors those belong to.
 `docs/docker-security-model.md` is the full account, including the gaps this README does not
-cover.
+cover. `CREDENTIALS.md`, next to this file, is what to actually put in each token: the three
+GitHub credentials a box holds, the requests each one makes, and the fine-grained permission set
+that covers those and nothing more.
 
 ### Idle agents: a container that is already warm
 
