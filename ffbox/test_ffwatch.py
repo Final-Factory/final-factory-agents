@@ -3331,6 +3331,27 @@ def test_a_public_reply_is_corrected_when_the_harness_disagrees():
           ffwatch.compose_head(None, turn, "done", {}, honest, None, job) == honest["summary"],
           honest)
 
+    # The private shape, same idle run. This is the one the operator actually reads, and it used
+    # to hand back three rows of bookkeeping under a summary that already said there was nothing
+    # to do — including a harvest refusal, which sounds like lost work and is not: the run wrote
+    # nothing for the harvest to lose.
+    priv = dict(turn, venue="private")
+    idle = ffwatch.compose_head(
+        None, priv, "done", {}, honest, None, job, verification=skipped,
+        publish={"no_branch_reason": "the work descends neither from master develop nor from "
+                                     "the commit this run started at (e4822d1), so it cannot "
+                                     "be bundled"})
+    check("an idle run's private reply is the answer and nothing else",
+          idle == honest["summary"], idle)
+    # And the same rows still print the moment the run DID something, because then they are
+    # about work that exists.
+    real = ffwatch.compose_head(
+        None, priv, "done", {}, lying, None, job,
+        verification=dict(failed, tests_passed=214, tests_failed=0),
+        publish={"no_branch_reason": "the range could not be bundled"})
+    check("a run whose files changed still says where the work went",
+          "no branch: the range could not be bundled" in real, real)
+
 
 def test_publish_opens_a_pull_request():
     print("publication: branch, push, PR")
@@ -3388,8 +3409,8 @@ def test_publish_opens_a_pull_request():
           expected in text and str(run["pr_number"]) in text, text[:500])
     check("and not the branch the agent invented",
           "feature/my-own-branch" not in text.split(lying["summary"])[0], text[:500])
-    check("the reply reports the harness's verification, not the agent's claim",
-          "compiled ✓" in text and "214/214" in text, text[:500])
+    check("a passing suite is not reported at all: the open PR is what says it passed",
+          "compiled" not in text and "214" not in text and "tests" not in text, text[:500])
 
 
 def test_failed_verification_blocks_the_pull_request():
@@ -6171,8 +6192,12 @@ def test_a_run_that_changed_nothing_is_not_verified():
           (ver["ran"], ver["skipped"]) == (0, 1), dict(ver))
     text = json.loads(case.rows("SELECT * FROM outbound WHERE run_id=? AND action='post'",
                                 (run["id"],))[0]["payload_json"])["text"]
-    check("and the reply says so instead of shouting NOT VERIFIED",
-          "no code changed" in text and "NOT VERIFIED" not in text, text[:400])
+    check("and the reply is the answer alone, with no NOT VERIFIED and no bookkeeping",
+          text == "Already fixed on develop.", text[:400])
+    check("nothing tells the reader that a run which changed nothing ran no tests",
+          "no tests" not in text and "NOT VERIFIED" not in text, text[:400])
+    check("nor that it published no branch, which nobody asked it to",
+          "no branch" not in text and "bundled" not in text, text[:400])
 
 
 def run_base_resolution(root, *, base_refs, ending):
@@ -6303,7 +6328,8 @@ def test_the_pull_request_targets_the_branch_the_work_is_based_on():
           (pull["body"] or "")[-300:])
     text = json.loads(case.rows("SELECT * FROM outbound WHERE run_id=? AND action='post'",
                                 (run["id"],))[0]["payload_json"])["text"]
-    check("and the reply names the branch it is proposed into", "→ `master`" in text,
+    check("but the reply does not repeat it: the PR page it links to states its own base",
+          "→" not in text and "master" not in text.split(CONFIDENT_VERDICT["summary"])[-1],
           text[:400])
 
     # A name the container could have written itself. Neither half is trusted: it is not in the
