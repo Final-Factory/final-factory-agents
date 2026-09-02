@@ -310,18 +310,19 @@ cmd_cache() {
                _name="$_branch@$_scope.tar"
                ffghr_cache_name_ok "$_name" || die "'$_ref' does not sanitize to a usable entry name"
 
-               # TAR A SNAPSHOT, NEVER THE LIVE TREE. Golden is a working checkout that ffbox,
-               # an updater and a person all write to, and a five-minute tar over a live .git is a
-               # race it will eventually lose: the first attempt at this died on
+               # TAR A SNAPSHOT, NEVER THE LIVE TREE. Golden is a working checkout a person still
+               # edits, and a five-minute tar over a live .git is a race it will eventually lose:
+               # the first attempt at this died on
                #   tar: ./.git: file changed as we read it
                # because a commit landed while it read. GNU tar exits 1 on that, the archive is
                # discarded, and five minutes are gone. A ZFS snapshot is an atomic point-in-time
                # view and removes the race entirely rather than narrowing it.
                #
-               # THE GOLDEN LOCK IS STILL TAKEN, but now only across the snapshot rather than the
-               # whole read: a snapshot taken mid-import would capture a half-built Library, which
-               # is 04-warmLibrary.sh:89-91's own stated reason for holding it. Held for a second
-               # instead of five minutes.
+               # THE GOLDEN LOCK IS STILL TAKEN when it is there, across the snapshot only -- a
+               # second, not the whole five-minute read. Nothing on the box takes it exclusively
+               # any more: the golden updater that created it is gone, so on a machine that never
+               # ran it the file simply does not exist and there is nothing to wait for. It stays
+               # honoured because a person updating golden by hand can still hold it.
                _glock=${FFBOX_GOLDEN_LOCK:-$FFBOX_CONFIG_DIR/golden.lock}
                _ds=$(df --output=source "$_src" 2>/dev/null | tail -1)
                _snap=""
@@ -333,7 +334,7 @@ cmd_cache() {
                        say "waiting for the golden lock ($_glock)"
                        flock -s -w 3600 8 || die "could not take a shared lock on $_glock within an hour"
                    else
-                       say "WARNING: $_glock does not exist; proceeding without it"
+                       say "no golden lock at $_glock; nothing holds it, proceeding"
                    fi
                }
                drop_golden_lock() { exec 8>&- 2>/dev/null || true; }

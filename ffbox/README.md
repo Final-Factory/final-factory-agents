@@ -302,13 +302,13 @@ Design and rationale: `design/self_update_design.txt`.
 ## How it fits together
 
 ```
-/opt/FinalFactory              rpool/ff/golden      the golden checkout (its own ZFS dataset)
-   │                                  │
-   │ zfs snapshot + clone  ───────────┤             instant, ~0 bytes, warm Library/ included
-   ▼                                  ▼
-/opt/ffruns/run-<id>           rpool/ff/run-<id>
-   │
-   │ bind mount
+/opt/ffcache/entries/<branch>@<unity>.tar   written by CI: a whole finished workspace,
+   │                                        worktree, .git and a warm Library/ included
+   │ restore, ~35s for a 22 GB entry
+   ▼
+per-run tmpfs on /dev/shm  ◄── git fetch ── /opt/ffcache/mirror/FinalFactory.git
+   │                                        every branch, plus the commits since that tar
+   │ mounted at the runner's own path
    ▼
 container workspace            ffbox:latest         FROM the exact image CI tests in
    │
@@ -318,89 +318,34 @@ container workspace            ffbox:latest         FROM the exact image CI test
                                                    ~/ffbox-runs/<id>/changes.patch
 ```
 
-### Why a ZFS clone
+### Why CI's cache and not a clone of a local checkout
 
-`/opt/FinalFactory` is ~11GB with a 5.5GB `.git` and heavy LFS, so copying it per run is a
-non-starter. A ZFS clone is created instantly and consumes only the blocks a run actually
-modifies. The real prize is `Library/`: build Unity's import cache **once** in golden and every
-run inherits it warm, instead of paying a 30–60 minute cold import. Clones are separate
-directories, so concurrent runs also stop fighting over Unity's project lock.
+A run needs Unity's import cache warm — a cold import is 30–60 minutes — and CI already pays for
+one on every job. Restoring the tar CI writes gets the whole thing, `Library/` included, in about
+35 seconds on the ramdrive. What it really buys is that no local checkout is on the run path:
+nothing has to keep `/opt/FinalFactory` current, warm, or clean for a run to work, and no run
+waits behind another one updating it.
 
-Golden must be its own dataset — ZFS cannot snapshot a subdirectory. See "Host setup" below.
+That checkout still exists, on its own ZFS dataset — ZFS cannot snapshot a subdirectory, and
+`ffgithubrunners` snapshots it to seed a cache entry on a box where CI has not written one yet.
+Nothing else reads it. See "The workspace: CI's cache, not a golden clone" under Host setup, and
+`design/ffcache_design.txt` for how the entries and the mirror are built.
 
-### Golden is brought to origin before every clone
+### The base is refreshed before every run
 
-Every launch fast-forwards `/opt/FinalFactory` to `origin/<its branch>` before it snapshots, so a
-run's base is at least as new as origin was when that run started. That is a contract you can
-state. "Latest" is not one: origin can advance a nanosecond after any fetch.
+Every launch fetches the tip from the local mirror before the container starts, so a run's base is
+at least as new as the mirror was when that run started. That is a contract you can state.
+"Latest" is not one: origin can advance a nanosecond after any fetch.
 
-The fetch takes **every branch origin has**, the way a bare `git fetch` does, with `--prune` so
-golden mirrors origin rather than accumulating branches that no longer exist. Only golden's own
-branch is checked out or fast-forwarded onto; the rest are remote-tracking refs a clone inherits.
-It used to fetch just the branch golden sits on, which updates that branch's ref and no other —
-so `origin/develop`, the ref every Discord run checks out, was as stale as the last hand-typed
-fetch.
+**A failed fetch fails the run.** A run whose base is silently a day old produces a patch against
+code nobody is on any more, which is a quieter and worse failure than an honest one. `--no-fetch`
+(or `FFBOX_SKIP_FETCH=1`) is the deliberate opt-out — for reproducing a bug against exactly what
+the cache entry holds, or for working through an outage.
 
-`FFBOX_BASE_REFS` (default `develop master`) is a shorter list with a different job: those
-branches must exist, and their LFS objects are pre-fetched. `git lfs pull` materializes the
-checked-out tree only, so a run that checks out the other branch would find pointers wherever the
-two disagree about a binary — with no network to fix it and a CS0246 that names nothing useful.
-Pre-materializing that for *every* branch would cost far more than it could save, which is why
-this list is not simply "all of them".
-
-The update and the snapshot are **one critical section**, under an exclusive `flock` on
-`~/.config/ffbox/golden.lock`:
-
-```
-flock ───────────────────────────────────────────── release
-  │  fetch → merge --ff-only → lfs pull  │  zfs snapshot  │
-                                                           └── zfs clone, docker run … (unlocked)
-```
-
-Both halves are inside it because `zfs snapshot` is atomic in the crash-consistent sense, not the
-application-consistent one. Fired while another run is half-way through a pull, it captures golden
-mid-write — some files at the new commit, some at the old, and quite possibly a live
-`.git/index.lock`. The clone inherits all of it, and the first thing `ffbox` does with a clone is
-run git in it. The lucky outcome is that git refuses and the run dies there. The unlucky one is a
-working tree that never existed as a commit anywhere, harvested into a patch whose recorded
-`base_sha` does not describe it.
-
-**The lock blocks with no timeout.** A timeout would make mutual exclusion contingent on a number
-somebody guessed, and the first pull that ran longer than the guess would put us back to
-snapshotting mid-write. A run arriving during an update wants that update's result, so waiting is
-the correct behaviour; at `max_concurrent_runs: 8` the worst case is one no-op fetch per run ahead
-of you. `flock` lives on the open file description, so the kernel releases it when the last holder
-dies — there is no stale lock to reap and no PID file to get wrong. Liveness is handled separately
-and never decides who wins: the fetch carries git's low-speed abort so a half-dead connection
-cannot hold the lock all day.
-
-It is released the moment the snapshot exists. `zfs clone` derives from something already
-immutable and cannot be torn, so the expensive half of a launch runs unlocked and the container
-run — an hour of it — holds nothing.
-
-Three things follow from this that are worth knowing:
-
-- **A failed update fails the run.** A run whose base is silently a day old produces a patch
-  against code nobody is on any more, which is a quieter and worse failure than an honest one.
-  `--no-fetch` (or `FFBOX_SKIP_FETCH=1`) is the deliberate opt-out — for reproducing a bug against
-  exactly what golden holds, or for working through an origin outage.
-- **A dirty golden refuses.** Every run clones it, so a stray edit is not one contaminated run, it
-  is every run launched until somebody notices.
-- **It fixes `--ref` as well.** `--ref develop` resolves `origin/develop` out of the clone, so a
-  stale golden used to mean stale remote refs and not just a stale worktree.
-
-The same code path is runnable by hand:
-
-```bash
-sh ffbox/update-golden.sh            # take the lock, fast-forward golden, release
-sh ffbox/update-golden.sh --verify   # also scan every tracked file for unmaterialized LFS pointers
-```
-
-Offline tests: `python3 ffbox/test_golden_lock.py`. They build real git repositories rather than
-stubbing git, and the mutual-exclusion tests observe the lock with `flock -n` at a moment the test
-controls — an updater stopped mid-critical-section by a stub `git` that blocks on a pipe — rather
-than inferring exclusion from the order two processes happened to finish in. An earlier version
-did infer it from ordering, and passed with the `flock` deleted.
+`FFBOX_BASE_REFS` is a different list with a different job: it names the branches the harvest may
+publish against. `ffwatch` passes it from the keys of `publish_bases`, and `harvest-workspace.sh`
+takes the most specific one the work descends from. The mirror carries every branch and its LFS
+objects, so a container with no network can check out either.
 
 ### Why this base image
 
@@ -748,9 +693,10 @@ local git mirror at `/opt/ffcache/mirror/FinalFactory.git`.
 /opt/ffcache/mirror/FinalFactory.git                 every branch, plus its LFS objects
 ```
 
-Nothing reads `/opt/FinalFactory`. It stays on the box as a checkout to edit Final Factory by
-hand; `update-golden.sh` is still the right way to bring **that** up to date, and is no longer
-called by anything automatically.
+Nothing on the run path reads `/opt/FinalFactory`. It stays on the box as a checkout to edit
+Final Factory by hand, and updating it is now an ordinary `git pull` — followed by `git lfs pull`,
+which is not optional here: a tracked binary left as an LFS pointer makes Unity register the DLL
+as a managed plugin and fail with a CS0246 that names nothing useful.
 
 The workspace is a **ramdrive**, under `/dev/shm/ffbox-runs` — the same shape CI's job containers
 have always had. That is worth about 5x: the same 22 GB entry restores in **35s** there against
@@ -1458,9 +1404,9 @@ that is the whole mechanism — nothing else has to be told. At harvest ffbox ta
 specific base the work descends from: a branch off develop has master behind it as well, and
 develop is the descendant of the two, so develop wins; a branch off master does not have develop
 behind it at all. Work descending from neither is refused rather than published against a base
-nobody can name. `update-golden.sh` brings every branch on origin over before the snapshot, and
-pre-materializes the LFS content behind the ones in `FFBOX_BASE_REFS`, because the container has
-no network and can only check out what the clone already holds.
+nobody can name. The local mirror carries every branch and its LFS objects, and the run fetches
+it before the container starts, because the container has no network and can only check out what
+the workspace already holds.
 
 One cost worth knowing: the clone starts checked out at `base_ref`, so a run that switches to the
 other branch churns whatever differs under the warm `Library/` and Unity re-imports it. That is a
