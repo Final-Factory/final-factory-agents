@@ -121,7 +121,7 @@ no leading `-`, no `:` and no `..`. The container cannot name `master` or `devel
 does not name the branch at all.
 
 **There is no merge method.** The `GitHub` class has `create_pull_request` and
-`find_pull_request` and nothing else. Its docstring says the absence is load-bearing. Adding one
+`pull_request_for` and nothing else. Its docstring says the absence is load-bearing. Adding one
 is a design change, not a feature.
 
 **The workspace never touches a host path, and it is gone when the run is.** It was a ZFS clone
