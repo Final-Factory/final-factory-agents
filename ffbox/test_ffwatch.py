@@ -96,10 +96,11 @@ with open(os.environ["FFD_CALLS"], "a", encoding="utf-8") as fh:
     fh.write(json.dumps(sys.argv[1:]) + "\n")
 
 if "--help" in argv:
-    # ffwatch probes `post --help` for --nonce before it sends anything: the CLI ships in the
-    # plugin and a stale cached copy would fail every reply on "unrecognized arguments".
+    # ffwatch probes `post --help` for --nonce and --mention before it sends anything: the CLI
+    # ships in the plugin and a stale cached copy would fail every reply on "unrecognized
+    # arguments".
     print("usage: ffdiscord post [--text TEXT] [--reply-to ID] [--file F] [--silent] "
-          "[--dry-run] [--nonce NONCE]")
+          "[--mention ID] [--dry-run] [--nonce NONCE]")
     sys.exit(0)
 
 
@@ -1838,6 +1839,43 @@ def test_transcript_index():
     check("timestamps are carried over", rows[0]["ts"] == "2026-08-21T00:00:00Z", rows[0])
 
 
+def test_a_reply_addresses_the_person_it_answers():
+    """Max opens by @-mentioning whoever wrote to him, and that one id may ping.
+
+    Every reply goes out --silent, which is what stops an agent quoting "@ben" out of a code
+    comment from pulling a person away. The asker is the exception, and a narrow one: the id
+    comes from Discord's authenticated author.id on the message row, so it is the harness
+    naming who may be notified rather than the container asking for it.
+    """
+    print("the reply addresses the asker")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(14001, "why won't my smelter run?")]
+    case = Case("mentionasker", fixture)
+    case.events(ask_event(14001))
+    case.watcher.once()
+
+    row = case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")[0]
+    payload = json.loads(row["payload_json"])
+    check("the reply opens with the asker's mention",
+          payload["text"].startswith(f"<@{PLAYER}> "), payload["text"][:120])
+    check("and it is still composed --silent", payload["silent"] is True, payload)
+    post = sent_calls(case)[0]
+    check("the sender names that one id as pingable",
+          "--mention" in post and post[post.index("--mention") + 1] == PLAYER, post)
+    check("--silent went out with it, so no other name in the text can ping",
+          "--silent" in post, post)
+
+    # A DM is already a notification. Mentioning someone in their own DM is noise, and it is
+    # the one venue where the reply has nobody else to distinguish them from.
+    check("a DM reply is not given a mention",
+          ffwatch.reply_mention({"kind": "operator_dm"},
+                                {"author_id": LOTHSAHN, "is_bot": 0}) is None)
+    check("a bot is never addressed, which is how a two-bot loop starts",
+          ffwatch.reply_mention({"kind": "ask"}, {"author_id": PLAYER, "is_bot": 1}) is None)
+    check("a turn with no inbound message has nobody to address",
+          ffwatch.reply_mention({"kind": "ask"}, None) is None)
+
+
 def test_outbound_is_recorded_before_it_is_sent():
     print("outbound queue")
     fixture = base_fixture()
@@ -2963,8 +3001,10 @@ def test_the_reply_has_two_shapes():
     case.watcher.once()
     text = json.loads(case.rows("SELECT * FROM outbound WHERE action='post'"
                                 " ORDER BY id")[0]["payload_json"])["text"]
-    check("a public reply the harness has no quarrel with is the answer and nothing else",
-          text == "Checked the belt merger path; this is expected behaviour.", text)
+    check("a public reply the harness has no quarrel with is the answer, addressed to whoever "
+          "asked, and nothing else",
+          text == f"<@{PLAYER}> Checked the belt merger path; this is expected behaviour.",
+          text)
     check("no state, run id, lane, cost, turn count or classification leads it",
           not any(bit in text for bit in ("✅", "lane ", "$0.21", "4 turns", "type:")), text)
     check("and no session id footer, which nobody there could use",
@@ -2981,8 +3021,8 @@ def test_the_reply_has_two_shapes():
     btext = json.loads(blind.rows("SELECT * FROM outbound WHERE action='post'"
                                   " ORDER BY id")[0]["payload_json"])["text"]
     check("a public reply the harness DOES have a quarrel with says so, in one line",
-          btext.splitlines()[0] == "⚠️ I could not work out what this was asking for, "
-                                   "so treat what follows with care.", btext)
+          btext.splitlines()[0] == f"<@{PLAYER}> ⚠️ I could not work out what this was asking "
+                                   "for, so treat what follows with care.", btext)
     check("and the answer still follows it", btext.endswith(
         "Checked the belt merger path; this is expected behaviour."), btext)
     check("the correction names no internal the private shape would have named",
@@ -8434,6 +8474,7 @@ def main():
         test_timeout_is_terminal,
         test_kill_switch,
         test_transcript_index,
+        test_a_reply_addresses_the_person_it_answers,
         test_outbound_is_recorded_before_it_is_sent,
         test_the_acknowledgement_comes_off_when_the_turn_ends,
         test_dry_run,

@@ -485,6 +485,13 @@ THE SENDER ENFORCES, the skills only advise:
     matches, so an agent quoting @ben out of a code comment pings a person. Nothing reaches
     Discord without it unless a lane explicitly asks to ping, and dev-chat escalation is the
     only lane that does.
+  - The asker is the one exception, and the sender still owns it. Every reply opens with
+    <@id> for whoever raised the turn, and the post carries --mention <id>, which whitelists
+    exactly that id in allowed_mentions so it notifies them under --silent. The id is read
+    off the message row — Discord's authenticated author.id — so this is the host naming
+    who may be pinged, never the container asking. Not in a DM, which already notifies, and
+    never for a bot. The prefix is applied on the host rather than in the CLI so that
+    split_for_discord measures the message that is actually posted.
   - Length. check_length exits rather than truncating above 2000 characters. Compose a head
     under HEAD_CAP (1500, leaving room for framing lines) and attach the remainder as a file.
     Never let the cap turn into a failed post or a halved reply.

@@ -107,7 +107,7 @@ Then close the loop with the reporter and the team. The templates below are *con
 checklists, not wording to copy — the voice is [the `max-voice` skill](../max-voice/SKILL.md):
 
 ```bash
-ffdiscord post <thread_id> --text "Fixed and merged to develop, so this one's done. <what was wrong, in one plain sentence>. It'll be in the next build. (PR #123)"
+ffdiscord post <thread_id> --mention <reporter_id> --text "Fixed and merged to develop, so this one's done. <what was wrong, in one plain sentence>. It'll be in the next build. (PR #123)"
 ffdiscord post dev_chat --text "🤖 Auto-fixed a bug report: <title> → PR #123 merged to develop. Root cause: <one line>. Thread: <link>"
 ```
 
@@ -149,7 +149,7 @@ Alert both humans in #dev-chat, and acknowledge the reporter:
 
 ```bash
 ffdiscord post dev_chat --text "🐛 @ben @lothsahn new bug needs a look: <title>. <one-line why it's risky/unclear>. Issue #<n>: <url> | Thread: <link>"
-ffdiscord post <thread_id> --text "Logged this as issue #<n> and flagged it to the devs. Thanks for writing it up."
+ffdiscord post <thread_id> --mention <reporter_id> --text "Logged this as issue #<n> and flagged it to the devs. Thanks for writing it up."
 ```
 
 `@ben` and `@lothsahn` in the message body expand to real pings automatically.

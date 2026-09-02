@@ -36,7 +36,7 @@ straight out of the file. Only an unambiguous single match is remembered.
 | `channels`, `threads` | List channels or a forum's threads with their ids. |
 | `read <channel>` | Recent messages. `--after <id>` for everything since. |
 | `thread <thread_id>` | A forum thread end to end, including the opening embed. |
-| `post <channel>` | `--text` (or `-` for stdin), `--reply-to <id>`, `--file`, `--silent`, `--dry-run`. |
+| `post <channel>` | `--text` (or `-` for stdin), `--reply-to <id>`, `--mention <user id>`, `--file`, `--silent`, `--dry-run`. |
 | `edit`, `react` | Amend one of the bot's own messages; add a reaction, or take one back off with `react <channel> <id> 👀 --remove`. Removing one that is already gone is a no-op, not an error. |
 | `thread-create <channel> <message_id>` | Open a thread on an existing message. |
 | `download <channel> <message_id> --dir <path>` | Pull a message's attachments. Bug reports carry a runtime log and a save zip. |
@@ -56,6 +56,24 @@ without ever being read. That is a silently dropped bug report.
 rather than truncating above Discord's 2000 characters. Quoting `@ben` out of a code comment
 pings a real person; a long summary fails the command instead of arriving cut in half. Use
 `--silent` when a reply should not ping, and attach a file when the text will not fit.
+
+## Addressing the person you are answering
+
+`--mention <user id>` opens the message with `<@id>` and whitelists that one id in
+`allowed_mentions`, so the reply notifies them even under `--silent`. That is how Max addresses
+whoever wrote to him (see the `max-voice` skill, which makes it a rule rather than an option).
+Text that already contains the mention is left alone, so the front of a message never grows two.
+
+The id comes from the listings: `read`, `thread` and `unseen` print `author=<id>` on every
+message beside the name. A display name is not usable here and the CLI refuses one, because two
+players can share a name and a nickname is per-server.
+
+```bash
+ffdiscord post ask_claude --reply-to <message_id> --mention <author_id> --text "..."
+```
+
+On ffbox nobody passes this by hand: ffwatch prefixes the mention and passes `--mention` itself,
+from the author id on the message row, so a container cannot choose who gets pinged.
 
 ## The Gateway listener
 
