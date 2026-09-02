@@ -631,6 +631,25 @@ def fmt_secs(value):
     return f"{value / 60:.1f}m"
 
 
+def fmt_gib(kib):
+    """Kilobytes out of /proc/meminfo, as the GiB `free -h` would print.
+
+    One decimal, because the numbers this renders are hundreds of gigabytes and the tenth is
+    the only digit that moves between two page loads.
+
+    THREE TIERS, THE SAME THREE ffstatus.sh's human_kb uses. The two render the same numbers
+    from the same /proc fields and an operator reads them side by side, so a value that formats
+    differently here than in the terminal is a reason to distrust both.
+    """
+    if kib is None:
+        return "—"
+    if kib >= 1048576:
+        return f"{kib / 1048576.0:.1f}G"
+    if kib >= 1024:
+        return f"{int(kib) // 1024}M"
+    return f"{int(kib)}K"
+
+
 def fmt_ttl(secs):
     """A staged container's remaining idle life, in the shape ffstatus.sh prints it.
 
@@ -959,6 +978,12 @@ form.mark button:hover { color: #d7dae0; border-color: #4a5261; }
 .pill.warm, .pill.waiting { border-color: #4a6; color: #7d9; }
 .pill.filling, .pill.claimed { border-color: #a83; color: #eb8; }
 .pill.busy { border-color: #468; color: #9bd; }
+/* An updating box is amber and not red: a drain is the machine doing as it was told, and the
+   only thing it needs to change is how the empty container table below it reads. (`running`
+   needs no rule of its own — a run's pill above is already the green one.) */
+.pill.updating { border-color: #a83; color: #eb8; }
+/* A count that belongs to the heading it sits on: same line, quieter than the words. */
+h2 .count { color: #8f98a6; font-weight: 400; font-size: 13px; margin-left: 8px; }
 .item { border-left: 3px solid #333a45; padding: 6px 12px; margin: 8px 0; background: #1a1e25; }
 .item.message { border-left-color: #468; }
 .item.message.out { border-left-color: #684; }
@@ -2072,10 +2097,48 @@ class App:
 
         box = doc.get("box") or {}
         used, cap = box.get("used"), box.get("max")
+        # WHETHER THE BOX IS BEING WORKED ON, beside the count and not below it, because the
+        # count is what it changes the meaning of: a drained box is SUPPOSED to look empty, and
+        # without the word the healthy middle of an update reads as an outage. `running` is the
+        # ordinary state and says so rather than being the absence of a warning — an operator
+        # should not have to know which words this page omits when all is well.
+        maint = doc.get("maintenance") or {}
+        state = maint.get("state") or "running"
         head.append("<p class=\"note\">" + esc(str(doc.get("host") or "this box")) +
                     " · read at " + esc(short(str(doc.get("generated_at") or ""), 40)) +
-                    " · " + esc(f"{used} of {cap}") + " containers hold a workspace "
-                    "(max_concurrent_runs, which both lanes count against)</p>")
+                    " · " + str(pill(state)) +
+                    (" " + esc(short(str(maint.get("reason")), 120))
+                     if maint.get("reason") else "") + "</p>")
+
+        # --- the machine ---------------------------------------------------------------
+        #
+        # ABOVE THE CONTAINER TABLES, because a container count is not the unit that runs out.
+        # RAM is: a workspace is a tmpfs, so it is resident memory rather than disk, and a box
+        # sitting at four of ten containers with no memory left is a box whose ceiling is
+        # wrong. Absent on a document from an ffstatus.sh that predates this, which is a real
+        # state for the minutes between a deploy and the unit restarting — so the section is
+        # skipped rather than rendered full of em dashes.
+        machine = doc.get("machine") or {}
+        body = []
+        if machine:
+            # mem_* rather than total/used: `used` is the container count a few lines down,
+            # and borrowing the name here put 275619444/10 on the containers heading.
+            mem_total, mem_used = machine.get("mem_total_kb"), machine.get("mem_used_kb")
+            pct = (f" ({mem_used * 100 // mem_total}%)"
+                   if mem_total and mem_used is not None else "")
+            load = " ".join(f"{machine[k]:.2f}" for k in ("load1", "load5", "load15")
+                            if isinstance(machine.get(k), (int, float)))
+            body += ["<h2>machine</h2>",
+                     table(["load 1m · 5m · 15m", "cores", "memory used", "of", "in workspaces"],
+                           [[load or "—", machine.get("cores") or "—",
+                             fmt_gib(mem_used) + pct, fmt_gib(mem_total),
+                             fmt_gib(machine.get("shmem_kb"))]]),
+                     "<p class=\"note\">Used is total minus <em>available</em>, which is the "
+                     "kernel's own answer to what a new process could actually get — not total "
+                     "minus free, which counts the page cache as gone. <code>in workspaces</code> "
+                     "is shared memory: every container workspace is a tmpfs, so it is resident "
+                     "RAM that no cache pressure reclaims, and it is the number the container "
+                     "ceiling is really rationing.</p>"]
 
         rows = []
         for c in doc.get("containers") or []:
@@ -2083,13 +2146,21 @@ class App:
                          c.get("slot") or "—", pill(c.get("state")),
                          fmt_ttl(c.get("ttl_secs")), c.get("ref") or "—",
                          c.get("uptime") or "—"])
-        body = ["<h2>containers</h2>",
+        # THE COUNT SITS ON THE HEADING, not in the line above it. It counts the rows of the
+        # table directly beneath, and read out of a sentence at the top of the page it was a
+        # number an operator had to carry down the screen to use. What it is counted against
+        # moves into the note under the table, where there is room to say it once.
+        body += ["<h2>containers <span class=\"count\">" + esc(f"{used}/{cap}") +
+                 "</span></h2>",
                 table(["lane", "class", "name", "slot", "state", "ttl", "ref", "up"], rows),
                 "<p class=\"note\">A <code>spare</code> is a container that filled its "
                 "workspace before any request existed; <code>ttl</code> is what it has left "
                 "before it retires. <code>running*</code> is a turn that was dispatched into "
                 "one of those rather than launched cold — 1.2 seconds to start against about "
-                "40.</p>"]
+                "40. The count beside the heading is against <code>max_concurrent_runs</code>, "
+                "the ceiling on containers holding a workspace — agent runs, staged spares and "
+                "CI jobs all count against the one number, because they share a daemon and RAM "
+                "is what runs out.</p>"]
 
         prows = []
         for pool in doc.get("pools") or []:

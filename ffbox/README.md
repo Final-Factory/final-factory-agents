@@ -1412,7 +1412,25 @@ vocabulary — WAITING is a container holding a workspace with no work in it, wh
 spare or an idle registered CI runner — so for CI it reads ffgithubrunners' busy markers rather
 than counting every `ffghr-*` container as a job in flight. It reads `docker ps`,
 `~/.config/ffbox/config.json` and those markers, and writes nothing, so it is safe to run at any
-time; `--watch` refreshes it every five seconds.
+time; `--watch` refreshes it every five seconds and `--json` prints the same reading as one
+document, which is what the web page renders.
+
+Above both tables it prints the load average and the memory, because a container count is not
+the unit that runs out: a workspace is a tmpfs, so it is resident RAM rather than disk, and the
+`in container workspaces` figure is the shared memory the ceiling is really rationing. A box at
+four of ten containers with no memory left is a box whose ceiling is wrong, and that is only
+visible with the two on one screen.
+
+The header line ends in `(running)` or `(updating)`, with the reason under it. That is not
+decoration: a box mid-update is *supposed* to look empty, because a drain is exactly "finish
+what you are doing and take nothing new", so without the word the healthy middle of an update
+reads as an outage. Three signals feed it, most specific first — the `ffbox-update` unit being
+active, a hand-run `update_ffbox.sh`, and either lane's drain flag (`~/.config/ffbox/draining`
+for the agent lane, `githubrunners/drain` for CI), the last of which also catches a `ffwatch
+drain` somebody set by hand with no update behind it. The update *lock* is deliberately not one
+of them: testing it with `flock -n` would take it for the instant it held it, and
+`update_ffbox.sh` acquires that same lock with `-n` and gives up when it cannot — a status
+command that can cause a scheduled update to be skipped is not a status command.
 
 **What it costs is memory and a Unity seat.** A staged container holds its whole workspace
 resident, 22 GiB for master, and since 2026-09-01 it also holds a licence: `pool-task.sh`
@@ -1700,7 +1718,7 @@ when somebody is looking at it.
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
-| `/status` | **the box**, and the one page here that reads no database: every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
+| `/status` | **the box**, and the one page here that reads no database: whether it is `running` or `updating` and why, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 

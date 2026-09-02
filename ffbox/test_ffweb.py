@@ -480,6 +480,10 @@ FFSTATUS_DOC = {
     "host": "testbox",
     "generated_at": "2026-09-02T15:00:00+00:00",
     "box": {"used": 3, "max": 10},
+    "maintenance": {"state": "running", "reason": ""},
+    "machine": {"load1": 2.5, "load5": 3.25, "load15": 1.0, "cores": 40,
+                "mem_total_kb": 792528632, "mem_used_kb": 275619444,
+                "shmem_kb": 24810288},
     "pools": [
         {"class": "ffagent", "idle": 2, "waiting": 1, "busy": 0, "max": 10},
         {"class": "ffdev", "idle": 1, "waiting": 1, "busy": 0, "max": 3},
@@ -1199,7 +1203,9 @@ def test_the_box_page_reports_what_the_status_script_said():
         check("every container the script listed is on it",
               all(c["name"] in text for c in FFSTATUS_DOC["containers"]),
               [c["name"] for c in FFSTATUS_DOC["containers"] if c["name"] not in text])
-        check("the box ceiling is stated as the script gave it", "3 of 10" in text)
+        check("the container count rides on the heading it counts",
+              "<h2>containers <span class=\"count\">3/10</span></h2>" in text,
+              text[text.find("<h2>containers"):][:80])
         check("a spare's remaining idle life is hours and minutes, not raw seconds",
               "3h42m" in text and "13359" not in text)
         check("the state is a pill", 'class="pill warm"' in text)
@@ -1218,6 +1224,14 @@ def test_the_box_page_reports_what_the_status_script_said():
               "below target" not in prow["ffdev"], prow["ffdev"])
         check("infrastructure is listed apart from the workspace containers",
               "ffbox-egress" in text)
+        check("an ordinary box says so rather than saying nothing",
+              'class="pill running"' in text)
+        check("the machine's load is on the page, two decimals and three windows",
+              "2.50 3.25 1.00" in text, text[:0])
+        check("memory is gigabytes and a percentage, not kilobytes",
+              "262.9G (34%)" in text and "755.8G" in text and "792528632" not in text)
+        check("and the tmpfs the workspaces live in is called out",
+              "23.7G" in text and "in workspaces" in text)
         check("the nav offers the page from everywhere",
               all('href="/status"' in text_of(srv.get(p)[2]) for p in ("/", "/lanes")))
 
@@ -1240,6 +1254,35 @@ def test_the_box_page_reports_what_the_status_script_said():
                   code == 200 and "could not reach the ffbox daemon" in text_of(body), code)
             check("and no container table is invented for it",
                   "ffbox-agent-pool-deadbeef" not in text_of(body))
+        finally:
+            write_status_doc(FFSTATUS_DOC)
+
+        # A drain, which is what an update looks like from here. The container tables go
+        # quiet during one, so the word is what stops that reading as an outage.
+        draining = dict(FFSTATUS_DOC,
+                        maintenance={"state": "updating",
+                                     "reason": "the agent lane and the CI lane are drained"},
+                        containers=[], box={"used": 0, "max": 10})
+        write_status_doc(draining)
+        try:
+            code, _hdr, body = srv.get("/status")
+            check("a box mid-update is marked as such", code == 200 and
+                  'class="pill updating"' in text_of(body), code)
+            check("and it says which lanes, so nobody goes looking for a fault",
+                  "the agent lane and the CI lane are drained" in text_of(body))
+        finally:
+            write_status_doc(FFSTATUS_DOC)
+
+        # A document from an ffstatus.sh that predates the machine block. Real for the
+        # minutes between a deploy landing and the unit restarting onto it.
+        older = {k: v for k, v in FFSTATUS_DOC.items() if k != "machine"}
+        write_status_doc(older)
+        try:
+            code, _hdr, body = srv.get("/status")
+            check("a document with no machine block still renders", code == 200, code)
+            check("it just leaves that section out",
+                  "<h2>machine</h2>" not in text_of(body)
+                  and "ffbox-agent-pool-deadbeef" in text_of(body))
         finally:
             write_status_doc(FFSTATUS_DOC)
 
