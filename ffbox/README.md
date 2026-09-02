@@ -1341,22 +1341,36 @@ Design: `design/ffbox_idle_agents_design.txt`.
 There are two kinds of agent container, and a conversation picks one when it OPENS.
 
 ```json
-"ffagent": { "base_ref": "master", "agent_secs": 1800, "pool": {"idle": 1, "max": -1}, … }
-"ffdev":   { "base_ref": "master", "agent_secs": 1800, "pool": {"idle": 1, "max": 3},  … }
+"ffagent": { "base_ref": "master", …, "pool": {"idle": 1, "max": -1}, "network": "ffbox-net" }
+"ffdev":   { "base_ref": "master", …, "pool": {"idle": 1, "max": 3},  "network": "bridge" }
 ```
 
 Same keys, same meanings, one section each, and **no inheritance between them**: a box with no
 `ffdev` block gets ffwatch's built-in ffdev defaults rather than whatever `ffagent` is set to,
 and editing one class's clocks does not move the other's. They ship with the same numbers except
-the pool and are expected to diverge — ffdev onto `develop`, or with a longer agent clock — which
-is the whole reason the two are written out separately rather than one deriving from the other.
+the pool and the network, and are expected to diverge further — ffdev onto `develop`, or with a
+longer agent clock — which is the whole reason the two are written out separately rather than one
+deriving from the other.
 
-Everything about a run is otherwise identical: same image, same task script, same capability set,
-same harvest, same one-prompt-per-container rule. What a class gets is a **pool of its own** and a
+**ffdev has no egress fence, and that is the point of it.** `ffagent` runs on `ffbox-net` behind
+the allowlist proxy described below; `ffdev` runs on the ordinary `bridge`, with the whole
+internet, no allowlist and no SNI filter, so a dev turn can search the web, read documentation
+and fetch a package without an operator editing `allowlist.txt` first. That also hands it this
+machine's LAN address, so it is trusted the way a developer's own shell on this box is trusted —
+which is defensible only because **Discord conversations are always `ffagent`**: the class is
+picked at the local ingress, behind the web login or a shell here, and no text written by a
+stranger can start an unfenced container. `docs/docker-security-model.md` has the full argument
+under "The class that is not fenced". Putting ffdev back behind the fence is
+`"network": "ffbox-net"`, a restart, and `pool drop` for anything already staged.
+
+Everything else about a run is identical: same image, same task script, same capability set, same
+harvest, same one-prompt-per-container rule. What a class also gets is a **pool of its own** and a
 **ceiling of its own**. `pool.max` caps that class's containers, runs and staged ones together;
 `max_concurrent_runs` still caps the box, and every class plus CI counts against it. Neither class
 can take the other's warm container — `pool_claim_for` matches on class as well as branch, and a
-miss falls through to a cold launch like every other miss.
+miss falls through to a cold launch like every other miss. A container's network is fixed when it
+is created, so a staged container keeps whatever its class said at stage time; dispatch renames it
+and cannot move it.
 
 ```bash
 python3 ffbox/ffwatch.py pool           # one block per class
@@ -1382,7 +1396,11 @@ Design: `design/ffdev_agent_class_design.txt`.
 
 ### The egress filter
 
-A run gets no internet. It joins `ffbox-net`, a Docker `--internal` bridge with no default route,
+**This is `ffagent`'s fence and CI's, not `ffdev`'s.** Which network an agent container is created
+on is `agent_classes.<class>.network` in `config.json`, and `ffdev` is deliberately on the open
+`bridge` — see the class section above. Everything here describes the fenced classes.
+
+An `ffagent` run gets no internet. It joins `ffbox-net`, a Docker `--internal` bridge with no default route,
 whose only other occupant is `ffbox-egress` — a proxy that resolves and connects the names in
 `ffbox/egress/allowlist.txt` and refuses everything else at the TLS SNI. That list is Anthropic
 (the model has to be reachable or nothing runs) and Unity licensing and packages. No GitHub, no

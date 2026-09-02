@@ -300,11 +300,16 @@ for key, value in (
         # Which branch the pool stages. null follows base_ref, and there is deliberately no
         # second answer to configure: a pool staged on a branch no turn asks for serves nothing.
         "pool_ref": None,
+        # THE FENCE. ffbox-net is a Docker --internal bridge with no default route, whose only
+        # other occupant is the egress proxy: a run on it reaches the names in
+        # ffbox/egress/allowlist.txt and nothing else, no LAN and not this host. ffagent serves
+        # text written by strangers in a Discord forum, so this is the one that stays shut.
+        "network": "ffbox-net",
     }),
-    # THE SECOND AGENT CLASS. Same keys as "ffagent" above, same meanings, and deliberately the
-    # same values except the pool: the two are separate config sections with no inheritance
-    # between them, so ffdev reads THIS and never ffagent's numbers. Editing one does not move
-    # the other, which is the point -- they exist in order to diverge.
+    # THE SECOND AGENT CLASS. Same keys as "ffagent" above and the same meanings: the two are
+    # separate config sections with no inheritance between them, so ffdev reads THIS and never
+    # ffagent's numbers. Editing one does not move the other, which is the point -- they exist
+    # in order to diverge, and as of 2026-09-02 they do, on the network.
     #
     # idle 1 / max 3: one ffdev container waits warm, and at most three exist at once, runs and
     # staged ones together, underneath the box-wide max_concurrent_runs that CI counts against
@@ -321,6 +326,17 @@ for key, value in (
         "pool": {"idle": 1, "max": 3},
         "idle_agent_ttl_secs": 14400,
         "pool_ref": None,
+        # NO FENCE, DELIBERATELY. "bridge" is the ordinary NATted docker bridge: the whole
+        # internet, no allowlist, no SNI filter. A dev turn has to be able to read documentation,
+        # search the web and fetch a package, and an allowlist that must be edited every time it
+        # needs a new host is not a fence, it is a queue.
+        #
+        # Know what it costs before changing ffagent to match: this is not the fence minus DNS
+        # filtering, it is no fence. A container on the bridge also reaches this machine's own
+        # LAN address -- measured 2026-08-25, port 22 answered -- because rootless Docker
+        # disables the host loopback and not the host's IP. ffdev is trusted the way a
+        # developer's shell on this box is trusted, which is what it is for.
+        "network": "bridge",
     }),
     # Turns per rolling 24 hours, keyed on TRUST TIER — who wrote the text, not which lane it
     # took. One budget across every kind of turn a player can cause. `operator` is null, which
@@ -540,13 +556,24 @@ ffbox["_help"] = {
              "means no ceiling of its own and is read as max_concurrent_runs, so the default is "
              "to use the whole box while CI is quiet; a negative idle is read as 0, off. Zero "
              "is left alone on both, and means no places. idle_agent_ttl_secs is how long a staged container waits before "
-             "retiring, and pool_ref which branch it stages (null follows base_ref).",
+             "retiring, and pool_ref which branch it stages (null follows base_ref). network is "
+             "the docker network the container is created on: \"ffbox-net\" is the fenced one, "
+             "an --internal bridge whose only other occupant is the egress proxy, so the run "
+             "reaches the names in ffbox/egress/allowlist.txt and nothing else -- no LAN and not "
+             "this host. ffagent serves text written by strangers, so it stays on it.",
     "ffdev": "The second AGENT CLASS: the same keys as \"ffagent\" and the same meanings, read "
              "for a conversation that was started as ffdev instead. The two sections are "
              "independent -- there is no inheritance, so a box with no \"ffdev\" block here gets "
              "ffwatch's built-in ffdev defaults rather than whatever ffagent is set to, and "
              "editing ffagent's clocks does not move ffdev's. They ship with the same numbers "
-             "except the pool, and are expected to diverge. Each class is staged into a pool of "
+             "except the pool AND the network, which is where they already diverge: ffdev's "
+             "network is \"bridge\", the ordinary docker bridge, so an ffdev turn has the whole "
+             "internet with no allowlist and no SNI filter and can search the web and fetch "
+             "packages, while ffagent stays fenced on ffbox-net. That is not the fence minus DNS "
+             "filtering, it is no fence -- a container on the bridge reaches this machine's own "
+             "LAN address too -- so ffdev is trusted the way a developer's shell on this box is, "
+             "and only the class a Discord forum can reach is kept behind the proxy. Each class "
+             "is staged into a pool of "
              "its own and holds a ceiling of its own (pool.max), both underneath the box-wide "
              "max_concurrent_runs that CI counts against as well; neither class can take the "
              "other's warm container. A conversation's class is chosen when it is OPENED -- the "

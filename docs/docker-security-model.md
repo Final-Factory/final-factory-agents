@@ -34,15 +34,24 @@ Discord / web / shell  ->  ffwatch.py (host)  ->  ffbox (host)  ->  container
                                   +-> git push, GitHub API, Discord reply
 ```
 
-And the container's only way off the machine, which is a fence built out of routing rather than
-out of asking the agent nicely:
+And an `ffagent` container's only way off the machine, which is a fence built out of routing
+rather than out of asking the agent nicely:
 
 ```
-container -> ffbox-net -> ffbox-egress -> api.anthropic.com, *.unity3d.com, ...
-             (internal:    (SNI allowlist)
-              no default
-              route at all)
+ffagent -> ffbox-net -> ffbox-egress -> api.anthropic.com, *.unity3d.com, ...
+           (internal:    (SNI allowlist)
+            no default
+            route at all)
+
+ffdev   -> bridge ------------------------> the internet, and this host's LAN address
+           (no fence, on purpose)
 ```
+
+**The fence is per agent class, not per box.** Since 2026-09-02, `agent_classes.<class>.network`
+in `config.json` says which network a container of that class is created on, and the two classes
+disagree: `ffagent` is `ffbox-net` and `ffdev` is `bridge`. Everything below about the filter
+describes `ffagent`, which is the class a Discord forum can reach. `ffdev` is covered in "The
+class that is not fenced".
 
 The single most important property is that **no model runs on the host.** `ffwatch.py` is fixed
 Python. It does not decide whether to push; it executes a refspec it built itself from a name it
@@ -122,12 +131,14 @@ exits. Whatever an agent leaves behind on disk goes with it, and there is no cle
 could fail to run. What survives is `/ffbox/out`, which is exactly what a run is meant to hand
 back.
 
-**There is one route out, and it is not the agent's to choose.** The run joins `ffbox-net`, a
-Docker `--internal` bridge. Internal means no default route: not a firewall the container could
-argue with, an absence of anywhere to send a packet. The only host on that bridge is
-`ffbox-egress`, which resolves and connects the names in `ffbox/egress/allowlist.txt` and refuses
-everything else. This is what stops an injected agent fetching a second stage, reaching this
-machine's other services, or posting the workspace somewhere.
+**There is one route out of an `ffagent` run, and it is not the agent's to choose.** The run
+joins `ffbox-net`, a Docker `--internal` bridge. Internal means no default route: not a firewall
+the container could argue with, an absence of anywhere to send a packet. The only host on that
+bridge is `ffbox-egress`, which resolves and connects the names in `ffbox/egress/allowlist.txt`
+and refuses everything else. This is what stops an injected agent fetching a second stage,
+reaching this machine's other services, or posting the workspace somewhere. It is still not the
+agent's to choose in an `ffdev` container either — the network is fixed at `docker run` from the
+host's config — but there it is chosen to be open.
 
 **The container holds five capabilities, and cannot gain more.** Added 2026-09-01; until then
 this lane ran with Docker's default fourteen and no restriction at all, while being the one that
@@ -192,6 +203,40 @@ what makes them still worth treating as exposed.
 **It says nothing about what the agent writes.** Gap 1 below — a workflow file harvested and
 pushed to a self-hosted runner — needs no network from the container at all. The fence and that
 gap are unrelated, and closing one does not touch the other.
+
+### The class that is not fenced
+
+`ffdev` containers are created with `--network bridge` and none of this applies to them: no
+`--internal` network, no proxy, no allowlist, no SNI filter. The whole internet, and this
+machine's own LAN address with it — measured 2026-08-25, a container on the default bridge
+opened port 22 on this box, because rootless Docker disables the host *loopback* and not the
+host's IP. `bridge` is not the fence minus DNS filtering; it is no fence.
+
+That is the intended trade and it rests entirely on **who can start an `ffdev` turn**. The class
+is chosen when a conversation is opened, from the dropdown on the web page's new-prompt box or
+`ffwatch submit --agent ffdev`, both of which are behind the login on 127.0.0.1 or a shell on
+this box. **Discord conversations are always `ffagent`** — the class is picked at the local
+ingress and a forum thread has nobody to pick it, so no text written by a stranger can reach an
+unfenced container. A dev turn is Ben or Loth asking for work on their own machine, and it needs
+to read documentation, search the web and fetch a package; an allowlist edited every time it
+wants a new host is not a fence, it is a queue.
+
+Two consequences worth stating plainly. An `ffdev` container is as trusted as a developer's own
+shell on this box, so everything under "The container is assumed hostile" is an `ffagent`
+argument and not an `ffdev` one. And the exfiltration ceiling for `ffdev` is not "two vendors"
+but "anywhere" — the credentials it holds should be read as fully exposed rather than exposed to
+an allowlist.
+
+The switch is one key per class in `~/.config/ffbox/config.json`, read at container creation:
+
+```json
+"ffagent": { …, "network": "ffbox-net" }
+"ffdev":   { …, "network": "bridge" }
+```
+
+Putting `ffdev` back behind the fence is `"network": "ffbox-net"` and a restart of ffwatch;
+existing staged containers keep the network they were staged with, so drop the pool
+(`python3 ffbox/ffwatch.py pool drop`) if the change needs to take effect immediately.
 
 ## What is not a boundary
 
