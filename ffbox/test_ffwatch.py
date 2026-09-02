@@ -6814,6 +6814,124 @@ def test_the_pull_request_targets_the_branch_the_work_is_based_on():
 
 
 
+def test_the_admission_lock_does_not_ride_into_the_run():
+    """The lock covers admission. It must not be held for the length of the container.
+
+    OBSERVED ON THE BUILD SERVER, 2026-09-02, as "Max is not responding to Discord". The chain
+    is four links and only the first is a bug:
+
+      * fd 9 IS the admission lock -- `exec 9>>` in ffbox's own shell -- and a background
+        command inherits every open descriptor. The cold run's `docker run ... &` stays up for
+        the whole turn, so `exec 9>&-` closed only ffbox's copy: flock holds until the LAST
+        descriptor on that open file description goes.
+      * `ffbox --stage-pool` takes the same lock with a bare `flock 9`, which waits forever.
+      * ffwatch kills it at its 180-second ceiling, and keep_pool() runs on the DAEMON'S OWN
+        LOOP -- so every pass with a run in flight froze for three minutes, draining no events
+        and sending nothing that was already composed and queued.
+      * `slot.sh` takes the same lock while holding the CI pool lock, so all six runner slots
+        sat on "another slot is still minting" for the same reason.
+
+    The bash rule is demonstrated rather than described, because the reason for `9>&-` is not
+    visible at the place it is written. Then the two fixes: a bounded wait for the speculative
+    caller, and the shape itself in ffbox, which is what a later edit could quietly undo.
+    """
+    print("admission lock: it covers admission and not the run")
+    lock = os.path.join(TMPROOT, "admission.lock")
+    lib = os.path.join(HERE, "lib-workloads.sh")
+
+    def still_held(child):
+        """Is the lock still held after the holder releases, with the child still running?"""
+        script = (f'. "{lib}"\n'
+                  'ffbox_workload_lock_acquire\n'
+                  f'{child}\n'
+                  '_c=$!\n'
+                  'ffbox_workload_lock_release\n'
+                  f'if flock -w 1 "$FFBOX_WL_LOCK" -c true; then echo FREE; else echo HELD; fi\n'
+                  'kill "$_c" 2>/dev/null || :\n')
+        done = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                              env={**os.environ, "FFBOX_WL_LOCK": lock}, timeout=60)
+        return (done.stdout or "").strip().splitlines()[-1:] == ["HELD"]
+
+    check("a background child inherits fd 9 and holds the lock after the release",
+          still_held("sleep 30 &"), None)
+    check("and closing it in the child is what gives the lock back",
+          not still_held("sleep 30 9>&- &"), None)
+
+    # THE BOUNDED WAIT, for the caller that is only speculating. Held by somebody else, the
+    # staging path must come back and say so rather than sit there: it is called from ffwatch's
+    # loop, so a wait here is a wait on every reply the daemon has already queued.
+    holder = subprocess.Popen(["flock", lock, "-c", "sleep 30"])
+    try:
+        started = time.monotonic()
+        waited = subprocess.run(
+            ["bash", "-c", f'. "{lib}"; ffbox_workload_lock_acquire 1'],
+            capture_output=True, text=True, env={**os.environ, "FFBOX_WL_LOCK": lock},
+            timeout=60)
+        took = time.monotonic() - started
+        check("a bounded acquire gives up instead of waiting on a lock somebody else holds",
+              waited.returncode != 0 and took < 10, (waited.returncode, took))
+        # And the unbounded one still waits, because a cold run has somebody waiting on it and
+        # "the box is busy" is not a reason to fail their turn.
+        blocked = subprocess.Popen(["bash", "-c", f'. "{lib}"; ffbox_workload_lock_acquire'],
+                                   env={**os.environ, "FFBOX_WL_LOCK": lock})
+        time.sleep(2)
+        check("an unbounded acquire is still waiting, which is what a run wants",
+              blocked.poll() is None, blocked.poll())
+        blocked.kill()
+        blocked.wait(timeout=10)
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
+
+    # THE SHAPE IN ffbox ITSELF. Every `docker run` that is created under the lock has to close
+    # it, and the one that matters is the cold run, because that is the one that outlives the
+    # release. A later edit that drops the redirection is the outage coming back.
+    with open(os.path.join(HERE, "ffbox"), encoding="utf-8") as fh:
+        src = fh.read()
+    check("the cold run's docker run closes the lock in the child",
+          '"$IMAGE" 9>&- &' in src, None)
+    check("and so does the staged one", '"$IMAGE" 9>&-)' in src, None)
+    check("nothing creates a container under the lock without closing it",
+          src.count('"$IMAGE" 9>&-') == 2 and '"$IMAGE" &' not in src, None)
+    check("and staging asks for the lock with a bound on the wait",
+          'ffbox_workload_lock_acquire "${FFBOX_STAGE_LOCK_WAIT:-30}"' in src, None)
+
+
+def test_the_keeper_backs_off_a_class_whose_staging_failed():
+    """One staging that cannot succeed must not become a daemon that does nothing else.
+
+    pool_stage() blocks the daemon's own loop for as long as ffbox takes, and the loop is where
+    events are drained, replies are sent and turns are started. Retried every poll_secs, a
+    staging that hangs until its ceiling is not a wasted call -- it is the whole daemon, spending
+    180 of every 185 seconds inside the one thing that was never going to work.
+
+    Nothing is lost by waiting: the pool is an optimisation and a turn that finds none runs cold.
+    """
+    print("pool: a failed staging is not retried every pass")
+    case = Case("poolbackoff", base_fixture())
+    w = case.watcher
+    w.cfg["agent_classes"]["ffagent"].update({"idle_agents": 1, "agent_pool_max": 4})
+    w.cfg["agent_classes"]["ffdev"].update({"idle_agents": 1, "agent_pool_max": 4})
+    w.cfg["max_concurrent_runs"] = 4
+    w.pool_has_room = lambda for_containers=1: True
+    w.pool_reap = lambda: 0
+    w.pool_containers = lambda: []
+
+    tried = []
+    w.pool_stage = lambda cls=None: (tried.append(cls) or None)
+    check("the first pass tries both classes", w.keep_pool() == [] and tried == ["ffagent",
+                                                                                 "ffdev"], tried)
+    tried.clear()
+    check("and the next one leaves them alone", w.keep_pool() == [] and tried == [], tried)
+
+    # PER CLASS, and only for as long as configured: a box whose staging failed because CI was
+    # briefly full has to come back to it by itself.
+    w._pool_stage_after["ffdev"] = 0.0
+    w.pool_stage = lambda cls=None: (tried.append(cls) or f"p{len(tried)}")
+    check("the class whose backoff expired is tried again, and the other is not",
+          w.keep_pool() == ["p1"] and tried == ["ffdev"], tried)
+
+
 def test_the_finish_handler_reaches_the_agent_and_its_work():
     """The three things a run's ending has to do, and the bash rule that decides whether any of
     them happen.
@@ -8868,6 +8986,8 @@ def main():
         test_a_turn_falls_back_to_a_cold_launch,
         test_one_class_never_takes_the_others_warm_container,
         test_memory_is_read_from_meminfo_not_from_dev_shm,
+        test_the_admission_lock_does_not_ride_into_the_run,
+        test_the_keeper_backs_off_a_class_whose_staging_failed,
         test_the_finish_handler_reaches_the_agent_and_its_work,
         test_a_run_that_ran_out_of_time_still_says_so,
         test_a_verification_that_never_ran_does_not_read_as_one_that_failed,
