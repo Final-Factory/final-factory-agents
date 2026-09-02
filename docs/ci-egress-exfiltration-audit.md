@@ -93,123 +93,66 @@ endpoints do and do not scope. It is the one hole an SNI fence cannot close.
 
 ## Findings
 
-### X1. Eleven names in the pinned blob regex are unregistered, and anyone can claim them
+### X1. CLOSED as an exfiltration path, 2026-09-02, with one thing still to watch
 
-The CI allowlist pins Azure blob storage to a regex rather than a wildcard, and the comment above
-it is the clearest writing in the repo about why: `blob.core.windows.net` is a namespace Azure's
-customers claim first-come, so `*.blob.core.windows.net` permits an attacker's own bucket.
+**The entry is gone.** `productionresultssa*` came off `ffbox/runners/egress/allowlist.txt`, and a
+container on `ffghr-net` now gets NXDOMAIN for a blob shard while the Actions runtime still
+resolves. Eleven entries remain: `*.actions.githubusercontent.com` and Unity. No GitHub host at all.
 
-The regex is `^productionresultssa[0-9]{1,2}\.blob\.core\.windows\.net$`. `[0-9]{1,2}` matches
-one digit or two, so it admits 110 distinct names: `sa0` through `sa9`, and `sa00` through `sa99`.
-Sixteen have been seen carrying traffic. The other ninety-four were never checked.
-
-Measured 2026-09-01, resolving all 110 against the system resolver and confirming every outlier
-against 1.1.1.1 and 8.8.8.8. Ninety-nine resolve. Eleven do not:
+It went because nothing in a job needs it, not because it was narrowed. `main.yml` hands its
+artifact to the supervisor, which uploads it on the job's own credential and checks `repository_id`
+from the token against a configured list. Verified end to end on the first real job:
 
 ```
-productionresultssa00 .. productionresultssa09     no answer      (the leading-zero forms)
-productionresultssa22                              no answer
-productionresultssa21   blob.ams20prdstr14a.store.core.windows.net.  20.209.193.139
-productionresultssa23   blob.iad04prdstrz41a.store.core.windows.net.
+[slot 6] artifact: 'Test results for editmode': 54833 bytes, repository_id 623631450 (Final-Factory/FinalFactory)
+[slot 6] artifact: blob PUT returned 201
+[slot 6] artifact: uploaded 'Test results for editmode' as artifact id 9827865712
 ```
 
-A control lookup of an invented name under the same suffix also returns nothing, so the absences are
-real rather than an artifact of a wildcard zone. `sa22` was re-checked three times.
+`version=4` on CreateArtifact is confirmed by that run; the toolkit's `7` is something else.
 
-The leading-zero block is the larger half and comes straight from the quantifier. GitHub numbers its
-shards without padding, so `sa00` through `sa09` were never GitHub's and never will be. The regex
-admits them anyway.
+**What the eleven claimable names were.** `[0-9]{1,2}` admitted 110 names, `sa0`-`sa9` and
+`sa00`-`sa99`. Ninety-nine resolved. `sa00` through `sa09` -- which GitHub will never use, because
+it does not pad shard numbers -- and `sa22` returned nothing from two public resolvers, with a
+control lookup ruling out a wildcard zone. An Azure storage account name is free and first-come, so
+each was an allowlisted, unauthenticated, high-bandwidth endpoint waiting to be claimed.
 
-An Azure storage account name is globally unique and free to register. Whoever registers any of
-these eleven owns an allowlisted, unauthenticated, high-bandwidth HTTPS endpoint that every CI job
-on this box can reach, with no GitHub credential involved and nothing in the SNI log to distinguish
-it from a normal artifact upload. This is the exact failure the regex was written to prevent,
-surviving the narrowing because the narrowing shrank the namespace without emptying it.
+#### Still open: something in the runner asks for blob and is refused
 
-**Fix.** Reject the padded forms in the pattern, which removes ten of the eleven and cannot break a
-real shard:
+Measured on the first job after the removal: 64 A-queries for
+`productionresultssa17.blob.core.windows.net` from the job container, every one NXDOMAIN. They start
+two seconds into the job, before any workflow step, recur every few seconds for its whole life, and
+stop when it ends. That is the RUNNER retrying rather than a step, and one shard hammered rather
+than the thin spread across nineteen that normal use produced. Most likely a Results API object:
+the step summary, or the log archive.
 
-```
-~^productionresultssa([0-9]|[1-9][0-9])\.blob\.core\.windows\.net$   blob.core.windows.net
-```
+**Nothing has broken.** That job Succeeded, tests ran, the check run posted, the artifact uploaded.
+Whatever wants blob fails quietly.
 
-Parentheses and `|` pass the entrypoint's validation, which refuses only quotes and semicolons, and
-the generator already quotes the whole regex for nginx.
+**Decision, 2026-09-02: leave it off and find out what degrades.** Keeping the fence tight and
+learning what breaks beats restoring reach on a guess. The thing to check is whether that run's
+logs and step summary render in the Actions UI. If something worth having is lost, the narrowed
+`([0-9]|[1-9][0-9])` quantifier is the fallback -- it removes the ten padded names for free and
+leaves `sa22` as the only claimable one.
 
-That leaves `productionresultssa22`. Register the storage account on any free Azure subscription: it
-costs nothing, needs no further code change, and closes it permanently, because a name can only be
-claimed once. Narrowing the regex around a single gap in the middle of the range is the alternative
-and is worse, because it breaks loudly the first time GitHub fills that shard in.
+#### The mistake this nearly hid, which is the reusable part
 
-Re-run the sweep after any change to this entry. The quantifier stops at two digits, so a future
-`productionresultssa100` fails CI rather than opening anything.
+The deny sink was EMPTY while those 64 refusals were happening, and it was read as proof the removal
+was clean. It is not. Nginx only refuses a name that some entry's suffix resolved to the proxy in
+the first place; with the blob entry gone entirely, these die at dnsmasq and never open a connection,
+so they produce no `sni=` line at all. `docs/egress.md` documents this exactly -- "the two ways a
+name is refused", and its warning that the SNI log shows "nothing at all for the most common
+failure" -- and it was quoted earlier in the same session before being ignored.
 
-**Effort.** Settings, plus one line.
+**Read both halves, always:**
 
-#### The better fix is to stop needing the entry at all
-
-Researched 2026-09-01. Blob storage is reached by exactly one thing now: `actions/upload-artifact`.
-`actions/cache` is gone — both references in `main.yml` are `WAS:` comments, replaced by the host
-ffcache — and the second upload step, for coverage, was deleted the same day after it turned out it
-had never uploaded anything (`com.unity.testtools.codecoverage` is not in the project, so the
-editor produces no coverage directory for it to collect).
-
-So one `upload-artifact` step is the whole reason this entry exists.
-
-**There is no supported way to proxy it.** Removing the proxy WAS the v4 redesign — "we eliminated
-having a proxy service in between uploads for the runner and blob storage" — and the runner now
-PUTs to a SAS the results service mints. There is no REST endpoint to create an artifact, so the
-host cannot do it with its App token. `ACTIONS_RUNTIME_TOKEN` is issued to the runner at job
-assignment and cannot be minted through any API.
-
-**What does work** is to move the upload to the host and hand it the credential. Measured
-2026-09-02 from a real job, which simplified this considerably against the first draft:
-
-1. A step writes the runtime token and `ACTIONS_RESULTS_URL` to the drop box. It has to be a local
-   node action rather than a `run:` step: the runner injects those into action environments only
-   (`Runner.Worker/Handlers/NodeScriptActionHandler.cs`), confirmed by a probe that read a
-   2510-character token out of one. Local, so it needs no entry in the image's action archive cache.
-2. The supervisor validates the token's OWN claims against a configured repository list, then
-   uploads with `@actions/artifact`. Driving the official package rather than hand-rolling Twirp is
-   the whole maintenance story for an undocumented protocol GitHub has already replaced once.
-
-**The token names its own repository, so the check is direct.** From a live job:
-
-```
-repository_id       623631450
-job_workflow_ref    Final-Factory/FinalFactory/.github/workflows/main.yml@refs/heads/master
+```bash
+sh ffbox/runners/03-image.sh --egress-log     # allowed, deny-sink, AND the NXDOMAIN names
 ```
 
-Match `repository_id` -- numeric, and it survives a repository rename. A token minted for an
-attacker's own repository carries a different one and is refused on inspection.
-
-**This deleted three things the first draft needed**, all of which existed only to work around a
-repository claim that was wrongly believed to be absent: a trusted-time pin, a blocking handshake
-so that pin could not race untrusted code, and matching of `Actions.Results` GUIDs to bind a later
-token to an earlier one. None is necessary. The host can validate any token it is handed, whenever
-it is handed it, and a job cannot forge a claim inside a GitHub-signed JWT.
-
-**The credential also outlives the job**, so there is no refresh to handle. Measured across a
-complete successful editmode run: identical token before and after, `nbf 00:43:31Z`,
-`exp 02:28:31Z` -- job start plus exactly 100 minutes against `timeout-minutes: 90`. The lifetime
-is provisioned past the job's own ceiling.
-
-**What it buys and what it does not.** Blob comes off the container's allowlist and this finding
-stops existing. The blob connection still happens, from the host, which is already on the open
-internet — the reach moves out of the blast radius rather than disappearing. It does NOT close
-exfiltration: `*.actions.githubusercontent.com` stays whatever happens, and cannot be closed by any
-fence.
-
-**The open question, and it decides whether the entry can go at all.** Step summaries and the final
-log archive are Results API objects with the same "mint a SAS, PUT to blob" shape as artifacts. A
-connection-count trace cannot distinguish them. Settle it the way this repo settles everything else:
-remove the entry, run one job, read the deny sink. Anything else that wants blob is named there with
-`upstream=127.0.0.1:9` and the job fails loudly. **If one of them does need blob, this entry is
-permanent and the regex above stops being a hedge and becomes the fix.**
-
-Live logs are not at risk either way. They ride `*.actions.githubusercontent.com` — measured as 271
-connections to `pipelinesghubeus14` against roughly 55 jobs, the busiest host in the trace — and
-that entry is not going anywhere.
+Two other names surfaced in the same reading and are unrelated to this change:
+`cdp.cloud.unity3d.com` (14 queries) and `package.openupm.com` (1). Both were refused before as
+well; neither has broken anything.
 
 ### X2. A job chooses the name its cache entry is promoted under, and both lanes read that store
 
@@ -424,10 +367,10 @@ routing.
 
 ## Priority
 
-1. **X1.** Land the host-side artifact upload, then remove the blob entry and read the deny sink.
-   That deletes the finding rather than narrowing it. The `([0-9]|[1-9][0-9])` quantifier fix is a
-   one-line hedge for the window until then, and becomes the actual fix if step summaries turn out
-   to need blob.
+1. ~~**X1.**~~ Done 2026-09-02: the host does the upload, the entry is off, and a job can no
+   longer reach blob storage. Watch whether anything degrades -- the runner still asks for a shard
+   64 times a job and is refused. The narrowed quantifier is the fallback if something worth having
+   turns out to be lost.
 2. **X2.** Bind promotion to `CACHE_CLAIM`. Narrower than first written, and still the only finding
    that crosses from the CI lane into the agent lane, where the credentials are.
 3. **X3.** Truncate the check-run free text and drop `raw_details`.

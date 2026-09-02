@@ -132,14 +132,28 @@
 # supervisor, which uploads it on the job's own credential from a host that is on the open internet
 # regardless, and refuses any repository_id not on its list. See docs/ci-egress-exfiltration-audit.md.
 #
-# WHAT TO EXPECT IF THIS WAS WRONG. Step summaries and the final log archive are Results API objects
-# with the same "mint a SAS, PUT to blob" shape as artifacts, and a connection-count trace could not
-# rule them out. If either needs blob, a job now fails LOUDLY and the name appears in the deny sink
-# with upstream=127.0.0.1:9:
-#     sh ffbox/runners/03-image.sh --egress-log
-# That is the measurement this removal exists to make. Live logs are not at risk either way: they
-# ride *.actions.githubusercontent.com, measured at 271 connections to pipelinesghubeus14 across
-# roughly 55 jobs, and that entry is not going anywhere.
+# SOMETHING STILL ASKS FOR BLOB, AND IT IS NOT THE ARTIFACT. Measured on the first job after this
+# removal, 2026-09-02: 64 A-queries for productionresultssa17.blob.core.windows.net from the job
+# container, every one NXDOMAIN. They begin two seconds into the job -- before any workflow step --
+# recur every few seconds for its whole life, and stop when it ends. That is the RUNNER retrying,
+# not a step, and one shard hammered rather than the thin spread across nineteen that normal use
+# produced. Most likely a Results API object: the step summary or the log archive.
+#
+# NOTHING HAS BROKEN YET. That job Succeeded, the tests ran, the check run posted and the artifact
+# uploaded through the host. Whatever wants blob fails quietly and the job does not care. The entry
+# STAYS OFF deliberately, to find out what degrades: keeping the fence tight and learning what
+# breaks beats restoring reach on a guess.
+#
+# WHERE TO LOOK, AND IT IS NOT THE DENY SINK. This file said "the name appears in the deny sink with
+# upstream=127.0.0.1:9", and that was wrong in a way that cost an hour of believing the removal was
+# clean. A name is only refused BY NGINX if some allowlist entry's suffix resolves it here; with the
+# blob entry gone entirely, these die at DNS and produce no sni= line at all. The deny sink was
+# empty and 64 refusals had already happened. docs/egress.md, "the two ways a name is refused", is
+# exactly about this trap. Read BOTH halves:
+#     sh ffbox/runners/03-image.sh --egress-log     # allowed, deny-sink, AND the NXDOMAIN names
+#
+# Live logs are not at risk: they ride *.actions.githubusercontent.com, measured at 271 connections
+# to pipelinesghubeus14 across roughly 55 jobs, and that entry is not going anywhere.
 
 # --- CANDIDATES FOR REMOVAL, 2026-09-01 ------------------------------------------------------------
 # The licence became an offline .ulf on this date (ffbox/unity-offline-license.sh), and the offline
