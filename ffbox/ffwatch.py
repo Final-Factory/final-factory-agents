@@ -954,7 +954,12 @@ def snowflake_secs(value):
     than message time. The difference is not academic: the twelve #dev-chat rows this design
     exists to fix hold messages from 2024 and carry last_activity_at from the 2026 sweep that
     read them. Judging "how long ago" by ingest time would make every backfilled conversation
-    look seconds old, and a sweep that re-read a quiet channel would keep it that way.
+    look seconds old.
+
+    (Until 2026-09-02 a re-reading sweep also KEPT it that way, restamping every quiet thread
+    every 15 minutes. That is fixed in upsert_conversation — the stamp now moves only when the
+    conversation does — but ingest time is still not message time for a backlog read in one
+    gulp, so this stays the right clock for clustering.)
     """
     try:
         n = int(value)
@@ -2384,10 +2389,22 @@ class Watcher:
         thread_id = str(thread_id)
         row = self.db.one("SELECT * FROM conversation WHERE thread_id=?", (thread_id,))
         if row:
+            # NO last_activity_at HERE, deliberately. The 15-minute sweep calls this for every
+            # thread it lists whether or not anything was said in it, so a stamp written on
+            # this path is "when ffwatch last looked", not "when this conversation last moved" —
+            # and it would be rewritten forever, keeping a thread whose newest message is from
+            # 2024 permanently above a conversation somebody opened an hour ago. Found on
+            # 2026-09-02 doing exactly that to eleven bug reports.
+            #
+            # Nothing is lost by leaving it out: every caller that has REAL activity writes the
+            # stamp on a path that already knows the row changed — insert_message() after its
+            # rowcount check, so a duplicate doorbell does not count, and reparent() when a
+            # message actually moves. This branch only refreshes a renamed title, which is not
+            # activity.
             self.db.execute(
-                "UPDATE conversation SET last_activity_at=?, title=COALESCE(?, title),"
+                "UPDATE conversation SET title=COALESCE(?, title),"
                 " watch_alias=COALESCE(watch_alias, ?) WHERE id=?",
-                (now_iso(), title, alias, row["id"]))
+                (title, alias, row["id"]))
             return row["id"]
         if agent_class not in AGENT_CLASSES:
             raise ValueError(f"{agent_class!r} is not an agent class; expected one of "

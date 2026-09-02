@@ -7176,6 +7176,57 @@ def test_each_class_counts_only_its_own_containers():
         ffwatch.subprocess.run = saved
 
 
+def test_a_quiet_sweep_does_not_move_last_activity():
+    """The stamp moves when the conversation moves, and not when ffwatch merely looks at it.
+
+    sweep() runs every 15 minutes and calls upsert_conversation for EVERY thread it lists,
+    said-in or not. While that path wrote the stamp, "last activity" meant "when ffwatch last
+    looked", which is always a few minutes ago — on the build server on 2026-09-02 eleven bug
+    reports sat at the top of the web list carrying stamps from the sweep ten seconds earlier,
+    one of them a thread whose newest actual message was from 2024. A web conversation opened
+    that morning ranked below all of them, because nothing sweeps a conversation with no
+    Discord thread and its stamp was the only honest one on the page.
+
+    The backdated stamp here is the whole apparatus: same-second writes are indistinguishable
+    from no write at all, and this is a test about a column NOT being written.
+    """
+    print("config: a quiet sweep does not move last_activity_at")
+    case = Case("quietsweep", base_fixture())
+    w = case.watcher
+    STALE = "2024-08-01T10:53:46Z"
+
+    conv_id = w.upsert_conversation("7300", kind="ask", channel_id=ASK_CHANNEL,
+                                    root_message_id="7300", is_thread=True, title="a report")
+
+    def backdate():
+        w.db.execute("UPDATE conversation SET last_activity_at=? WHERE id=?", (STALE, conv_id))
+
+    def conv():
+        return w.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+
+    backdate()
+    # Exactly what the sweep does to a thread nobody has posted in: upsert, then find nothing
+    # new to insert.
+    w.upsert_conversation("7300", kind="ask", channel_id=ASK_CHANNEL,
+                          root_message_id="7300", is_thread=True, title="a renamed report")
+    check("a sweep over a thread with nothing new leaves the stamp alone",
+          conv()["last_activity_at"] == STALE, conv()["last_activity_at"])
+    check("while still picking up the rename, which is not activity",
+          conv()["title"] == "a renamed report", conv()["title"])
+
+    # A message actually arriving is what the column is for.
+    w.insert_message(conv_id, message(sflake(60, 3), "still too slow"))
+    moved = conv()["last_activity_at"]
+    check("a new message moves it", moved != STALE, moved)
+
+    # And the same doorbell twice does not, because insert_message bumps only past the rowcount
+    # check that dedupes it.
+    backdate()
+    w.insert_message(conv_id, message(sflake(60, 3), "still too slow"))
+    check("a duplicate message does not move it", conv()["last_activity_at"] == STALE,
+          conv()["last_activity_at"])
+
+
 def test_a_conversations_class_is_settled_when_it_opens():
     """Chosen by the opening turn, read on every turn afterwards, and never moved.
 
@@ -8237,6 +8288,7 @@ def main():
         test_the_two_agent_classes_are_configured_independently,
         test_each_class_counts_only_its_own_containers,
         test_a_conversations_class_is_settled_when_it_opens,
+        test_a_quiet_sweep_does_not_move_last_activity,
         test_the_pool_only_stages_what_it_has_room_for,
         test_the_daemon_loop_keeps_the_pool,
         test_two_dispatchers_cannot_take_one_container,
