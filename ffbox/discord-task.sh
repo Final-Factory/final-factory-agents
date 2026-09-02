@@ -643,7 +643,18 @@ else:
     argv += ["--session-id", session["id"]]
 
 if job.get("plugin_dir"):
-    argv += ["--plugin-dir", job["plugin_dir"]]
+    # AND THE SAME DIRECTORY AS AN ADDED ONE, for the same reason the attachments mount is
+    # named below. --plugin-dir makes the plugin's skills and roles LOADABLE; it does not make
+    # the files READABLE. The tree is mounted outside cwd, so the moment the agent opens one by
+    # path — and the prompt tells it to, "they are loaded from /ffbox/plugins/ff-discord" — Read
+    # raises an out-of-tree permission request that a `-p` run has nobody to answer, and the
+    # turn logs "Claude requested permissions to read from
+    # /ffbox/plugins/ff-discord/agents/discord-dev-agent.md, but you haven't granted it yet".
+    # The role text it was told to follow is the thing it cannot see.
+    #
+    # READ, not write: ffwatch mounts the plugin :ro on the host side, so this widens what the
+    # agent may look at and nothing else.
+    argv += ["--plugin-dir", job["plugin_dir"], "--add-dir", job["plugin_dir"]]
 
 argv += [
     # THE CHECKOUT'S OWN CONFIG IS NEVER A SOURCE OF CAPABILITY. `user` here is
