@@ -72,8 +72,13 @@ export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE
 #
 # THIS IS NOT THE BOUNDARY and is not meant to be. The job runs as root here and could unset it in
 # a line. What makes GitHub unreachable is github.com leaving the egress allowlist; this only
-# removes the NEED, which is the half that has to come first. While that entry is still present a
-# job whose redirect fails simply fetches from GitHub as it always did.
+# removes the NEED, which is the half that had to come first.
+#
+# AND THERE IS NO LONGER A FALLBACK BEHIND IT. This block used to end by saying that a job whose
+# redirect fails just fetches from GitHub as it always did. That was never true of a redirect that
+# SUCCEEDS and gets a refusal -- insteadOf rewrites the URL, so "the mirror does not have it" ends
+# the fetch rather than sending it elsewhere -- and since github.com left the allowlist on
+# 2026-08-31 it is not true of any failure. Whatever the mirror cannot serve, no job gets.
 #
 # LFS IS DELIBERATELY LEFT POINTING AT GITHUB. git-lfs derives its endpoint from the remote URL and
 # has nowhere to go with a git:// one, so pinning lfs.url keeps it working while the git objects
