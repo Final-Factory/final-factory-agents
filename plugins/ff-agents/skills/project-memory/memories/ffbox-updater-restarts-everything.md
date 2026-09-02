@@ -22,6 +22,17 @@ intervention, and manual intervention on a running build server is not free.
   `PartOf=ffbox.target` — `ffwatch`, `ffweb` **and `ffdiscord-listener`** — so all three come
   back on the new code, with the new plugin cache already in place because stage 5 ran first.
 
+**A CONFIG EDIT IS A TRIGGER TOO (added 2026-09-02).** `~/.config/ffbox/config.json` is read
+ONCE per process, in `ffwatch`'s `main()`, so editing it deploys nothing — same rule as a `.py`
+file, and it is not in git, so the updater's SHA comparison used to sail straight past it. It now
+also hashes `config.json` and compares that against `~/.config/ffbox/update.config-sha`, which
+holds what the RUNNING services started on. Edit the config, and the next tick drains and
+restarts into it exactly as a push would; `journalctl -u ffbox-update` says
+`config.json has changed since the services started`. So the rule at the top covers config edits
+as well: **wait one tick and look, do not restart the target by hand.** Two things it does not
+cover — a dirty checkout refuses the pass whatever the trigger, and `ffbox/egress/allowlist.txt`
+is still its own thing (see the bottom of this note).
+
 **IT WAITS UP TO AN HOUR BEFORE IT STOPS ANYTHING (revised 2026-09-01).** Before it stops
 anything it drains BOTH lanes — `ffwatch drain` and `ffgithubrunners drain` — and then:
 

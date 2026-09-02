@@ -13,6 +13,12 @@
 # from a checkout twelve hours older than HEAD, and a guard committed at 16:46 was not live at
 # 20:41. Editing a file is not deploying it.
 #
+# AND THE CONFIG IS A FILE. ~/.config/ffbox/config.json is read once per process, in ffwatch's
+# main(), so an edit to it is exactly as undeployed as an edit to a .py file — and it is not in
+# git, so until 2026-09-02 the SHA comparison below saw nothing and the box kept the old
+# settings until the next commit happened along. There are two triggers now: new commits, and a
+# config whose hash no longer matches the one the running processes started on.
+#
 # WHY IT IS NOT PART OF ffbox.target. A bad commit that stops ffwatch from starting is exactly
 # when an update matters. Nothing here may depend on ffbox being healthy: the drain is an
 # optimisation over a hard stop, and every way it can fail — timeout, crash, a broken
@@ -84,6 +90,9 @@ CONFIG_DIR=${FFBOX_CONFIG_DIR:-$OWNER_HOME/.config/ffbox}
 KILL_SWITCH=$CONFIG_DIR/update.disabled
 DRAIN_SWITCH=$CONFIG_DIR/draining
 LOCK=$CONFIG_DIR/update.lock
+# The box's one config file, and the fingerprint of the copy the running services started on.
+CONFIG_FILE=$CONFIG_DIR/config.json
+CONFIG_STAMP=$CONFIG_DIR/update.config-sha
 
 log() { printf '[ffbox-update] %s\n' "$*"; }
 die() { log "ERROR: $*"; exit 1; }
@@ -114,6 +123,20 @@ sudo_systemctl() {
         log "         FFBOX_UNITS sudoers rule, or run 'sudo systemctl $*' by hand."
         return 1
     fi
+}
+
+# A HASH, NOT AN MTIME. setup.sh runs on every update pass and its config stage is setdefault
+# the whole way down, so the file is opened and rewritten routinely; a touch that changes no
+# byte must not cost the box a drain and a restart.
+#
+# A missing or unhashable file answers with a CONSTANT rather than an empty string. The stamp is
+# compared for inequality, and an empty answer would differ from every stored value forever —
+# a machine with no config.json restarting itself every five minutes.
+config_fingerprint() {
+    [ -r "$CONFIG_FILE" ] || { echo "absent"; return 0; }
+    _fp=$(sha256sum "$CONFIG_FILE" 2>/dev/null | cut -c1-64)
+    printf '%s\n' "${_fp:-unhashable}"
+    unset _fp
 }
 
 # ------------------------------------------------------------------------------------------
@@ -179,7 +202,7 @@ if [ -e "$CONFIG_DIR/githubrunners/drain" ] && [ "$DRY_RUN" = 0 ]; then
 fi
 
 # ------------------------------------------------------------------------------------------
-# 2. the three reasons to do nothing
+# 2. is there anything to do — new commits, a changed config, or neither
 # ------------------------------------------------------------------------------------------
 if [ -e "$KILL_SWITCH" ]; then
     log "kill switch present ($KILL_SWITCH) — not updating"
@@ -197,29 +220,61 @@ log "fetching origin/$BRANCH"
 git_ fetch --prune --quiet origin "$BRANCH" || die "fetch failed"
 OLD_SHA=$(git_ rev-parse HEAD)
 NEW_SHA=$(git_ rev-parse FETCH_HEAD)
+CODE_UPDATE=1
 if [ "$OLD_SHA" = "$NEW_SHA" ]; then
-    log "already current at $(printf %.12s "$OLD_SHA") — nothing to do"
+    CODE_UPDATE=0
+else
+    BASE=$(git_ merge-base "$OLD_SHA" "$NEW_SHA")
+    if [ "$BASE" = "$NEW_SHA" ]; then
+        # HEAD contains the remote: someone committed here and has not pushed yet. That is not a
+        # divergence and not an error — there is simply nothing upstream to take. Found by
+        # running this on a box with an unpushed commit, where the divergence branch below fired
+        # instead and reported a failed unit every five minutes.
+        log "local is ahead of origin/$BRANCH by $(git_ rev-list --count "$NEW_SHA..$OLD_SHA") commit(s) — nothing to take"
+        CODE_UPDATE=0
+    elif [ "$BASE" != "$OLD_SHA" ]; then
+        # Genuinely diverged: both sides have commits the other lacks. A human problem, and this
+        # is the one place where being clever would mean auto-executing code nobody reviewed.
+        # Fatal for the config trigger too: a checkout nobody has untangled is not a checkout to
+        # restart the box on, whatever the config says.
+        die "origin/$BRANCH has diverged from HEAD — refusing to merge. Fix by hand."
+    fi
+fi
+
+# THE SECOND TRIGGER. Compared against what the RUNNING processes started on, not against the
+# last time this script looked, which is why the stamp is written down in section 6 next to the
+# start rather than here.
+CONFIG_NOW=$(config_fingerprint)
+CONFIG_WAS=$(cat "$CONFIG_STAMP" 2>/dev/null || echo "")
+CONFIG_CHANGED=0
+if [ -z "$CONFIG_WAS" ]; then
+    # NO STAMP IS NOT A CHANGE. Every machine that takes this commit, and anyone who deletes the
+    # file, would otherwise spend one whole drain-and-restart on a config nobody touched. Record
+    # what is there and let the next real edit be the trigger.
+    if [ "$DRY_RUN" = 1 ]; then
+        log "would record the current config fingerprint; no restart is owed for it"
+    else
+        log "recording the current config fingerprint; no restart is owed for it"
+        printf '%s\n' "$CONFIG_NOW" > "$CONFIG_STAMP"
+    fi
+elif [ "$CONFIG_NOW" != "$CONFIG_WAS" ]; then
+    CONFIG_CHANGED=1
+fi
+
+if [ "$CODE_UPDATE" = 0 ] && [ "$CONFIG_CHANGED" = 0 ]; then
+    log "already current at $(printf %.12s "$OLD_SHA"), config unchanged — nothing to do"
     exit 0
 fi
-BASE=$(git_ merge-base "$OLD_SHA" "$NEW_SHA")
-if [ "$BASE" = "$NEW_SHA" ]; then
-    # HEAD contains the remote: someone committed here and has not pushed yet. That is not a
-    # divergence and not an error — there is simply nothing upstream to take. Found by running
-    # this on a box with an unpushed commit, where the divergence branch below fired instead
-    # and reported a failed unit every five minutes.
-    log "local is ahead of origin/$BRANCH by $(git_ rev-list --count "$NEW_SHA..$OLD_SHA") commit(s) — nothing to take"
-    exit 0
+if [ "$CODE_UPDATE" = 1 ]; then
+    log "update available: $(printf %.12s "$OLD_SHA") -> $(printf %.12s "$NEW_SHA")"
+    git_ log --oneline "$OLD_SHA..$NEW_SHA" | sed 's/^/    /'
 fi
-if [ "$BASE" != "$OLD_SHA" ]; then
-    # Genuinely diverged: both sides have commits the other lacks. A human problem, and this is
-    # the one place where being clever would mean auto-executing code nobody reviewed.
-    die "origin/$BRANCH has diverged from HEAD — refusing to merge. Fix by hand."
+if [ "$CONFIG_CHANGED" = 1 ]; then
+    log "$CONFIG_FILE has changed since the services started — restarting to pick it up"
 fi
-log "update available: $(printf %.12s "$OLD_SHA") -> $(printf %.12s "$NEW_SHA")"
-git_ log --oneline "$OLD_SHA..$NEW_SHA" | sed 's/^/    /'
 
 if [ "$DRY_RUN" = 1 ]; then
-    log "--dry-run: stopping here. Would drain, stop, merge, act on the diff and restart."
+    log "--dry-run: stopping here. Would drain, stop, merge anything new, re-run setup and restart."
     exit 0
 fi
 
@@ -383,8 +438,14 @@ sudo_systemctl stop ffbox.target || log "WARNING: stop reported a failure; conti
 # ------------------------------------------------------------------------------------------
 # 4. the merge
 # ------------------------------------------------------------------------------------------
-git_ merge --ff-only --quiet "$NEW_SHA" || die "fast-forward merge failed"
-log "checkout is now at $(printf %.12s "$(git_ rev-parse HEAD)")"
+# Skipped outright on a config-only pass: there is nothing upstream to take, and the rest of
+# this script — setup, restart — is the same work either way.
+if [ "$CODE_UPDATE" = 1 ]; then
+    git_ merge --ff-only --quiet "$NEW_SHA" || die "fast-forward merge failed"
+    log "checkout is now at $(printf %.12s "$(git_ rev-parse HEAD)")"
+else
+    log "no new commits; the checkout stays at $(printf %.12s "$OLD_SHA")"
+fi
 
 # ------------------------------------------------------------------------------------------
 # 5. re-run setup
@@ -467,6 +528,15 @@ fi
 # Before the start, not after: ffbox is stopped at this moment, so nothing can observe the
 # window, and a start that fails still leaves the machine ready to run.
 lift_drain
+# STAMPED HERE, a moment before the processes that read it start, and not back where we decided
+# to restart. The drain can take an hour, and a config edited during that hour is picked up by
+# THIS start; stamping the older fingerprint would spend a second full restart on settings that
+# are already live. Written before the start rather than after, so a start that fails does not
+# leave the box owing a restart it will never be told about.
+# Never fatal, and for the usual reason: ffbox is STOPPED at this line, and an unwritable stamp
+# must not be what keeps it that way. The cost of failing here is one redundant restart.
+printf '%s\n' "$(config_fingerprint)" > "$CONFIG_STAMP" \
+    || log "WARNING: could not write $CONFIG_STAMP; the next tick will restart again"
 log "starting ffbox.target"
 sudo_systemctl start ffbox.target || log "WARNING: start reported a failure"
 
@@ -478,6 +548,10 @@ for u in ffdiscord-listener.service ffwatch.service ffweb.service; do
     printf '  %-28s %s\n' "$u" "$state"
     [ "$u" = "ffwatch.service" ] && [ "$state" != active ] && rc=1
 done
-log "updated $(printf %.12s "$OLD_SHA") -> $(printf %.12s "$NEW_SHA")"
+if [ "$CODE_UPDATE" = 1 ]; then
+    log "updated $(printf %.12s "$OLD_SHA") -> $(printf %.12s "$NEW_SHA")"
+else
+    log "restarted on a config change; still at $(printf %.12s "$OLD_SHA")"
+fi
 [ "$rc" = 0 ] || log "ERROR: ffwatch did not come back. The timer keeps running: the next good commit will land on its own."
 exit "$rc"
