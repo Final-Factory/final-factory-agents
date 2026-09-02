@@ -8017,6 +8017,30 @@ def test_draining_destroys_what_is_idle_and_nothing_else():
     w.pool_drop = lambda pool_id, force=False: None
     check("the keeper stages nothing while draining", w.keep_pool() == [], None)
 
+    # THE STOP HAS TO OUTLAST A LICENCE RETURN, and until 2026-09-02 it did not. A staged spare
+    # has held a Unity seat since 2026-09-01, the trap that gives it back runs
+    # `unity-editor -quit -returnlicense`, and `docker stop --timeout` KILLs when it runs out --
+    # so a drop with kill_grace_secs, default 10, SIGKILLed the container part-way through. The
+    # argv is what is asserted, rather than a running container: this is the only guard on a leak
+    # that is invisible until somebody counts seats.
+    os.makedirs(os.path.join(w.pool_dir("d4"), "out"), exist_ok=True)
+    w.cfg["kill_grace_secs"] = 10
+    seen = []
+    real_run = ffwatch.subprocess.run
+    ffwatch.subprocess.run = lambda argv, **kw: seen.append(argv) or real_run(
+        [sys.executable, "-c", ""], capture_output=True)
+    try:
+        w.pool_drop = ffwatch.Watcher.pool_drop.__get__(w)
+        w.pool_drop("d4")
+    finally:
+        ffwatch.subprocess.run = real_run
+    stops = [a for a in seen if "stop" in a]
+    graces = [int(a[a.index("--timeout") + 1]) for a in stops if "--timeout" in a]
+    check("a drop stops a seat-holding spare with at least the licence floor",
+          bool(graces) and min(graces) >= ffwatch.LICENCE_STOP_FLOOR, graces)
+    check("and kill_grace_secs alone would not have been enough",
+          w.cfg["kill_grace_secs"] < ffwatch.LICENCE_STOP_FLOOR, None)
+
 
 def test_the_project_directory_survives_a_workspace_move():
     """Claude Code keeps everything for a project — transcripts and memory/ — in one directory

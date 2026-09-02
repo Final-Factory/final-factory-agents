@@ -76,6 +76,12 @@ DRAIN_TIMEOUT=${FFBOX_DRAIN_TIMEOUT:-3600}
 # What each container gets to run its PID-1 trap when the window does expire: the workspace
 # harvest and the Unity licence return. ffbox uses the same floor for its own timeout stops.
 FORCE_STOP_GRACE=${FFBOX_FORCE_STOP_GRACE:-120}
+# AND THE SAME NUMBER FOR A CONTAINER WE ARE MERELY TIDYING AWAY, which is a separate knob only
+# because it is a separate decision. An idle staged container has nothing to harvest, but it HAS
+# held a Unity seat since 2026-09-01, and the trap that gives one back is an editor launch. This
+# stop used to pass 10, so the drain SIGKILLed a container part-way through returning its licence
+# on every pass that had something to merge. See ffbox/lib-workloads.sh's FFBOX_LICENCE_STOP_FLOOR.
+LICENCE_STOP_GRACE=${FFBOX_LICENCE_STOP_GRACE:-120}
 # And what the HOST gets afterwards, to finish publishing the containers we just stopped.
 FORCE_SETTLE=${FFBOX_FORCE_SETTLE_SECS:-300}
 DRY_RUN=0
@@ -428,8 +434,14 @@ while :; do
                 # the old ffbox and is still called that. It is safe to keep indefinitely --
                 # an old-style RUN was `ffbox-<run id>` and never matched this -- and the arm
                 # can go once no box can still be carrying a spare from before the rename.
+                # 120 RATHER THAN 10, AND THE NUMBER IS ABOUT UNITY. A staged container has
+                # held a seat since 2026-09-01, and the trap that hands it back is an editor
+                # launch of tens of seconds; `docker stop --timeout` KILLs when it runs out, so
+                # ten seconds meant this drain SIGKILLed a container part-way through returning
+                # its licence, on every pass that had something to merge. ffbox floors its own
+                # stop at the same 120 and says why; that reasoning never reached here.
                 log "destroying idle staged container $_c that the drain did not take"
-                docker_ stop --timeout 10 "$_c" >/dev/null 2>&1 || :
+                docker_ stop --timeout "$LICENCE_STOP_GRACE" "$_c" >/dev/null 2>&1 || :
                 docker_ rm -f "$_c" >/dev/null 2>&1 || : ;;
             *)  _busy=$((_busy + 1)) ;;
         esac
