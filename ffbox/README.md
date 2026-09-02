@@ -73,7 +73,8 @@ Everything ffbox owns on a machine lives in one directory:
 ~/.config/ffbox/discord/           the Discord CLI's STATE: cursors, doorbell, listener lock
 ~/.config/ffbox/discord.disabled   the kill switch
 ~/.config/ffbox/update.disabled    pauses the self-update timer (see "Staying current")
-~/.config/ffbox/update.config-sha  the hash of config.json the running services started on
+~/.config/ffbox/update.config-sha  the hash config.json and secrets.env had when the running
+                                   services started on them
 ~/ffbox-state/                     the database, blobs and per-conversation run directories
 ```
 
@@ -253,13 +254,15 @@ deploys nothing. This is not hypothetical: on 2026-08-22 the build server was fo
 ffwatch from a checkout twelve hours older than HEAD, and a guard committed at 16:46 was still
 not live at 20:41.
 
-The config is a file too. `config.json` is read once per process — ffwatch calls `load_config()`
-in `main()` and then runs for weeks off that dict — so editing it deploys nothing either.
+The config is a file too, and so are the secrets. `config.json` is read once per process —
+ffwatch calls `load_config()` in `main()` and then runs for weeks off that dict — and
+`secrets.env` is read once per *start*, by systemd, as the `EnvironmentFile=` of all three
+units. Editing either deploys nothing.
 
 `ffbox-update.timer` closes both gaps. Every five minutes it asks two questions: is there
-anything new on `origin/master`, and does `config.json` still hash to what the running services
-started on. Either answer drains the pipeline, fast-forwards if there is code to take, re-runs
-setup and restarts:
+anything new on `origin/master`, and do `config.json` and `secrets.env` still hash to what the
+running services started on. Either answer drains the pipeline, fast-forwards if there is code
+to take, re-runs setup and restarts:
 
 ```bash
 sudo systemctl start ffbox-update.service   # update now (the timer does exactly this)
@@ -287,15 +290,19 @@ Seven things worth knowing:
   workspace out of its tmpfs and hand the Unity licence seat back, and then the host gets five
   minutes to finish publishing what those stops released. `FFBOX_DRAIN_TIMEOUT`,
   `FFBOX_FORCE_STOP_GRACE` and `FFBOX_FORCE_SETTLE_SECS` are the three numbers.
-- **A config edit is a trigger, exactly like a commit.** `~/.config/ffbox/config.json` is
-  hashed on every tick and compared against `~/.config/ffbox/update.config-sha`, which holds
-  what the *running* services started on. Edit the config and the next tick drains and restarts
-  into it; nothing else about the pass changes, and there is no second code path. A hash rather
-  than an mtime, because setup rewrites the file on every pass and a touch that changes no byte
-  must not cost the box a restart. The stamp is written a moment before `systemctl start`, not
-  when the decision was made, so a config edited *during* an hour-long drain is picked up by
-  that same start instead of earning a second one. No stamp at all — a fresh machine, or one
-  where you deleted the file — records the current hash and restarts nothing.
+- **A config or secrets edit is a trigger, exactly like a commit.** `config.json` and
+  `secrets.env` are hashed on every tick and compared against `~/.config/ffbox/update.config-sha`,
+  which holds what the *running* services started on. Edit either and the next tick drains and
+  restarts into it, naming the file it saw change; nothing else about the pass changes, and there
+  is no second code path. A hash rather than an mtime, because setup rewrites `config.json` on
+  every pass and a touch that changes no byte must not cost the box a restart. The stamp is
+  written a moment before `systemctl start`, not when the decision was made, so a file edited
+  *during* an hour-long drain is picked up by that same start instead of earning a second one.
+  A line the stamp has never carried — a fresh machine, a deleted stamp, a file newly added to
+  the watched set — is recorded rather than treated as a change, so nobody pays a restart for a
+  file nobody touched. The runners' own `~/.config/ffbox/githubrunners/secrets.env` is
+  deliberately *not* watched: it is sourced per invocation, and its slots are in
+  `ffgithubrunners.target`, which this does not restart.
 - **It refuses a dirty working tree** and says so, rather than stashing or resetting. On a
   machine where you are editing, updates stop until you commit — a config edit will not get
   through either, and the journal says why.
@@ -1061,7 +1068,7 @@ because a moderation queue nobody can see is not a moderation queue.
 | `~/.config/ffbox/discord.disabled` | kill switch. While it exists, ffwatch neither launches a run nor sends a reply. Ingest keeps running, so nothing is lost. |
 | `~/.config/ffbox/draining` | drain flag. Launches pause; replies still go out. Written by the updater, lifted when it finishes. See "Staying current". |
 | `~/.config/ffbox/update.disabled` | pauses the self-update timer. Separate from the kill switch: pausing replies and pausing code updates are different intents. |
-| `~/.config/ffbox/update.config-sha` | the hash of `config.json` as the running services started on it. The updater compares it every tick and restarts when it no longer matches; see "Staying current". |
+| `~/.config/ffbox/update.config-sha` | one `name hash` line per start-time-only file — `config.json` and `secrets.env` — as the running services started on them. The updater compares it every tick and restarts when a line no longer matches; see "Staying current". |
 
 ### Sending
 

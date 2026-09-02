@@ -22,16 +22,23 @@ intervention, and manual intervention on a running build server is not free.
   `PartOf=ffbox.target` — `ffwatch`, `ffweb` **and `ffdiscord-listener`** — so all three come
   back on the new code, with the new plugin cache already in place because stage 5 ran first.
 
-**A CONFIG EDIT IS A TRIGGER TOO (added 2026-09-02).** `~/.config/ffbox/config.json` is read
-ONCE per process, in `ffwatch`'s `main()`, so editing it deploys nothing — same rule as a `.py`
-file, and it is not in git, so the updater's SHA comparison used to sail straight past it. It now
-also hashes `config.json` and compares that against `~/.config/ffbox/update.config-sha`, which
-holds what the RUNNING services started on. Edit the config, and the next tick drains and
-restarts into it exactly as a push would; `journalctl -u ffbox-update` says
-`config.json has changed since the services started`. So the rule at the top covers config edits
-as well: **wait one tick and look, do not restart the target by hand.** Two things it does not
-cover — a dirty checkout refuses the pass whatever the trigger, and `ffbox/egress/allowlist.txt`
+**A CONFIG OR SECRETS EDIT IS A TRIGGER TOO (added 2026-09-02).** `~/.config/ffbox/config.json`
+is read ONCE per process, in `ffwatch`'s `main()`, and `~/.config/ffbox/secrets.env` once per
+START, by systemd, as the `EnvironmentFile=` of all three units. So editing either deploys
+nothing — same rule as a `.py` file — and neither is in git, so the updater's SHA comparison used
+to sail straight past them. It now hashes both and compares them against
+`~/.config/ffbox/update.config-sha`, which holds what the RUNNING services started on. Edit
+either, and the next tick drains and restarts into it exactly as a push would;
+`journalctl -u ffbox-update` names the file: `secrets.env changed in ~/.config/ffbox since the
+services started`. So the rule at the top covers these edits as well: **wait one tick and look,
+do not restart the target by hand.** Three things it does not cover — a dirty checkout refuses
+the pass whatever the trigger; the runners' own `githubrunners/secrets.env` is not watched (it is
+sourced per invocation and its slots are in a different target); and `ffbox/egress/allowlist.txt`
 is still its own thing (see the bottom of this note).
+
+**And do not reason from mtimes here.** `setup.sh` rewrites `config.json` on every update pass,
+so its mtime moves every time the box updates whether or not a byte changed — which is exactly
+why the updater fingerprints it by hash. A fresh mtime is not evidence that anyone edited it.
 
 **IT WAITS UP TO AN HOUR BEFORE IT STOPS ANYTHING (revised 2026-09-01).** Before it stops
 anything it drains BOTH lanes — `ffwatch drain` and `ffgithubrunners drain` — and then:
