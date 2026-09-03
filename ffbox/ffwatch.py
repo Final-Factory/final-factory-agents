@@ -211,6 +211,15 @@ def pool_container_name(agent_class, pool_id):
 # this path that can legitimately block, which is waiting for a place under the box's ceiling.
 LAUNCH_CREATE_TIMEOUT = 300
 
+# THE SHAPE OF A RUN DIRECTORY, AS A NUMBER. A run whose container survives an update is started
+# by one build and finished by another, so the directory is an interface between two versions of
+# ourselves rather than a private detail. Changes to it are ADDITIVE -- a new file, a new key,
+# never a rename or a change of meaning -- and when that is impossible this goes up and a finisher
+# that meets a number it does not understand refuses rather than misreading the files.
+#
+# KEEP IN LOCKSTEP with FFBOX_RUN_CONTRACT in ffbox. Two languages, one number.
+FFBOX_RUN_CONTRACT = 1
+
 ADDED_COLUMNS = [
     ("conversation", "is_thread", "INTEGER NOT NULL DEFAULT 0"),
     ("outbound", "attempts", "INTEGER NOT NULL DEFAULT 0"),
@@ -8564,6 +8573,21 @@ class Watcher:
             self.collect_run_output(run)
             # Re-read: collect_run_output rewrites out_dir when it moves a pooled run's output.
             run = self.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
+            run_dir = self.run_dir_for(run)
+            if run_dir and not self.run_contract_ok(run_dir):
+                # A directory a newer ffbox wrote. Say so, close the row, and leave the files
+                # alone: the build that understands them is the one that should finish them, and
+                # guessing is how a misread bundle becomes a pushed branch.
+                log(f"run {run_id}: its directory was written by a newer ffbox than this one; "
+                    f"refusing to finish it. Update this checkout and it will be picked up.")
+                self.db.execute(
+                    "UPDATE run SET terminal_state='failed', exit_code=COALESCE(exit_code,-1),"
+                    " no_branch_reason=? WHERE id=?",
+                    ("the run directory was written by a newer ffbox than the one finishing it",
+                     run_row_id))
+                self.finish_turn(run["turn_id"], "failed",
+                                 error="run directory written by a newer ffbox")
+                return
             self.validate_harvest(run)
             self.finish_run_from_disk(run)
         except Exception as exc:  # noqa: BLE001 - one run must never take the daemon down
@@ -8604,6 +8628,28 @@ class Watcher:
                 except OSError as exc:
                     log(f"WARNING: could not move {s_path} into the run directory: {exc}")
         self.db.execute("UPDATE run SET out_dir=? WHERE id=?", (run_dir, run["id"]))
+        return True
+
+    def run_contract_ok(self, run_dir):
+        """Can this build finish a directory that build wrote?
+
+        A directory with no contract file was written before the file existed, and is finished
+        exactly as it always was -- that is the upgrade path and it has to keep working. A HIGHER
+        number means a newer ffbox wrote it, which happens when a checkout is rolled back with
+        containers still running; its files may not mean what this code thinks, and publishing a
+        branch derived from a misread bundle is the outcome the number exists to prevent.
+        """
+        raw = _read_text(os.path.join(run_dir, "contract"))
+        if not raw:
+            return True
+        for line in raw.splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() != "contract":
+                continue
+            try:
+                return int(value.strip()) <= FFBOX_RUN_CONTRACT
+            except ValueError:
+                return True                    # unreadable is not the same as newer
         return True
 
     def validate_harvest(self, run):

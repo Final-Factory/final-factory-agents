@@ -550,6 +550,81 @@ else
     echo "         sh ffbox/unity-offline-license.sh mint" >&2
 fi
 
+# --- what a run may publish, and by which rules ------------------------------------------------
+#
+# ABOVE THE CONTAINER GUARD, and that is not cosmetic. `--finish` runs the same harvest checks on
+# a directory some earlier invocation left behind, and those checks read every ceiling below. Left
+# inside the guard they were simply undefined on that path, so a `--finish` that reached a real
+# bundle died on an unbound variable -- which the first test of it did not catch, because a run
+# with no bundle never reaches them.
+
+# --- git identity and harvest ceilings -----------------------------------------------------------
+# The agent commits its OWN work now (WRITE_ALLOWED in ffwatch.py grants local git), so the
+# clone carries the identity those commits get and the harvest checks every commit against it.
+# A commit claiming somebody else is how an agent would dress its work up as a human's, and it
+# would reach a reviewer looking exactly like one.
+FFBOX_GIT_NAME=${FFBOX_GIT_NAME:-ffbox}
+FFBOX_GIT_EMAIL=${FFBOX_GIT_EMAIL:-ffbox@final-factory.invalid}
+
+# Ceilings on what one run may publish. Not a security boundary — the agent could stay under
+# either one — but a runaway `git add -A` over a re-imported Library/ is a mistake worth
+# catching before it becomes a 40GB push.
+MAX_CHANGED_FILES=${FFBOX_MAX_CHANGED_FILES:-2000}
+# PATHS THIS PIPELINE NEVER PUBLISHES. A pushed branch is code execution on the build machine:
+# FinalFactory's .github/workflows/main.yml is `on: [push, pull_request]` and `runs-on:
+# self-hosted`, with the Unity account and GITHUB_TOKEN in scope, and GitHub runs the workflow
+# AS IT EXISTS ON THE PUSHED BRANCH rather than the one on develop. So an agent that edits one
+# has its own steps run with real secrets before a human reads the diff, and the verification
+# gate cannot catch it: that gate asks whether the change compiles and passes tests, and a
+# workflow payload does both while the code beside it is perfectly good.
+FORBIDDEN_PATHS_RE=${FFBOX_FORBIDDEN_PATHS_RE:-^\.github/}
+MAX_BUNDLE_BYTES=${FFBOX_MAX_BUNDLE_BYTES:-268435456}
+
+# Branches a run may not END on. The agent is told to make its own branch and told what happens
+# if it does not; this is the half that makes the telling true. Work committed onto develop or
+# master is a change to the integration branch itself dressed up as a proposal — the range would
+# still bundle and still push, and the reviewer would have no way to see which it was.
+#
+# It is deliberately about where HEAD ENDS UP, not about which commits exist. An agent that
+# committed on develop and then branched off it publishes that work on the branch, which is the
+# outcome everybody wants; what is refused is finishing the run on the shared branch.
+PROTECTED_BRANCHES=${FFBOX_PROTECTED_BRANCHES:-develop master main}
+
+# THE RUN DIRECTORY IS A CROSS-VERSION INTERFACE NOW, so it carries a version.
+#
+# A run whose container survives an update was started by one build of ffbox and is FINISHED by
+# another -- `ffbox --finish` and ffwatch's finish pass, both from the new tree, reading a
+# directory the old tree wrote. That is the whole point of detaching, and it makes the shape of
+# this directory a contract between two versions of ourselves rather than a private detail.
+#
+# THE RULE THAT KEEPS THIS CHEAP: changes are ADDITIVE. A new file, a new key. Never a rename,
+# never a removal, never a change of meaning. When that is genuinely impossible, bump the number
+# -- and a finisher that meets a version it does not understand says so and stops, rather than
+# guessing at a directory whose files no longer mean what it thinks.
+#
+# KEEP IN LOCKSTEP with FFBOX_RUN_CONTRACT in ffwatch.py. Two languages, one number, and no
+# shared library to put it in -- the same arrangement the Unity machine-id constant lives under.
+FFBOX_RUN_CONTRACT=1
+
+# The ceilings this run's harvest was admitted under, recorded beside the work they judge.
+#
+# WHY WRITE THEM DOWN AT ALL, when `--finish` reads the same defaults from the same environment:
+# because it may not. A run finished an hour later, by a newer build, under a config somebody has
+# since loosened, would be judged by TODAY's ceilings rather than the ones it was started with --
+# so a bundle that would have been refused at launch could be published at harvest. Recording
+# them makes the run's own limits the ones that apply to it, which is the same rule the clock
+# file follows for the phase ceilings.
+ffbox_write_contract() {
+    {
+        printf 'contract=%s\n' "$FFBOX_RUN_CONTRACT"
+        printf 'max_changed_files=%s\n' "$MAX_CHANGED_FILES"
+        printf 'max_bundle_bytes=%s\n' "$MAX_BUNDLE_BYTES"
+        printf 'forbidden_paths_re=%s\n' "$FORBIDDEN_PATHS_RE"
+        printf 'protected_branches=%s\n' "$PROTECTED_BRANCHES"
+    } > "$OUT/contract" 2>/dev/null || :
+    return 0
+}
+
 # --- everything from here to the harvest is about a CONTAINER ----------------------------------
 #
 # `--finish` skips all of it. It is handed a run directory some earlier, detached invocation left
@@ -814,37 +889,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# --- git identity and harvest ceilings -----------------------------------------------------------
-# The agent commits its OWN work now (WRITE_ALLOWED in ffwatch.py grants local git), so the
-# clone carries the identity those commits get and the harvest checks every commit against it.
-# A commit claiming somebody else is how an agent would dress its work up as a human's, and it
-# would reach a reviewer looking exactly like one.
-FFBOX_GIT_NAME=${FFBOX_GIT_NAME:-ffbox}
-FFBOX_GIT_EMAIL=${FFBOX_GIT_EMAIL:-ffbox@final-factory.invalid}
-
-# Ceilings on what one run may publish. Not a security boundary — the agent could stay under
-# either one — but a runaway `git add -A` over a re-imported Library/ is a mistake worth
-# catching before it becomes a 40GB push.
-MAX_CHANGED_FILES=${FFBOX_MAX_CHANGED_FILES:-2000}
-# PATHS THIS PIPELINE NEVER PUBLISHES. A pushed branch is code execution on the build machine:
-# FinalFactory's .github/workflows/main.yml is `on: [push, pull_request]` and `runs-on:
-# self-hosted`, with the Unity account and GITHUB_TOKEN in scope, and GitHub runs the workflow
-# AS IT EXISTS ON THE PUSHED BRANCH rather than the one on develop. So an agent that edits one
-# has its own steps run with real secrets before a human reads the diff, and the verification
-# gate cannot catch it: that gate asks whether the change compiles and passes tests, and a
-# workflow payload does both while the code beside it is perfectly good.
-FORBIDDEN_PATHS_RE=${FFBOX_FORBIDDEN_PATHS_RE:-^\.github/}
-MAX_BUNDLE_BYTES=${FFBOX_MAX_BUNDLE_BYTES:-268435456}
-
-# Branches a run may not END on. The agent is told to make its own branch and told what happens
-# if it does not; this is the half that makes the telling true. Work committed onto develop or
-# master is a change to the integration branch itself dressed up as a proposal — the range would
-# still bundle and still push, and the reviewer would have no way to see which it was.
-#
-# It is deliberately about where HEAD ENDS UP, not about which commits exist. An agent that
-# committed on develop and then branched off it publishes that work on the branch, which is the
-# outcome everybody wants; what is refused is finishing the run on the shared branch.
-PROTECTED_BRANCHES=${FFBOX_PROTECTED_BRANCHES:-develop master main}
 
 
 
@@ -1177,6 +1221,7 @@ if [ -n "$DISPATCH" ]; then
     # The clock starts at DISPATCH for a pooled run, not at the container's creation: it has been
     # sitting warm and idle, and none of that time is this run's warm-up.
     ffbox_write_clock
+    ffbox_write_contract
 
     # `docker wait` prints the container's exit code and exits 0 itself, so the code has to come
     # out of its stdout rather than out of $?. Backgrounded so the clock loop below watches this
@@ -1268,6 +1313,7 @@ else
     ffbox_agent_slot_confirm "$RUN_SLOT" "$RUN_CID"
     ffbox_write_container_id "$RUN_CID"
     ffbox_write_clock
+    ffbox_write_contract
     ffbox_workload_lock_release
 fi
 
@@ -1378,6 +1424,32 @@ else
     # That reasoning is why this is the same function rather than a second implementation.
     [ -d "$FINISH_DIR" ] || { echo "ffbox: no run directory at $FINISH_DIR" >&2; exit 2; }
     OUT=$FINISH_DIR
+    # A DIRECTORY THIS BUILD DOES NOT UNDERSTAND IS NOT GUESSED AT. A run started before the
+    # contract existed carries no file and is finished as it always was -- that is the upgrade
+    # path and it has to keep working. A run carrying a HIGHER number was written by a newer
+    # ffbox than this one, which happens when a checkout is rolled back with containers still
+    # running, and its files may not mean what this code thinks they mean. Refusing is the whole
+    # value of the number: the alternative is publishing a branch derived from a misread bundle.
+    # ONE READER, GUARDED ON THE FILE EXISTING. `sed` on a missing path exits 2, and this script
+    # runs under `set -o pipefail`, so `sed ... | head -1` in a command substitution takes sed's
+    # status and `set -e` ends the run -- on the one case that has to work, which is a directory
+    # written before the contract file existed. Found by running exactly that.
+    _fread() { [ -r "$OUT/contract" ] || return 0; sed -n "s/^$1=//p" "$OUT/contract" | head -1; }
+    _fc=$(_fread contract)
+    case "${_fc:-}" in
+        ''|*[!0-9]*) ;;
+        *)  if [ "$_fc" -gt "$FFBOX_RUN_CONTRACT" ]; then
+                echo "ffbox: $FINISH_DIR was written by a newer ffbox (run contract $_fc, this" >&2
+                echo "       build understands $FFBOX_RUN_CONTRACT). Refusing to finish it." >&2
+                exit 3
+            fi ;;
+    esac
+    # The ceilings this run was admitted under, not today's. See ffbox_write_contract.
+    _fv=$(_fread max_changed_files); case "${_fv:-}" in ''|*[!0-9]*) ;; *) MAX_CHANGED_FILES=$_fv ;; esac
+    _fv=$(_fread max_bundle_bytes);  case "${_fv:-}" in ''|*[!0-9]*) ;; *) MAX_BUNDLE_BYTES=$_fv ;; esac
+    _fv=$(_fread forbidden_paths_re); [ -z "${_fv:-}" ] || FORBIDDEN_PATHS_RE=$_fv
+    _fv=$(_fread protected_branches);  [ -z "${_fv:-}" ] || PROTECTED_BRANCHES=$_fv
+    unset _fc _fv
     RUN_RC=$(tr -dc '0-9' < "$OUT/.container-rc" 2>/dev/null || true)
     [ -n "$RUN_RC" ] || RUN_RC=70
     case "$(head -1 "$OUT/ffbox-timeout" 2>/dev/null | tr -d ' \r\n')" in

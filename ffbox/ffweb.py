@@ -92,6 +92,9 @@ import subprocess
 import sys
 import threading
 import time
+# For the run clock, whose started_at is an ISO timestamp with an offset that
+# time.strptime cannot take.
+from datetime import datetime
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -2696,6 +2699,49 @@ class App:
         out.append("</div>")
         return "".join(out)
 
+    @staticmethod
+    def run_clock_left(out_dir):
+        """(phase, seconds left) off the run's clock file, or None when there is nothing to read.
+
+        The same derivation ffwatch's enforcer makes, and deliberately a separate three lines
+        rather than an import: this process opens the database read-only and shells out for
+        everything it cannot read, and a clock file is a file. Negative means past the ceiling,
+        which is a real state -- the stop runs on a pass, so there is a window where the page can
+        see a run that is over its limit and not yet stopped.
+        """
+        try:
+            with open(os.path.join(out_dir, "clock"), "r", encoding="utf-8") as fh:
+                raw = fh.read()
+        except OSError:
+            return None
+        vals = {}
+        for line in raw.splitlines():
+            key, _, value = line.partition("=")
+            vals[key.strip()] = value.strip()
+        started = vals.get("started_at")
+        if not started:
+            return None
+        try:
+            began = datetime.fromisoformat(started).timestamp()
+        except ValueError:
+            return None
+        phase, mark, key = "warmup", began, "warmup_secs"
+        for marker, name, ceiling_key in ((".verify-started", "verify", "verify_secs"),
+                                          (".agent-started", "agent", "agent_secs")):
+            try:
+                mark = os.path.getmtime(os.path.join(out_dir, marker))
+            except OSError:
+                continue
+            phase, key = name, ceiling_key
+            break
+        try:
+            ceiling = int(vals.get(key) or 0)
+        except ValueError:
+            return None
+        if ceiling <= 0:
+            return None
+        return phase, int(mark + ceiling - time.time())
+
     # -- one run's transcript ----------------------------------------------------------------
 
     def page_run(self, run_id):
@@ -2727,6 +2773,18 @@ class App:
               fmt_secs(run["warmup_secs"]), fmt_secs(run["agent_secs"]),
               fmt_secs(run["verify_secs"]), run["container_name"] or "—",
               esc(adopted) if adopted else "—"]]))
+        # HOW LONG THIS RUN HAS, while it is still going. The ceilings live in a file in the run
+        # directory rather than in the process that started it, which is what lets any ffwatch
+        # enforce them -- and it also means the page can just read them. Without this a run in
+        # flight shows no deadline at all, which is the column an operator wants most while
+        # wondering whether something is stuck.
+        if run["terminal_state"] is None and run["out_dir"]:
+            left = self.run_clock_left(run["out_dir"])
+            if left is not None:
+                phase, secs = left
+                head.append('<p class="note">clock: ' + esc(phase) + ' phase, '
+                            + esc(fmt_secs(abs(secs)))
+                            + (' left' if secs >= 0 else ' past its ceiling') + '.</p>')
         if adopted:
             head.append('<p class="note">This run\'s container outlived the ffwatch that '
                         'started it, and it was picked up again at ' + esc(adopted)

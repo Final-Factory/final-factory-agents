@@ -44,6 +44,14 @@ Two things were found by running it rather than by writing it, and both are fixe
    plan, found while landing it, and it had the box wedged: see the gap list below and the commit
    "a config written by a newer ffbox must not kill an older one".
 
+Three tasks were missed on the first pass and landed after a check of this list against the
+code: **B8** (the harvest ceilings recorded in the run directory), **E8** (the contract file and
+its two constants) and **G2** (the clock on the run's page). B8 and E8 turned up a real defect
+while being written — the `--finish` path had the harvest ceilings *and* the contract constant
+inside the container guard, so they were simply undefined on it. The first `--finish` test did
+not catch it because a run with no work bundle never reaches them, and `set -o pipefail` turned
+the second one into an exit nobody would have read as "unbound variable".
+
 What is NOT done, deliberately:
 
 - **D5 is not applicable as written.** It said to remove ffbox's clock loop after comparing the
