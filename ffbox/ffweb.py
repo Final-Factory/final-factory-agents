@@ -2117,10 +2117,13 @@ class App:
         # that does not exist.
         maint = doc.get("maintenance") or {}
         state = maint.get("state") or "running"
-        # WHEN THE CHECKOUT LAST MOVED, AND WHEN IT LOOKS AGAIN — on this line rather than in a
-        # section of its own, because it belongs with the pill beside it: `running` and
-        # `checking` both say nothing is landing right now, and these two say whether that is
-        # because there is nothing to land. Deliberately NOT "last checked", which is the timer
+        # WHEN THE CHECKOUT LAST MOVED, AND WHEN IT LOOKS AGAIN — directly under the state line
+        # rather than trailing off the end of it, because it is a second sentence about the
+        # same thing and the first line was already long enough to wrap on a narrow window,
+        # which put half the clock under the pill and half beside it. Still not a section of
+        # its own: it belongs with the pill above it, since `running` and `checking` both say
+        # nothing is landing right now and these two say whether that is because there is
+        # nothing to land. Deliberately NOT "last checked", which is the timer
         # number that is easy to get and useless to have: the timer looks every five minutes and
         # finds nothing almost every time, so it reads five minutes old on a box three days
         # behind master. update_ffbox.sh stamps only the pass that actually fast-forwarded.
@@ -2149,7 +2152,10 @@ class App:
                     " · " + str(pill(state)) +
                     (" " + esc(short(str(maint.get("reason")), 120))
                      if maint.get("reason") else "") +
-                    " · " + clock + "</p>")
+                    # A <br> rather than a second <p>: the two .note paragraphs would collapse
+                    # to an 18px gap and read as unrelated lines, when this is the same note
+                    # continued.
+                    "<br>" + clock + "</p>")
 
         # --- the machine ---------------------------------------------------------------
         #
