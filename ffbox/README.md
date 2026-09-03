@@ -73,6 +73,9 @@ Everything ffbox owns on a machine lives in one directory:
 ~/.config/ffbox/discord/           the Discord CLI's STATE: cursors, doorbell, listener lock
 ~/.config/ffbox/discord.disabled   the kill switch
 ~/.config/ffbox/update.disabled    pauses the self-update timer (see "Staying current")
+~/.config/ffbox/update.applying    exists only while an update is actually landing, and says
+                                   what triggered it. What ffstatus reads to tell an update
+                                   apart from the five-minute poll that finds nothing
 ~/.config/ffbox/update.config-sha  the hash config.json and secrets.env had when the running
                                    services started on them
 ~/ffbox-state/                     the database, blobs and per-conversation run directories
@@ -1068,6 +1071,7 @@ because a moderation queue nobody can see is not a moderation queue.
 | `~/.config/ffbox/discord.disabled` | kill switch. While it exists, ffwatch neither launches a run nor sends a reply. Ingest keeps running, so nothing is lost. |
 | `~/.config/ffbox/draining` | drain flag. Launches pause; replies still go out. Written by the updater, lifted when it finishes. See "Staying current". |
 | `~/.config/ffbox/update.disabled` | pauses the self-update timer. Separate from the kill switch: pausing replies and pausing code updates are different intents. |
+| `~/.config/ffbox/update.applying` | written by the updater once it has decided there is work, cleared on every exit path. Carries `started_at` and a one-line `reason`. Its presence is what makes `ffstatus` say `updating` rather than `checking` — see "What is on the box right now". |
 | `~/.config/ffbox/update.config-sha` | one `name hash` line per start-time-only file — `config.json` and `secrets.env` — as the running services started on them. The updater compares it every tick and restarts when a line no longer matches; see "Staying current". |
 
 ### Sending
@@ -1432,16 +1436,38 @@ the unit that runs out: a workspace is a tmpfs, so it is resident RAM rather tha
 four of ten containers with no memory left is a box whose ceiling is wrong, and that is only
 visible with the two on one screen.
 
-The header line ends in `(running)` or `(updating)`, with the reason under it. That is not
-decoration: a box mid-update is *supposed* to look empty, because a drain is exactly "finish
-what you are doing and take nothing new", so without the word the healthy middle of an update
-reads as an outage. Three signals feed it, most specific first — the `ffbox-update` unit being
-active, a hand-run `update_ffbox.sh`, and either lane's drain flag (`~/.config/ffbox/draining`
-for the agent lane, `githubrunners/drain` for CI), the last of which also catches a `ffwatch
-drain` somebody set by hand with no update behind it. The update *lock* is deliberately not one
-of them: testing it with `flock -n` would take it for the instant it held it, and
-`update_ffbox.sh` acquires that same lock with `-n` and gives up when it cannot — a status
-command that can cause a scheduled update to be skipped is not a status command.
+The header line ends in one of four words, with the reason under it. That is not decoration: a
+box mid-update is *supposed* to look empty, because a drain is exactly "finish what you are
+doing and take nothing new", so without the word the healthy middle of an update reads as an
+outage.
+
+| word | what it means |
+|---|---|
+| `running` | nothing is being done to the box |
+| `checking` | the updater is running — which every five minutes it is — and has decided nothing |
+| `updating` | an update is landing: new code is being merged and the box restarted onto it |
+| `drained` | a lane is drained with no update behind it — the weekly image rebuild, or a hand-set flag |
+
+`updating` comes from a flag, `~/.config/ffbox/update.applying`, that `update_ffbox.sh` writes at
+the top of its section 3 and clears on every exit path. That line is the exact boundary past
+which the box really is changing: every exit above it is a pass that touched nothing. The flag
+carries the reason with it (`8a77205 -> 2ad5553`, or which watched file changed), which is what
+the second line prints.
+
+The distinction is the point. `ffbox-update.timer` fires every five minutes, and until
+2026-09-02 the unit merely being active *was* the signal — so 288 times a day this said
+`updating` for a `git fetch` that logged "nothing to do", and one of those ticks was caught on
+the box page and cost somebody a hunt for a commit that had never landed. The unit being up
+answers "is the updater running", which is not the question anybody is asking this page.
+
+Three signals still feed the other two words, most specific first — the `ffbox-update` unit
+being active and a hand-run `update_ffbox.sh` both give `checking`, and either lane's drain flag
+(`~/.config/ffbox/draining` for the agent lane, `githubrunners/drain` for CI) gives `drained`,
+which is what a `ffwatch drain` set by hand or an `image-update.sh` rebuild looks like from here.
+The update *lock* is deliberately not one of them: testing it with `flock -n` would take it for
+the instant it held it, and `update_ffbox.sh` acquires that same lock with `-n` and gives up when
+it cannot — a status command that can cause a scheduled update to be skipped is not a status
+command.
 
 **What it costs is memory and a Unity seat.** A staged container holds its whole workspace
 resident, 22 GiB for master, and since 2026-09-01 it also holds a licence: `pool-task.sh`
@@ -1745,7 +1771,7 @@ when somebody is looking at it.
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
-| `/status` | **the box**, and the one page here that reads no database: whether it is `running` or `updating` and why, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
+| `/status` | **the box**, and the one page here that reads no database: whether it is `running`, `checking`, `updating` or `drained` and why, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 

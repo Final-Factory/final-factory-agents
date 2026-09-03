@@ -979,9 +979,16 @@ form.mark button:hover { color: #d7dae0; border-color: #4a5261; }
 .pill.filling, .pill.claimed { border-color: #a83; color: #eb8; }
 .pill.busy { border-color: #468; color: #9bd; }
 /* An updating box is amber and not red: a drain is the machine doing as it was told, and the
-   only thing it needs to change is how the empty container table below it reads. (`running`
-   needs no rule of its own — a run's pill above is already the green one.) */
-.pill.updating { border-color: #a83; color: #eb8; }
+   only thing it needs to change is how the empty container table below it reads. `drained` is
+   the same colour for the same reason — a lane drained by an image rebuild empties the same
+   table. (`running` needs no rule of its own — a run's pill above is already the green one.)
+
+   `checking` IS DELIBERATELY THE QUIET ONE. The update timer fires every five minutes and the
+   unit is up for a second or two of each, so this pill is on the page 288 times a day for a
+   poll that changes nothing. Amber there would be amber for its own sake, and an operator who
+   sees a warning colour that often stops reading it. */
+.pill.updating, .pill.drained { border-color: #a83; color: #eb8; }
+.pill.checking { border-color: #333a45; color: #8f98a6; }
 /* A count that belongs to the heading it sits on: same line, quieter than the words. */
 h2 .count { color: #8f98a6; font-weight: 400; font-size: 13px; margin-left: 8px; }
 .item { border-left: 3px solid #333a45; padding: 6px 12px; margin: 8px 0; background: #1a1e25; }
@@ -2102,6 +2109,12 @@ class App:
         # without the word the healthy middle of an update reads as an outage. `running` is the
         # ordinary state and says so rather than being the absence of a warning — an operator
         # should not have to know which words this page omits when all is well.
+        #
+        # AND `checking` IS NOT `updating`. ffstatus.sh draws that line; this page only has to
+        # not blur it back. See read_maintenance for the whole argument — the short version is
+        # that the updater polls origin every five minutes and lands something perhaps twice a
+        # day, and a page that calls the poll an update sends its reader looking for a commit
+        # that does not exist.
         maint = doc.get("maintenance") or {}
         state = maint.get("state") or "running"
         head.append("<p class=\"note\">" + esc(str(doc.get("host") or "this box")) +

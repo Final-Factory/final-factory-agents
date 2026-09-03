@@ -53,6 +53,10 @@ FFGHR_STATE=${FFGITHUBRUNNERS_CONFIG_DIR:-$CONFIG_HOME/githubrunners}/state
 # hardcodes it. The agent lane's is configurable (ffwatch's drain_switch) and comes out of the
 # config below; this one has no setting to read.
 FFGHR_DRAIN=${FFGITHUBRUNNERS_CONFIG_DIR:-$CONFIG_HOME/githubrunners}/drain
+# THE FLAG UPDATE_FFBOX.SH WRITES WHEN AN UPDATE IS ACTUALLY LANDING, hardcoded relative to the
+# config dir the way that script hardcodes it. See read_maintenance for why the unit being active
+# is not the same question.
+FFBOX_APPLYING=$CONFIG_HOME/update.applying
 
 # US, THE UNIT SEPARATOR, RATHER THAN A PIPE. Every field here is a name somebody else chose --
 # a container name, a git ref off a label -- and a ref may legally contain most punctuation. A
@@ -233,10 +237,34 @@ human_secs() {
 # a drain is exactly "finish what you are doing and take nothing new". Without this, the healthy
 # middle of an update reads as an outage and somebody goes looking for a fault that is not there.
 #
-# THREE SIGNALS, MOST SPECIFIC FIRST. The systemd unit is the timer-driven path, which is how
-# this box updates every five minutes; the process check catches a hand-run update, which is how
-# an operator does it; the drain flags catch both the window where the updater is waiting for
-# work to finish AND a `ffwatch drain` somebody set by hand with no update behind it.
+# FOUR STATES, AND THE DIFFERENCE BETWEEN TWO OF THEM IS THE WHOLE POINT. `updating` means an
+# update is LANDING -- new code is being merged and the box is being restarted onto it. That is
+# what an operator reads it as, so nothing else may claim it.
+#
+#   updating   update_ffbox.sh has decided there is work and written its flag
+#   checking   the updater is running, which every five minutes it is, and has decided nothing
+#   drained    a lane is drained with no update behind it -- an image rebuild, or a hand-set flag
+#   running    none of the above
+#
+# WHY `checking` IS NOT `updating`. ffbox-update.timer fires every five minutes and the unit is
+# `activating` for the second or two each poll takes, whether or not anything lands: 288 times a
+# day this page would say "updating" for a `git fetch` that logged "nothing to do". On 2026-09-02
+# one of those ticks was caught on the box page and cost somebody a hunt for the commit that had
+# just landed, of which there was none. The unit being up answers "is the updater running", and
+# that is a different question from "is my box changing under me".
+#
+# THE FLAG IS THE ANSWER, and it comes first for that reason. update_ffbox.sh writes
+# ~/.config/ffbox/update.applying at the top of its section 3, which is the exact line past
+# which every exit is an update that happened; everything above it is a pass that changed
+# nothing. So the flag is not a hint about the update, it IS the decision, and it carries the
+# reason with it.
+#
+# AND WHY THE OTHER THREE SIGNALS SURVIVE. They are what says something is going on when the
+# flag cannot be trusted or does not exist: the unit and the process check between them cover the
+# timer-driven path and a hand-run update, and the drain flags catch a drain with no updater
+# behind it at all -- the weekly runner-image rebuild sets one, and so does `ffwatch drain`.
+# A drained box is SUPPOSED to look empty, and that still has to be said; it just is not an
+# update, and until 2026-09-02 it claimed to be.
 #
 # THE UPDATE LOCK IS DELIBERATELY NOT ONE OF THEM. `flock -n` on $CONFIG_DIR/update.lock would
 # answer the question exactly -- and would also TAKE the lock for the instant it held it, and
@@ -248,17 +276,34 @@ MAINT_STATE=running MAINT_REASON=
 read_maintenance() {
     MAINT_STATE=running MAINT_REASON=
 
+    if [ -e "$FFBOX_APPLYING" ]; then
+        MAINT_STATE=updating
+        # The flag's own words, and a fallback for the one that could not be written -- the
+        # updater treats a failed write as non-fatal, so an empty or truncated flag is a real
+        # state and must not render as a bare `updating` with nothing after it.
+        # CAPPED, because this is a file rather than a string this script composed: the terminal
+        # renderer prints the reason raw, and ffweb truncates at 120, so an unbounded read is one
+        # stray write away from a screenful. Both renderers now agree on roughly the same limit.
+        MAINT_REASON=$(sed -n 's/^reason=//p' "$FFBOX_APPLYING" 2>/dev/null | head -1 | cut -c1-200)
+        [ -n "$MAINT_REASON" ] || MAINT_REASON="an update is being applied"
+        return
+    fi
+
     local unit
     unit=$(systemctl is-active ffbox-update.service 2>/dev/null)
     case "$unit" in
-        # `is-active` exits non-zero for a oneshot that is still ACTIVATING, which is what an
-        # update in progress looks like for its whole hour -- so the word is matched rather than
-        # the exit status, and --quiet cannot be used here.
+        # `is-active` exits non-zero for a oneshot that is still ACTIVATING, which is what the
+        # updater looks like for its whole run -- so the word is matched rather than the exit
+        # status, and --quiet cannot be used here.
         active|activating|reloading)
-            MAINT_STATE=updating; MAINT_REASON="the ffbox-update unit is $unit"; return ;;
+            MAINT_STATE=checking
+            MAINT_REASON="the ffbox-update unit is $unit -- polling origin, nothing landing yet"
+            return ;;
     esac
     if pgrep -f '/update_ffbox[.]sh' >/dev/null 2>&1; then
-        MAINT_STATE=updating; MAINT_REASON="update_ffbox.sh is running"; return
+        MAINT_STATE=checking
+        MAINT_REASON="update_ffbox.sh is running -- nothing landing yet"
+        return
     fi
 
     local lanes= verb=is
@@ -268,7 +313,7 @@ read_maintenance() {
         lanes="${lanes:+$lanes and }the CI lane"
     fi
     if [ -n "$lanes" ]; then
-        MAINT_STATE=updating; MAINT_REASON="$lanes $verb drained -- launching nothing new"
+        MAINT_STATE=drained; MAINT_REASON="$lanes $verb drained -- launching nothing new"
     fi
 }
 
@@ -388,13 +433,18 @@ gather() {
 
 # --- the terminal reading -------------------------------------------------------------------
 render_text() {
+    # AMBER FOR THE TWO STATES THAT CHANGE WHAT THE TABLES BELOW MEAN, green for the two that do
+    # not. An update or a drain empties the container tables on purpose, and the colour is what
+    # stops that reading as an outage; `checking` empties nothing and is the ordinary state of a
+    # box between two polls, so colouring it would make the header amber for a couple of seconds
+    # every five minutes and teach an operator to ignore the colour.
     local state_mark=$GRN
-    [ "$MAINT_STATE" = updating ] && state_mark=$YEL
+    case "$MAINT_STATE" in updating|drained) state_mark=$YEL ;; esac
     printf '\n%sffbox on %s%s  %s%s%s  %s(%s)%s\n' \
         "$B" "$(hostname -s)" "$N" "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$N" \
         "$state_mark" "$MAINT_STATE" "$N"
-    # The reason on the next line, because "updating" alone sends somebody to the journal to
-    # find out which of the three things it is.
+    # The reason on the next line, because the state word alone sends somebody to the journal to
+    # find out which of the things behind it this one is.
     [ -n "$MAINT_REASON" ] && printf '  %s%s%s\n' "$DIM" "$MAINT_REASON" "$N"
 
     # --- the machine ------------------------------------------------------------------------

@@ -118,6 +118,13 @@ Three new files, one new flag, two new subcommands. Nothing else moves.
                                      file — config.json and secrets.env — as the RUNNING
                                      services started on them. The second trigger.
 
+  ~/.config/ffbox/update.applying    (added 2026-09-02) exists only between step 3a and the end
+                                     of the run, and carries started_at and a one-line reason.
+                                     Nothing in this design reads it: it exists so ffstatus can
+                                     tell an update apart from the five-minute poll that finds
+                                     nothing, which the unit being `activating` cannot. Removed
+                                     on every exit path, stale ones cleared at step 1.
+
   ffwatch drain [--wait] [--timeout N]   write the flag; optionally block until quiet.
   ffwatch resume                         remove the flag.
 
@@ -318,6 +325,7 @@ holding no root.
   3. git fetch --prune origin; exit 0 if:
        kill switch present | working tree dirty
        | HEAD == origin/BRANCH AND config.json + secrets.env hash to update.config-sha
+  3a. write update.applying                 (the boundary: every exit above it changed nothing)
   4. ffwatch drain                         (sets the flag, drops the idle staged containers)
      then poll: busy containers, then `ffwatch quiet`, up to FFBOX_DRAIN_TIMEOUT
      at the ceiling: docker stop each straggler, let the host settle, go on (section 4a)
@@ -328,6 +336,8 @@ holding no root.
   8. rm the drain flag; write config.json's hash to update.config-sha
   9. systemctl start ffbox.target
  10. report each unit's state and OLD_SHA -> HEAD
+ 11. rm update.applying                    (on the EXIT trap, so a crash at any step above
+                                            does it too)
 
 STEP 0 IS NOT OPTIONAL. `sh` reads a script incrementally, by byte offset. Step 6 rewrites
 update_ffbox.sh underneath the running shell, which can resume in the middle of different
