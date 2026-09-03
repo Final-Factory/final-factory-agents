@@ -98,8 +98,10 @@ CREATE TABLE IF NOT EXISTS conversation (
     -- NOT NULL DEFAULT 'ffagent', so every conversation that predates classes reads as what it
     -- actually was, and ffweb's SELECT DISTINCT filter dropdowns never see a blank.
     --
-    -- Discord conversations are always 'ffagent': the class is chosen at the local ingress, and
-    -- a Discord thread has nobody to choose.
+    -- A DISCORD conversation gets no dropdown either: it is opened in the class the "discord"
+    -- section's user_pool/operator_pool pair names, chosen by whether the account that opened
+    -- it is in trust.operators. Same rule as everywhere else -- whoever OPENED it decides, and
+    -- an operator answering later in a stranger's thread does not promote it.
     agent_class         TEXT NOT NULL DEFAULT 'ffagent',
     github_issue        TEXT,
     github_pr           TEXT,

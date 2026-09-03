@@ -924,6 +924,97 @@ def test_operator_table_holds_ids_only():
                                   "slims"))
 
 
+def test_which_pool_a_discord_author_gets_is_read_from_the_trust_table():
+    """user_pool for a stranger, operator_pool for an account in trust.operators.
+
+    A configuration reader and nothing else: the same is_operator() the trust tier uses, an
+    authenticated snowflake, no message text anywhere near it.
+    """
+    print("discord pools")
+    cfg = {"_discord": {"trust": {"operators": {"lothsahn": LOTHSAHN}}}}
+    check("a stranger opens in the fenced class",
+          ffwatch.discord_agent_class(cfg, PLAYER) == "ffagent", None)
+    check("an operator opens in the unfenced one",
+          ffwatch.discord_agent_class(cfg, LOTHSAHN) == "ffdev", None)
+    check("no author at all is a stranger", ffwatch.discord_agent_class(cfg, "") == "ffagent")
+    check("and a box with no operators has only strangers",
+          ffwatch.discord_agent_class({}, LOTHSAHN) == "ffagent", None)
+
+    # Both keys are configurable, so a box that does not want the split can point them at one
+    # class -- which is also how you put operator traffic back behind the fence.
+    same = {"_discord": {"trust": {"operators": {"lothsahn": LOTHSAHN}},
+                         "user_pool": "ffagent", "operator_pool": "ffagent"}}
+    check("operator_pool can be pointed back at the fenced class",
+          ffwatch.discord_agent_class(same, LOTHSAHN) == "ffagent", None)
+
+    # A NAME THAT IS NOT A CLASS falls back rather than propagating. Writing 'ffdevv' on a
+    # conversation would match no pool on any later turn of it, so the run would never find a
+    # container -- a typo must cost a log line, not a lane.
+    typo = {"_discord": {"trust": {"operators": {"lothsahn": LOTHSAHN}},
+                         "user_pool": "ffdevv", "operator_pool": "ffagentt"}}
+    check("a typo in user_pool falls back to ffagent",
+          ffwatch.discord_agent_class(typo, PLAYER) == "ffagent", None)
+    check("a typo in operator_pool falls back to ffdev",
+          ffwatch.discord_agent_class(typo, LOTHSAHN) == "ffdev", None)
+
+
+def test_a_discord_conversation_opens_in_the_pool_its_opener_earns():
+    """The ingress end of the same rule, and the "whoever opened it decides" half of it.
+
+    Two cases rather than one because two messages in one channel would cluster into a single
+    conversation, which is a different test.
+    """
+    print("discord pools: at the ingress")
+    ops = {"operators": {"lothsahn": LOTHSAHN}}
+
+    # A PLAYER OPENS ONE. Fenced, and an operator answering in it does not promote it: the
+    # thread still carries a stranger's text, and moving the class under a live conversation
+    # would move the clocks its session is running under besides.
+    fixture = base_fixture()
+    root = message(4801, "how do belts work?")
+    fixture["messages"][ASK_CHANNEL] = [
+        root, message(4802, "the splitter page covers it", author=LOTHSAHN, name="lothsahn",
+                      ref=root)]
+    case = Case("pool-player", fixture)
+    case.cfg["_discord"]["trust"] = ops
+    case.events(ask_event(4801), ask_event(4802))
+    case.watcher.drain_events()
+    convs = case.rows("SELECT * FROM conversation")
+    check("a player's message opens one conversation", len(convs) == 1, convs)
+    check("in the fenced class", convs[0]["agent_class"] == "ffagent", convs)
+    check("and an operator answering in it does not promote it",
+          case.rows("SELECT COUNT(*) c FROM message")[0]["c"] == 2
+          and convs[0]["agent_class"] == "ffagent", convs)
+
+    # AN OPERATOR OPENS ONE. Unfenced, and it stays that way when a player joins in -- which is
+    # the case worth knowing about, and why operator_pool belongs on a class you are willing to
+    # let a public channel reach. docs/docker-security-model.md says so out loud.
+    fixture2 = base_fixture()
+    root2 = message(4811, "look at the belt throughput regression", author=LOTHSAHN,
+                    name="lothsahn")
+    fixture2["messages"][ASK_CHANNEL] = [root2, message(4812, "seeing it too", ref=root2)]
+    case2 = Case("pool-operator", fixture2)
+    case2.cfg["_discord"]["trust"] = ops
+    ev = ask_event(4811)
+    ev["author_id"] = LOTHSAHN
+    case2.events(ev, ask_event(4812))
+    case2.watcher.drain_events()
+    convs2 = case2.rows("SELECT * FROM conversation")
+    check("an operator's message opens one conversation", len(convs2) == 1, convs2)
+    check("in the unfenced class", convs2[0]["agent_class"] == "ffdev", convs2)
+    check("which a player joining does not demote",
+          case2.rows("SELECT COUNT(*) c FROM message")[0]["c"] == 2
+          and convs2[0]["agent_class"] == "ffdev", convs2)
+
+    # AND THE TURN'S TIER IS STILL THE TURN'S. The class says which container; trust_tier says
+    # what that container may say and do. A player in the batch makes the turn a player's
+    # however unfenced the box it runs in.
+    case2.watcher.claim_turns()
+    tiers = {t["trust_tier"] for t in case2.rows("SELECT * FROM turn")}
+    check("a player in an operator's conversation still makes a player's turn",
+          tiers == {"player"}, case2.rows("SELECT trust_tier, trust_actor FROM turn"))
+
+
 def test_no_channel_is_watched_unless_the_config_says_so():
     """The regression this whole file exists to pin: a config naming ONE channel used to get
     four more added to it, because _deep_merge recurses and DEFAULTS shipped a populated watch
@@ -9877,6 +9968,8 @@ def main():
         test_the_selector_can_only_choose_an_id_it_was_offered,
         test_the_classifier_tries_the_cheap_call_first_and_falls_back,
         test_the_fast_answer_is_held_to_the_schema_the_flag_would_have_enforced,
+        test_which_pool_a_discord_author_gets_is_read_from_the_trust_table,
+        test_a_discord_conversation_opens_in_the_pool_its_opener_earns,
     ]
     for fn in tests:
         try:

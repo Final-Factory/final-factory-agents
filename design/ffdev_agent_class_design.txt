@@ -44,8 +44,23 @@ classes are what is wanted and two are what the code will say. A third is a one-
 a tuple, and the shape below is built so that stays true, but nothing here scans config.json for
 sections it does not recognise — that would make a typo (`ffdevv`) into a silently-created pool.
 
-Not a goal: letting a Discord conversation pick a class. Discord conversations are ffagent, which
-is what they are today under another name.
+Not a goal WHEN THIS WAS WRITTEN, and superseded on 2026-09-02: letting a Discord conversation
+pick a class. It picks one now, but it does not pick it from anything a message says. Two keys in
+the "discord" section name a class per side of the trust table --
+
+    "discord": { "user_pool": "ffagent", "operator_pool": "ffdev" }
+
+-- and ingest reads Discord's authenticated author.id through is_operator(), the same reader that
+answers every other question about who is speaking. A stranger opens an ffagent conversation, so
+the property section 5 rests on is unchanged: no text written by somebody outside trust.operators
+reaches an unfenced container. An account in trust.operators opens an ffdev one, because an
+operator directive in Discord is the same dev work as a prompt typed into the page.
+
+Still not a goal: a class that moves. Whoever OPENED the conversation decides, once, for the same
+reason the web page has no dropdown on its reply box (section 6). An operator answering in a
+player's thread does not promote it; a player joining a thread an operator opened in a public
+channel does not demote it, which is the case to watch and is written up in
+docs/docker-security-model.md.
 
 
 2. Why a class and not a flag on the turn
@@ -274,7 +289,12 @@ migrates on start and a caller can be holding a row read before that.
 
 `submit()` takes `agent_class=DEFAULT_AGENT_CLASS`, validates it against `AGENT_CLASSES`, and
 writes it on the conversation it opens. `follow_up()` does not take one at all — there is nothing
-to decide. The Discord ingress passes nothing and gets the column default, which is ffagent.
+to decide. The Discord ingress passed nothing and got the column default until 2026-09-02; it now
+passes `discord_agent_class(cfg, <the opener's author id>)` at each of its four conversation-
+opening sites (thread, channel message, operator DM, and a batch the clusterer splits out onto an
+anchor of its own). It is passed rather than derived inside `upsert_conversation()` because
+`opener` is a snowflake for a Discord conversation and a unix login for a local one, and a login
+that happened to be all digits must never be looked up in the trust table.
 
 `run` gains no column. The class is a property of the conversation and the run row already joins
 to it; a copy on the run would be a second answer that could disagree with the first. What the run

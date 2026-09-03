@@ -1001,6 +1001,14 @@ deciding, and `turn_trust()` decides it from a dictionary lookup on Discord's au
 rolling 24 hours for anything a player caused, operators uncapped) and the split reply, and
 capability is uniform.
 
+The same lookup also picks **which agent class the conversation opens in** — `discord.user_pool`
+for a stranger, `discord.operator_pool` for an account in `trust.operators` — so an operator
+directive in Discord runs in the class dev work runs in, and everything else stays behind the
+egress fence. That is a different question from the tier: the class says which container, the
+tier says what that container may say and do, and a turn that batches one player's message into
+an operator's conversation is a player's turn in an operator's container. See "Two agent
+classes: ffagent and ffdev" below.
+
 **A stranger's bug report can therefore produce a branch and a pull request, and a human decides
 whether it merges.** What contains that is what always actually did, none of which changed: no
 git or GitHub credential in the container, a host-owned refspec, no merge method, a clone
@@ -1572,12 +1580,16 @@ deriving from the other.
 the allowlist proxy described below; `ffdev` runs on the ordinary `bridge`, with the whole
 internet, no allowlist and no SNI filter, so a dev turn can search the web, read documentation
 and fetch a package without an operator editing `allowlist.txt` first. That also hands it this
-machine's LAN address, so it is trusted the way a developer's own shell on this box is trusted —
-which is defensible only because **Discord conversations are always `ffagent`**: the class is
-picked at the local ingress, behind the web login or a shell here, and no text written by a
-stranger can start an unfenced container. `docs/docker-security-model.md` has the full argument
-under "The class that is not fenced". Putting ffdev back behind the fence is
-`"network": "ffbox-net"`, a restart, and `pool drop` for anything already staged.
+machine's LAN address, so it is trusted the way a developer's own shell on this box is trusted.
+What keeps that defensible is that **no text written by a stranger can start an unfenced
+container**: a Discord conversation opens in `discord.user_pool`, which is `ffagent`, unless the
+account that opened it is in `discord.trust.operators`, in which case it opens in
+`discord.operator_pool`, which is `ffdev`. An operator directive is dev work by the person who
+owns the box, so it gets the class dev work runs in; everything else stays behind the fence.
+`docs/docker-security-model.md` has the full argument under "The class that is not fenced".
+Putting ffdev back behind the fence is `"network": "ffbox-net"`, a restart, and `pool drop` for
+anything already staged; pointing Discord's operators back at the fenced class is
+`"operator_pool": "ffagent"`.
 
 Everything else about a run is identical: same image, same task script, same capability set, same
 harvest, same one-prompt-per-container rule. What a class also gets is a **pool of its own** and a
@@ -1601,8 +1613,26 @@ sha, resumes one session transcript and owns one branch; moving its class mid-fl
 the clocks that session has been running under and, once the classes differ on `base_ref`, the
 tree its transcript has been citing `file.cs:214` positions against.
 
-Discord conversations are always `ffagent` — the class is chosen at the local ingress, and a
-thread has nobody to choose.
+**A Discord conversation gets no dropdown either**, and it does not need one: the `"discord"`
+section names a class per side of the trust table, and ingest reads Discord's authenticated
+author id to pick between them.
+
+```jsonc
+"discord": {
+  "user_pool":     "ffagent",   // anybody not in trust.operators — the fenced class
+  "operator_pool": "ffdev"      // an account in trust.operators — the unfenced one
+}
+```
+
+**Whoever OPENED the conversation decides**, which is the same rule the dropdown obeys and the
+conservative reading of it. A forum thread a player started stays `ffagent` for its whole life
+even after Lothsahn answers in it — the alternative would carry a stranger's text into an
+unfenced container the moment a trusted account replied. It also runs the other way: a thread an
+operator opened in a public channel stays `ffdev` even if a player joins in, so `operator_pool`
+belongs on a class you are willing to let a public channel reach. On a box with nobody in
+`trust.operators` — which is what the template ships — every Discord conversation is a user's.
+A name that is not an agent class falls back to the default with a `WARNING` in the journal
+rather than writing a class no pool can serve.
 
 Every agent container carries `ffbox.agent.class`, set at creation and surviving the rename at
 dispatch, and that label is what the two pools count and claim by. A container with no such label
