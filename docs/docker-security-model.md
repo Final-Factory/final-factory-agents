@@ -220,13 +220,32 @@ opened port 22 on this box, because rootless Docker disables the host *loopback*
 host's IP. `bridge` is not the fence minus DNS filtering; it is no fence.
 
 That is the intended trade and it rests entirely on **who can start an `ffdev` turn**. The class
-is chosen when a conversation is opened, from the dropdown on the web page's new-prompt box or
-`ffwatch submit --agent ffdev`, both of which are behind the login on 127.0.0.1 or a shell on
-this box. **Discord conversations are always `ffagent`** — the class is picked at the local
-ingress and a forum thread has nobody to pick it, so no text written by a stranger can reach an
-unfenced container. A dev turn is Ben or Loth asking for work on their own machine, and it needs
-to read documentation, search the web and fetch a package; an allowlist edited every time it
-wants a new host is not a fence, it is a queue.
+is chosen when a conversation is opened. Locally that is the dropdown on the web page's new-prompt
+box or `ffwatch submit --agent ffdev`, both behind the login on 127.0.0.1 or a shell on this box.
+From Discord it is the `user_pool` / `operator_pool` pair in the `"discord"` section, and the
+question it asks is the trust question: **is the account that opened this conversation in
+`discord.trust.operators`?** A stranger gets `user_pool`, which is `ffagent`, so **no text written
+by somebody outside the trust table can reach an unfenced container**. An operator gets
+`operator_pool`, which is `ffdev`, because an operator directive *is* a dev turn — Ben or Loth
+asking for work, in Discord instead of at a keyboard — and it needs to read documentation, search
+the web and fetch a package; an allowlist edited every time it wants a new host is not a fence, it
+is a queue.
+
+Three properties hold that line, and all three are worth checking before changing this pair:
+
+- **The id is Discord's, not the message's.** `is_operator()` matches `author.id` against
+  `trust.operators`, which stores snowflakes and drops anything that is not all digits. A
+  username is renameable and message text is a stranger's to write; neither can reach this
+  decision.
+- **The opener decides, once.** The class is written when the conversation is created and never
+  moved, so an operator replying in a player's thread does not promote it into `ffdev`. The
+  reverse is the case to watch: a conversation an operator opens in a *public* channel keeps
+  `ffdev` even if players then join the thread, and their text runs in an unfenced container at
+  player trust tier. Set `operator_pool` to `ffagent` if that is not a trade you want, or keep
+  operator-opened conversations to DMs and private channels.
+- **A blank trust table trusts nobody.** The template seeds `trust.operators` with an example
+  name and an empty id, and every reader filters for a numeric one, so an unconfigured box routes
+  every Discord conversation to `user_pool`.
 
 Two consequences worth stating plainly. An `ffdev` container is as trusted as a developer's own
 shell on this box, so everything under "The container is assumed hostile" is an `ffagent`
@@ -239,6 +258,12 @@ The switch is one key per class in `~/.config/ffbox/config.json`, read at contai
 ```json
 "ffagent": { …, "network": "ffbox-net" }
 "ffdev":   { …, "network": "bridge" }
+```
+
+And which class Discord traffic opens in is two keys in the same file, read at ingest:
+
+```json
+"discord": { …, "user_pool": "ffagent", "operator_pool": "ffdev" }
 ```
 
 Putting `ffdev` back behind the fence is `"network": "ffbox-net"` and a restart of ffwatch;

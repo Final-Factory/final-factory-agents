@@ -945,8 +945,14 @@ def load_config():
     discord_raw = ffbox_raw.get(DISCORD_SECTION) or {}
     if not isinstance(discord_raw, dict):
         discord_raw = {}
+    # user_pool / operator_pool ride along because they are answers to the same question the
+    # trust table asks -- who is speaking -- and they are read in the same breath as it, by
+    # discord_agent_class(). They live in the Discord section rather than beside "ffagent" and
+    # "ffdev" for that reason: those two sections say what a class IS, this pair says which of
+    # them a stranger and which a trusted account gets.
     cfg["_discord"] = {k: discord_raw.get(k)
-                       for k in ("server_id", "guild_id", "channels", "mentions", "trust")}
+                       for k in ("server_id", "guild_id", "channels", "mentions", "trust",
+                                 "user_pool", "operator_pool")}
     return cfg
 
 
@@ -979,6 +985,43 @@ def operators(cfg):
 def is_operator(cfg, author_id):
     """Discord's authenticated author.id, looked up. Never a name, never message content."""
     return bool(author_id) and str(author_id) in set(operators(cfg).values())
+
+
+# WHICH POOL DISCORD TRAFFIC LANDS IN, and it is two answers rather than one because the two
+# kinds of author are not the same risk. A stranger in a forum thread gets `user_pool`, which
+# ships as ffagent: fenced onto ffbox-net, reaching the egress allowlist and nothing else. An
+# account in trust.operators gets `operator_pool`, which ships as ffdev: the ordinary docker
+# bridge, the whole internet, the same trust a developer's shell on this box has. Configured
+# rather than built in so a box that does not want that split can point both at one class.
+DISCORD_POOL_DEFAULTS = {"user_pool": "ffagent", "operator_pool": "ffdev"}
+
+
+def discord_pool(cfg, key):
+    """The agent class configured for one side of the split, or its built-in default.
+
+    A value that is not an agent class is the default, LOUDLY: an unknown name here would
+    otherwise be written on a conversation, read back on every later turn of it, and match no
+    pool -- the run would never find a container. A typo must cost a log line, not a lane.
+    """
+    want = DISCORD_POOL_DEFAULTS[key]
+    name = str(((cfg.get("_discord") or {}).get(key) or "")).strip()
+    if not name:
+        return want
+    if name not in AGENT_CLASSES:
+        log(f"WARNING: discord.{key} is {name!r}, which is not an agent class "
+            f"({', '.join(AGENT_CLASSES)}); using {want}")
+        return want
+    return name
+
+
+def discord_agent_class(cfg, author_id):
+    """Which agent class a Discord conversation OPENED by this author runs in.
+
+    Decided from Discord's authenticated author.id through the same trust table that decides
+    everything else about who is speaking -- never from a username, never from message text.
+    An unknown author, and every author on a box with no operators configured, is a user.
+    """
+    return discord_pool(cfg, "operator_pool" if is_operator(cfg, author_id) else "user_pool")
 
 
 def watch_entry(cfg, alias):
@@ -2798,9 +2841,13 @@ class Watcher:
 
         `agent_class` is written ON CREATION ONLY and the UPDATE branch deliberately does not
         touch it: a conversation's class is settled by its opening turn, and a later upsert --
-        which every subsequent message in a Discord thread performs -- must never move it. The
-        Discord ingress passes nothing and gets the default, which is what a Discord conversation
-        is.
+        which every subsequent message in a Discord thread performs -- must never move it.
+
+        THE DISCORD INGRESS PASSES IT EXPLICITLY, from discord_agent_class() on the account that
+        opened the conversation: discord.user_pool for a stranger, discord.operator_pool for an
+        account in trust.operators. It is passed rather than derived here because `opener` is a
+        snowflake for a Discord conversation and a unix login for a local one, and a login that
+        happened to be all digits must never be looked up in the trust table.
         """
         thread_id = str(thread_id)
         row = self.db.one("SELECT * FROM conversation WHERE thread_id=?", (thread_id,))
@@ -3035,7 +3082,13 @@ class Watcher:
             root_message_id=thread_id,
             opener=meta.get("owner_id"),
             is_thread=True,
-            alias=alias)
+            alias=alias,
+            # WHOEVER OPENED THE THREAD decides the class, not whoever spoke last. A forum
+            # thread a player started stays a player's for its whole life even after an
+            # operator answers in it, which is the conservative direction: the alternative is
+            # a conversation carrying a stranger's text into the unfenced class the moment a
+            # trusted account replies.
+            agent_class=discord_agent_class(self.cfg, meta.get("owner_id")))
         for m in msgs:
             m.setdefault("channel_id", str(thread_id))
             self.insert_message(conv_id, m)
@@ -3088,6 +3141,10 @@ class Watcher:
             title=(title[0][:100] if title else None),
             root_message_id=root_id or str(msg.get("id")),
             opener=author_id,
+            # An operator by construction -- the check above dropped every other DM -- so this
+            # resolves to discord.operator_pool. Asked rather than assumed so there is one
+            # place the answer comes from.
+            agent_class=discord_agent_class(self.cfg, author_id),
             is_thread=False)
         msg.setdefault("channel_id", channel_id)
         self.insert_message(conv_id, msg)
@@ -3285,7 +3342,12 @@ class Watcher:
                 title=(anchor["content"] or "").strip().splitlines()[:1][0][:100]
                       if (anchor["content"] or "").strip() else None,
                 root_message_id=anchor["discord_id"], opener=anchor["author_id"],
-                is_thread=False, alias=conv["watch_alias"])
+                is_thread=False, alias=conv["watch_alias"],
+                # The anchor opens this one, so it is the anchor's author who picks the class
+                # -- NOT an inherited copy of conv's. A batch split out of an operator's
+                # conversation because it belongs to none of them is a stranger's conversation
+                # and must not keep the class it was sitting next to.
+                agent_class=discord_agent_class(self.cfg, anchor["author_id"]))
         moved = self.reparent([m["id"] for m in pending], target)
         if moved:
             self.stamp_routing(pending, reason)
@@ -3594,7 +3656,12 @@ class Watcher:
             root_message_id=root.get("id"),
             opener=(root.get("author") or {}).get("id"),
             is_thread=False,
-            alias=alias)
+            alias=alias,
+            # THE ROOT'S AUTHOR, which is the opener, and not necessarily the author of the
+            # message that arrived: a reply walks back to the message that started the chain,
+            # and that is the conversation being opened here.
+            agent_class=discord_agent_class(self.cfg,
+                                            (root.get("author") or {}).get("id")))
         for m in chain:
             m.setdefault("channel_id", channel_id)
             self.insert_message(conv_id, m,

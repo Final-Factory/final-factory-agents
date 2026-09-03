@@ -35,7 +35,8 @@ STATE_DIR=${FFWATCH_STATE_DIR:-$HOME/ffbox-state}
 #
 #   ~/.config/ffbox/secrets.env        tokens and the Unity account
 #   ~/.config/ffbox/config.json        ffwatch, ffweb, the CI runners, and the "discord"
-#                                      section: token, server, channels, mentions, trust
+#                                      section: token, server, channels, mentions, trust,
+#                                      and which agent pool each side of that trust gets
 #   ~/.config/ffbox/discord/           the Discord CLI's STATE: cursors, the doorbell, the
 #                                      listener lock. Its config moved into the file above on
 #                                      2026-09-01, so the alias table and the "watch" block
@@ -149,6 +150,16 @@ if not any(str(v or "").strip().isdigit() for v in operators.values()):
                    f"ffdiscord set trust.operators.<name> <user id>   (present: {named}; "
                    f"ids only, never usernames)")
 
+# THE TWO POOL NAMES, checked against the classes that exist. Not counted as missing -- the
+# template seeds both and ffwatch falls back to the same defaults on a bad value -- but a typo
+# here silently sends every Discord conversation to the fenced class, or, worse the other way,
+# and the journal line that says so scrolls past once at ingest.
+for _pool_key, _pool_want in (("user_pool", "ffagent"), ("operator_pool", "ffdev")):
+    _pool = str(discord.get(_pool_key) or "").strip()
+    if _pool and _pool not in ("ffagent", "ffdev"):
+        out(f"{_pool_key}", f"{_pool!r} is not an agent class; ffwatch will use {_pool_want}: "
+                            f"ffdiscord set {_pool_key} <ffagent|ffdev>", required=False)
+
 # Same table, the other half: a mention target is what "@name" expands to in a post.
 if not any(str(v or "").strip().isdigit()
            for v in (discord.get("mentions") or {}).values()):
@@ -205,6 +216,21 @@ elif [ -d "$LEGACY_FFDISCORD_HOME" ]; then
 fi
 mkdir -p "$FFDISCORD_HOME"
 chmod 700 "$FFDISCORD_HOME" 2>/dev/null || true
+
+# THE OLD CONFIG NEXT DOOR, retired 2026-09-01 and cleared away here since 2026-09-02. Nothing
+# has read $FFDISCORD_HOME/config.json since those settings moved into the "discord" section of
+# the box's one config.json; this directory keeps only STATE (cursors, doorbell, listener lock).
+# A file nobody reads that still looks like configuration is worse than no file: somebody sets
+# trust.operators or a channel id in it, restarts, and cannot see why nothing changed. Renamed
+# rather than deleted, because on a box whose migration never finished it may hold the only
+# copy of a token.
+if [ -f "$FFDISCORD_HOME/config.json" ]; then
+    mv "$FFDISCORD_HOME/config.json" \
+       "$FFDISCORD_HOME/config.json.retired-$(date -u +%Y%m%dT%H%M%SZ)"
+    did "retired $FFDISCORD_HOME/config.json - nothing has read it since 2026-09-01;"
+    did "      the live settings are the \"discord\" section of $FFBOX_CONFIG_JSON"
+fi
+
 FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" python3 - <<'PY'
 import json
 import os
@@ -213,7 +239,8 @@ import os
 #   top level + "ffagent" + "container"   ffwatch and ffweb: lanes, ceilings, the page's bind
 #   "githubrunner"                        the CI runner pool
 #   "discord"                             the Discord CLI's own: token, server, channels,
-#                                         mentions, trust
+#                                         mentions, trust -- plus user_pool/operator_pool,
+#                                         ffwatch's, which read that trust table
 #
 # The Discord keys had a config.json of their own next door until 2026-09-01. That put the
 # "channels" alias table and the "watch" block that gives those aliases their meaning in two
@@ -316,8 +343,10 @@ for key, value in (
     # too. 3 rather than -1 because dev turns are the long ones.
     #
     # A conversation picks its class when it is opened -- the dropdown on the web page's new
-    # prompt box, or `ffwatch submit --agent ffdev` -- and every later turn of it runs in the
-    # same kind of container. Discord conversations are always ffagent.
+    # prompt box, `ffwatch submit --agent ffdev`, or, for a Discord conversation, the
+    # "user_pool"/"operator_pool" pair in the "discord" section, which picks by whether the
+    # account that opened it is in trust.operators -- and every later turn of it runs in the
+    # same kind of container.
     ("ffdev", {
         "base_ref": "master",
         "agent_secs": 1800,
@@ -449,6 +478,20 @@ discord.setdefault("app_token", "")
 discord.setdefault("server_id", "")
 discord.setdefault("mentions", {})
 
+# WHICH POOL DISCORD TRAFFIC LANDS IN, split by who is speaking. A message whose Discord-
+# authenticated author is in trust.operators opens its conversation in operator_pool; everybody
+# else opens one in user_pool. Real class names, not blanks, because there is a right answer
+# here and a blank would mean "whatever ffwatch's built-in default is" -- the same value, said
+# somewhere nobody can see it. setdefault, so a box that has already pointed these somewhere
+# else is left alone.
+#
+# ffagent for strangers is the fenced class (ffbox-net, the egress allowlist, nothing else) and
+# ffdev for operators is the unfenced one (the ordinary bridge, the whole internet), so this
+# pair is a trust boundary and not a scheduling preference. Pointing user_pool at ffdev hands
+# every stranger in the forum a container with the network a developer's shell has.
+discord.setdefault("user_pool", "ffagent")
+discord.setdefault("operator_pool", "ffdev")
+
 # WHAT EACH VALUE IS. JSON has no comments, and a blank string does not say what shape belongs
 # in it — "channels": {"agent_testing": ""} tells you an alias is wanted and nothing about the
 # value. Rewritten on every run rather than setdefault: this is generated documentation, so it
@@ -473,6 +516,16 @@ discord["_help"] = {
              "never usernames: a username is renameable, so a trust key somebody else can "
              "claim by renaming is not a trust key. Blank until you fill it in, which means "
              "NOBODY is an operator and every message is treated as a player's.",
+    "user_pool": "The agent class a Discord conversation opened by somebody who is NOT in "
+                 "trust.operators runs in, and every later turn of it. \"ffagent\", the "
+                 "fenced class, unless you have a reason: it is what serves text written by "
+                 "strangers, and its network reaches the egress allowlist and nothing else.",
+    "operator_pool": "The agent class a Discord conversation opened by an account in "
+                     "trust.operators runs in. \"ffdev\", which is unfenced -- the ordinary "
+                     "docker bridge, the whole internet -- because an operator directive is "
+                     "dev work and is trusted the way a shell on this box is. The class is "
+                     "settled by WHO OPENED the conversation and never moves afterwards, so "
+                     "an operator answering in a player's thread does not promote it.",
     "example_rows": "Every table above ships one example row so the shape is visible. Rename "
                     "it to the real alias or name and fill in the id, or delete the row. An "
                     "example row is blank, and blank is what every reader treats as absent.",
@@ -579,11 +632,17 @@ ffbox["_help"] = {
              "other's warm container. A conversation's class is chosen when it is OPENED -- the "
              "dropdown on the web page's new-prompt box, or `ffwatch submit --agent ffdev` -- "
              "and every later turn of that conversation runs in the same kind of container, so "
-             "there is no dropdown when replying. Discord conversations are always ffagent. "
+             "there is no dropdown when replying. A DISCORD conversation has no dropdown "
+             "either: it is opened by the \"user_pool\"/\"operator_pool\" pair in the "
+             "\"discord\" section, which reads trust.operators to decide whether the account "
+             "that opened it is a stranger or an operator. "
              "Set pool.idle to 0 to turn this class's pool off; it still runs, cold, like "
              "ffagent with no pool.",
     "discord": "What the ffdiscord CLI and the Gateway listener read: app_token, server_id, "
-             "the channels alias -> id table, mentions, and trust.operators. It had a "
+             "the channels alias -> id table, mentions, and trust.operators; plus the "
+             "user_pool/operator_pool pair, which is ffwatch's and says which agent class a "
+             "Discord conversation opens in depending on which side of trust.operators its "
+             "author falls. It had a "
              "config.json of its own in the discord/ directory beside this file until "
              "2026-09-01, which put that alias table and the \"watch\" block that gives the "
              "aliases their meaning in two files that had to be edited together. The "

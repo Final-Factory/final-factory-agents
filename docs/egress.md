@@ -51,7 +51,9 @@ the ordinary `bridge` and have no proxy, no allowlist and no filter — since 20
 is a per-class setting, `agent_classes.<class>.network` in `~/.config/ffbox/config.json`, and only
 `ffagent` is on `ffbox-net`. So an ffdev run leaves no trace in either proxy's log, and a "why is
 this host not being asked for" question about a dev turn has the same answer every time: it is not
-on this wire. `docs/docker-security-model.md`, "The class that is not fenced", is the argument for
+on this wire. **Discord can reach that class, but only through the trust table**: a conversation
+opened by an account in `discord.trust.operators` runs in `discord.operator_pool`, which is
+`ffdev`; everybody else opens in `discord.user_pool`, which is `ffagent` and on this wire. `docs/docker-security-model.md`, "The class that is not fenced", is the argument for
 that; `ffbox/README.md` is where to change it back.
 
 Both proxies run on the same rootless daemon, so their subnets must not overlap. `03-image.sh`
