@@ -8035,6 +8035,73 @@ def test_a_crashed_pooled_run_gives_its_transcript_back():
           turn["status"] == "queued", dict(turn))
 
 
+def test_a_run_reads_frozen_copies_not_the_checkout():
+    """The updater fast-forwards this checkout while containers are running.
+
+    Two of the three things a container reads from it are FILE mounts, which pin the inode, so
+    git replacing the path leaves the container reading what it started with -- measured on the
+    build server 2026-09-03. The plugin tree is a DIRECTORY mount and has no such protection: a
+    merge really does change it underneath a running container.
+
+    Rather than depend on git choosing to unlink rather than truncate, the run gets copies of its
+    own. This checks that the copies are what gets mounted, and that changing the source
+    afterwards does not reach them.
+
+    THE FAKE CHECKOUT IS NOT OPTIONAL. cfg["task_script"] and cfg["plugins_dir"] point at the
+    REAL files in this repository, and the second half of this test writes to the source to
+    prove the copy does not follow. Pointed at the real ones it would overwrite
+    ffbox/discord-task.sh, which is exactly what it did the first time it was run.
+    """
+    print("mounts: frozen per run")
+    case = Case("frozen", base_fixture())
+    w = case.watcher
+
+    checkout = os.path.join(case.root, "checkout")
+    os.makedirs(os.path.join(checkout, "plugins", "ff-discord", "skills"), exist_ok=True)
+    task = os.path.join(checkout, "discord-task.sh")
+    verify = os.path.join(checkout, "ffverify.sh")
+    for path, text in ((task, "#!/bin/sh\n# the task as it was when this run started\n"),
+                       (verify, "#!/bin/sh\n# ffverify as it was then\n"),
+                       (os.path.join(checkout, "plugins", "ff-discord", "skills", "s.md"),
+                        "a skill\n")):
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    w.cfg["task_script"] = task
+    w.cfg["ffverify"] = verify
+    w.cfg["plugins_dir"] = os.path.join(checkout, "plugins")
+    w.cfg["plugin"] = "ff-discord"
+
+    dest = os.path.join(case.root, "run1", "mounts")
+    frozen = w.freeze_mounts(dest)
+
+    check("the task script is copied", os.path.isfile(frozen.get("task_script", "")), frozen)
+    check("ffverify is copied", os.path.isfile(frozen.get("ffverify", "")), frozen)
+    check("and the copies are the run's, not the checkout's",
+          frozen.get("task_script", "").startswith(dest), frozen)
+    check("the plugin tree is copied too", os.path.isdir(frozen.get("plugin_dir", "")), frozen)
+    check("under the run's own directory, which is what the checkout's could never be",
+          frozen.get("plugin_dir", "").startswith(dest), frozen)
+
+    # Now do to the source what a merge does, including to the DIRECTORY, which is the mount that
+    # was never safe.
+    with open(task, "w", encoding="utf-8") as fh:
+        fh.write("#!/bin/sh\n# a commit landed while this run was going\n")
+    with open(os.path.join(checkout, "plugins", "ff-discord", "skills", "s.md"), "w",
+              encoding="utf-8") as fh:
+        fh.write("a skill, rewritten by the merge\n")
+
+    check("a change to the checkout does not reach a run that already started",
+          "a commit landed" not in open(frozen["task_script"], encoding="utf-8").read(), None)
+    check("nor does one to the plugin tree, which is the mount with no inode to pin",
+          "rewritten" not in open(os.path.join(frozen["plugin_dir"], "skills", "s.md"),
+                                  encoding="utf-8").read(), None)
+
+    # And the next run does get it, because freezing happens per launch rather than once.
+    again = w.freeze_mounts(os.path.join(case.root, "run2", "mounts"))
+    check("while the next run does get it",
+          "a commit landed" in open(again["task_script"], encoding="utf-8").read(), None)
+
+
 def test_a_crashed_run_that_left_work_is_finished_not_requeued():
     """2026-09-01, in a test.
 
@@ -10050,6 +10117,7 @@ def main():
         test_two_dispatchers_cannot_take_one_container,
         test_a_pooled_run_never_loses_the_conversations_memory,
         test_a_crashed_pooled_run_gives_its_transcript_back,
+        test_a_run_reads_frozen_copies_not_the_checkout,
         test_a_crashed_run_that_left_work_is_finished_not_requeued,
         test_a_run_is_identified_by_its_container_id_not_its_name,
         test_a_launch_never_destroys_a_warm_container,

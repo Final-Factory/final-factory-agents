@@ -2595,6 +2595,8 @@ class Watcher:
 
     # -- setup -----------------------------------------------------------------------------
 
+    _licence_checked = 0.0
+
     def init(self):
         for d in (self.state_dir, self.blobs_dir, self.conv_root):
             os.makedirs(d, exist_ok=True)
@@ -2781,6 +2783,57 @@ class Watcher:
 
     def conv_dir(self, conv_id):
         return os.path.join(self.conv_root, str(conv_id))
+
+    def freeze_mounts(self, dest):
+        """Copy everything a container reads from the checkout into a directory of its own.
+
+        WHY A COPY RATHER THAN AN ARGUMENT ABOUT INODES. The task script, ffverify and the plugin
+        tree live in this checkout, and the updater fast-forwards it while containers are
+        running. A bind mount of a FILE pins the inode, so git replacing the path leaves the
+        container reading the bytes it started with -- measured on the build server 2026-09-03,
+        where the host inode changed and the container went on reading the old text. A bind mount
+        of a DIRECTORY does not: the plugin tree really does change underneath a running
+        container.
+
+        So one of the three was already safe by a property nobody has promised us -- it depends
+        on git choosing to unlink and recreate rather than truncate and write -- and the other
+        was never safe at all. A copy makes both questions disappear, and it is not a close call
+        on size: plugins/ff-discord is 347 KB in 19 files, measured the same day.
+
+        It also leaves the run directory holding the exact bytes that ran, which is worth having
+        the first time somebody asks what a run three weeks ago actually executed.
+
+        Returns the paths to mount, or None for anything that was not there to copy.
+        design/ffbox_live_update_design.txt section 4.
+        """
+        os.makedirs(dest, exist_ok=True)
+        frozen = {}
+        for key, name in (("task_script", "task.sh"), ("ffverify", "ffverify")):
+            src = self.cfg[key]
+            if not src or not os.path.isfile(src):
+                continue
+            target = os.path.join(dest, name)
+            try:
+                shutil.copyfile(src, target)
+                shutil.copymode(src, target)
+            except OSError as exc:
+                # NOT FATAL, AND IT FALLS BACK TO THE CHECKOUT. A run that cannot be frozen is
+                # still a run; what it loses is the guarantee that a merge cannot reach it, which
+                # is the situation every run was in before this existed.
+                log(f"WARNING: could not freeze {src}: {exc}; mounting the checkout copy")
+                continue
+            frozen[key] = target
+        plugin_src = os.path.join(self.cfg["plugins_dir"], self.cfg["plugin"])
+        if os.path.isdir(plugin_src):
+            plugin_dest = os.path.join(dest, "plugins", self.cfg["plugin"])
+            try:
+                if os.path.isdir(plugin_dest):
+                    shutil.rmtree(plugin_dest)
+                shutil.copytree(plugin_src, plugin_dest)
+                frozen["plugin_dir"] = plugin_dest
+            except OSError as exc:
+                log(f"WARNING: could not freeze {plugin_src}: {exc}; mounting the checkout copy")
+        return frozen
 
     # -- kill switch / rate limits ---------------------------------------------------------
 
@@ -4848,6 +4901,10 @@ class Watcher:
         for sub in ("in", "out", "claude"):
             os.makedirs(os.path.join(d, sub), exist_ok=True)
         self.share_with_container(os.path.join(d, "claude"))
+        # FROZEN AT STAGE TIME, and for this container it matters more than for a cold run: a
+        # spare is created hours before it has a turn, so the checkout it was staged from has had
+        # every chance to move. The copies live in its spool and die with it.
+        frozen = self.freeze_mounts(os.path.join(d, "mounts"))
         cmd = self.ffbox_cmd() + [
             "--stage-pool", pool_id,
             "--pool-dir", self.pool_dir(),
@@ -4858,11 +4915,14 @@ class Watcher:
             "--task", self.cfg["pool_task"],
             # The turn task the container will eventually exec. Mounted now because a mount
             # cannot be added later, and it is the same script a cold run gets.
-            "--mount", f"{self.cfg['task_script']}:/ffbox/turn-task.sh:ro",
+            "--mount",
+            f"{frozen.get('task_script', self.cfg['task_script'])}:/ffbox/turn-task.sh:ro",
             "--mount", f"{os.path.join(d, 'claude')}:/ffbox/claude",
-            "--mount", f"{self.cfg['ffverify']}:/usr/local/bin/ffverify:ro",
+            "--mount",
+            f"{frozen.get('ffverify', self.cfg['ffverify'])}:/usr/local/bin/ffverify:ro",
         ]
-        plugin_dir = os.path.join(self.cfg["plugins_dir"], self.cfg["plugin"])
+        plugin_dir = frozen.get("plugin_dir",
+                                os.path.join(self.cfg["plugins_dir"], self.cfg["plugin"]))
         if os.path.isdir(plugin_dir):
             cmd += ["--mount", f"{plugin_dir}:/ffbox/plugins/{self.cfg['plugin']}:ro"]
         try:
@@ -6069,9 +6129,14 @@ class Watcher:
              container_claude if pool_id else None, pool_id, out_dir))
         run_row_id = cur.lastrowid
 
+        # WHAT THIS RUN READS, PINNED TO THIS RUN. The updater fast-forwards the checkout while
+        # containers are running, and one of the three things a container reads from it -- the
+        # plugin tree -- is a directory mount, which shows whatever is in the directory now.
+        # Copied into the run's own directory instead, so a merge has nothing to reach.
+        frozen = self.freeze_mounts(os.path.join(run_dir, "mounts"))
         cmd = self.ffbox_cmd() + [
             "--run-id", run_id,
-            "--task", self.cfg["task_script"],
+            "--task", frozen.get("task_script", self.cfg["task_script"]),
             "--job-file", job_path,
             "--ref", ref,
             "--mount", f"{att_dir}:/ffbox/attachments:ro",
@@ -6120,12 +6185,13 @@ class Watcher:
         ]
         if job.get("plugin_dir"):
             cmd += ["--mount",
-                    f"{os.path.join(self.cfg['plugins_dir'], self.cfg['plugin'])}:"
+                    f"{frozen.get('plugin_dir', os.path.join(self.cfg['plugins_dir'], self.cfg['plugin']))}:"
                     f"{job['plugin_dir']}:ro"]
         # ffverify is mounted onto PATH because the container task and the lane's Bash allow
         # list both name it, and neither knows a host path. It is the only Unity entry point
         # either of them gets, and the only thing on that PATH we put there.
-        cmd += ["--mount", f"{self.cfg['ffverify']}:/usr/local/bin/ffverify:ro"]
+        cmd += ["--mount",
+                f"{frozen.get('ffverify', self.cfg['ffverify'])}:/usr/local/bin/ffverify:ro"]
         if branch:
             # --branch is where the run STARTS; --branch-prefix is what lets it end somewhere
             # better. When the agent makes its own branch, ffbox publishes that name under this
@@ -8402,6 +8468,48 @@ class Watcher:
                 removed += 1
         return removed
 
+    def refresh_unity_licence(self, min_hours=None, every=1800):
+        """Keep the box's .ulf fresh while containers are running.
+
+        THE REFRESH USED TO HAPPEN ONLY WHEN A CONTAINER WAS CREATED, in ffbox, and the reasoning
+        was good: only the thing making a container knows the moment it needs a licence good for
+        the life of that container. What that misses is a container that outlives the question.
+        A Personal .ulf rolls forward about a day; a run that goes for longer was given a licence
+        that lapses inside it, and no amount of care at creation time fixes that.
+
+        So the host keeps the file fresh and ffbox goes on mounting it -- the directory now, so a
+        refresh reaches a container that is already up. The two halves are independent: this one
+        alone helps every future container, and the mount alone helps none of them.
+
+        CHEAP WHEN THERE IS NOTHING TO DO, which is what makes it acceptable on the poll loop:
+        `ensure` reads one small file with sed and returns unless the licence is inside its
+        threshold. Rate-limited anyway, because the loop ticks every few seconds and this is a
+        subprocess.
+
+        NEVER FATAL, and it holds nothing up: a refresh that fails leaves the licence we have,
+        which is what ffbox has always done with the same call.
+        """
+        now = time.monotonic()
+        if now - self._licence_checked < every:
+            return False
+        self._licence_checked = now
+        tool = os.path.join(HERE, "unity-offline-license.sh")
+        if not os.path.exists(tool):
+            return False
+        hours = str(min_hours if min_hours is not None
+                    else self.cfg.get("licence_min_hours", 4))
+        try:
+            proc = subprocess.run(["sh", tool, "ensure", hours],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=300)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"unity licence: could not run ensure: {exc}")
+            return False
+        for line in (proc.stdout or "").splitlines():
+            if "refresh" in line.lower():
+                log(f"unity licence: {line.strip()}")
+        return proc.returncode == 0
+
     def sweep_dead_containers(self, older_than=3600):
         """Remove workload containers that have exited and that nothing came back for.
 
@@ -8901,6 +9009,9 @@ class Watcher:
                     # normal case; see sweep_dead_containers for why it does not have to be
                     # prompt.
                     self.sweep_dead_containers()
+                    # The box's Unity licence rolls forward about a day, and a container can now
+                    # outlive that. Rate-limited inside; a no-op when there is nothing to do.
+                    self.refresh_unity_licence()
                     # Every pass, so the web page shows the agent talking as it talks rather
                     # than in one lump when the container exits. finish_run indexes the same
                     # transcript once more at the end; both are idempotent by uuid.

@@ -512,9 +512,19 @@ fi
 
 UNITY_LICENCE_ARGS=()
 if [ -r "$UNITY_ULF" ]; then
+    # THE DIRECTORY, NOT THE FILE, and the difference decides whether a long run keeps a valid
+    # licence. A Personal .ulf carries a rolling ~24-hour UpdateDate, and the host refreshes it by
+    # RE-ACTIVATING, which writes a new file. A bind mount of a file pins the inode -- measured on
+    # this box 2026-09-03 -- so a container mounted that way holds the licence it was born with
+    # for as long as it lives, and any run past about a day is running on a lapsed one. Mounting
+    # the directory means the host's refresh is visible to a container that is already up, and
+    # unity-license.sh re-copies when it sees a newer file.
+    #
+    # The path inside is unchanged, so entrypoint.sh and unity-license.sh need to know nothing
+    # about this. Read-only, as before: the container reads a licence and never writes one.
     UNITY_LICENCE_ARGS=(
-        -v "$UNITY_ULF:/ffbox/unity/Unity_lic.ulf:ro"
-        -e "FFBOX_UNITY_ULF=/ffbox/unity/Unity_lic.ulf"
+        -v "$(cd "$(dirname "$UNITY_ULF")" && pwd):/ffbox/unity:ro"
+        -e "FFBOX_UNITY_ULF=/ffbox/unity/$(basename "$UNITY_ULF")"
     )
 else
     echo "ffbox: WARNING: no Unity licence at $UNITY_ULF" >&2
