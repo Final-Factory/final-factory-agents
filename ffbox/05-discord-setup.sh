@@ -446,10 +446,12 @@ for key, value in (
         #
         # machine_id IS NOT SEEDED EITHER, and it used to be, as "per-slot". That was the
         # default when this seeding was written and it stopped being one hours later, on the
-        # same day: the licence is now a .ulf FILE resolved offline, a .ulf binds to exactly one
-        # /etc/machine-id, and unity-offline-license.sh mints it against lib/config.sh's
-        # constant. A fresh box seeded with "per-slot" would present an id that matches nothing
-        # and find no entitlement. It is infrastructure lib/config.sh owns, like the mirror
+        # same day. The box now activates ONE Unity Personal licence on the HOST, against the
+        # pinned constant in lib/config.sh, and every container mounts that one .ulf -- a .ulf
+        # binds to exactly one /etc/machine-id, so a container presenting a per-slot id would
+        # match nothing and find no entitlement. (The activation itself is online and has to be:
+        # Unity withdrew manual activation for Personal licences in 2023. See "Unity licensing"
+        # in ffbox/README.md.) It is infrastructure lib/config.sh owns, like the mirror
         # addresses, so the file should not carry a second answer to it at all.
         "cache_dir": "/opt/ffcache",
         "cache_keep": 10,

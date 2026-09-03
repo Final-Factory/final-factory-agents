@@ -1,13 +1,27 @@
 #!/bin/sh
-# Mint, install and check the OFFLINE Unity licence — the one thing that lets a container run the
-# editor without holding a Unity account password.
+# Mint, install and check the Unity licence — the one thing that lets a container run the editor
+# without holding a Unity account password.
+#
+# "OFFLINE" NAMES THE CONTAINER'S VIEW, NOT THIS BOX'S. THIS SCRIPT IS THE ONLINE HALF. Read that
+# first, because the rest of the tree says "offline" a lot and it has misled readers into thinking
+# nothing here talks to Unity:
+#
+#   * The licence is a Unity PERSONAL licence, and a Personal licence can only be obtained by
+#     authenticating to Unity over the network. Manual (.alf upload) activation was withdrawn for
+#     Personal in August 2023 -- see the .alf note below -- so there is no offline route to one.
+#   * `mint`/`refresh` here perform that ONLINE activation, on the host, in a throwaway container.
+#   * A Personal .ulf carries a rolling ~24h UpdateDate and no StopDate, so it has to be
+#     re-activated roughly DAILY. `ensure` is what does it, called before every container launch by
+#     ffbox and by runners/slot.sh.
+#   * Only the RUN container is offline: it mounts the resulting file and the licensing client
+#     resolves it from local files with no call and no seat.
 #
 # WHY THIS EXISTS. Until 2026-09-01 every container was handed UNITY_EMAIL and UNITY_PASSWORD and
-# performed an ONLINE serial activation on start. That put a full Unity account credential inside a
-# container that runs `claude -p --dangerously-skip-permissions` over text strangers wrote, and
+# performed the online activation itself, on start. That put a full Unity account credential inside
+# a container that runs `claude -p --dangerously-skip-permissions` over text strangers wrote, and
 # docs/docker-security-model.md's first premise is that the container is hostile. A .ulf licence
-# FILE needs no credential at all: the licensing client resolves entitlements from local files and
-# never calls out.
+# FILE needs no credential in the container at all: the licensing client resolves entitlements from
+# local files and makes no call of its own.
 #
 #     Rebuilding resolvers from local files
 #     Skipping directory watcher for: /root/.local/share/unity3d/Unity/*.ulf
@@ -20,11 +34,13 @@
 #     hostB, image machine-id   MachineID D7nTUnjNAmtsUMcnoyrqkgIbYdM=   <- hostname does not bind
 #     hostA, custom machine-id  MachineID zkMD9rIiV9nJzzFO8d7kcHxuHBM=   <- machine-id does
 #
-# So every container that presents the base image's pinned id can share ONE licence. Per-slot ids
-# existed only to stop a second CONCURRENT ONLINE ACTIVATION dying with "Found 0 entitlement groups
-# and 0 free entitlements", exit 198 -- a refusal from Unity's activation endpoint. The offline path
-# makes no such call, so the reason for per-slot ids is gone with it. Nine machine registrations
-# against one Personal entitlement (six agent slots plus three CI) becomes one.
+# So every container that presents the SAME id can share ONE licence, and the id they present is
+# FFBOX_MACHINE_ID_CONST below rather than the base image's. Per-slot ids existed only to stop a
+# second CONCURRENT ACTIVATION dying with "Found 0 entitlement groups and 0 free entitlements",
+# exit 198 -- a refusal from Unity's activation endpoint when two containers each registered
+# themselves. Activation still happens; it happens ONCE, here, so there is no second caller to
+# collide with. Nine machine registrations against one Personal entitlement (six agent slots plus
+# three CI) becomes one.
 #
 # NOT THE .alf ROUND TRIP, AND THIS IS THE TRAP TO KNOW ABOUT. The obvious way to get a machine-bound
 # .ulf is Unity's manual activation flow -- generate an .alf, upload it at license.unity3d.com/manual,

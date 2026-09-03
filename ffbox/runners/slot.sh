@@ -345,9 +345,11 @@ else
     log "cache: not provisioned or disabled; running without it"
 fi
 
-# THE UNITY MACHINE ID. Passed in rather than baked, because it is derived from the SLOT: see the
-# machine id section of lib/config.sh for why per-slot rather than game-ci's per-container random.
-# Empty means "leave the image's alone", which is what machine_id=image asks for.
+# THE UNITY MACHINE ID. Passed in rather than baked, because it is what the .ulf is BOUND to: the
+# host activates one licence against lib/config.sh's pinned constant and every container has to
+# present that same id to find an entitlement. It stopped being derived from the slot on
+# 2026-09-01, when the containers stopped activating for themselves; see the machine id section of
+# lib/config.sh. Empty means "leave the image's alone", which is what machine_id=image asks for.
 # THE UNITY LICENCE, MOUNTED READ-ONLY. A file rather than the account credentials the job used to
 # activate with; see ffbox/unity-offline-license.sh. Absent is not fatal here -- the job still has
 # the workflow's own UNITY_* secrets to fall back on, and unity-license.sh says so loudly.

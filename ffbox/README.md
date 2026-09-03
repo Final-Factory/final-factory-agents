@@ -429,9 +429,27 @@ forwards signals unreliably, which would leak a Unity seat on every stopped cont
 ## Unity licensing
 
 **No container holds a Unity credential.** The licence is a `.ulf` file, mounted read-only, and
-that is the whole mechanism. This section used to describe an online serial activation performed
-inside every container from `UNITY_EMAIL` and `UNITY_PASSWORD`; that ended on 2026-09-01 and the
-reasoning is worth keeping, because the old design looks reasonable until you say it out loud.
+that is the whole mechanism. This section used to describe an online activation performed inside
+every container from `UNITY_EMAIL` and `UNITY_PASSWORD`; that ended on 2026-09-01 and the reasoning
+is worth keeping, because the old design looks reasonable until you say it out loud.
+
+**Read this before you conclude the box never talks to Unity.** It does, roughly once a day. This
+is a Unity **Personal** licence, and a Personal licence can only be obtained by authenticating to
+Unity over the network — manual `.alf` activation was withdrawn for Personal in August 2023, so
+there is no offline route to one. What changed is *who* makes the call: the **host** activates once,
+in a throwaway container, and every run container merely mounts the result. "Offline" throughout
+this repo names the **run container's** view of its own licence — no credential, no call, no seat —
+and nothing wider. The mechanism end to end:
+
+1. `unity-offline-license.sh mint`/`refresh` starts a throwaway container that presents the pinned
+   machine id, runs `Unity.Licensing.Client --activate-ulf` with a credential from `secrets.env`,
+   and exits. The credential never leaves the host.
+2. The resulting `.ulf`, bound to that machine id, lands at `/opt/ffcache/unity/Unity_lic.ulf`.
+3. Every run container — both lanes, every slot — writes that same machine id into
+   `/etc/machine-id` at entrypoint and gets the one file bind-mounted read-only.
+4. A Personal `.ulf` has a rolling ~24-hour `UpdateDate` and no `StopDate`, so step 1 runs again
+   whenever fewer than four hours are left. `unity-offline-license.sh ensure` is called before
+   every container launch, by `ffbox` and by `runners/slot.sh`.
 
 ### Why it changed
 
@@ -444,7 +462,8 @@ meant 2FA on that account would have broken CI.
 
 ### Why a file is enough
 
-Unity's licensing client resolves entitlements from **local files**, with no call to Unity:
+Unity's licensing client resolves an entitlement it already has from **local files**, with no call
+to Unity (getting one in the first place is the online step above):
 
 ```
 Rebuilding resolvers from local files
@@ -469,21 +488,30 @@ across varying hostnames and ids:
 | `hostB` | image default | `D7nTUnjNAmtsUMcnoyrqkgIbYdM=` |
 | `hostA` | custom | `zkMD9rIiV9nJzzFO8d7kcHxuHBM=` |
 
-Hostname does not bind; machine-id does. Every container presents the base image's pinned constant
-(`576562626572264761624c65526f7578`, "Webber&GabLeRoux"), which game-ci pins for exactly this
-purpose — so **one** licence serves all of them.
+Hostname does not bind; machine-id does. Every container presents **our own** pinned constant
+`46696e616c466163746f72792d666662` (ASCII "FinalFactory-ffb"), written into `/etc/machine-id` by
+`entrypoint.sh` and `entrypoint-ci.sh` from the id the launcher passes in — so **one** licence
+serves all of them. game-ci's base image pins its own constant
+(`576562626572264761624c65526f7578`, "Webber&GabLeRoux") for the same purpose, and `machine_id:
+image` leaves that one in place; we pin ours instead so the licence does not depend on a number
+game-ci controls. Whichever it is, the licence is bound to whatever the **minting** container
+presented, and every run container has to present the same.
 
 ### The per-slot machine id is gone, and why that is not a regression
 
 Both lanes used to derive `/etc/machine-id` from a claimed slot. That existed solely to stop a
-second **concurrent online activation** dying with "Found 0 entitlement groups and 0 free
-entitlements", exit 198 — a refusal from Unity's activation endpoint. The offline path makes no
-such call, so there is nothing to refuse.
+second **concurrent activation** dying with "Found 0 entitlement groups and 0 free entitlements",
+exit 198 — a refusal from Unity's activation endpoint when two containers each registered
+themselves. There is one activator now, on the host, and it cannot be concurrent with itself.
 
 It would now be actively wrong: a container presenting a per-slot id matches no licence and finds
-no entitlement at all. `machine_id` therefore defaults to `image` on both lanes; `per-slot` remains
-available for a lane deliberately put back on online activation. The slot itself is still claimed —
-it labels the container and bounds the pool as before.
+no entitlement at all. `machine_id` therefore defaults to the pinned constant
+`46696e616c466163746f72792d666662` on both lanes (`ffbox/lib-workloads.sh` and
+`ffbox/runners/lib/config.sh`, which must stay in lockstep with `FFBOX_MACHINE_ID_CONST` in
+`unity-offline-license.sh`). `image` and `per-slot` remain available: `image` for a box whose
+licence was minted against the base image's id, `per-slot` for a lane whose containers activate for
+themselves again. The slot itself is still claimed — it labels the container and bounds the pool as
+before.
 
 This also retires nine machine registrations (six agent slots plus three CI) against a single
 Personal entitlement, down to one.
@@ -503,7 +531,7 @@ read. The trap survives only for the online fallback, guarded by the licence mod
 
 ```bash
 sh ffbox/unity-offline-license.sh mint      # asks for your Unity account, ONCE
-sh ffbox/unity-offline-license.sh status    # what is installed, what it binds, when it expires
+sh ffbox/unity-offline-license.sh status    # what is installed, what it binds, when it next renews
 sh ffbox/unity-offline-license.sh verify 3  # prove N containers share it concurrently
 sh ffbox/unity-offline-license.sh return    # hand the entitlement back
 ```
