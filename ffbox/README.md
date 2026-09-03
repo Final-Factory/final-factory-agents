@@ -318,6 +318,12 @@ Seven things worth knowing:
   commit that changes a unit template — `ffbox/systemd/`, `ffbox/runners/systemd/` — is fetched,
   merged and live everywhere except the units, until somebody runs the one command it names. The
   alternative is a sudoers rule for writing `/etc/systemd/system`, which is root.
+- **It writes down when an update actually landed.** `~/.config/ffbox/update.last-applied`,
+  one line of `<epoch> <sha>`, written beside the config fingerprint a moment before the start.
+  Only a pass that fast-forwarded writes it — a config-only restart leaves the checkout on the
+  commit it was already on, and calling that an update would make a box stuck two days behind
+  read as freshly updated every time somebody edited `config.json`. `ffstatus.sh` and the
+  `/status` page show it next to the next scheduled check.
 - **It is deliberately not part of `ffbox.target`.** `systemctl stop ffbox.target` leaves the
   timer firing, so a commit that breaks ffwatch can be repaired by the next commit without
   anyone touching the machine. There is no rollback, and that independence is why.
@@ -1475,6 +1481,16 @@ the instant it held it, and `update_ffbox.sh` acquires that same lock with `-n` 
 it cannot — a status command that can cause a scheduled update to be skipped is not a status
 command.
 
+Under that line it says when this box last took new code — the pass that actually
+fast-forwarded, read from `~/.config/ffbox/update.last-applied` — with the commit it landed on
+and how long until the updater looks again, which comes from systemd rather than from the
+interval in the `.timer` file (the schedule carries a randomised delay, catches up after the
+machine was off, and moves when somebody runs the unit by hand). Deliberately not "last
+checked", for the same reason `checking` is not `updating`: the timer looks every five minutes
+and finds nothing almost every time, so that clock reads five minutes old on a box three days
+behind master. A box that has taken no code since the stamp was invented says `unknown` rather
+than guessing.
+
 **What it costs is memory and a Unity seat.** A staged container holds its whole workspace
 resident, 22 GiB for master, and since 2026-09-01 it also holds a licence: `pool-task.sh`
 activates after the workspace is synced and before the container goes idle, so a dispatched turn
@@ -1807,7 +1823,7 @@ when somebody is looking at it.
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
-| `/status` | **the box**, and the one page here that reads no database: whether it is `running`, `checking`, `updating` or `drained` and why, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
+| `/status` | **the box**, and the one page here that reads no database: whether it is `running`, `checking`, `updating` or `drained` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 

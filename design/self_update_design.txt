@@ -125,6 +125,12 @@ Three new files, one new flag, two new subcommands. Nothing else moves.
                                      nothing, which the unit being `activating` cannot. Removed
                                      on every exit path, stale ones cleared at step 1.
 
+  ~/.config/ffbox/update.last-applied (added 2026-09-03) one line, `<epoch> <sha>`, written by
+                                     the pass that actually fast-forwarded — never by a
+                                     config-only restart. Read by ffstatus.sh and shown on
+                                     ffweb's /status page beside the next scheduled check;
+                                     see open question 1.
+
   ffwatch drain [--wait] [--timeout N]   write the flag; optionally block until quiet.
   ffwatch resume                         remove the flag.
 
@@ -333,7 +339,8 @@ holding no root.
   6. OLD_SHA=$(git rev-parse HEAD); git merge --ff-only origin/BRANCH  (skipped if the trigger
                                                                        was the config alone)
   7. act on the diff (section 5)
-  8. rm the drain flag; write config.json's hash to update.config-sha
+  8. rm the drain flag; write config.json's hash to update.config-sha, and — only when step 6
+     merged something — the epoch and new sha to update.last-applied
   9. systemctl start ffbox.target
  10. report each unit's state and OLD_SHA -> HEAD
  11. rm update.applying                    (on the EXIT trap, so a crash at any step above
@@ -509,6 +516,12 @@ Added 2026-09-02:
 
   NEW  ~/.config/ffbox/update.config-sha    written by the updater at step 8; the second trigger
 
+Added 2026-09-03:
+
+  NEW  ~/.config/ffbox/update.last-applied  written by the updater at step 8 when it merged
+  EDIT ffbox/ffstatus.sh                    reads it, and asks systemd for the next elapse
+  EDIT ffbox/ffweb.py                       both on /status's header line
+
 06-services.sh is the only place that learns about the new units, and it must not add them to
 ffbox.target — see section 3, choice 1.
 
@@ -516,10 +529,15 @@ ffbox.target — see section 3, choice 1.
 10. Open questions
 ------------------
 
-  1. SHOULD AN UPDATE BE VISIBLE IN ffweb? The journal has it, but the page is where a human
-     looks. A single row — last check, last update, old sha, new sha, outcome — would answer
-     "is this box current?" without ssh. Not in phase 1; it wants a table and a schema
-     migration for something the journal already records.
+  1. SHOULD AN UPDATE BE VISIBLE IN ffweb? Answered 2026-09-03, and smaller than the row this
+     question imagined. No table and no migration: the updater stamps update.last-applied when
+     it merges, ffstatus.sh reads that plus the timer's next elapse out of systemd, and both
+     land on /status's header line as "last update 2h07m ago (sha) · next check in 4m". LAST
+     APPLIED, NOT LAST CHECKED, which is the number the timer makes easy and nobody wants: the
+     timer looks every five minutes and finds nothing almost every time, so a "last checked"
+     clock reads five minutes old on a box three days behind master. Old sha and outcome stay
+     in the journal — they are what you read when something went wrong, and the page is what
+     you read to find out whether anything did.
 
   2. SHOULD THE UPDATER ANNOUNCE ITSELF IN DISCORD? Tempting and cheap, and wrong by the rule
      the pipeline already holds: the host composes, and an update is not a reply to anyone. If

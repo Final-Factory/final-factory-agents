@@ -8410,6 +8410,38 @@ def test_a_shutdown_waits_for_the_host_not_only_for_the_containers():
           '"$FFWATCH" quiet' in code and "label=ffbox.workload" in code, None)
 
 
+def test_the_updater_records_when_an_update_actually_landed():
+    """The stamp behind /status's "last update" line, and the one thing it must not count.
+
+    A config-only pass drains and restarts but leaves the checkout on the commit it was
+    already on. Stamping there would make a box stuck two days behind master read as freshly
+    updated every time somebody edited config.json — which is the direction of lie that
+    matters, because the whole point of the number is to answer "is this box current?".
+    """
+    print("update: the stamp says landed, not looked")
+    upd = open(os.path.join(HERE, "update_ffbox.sh"), encoding="utf-8").read()
+    code = "\n".join(l for l in upd.splitlines() if not l.lstrip().startswith("#"))
+    check("the stamp lives beside the config fingerprint, outside the checkout",
+          "APPLIED_STAMP=$CONFIG_DIR/update.last-applied" in code, None)
+    write = code.partition('config_fingerprint > "$CONFIG_STAMP"')[2] \
+                .partition('log "starting ffbox.target"')[0]
+    check("it is written a moment before the start, like the fingerprint",
+          '> "$APPLIED_STAMP"' in write, write)
+    check("only when the merge actually took something",
+          '[ "$CODE_UPDATE" = 1 ]' in write, write)
+    check("and it carries the epoch and the commit it landed on",
+          "date +%s" in write and "rev-parse HEAD" in write, write)
+    check("a failure to write it never stops the box coming back",
+          "|| log" in write and "die" not in write, write)
+
+    st = open(os.path.join(HERE, "ffstatus.sh"), encoding="utf-8").read()
+    stc = "\n".join(l for l in st.splitlines() if not l.lstrip().startswith("#"))
+    check("ffstatus reads that stamp rather than the timer's last trigger",
+          "update.last-applied" in stc and "LastTriggerUSec" not in stc, None)
+    check("and asks systemd for the next elapse instead of the interval in the unit file",
+          "NextElapseUSecMonotonic" in stc, None)
+
+
 def test_the_updater_forces_softly_rather_than_standing_down():
     """The window ends in a SOFT stop and an update, not in a stand-down.
 
@@ -9973,6 +10005,7 @@ def main():
         test_draining_destroys_what_is_idle_and_nothing_else,
         test_a_shutdown_waits_for_the_host_not_only_for_the_containers,
         test_the_updater_forces_softly_rather_than_standing_down,
+        test_the_updater_records_when_an_update_actually_landed,
         test_a_pull_request_a_human_closed_is_not_reopened,
         test_the_reconcile_opens_the_pull_request_the_run_could_not,
         test_the_second_look_tells_the_thread_where_the_fix_went,

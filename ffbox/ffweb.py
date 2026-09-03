@@ -2117,11 +2117,39 @@ class App:
         # that does not exist.
         maint = doc.get("maintenance") or {}
         state = maint.get("state") or "running"
+        # WHEN THE CHECKOUT LAST MOVED, AND WHEN IT LOOKS AGAIN — on this line rather than in a
+        # section of its own, because it belongs with the pill beside it: `running` and
+        # `checking` both say nothing is landing right now, and these two say whether that is
+        # because there is nothing to land. Deliberately NOT "last checked", which is the timer
+        # number that is easy to get and useless to have: the timer looks every five minutes and
+        # finds nothing almost every time, so it reads five minutes old on a box three days
+        # behind master. update_ffbox.sh stamps only the pass that actually fast-forwarded.
+        #
+        # The countdown earns its place next to it. "Two commits behind" is an operator getting
+        # out of bed; "two commits behind and it looks again in forty seconds" is one going back
+        # to sleep, and without the second half every reader has to remember the timer's period.
+        upd = doc.get("update") or {}
+        applied, next_check = upd.get("last_applied_epoch"), upd.get("next_check_secs")
+        if applied:
+            sha = str(upd.get("last_applied_sha") or "")
+            clock = ("last update " + esc(fmt_ttl(max(0, int(time.time()) - int(applied)))) +
+                     " ago" + (" (" + esc(sha[:12]) + ")" if sha else ""))
+        else:
+            # A real state, not a bug: no update has landed since the stamp was invented, or
+            # this checkout has never taken one. Saying so beats an em dash that reads as a
+            # broken column.
+            clock = "last update unknown"
+        if next_check is not None:
+            # Non-positive means the timer is due and systemd has not fired it yet — during an
+            # update, most often, since the unit stays activating for the whole drain.
+            clock += (" · next check in " + esc(fmt_ttl(int(next_check)))
+                      if int(next_check) > 0 else " · next check due now")
         head.append("<p class=\"note\">" + esc(str(doc.get("host") or "this box")) +
                     " · read at " + esc(short(str(doc.get("generated_at") or ""), 40)) +
                     " · " + str(pill(state)) +
                     (" " + esc(short(str(maint.get("reason")), 120))
-                     if maint.get("reason") else "") + "</p>")
+                     if maint.get("reason") else "") +
+                    " · " + clock + "</p>")
 
         # --- the machine ---------------------------------------------------------------
         #
@@ -2142,16 +2170,11 @@ class App:
             load = " ".join(f"{machine[k]:.2f}" for k in ("load1", "load5", "load15")
                             if isinstance(machine.get(k), (int, float)))
             body += ["<h2>machine</h2>",
-                     table(["load 1m · 5m · 15m", "cores", "memory used", "of", "in workspaces"],
+                     table(["load 1m · 5m · 15m", "cores", "memory used", "Memory Total",
+                            "in workspaces"],
                            [[load or "—", machine.get("cores") or "—",
                              fmt_gib(mem_used) + pct, fmt_gib(mem_total),
-                             fmt_gib(machine.get("shmem_kb"))]]),
-                     "<p class=\"note\">Used is total minus <em>available</em>, which is the "
-                     "kernel's own answer to what a new process could actually get — not total "
-                     "minus free, which counts the page cache as gone. <code>in workspaces</code> "
-                     "is shared memory: every container workspace is a tmpfs, so it is resident "
-                     "RAM that no cache pressure reclaims, and it is the number the container "
-                     "ceiling is really rationing.</p>"]
+                             fmt_gib(machine.get("shmem_kb"))]])]
 
         rows = []
         for c in doc.get("containers") or []:
