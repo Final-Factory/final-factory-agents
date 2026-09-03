@@ -277,9 +277,14 @@ ADDED_COLUMNS = [
     #   manual  a human closed it from the web page
     ("conversation", "closed_at", "TEXT"),
     ("conversation", "close_reason", "TEXT"),
-    # The turn seq at the last session rotation. rotate_turns counts FROM here, not from seq 1,
-    # or a long conversation rotates on every turn after the twelfth.
-    ("conversation", "rotated_at_seq", "INTEGER"),
+    # The turn seq at the last session seam -- a compaction, or a new generation seeded after a
+    # lost transcript. compact_turns counts FROM here, not from seq 1, or a long conversation
+    # compacts on every turn after the twelfth.
+    #
+    # NAMED FOR WHAT NOW HAPPENS. It was `rotated_at_seq` while reaching the limit rotated the
+    # session; init_schema renames it in place, so the seam this box already recorded is the
+    # seam the first compaction counts from.
+    ("conversation", "compacted_at_seq", "INTEGER"),
     # WHICH RULE PLACED THIS MESSAGE, set on every ingested message and not only the ones a
     # model touched: 'reply' S1, 'new' S2, 'certain' S3, 'model' an S4 answer that was believed
     # — including one that named the conversation the batch was already in — and 'recent' the
@@ -762,8 +767,10 @@ DEFAULTS = {
         # How many the selector chooses between. A short list is a question a small model
         # answers reliably; a long one is not.
         "max_candidates": 5,
-        # Rotates the SESSION and leaves the conversation open (section 7). Not a close.
-        "rotate_turns": 12,
+        # COMPACTS the session and leaves the conversation open (section 7). Not a close, and
+        # since 2026-09-03 not a rotation either: the turn that trips this runs /compact against
+        # the session it was already going to resume, and then resumes it. See build_job.
+        "compact_turns": 12,
         # Two people talking in one channel are one discussion, so this is false. A channel with
         # many simultaneous speakers is the opposite case and can say so per watch entry.
         "per_author": False,
@@ -1822,6 +1829,17 @@ class Db:
             script = fh.read()
         with self.conn:
             self.conn.executescript(script)
+            # v17 (2026-09-03): `rotated_at_seq` became `compacted_at_seq` when reaching
+            # cluster.compact_turns started compacting the session instead of rotating it. The
+            # RENAME has to run before the ADDED_COLUMNS loop below, or the loop adds an empty
+            # `compacted_at_seq` beside the old column and the rename then fails on a duplicate
+            # — and the value is worth carrying: it is where this box's last seam actually was,
+            # so the first compaction counts from the right turn instead of one turn early.
+            # Guarded both ways, so it is a no-op on a fresh database and on every later start.
+            if (self._has_column("conversation", "rotated_at_seq")
+                    and not self._has_column("conversation", "compacted_at_seq")):
+                self.conn.execute("ALTER TABLE conversation"
+                                  " RENAME COLUMN rotated_at_seq TO compacted_at_seq")
             for table, column, decl in ADDED_COLUMNS:
                 cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
                 if column not in cols:
@@ -5352,35 +5370,61 @@ class Watcher:
         resume = int(turn["seq"]) > 1 and os.path.exists(transcript)
         summary = None
 
-        # ROTATE THE SESSION, NOT THE CONVERSATION. A conversation that runs for weeks resumes
-        # a session that has been growing the whole time, and something has to bound that. An
-        # earlier draft bounded it by closing the conversation at twelve turns, which splits a
-        # live discussion to solve a problem the discussion did not cause.
+        # COMPACT THE SESSION, NOT THE CONVERSATION — and not the transcript either. A
+        # conversation that runs for weeks resumes a session that has been growing the whole
+        # time, and something has to bound that. An earlier draft bounded it by closing the
+        # conversation at twelve turns, which splits a live discussion to solve a problem the
+        # discussion did not cause; the draft after that ROTATED the session, taking the
+        # recovery path below deliberately — a new generation seeded from render_summary.
         #
-        # The two are separable and this file already separates them, in the recovery path just
-        # below: a new generation, seeded from the database rather than from the lost
-        # transcript. Triggering it deliberately costs the model's own reasoning trace from
-        # before the seam and keeps every word a person wrote, because render_summary reads
-        # those out of the system of record.
-        rotate_after = int(cluster_cfg(self.cfg, conv["watch_alias"])["rotate_turns"])
-        since = int(turn["seq"]) - int(conv["rotated_at_seq"] or 0)
-        if resume and rotate_after and since > rotate_after:
-            log(f"conversation {conv['id']}: {since} turns since the last session rotation, "
-                f"rotating at turn {turn['seq']} — the conversation stays open")
-            resume = False
-            self.db.execute("UPDATE conversation SET rotated_at_seq=? WHERE id=?",
+        # That kept every word a person wrote and threw away the expensive half: the model's
+        # own reasoning trace. What it read, what it ruled out, which approach it had already
+        # tried and why it abandoned it. render_summary reads Discord messages out of the
+        # system of record and cannot rebuild any of that, so turn 13 of an investigation
+        # started again from the question.
+        #
+        # /compact keeps the session and asks the model to summarise its own work instead,
+        # which is strictly more than the host can render. VERIFIED 2026-09-03 against Claude
+        # Code 2.1.259: `claude -p /compact --resume <id>` is accepted as a slash command in
+        # print mode and writes a compactMetadata boundary plus an isCompactSummary entry into
+        # the SAME transcript under the SAME session id, and the next resume comes back at
+        # roughly half the context (22.4k -> 13.0k on the probe) with the history intact.
+        #
+        # THE CONTAINER RUNS IT, not the host: the transcript only exists where the run has it
+        # (mounted for a cold run, staged for a pooled one), cwd inside the container is
+        # CONTAINER_WORKSPACE so Claude Code derives the project slug this file already
+        # assumes, and a host-side compaction would block a whole daemon pass on a model call.
+        # The host's job is the decision, which is this.
+        compact_after = int(cluster_cfg(self.cfg, conv["watch_alias"])["compact_turns"])
+        since = int(turn["seq"]) - int(conv["compacted_at_seq"] or 0)
+        compact = bool(resume and compact_after and since > compact_after)
+        if compact:
+            log(f"conversation {conv['id']}: {since} turns since the last session seam, "
+                f"compacting before turn {turn['seq']} — the session and the conversation "
+                "both stay")
+            # RECORDED WHEN IT IS ASKED FOR, not when it succeeds. The container's compaction
+            # is bounded and non-fatal: a run whose /compact times out still answers the turn,
+            # on the uncompacted session, and there is no return channel worth building for it.
+            # Moving the seam here costs that conversation one skipped compaction window and
+            # nothing else, where leaving it costs a compaction attempt on every turn from here
+            # on. Claude Code's own --autocompact is the backstop either way.
+            self.db.execute("UPDATE conversation SET compacted_at_seq=? WHERE id=?",
                             (int(turn["seq"]), conv["id"]))
 
         if int(turn["seq"]) > 1 and not resume:
             # The session file carries the investigation forward; the database is the system of
             # record and can always rebuild a conversation from nothing. That is what makes a
             # lost transcript survivable rather than fatal.
+            #
+            # ONLY A LOST TRANSCRIPT REACHES HERE NOW. Reaching compact_turns used to as well,
+            # by setting resume=False above.
             generation += 1
             session_id = session_id_for(conv["thread_id"], generation)
             summary = self.render_summary(conv["id"])
             self.db.execute(
-                "UPDATE conversation SET session_id=?, session_generation=? WHERE id=?",
-                (session_id, generation, conv["id"]))
+                "UPDATE conversation SET session_id=?, session_generation=?,"
+                " compacted_at_seq=? WHERE id=?",
+                (session_id, generation, int(turn["seq"]), conv["id"]))
             log(f"conversation {conv['id']}: new session generation {generation} seeded from "
                 f"a host-rendered summary")
 
@@ -5409,7 +5453,9 @@ class Watcher:
             # nobody is going to truncate it.
             "local": is_local_conversation(conv),
             "agent": cap["agent"],
-            "session": {"id": session_id, "resume": bool(resume)},
+            # `compact` is an instruction to the container and not a fact about the session:
+            # run /compact against this id before the turn, then resume it as normal.
+            "session": {"id": session_id, "resume": bool(resume), "compact": compact},
             "capabilities": {"tools": cap["tools"], "disallowed": list(cap["disallowed"]),
                              "allowed": list(cap.get("allowed") or []),
                              "permission_mode": "acceptEdits",

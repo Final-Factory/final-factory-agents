@@ -376,6 +376,14 @@ for key, value in (
     # not "send" is a tier. `operator` is null, which ffwatch reads as no limit.
     ("rate_limits", {"player": 5, "operator": None,
                      "send": {"per_hour": 60, "per_conversation_hour": 12}}),
+    # ONE KEY OUT OF THE CLUSTERING BLOCK, and deliberately not the other seven. ffwatch
+    # deep-merges this section, so a config naming one key inherits the rest of DEFAULTS
+    # ["cluster"] rather than replacing it -- which means the shipped file can put the one
+    # tunable a person actually reaches for on page and leave the candidacy arithmetic to the
+    # code. This is how often a long-running conversation's session is compacted, counted in
+    # turns from the last seam: past it the turn runs /compact against the session it was about
+    # to resume, and then resumes it. Overridable per `watch` entry, like everything in here.
+    ("cluster", {"compact_turns": 12}),
     # The page. It is behind a login and served over TLS, but 127.0.0.1 is still the default:
     # it renders raw model thinking, and one hardcoded password is a thin thing to hold a LAN
     # off with. Widening it stays a deliberate edit, made here where it is reviewable.

@@ -2335,8 +2335,10 @@ class App:
 
         The session boundary comes with them rather than keeping a column of its own, because
         it is a fact ABOUT the session id and not about the conversation: a resume lands in the
-        CURRENT session, and nothing said before a rotation is in it. That seam is what "the
-        agent forgot what we said in turn 3" looks like from the outside.
+        CURRENT session, and what was said before the last seam is in it only as a summary —
+        the model's own, after a compaction, or the host's, after a transcript was lost and the
+        generation rolled. That seam is what "the agent forgot what we said in turn 3" looks
+        like from the outside, so the page says which turn it fell on.
         """
         session = conv["session_id"]
         if not session:
@@ -2346,9 +2348,19 @@ class App:
             return ""
         bits = ["<div class=\"note ids\">conversation <code>", esc(session), "</code> (",
                 esc(conv["id"]), ")"]
-        if conv["rotated_at_seq"]:
+        # READ THROUGH A GUARD, like conversation_branch in ffwatch.py and for the same reason:
+        # this page never migrates the database, ffwatch does, and the two are restarted
+        # separately. `compacted_at_seq` was `rotated_at_seq` until 2026-09-03, so between the
+        # two restarts this reader can be looking at a database that still carries the old name
+        # — and a missing column on a sqlite3.Row raises rather than returning None, which would
+        # be a 500 on the conversation page over a label.
+        try:
+            seam = conv["compacted_at_seq"]
+        except (IndexError, KeyError):
+            seam = None
+        if seam:
             bits.append(" <span class=\"muted\">gen " + esc(conv["session_generation"])
-                        + ", rotated at turn " + esc(conv["rotated_at_seq"]) + "</span>")
+                        + ", last seam at turn " + esc(seam) + "</span>")
         bits.append("</div>")
         return "".join(bits)
 

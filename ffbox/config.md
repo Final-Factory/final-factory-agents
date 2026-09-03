@@ -576,8 +576,15 @@ has scrolled past it.
 | `certain_secs` | `900` | A lone candidate this recent, with nothing in between, is a continuation and must not cost a model call. |
 | `max_candidate_secs` | `604800` | Nothing older is ever offered. |
 | `max_candidates` | `5` | How many the selector chooses between. |
-| `rotate_turns` | `12` | Rotates the session and leaves the conversation open. Not a close. |
+| `compact_turns` | `12` | Turns since the last session seam before the next turn **compacts** the session it was about to resume — `claude -p /compact --resume <id>` in the container, before the agent clock starts, then the turn resumes the same id. The conversation stays open and keeps its id, its page and its Discord anchor; the session keeps its id too. Seeded into the file by stage 5, and the one `cluster` key that is. |
 | `per_author` | `false` | Two people talking in one channel are one discussion. A channel with many simultaneous speakers can say otherwise per `watch` entry. |
+
+A compaction is bounded (`FFBOX_COMPACT_SECS` in the container, 600s) and non-fatal: if it
+times out or the model refuses, the turn answers on the session exactly as it was, and the host
+has already moved the seam so nothing retries it every turn. `--autocompact auto` on the real
+invocation is the backstop. The other seam is recovery, not this knob: a transcript that is
+GONE rolls the session to a new generation seeded from `render_summary`, which reads what people
+wrote out of the database. `ffweb` shows whichever seam was last, and which turn it fell on.
 
 Unlike `watch`, this block ships non-empty on purpose. `_deep_merge` recurses into dicts, so
 a shipped default is added to whatever a config declares rather than replaced by it. Here the
