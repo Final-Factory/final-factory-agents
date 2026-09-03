@@ -1186,8 +1186,17 @@ if [ -n "$DISPATCH" ]; then
     # travel with the move below and had to be deleted separately. In `out/` there is one path
     # that answers "what did this container exit with" -- the same path on both routes, before
     # and after the move, and readable by a process that did not start the run.
-    docker wait "$RUN_NAME" > "$OUT/.container-rc" 2>/dev/null &
-    DOCKER_PID=$!
+    #
+    # NOT WHEN DETACHING. We are about to exit, and a backgrounded `docker wait` would be
+    # orphaned -- one leaked process per run, waiting hours on a container nothing in this shell
+    # is going to hear about. Worse, the redirect CREATES the file empty on the way past, so a
+    # reader that trusts its existence scores a finished run as unreadable. Nothing is lost by
+    # skipping it: the container writes its own status from its finish trap, and the host asks
+    # docker directly for anything that never got that far.
+    if [ "$DETACH" != 1 ]; then
+        docker wait "$RUN_NAME" > "$OUT/.container-rc" 2>/dev/null &
+        DOCKER_PID=$!
+    fi
 else
     # THE CEILING, TAKEN THE LONG WAY ROUND. This `docker run` is not detached -- it stays in the
     # foreground for the whole run so the clock loop below can watch it -- so the lock cannot wrap
