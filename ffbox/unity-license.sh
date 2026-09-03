@@ -154,6 +154,28 @@ install_offline_license() {
     # normal case in the agent lane is that the file is already here and the mount is UNREADABLE --
     # checking the destination first is what keeps that from looking like a missing licence.
     if [ -r "$dir/Unity_lic.ulf" ]; then
+        # BUT TAKE A NEWER ONE IF THE HOST HAS LEFT ONE. A Personal .ulf carries a rolling
+        # ~24-hour UpdateDate and no StopDate, and the host refreshes it by re-activating, which
+        # writes a NEW FILE. Since ffbox mounts the licence DIRECTORY rather than the file, a
+        # container that has been up longer than a day can see that refresh -- and without this
+        # it would go on presenting the copy it was born with, which has lapsed.
+        #
+        # This costs one stat in the normal case, where the staged copy is minutes old and the
+        # mount has not moved. It matters only for a run long enough to outlive its own licence,
+        # which is exactly the run that cannot afford to discover the problem at its verify step.
+        #
+        # NEVER FATAL, in either direction. An unreadable mount is the pre-2026-09-03 state and
+        # the staged copy is still good; a failed copy leaves the staged copy in place, which is
+        # no worse than not having tried.
+        if [ -n "$src" ] && [ -r "$src" ] && [ "$src" -nt "$dir/Unity_lic.ulf" ]; then
+            if cp "$src" "$dir/Unity_lic.ulf" 2>>"$FFBOX_LICENSE_LOG"; then
+                chmod 600 "$dir/Unity_lic.ulf" 2>/dev/null || :
+                log "took a newer .ulf the host left on the mount"
+            else
+                log "WARNING: a newer .ulf is on the mount but could not be copied; using the"
+                log "         staged one, which may have lapsed if this container is old"
+            fi
+        fi
         verify_offline_license || return 1
         FFBOX_ACTIVATED=1
         FFBOX_LICENCE_MODE=offline
