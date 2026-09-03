@@ -773,9 +773,37 @@ if model.get("effort"):
 with open(argv_path, "wb") as fh:
     fh.write(b"\0".join(a.encode("utf-8") for a in argv))
 
-sys.stderr.write("kind=%s local=%s tools=%s resume=%s\n" % (
+# THE COMPACTION PASS, when the host asked for one. cluster.compact_turns has come round, so
+# this session has been growing for a dozen turns and the turn below is about to resume it: run
+# /compact against that id FIRST, so the model summarises its own work and the turn resumes the
+# result. The host decides (ffwatch's build_job says why it is a compaction and not a rotation);
+# this is only the invocation, and it is built here beside the real one so the two cannot
+# disagree about the session id or about where the settings come from.
+#
+# WHAT IT DELIBERATELY DOES NOT CARRY. No --json-schema: a schema would demand a verdict object
+# from a pass that has no verdict to give. No --tools, no --add-dir, no plugin: /compact is a
+# local command that reads the transcript and calls the model once, and a pass that cannot
+# touch the tree cannot damage the workspace the real turn is about to work in. It DOES carry
+# the model, the effort and the budget: that call is a summarisation of this conversation, so it
+# should not silently land on a different model from the one that has been having it, and it
+# should be as unable to run away with the money as the turn it precedes.
+if session.get("resume") and session.get("compact"):
+    compact_argv = ["claude", "-p", "/compact", "--resume", session["id"],
+                    "--setting-sources", "user"]
+    if model.get("model"):
+        compact_argv += ["--model", str(model["model"])]
+    if model.get("fallback_model"):
+        compact_argv += ["--fallback-model", str(model["fallback_model"])]
+    if model.get("max_budget_usd"):
+        compact_argv += ["--max-budget-usd", str(model["max_budget_usd"])]
+    if model.get("effort"):
+        compact_argv += ["--effort", str(model["effort"])]
+    with open(argv_path + ".compact", "wb") as fh:
+        fh.write(b"\0".join(a.encode("utf-8") for a in compact_argv))
+
+sys.stderr.write("kind=%s local=%s tools=%s resume=%s compact=%s\n" % (
     (job.get("conversation") or {}).get("kind"), is_local, caps.get("tools"),
-    bool(session.get("resume"))))
+    bool(session.get("resume")), bool(session.get("compact"))))
 ARGVEOF
 then
     log "ERROR: could not build the claude invocation from $JOB_FILE"
@@ -784,6 +812,40 @@ fi
 
 mapfile -d '' -t ARGV < "$FFBOX_OUT/argv"
 rm -f "$FFBOX_OUT/argv"
+
+# ------------------------------------------------------------------------------------------
+# compact the session first, when the host asked for one
+# ------------------------------------------------------------------------------------------
+# cluster.compact_turns came round: this session has been resumed a dozen times and the turn
+# below is about to resume it again, so /compact runs against it now and the turn inherits the
+# model's own summary of its own work. Same session id throughout — the transcript gets a
+# compaction boundary written into it, it does not get replaced.
+#
+# BEFORE THE AGENT CLOCK STARTS, deliberately. This is not the model working on the turn and a
+# person waiting on a reply should not have it charged to agent_secs, where it would come
+# straight out of the time the actual answer gets. It lands in warm-up instead, and it is given
+# its own `timeout` so that it cannot spend warm-up either: a compaction that hangs is capped
+# here rather than by the pool ceiling that also has to cover a cold Unity import.
+#
+# NON-FATAL, on purpose. Every failure mode — the pass times out, the model refuses, the
+# transcript is not where it was expected — leaves the session exactly as it was, which is a
+# session the turn below can still resume. So the run says what happened and carries on; a
+# turn that answered on an uncompacted session is a turn that answered. Claude Code's own
+# --autocompact (passed on the real invocation) is the backstop if the context is genuinely
+# full. The host has already moved the seam, so this is not retried on the next turn either.
+if [ -s "$FFBOX_OUT/argv.compact" ]; then
+    mapfile -d '' -t COMPACT_ARGV < "$FFBOX_OUT/argv.compact"
+    log "compacting the session before this turn (the host asked; cluster.compact_turns)"
+    COMPACT_START=$(date +%s)
+    if timeout "${FFBOX_COMPACT_SECS:-600}" "${COMPACT_ARGV[@]}" \
+            > "$FFBOX_OUT/compact.log" 2>&1 </dev/null; then
+        log "compaction finished in $(( $(date +%s) - COMPACT_START ))s (see compact.log)"
+    else
+        log "WARNING: compaction failed or timed out after $(( $(date +%s) - COMPACT_START ))s"
+        log "         the turn runs on the session as it was; see compact.log"
+    fi
+fi
+rm -f "$FFBOX_OUT/argv.compact"
 
 # The AGENT clock starts here, not when ffbox did. Everything before this point — the clone,
 # the container, Unity activation, the Library delta — is warm-up and gets its own, much

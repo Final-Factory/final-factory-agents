@@ -618,13 +618,13 @@ def test_the_page_shows_how_clustering_decided():
         check("an open one does not claim to be closed", "close_reason" not in page)
 
         # The seam, and the routing note, on rows that carry them.
-        srv.db("UPDATE conversation SET rotated_at_seq=4, session_generation=2 WHERE id=1")
+        srv.db("UPDATE conversation SET compacted_at_seq=4, session_generation=2 WHERE id=1")
         srv.db("UPDATE message SET routed_by='model', routed_reason='it means the barge'"
                " WHERE id=1")
         _c, _h, body = srv.get("/conversation/1")
         page = text_of(body)
-        check("a rotated session says where the seam is", "rotated at turn 4" in page,
-              page[:900])
+        check("a session with a seam behind it says which turn the seam fell on",
+              "last seam at turn 4" in page, page[:900])
         check("and a message the selector placed says so, with its reason",
               "selector" in page and "it means the barge" in page, page[:1200])
 

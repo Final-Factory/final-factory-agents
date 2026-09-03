@@ -4991,24 +4991,28 @@ def test_a_sole_candidate_is_still_a_question():
           case.watcher.prior_view(conv, all_of_it, landed["discord_id"]) is None)
 
 
-def test_a_long_conversation_rotates_its_session_not_itself():
-    """Something has to bound a session that has been growing for weeks. Not the conversation.
+def test_a_long_conversation_compacts_its_session_not_itself():
+    """Something has to bound a session that has been growing for weeks. Not the conversation,
+    and not the transcript.
 
     Closing a conversation at N turns splits a live discussion to solve a problem the discussion
-    did not cause. The session underneath it can roll over instead: a new generation seeded from
-    render_summary, which reads what people wrote out of the database rather than out of the
-    transcript. The conversation keeps its id, its page and its Discord anchor.
+    did not cause. Rotating the session underneath it — a new generation seeded from
+    render_summary — keeps the conversation whole and still throws away the model's own reasoning
+    trace, which is the expensive half of a long investigation and the half a list of Discord
+    messages cannot rebuild. So the turn that trips compact_turns runs /compact against the
+    session it was about to resume, and then resumes it: same conversation, same session, and a
+    summary written by the model that did the work.
     """
-    print("session rotation")
+    print("session compaction")
     fixture = base_fixture()
     mid = sflake(0, 1)
     fixture["messages"][ASK_CHANNEL] = [message(mid, "a long-running discussion")]
-    case = Case("rotate", fixture, verdict={"engage": True, "reason": "r"})
+    case = Case("compact", fixture, verdict={"engage": True, "reason": "r"})
     case.events(ask_event(mid))
     case.watcher.drain_events()
     case.watcher.claim_turns()
     conv = case.rows("SELECT * FROM conversation")[0]
-    case.cfg["cluster"] = dict(case.cfg["cluster"], rotate_turns=3)
+    case.cfg["cluster"] = dict(case.cfg["cluster"], compact_turns=3)
 
     # Pretend the session transcript exists, which is what `resume` keys on.
     first_session = conv["session_id"]
@@ -5023,36 +5027,48 @@ def test_a_long_conversation_rotates_its_session_not_itself():
         turn["seq"] = seq
         job = case.watcher.build_job(turn, conv, f"r{seq}",
                                      os.path.join(case.root, "att"))
-        seen.append((seq, job["session"]["resume"], job["session"]["id"]))
+        seen.append((seq, job["session"]["resume"], job["session"]["compact"],
+                     job["session"]["id"]))
         # Whatever session it names, the transcript for it exists next time round.
         p2 = case.watcher.transcript_path(conv["id"], job["session"]["id"])
         os.makedirs(os.path.dirname(p2), exist_ok=True)
         open(p2, "w").close()
 
-    check("turns inside the window resume the same session",
-          seen[0][1] and seen[1][1] and seen[0][2] == seen[1][2] == first_session, seen)
-    check("the turn past rotate_turns starts a new session instead",
-          not seen[2][1] and seen[2][2] != first_session, seen)
-    check("and the one after that resumes the NEW session rather than rotating again",
-          seen[3][1] and seen[3][2] == seen[2][2], seen)
+    check("turns inside the window resume the same session and compact nothing",
+          all(r[1] and not r[2] and r[3] == first_session for r in seen[:2]), seen)
+    check("the turn past compact_turns compacts FIRST and then resumes that same session",
+          seen[2][1] and seen[2][2] and seen[2][3] == first_session, seen)
+    check("the one after that resumes it again with no second compaction",
+          seen[3][1] and not seen[3][2] and seen[3][3] == first_session, seen)
 
     after = case.rows("SELECT * FROM conversation WHERE id=?", (conv["id"],))[0]
     check("the conversation is still open, and still the same conversation",
           after["id"] == conv["id"] and after["state"] != "closed", dict(after))
-    check("the seam is recorded, so the web page can show where it is",
-          after["rotated_at_seq"] == 4, dict(after))
-    check("the new generation is a different session id, derived not invented",
-          after["session_id"] == ffwatch.session_id_for(after["thread_id"],
-                                                        after["session_generation"]),
+    check("the session is still the same session — a compaction is not a rotation",
+          after["session_id"] == first_session and int(after["session_generation"] or 1) == 1,
           dict(after))
+    check("the seam is recorded, so the web page can show where it is",
+          after["compacted_at_seq"] == 4, dict(after))
 
+    # AND THE OTHER SEAM, which compaction did not replace: a transcript that is GONE cannot be
+    # compacted, and the conversation is rebuilt from the database instead.
     conv = after
     turn = dict(case.rows("SELECT * FROM turn")[0])
     turn["seq"] = 6
+    os.remove(case.watcher.transcript_path(conv["id"], conv["session_id"]))
     job = case.watcher.build_job(turn, conv, "r6", os.path.join(case.root, "att"))
-    check("nothing a person wrote is lost across the seam",
-          job["resume_summary"] is None or "a long-running discussion"
-          in job["resume_summary"], job["resume_summary"])
+    check("a lost transcript still rolls the session to a new generation",
+          not job["session"]["resume"] and not job["session"]["compact"]
+          and job["session"]["id"] != first_session, job["session"])
+    check("nothing a person wrote is lost across THAT seam",
+          "a long-running discussion" in (job["resume_summary"] or ""), job["resume_summary"])
+    rolled = case.rows("SELECT * FROM conversation WHERE id=?", (conv["id"],))[0]
+    check("the new generation is a different session id, derived not invented",
+          rolled["session_id"] == ffwatch.session_id_for(rolled["thread_id"],
+                                                         rolled["session_generation"]),
+          dict(rolled))
+    check("and the fresh session counts its own turns to the next compaction",
+          rolled["compacted_at_seq"] == 6, dict(rolled))
 
 
 def test_the_dev_chat_exchange_that_started_this():
@@ -10070,7 +10086,7 @@ def main():
         test_the_selector_narrows_a_choice_it_cannot_widen,
         test_a_sole_candidate_is_still_a_question,
         test_the_cheap_model_routes_and_the_good_one_answers,
-        test_a_long_conversation_rotates_its_session_not_itself,
+        test_a_long_conversation_compacts_its_session_not_itself,
         test_a_thread_in_an_ordinary_channel_is_swept,
         test_a_container_sees_only_its_own_conversation,
         test_the_classifier_runs_in_a_sandbox,

@@ -969,9 +969,16 @@ something, so that is the commit boundary. A conversation is also never closed w
 holds an unanswered message, or a sweep spanning weeks would age out the early ones before
 anything replied to them.
 
-`cluster.rotate_turns` bounds the SESSION and not the conversation: past it the session rotates
-to a new generation seeded from `render_summary` (the database, not the lost transcript) and the
-conversation stays open, keeps its id and its Discord anchor. `ffweb` shows the seam.
+`cluster.compact_turns` bounds the SESSION and not the conversation: past it the next turn runs
+`/compact` against the session it was about to resume — in the container, before the agent clock
+starts — and then resumes it. Same session id, same conversation, and the summary carried across
+the seam is the model's own account of its own work rather than a list of Discord messages. It
+used to ROTATE there instead, taking the recovery path deliberately, which kept every word a
+person wrote and threw away what the model had read, ruled out and already tried.
+
+Rotation is now recovery alone: a transcript that is GONE rolls the session to a new generation
+seeded from `render_summary` (the database, not the lost transcript). Either way the conversation
+stays open and keeps its id and its Discord anchor, and `ffweb` shows the seam.
 
 Config lives under `cluster` in `~/.config/ffbox/config.json`, overridable per watch entry:
 
@@ -982,7 +989,7 @@ Config lives under `cluster` in `~/.config/ffbox/config.json`, overridable per w
 | `certain_secs` | 900 | a lone candidate this recent needs no model |
 | `max_candidate_secs` | 604800 | nothing older is ever offered |
 | `max_candidates` | 5 | how many the selector chooses between |
-| `rotate_turns` | 12 | rotates the session, not the conversation |
+| `compact_turns` | 12 | compacts the session, not the conversation |
 | `per_author` | false | two people in one channel are one discussion |
 
 One consequence worth knowing: `idle_msgs` counts channel messages that are not this
