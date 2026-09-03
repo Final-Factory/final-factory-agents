@@ -229,6 +229,23 @@ ADDED_COLUMNS = [
     # a crash can be told from a cold run's, and so recover() knows which spool directory still
     # holds a transcript nobody has swept.
     ("run", "pool_id", "TEXT"),
+    # THE ONE HANDLE ON A CONTAINER THAT DOES NOT MOVE. container_name does: dispatch renames a
+    # staged container to its run, so a name is only true between two renames, and a process
+    # that was not there for the rename cannot trust it. An id is fixed at creation and survives
+    # everything -- the rename, a restart of this daemon, and the update that replaced the code
+    # that started the run. NULL for a row written before this column existed, and for the
+    # moment between the INSERT and ffbox reporting the id; container_live falls back to the
+    # name for exactly those. design/ffbox_live_update_design.txt section 4a.
+    ("run", "container_id", "TEXT"),
+    # WHERE THIS RUN'S `out` DIRECTORY IS, which is not derivable: a cold run writes into the run
+    # directory and a dispatched one into its spool, and the spool's contents MOVE into the run
+    # directory when the run ends. The clock pass, the finish pass and `ffbox --finish` all have
+    # to know which, and the answer changes once during the run. Section 5.
+    ("run", "out_dir", "TEXT"),
+    # WHEN A LATER ffwatch PICKED THIS RUN UP, NULL for one this process started itself. A run
+    # whose container outlived the daemon that made it is a fact worth being able to see on the
+    # page rather than one that has to be inferred from a gap in the log. Section 7.
+    ("run", "adopted_at", "TEXT"),
     ("turn", "parent_turn_id", "INTEGER"),
     ("turn", "rebased_from", "TEXT"),
     ("turn", "note", "TEXT"),
@@ -5951,20 +5968,29 @@ class Watcher:
 
         # The run row is written BEFORE the container starts. A run that crashes, hangs or is
         # killed is still identifiable, and recovery can find it by the container name it owns.
+        # WHERE THIS RUN WRITES, and it is not derivable from the run id. A cold run's container
+        # writes straight into the run directory; a dispatched one writes into the spool of the
+        # container it was dispatched into, because that mount was fixed at stage time. The
+        # spool's contents are MOVED into the run directory when the run ends, and the column is
+        # rewritten then -- so this is the answer for the life of the container and the run
+        # directory is the answer afterwards. finish_runs, the clock pass and `ffbox --finish`
+        # all read it. design/ffbox_live_update_design.txt section 5.
+        out_dir = os.path.join(self.pool_dir(pool_id), "out") if pool_id else run_dir
         cur = self.db.execute(
             "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, resumed,"
             " base_sha, unity, tools, disallowed, allowed, stream_path, branch,"
-            " transcript_dir, pool_id)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " transcript_dir, pool_id, out_dir)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (turn["id"], run_id, run_container_name(cls, run_id), job["session"]["id"],
              1 if job["session"]["resume"] else 0, conv["base_sha"], 1,
              cap["tools"], ",".join(cap["disallowed"]),
              ",".join(cap.get("allowed") or []), os.path.join(run_dir, "stream.jsonl"), branch,
              # The container name is this CLASS's run name either way: a dispatched container
              # is RENAMED as the job goes in, and ffbox derives both ends of that rename from
-             # the same class, so recover() and container_live() need no idea that pooled runs
-             # exist. transcript_dir is the one thing that does differ.
-             container_claude if pool_id else None, pool_id))
+             # the same class. The NAME is no longer what anything identifies the container by
+             # -- container_id is, recorded below once ffbox reports it -- but it stays the
+             # readable handle an operator types and `docker ps` shows.
+             container_claude if pool_id else None, pool_id, out_dir))
         run_row_id = cur.lastrowid
 
         cmd = self.ffbox_cmd() + [
@@ -6066,6 +6092,11 @@ class Watcher:
             # take is a second in which a healthy run produces an orphan.
             rc, stderr = 124, "ffbox did not return within its own ceilings"
         wall = time.monotonic() - started
+        # THE CONTAINER'S ID, off the disk ffbox wrote it to. Recorded even when the run failed:
+        # a container that started and then died still has to be findable, and this is the one
+        # handle that a rename cannot invalidate. Never fatal -- container_live falls back to the
+        # name, which is what the fallback is for.
+        self.record_container_id(run_row_id, out_dir)
 
         try:
             with open(os.path.join(run_dir, "ffbox.log"), "w", encoding="utf-8") as fh:
@@ -6074,6 +6105,24 @@ class Watcher:
             pass
 
         self.finish_run(run_row_id, turn, conv, run_dir, rc, wall, job)
+
+    def record_container_id(self, run_row_id, out_dir):
+        """Copy the container id ffbox wrote into `out/container-id` onto the run row.
+
+        TWO WRITERS, ONE ANSWER. ffbox writes the file the moment the container exists, because
+        it is the only thing that knows; this copies it where every reader already looks. The
+        file is written first and the row second on purpose -- a crash in between leaves the
+        answer on disk, and the finish pass reads the directory anyway.
+
+        A missing file is not an error. It means the container never came up, or that this run
+        was started by a build of ffbox from before the id existed. Both are handled by
+        container_live falling back to the name.
+        """
+        cid = (_read_text(os.path.join(out_dir, "container-id")) or "").strip()
+        if not cid:
+            return None
+        self.db.execute("UPDATE run SET container_id=? WHERE id=?", (cid, run_row_id))
+        return cid
 
     # -- after the container exits ---------------------------------------------------------
 
@@ -8208,25 +8257,52 @@ class Watcher:
     # recovery
     # ======================================================================================
 
-    def container_live(self, name):
-        """Exact-name match only (design section 14 rule 2). There is deliberately no 'find
-        stray Unity processes and work out which are mine' path: a running editor is not proof
-        of which project it serves, and on a shared box guessing eventually kills a
-        developer's own editor."""
+    def container_live(self, name, container_id=None):
+        """Is this run's container still running?
+
+        BY ID WHEN WE HAVE ONE, and that is the whole point of recording it. A name MOVES:
+        dispatch renames a staged container to its run, so a name is only true between two
+        renames and a process that was not there for one cannot trust it. An id is fixed at
+        creation. design/ffbox_live_update_design.txt section 4a.
+
+        The name is the fallback, for a run row written before container_id existed and for the
+        moment between the INSERT and ffbox reporting the id. Both are real states, and both
+        answer correctly by name: a cold container is never renamed at all, and a row with no id
+        yet belongs to a run whose container may not exist.
+
+        Still an exact match, and there is still deliberately no 'find stray Unity processes and
+        work out which are mine' path: a running editor is not proof of which project it serves,
+        and on a shared box guessing eventually kills a developer's own editor.
+        """
+        if container_id:
+            # `docker ps -q --no-trunc --filter id=` matches on a PREFIX, so a full id is exact
+            # and a truncated one still resolves. Running only, which is the question asked.
+            args = ["ps", "-q", "--no-trunc", "--filter", f"id={container_id}"]
+            want = container_id
+        else:
+            args = ["ps", "--format", "{{.Names}}", "--filter", f"name=^{name}$"]
+            want = name
         try:
             proc = subprocess.run(
-                [self.cfg["docker"], "ps", "--format", "{{.Names}}", "--filter", f"name=^{name}$"],
+                [self.cfg["docker"]] + args,
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         except (OSError, subprocess.SubprocessError):
             return False
-        return name in [ln.strip() for ln in (proc.stdout or "").splitlines()]
+        return any(ln.strip() == want or ln.strip().startswith(want)
+                   for ln in (proc.stdout or "").splitlines() if ln.strip())
+
+    def run_container_live(self, run):
+        """container_live for a run row, so no caller has to remember the two columns."""
+        return bool(run["container_name"]) and self.container_live(
+            run["container_name"],
+            run["container_id"] if "container_id" in run.keys() else None)
 
     def recover(self):
         """A non-terminal run row at startup is by definition a crash: the run that owns it can
         never write that state itself once it is gone."""
         recovered = []
         for run in self.db.query("SELECT * FROM run WHERE terminal_state IS NULL"):
-            if run["container_name"] and self.container_live(run["container_name"]):
+            if self.run_container_live(run):
                 continue
             # A POOLED RUN'S TRANSCRIPT IS SWEPT BEFORE ANYTHING ELSE IS DECIDED. Its container
             # is gone, so the only copy of the conversation's memory is in a spool directory

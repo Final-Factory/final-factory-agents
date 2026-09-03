@@ -686,6 +686,19 @@ if [ -n "$JOB_FILE" ]; then
 fi
 
 # --- lifecycle ---------------------------------------------------------------------------------
+# THE ID, WRITTEN WHERE A LATER PROCESS CAN FIND IT. The host records it against the run, and the
+# database write happens after this script returns -- so if we die in between, the answer is still
+# on disk and the next pass can pick it up. Inside `out/` rather than beside it, so it travels
+# with the move a dispatched run's directory makes at the end.
+#
+# Never fatal. A run whose id was not written down is found by name or by its ffbox.run.id label,
+# which is what those exist for; failing the run over a bookkeeping file would be the wrong trade.
+ffbox_write_container_id() {
+    [ -n "${1:-}" ] || return 0
+    printf '%s\n' "$1" > "$OUT/container-id" 2>/dev/null || :
+    return 0
+}
+
 cleanup() {
     local rc=$?
     set +e
@@ -1058,6 +1071,10 @@ if [ -n "$DISPATCH" ]; then
     fi
     : > "$POOL_IN/dispatch"
     echo "[ffbox] dispatched into the pool container as ${RUN_NAME}"
+    # The id of the container this run is now in. Written on this route too, and by id rather
+    # than by the name we have just moved, so the host has one answer to "which container is
+    # this run" whichever way the run started.
+    ffbox_write_container_id "$(docker inspect --format '{{.Id}}' "$RUN_NAME" 2>/dev/null)"
 
     # `docker wait` prints the container's exit code and exits 0 itself, so the code has to come
     # out of its stdout rather than out of $?. Backgrounded so the clock loop below watches this
@@ -1102,10 +1119,20 @@ else
     # ffwatch killed it at its 180-second ceiling -- and keep_pool() runs on the daemon's own
     # loop, so ffwatch froze for three minutes a pass. Reactions and replies that were composed
     # and queued sat there. From Discord it looked exactly like Max had stopped answering.
+    # WHICH RUN THIS CONTAINER IS SERVING, AS A LABEL. A label is set at creation and survives
+    # `docker rename`, which is the whole reason it is here and the name is not: a pooled
+    # container is renamed at dispatch, so anything that identifies a container by name is only
+    # true between two renames. A cold container is never renamed, so this label is the same
+    # answer for its whole life, and it is what lets a process that did not start the run find
+    # it. The dispatch route has no equivalent to add -- a mount, a label and a network are all
+    # creation-time, and that container was created before it knew which run it would serve --
+    # so it is found by the ffbox.pool.id label it already carries.
+    # design/ffbox_live_update_design.txt section 4a.
     docker run --rm \
         --name "$RUN_NAME" \
         --label "$FFBOX_WORKLOAD_LABEL=agent" \
         --label "ffbox.slot=${RUN_SLOT}" \
+        --label "ffbox.run.id=${RUN_ID}" \
         "${RUN_ARGS[@]}" \
         -v "$OUT:/ffbox/out" \
         -e "FFBOX_MACHINE_ID=$RUN_MACHINE_ID" \
@@ -1114,8 +1141,9 @@ else
     ffbox_workload_await_container "$RUN_NAME" "$DOCKER_PID"
     # The id, now that there is one. A container that never came up leaves the claim naming it,
     # and the next scan recycles the number because nothing by that name is running.
-    ffbox_agent_slot_confirm "$RUN_SLOT" \
-        "$(docker inspect --format '{{.Id}}' "$RUN_NAME" 2>/dev/null)"
+    RUN_CID=$(docker inspect --format '{{.Id}}' "$RUN_NAME" 2>/dev/null)
+    ffbox_agent_slot_confirm "$RUN_SLOT" "$RUN_CID"
+    ffbox_write_container_id "$RUN_CID"
     ffbox_workload_lock_release
 fi
 
