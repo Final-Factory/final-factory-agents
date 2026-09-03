@@ -1271,19 +1271,60 @@ def test_the_box_page_reports_what_the_status_script_said():
         finally:
             write_status_doc(FFSTATUS_DOC)
 
-        # A drain, which is what an update looks like from here. The container tables go
-        # quiet during one, so the word is what stops that reading as an outage.
-        draining = dict(FFSTATUS_DOC,
+        # An update landing. The container tables go quiet during one, so the word is what stops
+        # that reading as an outage.
+        applying = dict(FFSTATUS_DOC,
                         maintenance={"state": "updating",
-                                     "reason": "the agent lane and the CI lane are drained"},
+                                     "reason": "8a772058dc56 -> 2ad5553f583d"},
                         containers=[], box={"used": 0, "max": 10})
-        write_status_doc(draining)
+        write_status_doc(applying)
         try:
             code, _hdr, body = srv.get("/status")
             check("a box mid-update is marked as such", code == 200 and
                   'class="pill updating"' in text_of(body), code)
-            check("and it says which lanes, so nobody goes looking for a fault",
-                  "the agent lane and the CI lane are drained" in text_of(body))
+            # ESCAPED, and asserted that way on purpose: this string is the `reason=` line of a
+            # file on disk rather than anything this process composed, so the page has to put it
+            # through esc() like any other outside text. `->` coming back as `-&gt;` is that
+            # working.
+            check("and it says what is landing, so nobody goes looking for a fault",
+                  "8a772058dc56 -&gt; 2ad5553f583d" in text_of(body))
+        finally:
+            write_status_doc(FFSTATUS_DOC)
+
+        # A DRAIN WITH NO UPDATE BEHIND IT is its own word since 2026-09-02. The weekly
+        # runner-image rebuild sets the CI flag and lands no code at all, and calling that
+        # `updating` sent somebody looking for the commit that had just landed.
+        drained = dict(FFSTATUS_DOC,
+                       maintenance={"state": "drained",
+                                    "reason": "the CI lane is drained -- launching nothing new"},
+                       containers=[], box={"used": 0, "max": 10})
+        write_status_doc(drained)
+        try:
+            code, _hdr, body = srv.get("/status")
+            check("a drained lane is drained and not updating", code == 200 and
+                  'class="pill drained"' in text_of(body) and
+                  'class="pill updating"' not in text_of(body), code)
+            check("and it still says which lane, so nobody goes looking for a fault",
+                  "the CI lane is drained" in text_of(body))
+        finally:
+            write_status_doc(FFSTATUS_DOC)
+
+        # THE FIVE-MINUTE POLL, which is the state this page is in for a second or two of every
+        # tick, 288 times a day. It must not read as an update: the box is not changing, and a
+        # page that says it is costs its reader a hunt through the log for a commit that never
+        # landed. The pill exists (something IS running) and is not the amber one.
+        checking = dict(FFSTATUS_DOC,
+                        maintenance={"state": "checking",
+                                     "reason": "the ffbox-update unit is activating -- polling "
+                                               "origin, nothing landing yet"})
+        write_status_doc(checking)
+        try:
+            code, _hdr, body = srv.get("/status")
+            page = text_of(body)
+            check("a poll says checking", code == 200 and 'class="pill checking"' in page, code)
+            check("and never updating", "class=\"pill updating\"" not in page)
+            check("and the containers it found are still on the page — nothing is draining",
+                  "ffbox-agent-pool-deadbeef" in page)
         finally:
             write_status_doc(FFSTATUS_DOC)
 

@@ -98,6 +98,14 @@ CONFIG_DIR=${FFBOX_CONFIG_DIR:-$OWNER_HOME/.config/ffbox}
 KILL_SWITCH=$CONFIG_DIR/update.disabled
 DRAIN_SWITCH=$CONFIG_DIR/draining
 LOCK=$CONFIG_DIR/update.lock
+# THE FLAG THAT SAYS AN UPDATE IS ACTUALLY LANDING, as opposed to this script merely running.
+# The unit is `activating` for the second or two of every five-minute poll, and a status reader
+# that has only that to go on calls all 288 of a day's polls "updating" -- which sends somebody
+# looking for the commit that just landed when none did. Written in section 3, once the decision
+# to restart the box has been made and not before, so its presence is the decision itself. It
+# carries the reason, the way the drain flag does, because "updating" is the question and
+# "8a77205 -> 2ad5553" is the answer.
+APPLY_FLAG=$CONFIG_DIR/update.applying
 # THE FILES THAT ONLY REACH A SERVICE THROUGH A PROCESS START, relative to CONFIG_DIR, and the
 # stamp holding the hash each one had when the running services started on it.
 #
@@ -217,8 +225,18 @@ lift_drain() {
     # under its own config dir; `resume` is the CLI for it and this is what that CLI writes.
     rm -f "$CONFIG_DIR/githubrunners/drain" 2>/dev/null || :
 }
-# A crash, or systemd's TimeoutStartSec, must not leave the machine drained and silent.
-trap 'lift_drain' EXIT HUP INT TERM
+# SEPARATE FROM lift_drain, AND NOT FOLDED INTO IT, because the two end at different moments.
+# The drain is lifted in section 6, deliberately a line BEFORE `systemctl start ffbox.target`,
+# so nothing observes the window; the update is not over until this process is. Folded together,
+# the flag would come off there too and the last minutes of an update -- the start, and the unit
+# check after it, which is where a start that fails is found -- would read as `checking`.
+clear_applying() {
+    [ "$DRY_RUN" = 1 ] && return 0
+    rm -f "$APPLY_FLAG" 2>/dev/null || :
+}
+# A crash, or systemd's TimeoutStartSec, must not leave the machine drained and silent -- nor
+# leave a flag claiming an update that is no longer running.
+trap 'lift_drain; clear_applying' EXIT HUP INT TERM
 
 # ------------------------------------------------------------------------------------------
 # 1. lift a flag stranded by a previous run
@@ -231,6 +249,14 @@ fi
 if [ -e "$CONFIG_DIR/githubrunners/drain" ] && [ "$DRY_RUN" = 0 ]; then
     log "clearing a CI drain flag left by an earlier run"
     rm -f "$CONFIG_DIR/githubrunners/drain"
+fi
+# And the flag that claims an update is landing. Only a SIGKILL gets past the EXIT trap, but the
+# whole point of the flag is that a status page believes it, so a stale one has to go the same
+# way the drain flags do -- and it is safe here for the same reason they are: the flock above
+# means the only update that could own this flag is this one.
+if [ -e "$APPLY_FLAG" ] && [ "$DRY_RUN" = 0 ]; then
+    log "clearing an update-in-progress flag left by an earlier run: $APPLY_FLAG"
+    rm -f "$APPLY_FLAG"
 fi
 
 # ------------------------------------------------------------------------------------------
@@ -326,6 +352,28 @@ fi
 # ------------------------------------------------------------------------------------------
 # 3. drain, then stop
 # ------------------------------------------------------------------------------------------
+# SAY SO FIRST, before the drain and before anything else observable happens. Every exit above
+# this line is a pass that changed nothing, and every line below it is an update in progress;
+# the flag is exactly that boundary, written where it is so a reader cannot see a drained box
+# or a stopped target without also seeing the reason for it.
+#
+# Never fatal. An unwritable config dir is a real state on a broken box, and the update matters
+# more than the label on it -- the cost of failing here is a status page that says `checking`
+# through an update, which is what it said before this flag existed.
+{
+    printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    # ONE LINE, and short, because a status reader puts it on a page beside the word `updating`
+    # and truncates what will not fit. Both triggers can fire on the same pass.
+    if [ "$CODE_UPDATE" = 1 ] && [ "$CONFIG_CHANGED" = 1 ]; then
+        printf 'reason=%.12s -> %.12s, and %s changed\n' "$OLD_SHA" "$NEW_SHA" "$CHANGED_LIST"
+    elif [ "$CODE_UPDATE" = 1 ]; then
+        printf 'reason=%.12s -> %.12s\n' "$OLD_SHA" "$NEW_SHA"
+    else
+        printf 'reason=%s changed since the services started\n' "$CHANGED_LIST"
+    fi
+} 2>/dev/null > "$APPLY_FLAG" \
+    || log "WARNING: could not write $APPLY_FLAG; this update will not be visible to ffstatus"
+
 # Never fatal. A commit that breaks ffwatch.py also breaks `ffwatch drain`, and an updater that
 # treats that as fatal can never install the fix.
 # BOTH LANES, AND AN IDLE CONTAINER IS NOT WORK. Until 2026-08-31 this drained ffbox only:
