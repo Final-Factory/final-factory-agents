@@ -188,11 +188,13 @@ Two tiers. Resist a third until something actually needs it.
              message that says it is from Ben. This is today's untrusted tier and its rules
              do not change.
 
-The set is config, in ~/.config/ffbox/discord/config.json alongside the channel and mention
-tables the CLI already reads. That file rather than ~/.config/ffbox/config.json, because the
-LISTENER needs it and the listener only reads the Discord one. ffwatch already loads that file
-too and keeps the parts it needs under cfg["_discord"], so reaching the operator set from the
-harness side is one more key in that tuple, next to guild_id, channels and mentions:
+The set is config, in the "discord" section of ~/.config/ffbox/config.json alongside the
+channel and mention tables the CLI already reads. That section rather than the top level,
+because the LISTENER needs it and the listener reads only the Discord one. (SUPERSEDED IN PART:
+this was written when the Discord keys were a config.json of their own next door; the section
+is where they live now, and the argument is unchanged by the move.) ffwatch keeps the parts it
+needs under cfg["_discord"], so reaching the operator set from the harness side is one more key
+in that tuple, next to server_id, channels and mentions:
 
     "trust": {
       "operators": {

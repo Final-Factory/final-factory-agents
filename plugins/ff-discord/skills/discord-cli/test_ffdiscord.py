@@ -286,7 +286,7 @@ def run(home, *argv, expect_code=0, stdin_text=None):
     env["FFDISCORD_API"] = f"http://127.0.0.1:{PORT[0]}"
     env["FFDISCORD_HOME"] = home
     env["FFBOX_CONFIG_DIR"] = home
-    env["FFDISCORD_TOKEN"] = "TESTTOKEN"
+    env["FFDISCORD_APP_TOKEN"] = "TESTTOKEN"
     proc = subprocess.run(
         [sys.executable, os.path.join(HERE, "ffdiscord.py"), *argv],
         capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
@@ -301,7 +301,7 @@ def main():
     srv = start_server()
     tmp = tempfile.mkdtemp(prefix="ffdiscord-test-")
     cfg = {
-        "guild_id": GUILD,
+        "server_id": GUILD,
         # agent_testing is left BLANK on purpose: `ask` defaults to it, so the default path
         # also exercises resolve-by-name and the write-back.
         "channels": {"bug_reports": FORUM, "dev_chat": DEVCHAT,
@@ -558,21 +558,21 @@ def main():
 
     print("doctor with a bad token")
     env_home = tempfile.mkdtemp(prefix="ffdiscord-bad-")
-    write_cfg(env_home, {**cfg, "token": "WRONG"})
+    write_cfg(env_home, {**cfg, "app_token": "WRONG"})
     proc = subprocess.run(
         [sys.executable, os.path.join(HERE, "ffdiscord.py"), "doctor"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         env={**os.environ, "FFDISCORD_API": f"http://127.0.0.1:{PORT[0]}",
              "FFDISCORD_HOME": env_home, "FFBOX_CONFIG_DIR": env_home,
-             "FFDISCORD_TOKEN": "WRONG"},
+             "FFDISCORD_APP_TOKEN": "WRONG"},
     )
     check("reports a revoked/bad token clearly",
           "revoked" in proc.stderr or "401" in proc.stderr, proc.stderr)
 
-    print("config key names (app_token / server_id, and the legacy spellings)")
+    print("config key names (app_token / server_id)")
 
     def run_bare(home, *argv, **env_extra):
-        """Like run(), but WITHOUT FFDISCORD_TOKEN in the environment.
+        """Like run(), but WITHOUT a token in the environment.
 
         The point of these checks is what the FILE alone can authenticate with, and run()
         always exports a token, which would mask a config that does not work on its own.
@@ -595,29 +595,25 @@ def main():
             "mentions": {"ben": BEN, "lothsahn": LOTH}}
 
     h = home_with({**live, "app_token": "TESTTOKEN", "server_id": GUILD})
-    check("the new key names authenticate on their own",
-          "bug-reports" in run_bare(h, "channels").stdout)
-
-    h = home_with({**live, "token": "TESTTOKEN", "guild_id": GUILD})
-    check("the pre-rename key names still work",
-          "bug-reports" in run_bare(h, "channels").stdout)
-
-    # The setup template seeds app_token: "", so a half-migrated file has the secret under the
-    # OLD key and a blank under the new one. Preferring the blank would authenticate with "".
-    h = home_with({**live, "app_token": "", "token": "TESTTOKEN",
-                   "server_id": "", "guild_id": GUILD})
-    check("a blank new key does not shadow a filled legacy one",
+    check("the file authenticates on its own",
           "bug-reports" in run_bare(h, "channels").stdout)
 
     h = home_with({**live, "server_id": GUILD})
-    check("the new env var authenticates",
+    check("so does the env var, with no token in the file",
           "bug-reports" in run_bare(h, "channels", FFDISCORD_APP_TOKEN="TESTTOKEN").stdout)
-    check("the legacy env var still authenticates",
-          "bug-reports" in run_bare(h, "channels", FFDISCORD_TOKEN="TESTTOKEN").stdout)
 
-    h = home_with({**live, "token": "TESTTOKEN", "guild_id": GUILD})
+    # ENV BEATS FILE, which is the whole reason a container can be handed a token without one
+    # being written to a disk it can read back.
+    h = home_with({**live, "app_token": "WRONG", "server_id": GUILD})
+    check("and the env var wins over a token in the file",
+          "bug-reports" in run_bare(h, "channels", FFDISCORD_APP_TOKEN="TESTTOKEN").stdout)
+
+    # `token` is not a key anything reads any more. It is still redacted, because `config`
+    # prints the section verbatim and a stray key holding a secret must not be the one that
+    # gets through.
+    h = home_with({**live, "app_token": "TESTTOKEN", "token": "TESTTOKEN", "server_id": GUILD})
     out = run_bare(h, "config").stdout
-    check("redaction covers the legacy key too, which load_config copies forward",
+    check("redaction covers a stray token key as well as app_token",
           "TESTTOKEN" not in out, out)
 
     print("resolve-channels")
@@ -709,7 +705,7 @@ def main():
     write_cfg(conc, cfg)
     env = {**os.environ, "FFDISCORD_API": f"http://127.0.0.1:{PORT[0]}",
            "FFDISCORD_HOME": conc, "FFBOX_CONFIG_DIR": conc,
-           "FFDISCORD_TOKEN": "TESTTOKEN"}
+           "FFDISCORD_APP_TOKEN": "TESTTOKEN"}
     # The always-on answerer and the periodic triage loop advance different cursors at
     # the same time; neither may erase the other.
     procs = [
@@ -729,7 +725,7 @@ def main():
     # Channel names and player messages routinely contain emoji; a cp1252 console raises
     # UnicodeEncodeError on the first one unless the CLI forces UTF-8 on its streams.
     env = {**os.environ, "FFDISCORD_API": f"http://127.0.0.1:{PORT[0]}",
-           "FFDISCORD_HOME": tmp, "FFBOX_CONFIG_DIR": tmp, "FFDISCORD_TOKEN": "TESTTOKEN",
+           "FFDISCORD_HOME": tmp, "FFBOX_CONFIG_DIR": tmp, "FFDISCORD_APP_TOKEN": "TESTTOKEN",
            "PYTHONIOENCODING": "cp1252"}
     pr = subprocess.run([sys.executable, os.path.join(HERE, "ffdiscord.py"), "channels"],
                         capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)

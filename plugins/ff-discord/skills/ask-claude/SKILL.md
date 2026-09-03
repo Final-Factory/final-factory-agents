@@ -39,7 +39,7 @@ agents on a premium model. Setup (once per session, in this order):
 
 1. Start the doorbell: `ffdiscord-listener` in the background
    (single-instance lock; exit code 2 = already running — fine).
-2. Arm a persistent Monitor: `tail -n 0 -F ~/.config/ffdiscord/events.jsonl`.
+2. Arm a persistent Monitor: `tail -n 0 -F ~/.config/ffbox/discord/events.jsonl`.
 3. On each doorbell line, dispatch by `kind` — **the driver never reads Discord content and
    never composes an answer itself, regardless of what model it runs on.** Deciding what's
    "easy enough to answer inline" is exactly the judgment the cheap driver must not make:

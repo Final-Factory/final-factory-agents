@@ -7,7 +7,6 @@ Python 3 standard library only (urllib) — no pip install, no venv, no lockfile
 
 Config (first match wins):
   1. env vars  FFDISCORD_APP_TOKEN, FFDISCORD_SERVER_ID
-               (FFDISCORD_TOKEN / FFDISCORD_GUILD_ID are the older names, still read)
   2. the "discord" section of ~/.config/ffbox/config.json
 
   "discord": {
@@ -17,19 +16,16 @@ Config (first match wins):
     "mentions": { "<name>": "<user id>" }
   }
 
-  ONE FILE FOR THE BOX (2026-09-01). These settings had a config.json of their own next door in
-  ~/.config/ffbox/discord/, which meant the alias table and the "watch" block that gives those
-  aliases their meaning lived in two files that had to be edited together and could disagree.
-  Everything else ffbox owns already shares ~/.config/ffbox/config.json — the lanes, the
-  ceilings, the runner pool — so Discord's settings are a section of it like the rest.
-  ~/.config/ffbox/discord/ stays: it is where the read cursors, the doorbell and the locks
-  live, and FFDISCORD_HOME still points at it. FFBOX_CONFIG_DIR relocates the config.
+  ONE FILE FOR THE BOX. Everything else ffbox owns already shares
+  ~/.config/ffbox/config.json — the lanes, the ceilings, the runner pool — so Discord's
+  settings are a section of it like the rest, which also keeps the alias table in the same
+  document as the "watch" block that gives those aliases their meaning. Two files that had to
+  be edited together could disagree, and every reader had to open both.
+  ~/.config/ffbox/discord/ holds STATE and nothing else: the read cursors, the doorbell and
+  the locks. FFDISCORD_HOME points at that; FFBOX_CONFIG_DIR relocates the config.
 
   `channels` maps an alias to a channel's snowflake id. The alias is what the ffwatch "watch"
   block names, which is what says what the channel MEANS; the id says which channel it is.
-
-  Pre-2026-08-24 configs say "token" and "guild_id"; both are still read, and
-  ffbox/05-discord-setup.sh renames them in place.
 
 The token NEVER lives in the repo. Config and read cursors live under ~/.config/ffbox/.
 
@@ -92,22 +88,15 @@ UA = "DiscordBot (https://github.com/bryding/FinalFactory, 1.0) ffdiscord"
 def _ffdiscord_home():
     """Where the Discord CLI keeps its cursors, doorbell and locks — its STATE, not its config.
 
-    ~/.config/ffbox/discord since 2026-08-22: everything ffbox owns on a machine lives under
-    ~/.config/ffbox, and the Discord CLI is one part of ffbox rather than a separate product.
-    The pre-move ~/.config/ffdiscord is still honoured when it exists and the new location does
-    not, so a machine that has not been migrated keeps working untouched. FFDISCORD_HOME beats
-    both.
-
-    The config used to live here too; it is a section of ~/.config/ffbox/config.json now.
+    Under ~/.config/ffbox, because everything ffbox owns on a machine lives there and the
+    Discord CLI is one part of ffbox rather than a separate product. There is no config here:
+    that is the "discord" section of ~/.config/ffbox/config.json. FFDISCORD_HOME relocates it,
+    which is how the test harness and a container get their own.
     """
     env = os.environ.get("FFDISCORD_HOME")
     if env:
         return os.path.expanduser(env)
-    new = os.path.expanduser("~/.config/ffbox/discord")
-    legacy = os.path.expanduser("~/.config/ffdiscord")
-    if not os.path.exists(new) and os.path.exists(legacy):
-        return legacy
-    return new
+    return os.path.expanduser("~/.config/ffbox/discord")
 
 
 FFDISCORD_HOME = _ffdiscord_home()
@@ -186,28 +175,16 @@ def read_ffbox_config():
 def load_config():
     section = read_ffbox_config().get(CONFIG_SECTION)
     cfg = dict(section) if isinstance(section, dict) else {}
-    # KEY NAMES, AND THE ONE PLACE THEY ARE NORMALIZED. The file says `app_token` and
-    # `server_id`, matching what a human is looking at: the developer portal issues an app and
-    # its bot token, and the Discord client calls a guild a server. Discord's API still says
-    # "guild", so every /guilds/... path below is unchanged — the rename covers what somebody
-    # types, not what goes on the wire.
+    # KEY NAMES. The file says `app_token` and `server_id`, matching what a human is looking
+    # at: the developer portal issues an app and its bot token, and the Discord client calls a
+    # guild a server. Discord's API still says "guild", so every /guilds/... path below is
+    # unchanged — these names cover what somebody types, not what goes on the wire.
     #
-    # A config written before 2026-08-24 says `token` and `guild_id` and keeps working. The
-    # legacy key fills a new one that is missing OR blank, which matters because the setup
-    # template seeds `app_token: ""`: without the blank test, a half-migrated file would
-    # authenticate with the empty string and report a bad token instead of a stale key name.
-    for new_key, legacy_key in (("app_token", "token"), ("server_id", "guild_id")):
-        if not str(cfg.get(new_key) or "").strip() and str(cfg.get(legacy_key) or "").strip():
-            cfg[new_key] = cfg[legacy_key]
-
-    # Env beats file, and the new spelling beats the old one. FFDISCORD_TOKEN stays supported
-    # forever: it is in every existing secrets.env and in the systemd EnvironmentFile, and
-    # breaking a running box to rename a variable is not a trade worth making.
-    for env_new, env_legacy, key in (
-        ("FFDISCORD_APP_TOKEN", "FFDISCORD_TOKEN", "app_token"),
-        ("FFDISCORD_SERVER_ID", "FFDISCORD_GUILD_ID", "server_id"),
-    ):
-        value = os.environ.get(env_new) or os.environ.get(env_legacy)
+    # ENV BEATS FILE, which is how a container gets a token without one being written to a disk
+    # it can read back.
+    for env_name, key in (("FFDISCORD_APP_TOKEN", "app_token"),
+                          ("FFDISCORD_SERVER_ID", "server_id")):
+        value = os.environ.get(env_name)
         if value:
             cfg[key] = value
 
@@ -237,8 +214,8 @@ def update_config(mutate):
 
     `mutate` is handed the section AS IT IS ON DISK and edits it in place; returning False
     means "nothing changed" and leaves the file alone. Never the config load_config returned:
-    that has FFDISCORD_APP_TOKEN from the environment and the legacy key names folded into it,
-    and writing it back would bake the environment's secret into the file.
+    that has FFDISCORD_APP_TOKEN folded in from the environment, and writing it back would bake
+    the environment's secret into the file.
 
     The rest of the document — ffwatch's settings, the container limits, the CI runner pool —
     is read and written back untouched. That is the whole reason this goes through
@@ -1357,8 +1334,9 @@ def cmd_cursors(client, args):
 def cmd_config(client_unused, args):
     cfg = load_config()
     redacted = dict(cfg)
-    # Both spellings: load_config copies a legacy `token` into `app_token`, so an un-migrated
-    # config holds the secret under BOTH keys and redacting one of them leaks it.
+    # `token` is not a key anything reads, and it is redacted anyway: this command prints the
+    # section verbatim, and a stray key holding a secret must not be the one that gets through.
+    # A redaction list is the wrong place to be economical.
     for key in ("app_token", "token"):
         if redacted.get(key):
             redacted[key] = redacted[key][:8] + "…(redacted)"
@@ -1411,8 +1389,8 @@ def cmd_resolve_channels(client, args):
         print("\n--write was not given; nothing was saved")
         return
     # update_config writes the section as it is ON DISK, not the `cfg` loaded above: load_config
-    # folds env vars and legacy key names into what it returns, and writing that back would bake
-    # FFDISCORD_APP_TOKEN from the environment into the file.
+    # folds env vars into what it returns, and writing that back would bake FFDISCORD_APP_TOKEN
+    # from the environment into the file.
     def mutate(section):
         if not isinstance(section.get("channels"), dict):
             section["channels"] = {}
