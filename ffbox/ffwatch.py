@@ -411,6 +411,12 @@ DEFAULTS = {
     # The fast EditMode suite by default, matching the game repo's "run FFEditorTests unless
     # asked for everything" rule. Empty runs every EditMode assembly, which is the slow suite.
     "verify_assemblies": "FFEditorTests",
+    # FFAGENT'S, FLATTENED, exactly like agent_secs and warmup_secs above it. The clock that is
+    # enforced comes from class_cfg() -- see agent_classes below and launch() -- and this copy is
+    # what load_config builds from pools.ffagent for the readers that predate classes, and what
+    # FFWATCH_VERIFY_SECS still sets. It is NOT a box-wide fallback for a class that has no
+    # number of its own: _class_blocks resolves that against THAT class's defaults, never against
+    # this.
     "verify_secs": 1800,
 
     # -- publication (design section 17) ---------------------------------------------------
@@ -545,10 +551,19 @@ DEFAULTS = {
     # a container that already exists, so its network was decided when it was staged, and the
     # pools do not mix: pool_claim_for matches on class.
     "agent_classes": {
+        # ALL FOUR CLOCKS ARE PER CLASS since 2026-09-03. verify_secs used to be the exception,
+        # on the argument that the harness's EditMode run is the same Unity suite whichever
+        # container ran the turn -- true about the SUITE, and not the question the clock asks.
+        # What it bounds is how long THIS lane's verification may take, and the two lanes are
+        # already allowed to diverge on every other number; a dev turn that touches half the
+        # assemblies has a different verification cost from a player-facing fix, and there was no
+        # way to say so. A box that wants one number sets the same one twice, which is what the
+        # seeded config does.
         "ffagent": {
             "base_ref": "master",
             "agent_secs": 1800,
             "warmup_secs": 3600,
+            "verify_secs": 1800,
             "kill_grace_secs": 10,
             "idle_agents": 1,
             "agent_pool_max": -1,
@@ -560,6 +575,7 @@ DEFAULTS = {
             "base_ref": "master",
             "agent_secs": 1800,
             "warmup_secs": 3600,
+            "verify_secs": 1800,
             "kill_grace_secs": 10,
             "idle_agents": 1,
             "agent_pool_max": 3,
@@ -621,7 +637,7 @@ DEFAULTS = {
     # locally typed prompt are not a runaway risk the way a busy forum is: nobody accidentally
     # types two hundred prompts, and a person at a terminal watching a prompt refused because
     # "the tier is full today" is a worse failure than the one a cap prevents. Concurrency and
-    # the three clocks still bound what they can spend at any moment.
+    # the per-run clocks still bound what they can spend at any moment.
     # TURNS BY TRUST TIER, AND SENDS BY THE HOUR, in one place because both answer "how much may
     # this thing do". The tier keys cap how many TURNS a lane may run; "send" caps what reaches the
     # wire, and is separate because a single run that loops writing intents would spray a thread no
@@ -5458,13 +5474,18 @@ class Watcher:
                       "actor": turn["trust_actor"] or "",
                       "why": turn["trust_reason"] or ""},
             "venue": {"kind": turn["venue"] or "public"},
-            # THIS CLASS's clocks, the same three launch() puts on the ffbox argv. Read from
-            # the flat config until 2026-09-01, which was right while there was one class and
-            # would now make an ffdev run RECORD ffagent's numbers while running under its own.
-            # job.json is what a run directory is read back from months later, and a record that
-            # disagrees with what happened is worse than no record.
+            # THIS CLASS's clocks, the same four launch() puts on the ffbox argv. job.json is
+            # what a run directory is read back from months later, and a record that disagrees
+            # with what happened is worse than no record.
+            #
+            # Read from the flat config until 2026-09-01, which was right while there was one
+            # class and would now make an ffdev run RECORD ffagent's numbers while running under
+            # its own. verify_secs joined them on 2026-09-03, when it stopped being box-wide:
+            # exit 125 is a run killed by the verification ceiling, and a record that does not
+            # say what that ceiling was is missing the one number the reader came for.
             "limits": {"agent_secs": ccfg["agent_secs"],
                        "warmup_secs": ccfg["warmup_secs"],
+                       "verify_secs": ccfg["verify_secs"],
                        "kill_grace_secs": ccfg["kill_grace_secs"]},
             "out_dir": "/ffbox/out",
             "dry_run": self.dry_run,
@@ -5784,6 +5805,35 @@ class Watcher:
         log(f"mirror: took {branch} from {self.cfg['git_dir']}")
         return True
 
+    @staticmethod
+    def launch_ceiling(ccfg):
+        """How long to wait on `ffbox` itself, in seconds. DERIVED FROM ITS OWN CLOCKS.
+
+        ffbox enforces the phase ceilings; this one exists only for ffbox wedging, and it has to
+        sit ABOVE anything ffbox may legitimately do or it stops being that and starts killing
+        healthy runs. subprocess kills the shell and not the container, so a run that trips this
+        leaves an orphan holding a slot and a Unity seat while the turn is recorded as failed.
+
+        WHAT FFBOX MAY LEGITIMATELY TAKE is its three phases end to end -- they are sequential,
+        and a run can hit each in turn -- plus the stop grace it allows itself after a ceiling
+        fires, which is max(kill_grace, 120) because PID 1's trap hands the licence back.
+
+        THIS USED TO BE warmup + agent + 300 and left verification out, so the honest worst case
+        (3600 + 1800 + 1800 + 120 = 7320) sat 1620 seconds above a ceiling of 5700. It never bit,
+        because warm-up is seconds in practice -- 1.2s into a staged spare, ~40s cold -- and the
+        gap only opens on a genuinely slow cold import followed by a long agent and a long verify.
+        A ceiling whose safety depends on one of its own terms almost never being spent is not a
+        ceiling; it is a coincidence.
+
+        The margin covers ffbox's own work either side of the container: the golden fetch, the
+        harvest, and a stop that overruns the grace it was given.
+        """
+        return (int(ccfg["warmup_secs"])
+                + int(ccfg["agent_secs"])
+                + int(ccfg["verify_secs"])
+                + max(int(ccfg["kill_grace_secs"]), LICENCE_STOP_FLOOR)
+                + 300)
+
     def launch(self, turn_id):
         turn = self.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (turn["conversation_id"],))
@@ -5791,7 +5841,9 @@ class Watcher:
         # WHICH KIND OF CONTAINER, settled when this conversation was opened. Everything below
         # that is a clock, a base branch or a pool comes from `ccfg` rather than `self.cfg`;
         # anything that is about the pipeline rather than the container still comes from the
-        # flat config, `verify_secs` included -- see build_job.
+        # flat config. `verify_secs` was the one clock on the wrong side of that line and moved
+        # into the class blocks on 2026-09-03; `verify_assemblies` stayed, because WHICH suite
+        # runs is a property of the repo and not of the lane.
         cls = self.conversation_class(conv)
         ccfg = class_cfg(self.cfg, cls)
 
@@ -5957,10 +6009,11 @@ class Watcher:
             # that skill text inert in here; both preambles tell the lane so up front.
             "--agent-timeout", str(ccfg["agent_secs"]),
             "--warmup-timeout", str(ccfg["warmup_secs"]),
-            # NOT PER CLASS. verify_secs bounds the harness's own verification after the agent
-            # has exited, which is the same Unity suite whichever container ran the turn, and it
-            # is not in either pool's block in config.json.
-            "--verify-timeout", str(self.cfg["verify_secs"]),
+            # PER CLASS SINCE 2026-09-03, like the three above it. It bounds the harness's own
+            # verification after the agent has exited; the SUITE is the same whichever container
+            # ran the turn, but how long this lane may spend in it is that lane's decision, and
+            # both pools carry the number in config.json now.
+            "--verify-timeout", str(ccfg["verify_secs"]),
             "--kill-grace", str(ccfg["kill_grace_secs"]),
         ]
         if job.get("plugin_dir"):
@@ -6001,11 +6054,16 @@ class Watcher:
         try:
             proc = subprocess.run(cmd, env=env, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace",
-                                  timeout=int(ccfg["warmup_secs"])
-                                  + int(ccfg["agent_secs"]) + 300)
+                                  timeout=self.launch_ceiling(ccfg))
             rc, stderr = proc.returncode, proc.stderr
         except subprocess.TimeoutExpired:
-            # ffbox owns the three clocks; this outer timeout only catches ffbox itself wedging.
+            # ffbox owns the phase clocks; this outer timeout only catches ffbox itself wedging.
+            #
+            # AND FIRING IT IS EXPENSIVE, which is why launch_ceiling sums all four. subprocess
+            # kills the ffbox SHELL and nothing else: the container it was supervising keeps
+            # running, unwatched, holding a slot and a Unity seat, while the turn is recorded
+            # here as a failure. Every second this ceiling sits below what ffbox may legitimately
+            # take is a second in which a healthy run produces an orphan.
             rc, stderr = 124, "ffbox did not return within its own ceilings"
         wall = time.monotonic() - started
 

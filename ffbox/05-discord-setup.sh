@@ -279,12 +279,26 @@ for key, value in (
         # which is what the agent is told to branch from by default; disagreeing costs a
         # cross-base checkout and a full Unity reimport inside every container.
         "base_ref": "master",
-        # THREE CLOCKS, and conflating them makes a slow Unity import look like a hung agent.
-        # agent_secs is the model's working time, measured from the .agent-started marker;
-        # warmup_secs covers everything before it; kill_grace_secs is how long a container
-        # gets to finish after it is told to stop.
+        # FOUR CLOCKS, and conflating them makes a slow Unity import look like a hung agent.
+        # They run in this order and each is measured from its own marker, so a run can spend
+        # all of every one of them:
+        #   warmup_secs   from `docker run`: clone, container start, Unity activation, the
+        #                 Library delta. A staged spare has already paid it.
+        #   agent_secs    the model's working time, from <out>/.agent-started -- the number a
+        #                 person waiting on a reply is actually waiting on.
+        #   verify_secs   the harness's own EditMode run afterwards, from <out>/.verify-started.
+        #                 Its own clock since it landed, so a fifteen-minute test suite is never
+        #                 charged to the agent's budget and recorded as a hung agent; per pool
+        #                 since 2026-09-03, so a dev lane can allow a longer suite than the
+        #                 player-facing one without moving the other lane's number.
+        #   kill_grace_secs   how long a container gets to finish after it is told to stop.
+        #                 FLOORED AT 120 wherever a Unity seat may be held (see
+        #                 lib-workloads.sh's FFBOX_LICENCE_STOP_FLOOR), because PID 1's trap
+        #                 hands the licence back and that is an editor launch. Lowering this
+        #                 below 120 cannot strand a seat; raising it above 120 is honoured.
         "agent_secs": 1800,
         "warmup_secs": 3600,
+        "verify_secs": 1800,
         "kill_grace_secs": 10,
         # THE POOL, in the same shape the runners use. idle is how many containers fill a
         # workspace before any request exists, so one that arrives finds a warm one: 1.2s from
@@ -334,6 +348,7 @@ for key, value in (
         "base_ref": "master",
         "agent_secs": 1800,
         "warmup_secs": 3600,
+        "verify_secs": 1800,
         "kill_grace_secs": 10,
         "pool": {"idle": 1, "max": 3},
         "idle_agent_ttl_secs": 14400,

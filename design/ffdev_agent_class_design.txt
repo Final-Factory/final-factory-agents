@@ -385,6 +385,15 @@ harness's own verification after the agent has exited, which is the same Unity s
 container ran the turn. Everything in this document that says "the three clocks" means the three
 that are in the section.
 
+> SUPERSEDED 2026-09-03. `verify_secs` is now per class and sits in both pools' blocks, so there
+> are four clocks in the section and not three. The argument above is true about the SUITE and is
+> not the question the clock asks: what it bounds is how long THIS lane may spend verifying, and
+> the lanes are already allowed to diverge on every other number. A dev turn touching half the
+> assemblies does not cost what a player-facing fix costs, and there was no way to say so. Both
+> `launch()` and `build_job()` read it from `ccfg`; the flat `verify_secs` remains as ffagent's
+> flattened copy, the same way `agent_secs` and `warmup_secs` already did. Read every "three
+> clocks" in this document as four.
+
 `pool_claim_for(ref, cls)` decides whether this is a dispatch or a cold launch, and everything
 from there is what it is today.
 

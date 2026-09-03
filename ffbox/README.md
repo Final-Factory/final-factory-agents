@@ -64,7 +64,7 @@ Everything ffbox owns on a machine lives in one directory:
                                    whichever lane started it (workspace_size, memory,
                                    pids_limit); "pools", one block per AGENT CLASS ("ffagent"
                                    and "ffdev") for what governs a run of that kind (base_ref,
-                                   the three clocks, pool, network) — independent of each other,
+                                   the four clocks, pool, network) — independent of each other,
                                    no inheritance either way, and both at the top level of the
                                    file until 2026-09-02; "githubrunner" for the CI runners,
                                    which kept their own file until 2026-09-01; and "discord" for
@@ -855,7 +855,7 @@ does its Unity import. The flags below make it usable from outside this director
 | `--ref REF` | Check the clone out at `REF` after cloning. `develop` falls back to `origin/develop`. The resolved sha lands in `base_sha.txt`. |
 | `--branch NAME` | Create `NAME` at that commit before the container starts — a ref move, so nothing churns under the warm `Library/`. At harvest, anything the agent left uncommitted is committed, the branch HEAD ended on is bundled to `work.bundle` as `base..branch`, and `NAME` is the name it publishes under unless `--branch-prefix` renames it. A run that ends on `develop`, `master` or `main` is refused. No changed files means no commit, no bundle and no branch. |
 | `--branch-prefix P` | Let the agent name the published branch: a branch it made itself is published as `P<its name>-<run id>` instead of `NAME`. ffwatch passes `ffbox/`. Without it the published name is always `NAME`, which is what `ffbox --branch wip "…"` has always meant. |
-| `--agent-timeout N` | Agent working time, default 900s. |
+| `--agent-timeout N` | Agent working time, default 1800s. |
 | `--warmup-timeout N` | Everything before the agent starts, default 3600s. |
 | `--verify-timeout N` | The harness verification phase after the agent exits, default 1800s. |
 | `--kill-grace N` | Seconds between SIGTERM and force, default 10. |
@@ -878,8 +878,14 @@ its trap is what returns the Unity seat. Every run holds an editor, so 120 secon
 rather than a special case: `--kill-grace` is about an agent ignoring SIGTERM, the 120 is the
 licence round trip, and the larger of the two is what the stop allows.
 
-The clocks are enforced only when the run is a task run, or when you pass one of the three
-flags explicitly. A plain interactive one-shot stays unbounded, as it always was.
+All four are per pool. `agent_secs`, `warmup_secs`, `verify_secs` and `kill_grace_secs` sit in
+each block of `pools` in `config.json`, so the two lanes can hold different numbers; `verify_secs`
+was box-wide until 2026-09-03, on the argument that the EditMode suite is the same whichever
+container ran the turn — true about the suite, and not what the clock asks. What it bounds is how
+long that lane may spend verifying.
+
+The clocks are enforced only when the run is a task run, or when you pass one of the flags
+explicitly. A plain interactive one-shot stays unbounded, as it always was.
 
 ## Discord conversations (ffwatch)
 

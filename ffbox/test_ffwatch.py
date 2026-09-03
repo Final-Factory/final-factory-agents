@@ -1760,9 +1760,10 @@ def test_read_only_capabilities():
           job["verify"]["enabled"] is True, job["verify"])
     argv = json.load(open(os.path.join(os.path.dirname(job_files[0]), "ffbox-argv.json"),
                           encoding="utf-8"))
-    check("ffbox is called with a working editor and the three clocks",
+    check("ffbox is called with a working editor and every clock",
           not any("unity" in a for a in argv) and "--agent-timeout" in argv
-          and "--warmup-timeout" in argv and "--kill-grace" in argv, argv)
+          and "--warmup-timeout" in argv and "--verify-timeout" in argv
+          and "--kill-grace" in argv, argv)
     check("the container name is owned by the host via --run-id, and names the agent class",
           run["container_name"] == f"ffbox-agent-{run['ffbox_run_id']}", run)
     check("the conversation pins the base sha it was first cloned from",
@@ -7337,7 +7338,8 @@ def test_an_ffdev_turn_runs_under_ffdevs_numbers():
     # Numbers nothing else on the box uses, so a value that leaked from the flat config or from
     # ffagent's block is unmistakable rather than coincidentally equal.
     w.cfg["agent_classes"]["ffdev"].update({"agent_secs": 4242, "warmup_secs": 4343,
-                                            "kill_grace_secs": 44, "base_ref": "develop"})
+                                            "verify_secs": 4444, "kill_grace_secs": 44,
+                                            "base_ref": "develop"})
 
     w.submit("implement the thing", kind="web", agent_class="ffdev")
     w.schedule()
@@ -7356,10 +7358,11 @@ def test_an_ffdev_turn_runs_under_ffdevs_numbers():
           argv[argv.index("--warmup-timeout") + 1] == "4343", argv)
     check("and ffdev's kill grace",
           argv[argv.index("--kill-grace") + 1] == "44", argv)
-    # verify_secs is NOT per class: it bounds the harness's own verification after the agent has
-    # exited, which is the same Unity suite whichever container ran the turn.
-    check("but the verify clock is still the box's",
-          argv[argv.index("--verify-timeout") + 1] == str(w.cfg["verify_secs"]), argv)
+    # AND ITS VERIFY CLOCK, which was the box's until 2026-09-03. The flat cfg["verify_secs"] is
+    # ffagent's and is deliberately left at its own value here, so a launch still reading it
+    # would produce that number instead of 4444 and fail this.
+    check("and ffdev's verify clock, not the flat one",
+          argv[argv.index("--verify-timeout") + 1] == "4444", argv)
     check("and it started on ffdev's base branch",
           argv[argv.index("--ref") + 1] == "develop", argv)
     # THE FENCE IS PART OF THE CLASS. A cold ffdev container is created on the open bridge, and
@@ -7374,8 +7377,13 @@ def test_an_ffdev_turn_runs_under_ffdevs_numbers():
     check("job.json records the class that produced it",
           job["turn"]["agent_class"] == "ffdev", job["turn"])
     check("and the clocks it actually ran under",
-          job["limits"] == {"agent_secs": 4242, "warmup_secs": 4343,
+          job["limits"] == {"agent_secs": 4242, "warmup_secs": 4343, "verify_secs": 4444,
                             "kill_grace_secs": 44}, job["limits"])
+    # AND THE ARGV AND THE RECORD AGREE. These are two separate readers of ccfg and the whole
+    # point of job["limits"] is that a run directory read back later says what the run was held
+    # to, so one of them drifting to the flat config is exactly the bug worth catching.
+    check("and job.json's verify clock is the one ffbox was given",
+          str(job["limits"]["verify_secs"]) == argv[argv.index("--verify-timeout") + 1], job["limits"])
 
     # An ffagent conversation on the same box is unaffected by any of it.
     w.submit("an ordinary question", kind="web")
@@ -7431,6 +7439,39 @@ def test_every_agent_container_carries_its_class():
     check("and so does ffweb",
           "AGENT_CLASSES = %r" % (ffwatch.AGENT_CLASSES,) in web
           or 'AGENT_CLASSES = ("ffagent", "ffdev")' in web, None)
+
+
+def test_the_outer_launch_ceiling_clears_every_phase_clock():
+    """ffwatch's own `subprocess.run` timeout on ffbox must sit above what ffbox may legitimately
+    take, or it stops catching a wedged ffbox and starts killing healthy runs.
+
+    THE BUG IT GUARDS. The ceiling was `warmup + agent + 300` and left verification out entirely,
+    so at the shipped numbers ffbox could honestly run 3600 + 1800 + 1800 + 120 = 7320 seconds
+    against a ceiling of 5700. It never fired, because warm-up is seconds in practice and the gap
+    only opens on a slow cold import followed by a long agent and a long verify -- which is a
+    coincidence holding it up, not a design.
+
+    WHAT FIRING IT COSTS is why this is worth a test of its own: subprocess kills the ffbox SHELL
+    and not the container, so the run keeps going unwatched, holding a slot and a Unity seat,
+    while the turn is recorded here as a failure.
+    """
+    print("clocks: the outer ceiling clears every phase")
+    for cls in ("ffagent", "ffdev"):
+        ccfg = ffwatch.class_cfg(ffwatch.DEFAULTS, cls)
+        # What ffbox may spend, end to end, at these numbers: the three phases are sequential and
+        # each is measured from its own marker, so a run can hit all three, and after the last
+        # one fires ffbox still allows itself a stop grace floored at the licence round trip.
+        worst = (int(ccfg["warmup_secs"]) + int(ccfg["agent_secs"]) + int(ccfg["verify_secs"])
+                 + max(int(ccfg["kill_grace_secs"]), ffwatch.LICENCE_STOP_FLOOR))
+        ceiling = ffwatch.Watcher.launch_ceiling(ccfg)
+        check(f"{cls}: the outer ceiling is above ffbox's own worst case",
+              ceiling > worst, (cls, ceiling, worst))
+        # And it is DERIVED rather than a constant that happens to be big enough today: raising a
+        # phase clock has to raise it too, which is the property that stops this drifting back.
+        raised = dict(ccfg, verify_secs=int(ccfg["verify_secs"]) + 3600)
+        check(f"{cls}: raising a phase clock raises the ceiling with it",
+              ffwatch.Watcher.launch_ceiling(raised) == ceiling + 3600,
+              (cls, ffwatch.Watcher.launch_ceiling(raised), ceiling))
 
 
 def test_the_two_agent_classes_are_configured_independently():
@@ -9862,6 +9903,7 @@ def main():
         test_a_finished_runs_spool_is_swept_and_then_deleted,
         test_the_reaper_says_a_held_spool_once,
         test_an_ffdev_turn_runs_under_ffdevs_numbers,
+        test_the_outer_launch_ceiling_clears_every_phase_clock,
         test_the_two_agent_classes_are_configured_independently,
         test_each_class_is_created_on_its_own_network,
         test_each_class_counts_only_its_own_containers,
