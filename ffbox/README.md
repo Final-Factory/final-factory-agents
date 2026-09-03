@@ -1001,7 +1001,7 @@ Config lives under `cluster` in `~/.config/ffbox/config.json`, overridable per w
 | `certain_secs` | 900 | a lone candidate this recent needs no model |
 | `max_candidate_secs` | 604800 | nothing older is ever offered |
 | `max_candidates` | 5 | how many the selector chooses between |
-| `compact_turns` | 12 | compacts the session, not the conversation |
+| `compact_turns` | 20 | compacts the session, not the conversation |
 | `per_author` | false | two people in one channel are one discussion |
 
 One consequence worth knowing: `idle_msgs` counts channel messages that are not this

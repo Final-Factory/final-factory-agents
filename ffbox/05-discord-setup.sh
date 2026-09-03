@@ -392,7 +392,7 @@ for key, value in (
     # code. This is how often a long-running conversation's session is compacted, counted in
     # turns from the last seam: past it the turn runs /compact against the session it was about
     # to resume, and then resumes it. Overridable per `watch` entry, like everything in here.
-    ("cluster", {"compact_turns": 12}),
+    ("cluster", {"compact_turns": 20}),
     # The page. It is behind a login and served over TLS, but 127.0.0.1 is still the default:
     # it renders raw model thinking, and one hardcoded password is a thin thing to hold a LAN
     # off with. Widening it stays a deliberate edit, made here where it is reviewable.

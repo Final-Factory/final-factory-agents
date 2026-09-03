@@ -839,7 +839,7 @@ with open(argv_path, "wb") as fh:
     fh.write(b"\0".join(a.encode("utf-8") for a in argv))
 
 # THE COMPACTION PASS, when the host asked for one. cluster.compact_turns has come round, so
-# this session has been growing for a dozen turns and the turn below is about to resume it: run
+# this session has been growing for many turns and the turn below is about to resume it: run
 # /compact against that id FIRST, so the model summarises its own work and the turn resumes the
 # result. The host decides (ffwatch's build_job says why it is a compaction and not a rotation);
 # this is only the invocation, and it is built here beside the real one so the two cannot
@@ -881,7 +881,7 @@ rm -f "$FFBOX_OUT/argv"
 # ------------------------------------------------------------------------------------------
 # compact the session first, when the host asked for one
 # ------------------------------------------------------------------------------------------
-# cluster.compact_turns came round: this session has been resumed a dozen times and the turn
+# cluster.compact_turns came round: this session has been resumed many times and the turn
 # below is about to resume it again, so /compact runs against it now and the turn inherits the
 # model's own summary of its own work. Same session id throughout — the transcript gets a
 # compaction boundary written into it, it does not get replaced.

@@ -576,7 +576,7 @@ has scrolled past it.
 | `certain_secs` | `900` | A lone candidate this recent, with nothing in between, is a continuation and must not cost a model call. |
 | `max_candidate_secs` | `604800` | Nothing older is ever offered. |
 | `max_candidates` | `5` | How many the selector chooses between. |
-| `compact_turns` | `12` | Turns since the last session seam before the next turn **compacts** the session it was about to resume — `claude -p /compact --resume <id>` in the container, before the agent clock starts, then the turn resumes the same id. The conversation stays open and keeps its id, its page and its Discord anchor; the session keeps its id too. Seeded into the file by stage 5, and the one `cluster` key that is. |
+| `compact_turns` | `20` | Turns since the last session seam before the next turn **compacts** the session it was about to resume — `claude -p /compact --resume <id>` in the container, before the agent clock starts, then the turn resumes the same id. The conversation stays open and keeps its id, its page and its Discord anchor; the session keeps its id too. Seeded into the file by stage 5, and the one `cluster` key that is. |
 | `per_author` | `false` | Two people talking in one channel are one discussion. A channel with many simultaneous speakers can say otherwise per `watch` entry. |
 
 A compaction is bounded (`FFBOX_COMPACT_SECS` in the container, 600s) and non-fatal: if it

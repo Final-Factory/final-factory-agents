@@ -295,7 +295,7 @@ ADDED_COLUMNS = [
     ("conversation", "close_reason", "TEXT"),
     # The turn seq at the last session seam -- a compaction, or a new generation seeded after a
     # lost transcript. compact_turns counts FROM here, not from seq 1, or a long conversation
-    # compacts on every turn after the twelfth.
+    # compacts on every turn after the twentieth.
     #
     # NAMED FOR WHAT NOW HAPPENS. It was `rotated_at_seq` while reaching the limit rotated the
     # session; init_schema renames it in place, so the seam this box already recorded is the
@@ -786,7 +786,7 @@ DEFAULTS = {
         # COMPACTS the session and leaves the conversation open (section 7). Not a close, and
         # since 2026-09-03 not a rotation either: the turn that trips this runs /compact against
         # the session it was already going to resume, and then resumes it. See build_job.
-        "compact_turns": 12,
+        "compact_turns": 20,
         # Two people talking in one channel are one discussion, so this is false. A channel with
         # many simultaneous speakers is the opposite case and can say so per watch entry.
         "per_author": False,
