@@ -2596,6 +2596,10 @@ class Watcher:
     # -- setup -----------------------------------------------------------------------------
 
     _licence_checked = 0.0
+    # Runs a thread of ours is already stopping, so a pass that lands mid-stop does not start a
+    # second one. In-memory on purpose: a restart that loses it costs one redundant `docker stop`
+    # on a container that is already going away.
+    _clock_stopping = set()
 
     def init(self):
         for d in (self.state_dir, self.blobs_dir, self.conv_root):
@@ -8510,6 +8514,141 @@ class Watcher:
                 log(f"unity licence: {line.strip()}")
         return proc.returncode == 0
 
+    # Which phase a run is in, in the order the task passes through them, with the marker that
+    # says the phase has begun and the key in the clock file that bounds it. Warm-up has no
+    # marker: it starts when the clock does, which is what makes it the fallback.
+    RUN_PHASES = ((".verify-started", "verify", "verify_secs"),
+                  (".agent-started", "agent", "agent_secs"))
+
+    def run_phase(self, out_dir, clock):
+        """Which phase this run is in and how long it has been in it.
+
+        DERIVED, NOT RECORDED, and that is what makes this pass stateless. The task already
+        creates .agent-started when the model takes over and .verify-started when the harness's
+        own Unity run begins, and a marker's mtime IS the moment its phase started. So there is
+        nothing to write down and nothing to keep in step: each pass reads the directory and
+        works out the answer from scratch, which is the same discipline lib-workloads.sh applies
+        to the CI lane's clocks.
+
+        Newest marker wins, so a run that reached verification is judged against the verify
+        ceiling rather than still against the agent one.
+
+        Returns (phase, seconds in it, ceiling) or None when there is no clock to read.
+        """
+        started = clock.get("started_at")
+        if started is None:
+            return None
+        now = time.time()
+        best = ("warmup", now - started, clock.get("warmup_secs"))
+        for marker, phase, key in self.RUN_PHASES:
+            try:
+                mark = os.path.getmtime(os.path.join(out_dir, marker))
+            except OSError:
+                continue
+            return (phase, now - mark, clock.get(key))
+        return best
+
+    def read_clock(self, out_dir):
+        """The ceilings a run was CREATED under, off its clock file. {} when there is none.
+
+        A run started by a build of ffbox from before the clock file gets {}, and is bounded by
+        ffbox's own loop exactly as it was. That is the only reason this returns rather than
+        raising.
+        """
+        raw = _read_text(os.path.join(out_dir, "clock")) if out_dir else None
+        if not raw:
+            return {}
+        out = {}
+        for line in raw.splitlines():
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip()
+            if not key or not value:
+                continue
+            if key == "started_at":
+                try:
+                    when = datetime.fromisoformat(value)
+                except ValueError:
+                    continue
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                out["started_at"] = when.timestamp()
+            else:
+                try:
+                    out[key] = int(value)
+                except ValueError:
+                    continue
+        return out
+
+    def enforce_clocks(self):
+        """Stop any run that has outlived the ceiling it was created under. Returns how many.
+
+        WHY THIS IS NOT ffbox's JOB ANY MORE. ffbox watches its own container in a `while kill -0`
+        loop, which works exactly as long as ffbox is alive. A run whose supervisor was killed --
+        by a `systemctl stop`, by an update, by anything -- had no deadline at all after that
+        moment, and the container went on holding a slot, a workspace and a Unity seat with
+        nothing left that would ever stop it. Moving the comparison onto a pass that any ffwatch
+        runs is what makes the ceiling a property of the run rather than of a process.
+
+        SOFT, ALWAYS. A stop with a real grace gives PID 1's trap the time to harvest the
+        workspace out of the tmpfs and hand the licence back; a forced removal would run
+        neither, and the tmpfs is the only copy of the work. The floor is the licence round trip, not kill_grace_secs,
+        which is about an agent ignoring SIGTERM.
+
+        ON A THREAD, because a stop takes up to two minutes and this runs on the daemon's own
+        loop. c693d67 is what blocking here costs: three minutes a pass with the admission lock
+        held, and from Discord it looked like Max had stopped answering.
+        """
+        stopped = 0
+        for run in self.db.query("SELECT * FROM run WHERE terminal_state IS NULL"):
+            run_id = run["ffbox_run_id"]
+            if run_id in self._clock_stopping:
+                continue
+            out_dir = self.run_out_dir(run)
+            if not out_dir or not os.path.isdir(out_dir):
+                continue
+            clock = self.read_clock(out_dir)
+            if not clock:
+                continue                       # started before clocks were written down
+            phase = self.run_phase(out_dir, clock)
+            if phase is None:
+                continue
+            name, elapsed, ceiling = phase
+            if not ceiling or ceiling <= 0 or elapsed <= ceiling:
+                continue
+            if not self.run_container_live(run):
+                continue                       # already gone; the finish path owns it
+            grace = max(1, int(clock.get("kill_grace_secs") or 0), LICENCE_STOP_FLOOR)
+            ref = (run["container_id"] if "container_id" in run.keys() else None) \
+                or run["container_name"]
+            log(f"run {run_id}: {name} ceiling of {ceiling}s exceeded ({int(elapsed)}s); "
+                f"stopping it, with up to {grace}s to harvest and hand its licence back")
+            # The word ffbox writes, so finish_run's scoring needs no idea which of the two
+            # enforcers got there first.
+            try:
+                with open(os.path.join(out_dir, "ffbox-timeout"), "w", encoding="utf-8") as fh:
+                    fh.write(name + "\n")
+            except OSError as exc:
+                log(f"WARNING: could not record the timeout kind for {run_id}: {exc}")
+            self._clock_stopping.add(run_id)
+            threading.Thread(target=self._stop_expired_run, args=(run_id, ref, grace),
+                             name=f"ffwatch-clock-{run_id}", daemon=True).start()
+            stopped += 1
+        return stopped
+
+    def _stop_expired_run(self, run_id, ref, grace):
+        """One soft stop, off the daemon's loop. Never raises into the thread runner."""
+        try:
+            subprocess.run([self.cfg["docker"], "stop", "--timeout", str(grace), ref],
+                           capture_output=True, text=True, timeout=grace + 60)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"run {run_id}: could not stop its container: {exc}")
+        except Exception as exc:                                  # noqa: BLE001
+            log(f"run {run_id}: stopping it failed: {exc}")
+        finally:
+            # Dropped so a later pass can try again if the stop did not take. The run row is what
+            # stops this repeating: once the container is gone, run_container_live says so.
+            self._clock_stopping.discard(run_id)
+
     def sweep_dead_containers(self, older_than=3600):
         """Remove workload containers that have exited and that nothing came back for.
 
@@ -8811,6 +8950,7 @@ class Watcher:
         # pool keeper went into once(), the daemon ran run(), and the live box staged nothing at
         # all while reporting "0 staged, 1 wanted".
         self.sweep_dead_containers()
+        self.enforce_clocks()
         # Before the join, because the join is what blocks: in this pass-at-a-time form the
         # live index only ever catches a run some OTHER caller started. The daemon loop below
         # is where it earns its keep, ticking every poll_secs while a container works.
@@ -9009,6 +9149,9 @@ class Watcher:
                     # normal case; see sweep_dead_containers for why it does not have to be
                     # prompt.
                     self.sweep_dead_containers()
+                    # A run that has outlived its ceiling, whoever started it. This is what
+                    # bounds a run whose ffbox is no longer watching.
+                    self.enforce_clocks()
                     # The box's Unity licence rolls forward about a day, and a container can now
                     # outlive that. Rate-limited inside; a no-op when there is nothing to do.
                     self.refresh_unity_licence()
