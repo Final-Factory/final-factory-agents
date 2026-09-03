@@ -8035,6 +8035,38 @@ def test_a_crashed_pooled_run_gives_its_transcript_back():
           turn["status"] == "queued", dict(turn))
 
 
+def test_a_config_from_a_newer_ffbox_does_not_kill_this_one():
+    """2026-09-03, on the build server, in a test.
+
+    Several checkouts on that box share one ~/.config/ffbox/config.json, and setup.sh seeds new
+    keys into it on every update pass. A newer checkout wrote cluster.compact_turns while the
+    services were running one commit older, and config_warnings -- which main() calls on EVERY
+    invocation -- did DEFAULTS["cluster"][key] and raised KeyError.
+
+    So `ffwatch drain` died and no drain flag was written, which left the keeper staging
+    containers; `ffwatch quiet` died too, so the updater could never see the box go quiet. It
+    spent its whole hour destroying every container the undrained keeper had just staged and only
+    forced its way to the merge at the end -- the merge carrying the default it was missing.
+
+    The config is shared and the code is not, so a config from the future is a normal state here.
+    """
+    print("config: one from a newer build")
+    cfg = dict(ffwatch.DEFAULTS)
+    cfg["watch"] = {}
+    cfg["cluster"] = dict(ffwatch.DEFAULTS["cluster"])
+    cfg["cluster"]["a_setting_from_the_future"] = 99
+    try:
+        warnings = ffwatch.config_warnings(cfg)
+    except Exception as exc:  # noqa: BLE001 - the whole point is that it must not raise
+        check("a config key this build has never heard of does not raise", False, repr(exc))
+        return
+    check("a config key this build has never heard of does not raise", True, None)
+    check("and it is reported rather than swallowed",
+          any("a_setting_from_the_future" in w for w in warnings), warnings)
+    check("naming the likely cause, which is a newer ffbox having written the file",
+          any("newer ffbox" in w for w in warnings), warnings)
+
+
 def test_a_clock_that_has_passed_stops_the_run_from_a_pass():
     """The ceiling belongs to the run, not to whatever process happened to start it.
 
@@ -10186,6 +10218,7 @@ def main():
         test_two_dispatchers_cannot_take_one_container,
         test_a_pooled_run_never_loses_the_conversations_memory,
         test_a_crashed_pooled_run_gives_its_transcript_back,
+        test_a_config_from_a_newer_ffbox_does_not_kill_this_one,
         test_a_clock_that_has_passed_stops_the_run_from_a_pass,
         test_a_run_reads_frozen_copies_not_the_checkout,
         test_a_crashed_run_that_left_work_is_finished_not_requeued,

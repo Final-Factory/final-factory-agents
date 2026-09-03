@@ -1357,6 +1357,27 @@ def config_warnings(cfg):
     base = dict(DEFAULTS["cluster"])
     base.update(cfg.get("cluster") or {})
     for key, value in sorted(base.items()):
+        # A KEY THIS BUILD HAS NEVER HEARD OF IS NOT AN ERROR, and until 2026-09-03 it was a
+        # CRASH. `DEFAULTS["cluster"][key]` raises KeyError for anything the config carries and
+        # this build does not, and config_warnings runs in main() -- so EVERY ffwatch invocation
+        # died, `ffwatch drain` and `ffwatch quiet` included.
+        #
+        # WHAT THAT DID TO THIS BOX, on 2026-09-03. Several checkouts share one
+        # ~/.config/ffbox/config.json, and setup.sh seeds new keys into it on every update pass.
+        # A newer checkout wrote cluster.compact_turns; the checkout the services run from was
+        # one commit older and had no such default. `ffwatch drain` then failed, so no drain flag
+        # was written and the pool went on staging; `ffwatch quiet` failed too, so the updater
+        # could never see the box go quiet. It spent its whole hour destroying every container
+        # the undrained keeper had just staged, once every fifteen seconds, and only forced its
+        # way to the merge at the end of the window -- the merge that carried the missing default.
+        #
+        # The config file is shared and the code is not, so a newer config reaching an older
+        # build is a NORMAL state on this machine rather than a broken one. Say so and carry on.
+        if key not in DEFAULTS["cluster"]:
+            out.append(f"cluster.{key} is set to {value!r} and this build has no such setting; "
+                       f"ignoring it. That normally means the config was written by a newer "
+                       f"ffbox than the one running")
+            continue
         if value != DEFAULTS["cluster"][key]:
             out.append(f"cluster.{key} is {value!r}, not the default "
                        f"{DEFAULTS['cluster'][key]!r}")
