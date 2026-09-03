@@ -131,3 +131,16 @@ the namespaced skills all passed. Keep testing other Codex versions and platform
   sessions read.
 - The game repo may still carry legacy copies of these skills in `.claude/skills/` on some
   branches; those shadow the plugin for bare `/name` invocations until removed there.
+
+## ffbox
+
+The build-server harness lives in `ffbox/` in this repo. Its one settings file is
+`~/.config/ffbox/config.json`, and **`ffbox/config.md` is that file's documentation** — every
+key in every section, seeded or not, with defaults and examples. The JSON carries values only;
+the generated `_help` blocks it used to hold were removed on 2026-09-03 and stage 5 deletes a
+leftover one.
+
+**Changing the config's shape means editing `ffbox/config.md` in the same commit.** The shape
+is defined in `ffbox/05-discord-setup.sh` (the seeded template), `ffbox/ffwatch.py`
+(`DEFAULTS`, `ENV_OVERRIDES`, `load_config`), `ffbox/runners/lib/config.sh`, and the
+`container` reads in `ffbox/ffbox`. Do not put help text back into the JSON.

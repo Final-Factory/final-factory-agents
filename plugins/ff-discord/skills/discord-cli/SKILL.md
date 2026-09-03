@@ -125,6 +125,19 @@ is the only signal in this pipeline for which that is true.
 The `discord` section of `~/.config/ffbox/config.json`, mode 0600, never in a repo.
 `FFBOX_CONFIG_DIR` relocates the file, which is how a container gets its own copy.
 
+**`ffbox/config.md` is the reference for the whole file** — every section, every key, seeded
+or not, with defaults and examples. The file itself carries values only: the generated
+`_help` blocks that used to sit at the top level and inside `discord` were removed on
+2026-09-03, and `05-discord-setup.sh` deletes one it finds left over. What follows here is
+the part this CLI reads.
+
+**Changing the shape of the config means editing `ffbox/config.md` in the same commit.**
+Adding, renaming, moving or retiring a key in `ffbox/05-discord-setup.sh` (the seeded
+template), `ffbox/ffwatch.py` (`DEFAULTS`, `ENV_OVERRIDES`, `load_config`),
+`ffbox/runners/lib/config.sh`, or the `container` reads in `ffbox/ffbox` leaves that document
+saying something untrue, and there is no longer a `_help` block in the file to contradict it.
+Never put help text back into the JSON.
+
 ```json
 "discord": {
   "app_token": "<the Bot tab's token — not the Application ID, not the public key>",

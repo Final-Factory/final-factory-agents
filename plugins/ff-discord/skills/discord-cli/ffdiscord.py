@@ -338,8 +338,8 @@ class Client:
             die(
                 "no bot token. Set FFDISCORD_APP_TOKEN, or fill in the \"app_token\" field "
                 f"in the \"{CONFIG_SECTION}\" section of {CONFIG_PATH}. "
-                "`sh ffbox/05-discord-setup.sh --check` lists every blank, and that section's "
-                "\"_help\" block says where each value comes from."
+                "`sh ffbox/05-discord-setup.sh --check` lists every blank, and "
+                "ffbox/config.md says where each value comes from."
             )
         self.ctx = ssl.create_default_context()
 

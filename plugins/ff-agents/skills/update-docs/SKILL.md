@@ -30,6 +30,12 @@ CLAUDE.md still listed them as "active".)
      **header comments of the root `run_*.sh` harness scripts** (they are runbook docs — the
      "expect the counter to print 0" class of claim lives there), and **Claude memory**
      (`MEMORY.md` + the per-fact memory files) — a stale memory misleads every future session.
+   - **Generated-shape references** (a doc whose whole job is to mirror a structure in code, so
+     it is stale the moment that structure moves — check it key by key against the code, not by
+     reading it for plausibility): `ffbox/config.md` against the seeded template in
+     `ffbox/05-discord-setup.sh`, `DEFAULTS`/`ENV_OVERRIDES`/`load_config` in `ffbox/ffwatch.py`,
+     `ffbox/runners/lib/config.sh`, and the `container` reads in `ffbox/ffbox`. These live in the
+     final-factory-agents repo, not the game repo.
    - **Historical / append-only** (do NOT rewrite; only touch if they present a CLOSED feature as
      current work AND are pointed to as the live handoff): `specs/*/plan.md|spec.md|tasks.md`
      session logs, `measurements.md`. These are dated records; superseding blocks are fine.
