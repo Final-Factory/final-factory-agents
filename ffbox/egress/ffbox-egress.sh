@@ -173,6 +173,33 @@ start_proxy() {
     fi
     [ -z "$_have" ] || [ "$_have" = "$_want" ] || say "the image, mode or allowlist changed; recreating $NAME"
 
+    # NOT WHILE SOMETHING IS USING THE FENCE, unless a human said so.
+    #
+    # The fingerprint above covers the common case: an update where nothing about the fence
+    # changed leaves it alone. What it does not cover is an update where the allowlist DID change
+    # -- then this recreates the proxy, and every container on the fenced network loses egress for
+    # the couple of seconds that takes. That was survivable when the longest thing behind the
+    # fence was a CI job somebody would rerun. It is not now that a run can be twenty hours old
+    # and carried across updates on purpose: a fetch failing at hour nineteen because of a commit
+    # to an allowlist is a bad way to lose a day.
+    #
+    # SO THE RECREATE WAITS FOR THE BOX TO BE EMPTY OF WORKLOADS, and the next `up` does it. The
+    # allowlist is normally being TIGHTENED or extended for something new, and neither is urgent
+    # to the second; FFBOX_EGRESS_FORCE=1 is there for the case that is.
+    #
+    # The count is of containers on THIS network, not of every workload on the box: a run on the
+    # open bridge is not behind this fence and has nothing to lose from it restarting.
+    _using=$(docker_ ps --filter "network=$NET" --filter "label=ffbox.workload" -q 2>/dev/null \
+             | grep -c . || true)
+    case "${_using:-0}" in ''|*[!0-9]*) _using=0 ;; esac
+    if [ "${FFBOX_EGRESS_FORCE:-0}" != 1 ] && [ "$_using" -gt 0 ] \
+       && [ "$(docker_ inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = true ]; then
+        say "$NAME needs recreating, but $_using workload container(s) are on $NET and would"
+        say "lose egress while it restarts. Deferring; the next 'up' with an empty box does it."
+        say "Run with FFBOX_EGRESS_FORCE=1 to recreate now and take that outage deliberately."
+        return 0
+    fi
+
     archive_log
     docker_ rm -f "$NAME" >/dev/null 2>&1 || true
 

@@ -8046,6 +8046,45 @@ def test_a_crashed_pooled_run_gives_its_transcript_back():
           turn["status"] == "queued", dict(turn))
 
 
+def test_an_update_does_not_disturb_what_it_is_carrying():
+    """Rules about what an update must NOT do, checked against the source.
+
+    A container now runs THROUGH an update, which turns three things that were merely untidy into
+    ways to break a twenty-hour job:
+
+      the docker daemon   every container on the box is in it;
+      a name-prefix rule  dispatch renames a pooled container out of the staging pattern, so a
+                          sweep by name was safe only because of the rename. It is exactly the
+                          shape of the 2026-09-01 loss of conversation 30's turn 5;
+      the egress fence    a recreate takes it down for a couple of seconds, and everything on
+                          the fenced network loses egress with it.
+    """
+    print("update: what it must not disturb")
+    upd = open(os.path.join(HERE, "update_ffbox.sh"), encoding="utf-8").read()
+    egress = open(os.path.join(HERE, "egress", "ffbox-egress.sh"), encoding="utf-8").read()
+    code = "\n".join(ln for ln in upd.splitlines() if not ln.strip().startswith("#"))
+
+    check("the updater never restarts the docker daemon",
+          not re.search(r"systemctl\s+(restart|stop)\s+\S*docker", code), None)
+    check("nor prunes or removes images, which a running container is holding",
+          "docker image prune" not in code and "docker rmi" not in code
+          and "docker system prune" not in code, None)
+
+    # The name-prefix rule. A dispatched container wears its run's name, so anything that decides
+    # what to destroy by matching a STAGING name destroys live runs the moment the rename goes.
+    check("it does not decide what to destroy by matching a staging name",
+          "ffbox-agent-pool-" not in code and "ffbox-dev-pool-" not in code, None)
+    check("what it does destroy, it asks the container about",
+          "Runner\\.Worker" in code, None)
+
+    # And it asks about the HOST rather than about containers, which is what stops a long run
+    # holding an update open.
+    check("it waits on the host's own tail, not on containers", "--host-only" in code, None)
+
+    check("the egress fence defers a recreate while workloads are on it",
+          "FFBOX_EGRESS_FORCE" in egress and 'filter "network=$NET"' in egress, None)
+
+
 def test_a_detached_run_is_not_stopped_by_its_launcher():
     """The one line that decides whether a container survives an update.
 
@@ -8831,9 +8870,31 @@ def test_a_shutdown_waits_for_the_host_not_only_for_the_containers():
           w.running_counts() == 0, w.running_counts())
     counts = w.settling()
     check("but the turn is still publishing, so the machine is NOT quiet",
-          sum(counts.values()) == 1 and counts["turns"] == 1, counts)
+          counts["turns"] == 1, counts)
     check("and it says which half in words the journal can carry",
           "publishing" in w.settling_phrase(counts), w.settling_phrase(counts))
+    # THE COUNT THE UPDATER ACTUALLY WAITS ON, since containers survive a restart and threads do
+    # not. This turn's container is gone and its host-side half is still owed, which is exactly
+    # the thing a stop can lose.
+    check("and it is counted as host-side work, which is what a stop can lose",
+          counts["publishing"] == 1, counts)
+
+    # A turn whose container is STILL RUNNING is the case this distinction exists for: `turns`
+    # counts it and `publishing` does not, so an update no longer waits twenty hours for it.
+    cur = w.db.execute(
+        "INSERT INTO turn(conversation_id, seq, trigger, lane, status, queued_at)"
+        " VALUES(?,2,'message','dev','running',?)", (conv_id, ffwatch.now_iso()))
+    w.db.execute("INSERT INTO run(turn_id, ffbox_run_id, container_name, container_id)"
+                 " VALUES(?,'d30t6-live','ffbox-agent-d30t6-live','cid-live')", (cur.lastrowid,))
+    w.container_live = lambda name, cid=None: True
+    counts = w.settling()
+    check("a turn whose container is still working counts as a running turn",
+          counts["turns"] == 2, counts)
+    check("but NOT as host-side work: a container survives a restart",
+          counts["publishing"] == 1, counts)
+    check("so the updater, which asks only about the host, is not held by it",
+          sum(counts[k] for k in ffwatch.Watcher.HOST_TAIL) == 1, counts)
+    w.container_live = lambda name, cid=None: False
 
     w.db.execute("UPDATE turn SET status='done', ended_at=? WHERE id=?",
                  (ffwatch.now_iso(), turn_id))
@@ -8853,7 +8914,13 @@ def test_a_shutdown_waits_for_the_host_not_only_for_the_containers():
           w.settling()["outbound"] == 1, w.settling())
 
     w.db.execute("UPDATE outbound SET status='sent' WHERE nonce='n-7200'")
-    check("with all three at zero the machine is quiet",
+    # The second turn is still running in a live container, so close it before asking whether
+    # the box is quiet -- otherwise this is asserting that a busy box is idle.
+    w.db.execute("UPDATE turn SET status='done', ended_at=? WHERE status='running'",
+                 (ffwatch.now_iso(),))
+    w.db.execute("UPDATE run SET terminal_state='done', exit_code=0"
+                 " WHERE terminal_state IS NULL")
+    check("with all four at zero the machine is quiet",
           sum(w.settling().values()) == 0 and w.settling_phrase(w.settling()) == "nothing",
           w.settling())
 
@@ -8895,24 +8962,43 @@ def test_the_updater_records_when_an_update_actually_landed():
           "NextElapseUSecMonotonic" in stc, None)
 
 
-def test_the_updater_forces_softly_rather_than_standing_down():
-    """The window ends in a SOFT stop and an update, not in a stand-down.
+def test_the_updater_waits_for_the_host_and_not_for_containers():
+    """The window is the HOST's tail now, and it is five minutes rather than an hour.
 
-    Standing down was the old behaviour and it is the wrong trade on a box that is busy for
-    hours at a time: the update that never lands is the one that would have fixed the thing
-    making it busy. Forcing is not killing, though — every one of these containers is PID 1
-    running a task whose trap harvests the workspace out of a tmpfs and hands the Unity licence
-    seat back, and the host then needs a moment to publish what those stops released.
+    It used to be an hour because a container did not survive a restart: ffbox was a child of
+    ffwatch, in its cgroup, so a stop signalled it and its trap stopped the container. An hour
+    was the compromise between a box that never updates and a run that gets interrupted, and it
+    was a bad compromise in both directions -- a twenty-hour job both blocked every update and
+    was killed at the end of the window anyway.
+
+    Containers are detached now, so the update neither waits for them nor stops them. What is
+    left to wait for is a turn whose container has ALREADY exited and whose push is in a thread,
+    because a thread does not survive a stop. That is seconds of work.
+
+    STOP_RUNNING puts the old behaviour back for one pass, for a fix that has to apply to what is
+    running right now -- and when it does, forcing is still a soft stop.
     """
-    print("update: the window ends in a soft stop")
+    print("update: it waits for the host, not the containers")
     upd = open(os.path.join(HERE, "update_ffbox.sh"), encoding="utf-8").read()
     code = "\n".join(l for l in upd.splitlines() if not l.lstrip().startswith("#"))
-    check("the window is an hour", "FFBOX_DRAIN_TIMEOUT:-3600" in code, None)
+    check("the window is the host's tail, not an hour of containers",
+          "FFBOX_DRAIN_TIMEOUT:-300" in code, None)
     check("and nothing stands the update down at the end of it",
           "STANDING DOWN" not in upd, None)
     loop = code.partition("_deadline=$(( $(date +%s) + DRAIN_TIMEOUT ))")[2] \
                .partition('log "stopping ffbox.target"')[0]
     check("nothing in the wait exits before the merge", "exit 0" not in loop, loop)
+    check("what it waits on is the host alone", "--host-only" in loop, loop)
+    # A working container is counted only under the deliberate flag. The `while` body is the
+    # slice that matters: the section after it names what is being carried and never counts it.
+    body = loop.partition("while :; do")[2].partition("\ndone")[0]
+    check("nothing counts a working container unless stop-running is armed",
+          "ffbox.workload" not in body.partition('STOP_RUNNING" = 1')[0], body[:400])
+    check("and what is left running is named rather than waited on",
+          "it keeps working across this update" in upd
+          and "leaving $_c running" in upd, None)
+
+    # The deliberate form: wait for containers, then stop them SOFTLY.
     force = code.partition("_forced=1")[2].partition("_settle=")[0]
     check("the stragglers get docker stop with a real grace",
           'stop --timeout "$FORCE_STOP_GRACE"' in force, force)
@@ -8920,6 +9006,14 @@ def test_the_updater_forces_softly_rather_than_standing_down():
           "rm -f" not in force, force)
     check("the host gets a bounded window of its own afterwards",
           "FORCE_SETTLE" in code and '"$FFWATCH" quiet' in code, None)
+    check("stop-running is armable by a file, so the timer can pick it up",
+          "update.stop-running" in code, None)
+
+    # What survives is named, and nothing survives for ever.
+    check("every surviving container is named in the log",
+          "it keeps working across this update" in upd, None)
+    check("and one past the age ceiling is stopped rather than carried again",
+          "MAX_CONTAINER_AGE" in code, None)
 
 
 def test_every_lane_agrees_on_the_workspace_path():
@@ -10326,6 +10420,7 @@ def main():
         test_two_dispatchers_cannot_take_one_container,
         test_a_pooled_run_never_loses_the_conversations_memory,
         test_a_crashed_pooled_run_gives_its_transcript_back,
+        test_an_update_does_not_disturb_what_it_is_carrying,
         test_a_detached_run_is_not_stopped_by_its_launcher,
         test_a_live_container_is_adopted_not_requeued,
         test_a_config_from_a_newer_ffbox_does_not_kill_this_one,
@@ -10465,7 +10560,7 @@ def main():
         test_the_project_directory_survives_a_workspace_move,
         test_draining_destroys_what_is_idle_and_nothing_else,
         test_a_shutdown_waits_for_the_host_not_only_for_the_containers,
-        test_the_updater_forces_softly_rather_than_standing_down,
+        test_the_updater_waits_for_the_host_and_not_for_containers,
         test_the_updater_records_when_an_update_actually_landed,
         test_a_pull_request_a_human_closed_is_not_reopened,
         test_the_reconcile_opens_the_pull_request_the_run_could_not,

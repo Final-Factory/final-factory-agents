@@ -9407,7 +9407,10 @@ class Watcher:
     # What a shutdown has to wait for, and the phrase each count is reported as.
     SETTLE_LABELS = (("runs", "run(s) in a container"),
                      ("turns", "turn(s) still publishing on the host"),
+                     ("publishing", "turn(s) whose container is gone and are still publishing"),
                      ("outbound", "reply(s) not yet delivered"))
+    # WHAT A STOP CAN ACTUALLY LOSE, once containers survive one. See settling().
+    HOST_TAIL = ("publishing", "outbound")
 
     def settling(self):
         """Everything still in flight, in the THREE places a shutdown can lose work.
@@ -9446,9 +9449,39 @@ class Watcher:
             "runs": self.running_counts(),
             "turns": int(self.db.scalar(
                 "SELECT COUNT(*) FROM turn WHERE status='running'", (), 0)),
+            # THE ONLY ONE OF THE FOUR AN UPDATE STILL HAS TO WAIT FOR, since a container
+            # survives a stop and a turn does not.
+            #
+            # `turns` counts every running turn, and a twenty-hour run holds that status for
+            # twenty hours -- so an updater that waited on it would wait exactly as long as the
+            # one that waited on containers, which was the whole thing being fixed. What a stop
+            # can lose is narrower: a turn whose CONTAINER IS ALREADY GONE and whose host-side
+            # half -- the harvest, the push, the pull request, the reply -- is in a thread right
+            # now. That thread does not survive a restart; the container does.
+            #
+            # Counted from the run rows rather than by asking docker, because this is called on
+            # a loop and by the updater: a turn is publishing when its latest run has gone
+            # terminal, or when the run row is open but names no live container (the finish pass
+            # is about to take it).
+            "publishing": self.publishing_count(),
             "outbound": int(self.db.scalar(
                 f"SELECT COUNT(*) FROM outbound WHERE status IN {sendable}", (), 0)),
         }
+
+    def publishing_count(self):
+        """Turns whose container is gone and whose host-side half is still owed. See settling()."""
+        n = 0
+        for turn in self.db.query("SELECT id FROM turn WHERE status='running'"):
+            run = self.db.one("SELECT * FROM run WHERE turn_id=? ORDER BY id DESC LIMIT 1",
+                              (turn["id"],))
+            if run is None:
+                # A turn marked running with no run row at all: schedule() has claimed it and
+                # launch() has not reached its INSERT. Seconds, and a restart requeues it.
+                continue
+            if run["terminal_state"] is None and self.run_container_live(run):
+                continue                       # still in a container, which survives a stop
+            n += 1
+        return n
 
     @staticmethod
     def settling_phrase(counts):
@@ -10074,7 +10107,11 @@ def build_parser():
                     help="block until nothing is in flight (or --timeout expires)")
     sp.add_argument("--timeout", type=int, default=3600,
                     help="seconds to wait before giving up (default 3600)")
-    sub.add_parser("quiet", help="exit 0 when nothing is in flight, 1 while anything is")
+    q = sub.add_parser("quiet", help="exit 0 when nothing is in flight, 1 while anything is")
+    q.add_argument("--host-only", action="store_true",
+                   help="ignore work that is safely inside a container: ask only whether the "
+                        "HOST is still finishing a turn or holding a reply. What the updater "
+                        "asks, since a container survives a restart and a thread does not")
     sub.add_parser("resume", help="remove the drain flag and start launching again")
     sp = sub.add_parser("pool", help="staged containers waiting for a request")
     sp.add_argument("action", nargs="?", default="status",
@@ -10186,6 +10223,8 @@ def main(argv=None):
         # ever settle, and the update that would repair the machine must not be the thing that
         # waits an hour on them.
         counts = watcher.settling()
+        if args.host_only:
+            counts = {k: v for k, v in counts.items() if k in Watcher.HOST_TAIL}
         total = sum(counts.values())
         if total and not watcher.daemon_alive():
             print(f"no ffwatch daemon holds the lock; {watcher.settling_phrase(counts)} will "
