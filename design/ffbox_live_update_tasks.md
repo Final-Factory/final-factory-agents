@@ -8,15 +8,51 @@ the counters (`workload_count`, `agent_workload_count`), `ffbox`'s stage/dispatc
 Effort: **S** under an hour, **M** an afternoon, **L** a day or more, **?** unknown until
 something is measured.
 
-## Status, 2026-09-03
+## Status, 2026-09-03 — implemented and live
 
-Nothing started. Phase V is three commands and should be run before anything is written, because
-two facts the design leans on are inferred from how git and docker behave rather than measured on
-this box.
+All of V through G landed on the build server the same day, one commit per phase, verified end to
+end: a real turn was launched detached, its container was renamed at dispatch, and a later pass
+finished it and posted the answer.
 
-Phases A, B and C are worth landing whether or not the rest does. B alone fixes the 2026-09-01
-failure where a run that finished and verified 774/774 clean was scored 70 and reported as
-"the run failed".
+Phase V settled all three facts, and two of them mattered:
+
+- a file bind mount KEEPS ITS INODE when git replaces the source. The host inode changed and the
+  container went on reading the old bytes for the whole run. So the task script and ffverify were
+  never changed under a running container; the plugin DIRECTORY was, and that was the real bug.
+- `docker run --rm` is performed by the DAEMON. A client killed mid-run leaves the container to
+  exit and be removed with nobody able to ask what it exited with. That is what made dropping
+  --rm necessary rather than tidy.
+- a container outlives the shell that created it, which is what the whole design rests on.
+
+Live evidence from the first turn through the new path, run 68 (`d56t1-13ea10a2`):
+
+    run d56t1-13ea10a2: container is up; the finish pass owns it from here
+    pool: 0c6a7ca8's container is gone but its run has not been finished; leaving the spool alone
+    pool: 0c6a7ca8 finished; swept 1 transcript(s) home
+
+The middle line is B7 — the guard pool_reap only ever had by accident — firing in the window the
+design predicted it would matter in.
+
+Two things were found by running it rather than by writing it, and both are fixed:
+
+1. **A detached dispatch orphaned a `docker wait`.** That line sits above the detach exit, so
+   every dispatched run left a process waiting for hours on a container nothing would hear about
+   — and its redirect created `out/.container-rc` EMPTY, which a less careful reader would score
+   as a failed run. Skipped when detaching; the container writes its own status and the host asks
+   docker for the rest.
+2. **A config key from a newer build killed every older `ffwatch` invocation.** Not part of this
+   plan, found while landing it, and it had the box wedged: see the gap list below and the commit
+   "a config written by a newer ffbox must not kill an older one".
+
+What is NOT done, deliberately:
+
+- **D5 is not applicable as written.** It said to remove ffbox's clock loop after comparing the
+  two enforcers for a release. Phase E removes the loop from the executor path by construction —
+  a detached ffbox does not reach it — so there is nothing left to compare. The loop stays for
+  `--direct`, where a human is watching, and that is the right home for it.
+- **The dispatch rename stays.** Section 4a says land the ids, move every reader onto them, and
+  remove the rename afterwards. The readers have moved and the updater no longer classifies by
+  name, so the prerequisite is met; removing it is its own change and its own commit.
 
 ## What already exists
 
@@ -134,6 +170,19 @@ something the code does not do. Each is settled here and the design has been ame
     saying where the constant lives. **Decision:** one integer in `ffwatch.py` beside
     `CAPABILITIES` and one in `ffbox`, checked by `--finish` and by `finish_runs`, with the same
     lockstep note the three copies of the Unity machine-id constant already carry.
+
+12a. **A config written by a newer ffbox killed an older one.** Not from this design; found on
+    the build server at 12:28 on 2026-09-03 while landing phase D, and it had the box wedged.
+    Several checkouts share one `~/.config/ffbox/config.json` and `setup.sh` seeds new keys into
+    it every pass. A newer checkout wrote `cluster.compact_turns`; the checkout the services run
+    from was one commit older and had no such default, and `config_warnings` does
+    `DEFAULTS["cluster"][key]` on every invocation. So `ffwatch drain` died — no drain flag, so
+    the keeper went on staging — and `ffwatch quiet` died, so the updater could never see the box
+    go quiet. It spent its whole hour destroying every container the undrained keeper had just
+    staged, once every fifteen seconds, and the only way out was to force at the end of the
+    window. **Decision:** an unknown key is reported and ignored. The config file is shared and
+    the code is not, so a config from the future is a normal state on this machine. This is the
+    same forward-compatibility contract gap 11's contract version exists for, one layer down.
 
 12. **`FFBOX_DRAIN_TIMEOUT` should not be joined by a second knob.** The design named
     `FFBOX_SETTLE_TIMEOUT` for the shorter window, next to an existing `FFBOX_FORCE_SETTLE_SECS`

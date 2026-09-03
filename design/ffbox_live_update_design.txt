@@ -1,7 +1,15 @@
 ffbox: updating without stopping the containers that are working
 ================================================================
 
-Status: design, not implemented. Written 2026-09-03.
+Status: IMPLEMENTED AND LIVE on the build server, 2026-09-03, the day it was written. See
+design/ffbox_live_update_tasks.md for the phase-by-phase record, what the three verification
+probes actually measured, and the two defects found by running it rather than by writing it.
+
+The one thing this document predicted wrongly is worth naming here rather than only in the tasks
+file: section 12 asks whether a file bind mount survives a merge, and hedges. It does -- measured
+on this box, the host inode changed while the container went on reading the old bytes. So the
+task script and ffverify were never being changed under a running container, and the plugin
+DIRECTORY, which section 4a flagged as the one real instance, was the whole bug.
 Supersedes nothing; extends design/self_update_design.txt sections 4 and 4a, which decided
 that a busy box waits an hour and is then force-stopped.
 
