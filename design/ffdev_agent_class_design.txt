@@ -89,8 +89,8 @@ attribute it has to match on.
 3. The config sections
 ----------------------
 
-`ffdev` is a sibling of `ffagent` at the top level of config.json, with the same keys and the
-same `_help` treatment. Seeded by `05-discord-setup.sh`:
+`ffdev` is a sibling of `ffagent`, with the same keys and the same `_help` treatment. Seeded by
+`05-discord-setup.sh`:
 
     "ffdev": {
       "base_ref": "master",
@@ -99,8 +99,18 @@ same `_help` treatment. Seeded by `05-discord-setup.sh`:
       "kill_grace_secs": 10,
       "pool": {"idle": 1, "max": 3},
       "idle_agent_ttl_secs": 14400,
-      "pool_ref": null
+      "pool_ref": null,
+      "network": "full"
     }
+
+WHERE THE TWO BLOCKS LIVE, CORRECTED 2026-09-02. They were written here as siblings at the TOP
+LEVEL of config.json, beside `watch` and `web_port`, and shipped that way for a day. They are now
+both inside one `"pools"` object, because a pool is not another pipeline setting and "what does
+this box stage" should not depend on knowing which two top-level keys happen to be class names.
+`ffwatch._pool_section` is the only reader and it reads only `"pools"`; the one box running this
+had its config.json edited the same day. The rest of this section is unchanged by the move.
+
+`network` is the other thing this section gained on 2026-09-02 and it is described in section 3a.
 
 It goes into the template `05-discord-setup.sh` seeds AND into the config.json already on this
 box. Every value except the pool block starts out the same as `ffagent`'s. The two numbers that
@@ -122,10 +132,59 @@ with 3 rather than -1 on purpose. Dev turns are the long ones, and three of them
 is doing is as much of a six-container box as one lane should be able to take.
 
 
+3a. The network, per pool  (added 2026-09-02)
+---------------------------------------------
+
+The first thing the two classes actually disagree about, and the reason the split earns its keep
+beyond separate ceilings.
+
+    "pools": {
+      "ffagent": { ..., "network": "limited" },
+      "ffdev":   { ..., "network": "full" }
+    }
+
+TWO WORDS, AND THEY NAME A POLICY RATHER THAN A DOCKER NETWORK. `limited` is the egress fence:
+`ffbox-net`, a Docker --internal bridge with no default route whose only other occupant is the
+allowlist proxy, so a run on it reaches the names in `ffbox/egress/allowlist.txt` and nothing
+else -- no LAN, and not this host. `full` is the ordinary bridge: the whole internet, no
+allowlist, no SNI filter, and this machine's own LAN address as well (measured 2026-08-25, port
+22 answered, because rootless Docker disables the host loopback and not the host's IP).
+
+Written as a policy because the operator's question is "is this pool fenced", and `bridge` does
+not answer it. `full` is not the fence minus DNS filtering, it is no fence, and the word should
+say so without knowing what a docker network is.
+
+ONE PLACE RESOLVES IT. `ffwatch._class_blocks` turns the word into a docker network name and
+stores both -- `network` stays what the file said, `docker_network` is what goes onto the ffbox
+argv. `ffbox` itself takes a docker name and knows nothing about the two words; a second opinion
+there is how an ffdev container ends up fenced with an operator reading the wrong file to find
+out why. A value that is neither word falls back to THAT class's default, so a typo cannot put
+ffdev behind ffagent's fence or the other way round, and cannot produce `--network ''`, which
+docker refuses -- that would take a whole class off the box on a stray edit.
+
+READ AT CONTAINER CREATION ONLY. A container's network is fixed by `docker run`, and dispatch
+renames a container that already exists, so a staged container carries whatever its class said
+when it was staged. That is safe because the pools do not mix: `pool_claim_for` matches on class,
+so a fenced spare is never handed to a turn that was promised the internet.
+
+WHY IT IS PER POOL AND NOT ONE SWITCH FOR THE BOX. `ffdev` has to read documentation, search the
+web and fetch a package; an allowlist edited every time it wants a new host is not a fence, it is
+a queue. That makes an ffdev container as trusted as a developer's own shell here -- defensible
+only because DISCORD CONVERSATIONS ARE ALWAYS FFAGENT. The class is picked at the local ingress,
+behind the web login or a shell on this box, so no text written by a stranger can start an
+unfenced container. `docs/docker-security-model.md`, "The class that is not fenced", is the
+argument in full.
+
+The docker names are NOT accepted on the way in. `"network": "bridge"` is not a request for the
+bridge, it is a value that is neither word and falls back to that class's default -- the fence for
+ffagent, the bridge for ffdev, so the fall-back is the safe direction either way. Naming a docker
+network in the config file is precisely what this key stopped meaning.
+
+
 4. Resolving the config for a class
 -----------------------------------
 
-`load_config()` flattens `ffagent` over the top level and returns one dict. Every reader
+`load_config()` flattens `pools.ffagent` over the top level and returns one dict. Every reader
 downstream does `cfg["agent_secs"]` and knows nothing about sections. That has to keep working,
 because most of the file is not about the container at all — the watch table, the send limits,
 the page's bind address, `max_concurrent_runs` — and none of it wants a class.
@@ -134,7 +193,8 @@ So: `cfg` stays exactly what it is, flattened from `ffagent`, and gains one nest
 
     cfg["agent_classes"] = {
       "ffagent": {agent_secs, warmup_secs, kill_grace_secs, base_ref,
-                  idle_agents, agent_pool_max, idle_agent_ttl_secs, pool_ref},
+                  idle_agents, agent_pool_max, idle_agent_ttl_secs, pool_ref,
+                  network, docker_network},
       "ffdev":   {the same keys},
     }
 
@@ -320,7 +380,7 @@ and then `ccfg` supplies, in place of `self.cfg`:
 
 **`verify_secs` is not one of them and stays top-level.** `launch()` passes a FOURTH clock,
 `--verify-timeout`, out of `self.cfg["verify_secs"]` (`ffwatch.py:301`, `:4514`). It is not in the
-`ffagent` section of config.json and does not move into either class's block: it bounds the
+`pools.ffagent` block of config.json and does not move into either class's block: it bounds the
 harness's own verification after the agent has exited, which is the same Unity suite whichever
 container ran the turn. Everything in this document that says "the three clocks" means the three
 that are in the section.

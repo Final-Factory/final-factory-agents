@@ -153,11 +153,15 @@ RESULTS=${FFBOX_RESULTS:-$HOME/ffbox-runs}
 # it is no fence.
 #
 # THE DEFAULT BELOW IS NOT WHAT PRODUCTION RUNS ON, and that is worth knowing before reading it
-# as policy. Since 2026-09-02 the network is a PER-CLASS setting: ffwatch reads
-# agent_classes.<class>.network out of config.json and passes --network explicitly on every
-# container it creates -- ffbox-net for ffagent, and `bridge` for ffdev, which is deliberately
-# unfenced so a dev turn can search the web and fetch what it needs. This default is what a
-# hand-run and `--direct` get, and it stays the fenced one because the safe answer is the one
+# as policy. Since 2026-09-02 the network is a PER-POOL setting: config.json says
+# pools.<class>.network, which is "limited" or "full" rather than a docker name, and ffwatch
+# resolves that one word to a network and passes --network explicitly on every container it
+# creates -- ffbox-net for ffagent's "limited", and `bridge` for ffdev's "full", which is
+# deliberately unfenced so a dev turn can search the web and fetch what it needs.
+#
+# THIS FILE TAKES THE DOCKER NAME AND NOT THE POLICY WORD, so exactly one place knows that
+# "limited" means ffbox-net and it is the one holding the config file. The default here is what
+# a hand-run and `--direct` get, and it stays the fenced one because the safe answer is the one
 # you should have to opt out of. To hand-run an ffdev-shaped container, say so:
 #     ffbox --agent-class ffdev --network bridge ...
 NETWORK=${FFBOX_NETWORK:-ffbox-net}
@@ -180,11 +184,11 @@ RUN_ID_OVERRIDE=
 # classes run the same image, the same task and the same limits, and what differs is the config
 # section ffwatch read before it called us and the pool the container is staged into.
 #
-# THE NETWORK IS PART OF THAT CONFIG SECTION and reaches us as --network, NOT derived from this
-# name. One place decides, and it is ffwatch reading config.json; this file would be a second
-# opinion that could disagree with it, which is how an ffdev container ends up fenced and an
-# operator ends up reading the wrong file to find out why. The label
-# is what lets ffwatch count and claim the two pools apart afterwards.
+# THE NETWORK IS PART OF THAT POOL'S CONFIG SECTION and reaches us as --network, NOT derived
+# from this name. One place decides, and it is ffwatch reading pools.<class>.network out of
+# config.json; this file would be a second opinion that could disagree with it, which is how an
+# ffdev container ends up fenced and an operator ends up reading the wrong file to find out why.
+# The label is what lets ffwatch count and claim the two pools apart afterwards.
 #
 # MIRRORS AGENT_CLASSES IN ffwatch.py, which is the original -- this is shell and cannot import
 # it. ffweb.py carries the third copy for the same reason.
@@ -249,10 +253,11 @@ Options:
   --image NAME         Container image to run (default: ffbox:latest).
   --network NAME       Docker network for the run (default: ffbox-net, the filtered one). Use
                        "bridge" for unrestricted egress — it hands whatever runs in there the
-                       whole internet and this machine's LAN. ffwatch always passes this
-                       explicitly, from agent_classes.<class>.network in config.json: ffagent
-                       runs fenced on ffbox-net, ffdev runs on bridge. The default here is only
-                       what a hand-run gets.
+                       whole internet and this machine's LAN. A DOCKER NAME, not the policy word
+                       the config file uses: ffwatch always passes this explicitly, resolved from
+                       pools.<class>.network in config.json, where ffagent says "limited"
+                       (ffbox-net, fenced) and ffdev says "full" (bridge). The default here is
+                       only what a hand-run gets.
   --ref REF            Check the workspace out at REF after restoring (a branch, tag or sha;
                        "develop" resolves to origin/develop when no local branch matches).
                        The resolved sha is written to <results>/base_sha.txt.
@@ -295,7 +300,8 @@ Options:
                        run the same image, task and limits; the name goes on as a label so the
                        two pools can be counted and claimed apart. ffwatch passes the class the
                        conversation was opened with. It does NOT pick the network — that comes
-                       from --network, which ffwatch also passes; see there.
+                       from --network, which ffwatch also passes, resolved from that pool's
+                       "network" mode; see there.
   --agent-timeout N    Seconds of AGENT working time (default 1800). The clock starts when the
                        task creates <out>/.agent-started, not when ffbox does.
   --warmup-timeout N   Seconds for everything before that marker (default 3600).

@@ -7467,8 +7467,8 @@ def test_the_two_agent_classes_are_configured_independently():
 
     # ffagent configured hard, no ffdev section at all.
     cfg = load({"max_concurrent_runs": 6,
-                "ffagent": {"agent_secs": 999, "base_ref": "develop",
-                            "pool": {"idle": 2, "max": -1}}})
+                "pools": {"ffagent": {"agent_secs": 999, "base_ref": "develop",
+                                      "pool": {"idle": 2, "max": -1}}}})
     check("ffdev does not inherit ffagent's clocks",
           ffwatch.class_cfg(cfg, "ffdev")["agent_secs"] == 1800, None)
     check("nor its base branch",
@@ -7480,9 +7480,14 @@ def test_the_two_agent_classes_are_configured_independently():
     # where a well-meant "make them consistent" edit gets caught. ffagent behind the egress
     # proxy, ffdev on the open bridge, and neither derived from the other.
     check("ffagent defaults to the fenced network",
-          ffwatch.class_cfg(cfg, "ffagent")["network"] == "ffbox-net", None)
+          ffwatch.class_cfg(cfg, "ffagent")["network"] == "limited", None)
     check("and ffdev defaults to the unfenced one",
-          ffwatch.class_cfg(cfg, "ffdev")["network"] == "bridge", None)
+          ffwatch.class_cfg(cfg, "ffdev")["network"] == "full", None)
+    # THE MODE IS WHAT THE FILE SAYS AND THE DOCKER NAME IS DERIVED FROM IT, in one place. The
+    # config names a policy; only this resolution knows which network implements it.
+    check("and each mode resolves to the docker network that implements it",
+          (ffwatch.class_cfg(cfg, "ffagent")["docker_network"],
+           ffwatch.class_cfg(cfg, "ffdev")["docker_network"]) == ("ffbox-net", "bridge"), None)
     check("ffagent still reads what the file said",
           ffwatch.class_cfg(cfg, "ffagent")["agent_secs"] == 999, None)
     # -1 is "no ceiling of my own", which is the box's.
@@ -7493,8 +7498,8 @@ def test_the_two_agent_classes_are_configured_independently():
 
     # ffdev configured, ffagent left alone -- the other direction.
     cfg = load({"max_concurrent_runs": 6,
-                "ffdev": {"base_ref": "develop", "agent_secs": 3600,
-                          "pool": {"idle": -5, "max": "two"}}})
+                "pools": {"ffdev": {"base_ref": "develop", "agent_secs": 3600,
+                                    "pool": {"idle": -5, "max": "two"}}}})
     check("ffdev reads its own section",
           ffwatch.class_cfg(cfg, "ffdev")["base_ref"] == "develop", None)
     check("and ffagent is untouched by it",
@@ -7506,19 +7511,40 @@ def test_the_two_agent_classes_are_configured_independently():
           ffwatch.class_cfg(cfg, "ffdev")["agent_pool_max"] == 3, None)
 
     # A network that is set is honoured -- putting ffdev back behind the fence is a config edit
-    # and not a code change -- and one that is unusable falls back to THAT class's default. An
-    # empty string reaching the ffbox argv would be `--network ''`, which docker refuses, and
-    # the whole class would stop launching over a stray edit.
+    # and not a code change -- and one that is neither mode falls back to THAT class's default.
+    # A blank or a number reaching the ffbox argv would be `--network ''`, which docker refuses,
+    # and the whole class would stop launching over a stray edit.
     cfg = load({"max_concurrent_runs": 6,
-                "ffdev": {"network": "ffbox-net"},
-                "ffagent": {"network": "   "}})
+                "pools": {"ffdev": {"network": "limited"},
+                          "ffagent": {"network": "   "}}})
     check("a class's network is read from its own section",
-          ffwatch.class_cfg(cfg, "ffdev")["network"] == "ffbox-net", None)
+          ffwatch.class_cfg(cfg, "ffdev")["network"] == "limited", None)
+    check("and putting ffdev behind the fence moves the docker network with it",
+          ffwatch.class_cfg(cfg, "ffdev")["docker_network"] == "ffbox-net", None)
     check("and a blank one falls back to that class's default, never to empty",
-          ffwatch.class_cfg(cfg, "ffagent")["network"] == "ffbox-net", None)
-    cfg = load({"max_concurrent_runs": 6, "ffdev": {"network": 7}})
+          ffwatch.class_cfg(cfg, "ffagent")["network"] == "limited", None)
+    cfg = load({"max_concurrent_runs": 6, "pools": {"ffdev": {"network": 7}}})
     check("a network that is not a string falls back too",
-          ffwatch.class_cfg(cfg, "ffdev")["network"] == "bridge", None)
+          ffwatch.class_cfg(cfg, "ffdev")["network"] == "full", None)
+    # A DOCKER NETWORK NAME IS NOT A MODE. Naming one in the config file is exactly what this
+    # key stopped meaning, and it falls back rather than being honoured -- which for ffagent is
+    # the fence and for ffdev is the bridge, so the fall-back is the safe direction either way.
+    cfg = load({"max_concurrent_runs": 6,
+                "pools": {"ffdev": {"network": "ffbox-net"},
+                          "ffagent": {"network": "bridge"}}})
+    check("a docker network name in the config is not a mode",
+          ffwatch.class_cfg(cfg, "ffdev")["network"] == "full", None)
+    check("and the fenced class stays fenced when somebody writes one",
+          ffwatch.class_cfg(cfg, "ffagent")["network"] == "limited", None)
+
+    # THE POOLS ARE ONLY READ FROM "pools". A block left at the top level, which is where these
+    # sat until 2026-09-02, is not a second place to configure one -- it is ignored, and the
+    # class gets its own defaults.
+    cfg = load({"max_concurrent_runs": 6,
+                "ffagent": {"agent_secs": 777, "pool": {"idle": 2, "max": 5}}})
+    check("a block at the top level is not read",
+          ffwatch.class_cfg(cfg, "ffagent")["agent_secs"] == 1800, None)
+    check("nor is its pool", ffwatch.class_cfg(cfg, "ffagent")["idle_agents"] == 1, None)
 
     # An unknown name is a bug upstream, not an operator's typo: every caller gets its name from
     # a validated argument, a validated form field or a NOT NULL column. Falling back would hide
@@ -7587,7 +7613,17 @@ def test_each_class_is_created_on_its_own_network():
           and agent[agent.index("--agent-class") + 1] == "ffagent", seen)
 
     # A config edit moves it, with no code change: this is how ffdev goes back behind the fence.
-    w.cfg["agent_classes"]["ffdev"]["network"] = "ffbox-net"
+    # Through load_config rather than by poking the block, so what is asserted is the whole path
+    # -- the word in the file, the mode it resolves to, and the docker network that reaches the
+    # ffbox argv.
+    cfg_path = os.path.join(TMPROOT, "classnet-config.json")
+    with open(cfg_path, "w", encoding="utf-8") as fh:
+        json.dump({"pools": {"ffdev": {"network": "limited"}}}, fh)
+    saved_cfg, ffwatch.FFBOX_CONFIG = ffwatch.FFBOX_CONFIG, cfg_path
+    try:
+        w.cfg["agent_classes"] = ffwatch.load_config()["agent_classes"]
+    finally:
+        ffwatch.FFBOX_CONFIG = saved_cfg
     seen.clear()
     real, ffwatch.subprocess = ffwatch.subprocess, _Shim
     try:
@@ -7596,6 +7632,8 @@ def test_each_class_is_created_on_its_own_network():
         ffwatch.subprocess = real
     check("and the config is what decides, not the class name",
           seen[0][seen[0].index("--network") + 1] == "ffbox-net", seen)
+    check("the argv carries the docker network, never the word the config used",
+          "limited" not in seen[0], seen)
 
 
 def test_each_class_counts_only_its_own_containers():

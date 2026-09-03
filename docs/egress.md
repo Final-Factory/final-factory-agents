@@ -48,8 +48,10 @@ ffbox's list would hand ffbox's containers a reach they do not have today.
 
 **Not everything on this box goes through one of them.** `ffdev` agent containers are created on
 the ordinary `bridge` and have no proxy, no allowlist and no filter — since 2026-09-02 the network
-is a per-class setting, `agent_classes.<class>.network` in `~/.config/ffbox/config.json`, and only
-`ffagent` is on `ffbox-net`. So an ffdev run leaves no trace in either proxy's log, and a "why is
+is a per-pool setting, `pools.<class>.network` in `~/.config/ffbox/config.json`, and it names a
+policy rather than a network: `ffagent` says `"limited"`, which is `ffbox-net` behind the proxy,
+and `ffdev` says `"full"`, which is the open bridge. So an ffdev run leaves no trace in either
+proxy's log, and a "why is
 this host not being asked for" question about a dev turn has the same answer every time: it is not
 on this wire. **Discord can reach that class, but only through the trust table**: a conversation
 opened by an account in `discord.trust.operators` runs in `discord.operator_pool`, which is

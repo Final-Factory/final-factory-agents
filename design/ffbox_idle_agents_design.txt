@@ -526,7 +526,11 @@ the derivations are salted differently -- 'ffghr-<host>-slot-<n>' against 'ffbox
 13. Configuration and CLI
 --------------------------
 
-In `~/.config/ffbox/config.json`, beside `max_concurrent_runs`:
+In `~/.config/ffbox/config.json`. WHERE THESE KEYS LIVE HAS MOVED TWICE since this was written:
+they sat beside `max_concurrent_runs` at the top level, went into an `"ffagent"` section of their
+own on 2026-09-01, and on 2026-09-02 went inside `"pools"` with one block per agent class, where
+`idle_agents`/`agent_pool_max` are spelled `pool.idle`/`pool.max`. The meanings below are
+unchanged; `ffbox/README.md` is the current shape.
 
     "idle_agents": 1                staged containers waiting while nothing is happening. 0 is off
                                     and is exactly today's behaviour.

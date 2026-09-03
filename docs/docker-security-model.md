@@ -47,11 +47,12 @@ ffdev   -> bridge ------------------------> the internet, and this host's LAN ad
            (no fence, on purpose)
 ```
 
-**The fence is per agent class, not per box.** Since 2026-09-02, `agent_classes.<class>.network`
-in `config.json` says which network a container of that class is created on, and the two classes
-disagree: `ffagent` is `ffbox-net` and `ffdev` is `bridge`. Everything below about the filter
-describes `ffagent`, which is the class a Discord forum can reach. `ffdev` is covered in "The
-class that is not fenced".
+**The fence is per pool, not per box.** Since 2026-09-02, `pools.<class>.network` in
+`config.json` says which network a container of that class is created on, and the two pools
+disagree: `ffagent` is `"limited"` and `ffdev` is `"full"`. The config names the policy and not
+the network — ffwatch is the one place that knows `"limited"` means `ffbox-net` and `"full"` means
+`bridge`. Everything below about the filter describes `ffagent`, which is the class a Discord
+forum can reach. `ffdev` is covered in "The class that is not fenced".
 
 The single most important property is that **no model runs on the host.** `ffwatch.py` is fixed
 Python. It does not decide whether to push; it executes a refspec it built itself from a name it
@@ -253,11 +254,13 @@ argument and not an `ffdev` one. And the exfiltration ceiling for `ffdev` is not
 but "anywhere" — the credentials it holds should be read as fully exposed rather than exposed to
 an allowlist.
 
-The switch is one key per class in `~/.config/ffbox/config.json`, read at container creation:
+The switch is one key per pool in `~/.config/ffbox/config.json`, read at container creation:
 
 ```json
-"ffagent": { …, "network": "ffbox-net" }
-"ffdev":   { …, "network": "bridge" }
+"pools": {
+  "ffagent": { …, "network": "limited" },   // ffbox-net, behind the allowlist proxy
+  "ffdev":   { …, "network": "full" }       // the ordinary bridge: no proxy, no allowlist
+}
 ```
 
 And which class Discord traffic opens in is two keys in the same file, read at ingest:
@@ -266,7 +269,7 @@ And which class Discord traffic opens in is two keys in the same file, read at i
 "discord": { …, "user_pool": "ffagent", "operator_pool": "ffdev" }
 ```
 
-Putting `ffdev` back behind the fence is `"network": "ffbox-net"` and a restart of ffwatch;
+Putting `ffdev` back behind the fence is `"network": "limited"` and a restart of ffwatch;
 existing staged containers keep the network they were staged with, so drop the pool
 (`python3 ffbox/ffwatch.py pool drop`) if the change needs to take effect immediately.
 
