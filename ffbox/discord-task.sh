@@ -180,6 +180,21 @@ _ffbox_finish() {
         /ffbox/harvest-workspace.sh || log "WARNING: harvest failed"
     fi
     return_license
+    # WHAT THIS CONTAINER EXITED WITH, WRITTEN FROM THE INSIDE. We are PID 1, so our status IS the
+    # container's, and the host reads this to score the run.
+    #
+    # WHY THE CONTAINER WRITES IT AT ALL, when the host watches the container anyway: the host may
+    # not be watching. Whoever observes the exit from outside -- `docker wait`, or a later
+    # `docker inspect` -- overwrites this with the authoritative value, and the ordering makes
+    # that automatic, since this runs before the container has finished exiting. What it buys is
+    # the case where nothing was watching and nothing came back to look: the answer is on the bind
+    # mount rather than lost with the container. On 2026-09-01 a missing exit code turned a run
+    # that verified 774/774 clean into "the run failed"; this is one of the two halves of making
+    # that unreachable.
+    #
+    # Last, after the harvest and the licence, so a crash in either still leaves the code that
+    # says what happened. Never fatal, and never allowed to change our own status.
+    printf '%s\n' "$_rc" > "$FFBOX_OUT/.container-rc" 2>/dev/null || true
     return $_rc
 }
 trap _ffbox_finish EXIT INT TERM

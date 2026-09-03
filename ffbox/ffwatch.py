@@ -4611,6 +4611,11 @@ class Watcher:
         except Exception as exc:                                  # noqa: BLE001
             log(f"pool: retiring {name} failed: {exc}")
         finally:
+            # AND REMOVE IT. A stopped container is not a gone one since --rm came off, and a
+            # spare that retired holds nothing anybody wants: it was never dispatched, so there
+            # is no exit code to read and no output to harvest. Left behind it would sit in
+            # `docker ps -a` until the sweep got to it.
+            self.container_rm([name])
             # The spool directory is left to pool_reap, which already refuses to delete one that
             # still holds a transcript. Dropping the id here is what lets a later pass try again
             # if the stop did not take.
@@ -4657,6 +4662,25 @@ class Watcher:
         for pool_id in os.listdir(base):
             if pool_id in live:
                 continue
+            # A RUN THAT IS NOT FINISHED OWNS THIS DIRECTORY, whatever docker says about its
+            # container. Everything the run produced is in `out/` -- result.json, the work
+            # bundle, the exit code -- and the host reads it AFTER the container is gone, so
+            # "the container has exited" is not "nobody needs this any more".
+            #
+            # THIS USED TO BE COVERED BY ACCIDENT. The transcript guard below refuses a spool
+            # holding a session file, and sweep_finished_spool refuses to move one whose run is
+            # non-terminal, so the two together happened to protect a dispatched run. What they
+            # never covered is a run whose container died before writing any transcript, and the
+            # window was milliseconds only because ffbox moved `out/` the instant `docker wait`
+            # returned. It is a poll interval or more now that the finish happens on a pass.
+            # Ask the question directly instead of inferring it.
+            if self.db.one("SELECT id FROM run WHERE pool_id=? AND terminal_state IS NULL",
+                           (pool_id,)):
+                if pool_id not in Watcher._held_logged:
+                    Watcher._held_logged.add(pool_id)
+                    log(f"pool: {pool_id}'s container is gone but its run has not been "
+                        f"finished; leaving the spool alone")
+                continue
             d = self.pool_dir(pool_id)
             held = glob.glob(os.path.join(d, "claude", "projects", "*", "*.jsonl"))
             if held and self.sweep_finished_spool(pool_id):
@@ -4671,6 +4695,11 @@ class Watcher:
                         f"not sweep; leaving it alone")
                 continue
             Watcher._held_logged.discard(pool_id)
+            # The container itself, which no longer removes itself: --rm came off the staged
+            # container so that a pooled run's exit code survives the run. `docker rm -f` on a
+            # name that is already gone is a no-op, which is the usual case.
+            self.container_rm(pool_container_name(c, pool_id)
+                              for c in CLASS_NAME_PREFIX)
             if self._rmtree_spool(d):
                 gone += 1
                 # It is gone, so a future spool that somehow reused the id would be news again.
@@ -4777,17 +4806,18 @@ class Watcher:
         # the next container on that slot presents the same id and reuses the entitlement. What it
         # costs between times is a concurrent activation finding no free entitlement.
         grace = max(1, int(self.cfg["kill_grace_secs"]), LICENCE_STOP_FLOOR)
-        argvs = []
         for name in names:
-            argvs.append(([self.cfg["docker"], "stop", "--timeout", str(grace), name],
-                          grace + 60, name))
-        for name in names:
-            argvs.append(([self.cfg["docker"], "rm", "-f", name], 60, name))
-        for argv, patience, name in argvs:
+            argv = [self.cfg["docker"], "stop", "--timeout", str(grace), name]
             try:
-                subprocess.run(argv, capture_output=True, text=True, timeout=patience)
+                subprocess.run(argv, capture_output=True, text=True, timeout=grace + 60)
             except (OSError, subprocess.SubprocessError) as exc:
-                log(f"pool: {argv[1]} on {name}: {exc}")
+                log(f"pool: stop on {name}: {exc}")
+        # EVERY STOP FIRST, THEN THE REMOVALS, which is why this is two loops and not one. The
+        # stop is what runs PID 1's trap; removing a container we have not finished stopping
+        # would take the licence return with it. Removal goes through container_rm because that
+        # is the only thing here allowed to delete a container, and a removal that names its
+        # target is the rule the 2026-09-01 loss bought.
+        self.container_rm(names)
         if not force and os.path.exists(self.pool_owner_path(pool_id)):
             log(f"pool: {pool_id} is CLAIMED — its container is gone but its spool stays; "
                 f"the run that owns it still has output in there")
@@ -8343,13 +8373,275 @@ class Watcher:
             run["container_name"],
             run["container_id"] if "container_id" in run.keys() else None)
 
+    def container_rm(self, refs):
+        """Remove containers by id or name. Best effort, and never raises.
+
+        --rm came off both the cold run and the staged container, because the daemon performing
+        it is what loses a run's exit code when the process watching is not there any anymore.
+        Removal is explicit instead, and this is the one place that does it, so a caller cannot
+        invent its own flags.
+
+        Removing something that is already gone is a no-op and the usual case: most callers are
+        tidying up after a path that normally removes its own container.
+
+        BY ID OR BY AN EXACT NAME, NEVER BY A FILTER. Design section 14 rule 2, and the reason
+        is the 2026-09-01 loss: a sweep by label matched a container that had been renamed into
+        a live run and destroyed it. Every ref that reaches here is one the caller can name.
+        """
+        removed = 0
+        for ref in refs:
+            if not ref:
+                continue
+            try:
+                proc = subprocess.run([self.cfg["docker"], "rm", "-f", ref],
+                                      capture_output=True, text=True, timeout=60)
+            except (OSError, subprocess.SubprocessError) as exc:
+                log(f"could not remove container {ref}: {exc}")
+                continue
+            if proc.returncode == 0:
+                removed += 1
+        return removed
+
+    def sweep_dead_containers(self, older_than=3600):
+        """Remove workload containers that have exited and that nothing came back for.
+
+        THE BACKSTOP FOR AN ffwatch THAT DID NOT COME BACK. Every path that creates a container
+        also removes it, so in normal running this finds nothing. What it exists for is the run
+        whose host process was killed between the container exiting and anything reading it:
+        without --rm nothing else would ever take that container off the box.
+
+        AN HOUR, AND IT DOES NOT NEED TO BE PROMPT. An exited container holds neither a place
+        under the ceiling nor its workspace: every counter here and in lib-workloads.sh filters
+        `docker ps`, which is running containers only, and the workspace is a --tmpfs the kernel
+        frees when the container STOPS rather than when it is removed. So the cost of one
+        sitting around is a line in `docker ps -a`, and the cost of removing one too early is an
+        exit code the finish pass has not read yet. Slow and safe is the right trade in that
+        direction. design/ffbox_live_update_design.txt section 4b.
+
+        A CONTAINER WHOSE RUN IS STILL OPEN IS NEVER TOUCHED, however old it is. That is the
+        whole reason for the run_id lookup rather than a flat age test.
+        """
+        try:
+            proc = subprocess.run(
+                [self.cfg["docker"], "ps", "-a", "--filter", "label=ffbox.workload",
+                 "--filter", "status=exited",
+                 "--format", '{{.ID}}\t{{.Label "ffbox.run.id"}}\t{{.Label "ffbox.pool.id"}}'],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"could not list exited containers: {exc}")
+            return 0
+        if proc.returncode != 0:
+            return 0
+        stale = []
+        for line in (proc.stdout or "").splitlines():
+            parts = line.rstrip("\n").split("\t")
+            if not parts or not parts[0].strip():
+                continue
+            cid = parts[0].strip()
+            run_id = parts[1].strip() if len(parts) > 1 else ""
+            pool_id = parts[2].strip() if len(parts) > 2 else ""
+            # Still owed a finish? Leave it. Asked by run id for a cold container and by pool id
+            # for one that was staged, which is the same pair of handles everything else uses.
+            open_run = None
+            if run_id:
+                open_run = self.db.one(
+                    "SELECT id FROM run WHERE ffbox_run_id=? AND terminal_state IS NULL",
+                    (run_id,))
+            if open_run is None and pool_id:
+                open_run = self.db.one(
+                    "SELECT id FROM run WHERE pool_id=? AND terminal_state IS NULL", (pool_id,))
+            if open_run is not None:
+                continue
+            if self._container_exited_for(cid) < older_than:
+                continue
+            stale.append(cid)
+        if not stale:
+            return 0
+        n = self.container_rm(stale)
+        if n:
+            log(f"removed {n} exited container(s) nothing came back for")
+        return n
+
+    def _container_exited_for(self, cid):
+        """Seconds since a container finished, or 0 when that cannot be established.
+
+        ZERO MEANS 'TOO YOUNG TO TOUCH', not 'ancient'. An unparseable timestamp on a container
+        we are deciding whether to delete must fail towards leaving it alone.
+        """
+        try:
+            proc = subprocess.run(
+                [self.cfg["docker"], "inspect", "-f", "{{.State.FinishedAt}}", cid],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return 0
+        raw = (proc.stdout or "").strip()
+        if not raw or raw.startswith("0001-"):
+            return 0
+        # Docker prints RFC3339 with nanoseconds, which fromisoformat will not take before 3.11.
+        raw = re.sub(r"\.(\d{6})\d+", r".\1", raw.replace("Z", "+00:00"))
+        try:
+            when = datetime.fromisoformat(raw)
+        except ValueError:
+            return 0
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - when).total_seconds())
+
+    def run_left_work(self, run):
+        """Did this run leave something worth publishing, even though nothing finished it?
+
+        THE 2026-09-01 CASE, WHICH USED TO BE THROWN AWAY. A run whose supervisor died is scored
+        as a crash and its turn requeued, and that is right when the container died early. It is
+        badly wrong when the agent ran to completion: on 2026-09-01 a run that verified 774/774
+        clean lost its exit code, was scored 70, and the harness told the thread "the run failed
+        / no branch -- the run changed no files". The answer existed on disk the whole time and
+        nothing looked.
+
+        The work bundle is the test, because it is the one artefact that cannot lie: git verifies
+        its own prerequisites, and every commit and path in it is read out of it rather than
+        asserted by the container. A result with no bundle is a question answered rather than
+        work done, and it counts too -- a turn that produced an answer should deliver it rather
+        than be run a second time.
+        """
+        out_dir = self.run_out_dir(run)
+        if not out_dir or not os.path.isdir(out_dir):
+            return False
+        bundle = os.path.join(out_dir, "work.bundle")
+        try:
+            if os.path.getsize(bundle) > 0:
+                return True
+        except OSError:
+            pass
+        return bool(_read_json(os.path.join(out_dir, "result.json")))
+
+    def run_out_dir(self, run):
+        """Where this run's container writes, with a fallback for a row that predates the column.
+
+        The fallback is the run directory, which is right for a cold run and is where a pooled
+        run's output ends up anyway once it has been moved.
+        """
+        if "out_dir" in run.keys() and run["out_dir"]:
+            return run["out_dir"]
+        return self.run_dir_for(run)
+
+    def run_dir_for(self, run):
+        """The run's own directory under its conversation. Derived, never stored: it is a
+        function of two ids that cannot change."""
+        row = self.db.one("SELECT conversation_id FROM turn WHERE id=?", (run["turn_id"],))
+        if row is None:
+            return None
+        return os.path.join(self.conv_dir(row["conversation_id"]), "runs", run["ffbox_run_id"])
+
+    def container_exit_code(self, run):
+        """What this run's container exited with, from the most authoritative source still there.
+
+        THREE ANSWERS, IN ORDER, and the order is about who could still be lying:
+
+          out/.container-rc   written by whoever watched the container exit, and before that by
+                              the container's own trap. The observer's value overwrites the
+                              container's, which is the right way round and happens naturally --
+                              the trap runs before the container has finished exiting.
+          docker inspect      the daemon's own record, available because --rm came off. This is
+                              the one that survives a host process dying mid-run.
+          None                the container is gone and left no code. The caller decides what
+                              that means; it is not automatically a failure, because the run
+                              directory may still hold everything the run produced.
+        """
+        out_dir = self.run_out_dir(run)
+        raw = _read_text(os.path.join(out_dir, ".container-rc")) if out_dir else None
+        if raw:
+            digits = "".join(ch for ch in raw if ch.isdigit())
+            if digits:
+                return int(digits)
+        ref = (run["container_id"] if "container_id" in run.keys() else None) \
+            or run["container_name"]
+        if not ref:
+            return None
+        try:
+            proc = subprocess.run(
+                [self.cfg["docker"], "inspect", "-f", "{{.State.ExitCode}}", ref],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if proc.returncode != 0:
+            return None
+        text = (proc.stdout or "").strip()
+        return int(text) if text.lstrip("-").isdigit() else None
+
+    def finish_run_from_disk(self, run):
+        """Run the finish path for a run whose launching process is gone.
+
+        EVERYTHING finish_run TAKES IS RECOVERABLE, which is the property the whole live-update
+        design rests on. run_row_id, turn and conv are rows; run_dir is a function of two ids;
+        job.json was written before the container started; rc comes from the container or the
+        daemon; and `wall` comes from the turn's own started_at. That last one is the only
+        approximation -- it counts from when the turn was scheduled rather than from when ffbox
+        was invoked, a difference of the pool claim and a `docker run` -- and it is recorded as a
+        duration a human reads rather than anything the pipeline decides on.
+
+        Returns True when it finished the run.
+        """
+        turn = self.db.one("SELECT * FROM turn WHERE id=?", (run["turn_id"],))
+        if turn is None:
+            return False
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (turn["conversation_id"],))
+        if conv is None:
+            # A conversation deleted from under a live run. Close the row so it stops counting
+            # against the ceiling, and say so; there is nobody left to reply to.
+            self.db.execute("UPDATE run SET terminal_state='crashed',"
+                            " exit_code=COALESCE(exit_code,-1) WHERE id=?", (run["id"],))
+            log(f"run {run['ffbox_run_id']}: its conversation is gone; closing the row")
+            return False
+        run_dir = self.run_dir_for(run)
+        job = _read_json(os.path.join(run_dir, "job.json")) or {}
+        rc = self.container_exit_code(run)
+        if rc is None:
+            # NO CODE, BUT POSSIBLY A FINISHED RUN. 70 is what ffbox scores an unreadable exit,
+            # and finish_run reads the directory for everything else, so a run that harvested
+            # cleanly still publishes its branch.
+            rc = 70
+        wall = 0.0
+        if turn["started_at"]:
+            try:
+                began = datetime.strptime(turn["started_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=timezone.utc)
+                wall = max(0.0, (datetime.now(timezone.utc) - began).total_seconds())
+            except ValueError:
+                wall = 0.0
+        self.finish_run(run["id"], turn, conv, run_dir, rc, wall, job)
+        return True
+
     def recover(self):
         """A non-terminal run row at startup is by definition a crash: the run that owns it can
-        never write that state itself once it is gone."""
+        never write that state itself once it is gone.
+
+        UNLESS THE CONTAINER IS STILL THERE, in which case the run is ADOPTED rather than
+        recovered -- see adopt_run. That branch used to be a bare `continue`, which left the row
+        non-terminal for ever: it went on counting against the ceiling and nothing would ever
+        publish it. design/ffbox_live_update_design.txt section 7.
+
+        AND UNLESS IT LEFT WORK, in which case the finish path runs on what is on disk instead of
+        the turn being requeued. run_left_work says why.
+        """
         recovered = []
         for run in self.db.query("SELECT * FROM run WHERE terminal_state IS NULL"):
             if self.run_container_live(run):
                 continue
+            if self.run_left_work(run):
+                # Not a crash in the sense that matters: the container is gone and the work is
+                # here. Finish it from the directory rather than requeueing a turn that has
+                # already been answered.
+                log(f"run {run['ffbox_run_id']}: its container is gone but its directory holds "
+                    f"work; finishing it rather than requeueing the turn")
+                try:
+                    if self.finish_run_from_disk(run):
+                        recovered.append(run["id"])
+                        continue
+                except Exception as exc:  # noqa: BLE001 - one run must not stop recovery
+                    log(f"ERROR: could not finish run {run['ffbox_run_id']} from its "
+                        f"directory: {type(exc).__name__}: {exc}")
+                # Fall through to the requeue below: a finish that did not happen must not
+                # leave the row open for ever.
             # A POOLED RUN'S TRANSCRIPT IS SWEPT BEFORE ANYTHING ELSE IS DECIDED. Its container
             # is gone, so the only copy of the conversation's memory is in a spool directory
             # pool_reap() would delete, and the requeued turn below is about to resume from it.
@@ -8406,6 +8698,11 @@ class Watcher:
         # one that is already there rather than wait behind the staging of another. keep_pool
         # tops up what the turns just took.
         self.keep_pool()
+        # HERE AND IN run(), because the daemon does not call once() -- it drives the same steps
+        # itself, so a hook added to one reaches half the callers. That is not hypothetical: the
+        # pool keeper went into once(), the daemon ran run(), and the live box staged nothing at
+        # all while reporting "0 staged, 1 wanted".
+        self.sweep_dead_containers()
         # Before the join, because the join is what blocks: in this pass-at-a-time form the
         # live index only ever catches a run some OTHER caller started. The daemon loop below
         # is where it earns its keep, ticking every poll_secs while a container works.
@@ -8600,6 +8897,10 @@ class Watcher:
                     # nothing at all while reporting "0 staged, 1 wanted".
                     # test_the_daemon_loop_keeps_the_pool covers it.
                     self.keep_pool()
+                    # Containers nothing came back for. Cheap when there are none, which is the
+                    # normal case; see sweep_dead_containers for why it does not have to be
+                    # prompt.
+                    self.sweep_dead_containers()
                     # Every pass, so the web page shows the agent talking as it talks rather
                     # than in one lump when the container exits. finish_run indexes the same
                     # transcript once more at the end; both are idempotent by uuid.
