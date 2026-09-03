@@ -7994,7 +7994,9 @@ def test_a_crashed_pooled_run_gives_its_transcript_back():
         fh.write('{"uuid":"u1","type":"assistant"}\n')
 
     dropped = []
-    w.container_live = lambda name: False          # the container died with the daemon
+    # Two arguments since container_live took a container id as well as a name: a run is
+    # identified by the id ffbox recorded, and the name is only the fallback.
+    w.container_live = lambda name, cid=None: False   # the container died with the daemon
     w.pool_drop = lambda pool_id: dropped.append(pool_id)
 
     check("the run is recovered", len(w.recover()) == 1, None)
@@ -8007,6 +8009,52 @@ def test_a_crashed_pooled_run_gives_its_transcript_back():
     turn = w.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
     check("and the turn is queued again, ready to resume what was just swept home",
           turn["status"] == "queued", dict(turn))
+
+
+def test_a_run_is_identified_by_its_container_id_not_its_name():
+    """The name moves; the id does not.
+
+    Dispatch renames a staged container to its run, so a name is only true between two renames
+    and a process that was not there for one cannot trust it. This is the test that stops
+    anything drifting back onto the name: the row's name is stale, the id is right, and the run
+    still has to be found. design/ffbox_live_update_design.txt section 4a.
+    """
+    print("identity: by id, not by name")
+    case = Case("byid", base_fixture())
+    w = case.watcher
+    conv_id = w.upsert_conversation("99101", kind="ask", channel_id=ASK_CHANNEL)
+    cur = w.db.execute(
+        "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
+        " VALUES(?,1,'fix','running',?,'private')", (conv_id, ffwatch.now_iso()))
+    cur = w.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name, container_id, session_id)"
+        " VALUES(?,?,?,?,?)",
+        (cur.lastrowid, "d1t1-id", "ffbox-agent-pool-stale", "abc123def456", "SESS"))
+
+    asked = []
+
+    def fake(name, container_id=None):
+        asked.append((name, container_id))
+        return container_id == "abc123def456"
+
+    w.container_live = fake
+    run = w.db.one("SELECT * FROM run WHERE id=?", (cur.lastrowid,))
+    check("a run whose row still carries its staging name is found by its id",
+          w.run_container_live(run), asked)
+    check("and the id is what was asked about", asked[-1][1] == "abc123def456", asked)
+
+    # The fallback: a row from before container_id existed still answers by name, because a cold
+    # container is never renamed and a row with no id has no better handle to offer.
+    cur = w.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id)"
+        " VALUES(?,?,?,?)", (1, "d1t2-old", "ffbox-agent-d1t2-old", "SESS"))
+    asked.clear()
+    w.container_live = lambda name, container_id=None: (asked.append((name, container_id))
+                                                        or container_id is None)
+    old = w.db.one("SELECT * FROM run WHERE id=?", (cur.lastrowid,))
+    check("a row with no id falls back to the name", w.run_container_live(old), asked)
+    check("and asks about the name, with no id", asked[-1] == ("ffbox-agent-d1t2-old", None),
+          asked)
 
 
 def test_a_launch_never_destroys_a_warm_container():
@@ -9914,6 +9962,7 @@ def main():
         test_two_dispatchers_cannot_take_one_container,
         test_a_pooled_run_never_loses_the_conversations_memory,
         test_a_crashed_pooled_run_gives_its_transcript_back,
+        test_a_run_is_identified_by_its_container_id_not_its_name,
         test_a_launch_never_destroys_a_warm_container,
         test_a_turn_falls_back_to_a_cold_launch,
         test_one_class_never_takes_the_others_warm_container,

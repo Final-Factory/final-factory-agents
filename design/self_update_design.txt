@@ -79,17 +79,54 @@ Everything below is read out of this repository as it stands, not assumed.
      the first and not the second: replies that in-flight runs produce should still reach
      Discord while we wait for those runs to end.
 
-  g. TWO OF THE CONTAINER'S SCRIPTS ARE READ FROM THIS CHECKOUT AT RUN TIME. ffbox bind-mounts
-     the --task script at /ffbox/task.sh:ro, and Watcher.launch() mounts ffverify.sh at
-     /usr/local/bin/ffverify:ro. Neither is baked into the image; both are the working copy,
-     live, for the whole life of the container. A merge while a container is running really
-     does change the script under it. This is requirement 3's race, stated concretely.
+  g. THREE THINGS THE CONTAINER READS COME FROM THIS CHECKOUT AT RUN TIME, and they do NOT
+     all behave the same way under a merge. Corrected 2026-09-03; the original text said a
+     merge "really does change the script under it" for all of them, and that is true of one
+     of the three.
 
-  h. A STOP IS NOT FREE TODAY. ffwatch.service sets KillSignal=SIGTERM and
-     TimeoutStopSec=120, and its own comment says an in-flight run is terminal-failed and
-     requeued by the recovery pass on the next start. The container belongs to dockerd, not
-     to the unit's cgroup, so it survives on the strength of ffbox's `docker stop` trap
-     winning a race against that 120-second kill. Correct, but it costs a container.
+     ffbox bind-mounts the --task script at /ffbox/task.sh:ro (ffbox:674), Watcher.launch()
+     mounts ffverify.sh at /usr/local/bin/ffverify:ro, and it also mounts
+     plugins_dir/<plugin> at /ffbox/plugins/<plugin>:ro -- plugins_dir defaults to
+     REPO_ROOT/plugins (ffwatch.py:369), which is this checkout. A staged pool container
+     carries the same three, plus task_script again at /ffbox/turn-task.sh:ro
+     (ffwatch.py:4780). None of them is baked into the image.
+
+     A BIND MOUNT OF A FILE PINS THE INODE. git replaces a tracked file by unlinking the path
+     and creating a new one, so the mount goes on resolving to the bytes the container
+     started with and the old inode stays alive as long as the mount holds it. The task
+     script and ffverify are file mounts. They are, as far as this can be established from
+     git's behaviour, NOT changed under a running container.
+
+     A BIND MOUNT OF A DIRECTORY SHOWS WHAT IS IN THE DIRECTORY NOW. The plugin tree is a
+     directory mount, so a merge that touches plugins/<plugin> really does change what a
+     running container reads. That is the one real instance of requirement 3's race in the
+     current code.
+
+     THIS IS A REASON TO DRAIN, NOT A REASON TO RELY ON EITHER HALF. "git probably unlinks
+     rather than truncating" is not a contract anybody has given us, and it would be a poor
+     thing to hang a twenty-hour job on. design/ffbox_live_update_design.txt section 4
+     removes the dependency by copying all three into the run's own directory and mounting
+     from there.
+
+  h. A STOP IS NOT FREE TODAY, AND THE REASON IS THE OPPOSITE OF WHAT THIS USED TO SAY.
+     Corrected 2026-09-03. The original text was: "The container belongs to dockerd, not to
+     the unit's cgroup, so it survives on the strength of ffbox's `docker stop` trap winning
+     a race against that 120-second kill." The trap winning is what KILLS the container.
+
+     ffwatch.service is Type=simple with no KillMode=, so systemd's default control-group
+     applies and `systemctl stop ffbox.target` SIGTERMs every process in the unit's cgroup.
+     The ffbox children are in it, and ffbox carries `trap cleanup EXIT INT TERM` (ffbox:708)
+     whose cleanup runs `docker stop --timeout 120 "$RUN_NAME"` (ffbox:697). So the sequence
+     is: stop the target, ffbox is signalled, ffbox stops its container, the run is lost. The
+     120-second TimeoutStopSec is what gives that stop room to complete rather than what it
+     races.
+
+     The container is indeed dockerd's rather than the cgroup's, which is why a SIGKILL that
+     outran the trap would LEAVE it running. That is the property
+     design/ffbox_live_update_design.txt turns into the design rather than the accident.
+
+     The unit's own comment ("Any run still in flight is terminal-failed and requeued by the
+     recovery pass on the next start") describes the intended consequence and stays accurate.
 
   i. NON-INTERACTIVE FETCH ALREADY WORKS. origin is
      https://github.com/Final-Factory/final-factory-agents.git, credential.helper is `store`,
@@ -310,10 +347,12 @@ runs `sudo sh ffbox/06-services.sh --install` or `sudo sh ffbox/runners/05-servi
 That is the deliberate cost of an updater that fetches code off the internet and then executes it
 holding no root.
 
-  discord-task.sh, ffverify.sh   restart alone, but see fact (g): these two are MOUNTED from
-                              the checkout, not baked, so the new copy is in effect for the
-                              next container with no rebuild — and would have been in effect
-                              mid-run without the drain.
+  discord-task.sh, ffverify.sh   restart alone, but see fact (g): these are MOUNTED from the
+                              checkout, not baked, so the new copy is in effect for the next
+                              container with no rebuild. The trailing clause here used to read
+                              "and would have been in effect mid-run without the drain", which
+                              fact (g) as corrected does not support for a file mount. The one
+                              mount that IS live mid-run is the plugin directory.
 
   slot.sh, runners/lib/**     no restart to give: a slot supervisor is a long-lived process that
                               the pool may leave WAITING for hours. It stamps the mtime and size

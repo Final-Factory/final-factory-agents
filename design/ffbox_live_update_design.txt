@@ -1,0 +1,858 @@
+ffbox: updating without stopping the containers that are working
+================================================================
+
+Status: design, not implemented. Written 2026-09-03.
+Supersedes nothing; extends design/self_update_design.txt sections 4 and 4a, which decided
+that a busy box waits an hour and is then force-stopped.
+
+
+0. What this must do
+--------------------
+
+  1. A CONTAINER THAT IS WORKING IS NEVER TOUCHED BY AN UPDATE. Not stopped, not signalled,
+     not waited for. A run that has been going for twenty hours goes on going while the code
+     under it is replaced and the services restart.
+
+  2. AN IDLE CONTAINER IS STILL DESTROYED. A staged pool spare and a registered-but-idle CI
+     runner hold 22 GiB each and no work. They go, exactly as they do now, and the pool is
+     rebuilt from the new code afterwards.
+
+  3. THE UPDATE DOES NOT WAIT ON THEM EITHER. Today a busy box holds the merge for up to an
+     hour and then forces. Under this design a busy box updates immediately: the containers
+     are not part of the question.
+
+  4. THE RUN STILL FINISHES PROPERLY. Adopted by the restarted ffwatch: the transcript is
+     indexed, the workspace is harvested, the branch is pushed, the pull request is opened
+     and the reply is posted, all of it by a process that did not start the run.
+
+  5. NOTHING SILENTLY DEGRADES. A run whose container survives an update must not end up
+     with no clock, no owner, no reply, or a reply composed from half its evidence. Every
+     way this can go wrong is enumerated in section 10 and has an answer.
+
+Requirement 4 is the hard one. Requirements 1 to 3 are a few lines in update_ffbox.sh; the
+work is in making a run finishable by a process that has none of the state the process that
+started it had.
+
+
+1. Verified facts
+-----------------
+
+Read out of the tree as it stands on 2026-09-03, not assumed.
+
+  a. THE LAUNCH IS A FOREGROUND SUBPROCESS. Watcher.launch (ffwatch.py:5787) builds an ffbox
+     argv and calls subprocess.run (ffwatch.py:6002) with
+     timeout = warmup_secs + agent_secs + 300. Everything after that call -- finish_run,
+     record_verification, publish, record_reply, finish_turn -- runs in the same thread. The
+     turn's second half exists only as a Python stack frame.
+
+  b. FFBOX STOPS ITS CONTAINER WHEN IT DIES. `trap cleanup EXIT INT TERM` at ffbox:708, and
+     cleanup does `docker stop --timeout 120 "$RUN_NAME"` (ffbox:697). This is right for a
+     human at a terminal pressing ctrl-C, and it is the mechanism that kills every run when
+     ffwatch is stopped.
+
+  c. THE SIGNAL REACHES IT. ffwatch.service is Type=simple with no KillMode=, so the default
+     control-group applies: `systemctl stop ffbox.target` SIGTERMs every process in the unit's
+     cgroup, and the ffbox children are in it. The unit's own comment ("Any run still in
+     flight is terminal-failed and requeued by the recovery pass on the next start") records
+     that this is understood and accepted.
+
+  d. self_update_design.txt FACT (h) SAID THE OPPOSITE OF THIS, AND HAS BEEN CORRECTED. It
+     read: the container "survives on the strength of ffbox's `docker stop` trap winning a
+     race against that 120-second kill". The trap winning is what KILLS the container. If the
+     trap lost -- if SIGKILL reached ffbox before cleanup ran -- the container would survive,
+     which is what we now want. Fixed in that document on 2026-09-03, with the original
+     sentence quoted so the correction is legible rather than silent.
+
+  e. RECOVERY ALREADY REFUSES TO KILL A LIVE RUN, AND THEN LOSES IT. recover
+     (ffwatch.py:8166) skips any non-terminal run whose container_live (ffwatch.py:8153) says
+     yes. It does not adopt it: the row stays non-terminal for ever, running_counts keeps
+     counting it against max_concurrent_runs, and nothing will ever publish it. The container
+     runs to completion, exits, and the NEXT restart marks the run crashed. The place to put
+     adoption is therefore already carved out and already reached.
+
+  f. EVERYTHING finish_run NEEDS IS ALREADY ON DISK, EXCEPT TWO NUMBERS. Its signature is
+     finish_run(run_row_id, turn, conv, run_dir, rc, wall, job) (ffwatch.py:6022). turn, conv
+     and run_row_id come from the database; run_dir is derived from the run id; job is written
+     to run_dir/job.json before the container starts. Only `rc` and `wall` live nowhere but
+     the launching process.
+
+  g. THE THINGS A RUN READS FROM THE CHECKOUT ARE THE TASK SCRIPT, ffverify AND THE PLUGIN
+     DIRECTORY. ffbox mounts the --task script at /ffbox/task.sh:ro (ffbox:674) and ffwatch
+     adds ffverify.sh at /usr/local/bin/ffverify:ro and the plugin directory at
+     /ffbox/plugins/<plugin>:ro. plugins_dir defaults to REPO_ROOT/plugins (ffwatch.py:369),
+     which is inside this checkout. A staged pool container additionally carries
+     task_script at /ffbox/turn-task.sh:ro (ffwatch.py:4780).
+
+     THE TWO KINDS OF MOUNT BEHAVE DIFFERENTLY UNDER A MERGE, and self_update_design.txt fact
+     (g) did not distinguish them. A bind mount of a FILE pins the inode: git replaces the
+     path, the container keeps reading the bytes it started with. A bind mount of a DIRECTORY
+     shows whatever is in the directory now, so the plugin tree really does change under a
+     running container. That fact was rewritten on 2026-09-03 to say so, along with the
+     dependent claim in its section 5. Both halves should still be checked on the box before
+     anything is built on them -- see section 12 -- and section 4 removes the need to depend
+     on either.
+
+  h. THE UNITY LICENCE IS A FILE MOUNT WITH A ROLLING 24-HOUR CLOCK. ffbox refreshes
+     /opt/ffcache/unity/Unity_lic.ulf on the host immediately before creating a container
+     (`unity-offline-license.sh ensure`, ffbox:510) and mounts the file read-only at
+     /ffbox/unity/Unity_lic.ulf (ffbox:516). unity-license.sh inside the container copies it
+     once into the licence directory and skips the copy if a file is already there
+     (unity-license.sh:147, 162). A Personal .ulf carries an UpdateDate about a day out and no
+     StopDate. So a container that lives longer than a day holds a licence that has lapsed,
+     and neither the host refresh nor a re-copy reaches it. This is a bug in long-running
+     containers whether or not an update ever happens.
+
+  i. THE CEILING AND THE SLOTS ALREADY SURVIVE A RESTART. lib-workloads.sh counts containers
+     with `docker ps --filter label=ffbox.workload` and claims agent slots as files under
+     ~/.config/ffbox/slots holding a container id, treating a claim as free when the thing it
+     names is not running. Neither depends on any process staying up. A surviving container
+     goes on being counted and goes on holding its slot, which is correct.
+
+  j. THE POOL ALREADY DECIDES BUSY BY A FILE, NOT BY A PROCESS. pool_unclaimed
+     (ffwatch.py:4430) tests for out/owner, pool_expire skips a container that has one, and
+     pool_drop refuses to delete a claimed spool. An adopted pooled run is safe from all three
+     without any change. That property was bought on 2026-09-01 by losing conversation 30's
+     turn 5; do not spend it.
+
+  k. PUBLICATION IS ALREADY RECONCILED FROM THE DATABASE. reconcile_publications runs on every
+     pass. Whatever else is true of a half-finished publish, the design already assumes it can
+     be looked at again later rather than only being carried forward by the thread that
+     started it.
+
+  l. THE CLOCK FORMAT FOR A STATELESS ENFORCER ALREADY EXISTS. lib-workloads.sh writes
+     `staged_at=` and `ttl_secs=` into a file and every reader compares against now. Its own
+     header gives the reason: "a deadline held in a shell variable ... dies with the process
+     holding it, so a SIGKILLed supervisor leaves a container running with no deadline at all".
+     The agent lane's three clocks are exactly the shell variables that header warns about.
+
+  m. THE DEFAULT CLOCKS ARE NOT SIZED FOR A TWENTY-HOUR JOB. warmup_secs 3600, agent_secs 1800,
+     verify_secs 1800, kill_grace_secs 10, max_concurrent_runs 6.
+
+
+2. The two couplings
+--------------------
+
+A run dies with ffwatch for two separate reasons, and fixing either alone is not enough.
+
+  COUPLING ONE, THE PROCESS TREE. ffbox is a child of ffwatch, in ffwatch.service's cgroup, and
+  it stops its container when it is signalled (facts b and c). Break this and the container
+  survives a restart.
+
+  COUPLING TWO, THE STACK FRAME. The whole second half of a turn is a Python thread holding
+  `rc`, `wall` and `job` (fact a). Break coupling one alone and you get a container that runs to
+  completion and is then finished by nobody: the workspace is harvested into the run directory
+  by the container's own trap, and the branch is never pushed, the pull request never opened,
+  the reply never posted. That is a worse outcome than today's, because today the work at least
+  gets requeued.
+
+So the shape of the change is: make the run's state live in the run directory and the database,
+have any ffwatch pick up any run, and only then let the container outlive the process that made
+it.
+
+
+3. Architecture
+---------------
+
+One sentence: A RUN IS A ROW AND A DIRECTORY. No host process owns it.
+
+Concretely, five changes. Four of them are a chain and the fifth is not, and they carry the
+letters section 13 and the tasks file use, so the document has exactly one ordering in it.
+
+  A. A CONTAINER IS IDENTIFIED BY SOMETHING THAT DOES NOT MOVE (section 4a). Its docker id and a
+     creation-time label, rather than the name dispatch renames. First, because the explicit
+     container removal in B needs a handle that a rename cannot invalidate.
+
+  B. THE RUN DIRECTORY CARRIES THE FACTS finish_run NEEDS (section 5). The exit code, the out
+     directory and the start time stop being local variables.
+
+  D. THE CLOCKS BECOME DEADLINE FILES ENFORCED BY THE DAEMON LOOP (section 6). No per-run host
+     process is needed to bound a run.
+
+  E. LAUNCH RETURNS AS SOON AS THE CONTAINER EXISTS, AND A NEW PASS FINISHES RUNS (section 7).
+     The launch thread no longer outlives the container, so there is nothing left for
+     `systemctl stop` to kill.
+
+  C. IMMUTABLE RUN INPUTS (section 4), which is the one that is not in the chain. Everything a
+     container reads from the checkout is copied into the run's own directory at launch and
+     mounted from there, so a merge cannot reach a live container whatever git's write strategy
+     turns out to be. It depends on nothing here and nothing here depends on it; it is worth
+     landing on its own, because it makes the CURRENT drain-and-merge safe by construction.
+
+With A, B, D and E in place the update protocol (section 8) is mostly a deletion: the drain stops
+waiting for containers.
+
+An alternative was considered and rejected: leave ffbox as the supervisor and move it out of
+ffwatch's cgroup with `systemd-run --user --scope`. That breaks coupling one in about five
+lines. It does not touch coupling two, so the reconcile pass in section 7 has to be built
+anyway, and once it exists the transient scope buys nothing but a second lifecycle to reason
+about. It stays on the table only as a stopgap if the clock work in section 6 cannot land at the
+same time.
+
+
+4. Immutable run inputs
+-----------------------
+
+At launch, ffwatch materialises the container's inputs into the run's own directory and mounts
+from there:
+
+    <run-dir>/mounts/task.sh              copy of cfg["task_script"]
+    <run-dir>/mounts/ffverify             copy of cfg["ffverify"]
+    <run-dir>/mounts/plugins/<plugin>/    copy of plugins_dir/<plugin>
+    <run-dir>/mounts/unity/               the licence directory, mounted rather than the file
+
+A staged pool container gets the same treatment in its spool directory, at stage time, since it
+carries turn-task.sh and ffverify from creation.
+
+WHY A COPY AND NOT A CAREFUL ARGUMENT ABOUT INODES. Fact (g) says a file mount is probably safe
+across a merge and a directory mount definitely is not. "Probably safe" is not a property to
+hang a twenty-hour job on, and it depends on git's internal choice of write strategy, which is
+not ours and is not documented as a contract. A copy makes the question disappear. It also gives
+the run directory an exact record of the bytes that ran, which is worth having on its own.
+
+AND THE PLUGIN DIRECTORY IS SMALL ENOUGH THAT NOTHING CLEVERER IS WARRANTED. Measured on
+2026-09-03: plugins/ff-discord, the one plugin cfg["plugin"] names, is 347 KB in 19 files. The
+task script and ffverify are two more files. `cp -a` of that per run is free, and it is free
+again for every run.
+
+Three cleverer options were considered and all three are worse at this size:
+
+  * `cp -al`, a hardlink tree. Instant and nearly zero bytes, but a hardlink SHARES the inode,
+    so it protects against the unlink-and-create that git does and not against a true in-place
+    write -- which is the same "depends on git's write strategy" argument this section exists to
+    stop making. It also does not cross a filesystem, and it would have to: the checkout is on
+    rpool/ROOT and the state directory is on rpool/USERDATA, two ZFS datasets.
+  * A ZFS snapshot and clone of the checkout. ffbox already knows how to do this and it is
+    genuinely free, but the checkout would have to become its own dataset, and a snapshot per
+    run needs a lifecycle -- created at launch, destroyed when the last run holding it ends, and
+    reaped when a crash loses that bookkeeping. That is real machinery to save 347 KB.
+  * A content-addressed snapshot shared by every run on one commit,
+    <state>/mounts/<tree sha>/, built when the checkout changes rather than per run. This is the
+    right answer if the mounted tree ever gets big -- it is the same shape as /opt/ffcache/
+    entries -- and it is the wrong answer today, because it adds a cache and its eviction rule
+    to save a copy that costs nothing.
+
+If a future plugin makes the mounted tree large, take the third option. Until then, copy.
+
+THE LICENCE IS A DIRECTORY MOUNT FOR A DIFFERENT REASON. The host refresh (fact h) writes a new
+file, and a file mount pins the old one. Mounting /opt/ffcache/unity read-only lets a running
+container see a refreshed licence, and unity-license.sh gains a re-copy: before each editor
+launch, if the mounted .ulf is newer than the container's copy, copy it again. Two more pieces
+are needed to make that useful and both are small:
+
+  * the host has to keep refreshing while a container is up. `unity-offline-license.sh ensure`
+    is one sed and no network when there is nothing to do, so ffwatch calls it on its own poll
+    loop rather than only in ffbox before a creation;
+  * ffverify (and anything else that launches the editor) has to tolerate a licence that went
+    stale between two editor launches in the same run, rather than failing the run.
+
+
+4a. How a container is identified, and why not by name
+------------------------------------------------------
+
+Raised while reviewing this design: should an agent container carry a persistent slot id, the
+way something with a stable number could be tracked across a restart?
+
+THE PREMISE NEEDS CORRECTING FIRST, because it is inverted. CI runners are not the lane without
+slot ids; they are the lane that has always had them, and in a stronger form than the agent
+lane. A CI slot is a systemd unit instance -- ffgithubrunners@<slot>.service -- so the number is
+argv to slot.sh, fixed for the life of the machine, and it appears in the container name
+(`ffghr-$HOST-$SLOT-$NONCE`, slot.sh:261), in the `ffghr.slot` label, in the log file name and in
+the per-slot Unity machine id (lib/config.sh's ffghr_machine_id). The AGENT lane is the one that
+had no numbers at all until 2026-09-01, and it had to invent them without a unit instance to
+inherit from: ffbox_agent_slot_claim in lib-workloads.sh walks claim files under
+~/.config/ffbox/slots and takes the lowest free one.
+
+WHAT A SLOT IS FOR, IN BOTH LANES, IS UNITY IDENTITY AND RESOURCE ACCOUNTING. It is not a run
+identity and never was. It also already survives everything this design cares about: the claim
+file holds a container ID rather than a name, and a claim is only believed while the container it
+names is still running, so a hard-killed supervisor leaks nothing that the next scan does not
+recycle. lib-workloads.sh says why in its own header. Giving agent containers a more persistent
+slot would change none of that, and a per-slot Unity machine id is now actively wrong under the
+offline .ulf -- a container presenting one matches no licence at all.
+
+BUT THE INSTINCT IS RIGHT, AND IT POINTS AT A REAL GAP ONE STEP OVER. The run row records
+container_name (ffwatch.py's INSERT INTO run), and container_live (ffwatch.py:8153) is an exact
+match on that name. A NAME IS THE ONE HANDLE HERE THAT MOVES: dispatch renames a pooled container
+from its staging name to the run name (`docker rename`, ffbox:1054), precisely so that every
+downstream handle keeps working. Its own comment says so -- "THE NAME MOVES WITH THE JOB ...
+renaming is cheaper than teaching all of them that a pooled run is called something else."
+
+That was a fair trade when a run lived and died inside one process. It is not once a run has to
+be picked up by a process that was not there for the rename.
+
+SO TRACK A CONTAINER BY TWO THINGS THAT ARE FIXED AT CREATION AND NEVER MOVE:
+
+  * ITS DOCKER ID. ffbox already asks for it (`docker inspect --format '{{.Id}}'`, for the slot
+    confirm). It writes it into <run-dir>/container-id the moment the container exists, and
+    ffwatch copies it into a new run.container_id column. On disk first, database second, for the
+    same reason as everything else in section 5: a crash between the two leaves the answer
+    somewhere a later pass can read it.
+  * A CREATION-TIME LABEL. A cold container gains `--label ffbox.run.id=<run id>`. A dispatched
+    one already carries `ffbox.pool.id`, and run.pool_id already records which pool a run took,
+    so both routes have a label that identifies the run without anything having to be written
+    after the fact. Labels are set at creation and survive `docker rename`, which is exactly the
+    property the name lacks.
+
+The name stays. It is what an operator types and what `docker ps` shows, and it should go on
+being readable. Nothing may DEPEND on it.
+
+WHAT THIS SIMPLIFIES, concretely:
+
+  * container_live stops being a string match on a mutable field. Adoption asks docker about an
+    id, or sweeps one label, and cannot be confused by a name that moved while ffwatch was down.
+  * `docker wait`, `docker logs`, `docker inspect` and the explicit `docker rm` that section 5
+    needs once --rm is dropped all take an id. They have to come from somewhere anyway; this is
+    where.
+  * The adoption hazard at the end of section 7 -- a pool container renamed but never dispatched
+    -- stops being a case that has to be inferred from a name. The container is found by its pool
+    label, and the only question left is the honest one: does in/dispatch exist.
+  * lib-workloads.sh already learned this. Its claim files hold ids "because `docker rename`
+    moves the name and dispatch renames every pooled container to its run. An id does not move."
+    The run table is the second place that needed the same lesson.
+
+AND IT MAKES THE RENAME OPTIONAL, which is the part worth having. `docker rename` at dispatch
+exists only to keep name-based handles working. Once nothing depends on the name, the rename can
+be dropped, and with it goes the exit-70 path where a dispatch under the wrong class renames the
+wrong container, and the ordering hazard where ffwatch dies between the rename and the dispatch
+file. Do not drop it in the same change that adds ids -- land the ids, move every reader onto
+them, and remove the rename afterwards, when nothing is left that would notice.
+
+ONE READER IN PARTICULAR, AND IT IS THE DANGEROUS ONE. update_ffbox.sh tells an idle staged
+container from a busy dispatched one BY NAME PREFIX -- the
+`ffbox-agent-pool-*|ffbox-dev-pool-*|ffbox-pool-*` arm of its case statement -- and destroys what
+matches. Remove the rename with that arm still in place and every dispatched container matches
+it, so the updater destroys containers that are serving turns. That is precisely the shape of the
+2026-09-01 loss of conversation 30's turn 5, which is what put the `out/owner` rule into this
+design in the first place.
+
+So the ordering is a rule rather than a preference: the updater stops classifying by name
+(section 8) BEFORE the rename is touched, and removing the rename is not part of this plan at
+all. It is what the plan makes possible.
+
+ONE THING WORTH KEEPING FROM THE CI SHAPE. A slot claim held by a twenty-hour container is held
+for twenty hours, and that is correct rather than a leak: the claim is validated against a live
+container on every scan, so it comes back the moment the container does not. No change needed;
+it is worth stating because it looks like a leak the first time somebody reads it.
+
+
+4b. What happens to the agent slot files on disk
+------------------------------------------------
+
+~/.config/ffbox/slots/agent-1 .. agent-N, written by ffbox_agent_slot_claim. The short answer is
+that nothing in this design touches them, they need no migration, and there is nothing to clean
+up. The reasons are worth writing down, because two of them are only true by accident of how the
+scan is written.
+
+NOTHING NEW READS THEM. ffbox is the only writer (ffbox:969, 1000, 1003, 1085, 1117) and
+ffbox_agent_slot_claim's own scan is the only reader. ffstatus reads the `ffbox.slot` LABEL off
+the container (ffstatus.sh:461), not the file. So section 4a's container ids and labels are
+purely additive: they identify a RUN, the slot files number a MACHINE, and neither becomes the
+other's source of truth.
+
+THEY ARE ALREADY RESTART-PROOF, by the rule in their own header: the file is not the truth, the
+container is. A number is free when its file is absent or when the thing the file names is not
+running. So an adopted twenty-hour container keeps its number, because its id is still in
+`docker ps`; and a file left behind by a container the update killed is silently taken over by
+the next claim. That is exactly the property that makes adoption need no slot work at all.
+
+THERE IS NO REAPER, AND THERE SHOULD NOT BE ONE. ffbox_agent_slot_release fires only when
+creating a container failed. A finished run's file is not deleted -- the next claim OVERWRITES it
+in place. So the directory grows to at most max_concurrent_runs entries and then stays that size
+for the life of the machine, and a directory full of files naming long-dead containers is the
+normal steady state rather than a leak. Anybody who adds a cleanup pass here should be asked what
+it is for.
+
+ONE INTERACTION DOES NEED STATING, and it is the only one. Dropping --rm (section 5) creates a
+container state that does not exist today: Exited, and not yet removed. The staleness test is
+`docker ps -q --no-trunc` plus `docker ps --format '{{.Names}}'`, both of which list RUNNING
+containers only, so such a container's slot reads as stale and the next run may claim the number
+while the container itself is still on the box. That is correct in both of the things a slot
+governs, and the reasoning should be recorded rather than rediscovered:
+
+  * UNITY IDENTITY. Under the offline .ulf every container presents the same constant machine id
+    (FFBOX_AGENT_MACHINE_ID), so two containers associated with slot 3 is not a collision of any
+    kind. It would be under machine_id=per-slot, which is dead code for this lane, and even then
+    an exited container holds no editor and no seat.
+  * RESOURCE ACCOUNTING. ffbox_workload_count filters `docker ps -q --filter label=`, also
+    running only, and the workspace is a `--tmpfs` (ffbox:850), which the kernel frees when the
+    container STOPS rather than when it is removed. An exited container therefore holds neither a
+    place under the ceiling nor its 22 GiB, and counting it would be the bug.
+
+What this obliges section 5 to do is not defer removal indefinitely. The sweep that removes a
+container by id once its run row goes terminal belongs on the daemon loop, with the name-and-age
+sweep as the backstop for a container whose ffwatch never came back. Exited containers piling up
+would not break the slots or the ceiling; they would just make `docker ps -a` unreadable.
+
+ONE COSMETIC GAP, worth a line and not worth a phase. A claim file holds a bare container id: no
+run id, no timestamp. During a twenty-hour run `ls -l ~/.config/ffbox/slots` therefore says which
+numbers are taken and nothing about by what. Writing the run id and the claim time alongside the
+id would make it self-explaining. The better answer is the one section 4a already provides -- the
+`ffbox.slot` label joined to run.container_id -- so do that first and leave the file alone.
+
+AND A SMALL PRE-EXISTING WART, unrelated to this design but visible from here. The scan bounds at
+ffbox_workload_max, so LOWERING max_concurrent_runs leaves any higher-numbered file unscanned and
+inert forever. Harmless, since nothing else reads them, but a machine whose ceiling has come down
+carries files no code will ever look at again.
+
+
+5. The facts a run directory has to carry
+-----------------------------------------
+
+    job.json          already written before the container starts
+    base_sha.txt      written by the container
+    result.json       written by the container task
+    ffbox-timeout     written by ffbox when a clock fires; becomes a clock-file decision
+    .agent-started    written by the container task at the model handover
+    .verify-started   written by the container task when harness verification starts
+    .container-rc     NEW ON THE COLD PATH: the container's exit code
+    clock             NEW: the deadline the current phase is under (section 6)
+    contract          NEW: the version of the run-directory contract this run was started under
+    container-id      NEW: the docker id, written as soon as the container exists (section 4a)
+
+AND THE ROW HAS TO SAY WHERE THAT DIRECTORY IS. `out` is $RESULTS/$RUN_ID for a cold run
+(ffbox:565) and $POOL_HOME/out for a dispatched one (ffbox:633), and it MOVES into the run
+directory when the run ends (ffbox:1181). Three readers need to know which: the clock pass, the
+finish pass, and `ffbox --finish`. So `run.out_dir` is written at INSERT and rewritten to the run
+directory after the move -- and THE MOVE BECOMES ffwatch's, because ffbox no longer waits around
+to do it. That also settles what `ffbox --finish` is handed: exactly one directory, after the
+move, with no need to know whether the run was pooled.
+
+THE HARVEST CEILINGS ARE RECORDED AT LAUNCH, in the run directory beside the rest.
+MAX_CHANGED_FILES, FORBIDDEN_PATHS_RE, MAX_BUNDLE_BYTES and PROTECTED_BRANCHES are ffbox's own
+defaults read from the environment, so a later `--finish` that sets none of them already gets the
+same answers. Writing them down is for the case that is not already handled: a `--finish` running
+under a config that has since been loosened must not be more permissive than the run it is
+finishing.
+
+`.container-rc` already exists on the dispatch path, where ffbox backgrounds `docker wait` into
+it (ffbox:1065). It becomes the cold path's answer too. Three writers, in order of authority:
+
+  1. the container task's trap writes its own exit status into /ffbox/out/.container-rc;
+  2. whoever observes the container exit writes `docker inspect -f '{{.State.ExitCode}}'`;
+  3. if neither is there and the container is gone, the run scores as crashed -- but see below.
+
+DROP `--rm` FROM THE AGENT CONTAINERS. It is the reason an exit code can vanish: the daemon
+removes the container the moment it exits, so a process that was not already watching cannot ask
+what happened, and `docker logs` is gone with it. Removal becomes explicit, done by ffwatch after
+the run row goes terminal, which is also the point at which `docker logs` is copied into
+ffbox.log. A container that is never removed because ffwatch never came back is swept by the same
+pass that adopts, on a name-and-age test. Removal must not be deferred indefinitely, and
+section 4b says what does and does not depend on that.
+
+FROM THE STAGED CONTAINER TOO, AND THAT IS NOT OPTIONAL. A staged container is created with
+`docker run --rm -d` (ffbox:983) and dispatch only RENAMES it; flags are creation-time, so a
+pooled run's container carries `--rm` however the cold path is changed. Leaving it would give the
+two routes different lifetimes at exactly the moment this design starts depending on them being
+the same. So `--stage-pool` drops it as well, and pool_drop, _pool_expire_one and pool_reap each
+gain an explicit `docker rm` by id. One extra call against two lifecycles is not a close trade.
+
+AND `.container-rc` MOVES INSIDE THE OUT DIRECTORY. Today the dispatch path writes it to
+$POOL_HOME/.container-rc (ffbox:1065), beside the out directory rather than in it, so it does not
+travel with the move at ffbox:1181 and is deleted at ffbox:1188. Written inside `out/`, one path
+answers "what did this container exit with" whoever is asking and whenever they ask.
+
+`wall` comes from run.started_at, which the row already has.
+
+AND A CRASHED RUN STILL GETS HARVESTED. Today a missing exit code scores 70 and the harness posts
+"the run failed". On 2026-09-01 that happened to a run that had finished and verified 774/774
+clean. If the run directory holds a work bundle and a result, the finish path uses them and says
+the supervision was lost, rather than throwing away work that is sitting right there. This is a
+fix worth having independently of the rest of this document.
+
+THE CONTRACT FILE IS WHAT MAKES ADOPTION ACROSS A CODE CHANGE SAFE. A run adopted after an update
+was started by the old code and is finished by the new. The run directory is therefore a
+cross-version interface, and it needs a version somebody can check. The rule that follows:
+
+  * changes to the run-directory contract are ADDITIVE. A new file, a new key. Never a rename,
+    never a removal, never a change of meaning.
+  * when that is impossible, bump the contract version. An ffwatch that finds a run directory
+    carrying a version it does not understand does not guess: it stops the container softly,
+    records the run as unfinishable with the reason, and replies saying so.
+
+  The version is one integer in ffwatch.py beside CAPABILITIES and one in ffbox, checked by
+  `--finish` and by finish_runs, and it carries the same lockstep note the three copies of the
+  Unity machine-id constant already do. Two languages, one number, no shared library to put it
+  in.
+
+The same rule applies to job.json and to the database. Migrations stay additive, because an
+adopted run's rows were written by the previous schema.
+
+
+6. Clocks as deadline files
+---------------------------
+
+Today the three clocks are a `while kill -0 "$DOCKER_PID"` loop in ffbox (ffbox:1128 onward)
+comparing `date +%s` against marker file mtimes. That loop is the reason a host process has to
+stay up for the length of a run, and if it dies the run has no deadline at all.
+
+The clocks move to a file, in the format lib-workloads.sh already defines (fact l):
+
+    <run-dir>/clock          phase=warmup|agent|verify
+                             staged_at=<iso8601>
+                             ttl_secs=<the ceiling for that phase>
+
+Written by whoever starts a phase. The container task already creates .agent-started and
+.verify-started at exactly the two handovers, so the phase transitions need no new signalling:
+the host pass that notices a newer marker rewrites the clock file with that phase's ttl.
+
+Enforcement moves into ffwatch's poll loop as a stateless pass, once per poll, over every
+non-terminal run: read the clock, compare with now, and if it has passed, `docker stop
+--timeout max(kill_grace, 120)` on a thread and write ffbox-timeout. Same decisions, same
+numbers, same soft stop; the difference is that no particular process has to have been watching.
+
+TWO PROPERTIES THIS BUYS. A restart no longer resets or drops a deadline, because the deadline
+was never in memory. And a run keeps the ceilings it was STARTED under, because ttl_secs is
+written into the file at the start of the phase -- the same reason lib-workloads.sh gives for
+storing the TTL alongside the start rather than reading config at compare time. A config change
+during an update applies to the next run, never retroactively to one already in flight.
+
+`ffbox --direct`, which a human runs at a terminal and watches, keeps the foreground loop. It is
+the one caller for whom the current behaviour is the right behaviour.
+
+AND THE CONTAINER NEEDS A DEADLINE OF ITS OWN, because the clock file is written and read by the
+HOST and there is no guarantee a host is reading it. Two ways to reach that: `ffbox "prompt"` on a
+box whose ffwatch is down drives its own passes and can be ctrl-C'd, and an ffwatch that never
+comes back leaves every container it made with a deadline nobody enforces. Today the ffbox trap
+covers both by killing the container, and section 7 removes that.
+
+So the turn task carries a failsafe at its clock plus a margin, exactly as pool-task.sh already
+does for a staged container and for the same reason its header gives. This is not a nicety to
+schedule later: the detachment in section 7 does not land without it, or the box gains a way to
+grow containers nothing can stop.
+
+
+7. Launch, adopt, finish
+------------------------
+
+LAUNCH SHRINKS. In executor mode ffbox creates the container detached, waits only for it to
+exist (ffbox_workload_await_container already does this), confirms the slot, writes the clock
+file, and returns. Its EXIT trap no longer stops the container in this mode; it stops it only on
+a failure before the container was successfully created, and in --direct.
+
+Watcher.launch keeps everything above the subprocess call -- the run row, job.json, the mount
+staging, the pool claim and dispatch -- and returns when ffbox returns. The launch thread's life
+is now seconds. There is nothing left in the cgroup for `systemctl stop` to kill that would take
+a container with it.
+
+A NEW PASS, `finish_runs()`, RUNS ON THE DAEMON LOOP beside index_live_runs and keep_pool, AND IN
+`once()` AS WELL. The daemon loop does not call once(); it drives the same steps itself, so a hook
+added to one reaches half the callers. That is not hypothetical -- the pool keeper went into
+once(), the daemon ran run(), and the live box staged nothing at all while reporting "0 staged,
+1 wanted". For every run row with no terminal_state:
+
+    container live, clock not expired      leave it; index its transcript as today
+    container live, clock expired          soft stop on a thread; write ffbox-timeout
+    container gone                         take the conversation lock and finish it on a thread:
+                                           read rc, wall, job and timeout kind off disk, run the
+                                           harvest validation, then the existing finish_run and
+                                           everything downstream of it
+
+The harvest validation currently sits in ffbox after `wait "$DOCKER_PID"` -- bundle verification,
+protected branches, forbidden paths, the size caps. It becomes `ffbox --finish <run-dir>`, a mode
+that starts no container and reads only the directory. Same code, called from a different place,
+and callable by hand on a run directory that got stuck.
+
+THE CONVERSATION LOCK IS RE-TAKEN, NOT ASSUMED. ConversationLock is an flock and it died with the
+process. finish_runs acquires it before touching a conversation and skips the run if another
+ffwatch holds it. Nothing else changes about it.
+
+ADOPTION IS THEN JUST recover() NOT GIVING UP. The branch at ffwatch.py:8171 that today says
+`continue` for a live container instead stamps run.adopted_at, logs the adoption with the
+container's age and the turn it belongs to, and leaves the row alone. finish_runs does the rest
+on the next pass, whether the container exits in ten seconds or ten hours. The turn stays
+`running` and the conversation stays `running`, so schedule() will not launch it a second time
+(the `conv_state == "running"` check is already there).
+
+ONE ADOPTION THAT MUST BE REFUSED. If ffwatch dies between `docker rename` and writing the
+`dispatch` file, a pool container was never given the job, and adopting it means waiting for a
+turn that will never start. With section 4a in place the container is found by its `ffbox.pool.id`
+label rather than by whichever name it is currently wearing, so the only question left is the
+honest one: does `in/dispatch` exist. A pooled run whose spool has none is not adopted -- it is
+dropped and the turn is requeued, which is what happens today. pool-task.sh's own failsafe covers
+the container side. Once the rename goes (section 4a), this case stops existing.
+
+
+8. The update protocol, revised
+-------------------------------
+
+Sections 4 and 4a of self_update_design.txt change as follows. Everything else in that document
+stands.
+
+  * DRAIN BOTH LANES, UNCHANGED. No new work starts.
+
+  * DESTROY THE IDLE CONTAINERS, BUT STOP DECIDING WHICH BY NAME. `ffwatch drain` drops
+    unclaimed staged spares, deciding by `out/owner`, and the updater destroys CI runners with
+    no Runner.Worker, deciding by `docker top`. Both of those are asking the container. What
+    goes is the updater's own third rule -- the
+    `ffbox-agent-pool-*|ffbox-dev-pool-*|ffbox-pool-*` arm of its case statement -- which
+    decides by NAME PREFIX and destroys what matches.
+
+    That arm was safe only because dispatch renames a busy container out of the pattern. It is
+    the last thing pinning the rename in place (section 4a), and it is a rule that fails in the
+    worst possible direction when it is wrong.
+
+    WHEN FFWATCH CANNOT ANSWER, LEAVE CONTAINERS ALONE. The updater has to work when ffwatch is
+    the broken thing, so it needs a rule for "the drain did not take". The old rule was to
+    destroy anything matching the staging names, because a leftover spare would otherwise hold
+    the update open for the whole window. Nothing waits on containers any more, so the cost of
+    leaving one is a spare that lives until the next pass, and the cost of destroying one is a
+    turn. The default flips. Requirement 2.
+
+  * DO NOT WAIT FOR BUSY CONTAINERS. The `_busy` loop goes. What replaces it is a much shorter
+    wait on the HOST-SIDE TAIL only: turns whose container has already exited and that are
+    part-way through harvesting, pushing or replying.
+
+    DROPPING THE `runs` COUNT IS NOT ENOUGH, AND THE FIRST VERSION OF THIS SECTION SAID IT WAS.
+    settling() counts `turns` as turn.status='running', and an adopted twenty-hour run holds
+    that status for twenty hours, so an updater that kept `turns` would wait exactly as long as
+    the one it replaced. The tail is a FOURTH count instead:
+
+      publishing   turns marked running whose run row is terminal, plus turns marked running
+                   whose run row names no live container. In words: the host is still working
+                   on a turn whose container is gone. That is the only thing a stop can lose.
+
+    `ffwatch quiet --host-only` sums `publishing` and `outbound` and ignores the other two.
+
+    ONE KNOB, NOT THREE. The window is FFBOX_DRAIN_TIMEOUT, whose default drops from 3600 to
+    300 and whose meaning becomes "how long to wait for the host-side tail". The 3600 lives on
+    as the default under update.stop-running below, where waiting for containers is the point.
+    A second name beside the existing FFBOX_FORCE_SETTLE_SECS would be three knobs for two
+    ideas.
+
+    A container may exit during that window and start a new publish. The window is bounded
+    rather than open-ended for exactly that reason, and a publish cut off half way is picked up
+    by reconcile_publications on the next start (fact k) and by finish_runs, which will find a
+    non-terminal run with a finished container and do it again. finish_run and publish therefore
+    have to be re-entrant, and section 12 has the test.
+
+  * STOP, MERGE, SET UP, START, UNCHANGED. The merge cannot reach a live container because the
+    container reads no path in the checkout (section 4).
+
+  * SAY WHAT WAS LEFT RUNNING. One journal line per surviving container with its name, its age
+    and the turn it is serving. An operator reading an update log must be able to see what this
+    box is still carrying.
+
+TWO ESCAPE HATCHES, because "never touch a running container" is the wrong answer some of the
+time.
+
+  * ~/.config/ffbox/update.stop-running, or FFBOX_UPDATE_STOP_RUNNING=1, restores the old
+    behaviour for one pass: drain, wait the full window, force-stop, update. This is what a
+    security fix uses. It is a file rather than only an environment variable so that a human can
+    arm it and let the timer pick it up.
+
+  * AN AGE CEILING ON ADOPTION. FFBOX_MAX_CONTAINER_AGE, default 48 hours and deliberately well
+    above the twenty-hour job this is being built for. A container older than that is soft-
+    stopped by the update rather than adopted again. Without it, a wedged container that nothing
+    else bounds is carried across updates for ever.
+
+
+9. What an update must not do to a running container
+----------------------------------------------------
+
+These are constraints on setup.sh and its stages, not on the updater, and they are the part
+most likely to be broken later by a change that looks unrelated.
+
+  * NEVER RESTART THE DOCKER DAEMON. Every container on the box is in it. 01-dockerSetup.sh is a
+    root stage and --non-interactive already skips it; make that an assertion rather than a
+    consequence.
+
+  * NEVER PRUNE OR REMOVE IMAGES. A running container pins its image by id, so a prune is not
+    immediately fatal, but it is not something to do under a job either. 03-build.sh building a
+    new ffbox:latest is fine and changes nothing for a container already running.
+
+  * THE EGRESS FENCE IS THE REAL RISK. ffbox-egress.sh `up` is fingerprinted on image, mode and
+    allowlist checksum and leaves a healthy proxy alone, so an ordinary update does not touch it.
+    A commit that CHANGES the allowlist recreates the proxy, and every running container on that
+    internal network loses egress for the length of the recreate. That was already true for CI
+    jobs and becomes true for twenty-hour agent runs. Either accept it and say so in the header,
+    or have `up` defer a recreate while any ffbox.workload container is attached to the fence
+    unless forced. Recommend the second, with the deferral logged, because the alternative is a
+    surprise that arrives hours into somebody's job.
+
+  * CONFIG APPLIES FORWARD ONLY. Clocks, ceilings, networks, capability lists and the forbidden
+    path regex are creation-time facts. A surviving container keeps what it started with. Say
+    this in config.json's _help block, because the natural expectation is the opposite.
+
+
+10. Failure modes
+-----------------
+
+  ffwatch is killed with SIGKILL mid-run.
+    The container survives, which is now the intent. finish_runs on the next start adopts it or
+    finishes it. Same path as an update; no special case.
+
+  The container exits while ffwatch is down.
+    The task's trap has already harvested into the run directory and written .container-rc.
+    finish_runs finds a gone container with a full directory and finishes it normally. This is
+    the case `--rm` currently makes unrecoverable.
+
+  The container exits while ffwatch is down AND the task's trap did not run (SIGKILL, OOM kill).
+    No .container-rc and, with --rm dropped, a stopped container to inspect. If even that is
+    gone, the run is crashed -- but anything already in the run directory is still harvested and
+    reported, rather than discarded.
+
+  Two ffwatch processes.
+    The daemon pid lock and the per-conversation flock already handle it. finish_runs takes the
+    conversation lock before doing anything, so the second process skips.
+
+  The new code cannot finish an old run.
+    The contract file (section 5) turns this from a silent mis-scoring into a stated refusal:
+    stop the container softly, record why, reply.
+
+  The pool reaper deletes a live run's spool.
+    Today it cannot, by accident: it refuses a spool holding a transcript, and
+    sweep_finished_spool refuses to move one whose run is non-terminal, so the two together
+    happen to protect a dispatched run. The gap is a run whose container exited before any
+    transcript was written, and today that window is milliseconds because ffbox moves `out/` the
+    instant `wait` returns. Under this design the window is a poll interval or more. So pool_reap
+    gains the direct test -- skip any spool whose run row is non-terminal -- rather than going on
+    inferring it from the transcript guard.
+
+  A run is adopted whose conversation was closed or deleted while ffwatch was down.
+    finish_runs must tolerate a missing conversation row: record the run, skip the reply, do not
+    raise. This is reachable today only through the web page; it becomes more reachable when a
+    run can be twenty hours long.
+
+  The Unity licence lapses mid-run.
+    Section 4. Without that change this is not a failure mode, it is a certainty for any run
+    over about a day.
+
+  A twenty-hour run holds a slot the Discord lane needs.
+    max_concurrent_runs is 6 across both lanes. One long run is one sixth of the box for a day.
+    Section 11.
+
+  The update leaves a container running and the next update leaves it running again.
+    The age ceiling in section 8.
+
+
+11. Long-running containers, separately from the update
+-------------------------------------------------------
+
+Making updates survivable does not by itself make a twenty-hour run work. These are the other
+things that have to be true, and none of them is in the update path.
+
+  * THE CLOCKS HAVE TO BE SIZED FOR IT. agent_secs is 1800. A twenty-hour job needs its own agent
+    class with agent_secs around 90000 and verify_secs sized for the suite it will run. The
+    subprocess timeout in launch (fact a) does not disappear with section 7, it SHRINKS: ffbox
+    returns as soon as the container exists, so the timeout becomes a bound on creation -- 300
+    seconds -- and the clock file bounds the run. Keeping a timeout there matters, because a
+    wedged `docker run` must not hold a launch thread for ever.
+
+  * THE CEILING SHOULD PROBABLY NOT BE FLAT. A long-job class that can take places from the
+    Discord answer lane will eventually take all of them. Either give the long class its own
+    small max_runs (the per-class ceiling already exists) or reserve a place for interactive
+    work. This is a policy decision and is deliberately left open in section 14.
+
+  * MEMORY. Each container holds a 22 GiB workspace tmpfs for its whole life, charged to
+    --memory. Twenty hours of that is twenty hours the box cannot use it.
+
+  * THE OAUTH TOKEN IS PASSED AT CREATION. CLAUDE_CODE_OAUTH_TOKEN goes in as -e. A rotation on
+    the host does not reach a running container. Worth knowing before it is diagnosed the hard
+    way.
+
+  * A CONVERSATION IS BLOCKED FOR THE LENGTH OF ITS TURN. conversation.state stays `running`, so
+    follow-up messages queue behind a twenty-hour turn rather than starting anything. That is
+    correct, and it is going to surprise somebody in Discord. The acknowledgement reaction is
+    the only thing they will see for a day; consider whether a long-running class should post a
+    progress note.
+
+  * THE WORKSPACE IS PINNED AT DISPATCH. A long run works from the commit it started on and does
+    not see anything pushed since. Correct, and worth stating where somebody will read it.
+
+
+12. What to verify, and what to test
+------------------------------------
+
+VERIFY ON THE BOX, BEFORE BUILDING -- phase V in the tasks file. Each is one command, and each
+settles a fact this design infers rather than measures:
+
+  * does a file bind mount survive a `git checkout` over its source? Start a container with a
+    file mounted, replace the file the way git does, read it from inside. Fact (g).
+  * does `docker run --rm` remove the container when the client is killed and the container
+    exits later? This decides how urgently `--rm` has to go. Modern daemons do it server-side,
+    which is the assumption here.
+  * does a container survive `systemctl stop ffbox.target` once ffbox's trap is out of the way?
+    Fact (c) and fact (d) together predict yes; confirm rather than assume.
+
+TESTS, in the offline suite (test_ffwatch.py drives `once()`, which is why section 7 puts
+finish_runs on the same pass as the rest):
+
+  * a run whose container is live at startup is adopted, keeps its turn `running`, and is not
+    requeued;
+  * a run whose container is gone at startup is finished from the directory, including the case
+    with a work bundle and no exit code;
+  * finish_run and publish called twice on the same run produce one branch, one pull request and
+    one reply;
+  * a clock file that has passed produces a soft stop and an ffbox-timeout, from a pass rather
+    than from a supervisor;
+  * a drain destroys unclaimed staged containers and leaves a claimed one alone -- this test
+    exists; it now also has to assert the updater does not WAIT on the claimed one;
+  * an unknown contract version stops the container and records the refusal;
+  * a pooled container renamed but never dispatched is not adopted;
+  * a run is found and finished after its container has been renamed, which is the test that
+    stops anything drifting back onto the name (section 4a);
+  * an exited-but-not-yet-removed container neither holds a place under the ceiling nor blocks
+    the next claim of its slot number (section 4b), and is removed by the sweep;
+  * pool_reap leaves the spool of a non-terminal run alone even when it holds NO transcript,
+    which is the case the transcript guard never covered;
+  * settling() reports a twenty-hour run as not publishing, so `quiet --host-only` returns quiet
+    with a container up. This is the one that would have caught the first version of section 8.
+
+
+13. Phasing
+-----------
+
+Each phase is deployable on its own and leaves the box working. The letters are the ones
+design/ffbox_live_update_tasks.md uses; the two documents are meant to be read side by side.
+
+  V. VERIFY ON THE BOX (section 12). Three commands, before anything is written.
+  A. CONTAINER IDENTITY (section 4a). The docker id, the run label, and every handle moved off
+     the name. Everything after this depends on having something that does not move.
+  B. RUN DIRECTORY FACTS AND THE CRASHED-RUN HARVEST (section 5, minus the contract file). Drop
+     --rm on BOTH routes, remove containers explicitly by id, record out_dir, write
+     .container-rc inside the out directory, guard pool_reap, and harvest a crashed run's
+     directory instead of discarding it. No behaviour change to a healthy run, and it fixes the
+     2026-09-01 failure on its own.
+  C. IMMUTABLE RUN INPUTS (section 4) and the licence directory mount. Independently valuable:
+     it makes the CURRENT drain-and-merge safe by construction rather than by inode luck.
+  D. CLOCKS AS FILES (section 6), enforced by the daemon pass and by ffbox's loop together for
+     one release, so the two are compared before either is removed.
+  E. DETACH, ADOPT, FINISH (section 7), with the container-side failsafe in the same phase
+     rather than after it. The clock enforcement moves off ffbox, ffbox stops supervising in
+     executor mode, and its trap stops killing.
+  F. THE UPDATE PROTOCOL (section 8). By this point it is mostly deletion.
+  G. MAKE IT LEGIBLE (section 11 and open question 2): ffstatus, ffweb, the README and the
+     config help.
+
+A, B and C are worth doing whether or not the rest lands.
+
+
+14. Open questions
+------------------
+
+  1. SHOULD A LONG-RUNNING CLASS EXIST AT ALL, or should any turn be allowed twenty hours? A
+     separate class carries its own ceiling, its own clocks and its own pool, which is what makes
+     it possible to stop a long job from starving the answer lane. Leaning strongly towards a
+     class.
+
+  2. WHAT DOES ffweb SHOW FOR AN ADOPTED RUN? At minimum: adopted, and from when. There is an
+     argument for showing which update it survived, which means recording the sha the run started
+     under against the sha now.
+
+  3. SHOULD AN ADOPTED RUN'S REPLY SAY SO? A run finished by a different build than the one that
+     started it is a fact a reviewer might want. Probably a line in the pull request body rather
+     than in a Discord reply.
+
+  4. WHEN DOES THE DISPATCH RENAME GO? Not in this plan. Section 4a says land the ids first and
+     remove the rename afterwards, and section 8 names the hard prerequisite: update_ffbox.sh
+     has to stop classifying containers by name prefix first, or the removal destroys containers
+     serving turns. "Afterwards" also needs a definition of done -- every reader of
+     run.container_name in ffwatch, ffweb, ffstatus and update_ffbox.sh moved onto the id or the
+     label. Worth a grep in the commit that removes it rather than a judgement call.
+
+  5. ANSWERED WHILE CROSS-CHECKING THIS AGAINST THE TASKS: WHAT BOUNDS A CONTAINER THAT NOTHING
+     BOUNDS? It was an open question and it cannot be, because sections 7 and 10 assume a
+     container is always bounded while section 6 puts the only enforcer on the host. The turn
+     task carries its own failsafe at its clock plus a margin, as pool-task.sh already does, and
+     it lands in the same phase as the detachment rather than after it. Section 6 has the
+     reasoning.
