@@ -296,6 +296,15 @@ for key, value in (
         #                 lib-workloads.sh's FFBOX_LICENCE_STOP_FLOOR), because PID 1's trap
         #                 hands the licence back and that is an editor launch. Lowering this
         #                 below 120 cannot strand a seat; raising it above 120 is honoured.
+        #
+        # ALL FOUR APPLY TO CONTAINERS MADE AFTERWARDS, NEVER RETROACTIVELY. A run is created
+        # with its ceilings written into <out>/clock, and that file is what the host compares
+        # against for the life of the run -- so editing a number here changes the next run and
+        # not the one that is working now. The same is true of the network, the capability list
+        # and the workspace size, all of which are fixed when a container is created; a run that
+        # is carried across an update keeps everything it started with. This is deliberate: a
+        # clock that could be shortened underneath a working run would be a way to kill it by
+        # editing a file.
         "agent_secs": 1800,
         "warmup_secs": 3600,
         "verify_secs": 1800,

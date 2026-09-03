@@ -274,25 +274,37 @@ journalctl -u ffbox-update -f               # what it did
 touch ~/.config/ffbox/update.disabled       # pause updates while you work on the box
 ```
 
-Seven things worth knowing:
+Eight things worth knowing:
 
-- **It drains before it stops.** No new containers, then it waits up to an hour for two things
-  to go quiet: the containers already running, and the host-side work behind them. This matters
-  because ffbox bind-mounts the container's task script and `ffverify` from this checkout, live,
-  for the whole run, so a merge mid-run really would change them underneath a container.
+- **A container that is working is not touched.** An update destroys the idle staged spares and
+  the idle CI runners, leaves everything that has a job in it running, and does not wait for any
+  of it. A twenty-hour job neither blocks an update nor is interrupted by one; when the services
+  come back they adopt it and carry it to its reply. Every survivor is named in the journal with
+  its age.
 
-  The second half is easy to forget. A container is where the agent works, but the branch push,
-  the pull request and the Discord reply all happen on the host after it exits, in an ffwatch
-  thread that a restart does not survive. `ffwatch quiet` is the question the updater polls, and
-  it counts turns that are still publishing and replies not yet delivered as well as containers.
+  This works because nothing on the host supervises a container any more. `ffbox` creates it and
+  returns, the three ceilings live in a file in the run directory rather than in a shell
+  variable, and a pass finishes the run when its container exits. Before that, `ffbox` was a
+  child of `ffwatch` in its cgroup, so `systemctl stop ffbox.target` signalled it and its trap
+  stopped every container on the box.
 
-- **At the end of the hour it goes ahead anyway, softly.** It used to stand down and leave the
-  box on old code for as long as the box stayed busy, which is backwards: the update that never
-  lands is often the one that would have fixed whatever is keeping it busy. So the stragglers
-  get `docker stop` with a two-minute grace, which is enough for the task's trap to harvest the
-  workspace out of its tmpfs and hand the Unity licence seat back, and then the host gets five
-  minutes to finish publishing what those stops released. `FFBOX_DRAIN_TIMEOUT`,
-  `FFBOX_FORCE_STOP_GRACE` and `FFBOX_FORCE_SETTLE_SECS` are the three numbers.
+  The run also reads *copies* of the task script, `ffverify` and the plugin tree, taken into its
+  own directory at launch, so the merge has nothing to reach.
+
+- **What it does still wait for is the host.** A container is where the agent works, but the
+  branch push, the pull request and the Discord reply happen on the host after it exits, in a
+  thread that a restart does not survive. So the updater waits — five minutes, not an hour — for
+  turns whose container has *already* gone and whose publishing is still in flight:
+  `ffwatch quiet --host-only`. `FFBOX_DRAIN_TIMEOUT` is that window.
+
+- **When you do need everything stopped**, `touch ~/.config/ffbox/update.stop-running` (or set
+  `FFBOX_UPDATE_STOP_RUNNING=1`) and the next tick behaves the old way for one pass: wait an
+  hour for the running containers, then stop them softly — `docker stop` with a two-minute
+  grace, enough for the task's trap to harvest the workspace out of its tmpfs and hand the Unity
+  licence back — and give the host five minutes to publish what those stops released. That is
+  what a security fix or an image change wants. `FFBOX_FORCE_STOP_GRACE` and
+  `FFBOX_FORCE_SETTLE_SECS` are the other two numbers, and `FFBOX_MAX_CONTAINER_AGE` (48h) is
+  the point past which a container is stopped rather than carried across yet another update.
 - **A config or secrets edit is a trigger, exactly like a commit.** `config.json` and
   `secrets.env` are hashed on every tick and compared against `~/.config/ffbox/update.config-sha`,
   which holds what the *running* services started on. Edit either and the next tick drains and
@@ -1125,6 +1137,7 @@ because a moderation queue nobody can see is not a moderation queue.
 | `~/ffbox-state/outbound/<row>.md` | the overflow of a reply too long for one Discord message, attached to it |
 | `~/.config/ffbox/discord.disabled` | kill switch. While it exists, ffwatch neither launches a run nor sends a reply. Ingest keeps running, so nothing is lost. |
 | `~/.config/ffbox/draining` | drain flag. Launches pause; replies still go out. Written by the updater, lifted when it finishes. See "Staying current". |
+| `~/.config/ffbox/update.stop-running` | armed by hand. Makes the next update wait for running containers and then stop them, instead of leaving them working. For a fix that has to apply to what is running now. |
 | `~/.config/ffbox/update.disabled` | pauses the self-update timer. Separate from the kill switch: pausing replies and pausing code updates are different intents. |
 | `~/.config/ffbox/update.applying` | written by the updater once it has decided there is work, cleared on every exit path. Carries `started_at` and a one-line `reason`. Its presence is what makes `ffstatus` say `updating` rather than `checking` — see "What is on the box right now". |
 | `~/.config/ffbox/update.config-sha` | one `name hash` line per start-time-only file — `config.json` and `secrets.env` — as the running services started on them. The updater compares it every tick and restarts when a line no longer matches; see "Staying current". |
