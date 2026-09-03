@@ -380,8 +380,18 @@ if os.environ.get("FFBOX_STUB_FORGED_OUTBOX"):
             fh.write(json.dumps({"action": "post", "channel":
                                  job["conversation"]["thread_id"], "text": text}) + "\n")
 
+# THE EXIT CODE GOES ON DISK, because that is where the host reads it from since ffbox stopped
+# waiting for the container. The real chain is: the container task writes its own status into
+# out/.container-rc from its finish trap, and whoever observes the exit overwrites it. This stub
+# stands in for the whole chain, so it writes the code it is about to exit with.
+def container_rc(code):
+    with open(os.path.join(out, ".container-rc"), "w", encoding="utf-8") as fh:
+        fh.write("%d\n" % code)
+
+
 mode = os.environ.get("FFBOX_STUB_MODE", "ok")
 if mode == "timeout":
+    container_rc(124)
     with open(os.path.join(out, "ffbox-timeout"), "w", encoding="utf-8") as fh:
         fh.write("agent\n")
     sys.exit(124)
@@ -435,6 +445,7 @@ if claude_dir:
         for rec in records:
             fh.write(json.dumps(rec) + "\n")
 
+container_rc(1 if mode == "fail" else 0)
 sys.exit(1 if mode == "fail" else 0)
 '''
 
@@ -8035,6 +8046,97 @@ def test_a_crashed_pooled_run_gives_its_transcript_back():
           turn["status"] == "queued", dict(turn))
 
 
+def test_a_detached_run_is_not_stopped_by_its_launcher():
+    """The one line that decides whether a container survives an update.
+
+    ffbox is a child of ffwatch and lives in its cgroup, so `systemctl stop ffbox.target`
+    SIGTERMs it -- and its EXIT/INT/TERM trap then stopped the container. That is why stopping
+    the pipeline used to cost every run on the box. Under --detach the trap has to walk past a
+    container it deliberately left running, and ffwatch has to actually pass --detach.
+
+    Checked against the source, because it is a rule about what must NOT happen and there is no
+    container in this suite to observe it not happening to.
+    """
+    print("detach: the launcher lets go")
+    ffbox_src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    watch_src = open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
+
+    check("ffwatch launches detached", '"--detach"' in watch_src, None)
+    check("ffbox understands the flag", "--detach)" in ffbox_src, None)
+
+    # The trap must return BEFORE it reaches the stop, and it must do so on the flag that says
+    # the container was deliberately left up rather than on anything it could infer.
+    body = ffbox_src.split("cleanup() {", 1)[1].split("\n}\n", 1)[0]
+    check("its cleanup returns early when the run was detached",
+          '"$DETACHED_OK" = 1' in body, body[:400])
+    check("before it would stop anything",
+          body.index('DETACHED_OK') < body.index("docker stop"), None)
+    check("and the flag is only set once the container exists",
+          "DETACHED_OK=1" in ffbox_src.split("if [ \"$DETACH\" = 1 ]; then", 1)[1][:200], None)
+
+    # And the other half: ffbox must not sit in its clock loop or wait for a container it has
+    # handed over, or the launch thread outlives the container again.
+    detach_block = ffbox_src.split("if [ \"$DETACH\" = 1 ]; then", 1)[1][:400]
+    check("it exits rather than falling through to the wait", "exit 0" in detach_block, None)
+
+
+def test_a_live_container_is_adopted_not_requeued():
+    """A run whose container outlived the daemon that started it.
+
+    This branch used to be a bare `continue`: the run was skipped, its row stayed non-terminal
+    for ever, it went on counting against the ceiling, and nothing would ever publish it. The
+    container ran to completion and the next restart marked it crashed.
+
+    Adopting it is mostly a matter of NOT doing the crash path -- the passes that already exist
+    carry it the rest of the way -- plus recording that it happened.
+    """
+    print("recovery: adoption")
+    case = Case("adopt", base_fixture())
+    w = case.watcher
+    conv_id = w.upsert_conversation("99401", kind="ask", channel_id=ASK_CHANNEL)
+    cur = w.db.execute(
+        "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
+        " VALUES(?,1,'fix','running',?,'private')", (conv_id, ffwatch.now_iso()))
+    turn_id = cur.lastrowid
+    cur = w.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name, container_id, session_id)"
+        " VALUES(?,?,?,?,?)",
+        (turn_id, "d1t1-adopt", "ffbox-agent-d1t1-adopt", "cid-adopt", "SESS"))
+    run_row_id = cur.lastrowid
+    w.container_live = lambda name, cid=None: True      # it is still working
+
+    check("recovery leaves it alone", w.recover() == [], None)
+    run = w.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
+    turn = w.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
+    check("the run row is not closed", run["terminal_state"] is None, dict(run))
+    check("the turn stays running, so nothing schedules it a second time",
+          turn["status"] == "running", dict(turn))
+    check("and the adoption is recorded rather than left to be inferred",
+          run["adopted_at"], dict(run))
+
+    # Said once. A daemon that logged an adoption every pass would bury everything else.
+    check("adopting twice is a no-op", w.adopt_run(
+        w.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))) is False, None)
+
+    # The refused case: a pooled container renamed at dispatch but never given its job. Adopting
+    # it means waiting for a turn that will never start.
+    cur = w.db.execute(
+        "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
+        " VALUES(?,2,'fix','running',?,'private')", (conv_id, ffwatch.now_iso()))
+    cur = w.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name, container_id, pool_id)"
+        " VALUES(?,?,?,?,?)",
+        (cur.lastrowid, "d1t2-nodisp", "ffbox-agent-d1t2-nodisp", "cid-nodisp", "p9"))
+    os.makedirs(os.path.join(w.pool_dir("p9"), "in"), exist_ok=True)
+    check("a pooled container that was claimed but never dispatched is not adopted",
+          w.adopt_run(w.db.one("SELECT * FROM run WHERE id=?", (cur.lastrowid,))) is False, None)
+
+    # ...and it IS adopted once the job actually went in.
+    open(os.path.join(w.pool_dir("p9"), "in", "dispatch"), "w").close()
+    check("once the job is in, the same container is adopted",
+          w.adopt_run(w.db.one("SELECT * FROM run WHERE id=?", (cur.lastrowid,))) is True, None)
+
+
 def test_a_config_from_a_newer_ffbox_does_not_kill_this_one():
     """2026-09-03, on the build server, in a test.
 
@@ -8240,7 +8342,12 @@ def test_a_crashed_run_that_left_work_is_finished_not_requeued():
     run_row_id = cur.lastrowid
     w.container_live = lambda name, cid=None: False   # the supervisor died; the run did not
 
-    check("the run is dealt with", len(w.recover()) == 1, None)
+    # recover() leaves it for the finish pass rather than doing it inline: that pass takes the
+    # conversation lock, moves a pooled run's output and validates the harvest, and two code
+    # paths doing one job is how the two drift. once() runs them in this order for that reason.
+    check("recovery does not requeue it", w.recover() == [], None)
+    w.finish_runs()
+    w.join_finishes(timeout=60)
     run = w.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
     turn = w.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
     check("it is finished rather than marked crashed",
@@ -8262,6 +8369,7 @@ def test_a_crashed_run_that_left_work_is_finished_not_requeued():
         " VALUES(?,?,?,?,?)",
         (empty_turn, "d1t2-empty", "ffbox-agent-d1t2-empty", "SESS", empty_dir))
     w.recover()
+    w.join_finishes(timeout=60)
     turn = w.db.one("SELECT * FROM turn WHERE id=?", (empty_turn,))
     check("a run that left nothing is still a crash, and its turn is requeued",
           turn["status"] == "queued", dict(turn))
@@ -10218,6 +10326,8 @@ def main():
         test_two_dispatchers_cannot_take_one_container,
         test_a_pooled_run_never_loses_the_conversations_memory,
         test_a_crashed_pooled_run_gives_its_transcript_back,
+        test_a_detached_run_is_not_stopped_by_its_launcher,
+        test_a_live_container_is_adopted_not_requeued,
         test_a_config_from_a_newer_ffbox_does_not_kill_this_one,
         test_a_clock_that_has_passed_stops_the_run_from_a_pass,
         test_a_run_reads_frozen_copies_not_the_checkout,

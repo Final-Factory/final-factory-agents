@@ -204,6 +204,13 @@ def pool_container_name(agent_class, pool_id):
     return f"{CLASS_NAME_PREFIX[agent_class or DEFAULT_AGENT_CLASS]}pool-{pool_id}"
 
 
+# HOW LONG ffbox MAY TAKE TO CREATE A CONTAINER, in seconds. Not how long a run may take: the
+# run is bounded by the clock file it is created with (design section 6), and ffbox returns as
+# soon as the container exists. What this catches is ffbox itself wedging -- a `docker run` that
+# never comes back, an admission lock nobody releases -- and it has to sit above the one thing on
+# this path that can legitimately block, which is waiting for a place under the box's ceiling.
+LAUNCH_CREATE_TIMEOUT = 300
+
 ADDED_COLUMNS = [
     ("conversation", "is_thread", "INTEGER NOT NULL DEFAULT 0"),
     ("outbound", "attempts", "INTEGER NOT NULL DEFAULT 0"),
@@ -2621,6 +2628,9 @@ class Watcher:
     # second one. In-memory on purpose: a restart that loses it costs one redundant `docker stop`
     # on a container that is already going away.
     _clock_stopping = set()
+    # Runs a thread of ours is already finishing. In-memory like _clock_stopping, and safe for
+    # the same reason: a restart that loses it re-derives the answer from the run row.
+    _finishing = set()
 
     def init(self):
         for d in (self.state_dir, self.blobs_dir, self.conv_root):
@@ -5423,6 +5433,20 @@ class Watcher:
             t.join(timeout)
         return len(threads)
 
+    def join_finishes(self, timeout=None):
+        """Wait for the finish threads this process started. For once(), not for the daemon.
+
+        A pass-at-a-time caller -- the offline suite, `ffbox "prompt"` on a box with no daemon --
+        wants the turn to be over when the pass returns. The daemon deliberately does not wait:
+        a finish is a push and a pull request, and nothing else on that loop should stop for it.
+        """
+        deadline = time.monotonic() + float(timeout) if timeout else None
+        while self._finishing:
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+        return True
+
     def live_launches(self):
         with self._launch_lock:
             self._launches = [t for t in self._launches if t.is_alive()]
@@ -6237,6 +6261,14 @@ class Watcher:
             # sitting on the same commit.
             cmd += ["--base-refs", " ".join(self.cfg.get("publish_bases") or {})]
 
+        # DETACHED, AND THE CONTAINER IS NOT THIS THREAD'S ANY MORE. ffbox creates it, records
+        # its id and its ceilings, and returns; the clock pass enforces the ceilings and
+        # finish_runs finishes it. That is what makes a run survive the daemon that started it,
+        # and it is the whole point of the exercise -- until now, `systemctl stop ffbox.target`
+        # signalled ffbox in ffwatch's own cgroup and ffbox's trap stopped every container on the
+        # box.
+        cmd += ["--detach"]
+
         env = dict(os.environ)
         env["FFBOX_RESULTS"] = runs_dir          # so ffbox's OUT is exactly our run_dir
 
@@ -6247,7 +6279,7 @@ class Watcher:
         try:
             proc = subprocess.run(cmd, env=env, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace",
-                                  timeout=self.launch_ceiling(ccfg))
+                                  timeout=LAUNCH_CREATE_TIMEOUT)
             rc, stderr = proc.returncode, proc.stderr
         except subprocess.TimeoutExpired:
             # ffbox owns the phase clocks; this outer timeout only catches ffbox itself wedging.
@@ -6271,7 +6303,28 @@ class Watcher:
         except OSError:
             pass
 
-        self.finish_run(run_row_id, turn, conv, run_dir, rc, wall, job)
+        # A CREATION THAT FAILED IS FINISHED HERE, and only that. ffbox exits non-zero when it
+        # could not make a container at all -- no room under the ceiling, no free slot, a missing
+        # image, a fence that is down -- and there is nothing to wait for and nobody to adopt it.
+        # 77 is the ceiling refusing, which is not a failure of the turn: the turn goes back on
+        # the queue and starts when something finishes.
+        if rc != 0:
+            if rc == 77:
+                log(f"run {run_id}: the box is at its ceiling; requeueing the turn")
+                self.db.execute("UPDATE run SET terminal_state='crashed' WHERE id=?",
+                                (run_row_id,))
+                self.db.execute("UPDATE turn SET status='queued', started_at=NULL WHERE id=?",
+                                (turn["id"],))
+                self.db.execute("UPDATE conversation SET state='queued' WHERE id=?",
+                                (conv["id"],))
+                return
+            self.finish_run(run_row_id, turn, conv, run_dir, rc, wall, job)
+            return
+
+        # THE CONTAINER IS UP AND THIS THREAD IS DONE. Everything that used to happen below --
+        # the wait, the harvest, the verification, the push, the reply -- is finish_runs's, off
+        # a pass, from what is on disk. Nothing in this process outlives the container any more.
+        log(f"run {run_id}: container is up; the finish pass owns it from here")
 
     def record_container_id(self, run_row_id, out_dir):
         """Copy the container id ffbox wrote into `out/container-id` onto the run row.
@@ -8464,6 +8517,123 @@ class Watcher:
             run["container_name"],
             run["container_id"] if "container_id" in run.keys() else None)
 
+    def finish_runs(self):
+        """Finish every run whose container is gone. Returns how many were started.
+
+        THE SECOND HALF OF A TURN, AND IT USED TO BE A STACK FRAME. Everything after the
+        container exits -- the harvest validation, the verification record, the branch push, the
+        pull request, the reply -- ran in the launch thread that started the run. A thread is not
+        a queue: a `systemctl stop` landing in the middle of one lost the push, and the run's work
+        went with the tmpfs the container was using. Now the run is a row and a directory, and any
+        ffwatch can pick up any run.
+
+        ONE THREAD PER RUN, because publishing pushes a branch and opens a pull request, and this
+        is called from the daemon's own loop. Nothing here may block the pass that also sends
+        replies.
+
+        THE CONVERSATION LOCK IS RE-TAKEN. It was an flock held by the launch thread and it died
+        with the process; a second ffwatch, or a `ffwatch once` run by hand, must not finish a run
+        another one is already finishing.
+        """
+        started = 0
+        for run in self.db.query("SELECT * FROM run WHERE terminal_state IS NULL"):
+            run_id = run["ffbox_run_id"]
+            if run_id in self._finishing:
+                continue
+            if self.run_container_live(run):
+                continue                       # still working; enforce_clocks bounds it
+            turn = self.db.one("SELECT * FROM turn WHERE id=?", (run["turn_id"],))
+            if turn is None:
+                continue
+            lock = ConversationLock(
+                os.path.join(self.conv_dir(turn["conversation_id"]), "lock"))
+            if not lock.acquire():
+                continue                       # somebody else has this conversation
+            self._finishing.add(run_id)
+            threading.Thread(target=self._finish_guarded, args=(run["id"], run_id, lock),
+                             name=f"ffwatch-finish-{run_id}", daemon=True).start()
+            started += 1
+        return started
+
+    def _finish_guarded(self, run_row_id, run_id, lock):
+        """One run finished off the daemon's loop. Never raises into the thread runner."""
+        try:
+            run = self.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
+            if run is None or run["terminal_state"] is not None:
+                return
+            self.collect_run_output(run)
+            # Re-read: collect_run_output rewrites out_dir when it moves a pooled run's output.
+            run = self.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
+            self.validate_harvest(run)
+            self.finish_run_from_disk(run)
+        except Exception as exc:  # noqa: BLE001 - one run must never take the daemon down
+            log(f"ERROR: could not finish run {run_id}: {type(exc).__name__}: {exc}")
+            self.db.execute(
+                "UPDATE run SET terminal_state='failed', exit_code=COALESCE(exit_code,-1)"
+                " WHERE id=? AND terminal_state IS NULL", (run_row_id,))
+            self.db.execute("UPDATE turn SET status='failed', error=? WHERE id=?"
+                            " AND status='running'",
+                            (f"{type(exc).__name__}: {exc}", run["turn_id"] if run else None))
+        finally:
+            self._finishing.discard(run_id)
+            lock.release()
+
+    def collect_run_output(self, run):
+        """Move a pooled run's output into its own directory, and record that it moved.
+
+        ffbox used to do this the moment `docker wait` returned. It does not wait any more, so
+        the move belongs to whoever finds the container gone -- and the run row has to say where
+        the output is, because for a pooled run the answer changes exactly once, here.
+
+        A rename within one filesystem, so it costs nothing even with a transcript in it.
+        """
+        if not run["pool_id"]:
+            return False
+        run_dir = self.run_dir_for(run)
+        src = self.run_out_dir(run)
+        if not run_dir or not src or os.path.abspath(src) == os.path.abspath(run_dir):
+            return False
+        os.makedirs(run_dir, exist_ok=True)
+        if os.path.isdir(src):
+            for name in os.listdir(src):
+                s_path, d_path = os.path.join(src, name), os.path.join(run_dir, name)
+                try:
+                    if os.path.exists(d_path):
+                        continue               # already moved; do not clobber
+                    shutil.move(s_path, d_path)
+                except OSError as exc:
+                    log(f"WARNING: could not move {s_path} into the run directory: {exc}")
+        self.db.execute("UPDATE run SET out_dir=? WHERE id=?", (run_dir, run["id"]))
+        return True
+
+    def validate_harvest(self, run):
+        """Re-derive the harvest from what the container left, by calling ffbox back.
+
+        NOT A SECOND IMPLEMENTATION, and that is the point of shelling out rather than porting
+        it. The container wrote branch.txt and changed_files.txt, and a run that skipped or lied
+        about its own checks would be taken at its word if the host merely read them; the bundle
+        cannot lie, and ffbox is where the checks that read it live. Running the same code from
+        a different place is what keeps the supervised and detached paths honest about each
+        other.
+
+        Never fatal. A validation that cannot run leaves the directory as the container left it,
+        and publish() then makes the same decision it makes for a run that harvested nothing.
+        """
+        run_dir = self.run_dir_for(run)
+        if not run_dir or not os.path.isdir(run_dir):
+            return False
+        try:
+            proc = subprocess.run(self.ffbox_cmd() + ["--finish", run_dir],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=600, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"run {run['ffbox_run_id']}: could not validate the harvest: {exc}")
+            return False
+        if proc.returncode not in (0, 123, 124, 125) and proc.stderr:
+            log(f"run {run['ffbox_run_id']}: harvest validation said: "
+                f"{proc.stderr.strip()[:300]}")
+        return True
+
     def container_rm(self, refs):
         """Remove containers by id or name. Best effort, and never raises.
 
@@ -8755,6 +8925,42 @@ class Watcher:
             when = when.replace(tzinfo=timezone.utc)
         return max(0.0, (datetime.now(timezone.utc) - when).total_seconds())
 
+    def adopt_run(self, run):
+        """Take over a run whose container outlived the process that started it.
+
+        There is nothing to DO here, and that is the result the rest of the design was for. The
+        container is running, the clock is a file, the output is on a bind mount and the turn is
+        still marked running, so the passes that already exist carry it the rest of the way:
+        enforce_clocks bounds it, index_live_runs keeps the page filling in, and finish_runs
+        publishes it when it exits. What this adds is the RECORD -- a run finished by a different
+        build than the one that started it is a fact worth being able to see rather than infer
+        from a gap in the log -- and one line saying so.
+
+        ONE CASE IS REFUSED. A pooled container is renamed at dispatch and given its job a moment
+        later; if ffwatch died in between, the container carries the run and never got the job,
+        and adopting it means waiting for a turn that will never start. The dispatch file is the
+        test, and it is the file the host actually writes rather than an inference from a name.
+        Such a run falls through to the crash path, which requeues the turn -- which is right,
+        because nothing ran.
+        """
+        if run["adopted_at"] if "adopted_at" in run.keys() else None:
+            return False                       # already adopted; say it once
+        if run["pool_id"]:
+            dispatched = os.path.join(self.pool_dir(run["pool_id"]), "in", "dispatch")
+            if not os.path.exists(dispatched):
+                log(f"run {run['ffbox_run_id']}: its container was claimed but never given the "
+                    f"job; not adopting it")
+                return False
+        age = ""
+        out_dir = self.run_out_dir(run)
+        clock = self.read_clock(out_dir) if out_dir else {}
+        if clock.get("started_at"):
+            age = f", up {int(time.time() - clock['started_at'])}s"
+        self.db.execute("UPDATE run SET adopted_at=? WHERE id=?", (now_iso(), run["id"]))
+        log(f"adopted run {run['ffbox_run_id']}: its container outlived the daemon that started "
+            f"it{age}; turn {run['turn_id']} stays running")
+        return True
+
     def run_left_work(self, run):
         """Did this run leave something worth publishing, even though nothing finished it?
 
@@ -8894,22 +9100,17 @@ class Watcher:
         recovered = []
         for run in self.db.query("SELECT * FROM run WHERE terminal_state IS NULL"):
             if self.run_container_live(run):
+                self.adopt_run(run)
                 continue
             if self.run_left_work(run):
-                # Not a crash in the sense that matters: the container is gone and the work is
-                # here. Finish it from the directory rather than requeueing a turn that has
-                # already been answered.
+                # NOT A CRASH IN THE SENSE THAT MATTERS: the container is gone and the work is
+                # here. Left open deliberately, for finish_runs to pick up on this same pass --
+                # it takes the conversation lock, moves a pooled run's output and validates the
+                # harvest, none of which belongs in a recovery sweep, and doing it in two places
+                # is how the two would drift.
                 log(f"run {run['ffbox_run_id']}: its container is gone but its directory holds "
-                    f"work; finishing it rather than requeueing the turn")
-                try:
-                    if self.finish_run_from_disk(run):
-                        recovered.append(run["id"])
-                        continue
-                except Exception as exc:  # noqa: BLE001 - one run must not stop recovery
-                    log(f"ERROR: could not finish run {run['ffbox_run_id']} from its "
-                        f"directory: {type(exc).__name__}: {exc}")
-                # Fall through to the requeue below: a finish that did not happen must not
-                # leave the row open for ever.
+                    f"work; leaving it for the finish pass rather than requeueing the turn")
+                continue
             # A POOLED RUN'S TRANSCRIPT IS SWEPT BEFORE ANYTHING ELSE IS DECIDED. Its container
             # is gone, so the only copy of the conversation's memory is in a spool directory
             # pool_reap() would delete, and the requeued turn below is about to resume from it.
@@ -8977,6 +9178,12 @@ class Watcher:
         # is where it earns its keep, ticking every poll_secs while a container works.
         self.index_live_runs()
         self.join_launches()
+        # AFTER THE JOIN, because the join is what makes the containers exist. In this
+        # pass-at-a-time form the caller wants the whole turn to have happened when once()
+        # returns, so the finish threads are waited on too -- which is the difference between
+        # this and the daemon, where a finish takes as long as a push and nobody is blocked on it.
+        self.finish_runs()
+        self.join_finishes()
         # AFTER the join, so the runs this pass started have finished publishing and this sees
         # what they actually left behind rather than racing them for it.
         self.reconcile_publications()
@@ -9173,6 +9380,8 @@ class Watcher:
                     # A run that has outlived its ceiling, whoever started it. This is what
                     # bounds a run whose ffbox is no longer watching.
                     self.enforce_clocks()
+                    # Runs whose container is gone. On threads; this returns at once.
+                    self.finish_runs()
                     # The box's Unity licence rolls forward about a day, and a container can now
                     # outlive that. Rate-limited inside; a no-op when there is nothing to do.
                     self.refresh_unity_licence()
