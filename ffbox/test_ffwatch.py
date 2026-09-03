@@ -5391,6 +5391,14 @@ def test_destructive_docker_calls_name_the_container():
                 check(f"{name}: `{stripped[:60]}` addresses one exact name",
                       "$RUN_NAME" in stripped or "$POOL_NAME" in stripped
                       or "$name" in stripped or "container_name" in stripped, stripped)
+    # ffwatch removes containers itself since --rm came off both routes, and it builds its argv
+    # as a LIST, which the line scan above cannot see. The rule is the same one: a removal names
+    # what it is removing. So check the shape instead -- one helper does every removal, and it
+    # takes refs from its caller rather than asking docker to match something.
+    check("ffwatch removes containers in exactly one place",
+          sources["ffwatch.py"].count('"rm", "-f"') == 1, None)
+    check("and that place names its target rather than filtering for it",
+          '"rm", "-f", ref]' in sources["ffwatch.py"], None)
     check("ffwatch asks docker about one anchored name and nothing else",
           'f"name=^{name}$"' in sources["ffwatch.py"])
     check("the container ffbox stops is the one it named",
@@ -8027,6 +8035,70 @@ def test_a_crashed_pooled_run_gives_its_transcript_back():
           turn["status"] == "queued", dict(turn))
 
 
+def test_a_crashed_run_that_left_work_is_finished_not_requeued():
+    """2026-09-01, in a test.
+
+    A pooled run's spool was destroyed while it worked. The agent ran to completion and verified
+    774/774 clean, but ffbox found no exit code, scored the run 70, and the harness posted "the
+    run failed / no branch -- the run changed no files" into the thread. The answer was on disk
+    the whole time and nothing looked at it.
+
+    So a run whose container is gone is only a crash when it left NOTHING. If the directory holds
+    a work bundle or a result, the finish path runs on what is there and the turn is not run a
+    second time. design/ffbox_live_update_design.txt section 5.
+    """
+    print("recovery: a crash that left work")
+    case = Case("leftwork", base_fixture())
+    w = case.watcher
+    conv_id = w.upsert_conversation("99201", kind="ask", channel_id=ASK_CHANNEL)
+    cur = w.db.execute(
+        "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, started_at, venue)"
+        " VALUES(?,1,'fix','running',?,?,'private')",
+        (conv_id, ffwatch.now_iso(), ffwatch.now_iso()))
+    turn_id = cur.lastrowid
+    run_dir = os.path.join(w.conv_dir(conv_id), "runs", "d1t1-left")
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "job.json"), "w", encoding="utf-8") as fh:
+        json.dump({"run_id": "d1t1-left", "session": {"id": "SESS"}, "messages": []}, fh)
+    with open(os.path.join(run_dir, "result.json"), "w", encoding="utf-8") as fh:
+        json.dump({"result": "the belt merger now respects item priority", "subtype": "success"},
+                  fh)
+    with open(os.path.join(run_dir, ".container-rc"), "w", encoding="utf-8") as fh:
+        fh.write("0\n")
+    cur = w.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, out_dir)"
+        " VALUES(?,?,?,?,?)",
+        (turn_id, "d1t1-left", "ffbox-agent-d1t1-left", "SESS", run_dir))
+    run_row_id = cur.lastrowid
+    w.container_live = lambda name, cid=None: False   # the supervisor died; the run did not
+
+    check("the run is dealt with", len(w.recover()) == 1, None)
+    run = w.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
+    turn = w.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
+    check("it is finished rather than marked crashed",
+          run["terminal_state"] not in (None, "crashed"), dict(run))
+    check("the exit code on disk is what scored it", run["exit_code"] == 0, dict(run))
+    check("and the turn is NOT queued again, because it has already been answered",
+          turn["status"] != "queued", dict(turn))
+
+    # The other half of the rule: a run that left nothing really is a crash, and its turn has to
+    # be run again or the asker gets silence.
+    cur = w.db.execute(
+        "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
+        " VALUES(?,2,'fix','running',?,'private')", (conv_id, ffwatch.now_iso()))
+    empty_turn = cur.lastrowid
+    empty_dir = os.path.join(w.conv_dir(conv_id), "runs", "d1t2-empty")
+    os.makedirs(empty_dir, exist_ok=True)
+    w.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, out_dir)"
+        " VALUES(?,?,?,?,?)",
+        (empty_turn, "d1t2-empty", "ffbox-agent-d1t2-empty", "SESS", empty_dir))
+    w.recover()
+    turn = w.db.one("SELECT * FROM turn WHERE id=?", (empty_turn,))
+    check("a run that left nothing is still a crash, and its turn is requeued",
+          turn["status"] == "queued", dict(turn))
+
+
 def test_a_run_is_identified_by_its_container_id_not_its_name():
     """The name moves; the id does not.
 
@@ -9978,6 +10050,7 @@ def main():
         test_two_dispatchers_cannot_take_one_container,
         test_a_pooled_run_never_loses_the_conversations_memory,
         test_a_crashed_pooled_run_gives_its_transcript_back,
+        test_a_crashed_run_that_left_work_is_finished_not_requeued,
         test_a_run_is_identified_by_its_container_id_not_its_name,
         test_a_launch_never_destroys_a_warm_container,
         test_a_turn_falls_back_to_a_cold_launch,

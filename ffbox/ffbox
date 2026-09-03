@@ -710,6 +710,15 @@ cleanup() {
         docker stop --timeout 120 "$RUN_NAME" >/dev/null 2>&1
     fi
 
+    # AND REMOVE IT, because --rm no longer does. By the time this runs everything worth reading
+    # has been read: the exit code is in out/.container-rc and the harvest has already run off
+    # $OUT. A cold run's container is this script's to remove; a DISPATCHED one is the pool's,
+    # and pool_drop/pool_reap remove it along with the spool -- removing it here would take it
+    # out from under a keeper that is still deciding what to do with the directory.
+    if [ -z "$DISPATCH" ] && [ -n "${RUN_NAME:-}" ]; then
+        docker rm -f "$RUN_NAME" >/dev/null 2>&1 || :
+    fi
+
     if [ "$KEEP" = 1 ]; then
         echo "[ffbox] --keep: nothing to keep — the workspace was a container ramdrive" >&2
         echo "[ffbox]         the run's output is at $OUT" >&2
@@ -993,7 +1002,12 @@ if [ -n "$STAGE_POOL" ]; then
             # nothing that outlives the release may carry it. `docker run -d` returns in a
             # moment, so this has never leaked -- it is closed anyway, because the rule is
             # about the descriptor and not about how long a particular command usually takes.
-            _CID=$(docker run --rm -d \
+            # NO --rm HERE EITHER, and it has to be this way round: flags are creation-time and
+            # dispatch only RENAMES this container, so a staged container created with --rm stays
+            # a --rm container for the whole of the run it eventually serves. Leaving it would
+            # give the two routes different lifetimes at exactly the point the host starts
+            # depending on them being the same. pool_drop and pool_reap remove it explicitly.
+            _CID=$(docker run -d \
                 --name "$POOL_NAME" \
                 --label "$FFBOX_WORKLOAD_LABEL=pool" \
                 --label "ffbox.pool=${REF}" \
@@ -1079,7 +1093,12 @@ if [ -n "$DISPATCH" ]; then
     # `docker wait` prints the container's exit code and exits 0 itself, so the code has to come
     # out of its stdout rather than out of $?. Backgrounded so the clock loop below watches this
     # exactly as it watches a `docker run`.
-    docker wait "$RUN_NAME" > "$POOL_DIR/$DISPATCH/.container-rc" 2>/dev/null &
+    #
+    # INSIDE `out/`, NOT BESIDE IT. This used to land in $POOL_HOME, one level up, so it did not
+    # travel with the move below and had to be deleted separately. In `out/` there is one path
+    # that answers "what did this container exit with" -- the same path on both routes, before
+    # and after the move, and readable by a process that did not start the run.
+    docker wait "$RUN_NAME" > "$OUT/.container-rc" 2>/dev/null &
     DOCKER_PID=$!
 else
     # THE CEILING, TAKEN THE LONG WAY ROUND. This `docker run` is not detached -- it stays in the
@@ -1128,7 +1147,14 @@ else
     # creation-time, and that container was created before it knew which run it would serve --
     # so it is found by the ffbox.pool.id label it already carries.
     # design/ffbox_live_update_design.txt section 4a.
-    docker run --rm \
+    # NO --rm, AND THAT IS THE POINT. Measured on this box on 2026-09-03: `--rm` is performed by
+    # the DAEMON, so a client that is killed leaves the container to exit and be removed with
+    # nobody able to ask what it exited with. `docker logs` goes the same way. The exit code is
+    # the one fact a run cannot be scored without, and on 2026-09-01 losing it turned a run that
+    # verified 774/774 clean into "the run failed". The container is removed explicitly instead --
+    # by this script's cleanup below while it is the one waiting, and by ffwatch's sweep for a
+    # container whose host process did not come back.
+    docker run \
         --name "$RUN_NAME" \
         --label "$FFBOX_WORKLOAD_LABEL=agent" \
         --label "ffbox.slot=${RUN_SLOT}" \
@@ -1197,7 +1223,7 @@ if [ -n "$DISPATCH" ]; then
     # `docker wait` exits 0 having PRINTED the container's code, so $? above is its own success
     # and not the run's. An unreadable file means the container went away without docker wait
     # seeing it end, which is a failed run rather than a successful one.
-    RUN_RC=$(tr -dc '0-9' < "$POOL_HOME/.container-rc" 2>/dev/null || true)
+    RUN_RC=$(tr -dc '0-9' < "$OUT/.container-rc" 2>/dev/null || true)
     [ -n "$RUN_RC" ] || RUN_RC=70
 
     # EVERYTHING THE RUN PRODUCED MOVES TO THE RUN DIRECTORY, and from here on nothing downstream
@@ -1213,7 +1239,7 @@ if [ -n "$DISPATCH" ]; then
     # The container is gone and so is anything it could still be told. What is left under
     # POOL_HOME is this run's leavings, and the keeper deletes the directory; the transcript is
     # the one thing that must be taken out first, which is ffwatch's job and not this script's.
-    rm -f "$POOL_HOME/.container-rc"
+    # `.container-rc` needs no cleanup any more: it lives in `out/` and moved with the rest.
 fi
 
 case "$TIMEOUT_KIND" in
