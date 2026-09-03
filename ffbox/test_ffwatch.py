@@ -8035,6 +8035,75 @@ def test_a_crashed_pooled_run_gives_its_transcript_back():
           turn["status"] == "queued", dict(turn))
 
 
+def test_a_clock_that_has_passed_stops_the_run_from_a_pass():
+    """The ceiling belongs to the run, not to whatever process happened to start it.
+
+    ffbox watches its own container in a `while kill -0` loop, which lasts exactly as long as
+    ffbox does. A run whose supervisor was killed had no deadline at all after that moment and
+    went on holding a slot, a workspace and a Unity seat. The comparison runs on a pass now, off
+    a file the run was created with, so any ffwatch can enforce it.
+    """
+    print("clocks: enforced from a pass")
+    case = Case("clocks", base_fixture())
+    w = case.watcher
+    conv_id = w.upsert_conversation("99301", kind="ask", channel_id=ASK_CHANNEL)
+    cur = w.db.execute(
+        "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
+        " VALUES(?,1,'fix','running',?,'private')", (conv_id, ffwatch.now_iso()))
+    turn_id = cur.lastrowid
+    out_dir = os.path.join(case.root, "clockrun")
+    os.makedirs(out_dir, exist_ok=True)
+    w.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name, container_id, out_dir)"
+        " VALUES(?,?,?,?,?)",
+        (turn_id, "d1t1-clock", "ffbox-agent-d1t1-clock", "cid-clock", out_dir))
+
+    began = (ffwatch.datetime.now(ffwatch.timezone.utc)
+             - ffwatch.timedelta(seconds=400))
+    with open(os.path.join(out_dir, "clock"), "w", encoding="utf-8") as fh:
+        fh.write(f"started_at={began.isoformat()}\n"
+                 "warmup_secs=3600\nagent_secs=300\nverify_secs=1800\nkill_grace_secs=10\n")
+
+    w.container_live = lambda name, cid=None: True
+    stops = []
+    w._stop_expired_run = lambda run_id, ref, grace: stops.append((run_id, ref, grace))
+
+    check("in warm-up, with 400s gone of 3600, nothing is stopped", w.enforce_clocks() == 0,
+          stops)
+
+    # The agent takes over. Its ceiling is 300 and the marker is 400 seconds old, so it is over.
+    marker = os.path.join(out_dir, ".agent-started")
+    open(marker, "w").close()
+    os.utime(marker, (time.time() - 400, time.time() - 400))
+    w._clock_stopping.clear()
+    check("once the agent phase has run past ITS ceiling, the run is stopped",
+          w.enforce_clocks() == 1, stops)
+    check("softly, with the licence floor rather than kill_grace_secs",
+          stops and stops[-1][2] == ffwatch.LICENCE_STOP_FLOOR, stops)
+    check("addressed by the container id, which a rename cannot move",
+          stops and stops[-1][1] == "cid-clock", stops)
+    check("and the phase that ran out is recorded where finish_run reads it",
+          open(os.path.join(out_dir, "ffbox-timeout"), encoding="utf-8").read().strip()
+          == "agent", None)
+
+    # Verification is its own phase with its own ceiling, and the newest marker is the one that
+    # counts: 400s into verify is well inside 1800.
+    verify = os.path.join(out_dir, ".verify-started")
+    open(verify, "w").close()
+    os.utime(verify, (time.time() - 400, time.time() - 400))
+    w._clock_stopping.clear()
+    stops.clear()
+    check("a run that has moved on to verification is judged against the verify ceiling",
+          w.enforce_clocks() == 0, stops)
+
+    # A run from before clocks were written down is bounded by ffbox's own loop, exactly as it
+    # was, rather than by a pass that has nothing to compare against.
+    os.remove(os.path.join(out_dir, "clock"))
+    w._clock_stopping.clear()
+    check("and a run with no clock file is left alone rather than guessed at",
+          w.enforce_clocks() == 0, stops)
+
+
 def test_a_run_reads_frozen_copies_not_the_checkout():
     """The updater fast-forwards this checkout while containers are running.
 
@@ -10117,6 +10186,7 @@ def main():
         test_two_dispatchers_cannot_take_one_container,
         test_a_pooled_run_never_loses_the_conversations_memory,
         test_a_crashed_pooled_run_gives_its_transcript_back,
+        test_a_clock_that_has_passed_stops_the_run_from_a_pass,
         test_a_run_reads_frozen_copies_not_the_checkout,
         test_a_crashed_run_that_left_work_is_finished_not_requeued,
         test_a_run_is_identified_by_its_container_id_not_its_name,

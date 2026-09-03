@@ -709,6 +709,39 @@ ffbox_write_container_id() {
     return 0
 }
 
+# THE RUN'S CEILINGS, ON DISK, SO SOMETHING OTHER THAN THIS PROCESS CAN ENFORCE THEM.
+#
+# The clock loop below holds the three ceilings in shell variables and compares them against
+# marker mtimes every two seconds. lib-workloads.sh's own header says what is wrong with that,
+# about the CI lane: "a deadline held in a shell variable cannot be read by anything else ... and
+# it dies with the process holding it, so a SIGKILLed supervisor leaves a container running with
+# no deadline at all". The agent lane's clocks are exactly those variables.
+#
+# WHY THE CEILINGS AND NOT A DEADLINE. A deadline would have to be rewritten at every phase
+# change, by somebody, and that somebody would be a process again. The phase markers the task
+# already writes -- .agent-started and .verify-started -- carry their own start times in their
+# mtimes, so a reader can derive which phase is in flight and how long it has been in it with no
+# state of its own. What it cannot derive is which ceilings this run was created under, and that
+# is what this file is for.
+#
+# THAT MATTERS BECAUSE CONFIG MOVES. A run started under agent_secs=1800 keeps 1800 even if the
+# file says 3600 an hour later, which is the same rule lib-workloads.sh applies to the pool's
+# idle clock and for the same reason: a setting applies to containers made afterwards and never
+# retroactively.
+#
+# Never fatal. A run whose ceilings were not written down is bounded by this script's own loop,
+# which is where every run was before this existed.
+ffbox_write_clock() {
+    {
+        printf 'started_at=%s\n' "$(date -Is)"
+        printf 'warmup_secs=%s\n' "$WARMUP_TIMEOUT"
+        printf 'agent_secs=%s\n' "$AGENT_TIMEOUT"
+        printf 'verify_secs=%s\n' "$VERIFY_TIMEOUT"
+        printf 'kill_grace_secs=%s\n' "$KILL_GRACE"
+    } > "$OUT/clock" 2>/dev/null || :
+    return 0
+}
+
 cleanup() {
     local rc=$?
     set +e
@@ -1099,6 +1132,9 @@ if [ -n "$DISPATCH" ]; then
     # than by the name we have just moved, so the host has one answer to "which container is
     # this run" whichever way the run started.
     ffbox_write_container_id "$(docker inspect --format '{{.Id}}' "$RUN_NAME" 2>/dev/null)"
+    # The clock starts at DISPATCH for a pooled run, not at the container's creation: it has been
+    # sitting warm and idle, and none of that time is this run's warm-up.
+    ffbox_write_clock
 
     # `docker wait` prints the container's exit code and exits 0 itself, so the code has to come
     # out of its stdout rather than out of $?. Backgrounded so the clock loop below watches this
@@ -1180,6 +1216,7 @@ else
     RUN_CID=$(docker inspect --format '{{.Id}}' "$RUN_NAME" 2>/dev/null)
     ffbox_agent_slot_confirm "$RUN_SLOT" "$RUN_CID"
     ffbox_write_container_id "$RUN_CID"
+    ffbox_write_clock
     ffbox_workload_lock_release
 fi
 
