@@ -484,6 +484,10 @@ FFSTATUS_DOC = {
     "machine": {"load1": 2.5, "load5": 3.25, "load15": 1.0, "cores": 40,
                 "mem_total_kb": 792528632, "mem_used_kb": 275619444,
                 "shmem_kb": 24810288},
+    # WHEN THE CHECKOUT LAST MOVED, relative to now rather than a fixed epoch: the page renders
+    # an age, so a hardcoded date would render "47000h ago" and grow by an hour every hour.
+    "update": {"last_applied_epoch": int(time.time()) - 7620,
+               "last_applied_sha": "f2c72ecedede9a11", "next_check_secs": 214},
     "pools": [
         {"class": "ffagent", "idle": 2, "waiting": 1, "busy": 0, "max": 10},
         {"class": "ffdev", "idle": 1, "waiting": 1, "busy": 0, "max": 3},
@@ -1246,6 +1250,16 @@ def test_the_box_page_reports_what_the_status_script_said():
               "262.9G (34%)" in text and "755.8G" in text and "792528632" not in text)
         check("and the tmpfs the workspaces live in is called out",
               "23.7G" in text and "in workspaces" in text)
+        check("the column holding the machine's total is named for what it holds",
+              "Memory Total" in text and "<th>of</th>" not in text)
+        # LAST APPLIED, NOT LAST CHECKED. The timer looks every five minutes and finds nothing
+        # almost every time, so a "last checked" clock reads five minutes old on a box that is
+        # three days behind master.
+        check("the page says when this box last took new code, and which commit",
+              "last update 2h07m ago (f2c72ecedede)" in text,
+              text[text.find("<p class=\"note\">"):][:400])
+        check("and how long until it looks again", "next check in 3m" in text,
+              text[text.find("<p class=\"note\">"):][:400])
         check("the nav offers the page from everywhere",
               all('href="/status"' in text_of(srv.get(p)[2]) for p in ("/", "/lanes")))
 
@@ -1325,6 +1339,34 @@ def test_the_box_page_reports_what_the_status_script_said():
             check("and never updating", "class=\"pill updating\"" not in page)
             check("and the containers it found are still on the page — nothing is draining",
                   "ffbox-agent-pool-deadbeef" in page)
+        finally:
+            write_status_doc(FFSTATUS_DOC)
+
+        # A box that has taken no code since the stamp was invented — a fresh checkout, or one
+        # that has simply been current ever since. Blank is a state, not a failure.
+        never = dict(FFSTATUS_DOC, update={"last_applied_epoch": None,
+                                           "last_applied_sha": None, "next_check_secs": -3})
+        write_status_doc(never)
+        try:
+            code, _hdr, body = srv.get("/status")
+            t = text_of(body)
+            check("a box with no recorded update says so rather than showing an em dash",
+                  code == 200 and "last update unknown" in t, code)
+            check("and a timer that is already due does not count down past zero",
+                  "next check due now" in t and "expired" not in t,
+                  t[t.find("<p class=\"note\">"):][:400])
+        finally:
+            write_status_doc(FFSTATUS_DOC)
+
+        # A document from an ffstatus.sh that predates the update block, which is the same
+        # shape as one that predates the machine block below: a real state for the minutes
+        # between a deploy landing and the unit restarting onto it.
+        older_update = {k: v for k, v in FFSTATUS_DOC.items() if k != "update"}
+        write_status_doc(older_update)
+        try:
+            code, _hdr, body = srv.get("/status")
+            check("a document with no update block still renders",
+                  code == 200 and "last update unknown" in text_of(body), code)
         finally:
             write_status_doc(FFSTATUS_DOC)
 

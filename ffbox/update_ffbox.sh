@@ -119,6 +119,19 @@ APPLY_FLAG=$CONFIG_DIR/update.applying
 # restart of the wrong target.
 WATCHED_FILES="config.json secrets.env"
 CONFIG_STAMP=$CONFIG_DIR/update.config-sha
+# WHEN THIS BOX LAST TOOK NEW CODE — one line, `<epoch> <sha>`, written in section 6 by the
+# pass that actually fast-forwarded. NOT when the timer last looked: the timer looks every five
+# minutes and finds nothing almost every time, so "last checked" answers a question nobody asks
+# while hiding the one they do — is this box running what was pushed an hour ago? ffstatus.sh
+# reads it, the terminal and the page both show it, and a box that has taken no code since the
+# stamp was invented says so rather than guessing from an mtime that a stray `git` command
+# could have moved.
+#
+# A CONFIG-ONLY RESTART DOES NOT TOUCH IT. That pass drains and restarts, but the checkout is
+# on the same commit it was on before, and calling that an update would make the number lie in
+# the direction that matters — a box stuck on a two-day-old commit would read as freshly
+# updated every time somebody edited config.json.
+APPLIED_STAMP=$CONFIG_DIR/update.last-applied
 
 log() { printf '[ffbox-update] %s\n' "$*"; }
 die() { log "ERROR: $*"; exit 1; }
@@ -648,6 +661,14 @@ lift_drain
 # must not be what keeps it that way. The cost of failing here is one redundant restart.
 config_fingerprint > "$CONFIG_STAMP" \
     || log "WARNING: could not write $CONFIG_STAMP; the next tick will restart again"
+# Beside the fingerprint and for the same reason: written while ffbox is stopped, a moment
+# before the start, so the stamp and the processes reading the new code date from the same
+# moment. Never fatal — an unwritable stamp costs one blank field on a status page, which is
+# not a reason to leave the box stopped.
+if [ "$CODE_UPDATE" = 1 ]; then
+    printf '%s %s\n' "$(date +%s)" "$(git_ rev-parse HEAD)" > "$APPLIED_STAMP" \
+        || log "WARNING: could not write $APPLIED_STAMP; ffstatus will not know when this landed"
+fi
 log "starting ffbox.target"
 sudo_systemctl start ffbox.target || log "WARNING: start reported a failure"
 

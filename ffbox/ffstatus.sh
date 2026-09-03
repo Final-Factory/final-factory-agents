@@ -57,6 +57,14 @@ FFGHR_DRAIN=${FFGITHUBRUNNERS_CONFIG_DIR:-$CONFIG_HOME/githubrunners}/drain
 # config dir the way that script hardcodes it. See read_maintenance for why the unit being active
 # is not the same question.
 FFBOX_APPLYING=$CONFIG_HOME/update.applying
+# AND WHEN ONE LAST DID, written by that script's section 6 as `<epoch> <sha>`. The flag above
+# says whether the box is changing right now; this says when it last changed, which is the
+# question you ask when it is not. The stamp only exists once an update has landed since it was
+# invented, which is why every consumer below has an "unknown" case rather than a default.
+UPDATE_STAMP=$CONFIG_HOME/update.last-applied
+# The unit that does the looking. Only its schedule is read here -- `systemctl show` on a timer
+# takes no lock and starts nothing, unlike the update lock read_maintenance deliberately avoids.
+UPDATE_TIMER=${FFBOX_UPDATE_TIMER:-ffbox-update.timer}
 
 # US, THE UNIT SEPARATOR, RATHER THAN A PIPE. Every field here is a name somebody else chose --
 # a container name, a git ref off a label -- and a ref may legally contain most punctuation. A
@@ -243,6 +251,92 @@ human_secs() {
     else printf '%ds' "$s"; fi
 }
 
+# --- the self-update clock ----------------------------------------------------------------------
+#
+# TWO NUMBERS, AND THEY ARE NOT THE SAME NUMBER. The timer fires every five minutes and finds
+# nothing almost every time, so "last checked" is a clock that ticks whatever the box is running:
+# it reads five minutes old on a machine three days behind master. What an operator wants is when
+# the checkout last MOVED, which is what update_ffbox.sh stamps, plus how long until the next
+# look -- because "this box is two commits behind" and "and it will notice in forty seconds" is a
+# problem you wait out, while the same line with no second half sends somebody to systemctl.
+#
+# THE SCHEDULE COMES FROM SYSTEMD, not from the interval in the .timer file. The unit carries
+# OnUnitActiveSec plus a randomised delay, it catches up after a machine was off, and a hand-run
+# `systemctl start` moves the whole schedule -- so the only answer that is not a guess is the one
+# the thing holding the schedule gives.
+UPDATE_AT= UPDATE_SHA= UPDATE_NEXT_SECS=
+
+# A systemd timespan -- "1w 2d 13h 25min 57.286040s", "4min 3s", "250ms" -- as whole seconds, or
+# nothing when it is not one. Some builds print these properties as a raw microsecond count
+# instead, so a bare integer is taken as usec; that is the one ambiguity, and systemd never
+# prints a unitless timespan.
+systemd_timespan_secs() {
+    case "${1:-}" in
+        ''|infinity|n/a) return ;;
+        *[!0-9]*) ;;
+        # USEC_INFINITY is UINT64_MAX, which is what a disabled or unschedulable timer answers
+        # in the raw form, and it is also the one integer that overflows the arithmetic below
+        # into a negative "seconds from now". Anything wider than a plausible timespan is
+        # treated as no answer.
+        ??????????????????*) return ;;
+        *) printf '%d\n' $(( $1 / 1000000 )); return ;;
+    esac
+    printf '%s\n' "$1" | awk '
+        {
+            total = 0; ok = 0
+            n = split($0, tok, /[ \t]+/)
+            for (i = 1; i <= n; i++) {
+                if (match(tok[i], /^[0-9]+(\.[0-9]+)?/) == 0) continue
+                v = substr(tok[i], 1, RLENGTH) + 0
+                u = substr(tok[i], RLENGTH + 1)
+                if      (u == "y")               m = 31557600
+                else if (u == "month")           m = 2629800
+                else if (u == "w")               m = 604800
+                else if (u == "d")               m = 86400
+                else if (u == "h")               m = 3600
+                else if (u == "min" || u == "m") m = 60
+                else if (u == "s" || u == "")    m = 1
+                else if (u == "ms")              m = 0.001
+                else if (u == "us")              m = 0.000001
+                else continue
+                total += v * m; ok = 1
+            }
+            if (ok) printf "%d\n", total
+        }'
+}
+
+read_update() {
+    UPDATE_AT= UPDATE_SHA= UPDATE_NEXT_SECS=
+
+    if [ -r "$UPDATE_STAMP" ]; then
+        local epoch sha rest
+        read -r epoch sha rest < "$UPDATE_STAMP" || true
+        case "${epoch:-}" in
+            ''|*[!0-9]*) ;;
+            *) UPDATE_AT=$epoch; UPDATE_SHA=${sha:-} ;;
+        esac
+    fi
+
+    command -v systemctl >/dev/null 2>&1 || return 0
+    # MONOTONIC FIRST, because this timer is OnBootSec/OnUnitActiveSec and a monotonic timer has
+    # no realtime elapse to show -- the property is there and empty. A calendar timer is the
+    # other way round, so both are tried and neither being answerable leaves the column blank.
+    local mono now_up rt next
+    mono=$(systemd_timespan_secs "$(systemctl show "$UPDATE_TIMER" \
+        -p NextElapseUSecMonotonic --value 2>/dev/null)")
+    if [ -n "$mono" ] && [ -r /proc/uptime ]; then
+        read -r now_up _ < /proc/uptime
+        UPDATE_NEXT_SECS=$(( mono - ${now_up%.*} ))
+        return 0
+    fi
+    rt=$(systemctl show "$UPDATE_TIMER" -p NextElapseUSecRealtime --value 2>/dev/null)
+    case "${rt:-}" in
+        ''|infinity|n/a) return 0 ;;
+    esac
+    next=$(date -d "$rt" +%s 2>/dev/null) || return 0
+    [ -n "$next" ] && UPDATE_NEXT_SECS=$(( next - $(date +%s) ))
+}
+
 # --- is the box being worked on? -----------------------------------------------------------------
 #
 # WHY THIS IS ON THE HEADER LINE. An empty pool and a container count of zero mean two entirely
@@ -358,6 +452,7 @@ CI_BUSY=0 CI_WAITING=0 WORKLOADS=0 WIDEST=4 GATHER_ERR=
 gather() {
     read_machine
     read_maintenance
+    read_update
     ROWS=(); INFRA=(); SPARES=(); RUNS=()
     CI_BUSY=0; CI_WAITING=0; WORKLOADS=0; WIDEST=4; GATHER_ERR=
 
@@ -459,6 +554,31 @@ render_text() {
     # The reason on the next line, because the state word alone sends somebody to the journal to
     # find out which of the things behind it this one is.
     [ -n "$MAINT_REASON" ] && printf '  %s%s%s\n' "$DIM" "$MAINT_REASON" "$N"
+    # AND WHEN THIS CHECKOUT LAST MOVED, on the header rather than in a section of its own: it
+    # is one line, and the question it answers -- is this box running what was pushed? -- is the
+    # one you ask before reading any number below it. The next check is beside it because a box
+    # that is behind and about to notice needs no operator at all.
+    if [ -n "$UPDATE_AT" ] || [ -n "$UPDATE_NEXT_SECS" ]; then
+        local since=unknown
+        if [ -n "$UPDATE_AT" ]; then
+            since="$(date -d "@$UPDATE_AT" '+%Y-%m-%d %H:%M' 2>/dev/null || printf '%s' "$UPDATE_AT")"
+            since="$since ($(human_secs $(( $(date +%s) - UPDATE_AT )) ) ago)"
+            [ -n "$UPDATE_SHA" ] && since="$since $(printf %.12s "$UPDATE_SHA")"
+        fi
+        # A non-positive countdown is a timer that is due and has not fired yet -- during an
+        # update, most often, since the unit stays activating for the whole drain. human_secs
+        # would call that "expired", which is the right word for a container's TTL and the
+        # wrong one for a check that is about to happen.
+        local due=
+        if [ -n "$UPDATE_NEXT_SECS" ]; then
+            if [ "$UPDATE_NEXT_SECS" -gt 0 ]; then
+                due=" · next check in $(human_secs "$UPDATE_NEXT_SECS")"
+            else
+                due=" · next check due now"
+            fi
+        fi
+        printf '  %slast update %s%s%s\n' "$DIM" "$since" "$due" "$N"
+    fi
 
     # --- the machine ------------------------------------------------------------------------
     if [ -n "$LOAD1" ] || [ -n "$MEM_TOTAL_KB" ]; then
@@ -551,6 +671,8 @@ render_json() {
     {
         printf 'B%s%s%s%s\n' "$SEP" "$WORKLOADS" "$SEP" "${CFG[box_max]}"
         printf 'T%s%s%s%s\n' "$SEP" "$MAINT_STATE" "$SEP" "$MAINT_REASON"
+        printf 'U%s%s%s%s%s%s\n' "$SEP" "$UPDATE_AT" "$SEP" "$UPDATE_SHA" \
+            "$SEP" "$UPDATE_NEXT_SECS"
         printf 'M%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
             "$SEP" "$LOAD1" "$SEP" "$LOAD5" "$SEP" "$LOAD15" "$SEP" "$CORES" \
             "$SEP" "$MEM_TOTAL_KB" "$SEP" "$MEM_USED_KB" "$SEP" "$SHMEM_KB"
@@ -576,6 +698,8 @@ SEP = "\x1f"
 doc = {"host": sys.argv[1], "generated_at": sys.argv[2],
        "box": {"used": 0, "max": 0}, "machine": {},
        "maintenance": {"state": "running", "reason": ""},
+       "update": {"last_applied_epoch": None, "last_applied_sha": None,
+                  "next_check_secs": None},
        "pools": [], "containers": [], "infrastructure": []}
 
 def num(text):
@@ -593,6 +717,12 @@ for line in sys.stdin.read().splitlines():
         doc["box"] = {"used": num(f[0]), "max": num(f[1])}
     elif tag == "T":
         doc["maintenance"] = {"state": f[0] or "running", "reason": f[1]}
+    elif tag == "U":
+        # Epoch and seconds-from-now rather than "2h07m ago" and "in 4m", for the reason every
+        # other clock in this document is a number: the terminal wants the short form, a page
+        # wants to decide for itself, and a formatted string is a decision neither can undo.
+        doc["update"] = {"last_applied_epoch": num(f[0]), "last_applied_sha": f[1] or None,
+                         "next_check_secs": num(f[2])}
     elif tag == "M":
         # A load average is the one non-integer on this page. None rather than 0.0 when /proc
         # was unreadable, so a consumer can tell "no answer" from "an idle machine".
