@@ -86,6 +86,7 @@ already there:
       "base_ref": "master",
       "agent_secs": 1800,
       "warmup_secs": 3600,
+      "verify_secs": 1800,
       "kill_grace_secs": 10,
       "pool": { "idle": 1, "max": -1 },
       "idle_agent_ttl_secs": 14400,
@@ -96,6 +97,7 @@ already there:
       "base_ref": "master",
       "agent_secs": 1800,
       "warmup_secs": 3600,
+      "verify_secs": 1800,
       "kill_grace_secs": 10,
       "pool": { "idle": 1, "max": 3 },
       "idle_agent_ttl_secs": 14400,
@@ -204,7 +206,7 @@ with no model involved.
 Anything here that is not `send` is a trust tier. `null` means no limit, which is what
 `operator` gets: nobody accidentally types two hundred prompts, and a person at a terminal
 watching a prompt refused because the tier is full is a worse failure than the one a cap
-prevents. Concurrency and the three clocks still bound what an operator can spend at any
+prevents. Concurrency and the per-run clocks still bound what an operator can spend at any
 moment.
 
 `send` is separate because it caps what reaches the wire. One run that loops writing intents
@@ -278,7 +280,7 @@ because wanting that is unusual.
 # `pools`
 
 **One block per agent class**, holding what governs a run rather than the pipeline around it:
-the branch its clone starts from, the three clocks it is held to, its warm pool, and the
+the branch its clone starts from, the four clocks it is held to, its warm pool, and the
 network it is put on. `ffwatch` flattens the `ffagent` block over the top level when it reads
 the file, so `cfg["agent_secs"]` still means what it always meant.
 
@@ -302,16 +304,32 @@ pool of its own and neither can take the other's warm container.
 | `base_ref` | `"master"` | `"master"` | Where a run's clone starts. Keep it equal to the first key of `publish_bases`, which is what the agent is told to branch from by default; disagreeing costs a cross-base checkout and a full Unity reimport inside every container. |
 | `agent_secs` | `1800` | `1800` | The model's working time, measured from the `.agent-started` marker. |
 | `warmup_secs` | `3600` | `3600` | Everything before that marker: clone, restore, Unity import. |
-| `kill_grace_secs` | `10` | `10` | How long a container gets to finish after it is told to stop. |
+| `verify_secs` | `1800` | `1800` | The harness's own EditMode run after the agent exits, measured from the `.verify-started` marker. |
+| `kill_grace_secs` | `10` | `10` | How long a container gets to finish after it is told to stop. Floored at 120 wherever a Unity seat may be held. |
 | `pool.idle` | `1` | `1` | Containers staged warm before any request exists. |
 | `pool.max` | `-1` | `3` | This class's own ceiling on containers, runs and staged ones together. |
 | `idle_agent_ttl_secs` | `14400` | `14400` | How long a staged container waits before retiring. |
 | `pool_ref` | `null` | `null` | Which branch the pool stages. `null` follows `base_ref`. |
 | `network` | `"limited"` | `"full"` | The fence. See below. |
 
-**Three clocks, not one.** Conflating them makes a slow Unity import look like a hung agent,
-which is why `agent_secs` bounds the agent phase and `warmup_secs` bounds everything in front
-of it.
+**Four clocks, not one.** They run in order — warm-up, then the agent, then verification — and
+each is measured from its own marker, so a run can spend all of every one of them. Conflating
+them makes a slow Unity import or a long test suite look like a hung agent, which is the whole
+reason they are separate: `warmup_secs` bounds everything in front of the agent, `agent_secs`
+bounds the agent phase, and `verify_secs` bounds the harness's EditMode run afterwards.
+Exceeding one exits **123**, **124** or **125** respectively, and writes `warmup`, `agent` or
+`verify` to `<out>/ffbox-timeout`; only 123 and 124 are the turn failing.
+
+`verify_secs` was box-wide until 2026-09-03, on the argument that the EditMode suite is the same
+whichever container ran the turn. That is true of the suite and is not what the clock asks: what
+it bounds is how long **this lane** may spend verifying, and a dev turn touching half the
+assemblies does not cost what a player-facing fix costs. Set the same number in both blocks if
+you want one answer.
+
+**`kill_grace_secs` has a floor of 120 and it is not this number.** PID 1's trap runs
+`unity-editor -quit -returnlicense`, which is an editor launch, so every stop of a container that
+may hold a seat allows `max(kill_grace_secs, 120)`. Lowering this below 120 cannot strand a seat;
+raising it above 120 is honoured, and is what to do for an agent that ignores SIGTERM.
 
 **`pool.idle`** buys latency: 1.2 seconds from dispatch to the agent starting, against about
 40 on a cold launch, measured on the build server. Each staged container counts against
@@ -526,8 +544,8 @@ because a box normally wants one.
 
 | Key | Default | Notes |
 |---|---|---|
-| `verify_assemblies` | `"FFEditorTests"` | The fast EditMode suite. Empty runs every EditMode assembly, which is the slow one. |
-| `verify_secs` | `1800` | |
+| `verify_assemblies` | `"FFEditorTests"` | The fast EditMode suite. Empty runs every EditMode assembly, which is the slow one. WHICH suite runs is a property of the repo, so unlike `verify_secs` it stays box-wide. |
+| `verify_secs` | `1800` | Ffagent's, flattened, and kept for `FFWATCH_VERIFY_SECS`. The clock that is enforced is the one in each pool's block — see [`pools`](#pools). |
 | `git_dir` | `/opt/FinalFactory` | A host checkout with the real remote. Publication only ever writes refs under `refs/ffbox/` there. |
 | `mirror_repo` | `/opt/ffcache/mirror/FinalFactory.git` | The freshest local copy of the remote, and the only one guaranteed to hold a pinned base sha. Read-only. |
 | `push_remote` | `"origin"` | |
