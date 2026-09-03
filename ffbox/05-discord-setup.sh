@@ -236,7 +236,7 @@ import json
 import os
 
 # ONE FILE FOR THE BOX: ~/.config/ffbox/config.json.
-#   top level + "ffagent" + "container"   ffwatch and ffweb: lanes, ceilings, the page's bind
+#   top level + "pools" + "container"     ffwatch and ffweb: pools, ceilings, the page's bind
 #   "githubrunner"                        the CI runner pool
 #   "discord"                             the Discord CLI's own: token, server, channels,
 #                                         mentions, trust -- plus user_pool/operator_pool,
@@ -288,12 +288,17 @@ for key, value in (
     # See ffbox/lib-workloads.sh, which is what actually refuses.
     ("max_concurrent_runs", 6),
     ("catchup_secs", 900),
-    # --- the agent containers -------------------------------------------------------------
-    # Everything that governs a RUN rather than the pipeline around it: the clocks it is held
-    # to, the branch its workspace starts from, and the warm pool it may be dispatched into.
-    # ffwatch flattens this section over the top level, so a key here is read exactly as it
+    # --- the pools --------------------------------------------------------------------------
+    # ONE SECTION HOLDING ONE BLOCK PER AGENT CLASS, since 2026-09-02. Everything that governs a
+    # RUN rather than the pipeline around it: the clocks it is held to, the branch its workspace
+    # starts from, the warm pool it may be dispatched into, and the network it is put on.
+    # ffwatch flattens the ffagent block over the top level, so a key here is read exactly as it
     # was before it moved.
-    ("ffagent", {
+    #
+    # The two blocks sat at the top level of this file beside "watch" and "web_port" until the
+    # move, which read as though a pool were another pipeline setting.
+    ("pools", {
+      "ffagent": {
         # Where a run's clone starts. Must match the first key of ffwatch's publish_bases,
         # which is what the agent is told to branch from by default; disagreeing costs a
         # cross-base checkout and a full Unity reimport inside every container.
@@ -311,10 +316,10 @@ for key, value in (
         # counts against max_concurrent_runs above AND holds a Unity seat, taken after it syncs
         # and before it goes idle.
         #
-        # max is THIS LANE's ceiling on containers, runs and staged ones together, underneath
+        # max is THIS POOL's ceiling on containers, runs and staged ones together, underneath
         # the box-wide max_concurrent_runs that CI counts against too. Both have to hold: the
-        # lane cap stops the agent filling a shared box on its own, the box cap stops the two
-        # lanes together overcommitting it.
+        # pool cap stops one class filling a shared box on its own, the box cap stops the pools
+        # together overcommitting it.
         #
         # -1 means "no ceiling of my own" and is coerced to max_concurrent_runs, so the default
         # is to use the whole box when CI is quiet. A negative idle is coerced to 0, which is
@@ -327,27 +332,29 @@ for key, value in (
         # Which branch the pool stages. null follows base_ref, and there is deliberately no
         # second answer to configure: a pool staged on a branch no turn asks for serves nothing.
         "pool_ref": None,
-        # THE FENCE. ffbox-net is a Docker --internal bridge with no default route, whose only
-        # other occupant is the egress proxy: a run on it reaches the names in
-        # ffbox/egress/allowlist.txt and nothing else, no LAN and not this host. ffagent serves
-        # text written by strangers in a Discord forum, so this is the one that stays shut.
-        "network": "ffbox-net",
-    }),
-    # THE SECOND AGENT CLASS. Same keys as "ffagent" above and the same meanings: the two are
-    # separate config sections with no inheritance between them, so ffdev reads THIS and never
-    # ffagent's numbers. Editing one does not move the other, which is the point -- they exist
-    # in order to diverge, and as of 2026-09-02 they do, on the network.
-    #
-    # idle 1 / max 3: one ffdev container waits warm, and at most three exist at once, runs and
-    # staged ones together, underneath the box-wide max_concurrent_runs that CI counts against
-    # too. 3 rather than -1 because dev turns are the long ones.
-    #
-    # A conversation picks its class when it is opened -- the dropdown on the web page's new
-    # prompt box, `ffwatch submit --agent ffdev`, or, for a Discord conversation, the
-    # "user_pool"/"operator_pool" pair in the "discord" section, which picks by whether the
-    # account that opened it is in trust.operators -- and every later turn of it runs in the
-    # same kind of container.
-    ("ffdev", {
+        # THE FENCE, and the word says the policy rather than a docker network name -- ffwatch
+        # is the one place that knows "limited" means ffbox-net, a Docker --internal bridge with
+        # no default route whose only other occupant is the egress proxy. A run on it reaches
+        # the names in ffbox/egress/allowlist.txt and nothing else, no LAN and not this host.
+        # ffagent serves text written by strangers in a Discord forum, so this is the pool that
+        # stays shut.
+        "network": "limited",
+      },
+      # THE SECOND AGENT CLASS. Same keys as "ffagent" above and the same meanings: the two are
+      # separate blocks with no inheritance between them, so ffdev reads THIS and never
+      # ffagent's numbers. Editing one does not move the other, which is the point -- they exist
+      # in order to diverge, and as of 2026-09-02 they do, on the network.
+      #
+      # idle 1 / max 3: one ffdev container waits warm, and at most three exist at once, runs and
+      # staged ones together, underneath the box-wide max_concurrent_runs that CI counts against
+      # too. 3 rather than -1 because dev turns are the long ones.
+      #
+      # A conversation picks its class when it is opened -- the dropdown on the web page's new
+      # prompt box, `ffwatch submit --agent ffdev`, or, for a Discord conversation, the
+      # "user_pool"/"operator_pool" pair in the "discord" section, which picks by whether the
+      # account that opened it is in trust.operators -- and every later turn of it runs in the
+      # same kind of container.
+      "ffdev": {
         "base_ref": "master",
         "agent_secs": 1800,
         "warmup_secs": 3600,
@@ -355,7 +362,7 @@ for key, value in (
         "pool": {"idle": 1, "max": 3},
         "idle_agent_ttl_secs": 14400,
         "pool_ref": None,
-        # NO FENCE, DELIBERATELY. "bridge" is the ordinary NATted docker bridge: the whole
+        # NO FENCE, DELIBERATELY. "full" is the ordinary NATted docker bridge: the whole
         # internet, no allowlist, no SNI filter. A dev turn has to be able to read documentation,
         # search the web and fetch a package, and an allowlist that must be edited every time it
         # needs a new host is not a fence, it is a queue.
@@ -365,7 +372,8 @@ for key, value in (
         # LAN address -- measured 2026-08-25, port 22 answered -- because rootless Docker
         # disables the host loopback and not the host's IP. ffdev is trusted the way a
         # developer's shell on this box is trusted, which is what it is for.
-        "network": "bridge",
+        "network": "full",
+      },
     }),
     # Turns per rolling 24 hours, keyed on TRUST TIER — who wrote the text, not which lane it
     # took. One budget across every kind of turn a player can cause. `operator` is null, which
@@ -596,48 +604,46 @@ ffbox["_help"] = {
              "container on the same daemon, so these are one answer rather than two that drift "
              "-- until 2026-09-01 a CI job had all three and an agent run had none of them. A "
              "copy of any of them inside \"githubrunner\" overrides for CI alone.",
-    "ffagent": "What governs a RUN rather than the pipeline around it, flattened over the top "
-             "level when ffwatch reads it. base_ref is where a run's clone starts. agent_secs, "
-             "warmup_secs and kill_grace_secs are three separate clocks: the model's working "
-             "time from the .agent-started marker, everything before it, and how long a "
-             "container gets to finish after it is told to stop -- conflating them makes a slow "
-             "Unity import look like a hung agent. pool.idle is how many containers fill a "
-             "workspace before any request exists (1.2s to dispatch against 40s cold); each one "
-             "counts against max_concurrent_runs and holds a Unity seat. pool.max is this lane's own "
-             "ceiling on containers, runs and staged ones together, and it sits under the "
-             "box-wide max_concurrent_runs -- both have to hold before anything starts. -1 "
-             "means no ceiling of its own and is read as max_concurrent_runs, so the default is "
-             "to use the whole box while CI is quiet; a negative idle is read as 0, off. Zero "
-             "is left alone on both, and means no places. idle_agent_ttl_secs is how long a staged container waits before "
-             "retiring, and pool_ref which branch it stages (null follows base_ref). network is "
-             "the docker network the container is created on: \"ffbox-net\" is the fenced one, "
-             "an --internal bridge whose only other occupant is the egress proxy, so the run "
-             "reaches the names in ffbox/egress/allowlist.txt and nothing else -- no LAN and not "
-             "this host. ffagent serves text written by strangers, so it stays on it.",
-    "ffdev": "The second AGENT CLASS: the same keys as \"ffagent\" and the same meanings, read "
-             "for a conversation that was started as ffdev instead. The two sections are "
-             "independent -- there is no inheritance, so a box with no \"ffdev\" block here gets "
-             "ffwatch's built-in ffdev defaults rather than whatever ffagent is set to, and "
-             "editing ffagent's clocks does not move ffdev's. They ship with the same numbers "
-             "except the pool AND the network, which is where they already diverge: ffdev's "
-             "network is \"bridge\", the ordinary docker bridge, so an ffdev turn has the whole "
-             "internet with no allowlist and no SNI filter and can search the web and fetch "
-             "packages, while ffagent stays fenced on ffbox-net. That is not the fence minus DNS "
-             "filtering, it is no fence -- a container on the bridge reaches this machine's own "
-             "LAN address too -- so ffdev is trusted the way a developer's shell on this box is, "
-             "and only the class a Discord forum can reach is kept behind the proxy. Each class "
-             "is staged into a pool of "
-             "its own and holds a ceiling of its own (pool.max), both underneath the box-wide "
-             "max_concurrent_runs that CI counts against as well; neither class can take the "
-             "other's warm container. A conversation's class is chosen when it is OPENED -- the "
-             "dropdown on the web page's new-prompt box, or `ffwatch submit --agent ffdev` -- "
-             "and every later turn of that conversation runs in the same kind of container, so "
-             "there is no dropdown when replying. A DISCORD conversation has no dropdown "
-             "either: it is opened by the \"user_pool\"/\"operator_pool\" pair in the "
-             "\"discord\" section, which reads trust.operators to decide whether the account "
-             "that opened it is a stranger or an operator. "
-             "Set pool.idle to 0 to turn this class's pool off; it still runs, cold, like "
-             "ffagent with no pool.",
+    "pools": "ONE BLOCK PER AGENT CLASS -- \"ffagent\" and \"ffdev\" -- holding what governs a "
+             "RUN rather than the pipeline around it. ffwatch flattens the ffagent block over "
+             "the top level when it reads it. base_ref is where a run's clone starts. "
+             "agent_secs, warmup_secs and kill_grace_secs are three separate clocks: the "
+             "model's working time from the .agent-started marker, everything before it, and "
+             "how long a container gets to finish after it is told to stop -- conflating them "
+             "makes a slow Unity import look like a hung agent. pool.idle is how many "
+             "containers fill a workspace before any request exists (1.2s to dispatch against "
+             "40s cold); each one counts against max_concurrent_runs and holds a Unity seat. "
+             "pool.max is that pool's own ceiling on containers, runs and staged ones together, "
+             "and it sits under the box-wide max_concurrent_runs -- both have to hold before "
+             "anything starts. -1 means no ceiling of its own and is read as "
+             "max_concurrent_runs, so the default is to use the whole box while CI is quiet; a "
+             "negative idle is read as 0, off. Zero is left alone on both, and means no places. "
+             "idle_agent_ttl_secs is how long a staged container waits before retiring, and "
+             "pool_ref which branch it stages (null follows base_ref). network is \"limited\" "
+             "or \"full\": limited puts the container behind the egress fence (an --internal "
+             "bridge whose only other occupant is the allowlist proxy, so the run reaches the "
+             "names in ffbox/egress/allowlist.txt and nothing else -- no LAN and not this "
+             "host), full puts it on the ordinary docker bridge with the whole internet and no "
+             "filter of any kind. THE TWO BLOCKS ARE INDEPENDENT: there is no inheritance, so a "
+             "box with no \"ffdev\" block here gets ffwatch's built-in ffdev defaults rather "
+             "than whatever ffagent is set to, and editing ffagent's clocks does not move "
+             "ffdev's. They ship with the same numbers except the pool AND the network, which "
+             "is where they already diverge: ffagent is \"limited\" because it serves text "
+             "written by strangers, and ffdev is \"full\" so a dev turn can search the web and "
+             "fetch packages. Full is not the fence minus DNS filtering, it is no fence -- a "
+             "container on the bridge reaches this machine's own LAN address too -- so ffdev is "
+             "trusted the way a developer's shell on this box is, and only the class a Discord "
+             "forum can reach is kept behind the proxy. Each class is staged into a pool of its "
+             "own; neither can take the other's warm container. A conversation's class is "
+             "chosen when it is OPENED -- the dropdown on the web page's new-prompt box, or "
+             "`ffwatch submit --agent ffdev` -- and every later turn of that conversation runs "
+             "in the same kind of container, so there is no dropdown when replying. A DISCORD "
+             "conversation has no dropdown either: it is opened by the "
+             "\"user_pool\"/\"operator_pool\" pair in the \"discord\" section, which reads "
+             "trust.operators to decide whether the account that opened it is a stranger or an "
+             "operator. Set pool.idle to 0 to turn a class's pool off; it still runs, cold, "
+             "like ffagent with no pool. These two blocks sat at the top level of this file "
+             "until 2026-09-02.",
     "discord": "What the ffdiscord CLI and the Gateway listener read: app_token, server_id, "
              "the channels alias -> id table, mentions, and trust.operators; plus the "
              "user_pool/operator_pool pair, which is ffwatch's and says which agent class a "

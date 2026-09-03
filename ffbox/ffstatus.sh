@@ -122,10 +122,19 @@ def num(v, default):
 box = max(1, num(cfg.get("max_concurrent_runs"), 6))
 print("box_max=%d" % box)
 
-# (class, default idle, default max) -- ffwatch's per-class DEFAULTS, written out rather than
-# derived, for the same reason they are written out there: the classes exist to diverge.
-for cls, d_idle, d_max in (("ffagent", 1, -1), ("ffdev", 1, 3)):
-    block = cfg.get(cls) or {}
+# WHERE A POOL'S BLOCK LIVES: one block per class inside "pools", the same place ffwatch's
+# _pool_section reads.
+pools = cfg.get("pools")
+if not isinstance(pools, dict):
+    pools = {}
+
+# (class, default idle, default max, default network) -- ffwatch's per-class DEFAULTS, written
+# out rather than derived, for the same reason they are written out there: the classes exist to
+# diverge.
+for cls, d_idle, d_max, d_net in (("ffagent", 1, -1, "limited"), ("ffdev", 1, 3, "full")):
+    block = pools.get(cls)
+    if not isinstance(block, dict):
+        block = {}
     pool = block.get("pool") or {}
     idle = max(0, num(pool.get("idle"), d_idle))
     cap = num(pool.get("max"), d_max)
@@ -134,7 +143,11 @@ for cls, d_idle, d_max in (("ffagent", 1, -1), ("ffdev", 1, 3)):
     # ffwatch's load_config coerces it -- so the number printed is the one actually enforced.
     print("%s_max=%d" % (cls, box if cap < 0 else cap))
     print("%s_ref=%s" % (cls, block.get("pool_ref") or block.get("base_ref") or "master"))
-    print("%s_net=%s" % (cls, block.get("network") or ("bridge" if cls == "ffdev" else "ffbox-net")))
+    # THE POLICY WORD, not the docker network: "limited" is the egress fence and "full" is the
+    # open bridge. Anything else falls back to this class's default, exactly as ffwatch's
+    # resolve_network_mode does, so what is printed is what a run would actually get.
+    net = block.get("network")
+    print("%s_net=%s" % (cls, net if net in ("limited", "full") else d_net))
 
 # WHERE THE AGENT LANE'S DRAIN FLAG LIVES. Configurable, so it is read rather than assumed:
 # ffwatch's own DEFAULTS carry this path and a box may have moved it.

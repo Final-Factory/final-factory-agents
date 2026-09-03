@@ -6,8 +6,9 @@ not exist before the job and does not exist after it.
 The harness keeps a small **pool**: `pool.idle` runners registered and waiting, plus one per job in
 flight, never more than `pool.max` altogether. A slot with no runner in it holds nothing at all.
 
-Both settings live in the `githubrunner` section of `~/.config/ffbox/config.json`, and the agent
-lane describes its own pool with the same two keys in `ffagent`. Above both sits
+Both settings live in the `githubrunner` section of `~/.config/ffbox/config.json`, and each agent
+class describes its own pool with the same two keys, in `pools.ffagent` and `pools.ffdev`. Above
+them all sits
 `max_concurrent_runs`, the box-wide ceiling on containers that the two lanes share.
 
 The design is `design/ffgithubrunners_design.txt` and the task list is

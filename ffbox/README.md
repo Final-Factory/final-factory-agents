@@ -57,19 +57,20 @@ Everything ffbox owns on a machine lives in one directory:
 
 ```
 ~/.config/ffbox/secrets.env        tokens, the Unity account
-~/.config/ffbox/config.json        EVERY setting this box has, in six parts: the pipeline at the
+~/.config/ffbox/config.json        EVERY setting this box has, in five parts: the pipeline at the
                                    top level (watch, rate_limits, web_host/web_port, and
                                    max_concurrent_runs, the ceiling on containers that BOTH lanes
                                    count against); "container" for what is true of a container
                                    whichever lane started it (workspace_size, memory,
-                                   pids_limit); "ffagent" and "ffdev", one per AGENT CLASS, for
-                                   what governs a run of that kind (base_ref, the three clocks,
-                                   pool) — independent of each other, no inheritance either way;
-                                   "githubrunner" for the CI runners, which
-                                   kept their own file until 2026-09-01; and "discord" for the
-                                   bot token, server, channel aliases, mentions and trust, which
-                                   kept its own file until the same day. The "_help" block in it
-                                   is generated on every setup run and documents each part.
+                                   pids_limit); "pools", one block per AGENT CLASS ("ffagent"
+                                   and "ffdev") for what governs a run of that kind (base_ref,
+                                   the three clocks, pool, network) — independent of each other,
+                                   no inheritance either way, and both at the top level of the
+                                   file until 2026-09-02; "githubrunner" for the CI runners,
+                                   which kept their own file until 2026-09-01; and "discord" for
+                                   the bot token, server, channel aliases, mentions and trust,
+                                   which kept its own file until the same day. The "_help" block
+                                   in it is generated on every setup run and documents each part.
 ~/.config/ffbox/discord/           the Discord CLI's STATE: cursors, doorbell, listener lock
 ~/.config/ffbox/discord.disabled   the kill switch
 ~/.config/ffbox/update.disabled    pauses the self-update timer (see "Staying current")
@@ -1358,13 +1359,13 @@ So it happens before the asking. `pool.idle` containers sit with their workspace
 wait; a request that finds one starts the agent in **1.2 seconds**, measured on this box.
 
 ```json
-"ffagent": {
+"pools": { "ffagent": {
   "pool": { "idle": 1,         // how many wait while nothing is happening. 0 is off
-            "max": -1 },       // this lane's ceiling; -1 means "the box's", max_concurrent_runs
+            "max": -1 },       // this pool's ceiling; -1 means "the box's", max_concurrent_runs
   "idle_agent_ttl_secs": 14400,// what one waits before retiring. The keeper enforces it; the
                                // container fails safe at this plus 900
   "pool_ref": null             // which branch to stage; null follows base_ref
-}
+}}
 ```
 
 Both lanes describe their pool the same way — `githubrunner.pool` has the same two keys, where
@@ -1565,19 +1566,27 @@ Design: `design/ffbox_idle_agents_design.txt`.
 There are two kinds of agent container, and a conversation picks one when it OPENS.
 
 ```json
-"ffagent": { "base_ref": "master", …, "pool": {"idle": 1, "max": -1}, "network": "ffbox-net" }
-"ffdev":   { "base_ref": "master", …, "pool": {"idle": 1, "max": 3},  "network": "bridge" }
+"pools": {
+  "ffagent": { "base_ref": "master", …, "pool": {"idle": 1, "max": -1}, "network": "limited" },
+  "ffdev":   { "base_ref": "master", …, "pool": {"idle": 1, "max": 3},  "network": "full" }
+}
 ```
 
-Same keys, same meanings, one section each, and **no inheritance between them**: a box with no
-`ffdev` block gets ffwatch's built-in ffdev defaults rather than whatever `ffagent` is set to,
-and editing one class's clocks does not move the other's. They ship with the same numbers except
-the pool and the network, and are expected to diverge further — ffdev onto `develop`, or with a
-longer agent clock — which is the whole reason the two are written out separately rather than one
-deriving from the other.
+Same keys, same meanings, one block each under `pools`, and **no inheritance between them**: a box
+with no `ffdev` block gets ffwatch's built-in ffdev defaults rather than whatever `ffagent` is set
+to, and editing one class's clocks does not move the other's. They ship with the same numbers
+except the pool and the network, and are expected to diverge further — ffdev onto `develop`, or
+with a longer agent clock — which is the whole reason the two are written out separately rather
+than one deriving from the other.
 
-**ffdev has no egress fence, and that is the point of it.** `ffagent` runs on `ffbox-net` behind
-the allowlist proxy described below; `ffdev` runs on the ordinary `bridge`, with the whole
+The two blocks sat at the top level of `config.json` until 2026-09-02, beside `watch` and
+`web_port`. Only `pools` is read now — a block left at the top level is ignored, not a second
+place to configure one.
+
+**ffdev has no egress fence, and that is the point of it.** `network` names a policy rather than a
+docker network — `"limited"` is the fence and `"full"` is no fence, and ffwatch is the one place
+that knows which network implements each. `ffagent` runs `"limited"`, which is `ffbox-net` behind
+the allowlist proxy described below; `ffdev` runs `"full"`, the ordinary `bridge`, with the whole
 internet, no allowlist and no SNI filter, so a dev turn can search the web, read documentation
 and fetch a package without an operator editing `allowlist.txt` first. That also hands it this
 machine's LAN address, so it is trusted the way a developer's own shell on this box is trusted.
@@ -1587,7 +1596,7 @@ account that opened it is in `discord.trust.operators`, in which case it opens i
 `discord.operator_pool`, which is `ffdev`. An operator directive is dev work by the person who
 owns the box, so it gets the class dev work runs in; everything else stays behind the fence.
 `docs/docker-security-model.md` has the full argument under "The class that is not fenced".
-Putting ffdev back behind the fence is `"network": "ffbox-net"`, a restart, and `pool drop` for
+Putting ffdev back behind the fence is `"network": "limited"`, a restart, and `pool drop` for
 anything already staged; pointing Discord's operators back at the fenced class is
 `"operator_pool": "ffagent"`.
 
@@ -1643,8 +1652,8 @@ Design: `design/ffdev_agent_class_design.txt`.
 ### The egress filter
 
 **This is `ffagent`'s fence and CI's, not `ffdev`'s.** Which network an agent container is created
-on is `agent_classes.<class>.network` in `config.json`, and `ffdev` is deliberately on the open
-`bridge` — see the class section above. Everything here describes the fenced classes.
+on is `pools.<class>.network` in `config.json`, and `ffdev` is deliberately `"full"`, the open
+`bridge` — see the class section above. Everything here describes the fenced ones.
 
 An `ffagent` run gets no internet. It joins `ffbox-net`, a Docker `--internal` bridge with no default route,
 whose only other occupant is `ffbox-egress` — a proxy that resolves and connects the names in
