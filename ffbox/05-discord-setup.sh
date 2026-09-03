@@ -428,7 +428,14 @@ for key, value in (
         # The container limits are NOT here: memory, pids_limit and workspace_size are the same
         # question for both lanes and live in "container" below. A copy of any of them in this
         # section still overrides, for a machine that wants CI on a different ceiling.
-        "machine_id": "per-slot",
+        #
+        # machine_id IS NOT SEEDED EITHER, and it used to be, as "per-slot". That was the
+        # default when this seeding was written and it stopped being one hours later, on the
+        # same day: the licence is now a .ulf FILE resolved offline, a .ulf binds to exactly one
+        # /etc/machine-id, and unity-offline-license.sh mints it against lib/config.sh's
+        # constant. A fresh box seeded with "per-slot" would present an id that matches nothing
+        # and find no entitlement. It is infrastructure lib/config.sh owns, like the mirror
+        # addresses, so the file should not carry a second answer to it at all.
         "cache_dir": "/opt/ffcache",
         "cache_keep": 10,
         "cache_quota": "250G",
@@ -467,45 +474,18 @@ discord.setdefault("mentions", {})
 discord.setdefault("user_pool", "ffagent")
 discord.setdefault("operator_pool", "ffdev")
 
-# WHAT EACH VALUE IS. JSON has no comments, and a blank string does not say what shape belongs
-# in it — "channels": {"agent_testing": ""} tells you an alias is wanted and nothing about the
-# value. Rewritten on every run rather than setdefault: this is generated documentation, so it
-# should track the code, not whatever an old run left behind.
-discord["_help"] = {
-    "app_token": "Discord developer portal > your app > Bot > Reset Token. NOT the "
-                 "Application ID and NOT the public key. Better: leave this blank and put "
-                 f"FFDISCORD_APP_TOKEN in {os.path.dirname(ffbox_path)}/secrets.env, which "
-                 "keeps the secret out of this file (which is why this file is 0600).",
-    "server_id": "Right-click the server name > Copy Server ID (Settings > Advanced > "
-                 "Developer Mode must be on). Optional: it is inferred when the bot is in "
-                 "exactly one server.",
-    "channels": "alias -> that channel's id (right-click the channel > Copy Channel ID). The "
-                "alias must match an entry in the \"watch\" block at the top level of this "
-                "file, which is what says what the channel MEANS; the id here says which "
-                "channel it IS. Leave the id blank and the first command that uses the alias "
-                "looks it up by name on the server and writes the id back here, so "
-                "agent_testing finds #agent-testing on its own. Nothing is watched unless it "
-                "is in both tables.",
-    "mentions": "name -> user id. What @name expands to in a post.",
-    "trust": "operators: name -> user id. Whose messages may command this box. Ids only, "
-             "never usernames: a username is renameable, so a trust key somebody else can "
-             "claim by renaming is not a trust key. Blank until you fill it in, which means "
-             "NOBODY is an operator and every message is treated as a player's.",
-    "user_pool": "Which pool a Discord conversation opened by somebody who is NOT in "
-                 "trust.operators runs in, and every later turn of it. \"ffagent\", whose "
-                 "network is \"limited\", unless you have a reason: it is what serves text "
-                 "written by strangers, and behind the fence it reaches the egress allowlist "
-                 "and nothing else.",
-    "operator_pool": "Which pool a Discord conversation opened by an account in "
-                     "trust.operators runs in. \"ffdev\", whose network is \"full\" -- the "
-                     "whole internet, no filter -- because an operator directive is dev work "
-                     "and is trusted the way a shell on this box is. The pool is settled by "
-                     "WHO OPENED the conversation and never moves afterwards, so an operator "
-                     "answering in a player's thread does not promote it.",
-    "example_rows": "Every table above ships one example row so the shape is visible. Rename "
-                    "it to the real alias or name and fill in the id, or delete the row. An "
-                    "example row is blank, and blank is what every reader treats as absent.",
-}
+# THE HELP IS NOT IN THE FILE, since 2026-09-03. There were two generated "_help" blocks, one
+# here and one at the top level, rewritten on every run: between them they were longer than
+# every value they described, and a paragraph of prose stored as a JSON string is close to
+# unreadable in the one place it lives. ffbox/config.md is the reference now, and it covers
+# every key in the file rather than the ones somebody had got round to writing a line for.
+#
+# POPPED RATHER THAN LEFT ALONE, so a box configured before the move loses the stale copy on
+# the next run instead of carrying documentation that no longer tracks the code. Nothing reads
+# it either way -- ffwatch drops top-level keys it does not know, and lib/config.sh skips any
+# key starting with an underscore -- so this is only about what a human opens the file to.
+stripped_help = [name for name, block in (("discord", discord), ("top level", ffbox))
+                 if block.pop("_help", None) is not None]
 
 # One blank per alias the ffwatch "watch" block declares, because those two tables have to
 # agree: watch says what a channel MEANS, channels says which channel it IS, and an alias in
@@ -539,99 +519,6 @@ if not operators:
 if not discord["mentions"]:
     discord["mentions"].setdefault(EXAMPLE_OPERATOR, "")
 
-# The ffbox config gets its own one-line map, for the same reason the Discord one does: JSON
-# carries no comments, "watch" is the single most consequential block on the machine, and a
-# reader should not have to find ffwatch.py to learn what "engage" does.
-ffbox["_help"] = {
-    "watch": "alias -> {\"kind\": ask|bug_report|suggestion, \"forum\": true for a forum "
-             "channel, \"venue\": public|private, \"engage\": all|mention, \"ping\": true "
-             "to let a reply there @-mention a human}. THE ONLY PLACE A "
-             "CHANNEL IS NAMED — nothing is built in, so this box reads exactly what is listed "
-             "here and nothing else. The alias needs a matching row in the \"channels\" "
-             "table of the \"discord\" section of this file, which says which channel it IS. "
-             "venue private means "
-             "internals may be said out loud there; engage mention means only a message that "
-             "@-mentions the bot (or replies to it) is considered. Both fall closed when "
-             "omitted, and ffwatch logs which entry made it choose. ping is false unless "
-             "stated: mark your escalation channel true, and nothing else. AN ALIAS ADDED "
-             "HERE IS WATCHED FROM NOW: ffwatch records the moment it appears, and nothing "
-             "posted before that can produce a reply. The history is still read and kept as "
-             "context for whatever is said next -- it just never gets answered. Taking an "
-             "alias back out is recorded too, so putting it back later joins the channel "
-             "afresh from that moment rather than from the first time it was listed.",
-    "max_concurrent_runs": "The ceiling on CONTAINERS, and it is the box's rather than one "
-             "lane's: agent runs, staged pool containers and ffgithubrunners' CI jobs all count "
-             "against it. They share a daemon, each holds a workspace of tens of GiB, and RAM is "
-             "what runs out. The \"githubrunner\" section's \"slots\" caps how many of its "
-             "places may be busy, underneath this one.",
-    "container": "The limits every container gets, whichever lane started it. workspace_size "
-             "caps the in-RAM workspace; memory is the cgroup ceiling for the whole container "
-             "(that workspace plus about 32 GB for the editor, and the tmpfs counts against it, "
-             "so a run that fills its ramdrive hits its own limit rather than the host's); "
-             "pids_limit bounds runaway process creation. Both lanes hold the same kind of "
-             "container on the same daemon, so these are one answer rather than two that drift "
-             "-- until 2026-09-01 a CI job had all three and an agent run had none of them. A "
-             "copy of any of them inside \"githubrunner\" overrides for CI alone.",
-    "pools": "ONE BLOCK PER AGENT CLASS -- \"ffagent\" and \"ffdev\" -- holding what governs a "
-             "RUN rather than the pipeline around it. ffwatch flattens the ffagent block over "
-             "the top level when it reads it. base_ref is where a run's clone starts. "
-             "agent_secs, warmup_secs and kill_grace_secs are three separate clocks: the "
-             "model's working time from the .agent-started marker, everything before it, and "
-             "how long a container gets to finish after it is told to stop -- conflating them "
-             "makes a slow Unity import look like a hung agent. pool.idle is how many "
-             "containers fill a workspace before any request exists (1.2s to dispatch against "
-             "40s cold); each one counts against max_concurrent_runs and holds a Unity seat. "
-             "pool.max is that pool's own ceiling on containers, runs and staged ones together, "
-             "and it sits under the box-wide max_concurrent_runs -- both have to hold before "
-             "anything starts. -1 means no ceiling of its own and is read as "
-             "max_concurrent_runs, so the default is to use the whole box while CI is quiet; a "
-             "negative idle is read as 0, off. Zero is left alone on both, and means no places. "
-             "idle_agent_ttl_secs is how long a staged container waits before retiring, and "
-             "pool_ref which branch it stages (null follows base_ref). network is \"limited\" "
-             "or \"full\": limited puts the container behind the egress fence (an --internal "
-             "bridge whose only other occupant is the allowlist proxy, so the run reaches the "
-             "names in ffbox/egress/allowlist.txt and nothing else -- no LAN and not this "
-             "host), full puts it on the ordinary docker bridge with the whole internet and no "
-             "filter of any kind. THE TWO BLOCKS ARE INDEPENDENT: there is no inheritance, so a "
-             "box with no \"ffdev\" block here gets ffwatch's built-in ffdev defaults rather "
-             "than whatever ffagent is set to, and editing ffagent's clocks does not move "
-             "ffdev's. They ship with the same numbers except the pool AND the network, which "
-             "is where they already diverge: ffagent is \"limited\" because it serves text "
-             "written by strangers, and ffdev is \"full\" so a dev turn can search the web and "
-             "fetch packages. Full is not the fence minus DNS filtering, it is no fence -- a "
-             "container on the bridge reaches this machine's own LAN address too -- so ffdev is "
-             "trusted the way a developer's shell on this box is, and only the class a Discord "
-             "forum can reach is kept behind the proxy. Each class is staged into a pool of its "
-             "own; neither can take the other's warm container. A conversation's class is "
-             "chosen when it is OPENED -- the dropdown on the web page's new-prompt box, or "
-             "`ffwatch submit --agent ffdev` -- and every later turn of that conversation runs "
-             "in the same kind of container, so there is no dropdown when replying. A DISCORD "
-             "conversation has no dropdown either: it is opened by the "
-             "\"user_pool\"/\"operator_pool\" pair in the \"discord\" section, which reads "
-             "trust.operators to decide whether the account that opened it is a stranger or an "
-             "operator. Set pool.idle to 0 to turn a class's pool off; it still runs, cold, "
-             "like ffagent with no pool. These two blocks sat at the top level of this file "
-             "until 2026-09-02.",
-    "discord": "What the ffdiscord CLI and the Gateway listener read: app_token, server_id, "
-             "the channels alias -> id table, mentions, and trust.operators; plus the "
-             "user_pool/operator_pool pair, which is ffwatch's and says which agent class a "
-             "Discord conversation opens in depending on which side of trust.operators its "
-             "author falls. The discord/ directory beside this file holds Discord STATE and no "
-             "configuration at all: read cursors, the doorbell, the listener's lock. The "
-             "section carries its own \"_help\" saying what each field is, and "
-             "`ffdiscord set <key> <value>` writes into it.",
-    "githubrunner": "ffgithubrunners' settings, which lived in githubrunners/config.json until "
-             "2026-09-01 -- one file per box, so there is one place to look. Anything absent "
-             "falls back to the default in ffbox/runners/lib/config.sh, and "
-             "FFGITHUBRUNNERS_<KEY> in the environment beats both. The two anybody changes are in "
-             "\"pool\": max (the ceiling: the most CI jobs at once, under the box-wide "
-             "max_concurrent_runs above) and idle (the standing cost: runners registered and "
-             "waiting while nothing is happening -- a slot with no container holds no "
-             "registration and GitHub has never heard of it). `ffgithubrunners slots N` and "
-             "`idle N` write them here. The mirror addresses, network names and daemon paths are NOT "
-             "seeded on purpose: they are infrastructure lib/config.sh owns.",
-}
-
 # `ping` arrived after boxes were already configured, and stage 5 only seeds "watch" when the
 # whole key is absent — so an existing entry would never grow the key, and ping_allowed would
 # read a missing key as False. That is the safe direction, but it is also a silent change to
@@ -646,6 +533,10 @@ ffbox["discord"] = discord
 write(ffbox_path, ffbox)
 
 print("[discord-setup]   seeded keys: " + (", ".join(seeded) or "(nothing new)"))
+if stripped_help:
+    print("[discord-setup]   removed the generated \"_help\" block from: "
+          + ", ".join(stripped_help)
+          + "\n[discord-setup]     (every setting is documented in ffbox/config.md now)")
 if pinged:
     print("[discord-setup]   added \"ping\": false to watch entries: " + ", ".join(pinged)
           + "\n[discord-setup]     (a reply there cannot @-mention a human until you set it "
@@ -724,8 +615,8 @@ if ! blanks >/dev/null 2>&1; then
     say "       View Channels, Read Message History, Send Messages, Embed Links, Attach Files,"
     say "       plus Add Reactions + Create Public Threads + Send Messages in Threads on a forum."
     say "  2. Fill in the blanks below. Every one of them is already a key in the"
-    say "     \"discord\" section of $FFBOX_CONFIG_JSON, waiting empty, and that"
-    say "     section's \"_help\" block says what each value is:"
+    say "     \"discord\" section of $FFBOX_CONFIG_JSON, waiting empty, and"
+    say "     $HERE/config.md says what each value is:"
     blanks || true
     say "     (Discord: Settings > Advanced > Developer Mode, then right-click to copy an id.)"
     say "     app_token is the Bot tab's Reset Token, NOT the Application ID or public key."

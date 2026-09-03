@@ -69,8 +69,10 @@ Everything ffbox owns on a machine lives in one directory:
                                    file until 2026-09-02; "githubrunner" for the CI runners,
                                    which kept their own file until 2026-09-01; and "discord" for
                                    the bot token, server, channel aliases, mentions and trust,
-                                   which kept its own file until the same day. The "_help" block
-                                   in it is generated on every setup run and documents each part.
+                                   which kept its own file until the same day. Every key in it,
+                                   seeded or not, is documented in ffbox/config.md — the file
+                                   itself carries values only, and the generated "_help" block
+                                   that used to sit in it was removed on 2026-09-03.
 ~/.config/ffbox/discord/           the Discord CLI's STATE: cursors, doorbell, listener lock
 ~/.config/ffbox/discord.disabled   the kill switch
 ~/.config/ffbox/update.disabled    pauses the self-update timer (see "Staying current")

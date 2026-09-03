@@ -1,6 +1,6 @@
 {
   "name": "ff-discord",
-  "version": "1.12.3",
+  "version": "1.12.4",
   "description": "Discord integration for Final Factory — bug triage, player Q&A, and dev-to-dev messaging.",
   "author": {
     "name": "Final Factory"
