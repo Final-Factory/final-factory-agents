@@ -2711,14 +2711,27 @@ class App:
                      f"back to conversation {run['conversation_id']}").markup,
                 " · turn ", esc(run["turn_seq"]), " · lane ", esc(run["lane"] or "—"),
                 "</p>"]
+        # ADOPTED, AND FROM WHEN. A run whose container outlived the daemon that started it is
+        # finished by a different process, and possibly by a different BUILD, than the one that
+        # launched it. That is the intended behaviour and it is also the first thing anybody
+        # will suspect when a run looks odd, so it goes on the page rather than being left to be
+        # inferred from a gap in the journal.
+        state = pill(run["terminal_state"] or "in flight")
+        adopted = run["adopted_at"] if "adopted_at" in run.keys() else None
         head.append(table(
             ["state", "exit", "cost", "in", "out", "cache", "warm-up", "agent", "verify",
-             "container"],
-            [[pill(run["terminal_state"] or "in flight"), run["exit_code"],
+             "container", "adopted"],
+            [[state, run["exit_code"],
               fmt_usd(run["cost_usd"]), fmt_int(run["input_tokens"]),
               fmt_int(run["output_tokens"]), fmt_int(run["cache_read_tokens"]),
               fmt_secs(run["warmup_secs"]), fmt_secs(run["agent_secs"]),
-              fmt_secs(run["verify_secs"]), run["container_name"] or "—"]]))
+              fmt_secs(run["verify_secs"]), run["container_name"] or "—",
+              esc(adopted) if adopted else "—"]]))
+        if adopted:
+            head.append('<p class="note">This run\'s container outlived the ffwatch that '
+                        'started it, and it was picked up again at ' + esc(adopted)
+                        + ' — normally because an update restarted the services while it was '
+                        'working. The run itself was not interrupted.</p>")'.rstrip('")'))
         rows = self.db.query(
             "SELECT * FROM transcript_event WHERE run_id = ? ORDER BY seq, id", (run_id,))
         live = run["terminal_state"] is None
@@ -2975,7 +2988,8 @@ REQUIRED_COLUMNS = {
              "note"],
     "run": ["terminal_state", "cost_usd", "input_tokens", "output_tokens",
             "cache_read_tokens", "warmup_secs", "agent_secs", "verify_secs", "branch",
-            "pushed", "pr_number", "pr_url", "pr_base", "no_branch_reason", "no_pr_reason"],
+            "pushed", "pr_number", "pr_url", "pr_base", "no_branch_reason", "no_pr_reason",
+            "adopted_at"],
     "verification": ["ran", "compiled", "tests_run", "tests_passed", "tests_failed"],
     "transcript_event": ["seq", "uuid", "parent_uuid", "is_sidechain", "agent", "type",
                          "tool_name", "text"],
