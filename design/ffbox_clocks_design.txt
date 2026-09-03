@@ -264,7 +264,8 @@ is already on disk in `out/staged`.
 
 What it costs is the property a container-held clock has and a host-held one does not: a spare
 retires itself even when nothing is watching. That matters more here than it looks, because an
-agent spare holds about 22 GiB and, since 2026-09-01, a Unity seat. A stopped or crash-looping
+agent spare holds about 22 GiB, and on the activation licence path a Unity seat. A stopped or
+crash-looping
 ffwatch would hold both until an operator noticed. That is exactly the weakness this design is
 fixing on the CI side, and importing it into the lane that does not have it would be a poor trade.
 
@@ -291,7 +292,8 @@ never implemented because until now nothing made the case reachable. That is sur
 because the only thing that creates `owner` from the host side is a dispatch, which delivers
 `in/dispatch` about a second later. Make the keeper create `owner` on every RETIREMENT and the
 same loop becomes a trap: a keeper that claims and then dies, or whose `docker stop` fails,
-strands a container holding 22 GiB and a Unity seat, with its own failsafe permanently disarmed.
+strands a container holding 22 GiB of RAM -- and, on the activation path, a Unity seat -- with
+its own failsafe permanently disarmed.
 That is strictly worse than what this replaces, and it is reachable by one crash at the wrong
 moment.
 
@@ -305,24 +307,36 @@ margin of 900 -- and short enough that a stranded seat comes back the same hour.
 The 900-second push stays for the case it was written for, a claim that IS a dispatch. What changes
 is that it is no longer unbounded: it may be taken once, and the second expiry exits.
 
-THE KEEPER'S STOP NEEDS THE 120-SECOND FLOOR, and getting this wrong would leak a Unity seat on
-every retirement rather than on none. A spare has held a seat since 2026-09-01, and the trap that
-gives it back runs `unity-editor -quit -returnlicense`, an editor launch that ffbox and slot.sh
-both describe as taking tens of seconds: `ffbox:1146-1150` therefore floors its stop at 120
+THE KEEPER'S STOP NEEDS THE 120-SECOND FLOOR, and the reason is a licence path that is currently
+NOT the one this box takes. Be precise about which, because the first draft of this section was
+not.
+
+A container settles its licence one of two ways. With a `.ulf` staged -- what every ffbox container
+has done since 2026-09-01 -- it copies a file bound to one machine id that every container
+presents, consumes no concurrent entitlement, and has nothing to hand back; `return_license`
+no-ops on that path deliberately. The licence still needs the network, because a Personal `.ulf`
+carries a rolling ~24h `UpdateDate`, but THE HOST refreshes it (`unity-offline-license.sh ensure`,
+called before every launch) and the container only ever reads the result. On the fallback path,
+`activate_unity` performs a real activation and logs "a seat is held until this process exits";
+that seat comes back only through `-returnlicense`, an editor launch that ffbox and slot.sh both
+describe as taking tens of seconds: `ffbox:1146-1150` therefore floors its stop at 120
 whatever `kill_grace_secs` says, and `slot.sh:492` uses 90 for the same reason. Today the container
 retires itself with `exit 0`, so the trap runs with NO deadline at all. A host-side stop replaces
 "unbounded" with "however long the keeper allows", and the keeper must therefore apply the same
 floor ffbox does. `kill_grace_secs`, which defaults to 10, is the wrong number here: it is about an
 agent ignoring SIGTERM, not about a licence round trip.
 
-That is also a live bug in two places this design did not set out to touch. `pool_drop`
-(ffwatch.py:4156) stops a staged spare with `kill_grace_secs`, and `update_ffbox.sh:432` stops one
-with a hardcoded 10, and both have been doing it to seat-holding containers since 2026-09-01 --
-the updater on every pass that has something to merge, which on this box can be every five minutes.
-The floor argument in `ffbox:1147` was applied to the run path and never carried to these two. The
-consequence is bounded rather than permanent, because machine ids are per slot and the next
-container on that slot reuses the entitlement, but between the two a concurrent activation can find
-no free entitlement. Fixing it is two lines and does not wait for anything else here.
+SO THE EXPOSURE IS LATENT, NOT ACTIVE, and it is worth saying which. `pool_drop`
+(ffwatch.py:4156) stopped a staged spare with `kill_grace_secs`, and `update_ffbox.sh:432` with a
+hardcoded 10; the floor argument in `ffbox:1147` was applied to the run path when runs started
+holding editors and never carried to these two. On this box, licensed by `.ulf`, those ten seconds
+cost nothing: there is no activation to interrupt. What they would cost is on the fallback path --
+no usable `.ulf` and credentials set -- where a SIGKILL lands part-way through `-returnlicense`.
+For the agent lane that path is currently dead code, because ffbox passes no credentials. For CI
+it is not: `main.yml` still supplies `UNITY_EMAIL`/`UNITY_PASSWORD` from repository secrets, which
+is why the per-slot machine ids exist and why `slot.sh` has always used 90 seconds. Fixing the two
+agent-lane call sites is two lines, and it is insurance against a `.ulf` that lapses or is bound to
+the wrong machine id rather than a leak in progress.
 
 One implementation constraint, from this repository's own history. Commit c693d67 is the admission
 lock riding into the run and costing the daemon three minutes of every pass, during which it
@@ -495,9 +509,10 @@ supervisor recovers it. If the supervisor does not come back, nothing enforces t
 kind from today, where the deadline is simply lost.
 
 THE KEEPER DIES WITH SPARES STAGED. The container failsafe fires at `ttl_secs + 900` and the spare
-retires itself, returning its Unity seat through the `trap return_license EXIT INT TERM` that
-`unity-license.sh:115` arms and `pool-task.sh` inherits as pid 1. This is section 6's whole reason
-for keeping the failsafe.
+retires itself, running the `trap return_license EXIT INT TERM` that `unity-license.sh:115` arms
+and `pool-task.sh` inherits as pid 1 -- which hands a seat back on the activation path and returns
+immediately on the `.ulf` path, where there is none. This is section 6's whole reason for keeping
+the failsafe.
 
 THE KEEPER CLAIMS `owner` AND THEN DIES, or its `docker stop` fails. The container sees a claim
 that never becomes a dispatch, takes its one 900-second push, and exits at the second expiry
@@ -547,7 +562,7 @@ removes has produced no failure anybody has recorded: `out/owner` was written co
 time and has settled every dispatch since. What the move buys is one fewer party able to decide a
 spare's fate, and a second lane described in the same vocabulary as the first. What it costs is a
 new host-side stop path, a keeper that can strand a container if the failsafe is built wrong, and a
-lane whose RAM and Unity seats now come back on time only while ffwatch is healthy. The failsafe
+lane whose RAM comes back on time only while ffwatch is healthy. The failsafe
 puts a floor under that, and the floor is the margin rather than the deadline: a keeper that dies
 at the wrong moment turns a four-hour spare into a four-hour-and-fifteen-minute one. That is a fair
 price for a simplification and a poor one for a repair, and this is a simplification. If only part
@@ -566,12 +581,13 @@ honest: nothing knew the answer. A number read from a file the enforcer may not 
 than a blank, which is why section 9 spends a paragraph on the orphan case and section 12 on the
 unreadable one. Every one of these is a new opportunity for the page and the box to disagree.
 
-A SEAT RETURN GAINS A DEADLINE IT DID NOT HAVE. Today a spare retiring itself runs
-`-returnlicense` from an EXIT trap with no clock on it at all. Under host-side expiry it gets
-whatever the keeper's `docker stop` allows, and the design sets that at ffbox's 120-second floor.
-That is generous against a round trip measured in tens of seconds, and it is still a bound where
-there was none. A licence server having a slow day now costs a seat that self-retirement would
-have waited out.
+A SEAT RETURN GAINS A DEADLINE IT DID NOT HAVE, on the path that has one to return. A spare
+retiring itself runs its EXIT trap with no clock on it at all; under host-side expiry it gets
+whatever the keeper's `docker stop` allows, set here at ffbox's 120-second floor. On the `.ulf`
+path that changes nothing, because the trap has nothing to hand back. On the activation fallback
+it is generous against a round trip measured in tens of seconds and still a bound where there was
+none: a licence server having a slow day now costs a seat that self-retirement would have waited
+out.
 
 A CONTAINER CAN LIVE TWICE AS LONG. `idle_minutes` then `watchdog_minutes` end to end is up to four
 hours where the ceiling has been two. Nothing reads that ceiling, but people do: "an ffghr
@@ -594,7 +610,8 @@ right shape and already start at markers.
 It does not make the two lanes share an enforcer, a process, or a language. Section 7.
 
 It does not change what happens at expiry: `docker stop` with a grace, never `docker kill`, in both
-lanes, because in both lanes PID 1 has a trap that returns a Unity seat.
+lanes, because in both lanes PID 1 has a trap that harvests and, where there is one to give
+back, returns a Unity seat.
 
 It does not touch `reap.sh`. Orphan sweeping asks "is the supervisor gone", which is a different
 question from "has the deadline passed", and the two want different answers.

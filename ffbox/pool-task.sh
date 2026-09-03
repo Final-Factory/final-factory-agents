@@ -69,35 +69,53 @@ staged_at=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo "")
 # has left. Written here rather than through ffbox_clock_write because this file carries three
 # more keys of its own and the helper owns two keys, not a file. Keep the names in step.
 
-# --- the Unity seat, taken NOW rather than when a turn arrives ----------------------------------
+# --- the licence, settled NOW rather than when a turn arrives -----------------------------------
 #
 # The workspace is filled and synced and this container is about to go idle, which makes this the
-# one moment in its life when nothing is waiting on it. Activation is an online round trip and a
-# full editor launch; paying it here means a dispatched turn pays nothing, which is the whole
-# reason the pool exists.
+# one moment in its life when nothing is waiting on it. Whatever the licence costs, it is paid
+# here, so a dispatched turn pays nothing.
+#
+# WHAT IT COSTS DEPENDS ENTIRELY ON WHICH PATH try_unity_license TAKES, and since the .ulf landed
+# on 2026-09-01 the usual answer is "almost nothing":
+#
+#   offline   a file copy and a sub-second --showEntitlements check. No network, no credentials,
+#             and NO CONCURRENT SEAT: the .ulf is bound to one machine id that every container
+#             presents, so there is nothing per-container to hold and nothing to hand back. What
+#             is still worth doing here is the CHECK -- a licence that does not resolve is found
+#             now rather than thousands of log lines into somebody's turn.
+#   online    a real activation: an editor launch, an online round trip, and a seat held until
+#             this process exits. That is the fallback, reached only when there is no usable .ulf
+#             AND credentials are set; ffbox passes none, so for the agent lane it is dead code.
+#
+# THE LICENCE ITSELF STILL NEEDS THE NETWORK -- a Personal .ulf carries a rolling ~24h UpdateDate
+# and no StopDate, and Unity expects it refreshed online. THE HOST DOES THAT, not this container:
+# ffbox calls unity-offline-license.sh ensure before every launch. "offline" here is the
+# container's view of its own licence, never a claim that no connection is involved anywhere.
 #
 # THIS REVERSES THE LAZY ACQUISITION of 2026-08-31. That change was right when every container was
-# cold: a plain question paid a licence round trip it never used, and the reply was measured 2m09s
-# behind the agent finishing. With a warm pool the cost moves off the request path entirely rather
-# than being avoided, so the reason for deferring it is gone.
+# cold and every licence was an activation: a plain question paid a round trip it never used, and
+# the reply was measured 2m09s behind the agent finishing. With a warm pool the cost moves off the
+# request path rather than being avoided, so the reason for deferring it is gone.
 #
-# A STAGED CONTAINER NOW HOLDS A SEAT, which section 12 of the idle-agents design says it does not.
-# That is the deliberate trade: `idle_agents` seats are held while the box is quiet, bounded by the
-# same number as the pool and returned when a container retires or is dispatched and finishes. It
-# is affordable precisely because the machine ids are per slot now -- the licence sees a small
-# recycled set of machines rather than one per container.
-#
-# NEVER FATAL HERE. A container that cannot get a seat is still a warm workspace, and a turn
-# dispatched into it will try again through the turn task's own ensure_unity_license. Retiring the
-# container instead would turn a licensing hiccup into an empty pool.
+# NEVER FATAL HERE. A container that cannot settle its licence is still a warm workspace, and a
+# turn dispatched into it will try again through the turn task's own ensure_unity_license.
+# Retiring the container instead would turn a licensing hiccup into an empty pool.
 # Overridable ONLY so the failsafe can be driven offline by test_pool_task.sh; every real
 # container gets the bind-mounted path. The loop below is the one piece of this script whose
 # failure mode is a container that never goes away, so it is worth being able to test.
 . "${FFBOX_UNITY_LICENSE:-/ffbox/unity-license.sh}"
+# SAY WHICH PATH IT TOOK. This used to log "holding a Unity seat for whatever is dispatched here"
+# whatever happened, two lines under unity-license.sh's own "no seat taken" -- one log
+# contradicting itself, and it is what made a reader conclude the pool was holding and leaking
+# concurrent seats it never took.
 if try_unity_license; then
-    log "holding a Unity seat for whatever is dispatched here"
+    case "${FFBOX_LICENCE_MODE:-unknown}" in
+        offline) log "licensed for whatever is dispatched here (staged .ulf; no seat to hand back)" ;;
+        online)  log "holding a Unity seat for whatever is dispatched here, until this container exits" ;;
+        *)       log "licensed for whatever is dispatched here (${FFBOX_LICENCE_MODE:-unknown})" ;;
+    esac
 else
-    log "WARNING: could not take a Unity seat; the turn dispatched here will try again"
+    log "WARNING: could not settle a Unity licence; the turn dispatched here will try again"
 fi
 
 log "staged on ${FFBOX_REF:-?} at ${staged_at:0:12}, waiting up to ${TTL}s for a request"

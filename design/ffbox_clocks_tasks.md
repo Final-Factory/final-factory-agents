@@ -36,13 +36,15 @@ Worth knowing before estimating, because most of this design is wiring rather th
   matches the agent lane's rule and is not something to work around.
 - **`slot.sh` already sources `../lib-workloads.sh`** (`slot.sh:46-47`), with a warning and a
   degraded path when it is missing. Phase B needs no new plumbing on the CI side at all.
-- **A spare stopped by the host already returns its Unity seat.** `unity-license.sh:115` arms
-  `trap return_license EXIT INT TERM`, `pool-task.sh` sources it and activates as pid 1, and the
-  foreground child during the idle wait is `sleep 1`, so a deferred bash trap runs within a second
-  of the TERM. Without this, Phase D would leak a seat on every retirement, and the phase would be
-  a straight regression rather than a refactor. **The trap firing is not sufficient on its own**:
-  `-returnlicense` is an editor launch, so the stop has to allow 120 seconds for it to finish.
-  D1a and A6 are that number.
+- **A spare stopped by the host already runs its licence trap.** `unity-license.sh:115` arms
+  `trap return_license EXIT INT TERM`, `pool-task.sh` sources it as pid 1, and the foreground child
+  during the idle wait is `sleep 1`, so a deferred bash trap runs within a second of the TERM.
+  **What the trap then does depends on the path.** On the `.ulf` path it returns immediately —
+  `FFBOX_LICENCE_MODE=offline` is checked before the owner test, because that licence took no
+  concurrent seat and `-returnlicense` would want the credentials the .ulf exists to delete. On the
+  activation fallback it runs a real return, an editor launch, and the stop has to allow 120
+  seconds for it: D1a and A6 are that number. Without both halves Phase D would be a regression on
+  the fallback path rather than a refactor.
 - **Nothing reads `at=` out of the busy marker except the code that writes it.** The only other
   `at=` in the tree is the cache claim at `runners/lib/config.sh:486`, a different file with a
   different reader. So B3's key rename breaks no consumer.
@@ -124,20 +126,26 @@ that is the part that was wrong and the part a future reader will assume.
 invariant about the same watchdog.
 
 **A6 (S)** `pool_drop` stops a staged spare with `kill_grace_secs`, default 10
-(`ffwatch.py:4156`). A spare has held a Unity seat since 2026-09-01, and the trap that gives it
-back is an editor launch that takes tens of seconds — which is exactly why `ffbox:1146-1150` floors
+(`ffwatch.py:4156`). Where a container settles its licence by ACTIVATION, the trap that gives the
+seat back is an editor launch of tens of seconds — which is exactly why `ffbox:1146-1150` floors
 its own stop at 120 whatever `kill_grace_secs` says. Apply the same floor here. `kill_grace_secs`
 is about an agent ignoring SIGTERM and is the wrong number for a licence round trip.
+
+**Insurance, not a leak in progress.** With a `.ulf` staged — this box since 2026-09-01 — there is
+no activation to interrupt and ten seconds costs nothing. The floor matters when the `.ulf` lapses
+or is bound to the wrong machine id and `try_unity_license` falls through to `activate_unity`. Say
+that in the commit message rather than claiming a live leak; design section 6 has the full split.
 
 **A7 (S)** The same floor in `update_ffbox.sh:432`, which stops idle staged containers with a
 hardcoded 10 on every update pass that has something to merge. On this box that is potentially
 every five minutes, against a container holding a seat.
 
-Neither A6 nor A7 loses a seat permanently: machine ids are per slot, so the next container on that
-slot reuses the entitlement. What they cost between times is a concurrent activation finding no
-free entitlement, which is the failure mode `entrypoint-ci.sh` and the runners README both describe
-at length. Worth landing on its own merits, and worth landing BEFORE Phase D, which would otherwise
-turn a bug that fires on drains into one that fires on every retirement.
+On the activation path neither A6 nor A7 loses a seat permanently: machine ids are per slot, so the
+next container on that slot reuses the entitlement. What they cost between times is a concurrent
+activation finding no free entitlement, which is the failure mode `entrypoint-ci.sh` and the
+runners README both describe at length. Worth landing on its own merits, and worth landing BEFORE
+Phase D, which would otherwise turn a stop that is too short on drains into one that is too short
+on every retirement.
 
 ## Phase B — the shared clock helper
 
