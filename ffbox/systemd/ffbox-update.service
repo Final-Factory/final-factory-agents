@@ -42,9 +42,22 @@ ExecStart=/bin/sh @UPDATE@
 
 # THE DRAIN CAN TAKE AN HOUR. DefaultTimeoutStartSec is 90 seconds, which would kill the
 # updater mid-drain on any busy machine and leave the drain flag behind (the script's EXIT trap
-# lifts it, but the update would never land). 8100 = the 7200s drain ceiling plus fifteen
-# minutes for the stop, merge, rebuild and restart. NOT `infinity`: a wedged updater holding
-# the flock forever is worse than one that gets killed and retried on the next tick.
+# lifts it, but the update would never land).
+#
+# 8100 IS THE DRAIN CEILING PLUS SLACK, AND THE SLACK IS DELIBERATELY LARGE. update_ffbox.sh's
+# DRAIN_TIMEOUT is 3600 (FFBOX_DRAIN_TIMEOUT), and past that it FORCES rather than giving up:
+# a soft stop of every container at 120s of grace each, then FORCE_SETTLE=300 for the host to
+# finish publishing, then the merge, the re-run of setup.sh, an image rebuild and the restart.
+# On a full box that tail is worth far more than the fifteen minutes an earlier version of this
+# comment allowed for, and getting killed inside it is exactly the failure this number exists to
+# prevent. So: 3600 drain + 4500 for everything after it.
+#
+# THIS NUMBER IS NOT DERIVED AUTOMATICALLY. If FFBOX_DRAIN_TIMEOUT is raised, raise this too --
+# an updater killed by systemd mid-drain is the bug, not the symptom. (An earlier comment here
+# read "7200s drain ceiling"; there has never been a 7200 in update_ffbox.sh.)
+#
+# NOT `infinity`: a wedged updater holding the flock forever is worse than one that gets killed
+# and retried on the next tick.
 TimeoutStartSec=8100
 
 [Install]
