@@ -1498,7 +1498,8 @@ keeper claims `out/owner` first, exactly as a dispatch does, and one that loses 
 create has lost to a container already walking out.
 
 **The container keeps a failsafe at the TTL plus fifteen minutes, and it is absolute.** A spare
-holds 22 GiB and a Unity seat, and a keeper that is not keeping must not mean both are held until
+holds 22 GiB of RAM, and on the activation licence path a Unity seat too, and a keeper that is
+not keeping must not mean they are held until
 somebody notices. It fires whether or not `out/owner` exists, because a claim that has not become
 a dispatch within the margin is a host that failed rather than a dispatch in progress — a real one
 lands about a second later. Before that it re-armed instead of exiting, so a keeper that claimed
