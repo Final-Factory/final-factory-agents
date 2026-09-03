@@ -78,7 +78,7 @@ from the author id on the message row, so a container cannot choose who gets pin
 ## The Gateway listener
 
 `ffdiscord-listener` holds one websocket open and appends a JSON line to
-`~/.config/ffdiscord/events.jsonl` for anything the loops care about. One per machine; the
+`~/.config/ffbox/discord/events.jsonl` for anything the loops care about. One per machine; the
 lock in `listener.lock` enforces it, and exit code 2 means one is already running.
 
 ```bash
@@ -135,11 +135,12 @@ The `discord` section of `~/.config/ffbox/config.json`, mode 0600, never in a re
 }
 ```
 
-Moved into that file on 2026-09-01, from a `config.json` of its own in
-`~/.config/ffbox/discord/`. The `channels` table and the ffwatch `watch` block that gives those
-aliases their meaning were in two files that had to be edited together, and every reader had to
-open both. `ffdiscord set <key> <value>` writes into the section; everything else in the file —
-ffwatch's settings, the container limits, the CI runner pool — is carried through untouched.
+One file, one read, one place to look: the `channels` table and the ffwatch `watch` block
+that gives those aliases their meaning belong in the same document, since two files that had
+to be edited together could disagree and every reader had to open both. `~/.config/ffbox/discord/`
+holds STATE and no configuration at all — the read cursors, the doorbell, the listener lock.
+`ffdiscord set <key> <value>` writes into the section; everything else in the file — ffwatch's
+settings, the container limits, the CI runner pool — is carried through untouched.
 
 `channels` maps an alias to that channel's snowflake id. The alias is what the ffwatch `watch`
 block calls the channel, which is what says what it MEANS; the id says which channel it IS.

@@ -6066,33 +6066,26 @@ def test_past_standalone_runs_import():
 def test_config_lives_under_ffbox():
     """ONE FILE holds every setting this box has, and the Discord keys are a section of it.
 
-    ffwatch's and ffweb's settings used to sit in a block inside the Discord CLI's own config,
+    ffwatch's and ffweb's settings once sat in a block inside a Discord config of their own,
     which meant a ROOT-run installer had to read a user's Discord directory to learn where the
-    WEB PAGE should listen — and that is exactly how the sudo/$HOME bug shipped. The move that
-    fixed it left the Discord keys behind in that file, so the `channels` alias table and the
-    `watch` block that gives those aliases their meaning were two files that had to be edited
-    together; on 2026-09-01 they joined the rest under "discord".
+    WEB PAGE should listen — and that is exactly how the sudo/$HOME bug shipped. Everything is
+    one document now, which also keeps the `channels` alias table beside the `watch` block that
+    gives those aliases their meaning: two files that had to be edited together could disagree.
 
-    The STATE directory did not move: cursors, the doorbell and the listener lock are still
-    ~/.config/ffbox/discord, and an unmigrated machine's ~/.config/ffdiscord still wins there.
+    ~/.config/ffbox/discord is STATE and only state — cursors, the doorbell, the listener lock
+    — and holds no configuration at all.
     """
     print("config: one file under ~/.config/ffbox")
     root = os.path.join(TMPROOT, "confmove")
     shutil.rmtree(root, ignore_errors=True)
-    legacy = os.path.join(root, ".config", "ffdiscord")
     ffbox_dir = os.path.join(root, ".config", "ffbox")
-    # Deliberately NOT creating ffbox/discord yet: the resolver prefers the new home only when
-    # it exists, which is what lets an unmigrated machine keep working untouched.
-    os.makedirs(legacy); os.makedirs(ffbox_dir)
+    os.makedirs(ffbox_dir)
 
     saved = dict(os.environ)
     try:
         os.environ.pop("FFDISCORD_HOME", None)
         os.environ["HOME"] = root
         os.environ["FFBOX_CONFIG_DIR"] = ffbox_dir
-        importlib.reload(ffwatch)
-        check("with no new state home yet, the legacy directory is still used",
-              ffwatch.FFDISCORD_HOME == legacy, ffwatch.FFDISCORD_HOME)
 
         with open(os.path.join(ffbox_dir, "config.json"), "w", encoding="utf-8") as fh:
             json.dump({"web_host": "192.168.1.5", "catchup_secs": 4242,
@@ -6120,22 +6113,19 @@ def test_config_lives_under_ffbox():
         check("a null discord section is read as absent rather than raising",
               ffwatch.discord_channels(cfg) == {} and ffwatch.operators(cfg) == {})
 
-        # Once the Discord state home has moved, the legacy path is no longer consulted.
-        os.makedirs(os.path.join(ffbox_dir, "discord"))
-        shutil.rmtree(legacy)
-        importlib.reload(ffwatch)
-        check("with the new state home present, that is the one used",
+        # THE STATE HOME IS DERIVED, not configured: it hangs off ~/.config/ffbox whether or
+        # not it exists yet, so the listener and ffwatch agree on where the doorbell is before
+        # anything has created it.
+        check("the state home sits under the ffbox directory",
               ffwatch.FFDISCORD_HOME == os.path.join(ffbox_dir, "discord"),
               ffwatch.FFDISCORD_HOME)
+        check("and it is not where any configuration is read from",
+              ffwatch.FFBOX_CONFIG == os.path.join(ffbox_dir, "config.json"),
+              ffwatch.FFBOX_CONFIG)
     finally:
         os.environ.clear(); os.environ.update(saved)
         importlib.reload(ffwatch)
 
-    setup = open(os.path.join(HERE, "05-discord-setup.sh"), encoding="utf-8").read()
-    check("the setup stage migrates the old directory rather than leaving it to rot",
-          "migrated $LEGACY_FFDISCORD_HOME" in setup, )
-    check("and refuses to guess when both exist",
-          "Nothing was moved. Merge them by hand" in setup, )
     services = open(os.path.join(HERE, "06-services.sh"), encoding="utf-8").read()
     check("the listener unit is told its home explicitly, since the launcher may be older",
           "@FFDHOME@" in services and "@FFDHOME@" in open(

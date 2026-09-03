@@ -307,33 +307,27 @@ DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "di
 FFDISCORD_PY = os.path.join(DISCORD_CLI_DIR, "ffdiscord.py")
 
 def _ffdiscord_home():
-    """Where the Discord CLI keeps its config, cursors, doorbell and locks.
+    """Where the Discord CLI keeps its cursors, doorbell and locks — its STATE, not its config.
 
-    ~/.config/ffbox/discord since 2026-08-22: everything ffbox owns on a machine lives under
-    ~/.config/ffbox, and the Discord CLI is one part of ffbox rather than a separate product.
-    The pre-move ~/.config/ffdiscord is still honoured when it exists and the new location does
-    not, so a machine that has not been migrated keeps working untouched. FFDISCORD_HOME beats
-    both.
+    Under ~/.config/ffbox, because everything ffbox owns on a machine lives there and the
+    Discord CLI is one part of ffbox rather than a separate product. FFDISCORD_HOME relocates
+    it, and must agree with what the CLI itself resolves — the two read the same doorbell.
     """
     env = os.environ.get("FFDISCORD_HOME")
     if env:
         return os.path.expanduser(env)
-    new = os.path.expanduser("~/.config/ffbox/discord")
-    legacy = os.path.expanduser("~/.config/ffdiscord")
-    if not os.path.exists(new) and os.path.exists(legacy):
-        return legacy
-    return new
+    return os.path.expanduser("~/.config/ffbox/discord")
 
 
 FFDISCORD_HOME = _ffdiscord_home()
 
 # ONE CONFIG FILE FOR THE BOX, in the directory that already holds secrets.env and the kill
-# switch. Everything ffwatch and ffweb need is here, and since 2026-09-01 so is what is
-# genuinely Discord's — token, server, channels, mentions, trust — in a "discord" section the
-# ffdiscord CLI reads on its own account. It had a config.json of its own next door until then,
-# which put the alias table and the "watch" block that gives those aliases their meaning in two
-# files that had to be edited together. ~/.config/ffbox/discord still holds Discord STATE: the
-# read cursors, the doorbell, the listener's lock.
+# switch. Everything ffwatch and ffweb need is here, and so is what is genuinely Discord's —
+# token, server, channels, mentions, trust — in a "discord" section the ffdiscord CLI reads on
+# its own account. That keeps the alias table in the same document as the "watch" block which
+# gives those aliases their meaning; split across two files they could disagree, and every
+# reader had to open both. ~/.config/ffbox/discord holds Discord STATE and no configuration:
+# the read cursors, the doorbell, the listener's lock.
 FFBOX_CONFIG_DIR = os.path.expanduser(os.environ.get("FFBOX_CONFIG_DIR", "~/.config/ffbox"))
 FFBOX_CONFIG = os.path.join(FFBOX_CONFIG_DIR, "config.json")
 DISCORD_SECTION = "discord"
@@ -1052,10 +1046,10 @@ def is_operator(cfg, author_id):
 
 # WHICH POOL DISCORD TRAFFIC LANDS IN, and it is two answers rather than one because the two
 # kinds of author are not the same risk. A stranger in a forum thread gets `user_pool`, which
-# ships as ffagent: fenced onto ffbox-net, reaching the egress allowlist and nothing else. An
-# account in trust.operators gets `operator_pool`, which ships as ffdev: the ordinary docker
-# bridge, the whole internet, the same trust a developer's shell on this box has. Configured
-# rather than built in so a box that does not want that split can point both at one class.
+# ships as ffagent, whose network is "limited": the egress fence, the allowlist, nothing else.
+# An account in trust.operators gets `operator_pool`, which ships as ffdev, whose network is
+# "full": the whole internet, the same trust a developer's shell on this box has. Configured
+# rather than built in so a box that does not want that split can point both at one pool.
 DISCORD_POOL_DEFAULTS = {"user_pool": "ffagent", "operator_pool": "ffdev"}
 
 

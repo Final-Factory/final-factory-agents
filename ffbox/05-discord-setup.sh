@@ -31,24 +31,22 @@ if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; th
     exit 2
 fi
 STATE_DIR=${FFWATCH_STATE_DIR:-$HOME/ffbox-state}
-# EVERYTHING ffbox owns on this machine lives under one directory (moved 2026-08-22):
+# EVERYTHING ffbox owns on this machine lives under one directory:
 #
 #   ~/.config/ffbox/secrets.env        tokens and the Unity account
 #   ~/.config/ffbox/config.json        ffwatch, ffweb, the CI runners, and the "discord"
 #                                      section: token, server, channels, mentions, trust,
 #                                      and which agent pool each side of that trust gets
-#   ~/.config/ffbox/discord/           the Discord CLI's STATE: cursors, the doorbell, the
-#                                      listener lock. Its config moved into the file above on
-#                                      2026-09-01, so the alias table and the "watch" block
-#                                      that gives those aliases their meaning are one edit.
+#   ~/.config/ffbox/discord/           the Discord CLI's STATE, and only state: the read
+#                                      cursors, the doorbell, the listener lock
 #   ~/.config/ffbox/discord.disabled   the kill switch
 #
-# The pre-move ~/.config/ffdiscord is migrated below rather than left to rot: two config files
-# where one is read and the other is edited is the worst outcome available.
+# ONE CONFIG FILE, and the alias table sits in it beside the "watch" block that gives those
+# aliases their meaning: two files where one is read and the other is edited is the worst
+# outcome available.
 FFBOX_CONFIG=$HOME/.config/ffbox
 FFDISCORD_HOME=${FFDISCORD_HOME:-$FFBOX_CONFIG/discord}
 FFBOX_CONFIG_JSON=$FFBOX_CONFIG/config.json
-LEGACY_FFDISCORD_HOME=$HOME/.config/ffdiscord
 KILL_SWITCH=$FFBOX_CONFIG/discord.disabled
 
 CHECK=0
@@ -110,22 +108,23 @@ def out(field, fix, required=True):
 
 
 missing = 0
-# Both spellings are accepted everywhere, so a box still carrying the pre-rename keys must not
-# be told it is unconfigured.
-def filled(new_key, legacy_key, *env_names):
-    if str(discord.get(new_key) or "").strip() or str(discord.get(legacy_key) or "").strip():
+# A key is filled if the file has it OR the environment does: the units read secrets.env
+# through EnvironmentFile=, so a token living only there is configured even though the JSON
+# blank is still empty.
+def filled(key, *env_names):
+    if str(discord.get(key) or "").strip():
         return True
     return any(os.environ.get(e) or in_secrets(e) for e in env_names)
 
 
-if not filled("app_token", "token", "FFDISCORD_APP_TOKEN", "FFDISCORD_TOKEN"):
+if not filled("app_token", "FFDISCORD_APP_TOKEN"):
     missing += out("app_token", "FFDISCORD_APP_TOKEN=<bot token> in secrets.env, "
                                 "or: ffdiscord set app_token <bot token>")
 
 # Not counted as missing: ffdiscord infers the guild when the bot is in exactly one, so a box
 # that never sets it still works. Reported anyway, because inference is not something you want
 # to discover the day a second guild appears.
-if not filled("server_id", "guild_id", "FFDISCORD_SERVER_ID", "FFDISCORD_GUILD_ID"):
+if not filled("server_id", "FFDISCORD_SERVER_ID"):
     out("server_id", "optional (inferred when the bot is in one server): "
                      "ffdiscord set server_id <server id>", required=False)
 
@@ -203,33 +202,11 @@ say "config"
 mkdir -p "$FFBOX_CONFIG"
 chmod 700 "$FFBOX_CONFIG" 2>/dev/null || true
 
-# --- migration: ~/.config/ffdiscord -> ~/.config/ffbox/discord ------------------------------
-# The STATE directory, moved whole: the listener's read cursors and the doorbell are state a
-# reinstall must not lose. Only when the destination does not exist — a half-merge of two live
-# directories is not something a setup script should attempt.
-if [ -d "$LEGACY_FFDISCORD_HOME" ] && [ ! -e "$FFDISCORD_HOME" ]; then
-    mv "$LEGACY_FFDISCORD_HOME" "$FFDISCORD_HOME"
-    did "migrated $LEGACY_FFDISCORD_HOME -> $FFDISCORD_HOME"
-elif [ -d "$LEGACY_FFDISCORD_HOME" ]; then
-    did "NOTE: $LEGACY_FFDISCORD_HOME still exists and $FFDISCORD_HOME does too."
-    did "      Nothing was moved. Merge them by hand, then delete the old one."
-fi
+# --- the Discord CLI's state directory ------------------------------------------------------
+# STATE ONLY: the listener's read cursors, the doorbell socket and the listener lock. There is
+# no config here — the "discord" section of the file above is the whole of it.
 mkdir -p "$FFDISCORD_HOME"
 chmod 700 "$FFDISCORD_HOME" 2>/dev/null || true
-
-# THE OLD CONFIG NEXT DOOR, retired 2026-09-01 and cleared away here since 2026-09-02. Nothing
-# has read $FFDISCORD_HOME/config.json since those settings moved into the "discord" section of
-# the box's one config.json; this directory keeps only STATE (cursors, doorbell, listener lock).
-# A file nobody reads that still looks like configuration is worse than no file: somebody sets
-# trust.operators or a channel id in it, restarts, and cannot see why nothing changed. Renamed
-# rather than deleted, because on a box whose migration never finished it may hold the only
-# copy of a token.
-if [ -f "$FFDISCORD_HOME/config.json" ]; then
-    mv "$FFDISCORD_HOME/config.json" \
-       "$FFDISCORD_HOME/config.json.retired-$(date -u +%Y%m%dT%H%M%SZ)"
-    did "retired $FFDISCORD_HOME/config.json - nothing has read it since 2026-09-01;"
-    did "      the live settings are the \"discord\" section of $FFBOX_CONFIG_JSON"
-fi
 
 FFBOX_CONFIG_JSON="$FFBOX_CONFIG_JSON" python3 - <<'PY'
 import json
@@ -242,10 +219,9 @@ import os
 #                                         mentions, trust -- plus user_pool/operator_pool,
 #                                         ffwatch's, which read that trust table
 #
-# The Discord keys had a config.json of their own next door until 2026-09-01. That put the
-# "channels" alias table and the "watch" block that gives those aliases their meaning in two
-# files that had to be edited together and could disagree — and every reader had to open both
-# and decide which won. One file, one read, one place to look.
+# ONE FILE, ONE READ, ONE PLACE TO LOOK. The "channels" alias table and the "watch" block that
+# gives those aliases their meaning belong in the same document: split across two, they could
+# disagree, and every reader had to open both and decide which won.
 
 
 def read(path):
@@ -469,19 +445,10 @@ for key, value in (
 # page to fill in, and the reader has to find the shape in a README or in the CLI's docstring.
 # Every blank seeded here is falsy, which is exactly what each reader already tests for
 # ("if not cfg.get('token')"), so an unfilled template behaves identically to a missing key.
-# RENAME, ONCE (2026-08-24). token -> app_token, guild_id -> server_id, matching what a human
-# is looking at rather than what the API says: the portal issues an app and its bot token, and
-# the Discord client has called a guild a server for years. Every reader still accepts the old
-# names, so this migration is for legibility, not for correctness — but leaving both spellings
-# on disk is how a config ends up with a token under one key and a blank under the other.
-renamed = []
-for new_key, legacy_key in (("app_token", "token"), ("server_id", "guild_id")):
-    if legacy_key in discord:
-        if not str(discord.get(new_key) or "").strip():
-            discord[new_key] = discord[legacy_key]
-        del discord[legacy_key]
-        renamed.append(f"{legacy_key} -> {new_key}")
-
+# app_token and server_id match what a HUMAN is looking at rather than what the API says: the
+# developer portal issues an app and its bot token, and the Discord client has called a guild a
+# server for years. Discord's own paths still say "guild", which is why /guilds/... is all over
+# the CLI — the names here cover what somebody types, not what goes on the wire.
 discord.setdefault("app_token", "")
 discord.setdefault("server_id", "")
 discord.setdefault("mentions", {})
@@ -493,10 +460,10 @@ discord.setdefault("mentions", {})
 # somewhere nobody can see it. setdefault, so a box that has already pointed these somewhere
 # else is left alone.
 #
-# ffagent for strangers is the fenced class (ffbox-net, the egress allowlist, nothing else) and
-# ffdev for operators is the unfenced one (the ordinary bridge, the whole internet), so this
-# pair is a trust boundary and not a scheduling preference. Pointing user_pool at ffdev hands
-# every stranger in the forum a container with the network a developer's shell has.
+# ffagent for strangers is the "limited" pool (behind the egress fence, the allowlist, nothing
+# else) and ffdev for operators is the "full" one (the whole internet, no filter), so this pair
+# is a trust boundary and not a scheduling preference. Pointing user_pool at ffdev hands every
+# stranger in the forum a container with the network a developer's shell has.
 discord.setdefault("user_pool", "ffagent")
 discord.setdefault("operator_pool", "ffdev")
 
@@ -524,16 +491,17 @@ discord["_help"] = {
              "never usernames: a username is renameable, so a trust key somebody else can "
              "claim by renaming is not a trust key. Blank until you fill it in, which means "
              "NOBODY is an operator and every message is treated as a player's.",
-    "user_pool": "The agent class a Discord conversation opened by somebody who is NOT in "
-                 "trust.operators runs in, and every later turn of it. \"ffagent\", the "
-                 "fenced class, unless you have a reason: it is what serves text written by "
-                 "strangers, and its network reaches the egress allowlist and nothing else.",
-    "operator_pool": "The agent class a Discord conversation opened by an account in "
-                     "trust.operators runs in. \"ffdev\", which is unfenced -- the ordinary "
-                     "docker bridge, the whole internet -- because an operator directive is "
-                     "dev work and is trusted the way a shell on this box is. The class is "
-                     "settled by WHO OPENED the conversation and never moves afterwards, so "
-                     "an operator answering in a player's thread does not promote it.",
+    "user_pool": "Which pool a Discord conversation opened by somebody who is NOT in "
+                 "trust.operators runs in, and every later turn of it. \"ffagent\", whose "
+                 "network is \"limited\", unless you have a reason: it is what serves text "
+                 "written by strangers, and behind the fence it reaches the egress allowlist "
+                 "and nothing else.",
+    "operator_pool": "Which pool a Discord conversation opened by an account in "
+                     "trust.operators runs in. \"ffdev\", whose network is \"full\" -- the "
+                     "whole internet, no filter -- because an operator directive is dev work "
+                     "and is trusted the way a shell on this box is. The pool is settled by "
+                     "WHO OPENED the conversation and never moves afterwards, so an operator "
+                     "answering in a player's thread does not promote it.",
     "example_rows": "Every table above ships one example row so the shape is visible. Rename "
                     "it to the real alias or name and fill in the id, or delete the row. An "
                     "example row is blank, and blank is what every reader treats as absent.",
@@ -648,13 +616,10 @@ ffbox["_help"] = {
              "the channels alias -> id table, mentions, and trust.operators; plus the "
              "user_pool/operator_pool pair, which is ffwatch's and says which agent class a "
              "Discord conversation opens in depending on which side of trust.operators its "
-             "author falls. It had a "
-             "config.json of its own in the discord/ directory beside this file until "
-             "2026-09-01, which put that alias table and the \"watch\" block that gives the "
-             "aliases their meaning in two files that had to be edited together. The "
-             "directory is still there and still holds Discord STATE: read cursors, the "
-             "doorbell, the listener's lock. The section carries its own \"_help\" saying "
-             "what each field is, and `ffdiscord set <key> <value>` writes into it.",
+             "author falls. The discord/ directory beside this file holds Discord STATE and no "
+             "configuration at all: read cursors, the doorbell, the listener's lock. The "
+             "section carries its own \"_help\" saying what each field is, and "
+             "`ffdiscord set <key> <value>` writes into it.",
     "githubrunner": "ffgithubrunners' settings, which lived in githubrunners/config.json until "
              "2026-09-01 -- one file per box, so there is one place to look. Anything absent "
              "falls back to the default in ffbox/runners/lib/config.sh, and "
@@ -680,8 +645,6 @@ for alias in pinged:
 ffbox["discord"] = discord
 write(ffbox_path, ffbox)
 
-if renamed:
-    print("[discord-setup]   renamed keys: " + ", ".join(renamed))
 print("[discord-setup]   seeded keys: " + (", ".join(seeded) or "(nothing new)"))
 if pinged:
     print("[discord-setup]   added \"ping\": false to watch entries: " + ", ".join(pinged)

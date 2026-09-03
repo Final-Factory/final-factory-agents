@@ -45,8 +45,8 @@ for _stream in (sys.stdout, sys.stderr):
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# ffwatch resolves ~/.config/ffdiscord at import time; point it somewhere harmless first so a
-# real config on this machine can never reach a test.
+# ffwatch resolves the Discord state home at import time; point it somewhere harmless first
+# so a real doorbell on this machine can never reach a test.
 TMPROOT = tempfile.mkdtemp(prefix="ffweb-test-")
 os.environ["FFDISCORD_HOME"] = os.path.join(TMPROOT, "ffdiscord-home")
 os.makedirs(os.environ["FFDISCORD_HOME"], exist_ok=True)

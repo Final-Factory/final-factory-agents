@@ -49,8 +49,9 @@ on this machine (Claude Code, Codex) and installs its plugins at user scope.
 Idempotent — re-run any time to update.
 
 Default plugins: ${DEFAULT_PLUGINS}
-Optional extras: ff-discord (needs the ffdiscord bot token in ~/.config/ffdiscord/;
-                 installs an 'ffdiscord' launcher into ~/.local/bin)
+Optional extras: ff-discord (needs the ffdiscord bot token in the "discord" section
+                 of ~/.config/ffbox/config.json; installs an 'ffdiscord'
+                 launcher into ~/.local/bin)
 
 Options (alphabetical):
   (none)         Register if needed, otherwise refresh the marketplace and update

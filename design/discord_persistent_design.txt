@@ -2,6 +2,13 @@ ffbox + Discord: persistent conversation design
 ===============================================
 
 Revision 2, 2026-08-21. Supersedes revision 1 entirely.
+Revision 4, 2026-09-03: every ~/.config/ffdiscord path below is HISTORY. Configuration is the
+"discord" section of ~/.config/ffbox/config.json -- one file for the box, so the channel alias
+table sits beside the "watch" block that gives those aliases their meaning -- and the state
+(read cursors, doorbell, listener lock) is ~/.config/ffbox/discord/. There is no config file in
+that directory and nothing reads one. The paths are left as written below because they record
+what was built; this note is what to believe.
+
 Revision 3, 2026-08-25: sections 7 and 13 are SUPERSEDED by design/single_lane_design.txt,
 which removes the lane system entirely. Their bodies are left as written, because they record
 what was built and why; each now opens with a correction block saying what actually shipped and

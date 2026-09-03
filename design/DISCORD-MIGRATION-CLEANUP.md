@@ -131,9 +131,10 @@ against `develop` at the time of writing.
 ## 5. What stays, and why
 
 **`.gitignore`'s ffdiscord entries** (`**/ffdiscord/config.json`, `**/ffdiscord/state.json`,
-`**/ffdiscord/state.json.lock`, `.ffdiscord/`). Keep every one. The token and cursors still land
-in `~/.config/ffdiscord/`, and the test harness still points `FFDISCORD_HOME` at a repo-relative
-temp directory. Removing these is how a bot token eventually gets committed.
+`**/ffdiscord/state.json.lock`, `.ffdiscord/`). Keep every one. The token lives in the `discord`
+section of `~/.config/ffbox/config.json` and the cursors in `~/.config/ffbox/discord/`, but the
+test harness still points `FFDISCORD_HOME` at a repo-relative temp directory. Removing these is
+how a bot token eventually gets committed.
 
 **The in-game bug reporter.** `Assets/Scripts/UI/Panels/DiscordBugReporter.cs` and
 `Assets/Scriptables/DiscordBugForumsWebhook.asset` are game code that posts to the forum webhook.

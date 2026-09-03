@@ -82,9 +82,6 @@ Everything ffbox owns on a machine lives in one directory:
 ~/ffbox-state/                     the database, blobs and per-conversation run directories
 ```
 
-A pre-2026-08-22 machine keeps `~/.config/ffdiscord`; stage 5 moves that state directory whole,
-cursors included, and every reader falls back to the old path until it does.
-
 ## The services
 
 Three daemons — the gateway listener, the conversation manager, the web page — under one target,
