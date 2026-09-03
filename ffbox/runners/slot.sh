@@ -528,6 +528,21 @@ DEADLINE=$(idle_deadline) || DEADLINE=
 DEADLINE_KIND=idle
 KILLED=0
 
+# HOW LONG A STOPPED CONTAINER GETS TO HAND ITS UNITY SEAT BACK, resolved once here so the
+# watchdog below is not carrying a number of its own. ffbox_stop_grace() is lib-workloads.sh's,
+# the same helper the agent lane's stops go through, and it returns the larger of what it is
+# handed and FFBOX_LICENCE_STOP_FLOOR (120).
+#
+# THE FALLBACK IS THE FLOOR, NOT THE OLD 90. lib-workloads.sh is optional here -- slot.sh warns
+# and carries on without it at the top of this file -- and a checkout that is missing it must not
+# quietly get the shorter grace this change exists to remove. 120 is written out rather than read
+# from FFBOX_LICENCE_STOP_FLOOR because in that branch nothing has defined it.
+if command -v ffbox_stop_grace >/dev/null 2>&1; then
+    STOP_GRACE=$(ffbox_stop_grace 90)
+else
+    STOP_GRACE=120
+fi
+
 # WHETHER THIS CONTAINER HAS TAKEN A JOB, and the reason this loop is worth waking up for while
 # nothing is wrong. Until it flips, this container is the pool's idle runner and no other slot
 # will start one; the moment it flips, the marker goes down and the next waiting slot brings a
@@ -587,7 +602,15 @@ while [ "$(docker inspect -f '{{.State.Running}}' "$CNAME" 2>/dev/null)" = true 
         # tens of seconds. Whether the signal actually reaches that trap through the runner is
         # open item (d) in the design and is NOT established; if it does not, a watchdog kill
         # leaks a Unity seat and this comment is where to start looking.
-        docker stop -t 90 "$CNAME" >/dev/null 2>&1 || true
+        #
+        # THE SHARED FLOOR, NOT A NUMBER OF THIS FILE'S OWN. This was a literal 90 while the
+        # agent lane floored every seat-holding stop at FFBOX_LICENCE_STOP_FLOOR=120 -- one lane
+        # allowing the licence round trip 120 seconds and the other 90, for the same trap doing
+        # the same work. 90 was never argued for; it predates the floor existing. Whatever a
+        # reader concludes about open item (d), the two lanes should be wrong in the same
+        # direction, and if the signal DOES reach the trap the extra 30s is what makes the
+        # difference between a returned seat and a leaked one.
+        docker stop -t "$STOP_GRACE" "$CNAME" >/dev/null 2>&1 || true
         KILLED=1
         break
     fi
