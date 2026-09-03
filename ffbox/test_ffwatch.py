@@ -8046,6 +8046,43 @@ def test_a_crashed_pooled_run_gives_its_transcript_back():
           turn["status"] == "queued", dict(turn))
 
 
+def test_a_run_directory_from_a_newer_ffbox_is_refused():
+    """The run directory is an interface between two builds now, so it carries a version.
+
+    A run whose container survives an update is started by one build of ffbox and finished by
+    another. Usually the finisher is NEWER, which additive changes handle. The case that needs a
+    number is the other one -- a checkout rolled back with containers still running -- where the
+    files may not mean what the finisher thinks. Publishing a branch derived from a misread
+    bundle is what the refusal exists to prevent.
+    """
+    print("contract: a directory from the future")
+    case = Case("contract", base_fixture())
+    w = case.watcher
+    d = os.path.join(case.root, "rundir")
+    os.makedirs(d, exist_ok=True)
+
+    check("a directory with no contract file is finished as it always was",
+          w.run_contract_ok(d), None)
+    with open(os.path.join(d, "contract"), "w", encoding="utf-8") as fh:
+        fh.write("contract=%d\nmax_changed_files=2000\n" % ffwatch.FFBOX_RUN_CONTRACT)
+    check("one this build wrote is fine", w.run_contract_ok(d), None)
+    with open(os.path.join(d, "contract"), "w", encoding="utf-8") as fh:
+        fh.write("contract=%d\n" % (ffwatch.FFBOX_RUN_CONTRACT + 1))
+    check("one from a newer build is refused", not w.run_contract_ok(d), None)
+    with open(os.path.join(d, "contract"), "w", encoding="utf-8") as fh:
+        fh.write("contract=not-a-number\n")
+    check("and an unreadable one is not treated as newer, which would strand it",
+          w.run_contract_ok(d), None)
+
+    # The number lives in two languages and there is no shared library to put it in, so the
+    # thing that catches them drifting apart is a test that reads both.
+    ffbox_src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    m = re.search(r"^FFBOX_RUN_CONTRACT=(\d+)$", ffbox_src, re.M)
+    check("ffbox declares the same contract number ffwatch does",
+          m and int(m.group(1)) == ffwatch.FFBOX_RUN_CONTRACT,
+          m.group(1) if m else "not found")
+
+
 def test_an_update_does_not_disturb_what_it_is_carrying():
     """Rules about what an update must NOT do, checked against the source.
 
@@ -10420,6 +10457,7 @@ def main():
         test_two_dispatchers_cannot_take_one_container,
         test_a_pooled_run_never_loses_the_conversations_memory,
         test_a_crashed_pooled_run_gives_its_transcript_back,
+        test_a_run_directory_from_a_newer_ffbox_is_refused,
         test_an_update_does_not_disturb_what_it_is_carrying,
         test_a_detached_run_is_not_stopped_by_its_launcher,
         test_a_live_container_is_adopted_not_requeued,
