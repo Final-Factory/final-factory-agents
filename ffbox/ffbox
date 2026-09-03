@@ -207,6 +207,16 @@ MOUNTS=()
 # owns that lifecycle. design/ffbox_idle_agents_design.txt.
 STAGE_POOL=
 DISPATCH=
+# DETACH: create the container and return, leaving it running. What ffwatch passes since the
+# host stopped supervising containers -- see FINISH below and
+# design/ffbox_live_update_design.txt section 7.
+DETACH=0
+# FINISH: the other half. Start nothing; validate the harvest sitting in a run directory that
+# some earlier, detached invocation left behind. One directory in, no container, no docker.
+FINISH_DIR=
+# Set once the container is up and we are leaving it that way, so cleanup knows the difference
+# between "we are done with it" and "we failed before it existed".
+DETACHED_OK=0
 POOL_DIR=${FFBOX_POOL_DIR:-$HOME/ffbox-state/pool}
 POOL_TASK=${FFBOX_POOL_TASK:-}
 IDLE_TTL=${FFBOX_IDLE_TTL_SECS:-14400}
@@ -345,6 +355,8 @@ while [ $# -gt 0 ]; do
         --stage-pool)     STAGE_POOL=${2:?--stage-pool needs an id}; shift 2 ;;
         --dispatch)       DISPATCH=${2:?--dispatch needs a pool id}; CLOCKS=1; shift 2 ;;
         --pool-dir)       POOL_DIR=${2:?--pool-dir needs a path}; shift 2 ;;
+        --detach)         DETACH=1; shift ;;
+        --finish)         FINISH_DIR=${2:?--finish needs a run directory}; shift 2 ;;
         --idle-ttl)       IDLE_TTL=${2:?--idle-ttl needs seconds}; shift 2 ;;
         --agent-class)    AGENT_CLASS=${2:?--agent-class needs a name}; shift 2 ;;
         --agent-timeout)  AGENT_TIMEOUT=${2:?--agent-timeout needs seconds}; CLOCKS=1; shift 2 ;;
@@ -391,13 +403,18 @@ if [ -n "$PROMPT_FILE" ]; then
     PROMPT=$(cat "$PROMPT_FILE")
 elif [ $# -gt 0 ]; then
     PROMPT="$*"
-elif [ -z "$TASK" ] && [ ! -t 0 ]; then
+elif [ -z "$TASK" ] && [ -z "$STAGE_POOL$DISPATCH$FINISH_DIR" ] && [ ! -t 0 ]; then
+    # Piped-in prompt. Guarded on the modes that are not a prompt at all, or `--finish` run from
+    # a script -- which has no terminal by definition -- sits here waiting for a prompt nobody
+    # is going to type.
     PROMPT=$(cat)
 fi
 
 # A task run carries its instructions in its own mounted files (job.json for the Discord lanes),
-# so a prompt is required only for the default one-shot task.
-if [ -z "$TASK" ] && [ -z "$STAGE_POOL$DISPATCH" ] && [ -z "${PROMPT// }" ]; then
+# so a prompt is required only for the default one-shot task. `--finish` is not a run at all: it
+# is handed a directory a finished run left behind, and asking it for a prompt would be asking
+# what to call a question that has already been answered.
+if [ -z "$TASK" ] && [ -z "$STAGE_POOL$DISPATCH$FINISH_DIR" ] && [ -z "${PROMPT// }" ]; then
     echo "ffbox: no prompt given" >&2
     usage >&2
     exit 2
@@ -441,7 +458,8 @@ else
     ffbox_agent_slot_release() { return 0; }
     FFBOX_WORKLOAD_LABEL=ffbox.workload
 fi
-if [ "$DIRECT" = 0 ] && [ -z "$TASK" ] && [ -z "$JOB_FILE" ] && [ -z "$STAGE_POOL$DISPATCH" ] \
+if [ "$DIRECT" = 0 ] && [ -z "$TASK" ] && [ -z "$JOB_FILE" ] \
+   && [ -z "$STAGE_POOL$DISPATCH$FINISH_DIR" ] \
    && [ -r "$FFWATCH_PY" ]; then
     ROUTE=("python3" "$FFWATCH_PY" "submit" "--wait")
     [ -z "$REF" ] || ROUTE+=("--ref" "$REF")
@@ -531,6 +549,18 @@ else
     echo "       Any run that starts the editor will fail. Mint one with:" >&2
     echo "         sh ffbox/unity-offline-license.sh mint" >&2
 fi
+
+# --- everything from here to the harvest is about a CONTAINER ----------------------------------
+#
+# `--finish` skips all of it. It is handed a run directory some earlier, detached invocation left
+# behind and asked to do the one thing that is left: re-derive the harvest from what is in there.
+# No docker, no image, no network, no workspace, no licence -- none of which exists to check by
+# then, and a run whose container is long gone must not fail its harvest because the egress proxy
+# happens to be down now.
+#
+# Written as a guard rather than an early exit because the harvest is at the BOTTOM of this file
+# and shell has no way back to it. One `if` and one `fi`; the body is untouched.
+if [ -z "$FINISH_DIR" ]; then
 
 # --- preflight ------------------------------------------------------------------------------------
 command -v docker >/dev/null || { echo "ffbox: docker not found" >&2; exit 127; }
@@ -745,6 +775,18 @@ ffbox_write_clock() {
 cleanup() {
     local rc=$?
     set +e
+
+    # WE MEANT TO LEAVE IT RUNNING. This is the single line that separates a container that
+    # outlives an update from one that does not.
+    #
+    # This trap is why `systemctl stop ffbox.target` used to cost every run on the box: ffbox is
+    # a child of ffwatch, in its cgroup, so the stop signalled it and this handler dutifully
+    # stopped the container. Under --detach there is no supervisor to lose and nothing here to
+    # clean up -- the container is ffwatch's to finish, whenever it next looks. Only set once the
+    # container actually exists, so every failure path before that still tidies up after itself.
+    if [ "$DETACHED_OK" = 1 ]; then
+        return $rc
+    fi
 
     # Stop rather than kill: SIGTERM reaches run-as-user.sh as PID 1 so it can hand the Unity
     # activation seat back before dying. A killed container leaks the seat.
@@ -1220,6 +1262,28 @@ else
     ffbox_workload_lock_release
 fi
 
+# --- detach ------------------------------------------------------------------------------------
+#
+# THE CONTAINER EXISTS AND IT IS SOMEBODY ELSE'S NOW. Everything below this line -- the clock
+# loop, the wait, the move, the harvest -- is what a SUPERVISOR does, and under --detach there is
+# no supervisor. ffwatch does all of it from a pass instead: enforce_clocks compares the file
+# written above, and finish_runs moves the directory and calls this script back with --finish.
+#
+# WHY THAT IS BETTER THAN WATCHING. A supervisor is a process, and a process dies: with a
+# `systemctl stop`, with an update, with anything. The run then had no clock, no harvest and no
+# reply, and the container went on holding a slot and a workspace with nothing left that would
+# ever finish it. Nothing here outlives the container any more, so stopping ffwatch costs a
+# scheduling pass rather than every run on the box.
+#
+# `--direct` and a plain `ffbox "prompt"` never take this path: a human at a terminal is watching
+# the run, and the foreground loop is exactly what they want.
+if [ "$DETACH" = 1 ]; then
+    DETACHED_OK=1
+    echo "[ffbox] detached: ${RUN_NAME} is running and is ffwatch's to finish"
+    echo "[ffbox] results will be at: $OUT"
+    exit 0
+fi
+
 TIMEOUT_KIND=
 if [ "$CLOCKS" = 1 ]; then
     # Two clocks, watched from out here because only the host can tell the difference between
@@ -1294,6 +1358,25 @@ case "$TIMEOUT_KIND" in
     agent)  RUN_RC=124 ;;
     verify) RUN_RC=125 ;;
 esac
+
+else
+    # THE OTHER HALF OF --detach. The container has already exited; what is left is the work it
+    # wrote into its directory, and the checks that turn that into something publishable.
+    #
+    # RE-DERIVED HERE AND NOT TRUSTED FROM THE CONTAINER, exactly as on the supervised path: the
+    # container wrote branch.txt and changed_files.txt, and a run that skipped or lied about its
+    # own checks would be taken at its word if the host merely read them. The bundle cannot lie.
+    # That reasoning is why this is the same function rather than a second implementation.
+    [ -d "$FINISH_DIR" ] || { echo "ffbox: no run directory at $FINISH_DIR" >&2; exit 2; }
+    OUT=$FINISH_DIR
+    RUN_RC=$(tr -dc '0-9' < "$OUT/.container-rc" 2>/dev/null || true)
+    [ -n "$RUN_RC" ] || RUN_RC=70
+    case "$(head -1 "$OUT/ffbox-timeout" 2>/dev/null | tr -d ' \r\n')" in
+        warmup) RUN_RC=123 ;;
+        agent)  RUN_RC=124 ;;
+        verify) RUN_RC=125 ;;
+    esac
+fi
 
 # --- harvest, when the workspace was a container ramdrive --------------------------------------
 #
@@ -1419,6 +1502,7 @@ harvest_from_out() {
     echo "[ffbox] verified ${_count} changed file(s) in ${_commits} commit(s) on $_hb: $OUT/work.bundle"
     return 0
 }
+
 
 # --- harvest ---------------------------------------------------------------------------------------
 # Do this before cleanup destroys the clone, or the work evaporates with it.

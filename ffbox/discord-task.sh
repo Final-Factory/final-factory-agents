@@ -199,6 +199,56 @@ _ffbox_finish() {
 }
 trap _ffbox_finish EXIT INT TERM
 
+# --- the failsafe, for when nothing on the host is watching ------------------------------------
+#
+# WHY A CONTAINER NEEDS ITS OWN DEADLINE AT ALL. The ceilings are enforced by ffwatch, off the
+# clock file ffbox wrote into this directory, and that works because a pass keeps running. It
+# stops working when no pass does: `ffbox "prompt"` on a box with no daemon drives its own passes
+# and can be interrupted, and an ffwatch that never comes back leaves every container it made
+# with a deadline nobody reads. Before the host stopped supervising, ffbox's own trap covered
+# both by stopping the container; nothing covers them now.
+#
+# So the container carries a clock of its own, exactly as pool-task.sh has since 2026-09-02 and
+# for the same reason its header gives: a spare holds 22 GiB and a Unity seat, and a keeper that
+# is not keeping must not mean both are held until somebody notices.
+#
+# DELIBERATELY GENEROUS. This is not a second ceiling and must never be the thing that ends a
+# healthy run -- the host's clocks are, and they are per phase and enforced every few seconds.
+# This fires only when the host is ABSENT, so it is the sum of every phase plus a wide margin:
+# a run that reaches it has outlived every ceiling it could legitimately have spent, one after
+# another, with nobody watching.
+#
+# TERM TO PID 1, WHICH IS US, so _ffbox_finish runs: the harvest, the licence, the exit code.
+# A run that ends this way still hands back everything it produced. `kill -9` would hand back
+# nothing, and the workspace is a tmpfs.
+_ffbox_failsafe() {
+    _fs_total=0
+    if [ -r "$FFBOX_OUT/clock" ]; then
+        for _fs_key in warmup_secs agent_secs verify_secs; do
+            _fs_v=$(sed -n "s/^${_fs_key}=//p" "$FFBOX_OUT/clock" 2>/dev/null | head -1)
+            case "${_fs_v:-}" in
+                ''|*[!0-9]*) ;;
+                *) _fs_total=$(( _fs_total + _fs_v )) ;;
+            esac
+        done
+    fi
+    # No clock file means an ffbox from before they existed, and no basis for a number. A
+    # failsafe invented out of nothing is worse than none: it would eventually kill runs the
+    # host is perfectly well bounding.
+    [ "$_fs_total" -gt 0 ] || return 0
+    _fs_total=$(( _fs_total + ${FFBOX_FAILSAFE_MARGIN_SECS:-1800} ))
+    (
+        sleep "$_fs_total"
+        log "FAILSAFE: ${_fs_total}s with no host clock enforcement; stopping this run."
+        log "          The host should have ended this long ago, so something is wrong with it."
+        kill -TERM 1 2>/dev/null || true
+    ) &
+    log "failsafe armed at ${_fs_total}s, for the case where no host is watching"
+    unset _fs_total _fs_key _fs_v
+    return 0
+}
+_ffbox_failsafe
+
 START_TS=$(date +%s)
 
 if [ ! -r "$JOB_FILE" ]; then
