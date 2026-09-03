@@ -20,8 +20,16 @@
 #
 #   offline  a .ulf licence FILE, mounted read-only at FFBOX_UNITY_ULF. No credential, no network,
 #            no seat, nothing to return. THIS IS THE PATH EVERYTHING SHOULD TAKE.
-#   online   the old serial activation, kept only as a fallback for a caller that still supplies
-#            UNITY_EMAIL and UNITY_PASSWORD -- which, after 2026-09-01, is main.yml alone.
+#   online   this container activating for ITSELF, kept only as a fallback for a caller that still
+#            supplies UNITY_EMAIL and UNITY_PASSWORD -- which, after 2026-09-01, is main.yml alone.
+#
+# "OFFLINE" IS THIS CONTAINER'S VIEW AND NOTHING WIDER. The licence being mounted is a Unity
+# PERSONAL licence, which can only be obtained by authenticating to Unity over the network --
+# manual .alf activation was withdrawn for Personal in August 2023 -- and it carries a rolling ~24h
+# UpdateDate, so it has to be re-activated roughly daily. The HOST does that, before it launches
+# this container: ffbox/unity-offline-license.sh. What "offline" buys is that no credential and no
+# network call is needed IN HERE, which is the whole security argument. It is not a claim that the
+# box never talks to Unity.
 #
 # WHY OFFLINE FIRST. Until 2026-09-01 ffbox handed every container UNITY_EMAIL and UNITY_PASSWORD so
 # it could activate on start. That is a full Unity account credential -- the same identity as the
@@ -30,7 +38,8 @@
 # through /proc/self/environ. docs/docker-security-model.md's first premise is that this container
 # is hostile; a credential inside it is compromised by assumption.
 #
-# The licensing client resolves entitlements from local files and makes no server call to do it:
+# The licensing client resolves an entitlement it already has from local files and makes no server
+# call to do it (the host made that call when it minted the file):
 #
 #     Rebuilding resolvers from local files
 #     Skipping directory watcher for: /root/.local/share/unity3d/Unity/*.ulf

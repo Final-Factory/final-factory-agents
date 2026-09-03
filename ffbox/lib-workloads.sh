@@ -230,22 +230,35 @@ FFBOX_SLOT_DIR=${FFBOX_SLOT_DIR:-$FFBOX_WL_CONFIG_DIR/slots}
 
 # --- and why it no longer does, as of 2026-09-01 -------------------------------------------------
 #
-# EVERYTHING ABOVE DESCRIBES THE ONLINE ACTIVATION PATH, WHICH IS GONE. The licence is now a .ulf
-# FILE mounted into the container (ffbox/unity-offline-license.sh), and the licensing client
-# resolves it from local files without calling Unity at all. Exit 198 was Unity's ACTIVATION
-# ENDPOINT refusing a second concurrent registration; with no call there is no refusal, and the
-# reason for a per-slot id goes with it.
+# EVERYTHING ABOVE DESCRIBES A CONTAINER ACTIVATING FOR ITSELF, WHICH IS GONE. The activation is
+# NOT gone, and cannot be: this is a Unity PERSONAL licence, Unity withdrew manual (.alf upload)
+# activation for Personal in August 2023, so the only way to hold one is to authenticate to Unity
+# over the network. What changed on 2026-09-01 is who makes that call.
 #
-# WORSE THAN UNNECESSARY, ACTIVELY WRONG NOW. A .ulf is bound to one /etc/machine-id. A container
-# presenting a per-slot id would not match the licence and would find no entitlement at all, so
-# the default has to be the id the licence was minted against -- the base image's pinned constant,
-# which is what game-ci pins it to for exactly this purpose.
+# THE HOST MAKES IT NOW, ONCE, FOR EVERYBODY. ffbox/unity-offline-license.sh runs one throwaway
+# container presenting the constant below, calls `Unity.Licensing.Client --activate-ulf` with a
+# credential that never leaves the host, and drops the resulting .ulf at /opt/ffcache/unity. Run
+# containers mount that file and resolve it from local files without a call of their own. "Offline"
+# in these scripts always means the CONTAINER's view of its own licence; it never means the box
+# stopped talking to Unity. A Personal .ulf carries a rolling ~24h UpdateDate and no StopDate, so
+# the host re-activates roughly daily -- `unity-offline-license.sh ensure`, called before every
+# container launch by ffbox and by runners/slot.sh.
+#
+# Exit 198 was Unity's ACTIVATION ENDPOINT refusing a second CONCURRENT registration from two
+# containers each activating for themselves. One activator cannot be concurrent with itself, so
+# the reason for a per-slot id goes with it.
+#
+# WORSE THAN UNNECESSARY, ACTIVELY WRONG NOW. A .ulf is bound to one /etc/machine-id -- whichever
+# one the activating process presented. A container presenting a per-slot id would not match the
+# licence and would find no entitlement at all, so the default has to be the id the licence was
+# minted against.
 #
 #   <32 hex>   the default, and it is OUR constant rather than the image's: see
 #              ffbox/unity-offline-license.sh, which mints the licence against exactly this value.
 #              Pinning our own means the licence does not depend on a number game-ci controls.
-#   image      leave the image's baked-in constant alone.
-#   per-slot   the old behaviour, for a caller that has gone back to online activation.
+#   image      leave the image's baked-in constant alone. Only correct if the licence was minted
+#              against the image's id, which on this box it was not.
+#   per-slot   the old behaviour, for a caller whose containers activate for themselves.
 #
 # THE SLOT ITSELF IS STILL CLAIMED. It labels the container and bounds the pool the way it always
 # did; only the machine id stopped being derived from it.

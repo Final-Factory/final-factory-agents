@@ -319,22 +319,39 @@ _ffghr_set CAP_ADD          cap_add          'CHOWN,FOWNER,DAC_OVERRIDE'
 # machines ever, and the next job on that slot presents the same one and reuses its entitlement —
 # which is exactly why sequential jobs work today on the pinned id despite leaks.
 #
-# SUPERSEDED 2026-09-01, AND THE DEFAULT IS NOW image. Everything above is about ONLINE activation,
-# which neither lane does any more: the licence is a .ulf FILE mounted into the container
-# (ffbox/unity-offline-license.sh) and resolved from local files with no call to Unity. Exit 198 was
-# the activation endpoint refusing a concurrent registration, so with no call there is nothing to
-# refuse and no reason to vary the id.
+# SUPERSEDED 2026-09-01, AND THE DEFAULT IS NOW ONE PINNED CONSTANT FOR EVERY CONTAINER. What
+# changed is WHO ACTIVATES, not whether anybody does.
+#
+# THE ACTIVATION IS STILL ONLINE, AND FOR A PERSONAL LICENCE IT HAS TO BE. Unity withdrew manual
+# (.alf upload) activation for Personal in August 2023 -- "Unity no longer supports manual
+# activation of Personal licenses" -- so there is no way to obtain a .ulf without authenticating
+# to Unity over the network. Anyone reading this block for "do we go online?" wants ffbox/README.md
+# under "Unity licensing"; the short answer is yes, once per ~24 hours, from the HOST.
+#
+# WHAT MOVED IS THE CALLER. It used to be every container, activating for itself out of
+# UNITY_EMAIL/UNITY_PASSWORD handed to it. Now ffbox/unity-offline-license.sh runs ONE throwaway
+# container on the host that presents the constant below, calls
+# `Unity.Licensing.Client --activate-ulf` with a credential that never leaves the host, and writes
+# the resulting .ulf to /opt/ffcache/unity. Run containers only ever MOUNT that file, and the
+# client resolves it from local files with no call of their own -- which is the only sense in
+# which anything here is "offline".
+#
+# Exit 198 was the activation endpoint refusing a second CONCURRENT registration from two
+# containers activating for themselves. There is one activator now and it is not concurrent with
+# itself, so the reason to vary the id per slot is gone.
 #
 # IT WOULD NOW BREAK THE LICENCE RATHER THAN PROTECT IT. A .ulf binds to exactly one
-# /etc/machine-id, so a container presenting a per-slot id matches nothing and finds no entitlement.
+# /etc/machine-id -- the one the activating process presented -- so a container presenting a
+# per-slot id matches nothing and finds no entitlement.
 #
 #   <32 hex>   the default, and it is OUR constant (46696e616c466163746f72792d666662, ASCII
 #              "FinalFactory-ffb") rather than the image's: ffbox/unity-offline-license.sh mints the
 #              licence against exactly this value, so it does not depend on a number game-ci owns.
 #              KEEP IN LOCKSTEP with FFBOX_MACHINE_ID_CONST there and with ffbox/lib-workloads.sh.
-#   image      leave the image's baked-in constant alone.
-#   per-slot   sha256 of the host name and the slot, first 32 hex. The old default; correct only
-#              for a lane that has gone back to online activation.
+#   image      leave the image's baked-in constant alone. NOT the default, and it only works if
+#              the licence was minted against the image's id too.
+#   per-slot   sha256 of the host name and the slot, first 32 hex. The old default, from when each
+#              container activated itself; correct only for a lane put back on that.
 _ffghr_set MACHINE_ID       machine_id       46696e616c466163746f72792d666662
 
 # Prints the id for a slot, or returns 1 when nothing should be overridden. The container's

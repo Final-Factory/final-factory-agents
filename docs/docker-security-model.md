@@ -98,8 +98,10 @@ pooled container holds it for hours before a job arrives.
 rather than interactive credentials would still be a genuine improvement — the allowlist does
 nothing about it". That is what happened: the licence is now a `.ulf` file mounted read-only at
 `/ffbox/unity/Unity_lic.ulf`, Unity's licensing client resolves it from local files with no call
-out, and no container is handed an account password. See `ffbox/README.md`, "Unity licensing", and
-`ffbox/unity-offline-license.sh`.
+out **of the container**, and no container is handed an account password. The activation that
+produces the file is still an online one — it must be, for a Personal licence — but the host
+performs it, in a throwaway container that holds nothing else and exits. See `ffbox/README.md`,
+"Unity licensing", and `ffbox/unity-offline-license.sh`.
 
 A mounted licence file is not nothing — an agent can read and exfiltrate it like anything else in
 the container — but it is a bounded, revocable, machine-bound artifact rather than the credential
