@@ -402,30 +402,6 @@ for key, value in (
         "github": {"pr_token": None, "container_token": None},
       },
     }),
-    # --- what the harness may push, per base branch -----------------------------------------
-    # A run chooses which branch its work is FOR by choosing what it branches from; ffbox reads
-    # that back out of the commit graph at harvest, and this table says what the harness is then
-    # willing to do with it. One block per branch name, one field:
-    #
-    #   "all"        push anything that earns it — what every base did before this existed
-    #   "operators"  push only for a turn whose author is in discord.trust.operators, or that
-    #                was typed on this box (`ffwatch submit`, the web page)
-    #   "none"       push nothing, ever. The work goes with the run directory.
-    #
-    # THIS GATE COMES BEFORE THE OTHERS AND IT WITHHOLDS THE BRANCH, not the pull request. The
-    # verification and confidence gates publish the branch either way so nothing is lost with
-    # the ZFS clone; a base closed here leaves nothing on origin at all.
-    #
-    # SEEDED CLOSED, and this is the one place the policy is written — ffwatch's DEFAULTS carry
-    # an EMPTY table on purpose, so a rule that makes work disappear is one an operator can read
-    # in this file rather than one built into a program. master is the released build and the
-    # harness proposes nothing to it unattended; develop takes work from a developer and not
-    # from a stranger in a forum. Widen a branch by setting "all", and remember what that opens:
-    # a player's Discord message would then put commits on origin under an ffbox/ name.
-    ("branches", {
-        "master": {"permissions": "none"},
-        "develop": {"permissions": "operators"},
-    }),
     # Turns per rolling 24 hours, keyed on TRUST TIER — who wrote the text, not which lane it
     # took. One budget across every kind of turn a player can cause. `operator` is null, which
     # ffwatch reads as no limit: an operator directive and a locally typed prompt are not the
