@@ -565,23 +565,6 @@ def preamble_branch(job):
     )
 
 
-def publishable(bases):
-    """The bases the HOST says this turn's work may actually be pushed for, in the config's own
-    order.
-
-    `branches.<name>.permissions` decides it and the host resolves it, because the answer needs
-    the turn's trust tier and that is not a fact this container has. An older host sends no
-    `publishable` key at all: everything is open then, which is what that host will really do.
-    Never inferred from anything else here — a second copy of the rule in the container is a
-    copy that can disagree with the one that is enforced at the push.
-    """
-    choices = (bases or {}).get("choices") or {}
-    allowed = (bases or {}).get("publishable")
-    if allowed is None:
-        return list(choices)
-    return [name for name in choices if name in allowed]
-
-
 def preamble_bases(bases):
     """WHICH BRANCH THE WORK IS FOR — the agent's decision, made by choosing what it branches
     from. The names and what each is for come from the host's config rather than being written
@@ -601,84 +584,31 @@ def preamble_bases(bases):
     # obeyed — and obeying it is how a continuation throws away the work it was started on.
     if (bases or {}).get("conversation_branch"):
         on = (bases or {}).get("checked_out_base") or ""
-        if not on:
-            return ""
-        text = (f" This branch is based on `origin/{on}`, which is what its pull request "
+        return (f" This branch is based on `origin/{on}`, which is what its pull request "
                 "targets; that was decided when the work started and is not yours to revisit. "
                 "Do not check out another base — between master and develop that is thousands "
                 "of files and a full Unity reimport charged to your clock, and it would move "
-                "you off the very commits you were started on.")
-        # A CLOSED BASE ON A CONTINUATION IS NOT AN INSTRUCTION, because there is nothing the
-        # agent can do about it: the base was settled by the turn that created the branch, and
-        # the line above has just told it — correctly — not to go and change that. What is left
-        # worth saying is what will happen, so a summary does not promise a review that is not
-        # coming. Switching base here would be the one move that costs a reimport AND still
-        # publishes nothing, since the harness publishes this branch by name either way.
-        if on not in publishable(bases):
-            text += (f" The harness will NOT publish work based on `{on}` on this turn, so "
-                     "nothing you commit here will reach origin or a pull request. Do the work "
-                     "you were asked for, and say plainly in your summary that it could not be "
-                     "published — do not claim a branch or a pull request that will not exist.")
-        return text
+                "you off the very commits you were started on." if on else "")
     checked_out = (bases or {}).get("checked_out") or ""
     # WHICH BASE THAT SHA IS, when the host could tell. A resumed turn starts at a pinned commit,
     # and without this line the agent reads forty hex characters, cannot tell which release they
     # belong to, and re-checks-out a base to be sure — the single most expensive move available
     # to it in a Unity workspace.
     on = (bases or {}).get("checked_out_base") or ""
-    allowed = publishable(bases)
-    # WHERE THE CLONE STANDS, AND WHETHER STANDING THERE IS ANY USE. "you are already on that
-    # base, moving costs a reimport" is the right thing to say about an OPEN base and exactly
-    # the wrong thing to say about a closed one — it is an argument for staying put, and staying
-    # put is what loses the run. So the sentence changes rather than being contradicted three
-    # sentences later by the instruction that actually matters.
-    if on and on in allowed:
-        where = (f", which is a commit on `{on}`, so you are ALREADY on that base: branching "
-                 f"from `origin/{on}` is free and moving to the other one costs a full "
-                 "reimport.")
-    elif on:
-        where = (f", which is a commit on `{on}` — and `{on}` is CLOSED to this turn, so what "
-                 "you can do from where you are standing is the first thing to settle.")
-    else:
-        where = "."
     text = (" CHOOSE WHAT YOU BRANCH FROM, deliberately. This clone starts checked out at "
-            f"`{checked_out}`" + where
+            f"`{checked_out}`"
+            + (f", which is a commit on `{on}`, so you are ALREADY on that base: branching "
+               f"from `origin/{on}` is free and moving to the other one costs a full reimport."
+               if on else ".")
             + " These are the branches you may base work on:")
     for name, what in choices.items():
         text += f" `origin/{name}` — {what}"
-        # SAID AGAINST THE NAME, not gathered into a footnote, because the agent is choosing
-        # from this list and the choice is only as good as what is beside each option.
-        if name not in allowed:
-            text += (f" (CLOSED: the harness will not publish work based on `{name}` on this "
-                     "turn, whatever it changes.)")
     text += (" Branch from the one the change belongs on — `git checkout -b <name> "
              "origin/<base>` — because the harness reads your choice back out of the history "
              "and opens the pull request against that branch. Branching off the wrong one "
              "proposes your change to the wrong release, and nothing downstream can tell that "
-             "was not what you meant.")
-    if not allowed:
-        # NOTHING IS OPEN. Worth saying in one sentence rather than leaving the agent to infer
-        # it from every option being marked closed: what it changes the agent's behaviour about
-        # is the summary, which must not promise a review that cannot happen.
-        text += (" NONE of them is open to this turn: nothing you commit can be published,"
-                 " whichever base you take. Do the work you were asked for, and say plainly in"
-                 " your summary that it could not be published — do not claim a branch or a"
-                 " pull request that will not exist.")
-    else:
-        # THE CLONE STARTS ON A CLOSED BASE. This is the case the whole marking exists for: the
-        # container is checked out at base_ref, the instruction below used to be "if it is
-        # unclear, take the first one listed", and both of those can point straight at a branch
-        # nothing can be published from. Moving off it costs a Unity reimport; not moving off it
-        # costs the entire run. Say which one it is by name so there is nothing to work out.
-        first = allowed[0]
-        if on and on not in allowed:
-            text += (f" `{on}`, WHICH YOU ARE STANDING ON, IS ONE OF THE CLOSED ONES. Nothing "
-                     "you commit on top of it can be published, so branch from an open base "
-                     f"before you change anything — `git checkout -b <name> origin/{first}` — "
-                     "even though that costs a Unity reimport. It is the difference between a "
-                     "change that reaches a reviewer and one that is thrown away.")
-        text += (" If the answer is genuinely unclear, take "
-                 f"`origin/{first}` and say in your summary why another might have been right.")
+             "was not what you meant. If the answer is genuinely unclear, take the first one "
+             "listed and say in your summary why the other might have been right.")
     return text
 
 # The rest of the git contract, shared by both write preambles so the two cannot drift apart.

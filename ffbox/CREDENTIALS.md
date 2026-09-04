@@ -114,9 +114,9 @@ next update) to have it retry.
 
 ## 2. The push credential — the one that can actually write code
 
-This is the credential the *host checkout* uses, not `GH_PR_TOKEN`. `push_staged` deliberately does
+This is the credential the *host checkout* uses, not `GH_PR_TOKEN`. `push_bundle` deliberately does
 not splice a token into the push URL, because argv is world-readable through `/proc`
-(`ffbox/ffwatch.py:8455`); it runs
+(`ffbox/ffwatch.py:8191`); it runs
 
 ```
 git -C /opt/FinalFactory push origin refs/ffbox/<branch>:refs/heads/<branch>
@@ -239,7 +239,7 @@ repository only if a turn genuinely needs to read it.
 | Everything else | No access |
 
 CONTENTS **READ**, NOT WRITE, IS THE RECOMMENDATION, and it is not a token left half-configured.
-A run's work reaches origin through the harvest and `push_staged` on the host, which is unchanged
+A run's work reaches origin through the harvest and `push_bundle` on the host, which is unchanged
 and is still how anything gets published, so read costs the container nothing it was doing.
 
 WHAT WRITE WOULD COST, stated so the choice is made deliberately: for a class carrying this token,
@@ -249,7 +249,7 @@ scope and by branch protection on GitHub. The three legs that hold it elsewhere 
 - the agent's deny list does not hold it, because `Bash(git push*)` is a tripwire that
   `sh -c 'git push'` walks straight through, measured;
 - the host owning the refspec does not hold it, because an agent with a credential is not going
-  through `push_staged`;
+  through `push_bundle`;
 - `GH_PR_TOKEN` lacking contents:write does not hold it, because that caps a different process
   holding a different token.
 

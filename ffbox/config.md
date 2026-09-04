@@ -71,10 +71,6 @@ already there:
 ```json
 {
   "approve_before_send": false,
-  "branches": {
-    "master":  { "permissions": "none" },
-    "develop": { "permissions": "operators" }
-  },
   "catchup_secs": 900,
   "container": {
     "workspace_size": "40g",
@@ -163,9 +159,8 @@ real id, or delete them; nothing is watched and nobody is trusted until you do.
 
 # The top level: the pipeline
 
-What is watched, what may be sent, what may be pushed, where the page listens, and the ceiling
-both lanes share. Anything about the container a run happens in is in `pools` or `container`
-instead.
+What is watched, what may be sent, where the page listens, and the ceiling both lanes share.
+Anything about the container a run happens in is in `pools` or `container` instead.
 
 ## `watch`
 
@@ -210,58 +205,6 @@ from the first time it was ever listed.
 
 Every `cluster` value below can be overridden per entry, for a channel that moves differently
 from the rest.
-
-## `branches`
-
-**What the harness is willing to push, per base branch.** A run chooses which branch its work
-is *for* by choosing what it branches from; `ffbox` reads that back out of the commit graph at
-harvest, `pr_base()` checks the answer against [`publish_bases`](#verification-and-publication)
-and against the run's own commits, and this table then says what may happen to it.
-
-```json
-"branches": {
-  "master":  { "permissions": "none" },
-  "develop": { "permissions": "operators" }
-}
-```
-
-| `permissions` | What the harness does with work based on that branch |
-|---|---|
-| `all` | Pushes it whenever it earns a push, which is what every base did before this block existed. |
-| `operators` | Pushes it only for a turn whose trust tier is `operator` — a Discord account in `discord.trust.operators`, or a prompt typed on this box (`ffwatch submit`, the web page). A player's turn is refused. |
-| `none` | Pushes nothing, ever. Not for an operator either: the rule is about the branch. |
-
-**This gate withholds the branch, and every other gate withholds only the pull request.** A
-change that failed its tests, or that the agent was not confident in, is still pushed so it
-cannot be lost with the ZFS clone — see "Confidence gates the pull request, not the branch" in
-`ffbox/README.md`. A base closed here leaves nothing on origin at all: the run records no
-`bundle_path`, so the reconcile sweep never comes back to it either (it re-checks this table
-anyway), and nothing will act on those commits again. Nothing deletes them either — the bundle
-sits in the run directory like any other refusal's, for a human who wants to rescue one. The reply says the work was not pushed and why, and `ffwatch` logs the
-policy at startup, because a rule whose whole effect is that work disappears has to be visible
-somewhere.
-
-**The agent is told which bases are open to it before it starts.** The host resolves this table
-against the turn's tier and the container's preamble marks every closed base in the list, calls
-out the one the clone is checked out on when that is closed, and sends the "if it is unclear"
-fallback to an open base rather than to the first one listed. That matters because `base_ref` and
-the first key of `publish_bases` are both `master`: without it, the likeliest thing an agent does
-on a box that closes master is write the whole change on a base every commit is refused from.
-
-The trust tier is the **turn's**, from `turn_trust()`, which reads Discord's authenticated
-`author.id` or the fact that somebody with a login here typed the prompt. One player among the
-authors of a batched turn makes the whole turn a player's, so `operators` cannot be reached by
-joining an operator's thread.
-
-| Case | What happens |
-|---|---|
-| No `branches` block at all | Nothing is restricted. `DEFAULTS["branches"]` is empty on purpose, like `watch`: this is policy about one repository's branches, and a built-in answer would be a rule nobody reading this file can see. |
-| A branch not listed | Unrestricted. This table is a set of rules about named branches, not the list of branches a run may target — `publish_bases` is that list. |
-| A base the harness could not establish | `operators`, but only when the table is non-empty. `pr_base()` answers nothing when the run's commits descend from no configured base, and "we could not tell" must not be the way round a policy. |
-| `permissions` missing or misspelt | `operators`, and `ffwatch` logs the key and the value it could not read. Deliberately not `none`: a typo must not silently destroy a run's work. |
-
-Widening a branch to `all` is what opens it to a stranger: a Discord message from somebody who
-is not in `trust.operators` would then put commits on origin under an `ffbox/` name.
 
 ## `max_concurrent_runs`
 
@@ -478,7 +421,7 @@ which is what lets branch protection, CODEOWNERS and a reviewer's eye treat the 
 differently. Each still wants the permissions in `ffbox/CREDENTIALS.md`: pull requests read and
 write, contents READ, and contents write nowhere near either of them.
 
-**This splits the pull request and not the push.** `push_staged` uses whatever credential git
+**This splits the pull request and not the push.** `push_bundle` uses whatever credential git
 finds in `~/.git-credentials`, one file matched by host, and it is still shared by both lanes and
 by CI. Splitting that one is a separate job.
 
@@ -499,7 +442,7 @@ before the credential is consulted; `ffbox` warns rather than refuses, since som
 edited the allowlist. ffdev is on the open bridge already.
 
 **Mint it contents:READ.** A run's work still reaches origin through the harvest and the host's
-`push_staged`, so read costs a run nothing it was doing, and write means an agent that can push
+`push_bundle`, so read costs a run nothing it was doing, and write means an agent that can push
 to any branch the token reaches. For a class carrying this token, "nothing merges, ever" is held
 by the token's scope and by branch protection on GitHub and by nothing in this repository — the
 deny list does not hold it, and never did. `ffbox/CREDENTIALS.md` section 4 has the permission
@@ -693,7 +636,6 @@ because a box normally wants one.
 | `branch_prefix` | `"ffbox/"` | |
 | `reconcile_secs` | `604800` | How far back the reconcile sweep looks for a conversation whose publication stopped short. |
 | `publish_bases` | `master`, then `develop` | Ordered, and the order carries two meanings: the tie-break when both sit on the same commit, and the default the agent is told to take when the answer is unclear. The descriptions are rendered into the container's preamble, so this is the one place the policy is written. |
-| `branches` | `{}` | Which of those bases the harness may actually push work for, and for whom. Seeded non-empty by stage 5 — see [`branches`](#branches). |
 | `github.repo` | `Final-Factory/FinalFactory` | Also what turns a branch name into a link on the web page. |
 | `github.base` | `"master"` | The fallback when a run's own base cannot be established. Tracks the first key of `publish_bases`. |
 | `github.token_env` | `"GH_PR_TOKEN"` | Named for the one thing it may do. The credential that can write code is the one git finds in `~/.git-credentials`. See `ffbox/CREDENTIALS.md`. |

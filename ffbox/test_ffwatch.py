@@ -3882,7 +3882,7 @@ def bug_case(name, **kw):
     return case
 
 
-def escalate(case, *, changed, verify, verdict=None, tier="player"):
+def escalate(case, *, changed, verify, verdict=None):
     """Run a second turn on the bug thread that changes files, through to a finished run.
 
     This used to go through enqueue_autofix(), which existed because the triage turn was
@@ -3898,7 +3898,7 @@ def escalate(case, *, changed, verify, verdict=None, tier="player"):
         os.environ["FFBOX_STUB_VERIFY"] = json.dumps(verify)
     os.environ["FFBOX_STUB_VERDICT"] = json.dumps(verdict or CONFIDENT_VERDICT)
     conv = case.rows("SELECT * FROM conversation")[0]
-    turn_id = queue_follow_up(case, conv, note="clamp the merger index", tier=tier)
+    turn_id = queue_follow_up(case, conv, note="clamp the merger index")
     case.watcher.once()
     return turn_id
 
@@ -7507,86 +7507,6 @@ def test_the_pull_request_targets_the_branch_the_work_is_based_on():
     check("a lane with no bases to choose between is told nothing about them",
           "CHOOSE WHAT YOU BRANCH FROM" not in preamble_for(dict(JOB_SKELETON), "nobases"))
 
-    check("with nothing closed, the preamble still says take the first one listed",
-          "take `origin/master`" in pre, pre[-400:])
-
-
-
-def test_the_container_is_told_which_bases_it_can_actually_publish_from():
-    """A closed base is worth nothing to an agent that finds out at the push.
-
-    The clone starts at `base_ref`, which is master, and `publish_bases` lists master first and
-    calls it the default — so on a box whose `branches` table closes master, the single most
-    likely thing an agent can do is write the whole change on a base every commit will be
-    refused from. The gate is not negotiable, so the only fix is to say so BEFORE the work: the
-    host resolves the table against this turn's tier and the container renders the answer.
-    """
-    print("publication: the preamble says which bases are open to this turn")
-    case = bug_case("basesopen", venue="private")
-    git_origin(case)
-    case.watcher.cfg["branches"] = {"master": {"permissions": "none"},
-                                    "develop": {"permissions": "operators"}}
-    conv = case.rows("SELECT * FROM conversation")[0]
-
-    def bases_for(tier):
-        turn_id = queue_follow_up(case, conv, note="fix it", tier=tier)
-        turn = case.rows("SELECT * FROM turn WHERE id=?", (turn_id,))[0]
-        job = case.watcher.build_job(turn, conv, f"d1-{tier}", case.root)
-        return job["bases"]
-
-    operator = bases_for("operator")
-    check("an operator's turn is told develop is open and master is not",
-          operator["publishable"] == ["develop"], operator["publishable"])
-    player = bases_for("player")
-    check("a player's turn is told nothing is open, because nothing is",
-          player["publishable"] == [], player["publishable"])
-    check("and the choices themselves are unchanged: what a base is FOR does not depend on "
-          "who is asking",
-          list(player["choices"]) == list(ffwatch.DEFAULTS["publish_bases"]), player["choices"])
-
-    case.watcher.cfg["branches"] = {}
-    check("a box with no table says every base is open",
-          bases_for("player")["publishable"] == list(ffwatch.DEFAULTS["publish_bases"]))
-
-    # WHAT THE AGENT IS ACTUALLY TOLD, out of discord-task.sh's own builder rather than out of
-    # the job dict: the host deciding correctly and the container never mentioning it is the
-    # failure this is here to catch.
-    closed = dict(JOB_SKELETON,
-                  bases={"checked_out": "9f3c1a2b", "checked_out_base": "master",
-                         "choices": ffwatch.DEFAULTS["publish_bases"],
-                         "publishable": ["develop"]})
-    pre = preamble_for(closed, "basesclosed")
-    check("the closed base is marked against its own name in the list",
-          "`master` on this turn" in pre and "CLOSED" in pre, pre[-900:])
-    check("standing on it is called out, with the branch command that gets off it",
-          "STANDING ON" in pre and "origin/develop" in pre, pre[-900:])
-    check("and the fallback advice points at an OPEN base, not at the first one listed",
-          "take `origin/develop`" in pre and "take `origin/master`" not in pre, pre[-500:])
-    check("the sentence about staying put is not also there to argue the other way",
-          "ALREADY on that base" not in pre, pre[-900:])
-
-    none_open = preamble_for(dict(closed, bases=dict(closed["bases"], publishable=[])),
-                             "basesnone")
-    check("with nothing open the agent is told plainly that nothing can be published",
-          "NONE of them is open" in none_open
-          and "do not claim a branch or a pull request" in none_open, none_open[-600:])
-
-    # A CONTINUATION IS TOLD, NOT INSTRUCTED. The base was settled by the turn that made the
-    # branch and the preamble has just told it not to go and change that, so the only useful
-    # thing left to say is what will happen to the work.
-    cont = preamble_for(dict(closed, bases=dict(closed["bases"],
-                                                conversation_branch="ffbox/belt-fix-d1t3")),
-                        "basescont")
-    check("a continuation on a closed base is told its work will not be published",
-          "will NOT publish work based on `master`" in cont, cont[-700:])
-    check("and is not told to branch off something else, which is what it must not do",
-          "git checkout -b" not in cont.split("YOU ARE ALREADY ON THIS CONVERSATION")[-1]
-          or "do not switch" in cont.lower(), cont[-700:])
-
-    old_host = preamble_for(dict(closed, bases={k: v for k, v in closed["bases"].items()
-                                                if k != "publishable"}), "basesoldhost")
-    check("a job from a host that predates the table closes nothing",
-          "CLOSED" not in old_host and "take `origin/master`" in old_host, old_host[-500:])
 
 
 def test_the_admission_lock_does_not_ride_into_the_run():
@@ -10242,247 +10162,6 @@ def test_a_second_branch_is_refused_at_the_push():
           os.path.exists(os.path.join(run_dir, "work.bundle")))
 
 
-def test_the_branch_table_decides_what_may_be_pushed_and_for_whom():
-    """The lookup, on its own, before any of it is wired to a run.
-
-    Three answers and three fallbacks, and the fallbacks are the part worth pinning: a box with
-    no table restricts nothing (which is every box that has not opted in), a branch nobody
-    listed is a branch nobody wrote a rule about, and a typo must not be read as either "yes"
-    or as "destroy the work".
-    """
-    print("publication: the branch permission table")
-    closed = {"branches": {"master": {"permissions": "none"},
-                           "develop": {"permissions": "operators"}}}
-    check("a branch set to none refuses everybody",
-          ffwatch.push_permitted(closed, "master", "operator")[0] is False
-          and ffwatch.push_permitted(closed, "master", "player")[0] is False,
-          ffwatch.push_permitted(closed, "master", "operator"))
-    check("and says so in a sentence that names the branch",
-          "master" in (ffwatch.push_permitted(closed, "master", "operator")[1] or ""),
-          ffwatch.push_permitted(closed, "master", "operator")[1])
-    check("a branch set to operators takes an operator's work",
-          ffwatch.push_permitted(closed, "develop", "operator") == (True, None))
-    check("and refuses a player's",
-          ffwatch.push_permitted(closed, "develop", "player")[0] is False)
-    check("a turn with no tier at all is a player's, like everywhere else",
-          ffwatch.push_permitted(closed, "develop", None)[0] is False)
-
-    check("a box with no table restricts nothing, which is every box before this landed",
-          ffwatch.push_permitted({}, "master", "player") == (True, None)
-          and ffwatch.push_permitted({"branches": {}}, "master", "player") == (True, None))
-    check("and the shipped default is exactly that: policy lives in the config file",
-          ffwatch.DEFAULTS["branches"] == {}, ffwatch.DEFAULTS["branches"])
-    check("a branch the table does not list is unrestricted",
-          ffwatch.branch_permission(closed, "release/1.2") == "all")
-    check("a base the harness could not establish is not the way round a table that exists",
-          ffwatch.branch_permission(closed, None) == "operators"
-          and ffwatch.branch_permission({"branches": {}}, None) == "all")
-    check("an unreadable permission falls back to operators, never to yes",
-          ffwatch.branch_permission({"branches": {"develop": {"permissions": "operator"}}},
-                                    "develop") == "operators"
-          and ffwatch.branch_permission({"branches": {"develop": {}}}, "develop")
-          == "operators"
-          and ffwatch.branch_permission({"branches": {"develop": {"permissions": 7}}},
-                                        "develop") == "operators")
-    check("and never to none either: a typo must not silently destroy a run's work",
-          ffwatch.branch_permission(
-              {"branches": {"develop": {"permissions": "nobody"}}}, "develop") != "none")
-    check("the value is read the way a person would type it",
-          ffwatch.branch_permission({"branches": {"develop": {"permissions": " NONE "}}},
-                                    "develop") == "none")
-
-    warnings = ffwatch.config_warnings(dict(ffwatch.DEFAULTS, **closed))
-    check("startup says which branches are closed, because the effect is invisible otherwise",
-          any("NOTHING based on master" in w for w in warnings)
-          and any("only for an OPERATOR" in w for w in warnings), warnings)
-    check("and names a permission it could not read",
-          any("branches.develop.permissions is 'operator'" in w for w in ffwatch.config_warnings(
-              dict(ffwatch.DEFAULTS,
-                   branches={"develop": {"permissions": "operator"}}))),
-          ffwatch.config_warnings(dict(ffwatch.DEFAULTS,
-                                       branches={"develop": {"permissions": "operator"}})))
-
-
-def test_a_players_work_is_not_pushed_to_a_branch_reserved_for_operators():
-    """The gate end to end, on the run that a stranger in a Discord forum caused.
-
-    Everything else in publish() withholds the PULL REQUEST and publishes the branch anyway, so
-    work is never lost with the ZFS clone. This one withholds the branch: the commits stay in
-    the run directory and go with it. Nothing reaches origin, and nothing is left for the sweep
-    to find later, which is the whole difference between a policy and a delay.
-    """
-    print("publication: a player's work is refused a branch the config reserves")
-    case = bug_case("branchperm", venue="private")
-    origin, host = git_origin(case)
-    case.watcher.cfg["branches"] = {"master": {"permissions": "none"},
-                                    "develop": {"permissions": "operators"}}
-    calls_before = len(GH_STATE["requests"])
-    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY, tier="player")
-
-    run = _latest_run(case)
-    conv = case.rows("SELECT * FROM conversation")[0]
-    check("nothing was pushed", run["pushed"] == 0 and run["branch"] is None, run)
-    check("and the reason names the branch and the tier, so a human can act on it",
-          "develop" in (run["no_branch_reason"] or "")
-          and "operator" in (run["no_branch_reason"] or ""), run["no_branch_reason"])
-    check("the conversation claimed no branch, because none exists to claim",
-          conv["branch"] is None, conv["branch"])
-    heads = git_run("-C", host, "ls-remote", "--heads", "origin").stdout
-    check("origin carries nothing at all from this run", "refs/heads/ffbox/" not in heads, heads)
-    check("and GitHub was never asked anything",
-          GH_STATE["requests"][calls_before:] == [], GH_STATE["requests"][calls_before:])
-    check("the file count is still recorded: what changed is a fact about the run",
-          run["changed_files"] == 1, run["changed_files"])
-
-    # bundle_path IS the sweep's to-do list. A run that was refused must not be on it, or the
-    # second look would push in fifteen minutes exactly what the config just closed.
-    check("no bundle path is recorded, so the reconcile sweep never sees this run",
-          run["bundle_path"] is None, run["bundle_path"])
-    check("the sweep finds nothing to do", case.watcher.reconcile_publications() == 0)
-    check("and still nothing is on origin",
-          "refs/heads/ffbox/" not in
-          git_run("-C", host, "ls-remote", "--heads", "origin").stdout)
-    check("nor is a ref left behind in the host checkout every clone is made from",
-          git_run("-C", host, "for-each-ref", "refs/ffbox/").stdout.strip() == "",
-          git_run("-C", host, "for-each-ref", "refs/ffbox/").stdout)
-    run_dir = os.path.dirname(run["stream_path"])
-    check("the bundle is still in the run directory: the work is discarded WITH the run, and "
-          "nothing here goes and deletes it",
-          os.path.exists(os.path.join(run_dir, "work.bundle")))
-
-    text = json.loads(case.rows(
-        "SELECT * FROM outbound WHERE run_id=? AND action='post'",
-        (run["id"],))[0]["payload_json"])["text"]
-    check("and the reply does not claim a fix is waiting for review",
-          "PR" not in text and "pull request" not in text.lower(), text[:400])
-
-
-def test_an_operators_work_takes_the_same_branch_the_players_could_not():
-    """The other half, and the same run: the tier is the only thing that changed."""
-    print("publication: an operator's work is pushed where a player's was not")
-    case = bug_case("branchpermop", venue="private")
-    origin, host = git_origin(case)
-    case.watcher.cfg["branches"] = {"master": {"permissions": "none"},
-                                    "develop": {"permissions": "operators"}}
-    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY, tier="operator")
-
-    run = _latest_run(case)
-    check("it published", run["pushed"] == 1 and run["branch"], run)
-    check("onto develop, which is the branch the table opened to operators",
-          run["pr_base"] == "develop", run["pr_base"])
-    check("and the pull request follows as it always did", run["pr_number"], run)
-    check("the branch is really on origin",
-          f"refs/heads/{run['branch']}" in
-          git_run("-C", host, "ls-remote", "--heads", "origin").stdout,
-          git_run("-C", host, "ls-remote", "--heads", "origin").stdout)
-
-
-def test_a_refusal_on_a_continuation_leaves_the_published_branch_alone():
-    """A refused turn must not tidy away the ref an earlier turn's work is reachable through.
-
-    refs/ffbox/<branch> in the golden checkout is what mirror_take() fetches from when a later
-    turn finds the mirror has lost the conversation's branch, and a turn that cannot be put on
-    its branch does not run at all. So the cleanup a refusal does on a FIRST turn — where the
-    ref is only the refused work — is exactly the wrong move on a continuation.
-    """
-    print("publication: a refusal does not disturb what an earlier turn published")
-    case = bug_case("branchpermcont", venue="private")
-    origin, host = git_origin(case)
-    case.watcher.cfg["branches"] = {"develop": {"permissions": "operators"}}
-    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY, tier="operator")
-    first = _latest_run(case)
-    conv = case.rows("SELECT * FROM conversation")[0]
-    branch = conv["branch"]
-    check("the operator's turn published and opened a pull request",
-          first["pushed"] == 1 and first["pr_number"] and branch, first)
-
-    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY, tier="player")
-    second = _latest_run(case)
-    check("the player's follow-up is refused", second["pushed"] == 0
-          and "operator" in (second["no_branch_reason"] or ""), second["no_branch_reason"])
-    check("the conversation keeps the branch it published",
-          case.rows("SELECT * FROM conversation")[0]["branch"] == branch)
-    check("which is still on origin, with its pull request",
-          f"refs/heads/{branch}" in
-          git_run("-C", host, "ls-remote", "--heads", "origin").stdout
-          and GH_STATE["pulls"][-1]["state"] == "open")
-    check("and the staged ref an earlier turn left is still there, because a later turn may "
-          "have to recover the branch into the mirror through it",
-          branch in git_run("-C", host, "for-each-ref", "refs/ffbox/").stdout,
-          git_run("-C", host, "for-each-ref", "refs/ffbox/").stdout)
-    check("the branch really can still be put back in the mirror from it",
-          case.watcher.mirror_take(branch) is True)
-
-
-def test_a_branch_closed_to_the_harness_takes_nothing_from_anybody():
-    """"none" is not "operators with extra steps". An operator's own turn is refused too.
-
-    This is the case that says the table is about the BRANCH and not about the person: work
-    based on master is not pushed here however it was asked for, which is what makes it a rule
-    an operator can rely on rather than a courtesy.
-    """
-    print("publication: a closed branch takes nothing, not even from an operator")
-    case = bug_case("branchclosed", venue="private")
-    origin, host = git_origin(case)
-    case.watcher.cfg["branches"] = {"master": {"permissions": "none"},
-                                    "develop": {"permissions": "operators"}}
-    os.environ["FFBOX_STUB_BASE"] = "master"
-    try:
-        escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY, tier="operator")
-    finally:
-        os.environ.pop("FFBOX_STUB_BASE", None)
-
-    run = _latest_run(case)
-    check("nothing was pushed, though the suite passed and the agent was confident",
-          run["pushed"] == 0 and run["branch"] is None, run)
-    check("and the reason says the config closed it rather than blaming the run",
-          "master" in (run["no_branch_reason"] or "")
-          and "config" in (run["no_branch_reason"] or ""), run["no_branch_reason"])
-    check("origin carries nothing from it",
-          "refs/heads/ffbox/" not in
-          git_run("-C", host, "ls-remote", "--heads", "origin").stdout)
-
-
-def test_the_reconcile_will_not_push_what_the_config_closed():
-    """The second lock on the same door.
-
-    A run refused at publish() has no bundle_path and is not selected by the sweep at all, so
-    the case that actually needs this is the other one: a push that failed for an ordinary
-    reason, and a rule written before anybody came back to it. The sweep exists to finish what
-    publish() started, and it must not finish something the config has since forbidden.
-    """
-    print("publication: the second look re-runs the branch gate")
-    case = bug_case("reconcileperm", venue="private")
-    origin, host = git_origin(case)
-    case.watcher.cfg["push_remote"] = "nowhere"          # origin is unreachable for the turn
-    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY, tier="player")
-    run = _latest_run(case)
-    check("the turn left a bundle and no branch, which is the recoverable state",
-          run["pushed"] == 0 and run["bundle_path"], run)
-
-    case.watcher.cfg["push_remote"] = "origin"
-    case.watcher.cfg["branches"] = {"develop": {"permissions": "operators"}}
-    check("the sweep opens nothing", case.watcher.reconcile_publications() == 0)
-    run = _latest_run(case)
-    check("and pushes nothing either", run["pushed"] == 0, run)
-    check("recording the refusal over the failed push's reason",
-          "operator" in (run["no_branch_reason"] or ""), run["no_branch_reason"])
-    check("origin is still empty",
-          "refs/heads/ffbox/" not in
-          git_run("-C", host, "ls-remote", "--heads", "origin").stdout)
-    check("and the staged ref is cleaned up rather than left in the golden checkout",
-          git_run("-C", host, "for-each-ref", "refs/ffbox/").stdout.strip() == "",
-          git_run("-C", host, "for-each-ref", "refs/ffbox/").stdout)
-
-    # The same sweep, one tier up: what was refused for a player is pushed for an operator, so
-    # this is the gate and not the sweep having given up on the conversation.
-    case.watcher.db.execute("UPDATE turn SET trust_tier='operator' WHERE id=?", (run["turn_id"],))
-    check("an operator's stranded work is still finished by the sweep",
-          case.watcher.reconcile_publications() == 1)
-    run = _latest_run(case)
-    check("pushed, and the pull request with it", run["pushed"] == 1 and run["pr_number"], run)
-
-
 def test_a_submission_cannot_name_a_branch_the_conversation_does_not_own():
     """`--branch` and `--ref` lose to a conversation that already publishes somewhere.
 
@@ -11679,13 +11358,6 @@ def main():
         test_the_v12_migration_repairs_what_the_old_rule_left,
         test_a_continuation_the_mirror_cannot_supply_is_refused,
         test_a_second_branch_is_refused_at_the_push,
-        test_the_branch_table_decides_what_may_be_pushed_and_for_whom,
-        test_a_players_work_is_not_pushed_to_a_branch_reserved_for_operators,
-        test_an_operators_work_takes_the_same_branch_the_players_could_not,
-        test_a_refusal_on_a_continuation_leaves_the_published_branch_alone,
-        test_a_branch_closed_to_the_harness_takes_nothing_from_anybody,
-        test_the_reconcile_will_not_push_what_the_config_closed,
-        test_the_container_is_told_which_bases_it_can_actually_publish_from,
         test_a_submission_cannot_name_a_branch_the_conversation_does_not_own,
         test_the_mirror_is_only_written_inside_the_pipelines_own_namespace,
         test_the_keeper_expires_a_stale_spare_and_never_a_claimed_one,
