@@ -10623,6 +10623,62 @@ def test_a_message_that_loses_its_turn_gives_the_mark_back():
           [(r["action"], r["status"]) for r in rows] == [("react", "rejected")], rows)
 
 
+def test_the_classifier_is_handed_one_token_out_of_the_pool():
+    """secrets.env numbers the Claude tokens; the classifier gets exactly one of them.
+
+    THE CHILD MUST NOT INHERIT THE POOL. This daemon holds every account the box has, and the
+    classifier is a subprocess that answers a pick-an-id question — handing it all of them
+    would put every subscription this box owns inside a process that needs one. So the numbered
+    names never reach the child, and the one that does arrives under the unnumbered name
+    `claude` actually reads.
+
+    A GAP IS NOT THE END OF THE LIST either: slot 2 filled with slot 1 blank is a revoked first
+    key, and resolving that to "no token" would silently run the classifier on whatever
+    credential happened to be in HOME.
+    """
+    print("the classifier is handed one token out of the pool")
+    cfg = ffwatch.load_config()
+    saved = {k: os.environ.pop(k) for k in list(os.environ)
+             if k.startswith("CLAUDE_CODE_OAUTH_TOKEN")}
+    try:
+        check("the first non-empty slot is the one that is spent",
+              ffwatch.active_claude_token({"CLAUDE_CODE_OAUTH_TOKEN1": "one",
+                                           "CLAUDE_CODE_OAUTH_TOKEN2": "two"}) == "one")
+        check("a blank slot is skipped rather than ending the scan",
+              ffwatch.active_claude_token({"CLAUDE_CODE_OAUTH_TOKEN1": " ",
+                                           "CLAUDE_CODE_OAUTH_TOKEN2": "two"}) == "two")
+        check("the unnumbered spelling still works, for a secrets.env written before the pool",
+              ffwatch.active_claude_token({"CLAUDE_CODE_OAUTH_TOKEN": "old"}) == "old")
+        check("and a numbered slot takes precedence over it",
+              ffwatch.active_claude_token({"CLAUDE_CODE_OAUTH_TOKEN": "old",
+                                           "CLAUDE_CODE_OAUTH_TOKEN1": "one"}) == "one")
+        check("an environment holding none is an empty answer, not a crash",
+              ffwatch.active_claude_token({}) == "")
+
+        os.environ["CLAUDE_CODE_OAUTH_TOKEN1"] = "sk-ant-oat01-the-one-that-is-spent"
+        os.environ["CLAUDE_CODE_OAUTH_TOKEN2"] = "sk-ant-oat01-inventory-only"
+        _argv, env, _cwd, _stdin = ffwatch.classifier_invocation(
+            cfg, "text", ffwatch.SELECTOR_SCHEMA)
+        check("the child gets the active token under the name claude reads",
+              env.get("CLAUDE_CODE_OAUTH_TOKEN") == "sk-ant-oat01-the-one-that-is-spent", env)
+        check("and none of the numbered names reach it",
+              not [k for k in env if k.startswith("CLAUDE_CODE_OAUTH_TOKEN")
+                   and k != "CLAUDE_CODE_OAUTH_TOKEN"], sorted(env))
+        check("nor does any other account's token, by any name",
+              "sk-ant-oat01-inventory-only" not in env.values(), sorted(env))
+
+        os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN1")
+        _argv, env2, _cwd, _stdin = ffwatch.classifier_invocation(
+            cfg, "text", ffwatch.SELECTOR_SCHEMA)
+        check("with slot 1 emptied the box falls through to the next account rather than none",
+              env2.get("CLAUDE_CODE_OAUTH_TOKEN") == "sk-ant-oat01-inventory-only", env2)
+    finally:
+        for k in list(os.environ):
+            if k.startswith("CLAUDE_CODE_OAUTH_TOKEN"):
+                del os.environ[k]
+        os.environ.update(saved)
+
+
 def test_a_classifier_call_carries_a_thinking_budget():
     """Thinking is on and unbounded by default, and it was the latency.
 
@@ -10997,6 +11053,7 @@ def main():
         test_the_turn_adopts_the_mark_rather_than_sending_a_second,
         test_an_unforced_turn_still_does_not_flicker,
         test_a_message_that_loses_its_turn_gives_the_mark_back,
+        test_the_classifier_is_handed_one_token_out_of_the_pool,
         test_a_classifier_call_carries_a_thinking_budget,
         test_untrusted_text_is_fenced_and_the_task_is_restated_after_it,
         test_the_selector_can_only_choose_an_id_it_was_offered,

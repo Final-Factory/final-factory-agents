@@ -181,6 +181,16 @@ stage() { printf '\n######## %s\n\n' "$*"; }
 secrets_ready() {
   ( set +u
     . "$SECRETS" 2>/dev/null || exit 1
+    # ANY slot in the Claude pool, not slot 1 specifically. secrets.env numbers the tokens from
+    # 1 (CLAUDE_CODE_OAUTH_TOKEN1, ...2, ...) and ffbox spends the first non-empty one, so a
+    # file whose slot 1 was emptied after a revocation is still a ready file. The unnumbered
+    # name is the older spelling and still counts.
+    n=1
+    while [ "$n" -le 16 ]; do
+      eval "v=\${CLAUDE_CODE_OAUTH_TOKEN${n}}"
+      if [ -n "$v" ]; then exit 0; fi
+      n=$((n + 1))
+    done
     [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]                            || exit 1
   ) 2>/dev/null
 }
@@ -235,14 +245,21 @@ set_secret() {
 # ------------------------------------------------------------------------------------------------
 mint_claude_token() {
   [ "$DO_TOKEN" -eq 1 ]                 || { printf '    token setup skipped (--skip-token)\n'; return 0; }
-  [ -z "$(get_secret CLAUDE_CODE_OAUTH_TOKEN)" ] || { printf '    CLAUDE_CODE_OAUTH_TOKEN already set — leaving it alone\n'; return 0; }
-  command -v claude >/dev/null 2>&1     || { printf '    claude not on PATH — set CLAUDE_CODE_OAUTH_TOKEN by hand\n'; return 0; }
+  # NOTHING IS MINTED WHEN THE POOL HOLDS ANYTHING AT ALL. A box with a second account already
+  # written into CLAUDE_CODE_OAUTH_TOKEN2 is a box somebody has configured, and this stage
+  # offering to run an OAuth flow at it would be setup.sh second-guessing that. Adding another
+  # account is an edit to the file, deliberately — the numbering is the whole interface.
+  if secrets_ready; then
+    printf '    a Claude token is already set — leaving the pool alone\n'
+    return 0
+  fi
+  command -v claude >/dev/null 2>&1     || { printf '    claude not on PATH — set CLAUDE_CODE_OAUTH_TOKEN1 by hand\n'; return 0; }
   if [ ! -t 0 ] || [ ! -t 1 ]; then
     printf '    no terminal — run "sh %s" interactively to mint the Claude token\n' "$0"
     return 0
   fi
 
-  printf '\n==> CLAUDE_CODE_OAUTH_TOKEN is empty. Run "claude setup-token" now? [Y/n] '
+  printf '\n==> the Claude token pool is empty. Run "claude setup-token" now? [Y/n] '
   read -r _ans
   case "$_ans" in [Nn]*) printf '    skipped\n'; return 0 ;; esac
 
@@ -267,7 +284,7 @@ mint_claude_token() {
     _raw=$(printf '%s' "$_raw" | tr -d '[:space:]')
 
     if [ -z "$_raw" ]; then
-      printf '    no token entered — set CLAUDE_CODE_OAUTH_TOKEN by hand later\n'
+      printf '    no token entered — set CLAUDE_CODE_OAUTH_TOKEN1 by hand later\n'
       return 0
     fi
 
@@ -290,14 +307,17 @@ mint_claude_token() {
   done
 
   if [ -z "$_tok" ]; then
-    printf 'setup.sh: no valid token after %s attempts; set CLAUDE_CODE_OAUTH_TOKEN by hand.\n' \
+    printf 'setup.sh: no valid token after %s attempts; set CLAUDE_CODE_OAUTH_TOKEN1 by hand.\n' \
            "$_attempt" >&2
     return 0
   fi
 
   printf '    accepted a %s-character token\n' "$(printf '%s' "$_tok" | wc -c | tr -d ' ')"
-  set_secret CLAUDE_CODE_OAUTH_TOKEN "$_tok" \
-    && printf '==> wrote CLAUDE_CODE_OAUTH_TOKEN to %s\n' "$SECRETS"
+  # SLOT 1, not the unnumbered name. The pool is what ffbox and ffweb read, and a box seeded
+  # under the old spelling would work but would show up on ffweb's /claude page as a legacy
+  # entry rather than as key 1 of a pool somebody can add to.
+  set_secret CLAUDE_CODE_OAUTH_TOKEN1 "$_tok" \
+    && printf '==> wrote CLAUDE_CODE_OAUTH_TOKEN1 to %s\n' "$SECRETS"
   unset _tok _raw
 }
 
