@@ -28,6 +28,7 @@ load-bearing for future runs even where the original defect is fixed.
 - [Built-player sessions need an opt-in watcher to outlive a pair break](#outlive-pair-break) (049 T028)
 - [Mute the real audio path — `-batchmode -nographics` does not touch FMOD](#automation-mute) (049)
 - [Fixture determinism can be CPU-load-dependent even with no cross-peer comparison — unverified](#fixture-load-dependence) (055 R35)
+- [Host-frame profiling: a probe, not a determinism gate](#perf-probe) (055 flag lane 3)
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
@@ -369,3 +370,16 @@ while the same runs on a quiet machine reproduced exactly. This is an observatio
 root cause — but it means a behavioral-fixture diff measured on a busy machine can look like a
 regression that isn't one. **Diagnose fixture run-to-run drift on a quiet machine before treating it
 as a code regression.**
+
+## Host-frame profiling: a probe, not a determinism gate {#perf-probe}
+
+(055 flag lane 3, 2026-09-04.) `scripts/audit/run_perf_probe.sh` runs a real host+client built
+pair and samples the HOST for N seconds with `ffauto:perf.sample|<seconds>|<topN>` (PerfProbe:
+every top-level PlayerLoop stage, every FF system group via `FFSystemGroupSampler`, heartbeats
+applied, GC allocated/frame, FrameTiming CPU times; presentation-only, zero cost when disarmed).
+It emits one `PerfSample` critical record per second and one `PerfSummary` (ups, fps, avg/p95/max
+frame ms, top stages + groups with % shares) and prints them as tables. `MODE=camps` loads the
+enemy-economy fixture — the real-map arm the ~9 UPS finding came from. Run it on a QUIET machine
+(a concurrent sweep skews it), reusing a sweep build via `FF_BUILD_DIR`; on BEAST the SYSTEM
+account's `/tmp` is `C:/Windows/Temp`. This is a probe, not a gate — it is deliberately not in the
+audit manifest.
