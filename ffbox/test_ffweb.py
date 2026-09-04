@@ -1323,6 +1323,32 @@ def test_the_box_page_reports_what_the_status_script_said():
         finally:
             write_status_doc(FFSTATUS_DOC)
 
+        # A CONFIG FILE THAT DOES NOT PARSE. Not a drain and not an update: nothing on the box
+        # launches, and every target on this page is a built-in default rather than the
+        # machine's setting -- so it gets the loud colour and a sentence saying what it costs.
+        broken = dict(FFSTATUS_DOC,
+                      maintenance={"state": "misconfigured",
+                                   "reason": "~/.config/ffbox/config.json is not valid JSON: "
+                                             "Expecting ',' delimiter: line 12 column 3 "
+                                             "(char 410) -- nothing launches, and the targets "
+                                             "below are built-in defaults"},
+                      containers=[], box={"used": 0, "max": 10})
+        write_status_doc(broken)
+        try:
+            code, _hdr, body = srv.get("/status")
+            page_text = text_of(body)
+            check("a box whose config does not parse says so", code == 200 and
+                  'class="pill misconfigured"' in page_text, code)
+            check("and it is not read as a drain or an update",
+                  'class="pill drained"' not in page_text and
+                  'class="pill updating"' not in page_text)
+            check("the parser's line and column survive, which is the whole of what a reader "
+                  "has to go on", "line 12 column 3" in page_text)
+            check("and the page says what it costs, rather than only naming the state",
+                  "starting no containers" in page_text)
+        finally:
+            write_status_doc(FFSTATUS_DOC)
+
         # THE FIVE-MINUTE POLL, which is the state this page is in for a second or two of every
         # tick, 288 times a day. It must not read as an update: the box is not changing, and a
         # page that says it is costs its reader a hunt through the log for a commit that never

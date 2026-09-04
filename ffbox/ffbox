@@ -638,6 +638,46 @@ ffbox_write_contract() {
 if [ -z "$FINISH_DIR" ]; then
 
 # --- preflight ------------------------------------------------------------------------------------
+#
+# THE BOX'S CONFIG FILE HAS TO PARSE, AND IF IT DOES NOT, NOTHING STARTS. Every reader of that
+# file -- _ffbox_cfg above, ffwatch's load_config, ffstatus.sh, the runners' lib/config.sh --
+# answers {} for a file it cannot parse, so a stray comma does not fail: it silently substitutes
+# a built-in default for the workspace size, the memory ceiling, the pid limit, the clocks and
+# the pools. A container started under those is a container doing something other than what this
+# machine was configured for, and nothing downstream would ever mention it. So the failsafe is
+# here, at the top of the one path that creates containers: refuse, name the fault, and let the
+# operator fix the file.
+#
+# `--finish` NEVER REACHES THIS, because it is inside the guard above. A run whose container is
+# long gone must still be able to harvest what it left behind, whatever somebody has since done
+# to the config file.
+ffbox_config_error() {
+    [ -e "$FFBOX_CONFIG_JSON" ] || return 0
+    python3 - "$FFBOX_CONFIG_JSON" <<'CFGCHECK' 2>/dev/null
+import json, sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        cfg = json.load(fh)
+except OSError as exc:
+    print("cannot be read: %s" % (exc.strerror or exc))
+except ValueError as exc:
+    # str() on a JSONDecodeError carries the line and column, which is the whole of what an
+    # operator needs to go and fix it.
+    print("is not valid JSON: %s" % exc)
+else:
+    if not isinstance(cfg, dict):
+        print("holds a %s, not a JSON object of settings" % type(cfg).__name__)
+CFGCHECK
+}
+CONFIG_ERROR=$(ffbox_config_error)
+if [ -n "$CONFIG_ERROR" ]; then
+    echo "ffbox: $FFBOX_CONFIG_JSON $CONFIG_ERROR" >&2
+    echo "       Nothing is started while the box config does not parse: every setting in it" >&2
+    echo "       would silently be a built-in default instead. Fix the JSON and run again." >&2
+    exit 78
+fi
+
 command -v docker >/dev/null || { echo "ffbox: docker not found" >&2; exit 127; }
 docker image inspect "$IMAGE" >/dev/null 2>&1 || {
     echo "ffbox: image '$IMAGE' not built. Run: ffbox/03-build.sh" >&2

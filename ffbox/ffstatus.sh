@@ -62,6 +62,13 @@ FFBOX_APPLYING=$CONFIG_HOME/update.applying
 # question you ask when it is not. The stamp only exists once an update has landed since it was
 # invented, which is why every consumer below has an "unknown" case rather than a default.
 UPDATE_STAMP=$CONFIG_HOME/update.last-applied
+# AND THE FLAG FFWATCH WRITES WHEN ITS CONFIG FAILSAFE IS ON, hardcoded relative to the config
+# dir because a setting that says where it lives would be inside the file that does not parse.
+# The parse check below is what catches a broken file, and it needs nothing from any daemon; this
+# flag carries the half only ffwatch knows -- that it CAME UP on a broken file, is running on
+# built-in defaults, and is still refusing to launch after somebody repaired the file, because
+# nothing but a restart can make this process read it.
+FFWATCH_FAILSAFE=$CONFIG_HOME/config.invalid
 # The unit that does the looking. Only its schedule is read here -- `systemctl show` on a timer
 # takes no lock and starts nothing, unlike the update lock read_maintenance deliberately avoids.
 UPDATE_TIMER=${FFBOX_UPDATE_TIMER:-ffbox-update.timer}
@@ -115,11 +122,33 @@ read_config() {
     python3 - "$CONFIG" <<'PY' 2>/dev/null
 import json, os, sys
 
+# WHY THE FILE SAID NOTHING, when the reason is that it could not be read. A config that does
+# not parse is {} to every reader on this box -- this one, ffwatch, ffbox, the runners -- so
+# every number below would be a built-in default reported as though it were the machine's
+# setting. That is the one state this script must not render as an ordinary idle box: nothing
+# launches while it lasts (ffbox refuses in its preflight, ffwatch's failsafe refuses in
+# schedule), and read_maintenance turns this line into the word on the header.
+#
+# A MISSING FILE IS NOT AN ERROR. `ffwatch init` seeds one and a box part-way through setup runs
+# on the defaults on purpose; only a file that is THERE and unreadable is a fault.
+cfg = {}
+config_error = ""
 try:
     with open(sys.argv[1]) as fh:
         cfg = json.load(fh)
-except Exception:
-    cfg = {}
+    if not isinstance(cfg, dict):
+        config_error = "holds a %s, not a JSON object of settings" % type(cfg).__name__
+        cfg = {}
+except FileNotFoundError:
+    pass
+except OSError as exc:
+    config_error = "cannot be read: %s" % (exc.strerror or exc)
+except ValueError as exc:
+    # str() on a JSONDecodeError carries the line and column, which is what an operator needs to
+    # go and fix it. Flattened and capped because it is read back through a `key=value` line.
+    config_error = "is not valid JSON: %s" % exc
+if config_error:
+    print("config_error=%s" % " ".join(config_error.split())[:200])
 
 def num(v, default):
     try:
@@ -383,6 +412,29 @@ MAINT_STATE=running MAINT_REASON=
 read_maintenance() {
     MAINT_STATE=running MAINT_REASON=
 
+    # FIRST, ABOVE THE UPDATE AND THE DRAIN, because it is the only one of these that nobody
+    # chose and the only one that does not end on its own. An update finishes and a drain is
+    # lifted; a config file with a stray comma in it sits there launching nothing until a person
+    # opens it. It also makes every other reading on this screen provisional -- the pool targets
+    # printed below are built-in defaults, not this box's settings -- and that has to be said
+    # before them rather than after.
+    if [ -n "${CFG[config_error]:-}" ]; then
+        MAINT_STATE=misconfigured
+        MAINT_REASON="$CONFIG ${CFG[config_error]} -- nothing launches, and the targets below are built-in defaults"
+        return
+    fi
+    # THE FILE PARSES AND FFWATCH IS STILL REFUSING. Its own flag, and the only way to see the
+    # latch: the daemon reads the config once at startup, so a box that came up on a broken file
+    # is running on defaults and stays that way until it is restarted -- which the updater does
+    # by itself within a few minutes of the repair, since config.json is one of the files it
+    # watches. Without this the page would say `running` while the box launched nothing.
+    if [ -e "$FFWATCH_FAILSAFE" ]; then
+        MAINT_STATE=misconfigured
+        MAINT_REASON=$(sed -n 's/^reason=//p' "$FFWATCH_FAILSAFE" 2>/dev/null | head -1 | cut -c1-200)
+        [ -n "$MAINT_REASON" ] || MAINT_REASON="ffwatch is in its config failsafe and launches nothing"
+        return
+    fi
+
     if [ -e "$FFBOX_APPLYING" ]; then
         MAINT_STATE=updating
         # The flag's own words, and a fallback for the one that could not be written -- the
@@ -547,7 +599,13 @@ render_text() {
     # box between two polls, so colouring it would make the header amber for a couple of seconds
     # every five minutes and teach an operator to ignore the colour.
     local state_mark=$GRN
-    case "$MAINT_STATE" in updating|drained) state_mark=$YEL ;; esac
+    case "$MAINT_STATE" in
+        updating|drained) state_mark=$YEL ;;
+        # RED, WHERE THE OTHER TWO ARE AMBER. An update and a drain are the machine doing as it
+        # was told and both end by themselves; a config that does not parse is a fault, it holds
+        # every lane on the box, and it ends when a person fixes it.
+        misconfigured)    state_mark=$RED ;;
+    esac
     printf '\n%sffbox on %s%s  %s%s%s  %s(%s)%s\n' \
         "$B" "$(hostname -s)" "$N" "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$N" \
         "$state_mark" "$MAINT_STATE" "$N"
