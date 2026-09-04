@@ -1,8 +1,10 @@
 # GitHub credentials on an ffbox host
 
-Three separate GitHub credentials live on a build box, and they are not interchangeable. Each
+Three KINDS of GitHub credential live on a build box, and they are not interchangeable. Each
 one exists because a different process needs to talk to GitHub, and each should be minted
-separately so that a leak of one does not carry the others' capabilities.
+separately so that a leak of one does not carry the others' capabilities. Kinds rather than
+tokens because the first one can be held per agent pool since 2026-09-04, so a box may carry two
+of it; see "One per pool" below.
 
 Everything below was derived by reading the code that sends the requests **and then probing the
 live tokens against the API**. Both halves are necessary, and the first alone is what left a
@@ -12,7 +14,7 @@ to read the refs it is being asked to join, and no part of the request mentions 
 "Verify a token before you trust it" at the end. Where the older comments in
 `secrets.env.example` disagree with this file, this file is right and the discrepancy is noted.
 
-All three want to be **fine-grained** PATs. Classic scopes are far too coarse: `repo` alone
+All of them want to be **fine-grained** PATs. Classic scopes are far too coarse: `repo` alone
 carries code write, PR write, issues, releases, deploy keys and webhooks on every repository the
 account can see. Fine-grained tokens are also resource-scoped, so pick the single repository or
 the single organization and nothing else.
@@ -65,6 +67,44 @@ no matter what calls it — a third leg under "nothing merges, ever", beside the
 having no merge method and the container holding no credential at all.
 
 The branch push does not go through this token in any case. See below.
+
+### One per pool, if you want the lanes separated
+
+Since 2026-09-04 a pool may publish with a token of its own. `pools.<class>.github.pr_token` in
+`config.json` holds the KEY IN `secrets.env` whose value is the token — a name, never a token,
+because `config.json` sits beside the channel ids and `ffweb` reads it:
+
+```json
+"pools": {
+  "ffagent": { "github": { "pr_token": "GH_PR_TOKEN_FFAGENT" } },
+  "ffdev":   { "github": { "pr_token": "GH_PR_TOKEN_FFDEV" } }
+}
+```
+
+Each one wants exactly the permissions in the table above, and the same warning about
+contents:write applies to both. A pool that names nothing publishes with `GH_PR_TOKEN`, which is
+what every box did before this existed and what a box wanting one token should keep doing.
+
+**A pool that names a key gets that key or nothing.** `pr_token_for` in `ffwatch.py` does not
+fall back to `GH_PR_TOKEN` when a named key is absent, and that is the feature rather than an
+oversight: a fallback would hand ffagent — the lane whose input is written by strangers in a
+forum — whatever credential the dev lane publishes with, silently, at the moment somebody
+believed they had separated the two. Naming a key you have not installed costs a pull request
+that the reconcile sweep opens as soon as the key is in `secrets.env`, and the reply says which
+key is missing. Nothing caches the lookup, and this path never reaches the API, so it is not the
+latched refusal described two paragraphs down: no restart is involved, the next sweep simply
+finds the key and opens the pull request.
+
+Two tokens from ONE account buy rotation and revocation on separate schedules. Two tokens from
+TWO accounts buy an author on every branch and pull request that says which lane proposed it,
+which is what lets branch protection, CODEOWNERS and a reviewer treat the lanes differently. The
+code is the same; what you point the names at is the decision.
+
+`container_token` sits beside it in the same block, is a key name in the same file, and is read
+by nothing yet.
+
+**This splits the pull request and not the push.** Section 2's credential is still one file
+matched by host and still shared by both lanes and by CI.
 
 Failure mode with too little: the run finishes, the branch is pushed, and the turn reports
 `pushed but no PR` with the API error. The reconcile records the same error and then stops
@@ -126,7 +166,7 @@ git -C /opt/FinalFactory fetch origin      # prompts once, stores it
 The username is ignored by GitHub for token auth; any non-empty string works, the password is
 the token. The file must be mode 600.
 
-**Keep this token distinct from `GH_PR_TOKEN`.** If both are the same value you have gained nothing
+**Keep this token distinct from `GH_PR_TOKEN`**, and from any per-pool token named beside it. If both are the same value you have gained nothing
 by scoping either one, because the PR opener then also carries code write. Split, the PR token
 cannot write code at all, and the code-write token sits in a file that `ffwatch` never reads and
 no container ever sees.

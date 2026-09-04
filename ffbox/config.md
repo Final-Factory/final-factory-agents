@@ -112,7 +112,8 @@ already there:
       "pool": { "idle": 1, "max": -1 },
       "idle_agent_ttl_secs": 14400,
       "pool_ref": null,
-      "network": "limited"
+      "network": "limited",
+      "github": { "pr_token": null, "container_token": null }
     },
     "ffdev": {
       "base_ref": "master",
@@ -123,7 +124,8 @@ already there:
       "pool": { "idle": 1, "max": 3 },
       "idle_agent_ttl_secs": 14400,
       "pool_ref": null,
-      "network": "full"
+      "network": "full",
+      "github": { "pr_token": null, "container_token": null }
     }
   },
   "rate_limits": {
@@ -332,6 +334,8 @@ pool of its own and neither can take the other's warm container.
 | `idle_agent_ttl_secs` | `14400` | `14400` | How long a staged container waits before retiring. |
 | `pool_ref` | `null` | `null` | Which branch the pool stages. `null` follows `base_ref`. |
 | `network` | `"limited"` | `"full"` | The fence. See below. |
+| `github.pr_token` | `null` | `null` | The key in `secrets.env` holding the token this pool opens pull requests with. `null` uses the box-wide `GH_PR_TOKEN`. See below. |
+| `github.container_token` | `null` | `null` | Reserved. Read by nothing yet. |
 
 **Four clocks, not one.** They run in order — warm-up, then the agent, then verification — and
 each is measured from its own marker, so a run can spend all of every one of them. Conflating
@@ -384,6 +388,45 @@ written by strangers in a Discord forum and stays behind the proxy.
 The network is read at container **creation** — a cold run, or a staged pool container.
 Dispatch renames a container that already exists, so its network was decided when it was
 staged.
+
+**`github`** is how a pool publishes with a credential of its own instead of the box's. Both
+values are **key names, not tokens**: what you write here is the name of a variable in
+`~/.config/ffbox/secrets.env`, and the token stays in that file. Nothing about a secret belongs
+in this one — it sits beside the channel ids, `ffweb` reads it, and somebody edits it by hand at
+2am.
+
+```json
+"pools": {
+  "ffagent": { "github": { "pr_token": "GH_PR_TOKEN_FFAGENT" } },
+  "ffdev":   { "github": { "pr_token": "GH_PR_TOKEN_FFDEV" } }
+}
+```
+
+`null`, which is what is seeded, means the pool has no credential of its own and publishes with
+the box-wide `GH_PR_TOKEN` — the behaviour every box had before 2026-09-04, and the right answer
+for a box that does not want two tokens.
+
+**A pool that names a key gets that key or nothing.** There is deliberately no fallback: if
+`GH_PR_TOKEN_FFAGENT` is named here and is not in `secrets.env`, that pool opens no pull request
+and the reply says which key is missing. The alternative is worse than it sounds — falling back
+would hand the lane that runs text written by strangers in a forum whatever credential the dev
+lane publishes with, silently, at the moment somebody believed they had separated the two. The
+work is pushed either way, and the reconcile sweep opens the pull request as soon as the key is
+installed; nothing has to be restarted, because the lookup is not cached.
+
+What the split is worth depends on what you point the two names at. Two tokens minted from the
+same account buy rotation and revocation on their own schedules and nothing more. Two tokens
+belonging to **different GitHub accounts** buy a visible author on every branch and pull request,
+which is what lets branch protection, CODEOWNERS and a reviewer's eye treat the two lanes
+differently. Each still wants the permissions in `ffbox/CREDENTIALS.md`: pull requests read and
+write, contents READ, and contents write nowhere near either of them.
+
+**This splits the pull request and not the push.** `push_bundle` uses whatever credential git
+finds in `~/.git-credentials`, one file matched by host, and it is still shared by both lanes and
+by CI. Splitting that one is a separate job.
+
+`container_token` is a name this file accepts and nothing reads. It is here so the key exists
+before something depends on it.
 
 ---
 

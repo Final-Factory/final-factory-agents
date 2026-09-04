@@ -338,6 +338,17 @@ for key, value in (
         # ffagent serves text written by strangers in a Discord forum, so this is the pool that
         # stays shut.
         "network": "limited",
+        # WHICH CREDENTIALS THIS POOL PUBLISHES WITH, BY NAME. Both values are KEYS IN
+        # ~/.config/ffbox/secrets.env, never tokens: this file sits beside the channel ids, ffweb
+        # reads it, and an operator edits it by hand. null is "no credential of its own", which
+        # publishes with the box-wide GH_PR_TOKEN and is what every box did before 2026-09-04.
+        #
+        # A POOL THAT NAMES A KEY GETS THAT KEY OR NOTHING. Naming one that is not in secrets.env
+        # opens no pull request and says which key is missing; it does NOT fall back, because a
+        # fallback would hand this lane -- the one running text written by strangers -- whatever
+        # credential the dev lane publishes with, at the moment somebody believed they had
+        # separated the two. container_token is reserved and read by nothing yet.
+        "github": {"pr_token": None, "container_token": None},
       },
       # THE SECOND AGENT CLASS. Same keys as "ffagent" above and the same meanings: the two are
       # separate blocks with no inheritance between them, so ffdev reads THIS and never
@@ -373,6 +384,8 @@ for key, value in (
         # disables the host loopback and not the host's IP. ffdev is trusted the way a
         # developer's shell on this box is trusted, which is what it is for.
         "network": "full",
+        # Same keys and the same meanings as ffagent's above, and no inheritance between them.
+        "github": {"pr_token": None, "container_token": None},
       },
     }),
     # Turns per rolling 24 hours, keyed on TRUST TIER — who wrote the text, not which lane it

@@ -608,6 +608,12 @@ DEFAULTS = {
             "idle_agent_ttl_secs": 14400,
             "pool_ref": None,
             "network": "limited",
+            # WHICH CREDENTIALS THIS POOL USES, BY NAME. Each value is the KEY in
+            # ~/.config/ffbox/secrets.env whose value is the token, never the token: config.json
+            # sits on disk beside the channel ids and is read by ffweb, and a secret in it would
+            # be in the wrong file. null means this pool has no credential of its own, which is
+            # every box before 2026-09-04 and every box that never wants two. See pr_token_for.
+            "github": {"pr_token": None, "container_token": None},
         },
         "ffdev": {
             "base_ref": "master",
@@ -620,6 +626,7 @@ DEFAULTS = {
             "idle_agent_ttl_secs": 14400,
             "pool_ref": None,
             "network": "full",
+            "github": {"pr_token": None, "container_token": None},
         },
     },
     "pool_task": os.path.join(HERE, "pool-task.sh"),
@@ -966,6 +973,23 @@ def _class_blocks(ffbox_raw, max_runs, to_int):
         # resolve_network_mode), never to empty and never to the other class's.
         block["network"] = resolve_network_mode(block.get("network"), fallback["network"])
         block["docker_network"] = NETWORK_MODES[block["network"]]
+        # THE CREDENTIAL NAMES, FILLED IN RATHER THAN COPIED. Same treatment as `pool` above and
+        # for the same reason: a class that names one of the two keys must still come back with
+        # the other one present and null, so every reader can ask for either without guarding.
+        # The update above copied whatever the file holds under "github" -- a partial object, or
+        # a string somebody typed instead of an object -- and this replaces it wholesale.
+        #
+        # A NAME, NOT A TOKEN. Anything that is not a non-empty string is null, so a token
+        # accidentally pasted in here as a number, a list or an object cannot be read as a key
+        # name; a token pasted in as a STRING would be read as a key name, find nothing in the
+        # environment, and refuse -- loudly, which is the outcome that gets it removed.
+        block["github"] = dict(fallback["github"])
+        named = section.get("github")
+        if isinstance(named, dict):
+            for key in list(block["github"]):
+                value = named.get(key)
+                value = value.strip() if isinstance(value, str) else ""
+                block["github"][key] = value or None
         out[name] = block
     return out
 
@@ -2560,6 +2584,40 @@ class BranchUnavailable(RuntimeError):
     """
 
 
+def pr_token_for(cfg, agent_class=None):
+    """(the token this pool opens pull requests with, why it has none).
+
+    ONE KEY NAME PER POOL, AND IT IS A NAME. `pools.<class>.github.pr_token` holds the KEY in
+    ~/.config/ffbox/secrets.env whose value is the token, never the token itself. The
+    environment is where ffwatch has always read this credential from, for the reason
+    load_config states: a token in config.json would sit on disk beside the channel ids, in a
+    file ffweb reads and an operator edits.
+
+    A POOL THAT NAMES A KEY GETS THAT KEY OR NOTHING, and the missing fallback is the whole
+    point of splitting them. Falling back to the box-wide token when ffagent's key is absent
+    would quietly hand the lane that runs text written by strangers whatever credential the dev
+    lane publishes with, at exactly the moment somebody believed they had separated the two. So
+    a named key that is not in the environment is a refusal carrying a reason, which publish()
+    writes to the run's no_pr_reason and the reply shows. The work is already pushed by then and
+    nothing is lost; the reconcile sweep opens the pull request once the key is installed.
+
+    A POOL THAT NAMES NOTHING is a box that has not split anything, and gets the box-wide
+    GH_PR_TOKEN out of cfg["github"]["token"]. That is every box before 2026-09-04, and this is
+    the branch that keeps them working untouched.
+
+    Nothing here is cached: os.environ is read on the call, so installing a key and restarting
+    nothing is enough for the next sweep to use it.
+    """
+    named = ((class_cfg(cfg, agent_class).get("github") or {}).get("pr_token") or "").strip()
+    if not named:
+        return (cfg.get("github") or {}).get("token") or "", None
+    token = (os.environ.get(named) or "").strip()
+    if token:
+        return token, None
+    return "", (f"{agent_class or DEFAULT_AGENT_CLASS} opens pull requests with {named}, which "
+                f"is not set on this host — put it in ~/.config/ffbox/secrets.env")
+
+
 class GitHubError(RuntimeError):
     def __init__(self, status, body):
         self.status = status
@@ -2576,11 +2634,16 @@ class GitHub:
     feature.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, agent_class=None):
         gh = cfg.get("github") or {}
         self.api_base = (gh.get("api_base") or "https://api.github.com").rstrip("/")
         self.repo = gh.get("repo") or ""
-        self.token = gh.get("token") or ""
+        # WHICH POOL IS PUBLISHING, because the two lanes may hold different credentials. None
+        # is the default class, for the callers that have nothing to say; a pool that names no
+        # key of its own resolves to the box-wide token. See pr_token_for, which also explains
+        # why token_error is carried instead of being turned into an empty token here: "this box
+        # has no token" and "this pool's token is missing" are different things to be told.
+        self.token, self.token_error = pr_token_for(cfg, agent_class)
         self.base = gh.get("base") or "develop"
 
     def _request(self, method, path, body=None, retries=4, sleep=time.sleep):
@@ -5420,6 +5483,31 @@ class Watcher:
                 log(f"pool: could not stage attachment {name}: {exc}")
         return n
 
+    def credential_status(self):
+        """One line per pool that names a credential of its own, and NOTHING otherwise.
+
+        A pool naming a key nobody installed opens no pull requests, and says so only in the
+        reply to the turn that hit it. That is a bad place to learn it: the branch is already
+        pushed, and whoever reads a Discord reply is often not whoever edits secrets.env. Every
+        failure mode around these tokens is silent or near-silent, so the command an operator
+        runs while wondering why a lane stopped publishing is where it should be legible.
+
+        THE NAME IS PRINTED AND THE VALUE NEVER IS. Whether the key is set is the whole of what
+        somebody needs in order to go and fix it.
+
+        `container_token` is deliberately not reported: nothing reads it yet, and a status line
+        for it would imply it does something.
+        """
+        lines = []
+        for agent_class in AGENT_CLASSES:
+            name = (class_cfg(self.cfg, agent_class).get("github") or {}).get("pr_token")
+            if not name:
+                continue
+            installed = bool((os.environ.get(name) or "").strip())
+            lines.append(f"pool {agent_class}: pull requests use {name}"
+                         + ("" if installed else " — NOT SET, so this pool opens none"))
+        return lines
+
     def pool_status(self):
         """What is staged, per class, in the few lines a person reading `status` wants.
 
@@ -7572,10 +7660,11 @@ class Watcher:
                       or "the agent was not confident in the change")
             return self._no_pr(run_row_id, conv, branch, reason[:200])
 
-        gh = GitHub(self.cfg)
+        gh = GitHub(self.cfg, self.conversation_class(conv))
         if not gh.token or not gh.repo:
             return self._no_pr(run_row_id, conv, branch,
-                               "no GitHub token on the host, so no PR could be opened")
+                               gh.token_error
+                               or "no GitHub token on the host, so no PR could be opened")
         title = (verdict.get("pr_title")
                  or f"{conv['title'] or conv['kind']}"[:72] or f"ffbox {job['run_id']}")
         try:
@@ -7894,8 +7983,15 @@ class Watcher:
             return {"branch": branch}
         if branch in self._reconcile_refused:
             return {"branch": branch}
-        gh = GitHub(self.cfg)
+        gh = GitHub(self.cfg, self.conversation_class(conv))
         if not gh.token or not gh.repo:
+            # A MISCONFIGURED POOL IS SAID OUT LOUD, a box with no token at all is not. The
+            # sweep runs over every conversation with an unpublished branch, so an ordinary
+            # tokenless box would log this once per conversation per sweep forever; a pool
+            # naming a key nobody installed is a thing somebody has to go and fix, and it is
+            # otherwise invisible here because no reply is being composed to carry it.
+            if gh.token_error:
+                log(f"conversation {conv_id}: no pull request — {gh.token_error}")
             return {"branch": branch}
 
         try:
@@ -10004,6 +10100,7 @@ class Watcher:
             out.append(f"blocked turns: {len(blocked)}")
             for b in blocked:
                 out.append(f"  turn {b['id']} lane={b['lane']}: {b['error']}")
+        out.extend(self.credential_status())
         out.extend(self.pool_status())
         if self.killed():
             out.append(f"KILL SWITCH ACTIVE: {self.cfg['kill_switch']}")
