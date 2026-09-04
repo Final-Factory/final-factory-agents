@@ -547,15 +547,22 @@ os.environ["FFWEB_TEST_STATUS_DOC"] = STATUS_DOC_PATH
 # that had never seen the real thing.
 # ------------------------------------------------------------------------------------------
 
-CLAUDE_POOL = [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-first-account-token"),
-               ("CLAUDE_CODE_OAUTH_TOKEN2", "sk-ant-oat01-second-account-token"),
-               ("CLAUDE_CODE_OAUTH_TOKEN3", "sk-ant-oat01-revoked-token"),
+# The third element is the PLAN MULTIPLIER declared beside the token in secrets.env. The two
+# keys whose profile document answers are declared to AGREE with it, because a row reading "Pro"
+# beside Anthropic's own "claude_max" is a fixture inventing a state the field cannot produce --
+# a token whose profile answers is an interactive login, and those are not what goes in
+# secrets.env. The UNDECLARED row is slot 4, which is the kind of token this box really runs on
+# and therefore the row that really does turn up with nobody having declared it.
+CLAUDE_POOL = [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-first-account-token", 5),
+               ("CLAUDE_CODE_OAUTH_TOKEN2", "sk-ant-oat01-second-account-token", 20),
+               ("CLAUDE_CODE_OAUTH_TOKEN3", "sk-ant-oat01-revoked-token", 20),
                # THE KIND OF TOKEN THIS BOX ACTUALLY RUNS ON. `claude setup-token` mints a
                # token without the `user:profile` scope, so its usage document answers 403 and
                # the windows have to come off a /v1/messages reply's headers instead. Measured
                # against the real endpoint on 2026-09-04; the first release of this page shipped
                # without it and reported the 403 to the operator as if it were the answer.
-               ("CLAUDE_CODE_OAUTH_TOKEN4", "sk-ant-oat01-setup-token-no-scope")]
+               ("CLAUDE_CODE_OAUTH_TOKEN4", "sk-ant-oat01-setup-token-no-scope",
+                ffweb.CLAUDE_DEFAULT_RATE)]
 
 
 def claude_usage(five, week, opus=0):
@@ -1540,15 +1547,15 @@ def test_the_claude_page_reports_every_key_in_the_pool():
         text = text_of(body)
         check("the claude page serves", code == 200, code)
         check("every key in the pool has a row",
-              all(name in text for name, _t in CLAUDE_POOL),
-              [n for n, _t in CLAUDE_POOL if n not in text])
+              all(name in text for name, _t, _r in CLAUDE_POOL),
+              [n for n, _t, _r in CLAUDE_POOL if n not in text])
         # THE WHOLE SECURITY PROPERTY OF THIS PAGE. It is read by anyone who got past one
         # shared password, and a token on it is a subscription somebody can walk off with.
         check("no token is on the page, not even truncated",
-              not any(tok[8:] in text for _n, tok in CLAUDE_POOL),
-              [n for n, tok in CLAUDE_POOL if tok[8:] in text])
+              not any(tok[8:] in text for _n, tok, _r in CLAUDE_POOL),
+              [n for n, tok, _r in CLAUDE_POOL if tok[8:] in text])
         check("a key is identified by a digest of itself instead",
-              all(ffweb.token_fingerprint(tok) in text for _n, tok in CLAUDE_POOL))
+              all(ffweb.token_fingerprint(tok) in text for _n, tok, _r in CLAUDE_POOL))
         # Split per key, because "active" and a percentage both appear more than once on the
         # page and a document-wide search would pass on the wrong row.
         blocks = text.split('<div class="item key">')[1:]
@@ -1585,12 +1592,28 @@ def test_the_claude_page_reports_every_key_in_the_pool():
               and ">26%<" in blocks[3], blocks[3][:700])
         check("and the page says that reading came the other way",
               "via rate-limit headers" in blocks[3], blocks[3][:400])
-        check("with the reason spelled out, since the fix is a different kind of token",
-              "user:profile" in blocks[3] and "setup-token" in blocks[3], blocks[3][-500:])
         check("the fraction the headers send is rendered as a percentage, not as 0%",
               ">0%<" not in blocks[3], blocks[3][:700])
+        # THE PLAN COMES FROM secrets.env, NOT FROM ANTHROPIC, which is the whole point of the
+        # declaration: these tokens cannot be asked, so a row that could never name its plan now
+        # names it anyway. Per block, because "Pro" and "Max 5x" both appear more than once.
+        check("each key says which plan its slot declares",
+              "Max 5x" in blocks[0] and "Max 20x" in blocks[1] and "Max 20x" in blocks[2],
+              [b[:300] for b in blocks])
+        check("an undeclared slot reads as Pro rather than as a blank",
+              "Pro" in blocks[3], blocks[3][:300])
+        # A REVOKED KEY STILL HAS A PLAN. The declaration is a line in a file, so the one thing
+        # a dead key can still report is which account it was.
+        check("and a key that could not be reached at all still carries its plan",
+              'class="pill unreachable"' in blocks[2] and "Max 20x" in blocks[2],
+              blocks[2][:400])
         check("the note says how often Anthropic is actually asked",
-              "once every 20m" in text, text[text.find("<p class=\"note\">"):][:300])
+              "once every 15m" in text, text[text.find("<p class=\"note\">"):][:400])
+        check("and where the plan on each row came from, since it is not from Anthropic",
+              "CLAUDE_CODE_RATE_TOKEN" in text,
+              text[text.find("<p class=\"note\">"):][:400])
+        check("the per-row essay about the missing scope is gone",
+              "usage document is closed to us" not in text, blocks[3][-500:])
         check("and the sentence about which key is spent is gone from it",
               "is spent" not in text and "nowhere else" not in text,
               text[text.find("<p class=\"note\">"):][:300])
@@ -1610,6 +1633,8 @@ def test_a_box_with_no_keys_says_what_to_write_and_where():
               "secrets.env" in text and "CLAUDE_CODE_OAUTH_TOKEN1" in text
               and "claude setup-token" in text,
               text[text.find("<main>"):][:500])
+        check("and the plan declaration that goes beside them, since nothing else supplies it",
+              "CLAUDE_CODE_RATE_TOKEN1=5" in text, text[text.find("<main>"):][:500])
     finally:
         srv.stop()
 
@@ -1623,22 +1648,23 @@ def test_the_pool_is_numbered_and_a_gap_is_not_the_end():
     ACTIVE key is the first survivor rather than literally number 1.
     """
     print("the key pool is numbered, and a gap is not the end of it")
+    one = ffweb.CLAUDE_DEFAULT_RATE
     pool = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN1": "one",
                                     "CLAUDE_CODE_OAUTH_TOKEN2": "two"})
-    check("the numbered slots come back in order", pool == [("CLAUDE_CODE_OAUTH_TOKEN1", "one"),
-                                                            ("CLAUDE_CODE_OAUTH_TOKEN2", "two")],
-          pool)
+    check("the numbered slots come back in order",
+          pool == [("CLAUDE_CODE_OAUTH_TOKEN1", "one", one),
+                   ("CLAUDE_CODE_OAUTH_TOKEN2", "two", one)], pool)
     gapped = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN1": "  ",
                                       "CLAUDE_CODE_OAUTH_TOKEN3": "three"})
     check("a blank slot is skipped rather than ending the scan",
-          gapped == [("CLAUDE_CODE_OAUTH_TOKEN3", "three")], gapped)
+          gapped == [("CLAUDE_CODE_OAUTH_TOKEN3", "three", one)], gapped)
     legacy = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN": "old"})
     check("the unnumbered spelling still reads as a pool of one",
-          legacy == [("CLAUDE_CODE_OAUTH_TOKEN", "old")], legacy)
+          legacy == [("CLAUDE_CODE_OAUTH_TOKEN", "old", one)], legacy)
     both = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN": "old",
                                     "CLAUDE_CODE_OAUTH_TOKEN1": "one"})
     check("and it steps aside the moment a numbered slot exists, rather than being spent first",
-          both == [("CLAUDE_CODE_OAUTH_TOKEN1", "one")], both)
+          both == [("CLAUDE_CODE_OAUTH_TOKEN1", "one", one)], both)
     check("an environment with nothing in it is an empty pool, not an error",
           ffweb.claude_token_pool({}, secrets_path=os.path.join(TMPROOT, "no-such-secrets")) == [])
 
@@ -1649,18 +1675,58 @@ def test_the_pool_is_numbered_and_a_gap_is_not_the_end():
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("# a comment\n"
                  "CLAUDE_CODE_OAUTH_TOKEN1=sk-ant-oat01-from-the-file\n"
+                 "CLAUDE_CODE_RATE_TOKEN1=5\n"
                  "export CLAUDE_CODE_OAUTH_TOKEN2=\"sk-ant-oat01-quoted\"\n"
                  "UNITY_PASSWORD=hunter2\n"
                  "GH_PR_TOKEN=ghp_nope\n")
     from_file = ffweb.claude_token_pool({}, secrets_path=path)
     check("a hand-run reads the tokens out of secrets.env",
-          from_file == [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-from-the-file"),
-                        ("CLAUDE_CODE_OAUTH_TOKEN2", "sk-ant-oat01-quoted")], from_file)
+          from_file == [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-from-the-file", 5),
+                        ("CLAUDE_CODE_OAUTH_TOKEN2", "sk-ant-oat01-quoted", one)], from_file)
     # It reads a file that also holds a Unity password and a GitHub token. Nothing but the
     # Claude names may come out of it, and the check is on the VALUES because that is what
     # would leak.
     check("and nothing else in that file comes back with them",
-          not [v for _n, v in from_file if v in ("hunter2", "ghp_nope")], from_file)
+          not [v for _n, v, _r in from_file if v in ("hunter2", "ghp_nope")], from_file)
+
+
+def test_the_plan_beside_a_token_is_declared_because_the_token_cannot_say():
+    """CLAUDE_CODE_RATE_TOKEN<n>, the one fact about a key that does not come off the wire.
+
+    The plan lives in Anthropic's profile document, that document needs the `user:profile`
+    scope, and `claude setup-token` does not grant it — so on the only kind of token this box
+    runs on, the page cannot learn whether it is looking at Pro or at Max 20x. An operator
+    knows, so they write it down, and everything here is about that line being unable to break
+    the page: a typo, a missing line and a stray "x" all have to land somewhere sensible.
+    """
+    print("the plan beside a token is declared, because the token cannot say")
+
+    def rate(**env):
+        return ffweb.claude_token_pool(dict({"CLAUDE_CODE_OAUTH_TOKEN1": "t"}, **env))[0][2]
+
+    check("a declared multiplier is read as a number",
+          rate(CLAUDE_CODE_RATE_TOKEN1="5") == 5, rate(CLAUDE_CODE_RATE_TOKEN1="5"))
+    check("and it is an int, so the plan names key off it and nothing prints 5.0x",
+          isinstance(rate(CLAUDE_CODE_RATE_TOKEN1="5"), int))
+    check("written the way the plan is written everywhere else, it still reads",
+          rate(CLAUDE_CODE_RATE_TOKEN1="20x") == 20, rate(CLAUDE_CODE_RATE_TOKEN1="20x"))
+    check("an undeclared slot is Pro, which is the cautious guess rather than the generous one",
+          rate() == 1, rate())
+    # THE TYPO CASE. This is parsed while a page is being rendered, and the page exists to say
+    # which keys have room -- so a bad line must not be the reason nobody can see that.
+    for junk in ("", "   ", "max", "5x5", "-3", "0"):
+        check(f"a declaration of {junk!r} falls back to the default rather than breaking a page",
+              rate(CLAUDE_CODE_RATE_TOKEN1=junk) == ffweb.CLAUDE_DEFAULT_RATE,
+              (junk, rate(CLAUDE_CODE_RATE_TOKEN1=junk)))
+    check("the legacy unnumbered token takes an unnumbered declaration",
+          ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN": "old",
+                                   "CLAUDE_CODE_RATE_TOKEN": "20"})[0][2] == 20)
+    # The names people actually use, and a general answer for a plan that does not exist yet.
+    check("1 is Pro", ffweb.claude_plan(1) == "Pro", ffweb.claude_plan(1))
+    check("5 is Max 5x", ffweb.claude_plan(5) == "Max 5x", ffweb.claude_plan(5))
+    check("20 is Max 20x", ffweb.claude_plan(20) == "Max 20x", ffweb.claude_plan(20))
+    check("and a multiplier nobody has named yet still reports as itself",
+          ffweb.claude_plan(50) == "50x", ffweb.claude_plan(50))
 
 
 def test_a_usage_reading_is_cached_rather_than_fetched_per_reload():
@@ -1692,8 +1758,8 @@ def test_a_usage_reading_is_cached_rather_than_fetched_per_reload():
     check("a refused key is not asked a second question",
           len([c for c in calls if c[1] == CLAUDE_POOL[2][1]]) == 1,
           [c[0] for c in calls if c[1] == CLAUDE_POOL[2][1]])
-    check("the reading is held for twenty minutes, not for one",
-          ffweb.CLAUDE_USAGE_TTL_SECS == 1200, ffweb.CLAUDE_USAGE_TTL_SECS)
+    check("the reading is held for a quarter of an hour, not for one minute",
+          ffweb.CLAUDE_USAGE_TTL_SECS == 900, ffweb.CLAUDE_USAGE_TTL_SECS)
     aged = keys.read(now=time.time() + ffweb.CLAUDE_USAGE_TTL_SECS + 1)
     check("and past the TTL it goes out again", len(calls) > n_first, len(calls))
     check("still with an answer for every key", len(aged) == len(CLAUDE_POOL), len(aged))
@@ -3050,6 +3116,7 @@ def main():
         test_the_claude_page_reports_every_key_in_the_pool,
         test_a_box_with_no_keys_says_what_to_write_and_where,
         test_the_pool_is_numbered_and_a_gap_is_not_the_end,
+        test_the_plan_beside_a_token_is_declared_because_the_token_cannot_say,
         test_a_usage_reading_is_cached_rather_than_fetched_per_reload,
         test_a_key_that_cannot_read_its_usage_is_asked_the_other_way_once,
         test_actions_are_off_by_default,
