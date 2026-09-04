@@ -854,6 +854,7 @@ $EDITOR ~/.config/ffbox/secrets.env
 | variable | notes |
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` | one per Claude account, from `claude setup-token`; bills against that subscription. **Only the first non-empty one is spent** — the rest are inventory, reported on ffweb's `/claude` page. The unnumbered `CLAUDE_CODE_OAUTH_TOKEN` is the older spelling and still works |
+| `CLAUDE_CODE_RATE_TOKEN1`, `…2`, `…3` | which plan the token in the matching slot is on, as its multiplier: `1` for Pro, `5` for Max 5x, `20` for Max 20x. Read only by ffweb's `/claude` page, which cannot ask Anthropic (see below); an undeclared slot reads as `1` |
 | `UNITY_EMAIL` / `UNITY_PASSWORD` | required **even for a Personal license** — activation is an online serial activation |
 | `UNITY_SERIAL` *or* `UNITY_LICENSE_FILE` | the 27-char serial, or a `.ulf` to extract it from |
 
@@ -1964,13 +1965,19 @@ headers, which need only the `user:inference` scope every one of these tokens ha
 says `via rate-limit headers` and carries two windows instead of three. A key that answers 403
 once is remembered, so the closed document is not asked again.
 
-Readings are cached for **20 minutes** — the windows are five hours and seven days long, so a
+**Which plan a key is on is declared, not discovered.** That fact lives in the same closed
+profile document, so `CLAUDE_CODE_RATE_TOKEN<n>` in `secrets.env` says it instead — `1` for Pro,
+`5` for Max 5x, `20` for Max 20x, numbered to match the token beside it, and `1` when nothing
+says otherwise. Guessing low is deliberate: a key that looks smaller than it is costs nothing,
+and the mistake that kills a run is the other one.
+
+Readings are cached for **15 minutes** — the windows are five hours and seven days long, so a
 reading a quarter-hour old is the same answer for any decision this page supports, and the
 fallback costs a real (if tiny) inference call. The keys are fetched in parallel so a dead one
 does not hold up the page, a key that cannot be read at all says why in a sentence while the
-others still report, and **no token is ever rendered** — a row names its key by variable, by the
-account Anthropic says it belongs to when it can learn it, and by eight hex characters of its
-sha256.
+others still report, and **no token is ever rendered** — a row names its key by variable, by its
+declared plan, by the account Anthropic says it belongs to when it can learn it, and by eight
+hex characters of its sha256.
 
 `/status` reports on
 the machine rather than on ffwatch.db, and it does that by running `ffbox/ffstatus.sh --json` —
@@ -1990,7 +1997,7 @@ when somebody is looking at it.
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
-| `/claude` | **the subscriptions**: every Claude account in the `secrets.env` pool, which one is actually spent, and how much of each account's five-hour and weekly windows is gone, with the per-model weekly cap beside them where the token's scope allows it. Read from Anthropic over the network and cached for 20 minutes; no token appears on it |
+| `/claude` | **the subscriptions**: every Claude account in the `secrets.env` pool, which one is actually spent, which plan its slot declares, and how much of each account's five-hour and weekly windows is gone, with the per-model weekly cap beside them where the token's scope allows it. Read from Anthropic over the network and cached for 15 minutes; no token appears on it |
 | `/status` | **the box**, and one of two pages here that read no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |

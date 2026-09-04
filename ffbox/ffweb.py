@@ -137,7 +137,7 @@ DEFAULT_GITHUB_REPO = "Final-Factory/FinalFactory"
 # Shown in the header so a person reading a page knows which build wrote it. The HTTP
 # server_version below is the protocol banner and moves for its own reasons; this is the
 # one a human is meant to read.
-VERSION = "0.9.4"
+VERSION = "0.9.5"
 
 # A turn in one of these has stopped; anything else is still on its way. Kept in step with
 # ffwatch's own list by hand, because this process deliberately imports nothing from it — it
@@ -197,12 +197,26 @@ CLAUDE_TOKEN_PREFIX = "CLAUDE_CODE_OAUTH_TOKEN"
 # silently drop token 3 on a file that left 2 blank, and "read every variable that matches"
 # would make the pool depend on what else the unit happens to export.
 CLAUDE_TOKEN_MAX = 16
-# How long a usage reading stays good. TWENTY MINUTES, not a minute: these windows are five
+# WHICH PLAN EACH TOKEN IS ON, declared beside it as CLAUDE_CODE_RATE_TOKEN1 and numbered to
+# match. The number is the plan's multiplier — 1 for Pro, 5 for Max 5x, 20 for Max 20x — and it
+# is written by hand because these tokens genuinely cannot say it themselves: the plan lives in
+# Anthropic's profile document, that document needs the `user:profile` scope, and the
+# `claude setup-token` flow this box runs on does not grant it. An operator who knows which
+# account they signed in as knows this number, and a declared 5 is worth more than a blank.
+CLAUDE_RATE_PREFIX = "CLAUDE_CODE_RATE_TOKEN"
+# UNDECLARED MEANS PRO, the smallest plan there is. Guessing low is the safe direction: it makes
+# a key look like it has less room than it may really have, and the failure that costs a run is
+# believing a key has room it does not.
+CLAUDE_DEFAULT_RATE = 1
+# The multipliers that have a name people actually use. Anything else renders as "<n>x", so a
+# plan that does not exist yet still reports as itself rather than as a blank.
+CLAUDE_PLAN_NAMES = {1: "Pro", 5: "Max 5x", 20: "Max 20x"}
+# How long a usage reading stays good. FIFTEEN MINUTES, not a minute: these windows are five
 # hours and seven days long, so a reading a quarter-hour old is the same answer as a fresh one
 # for every decision this page supports, and the page ticks at a minute regardless. It is also
 # what keeps the fallback below honest — that path costs a (tiny) inference call per key per
-# refresh, and at this interval that is three calls an hour rather than sixty.
-CLAUDE_USAGE_TTL_SECS = 1200
+# refresh, and at this interval that is four calls an hour rather than sixty.
+CLAUDE_USAGE_TTL_SECS = 900
 
 # The family of response headers every /v1/messages reply carries, and the fallback reading's
 # whole vocabulary. Named once because six strings are built from it.
@@ -210,7 +224,10 @@ RATELIMIT_PREFIX = "anthropic-ratelimit-unified-"
 
 
 def claude_token_pool(env=None, secrets_path=None):
-    """[(name, token)] — every Claude account this box holds, in the order they would be spent.
+    """[(name, token, rate)] — every Claude account this box holds, in the order spent.
+
+    `rate` is the plan multiplier declared beside the token as CLAUDE_CODE_RATE_TOKEN<n>, and
+    CLAUDE_DEFAULT_RATE when nothing declares one.
 
     The environment first, because that is how the unit is fed: ffweb.service carries
     EnvironmentFile=-~/.config/ffbox/secrets.env, so under systemd the tokens are simply here.
@@ -218,9 +235,9 @@ def claude_token_pool(env=None, secrets_path=None):
     `python3 ffbox/ffweb.py` in a terminal show the same page the service does instead of an
     empty one that looks like a box with no keys.
 
-    NOTHING BUT THE TOKEN NAMES COMES OUT OF THAT FILE. It also holds a Unity account password
-    and a GitHub token, and this process has no business learning either — so the read is a
-    filter against the names above rather than a `.env` parser that returns what it finds.
+    NOTHING BUT THE TOKEN AND RATE NAMES COMES OUT OF THAT FILE. It also holds a Unity account
+    password and a GitHub token, and this process has no business learning either — so the read
+    is a filter against the names above rather than a `.env` parser that returns what it finds.
     """
     env = os.environ if env is None else env
     found = _claude_tokens_from(env.get)
@@ -246,11 +263,40 @@ def _claude_tokens_from(get):
         name = CLAUDE_TOKEN_PREFIX + str(n)
         value = (get(name) or "").strip()
         if value:
-            out.append((name, value))
+            out.append((name, value, _claude_rate(get, str(n))))
     if out:
         return out
     value = (get(CLAUDE_TOKEN_PREFIX) or "").strip()
-    return [(CLAUDE_TOKEN_PREFIX, value)] if value else []
+    return [(CLAUDE_TOKEN_PREFIX, value, _claude_rate(get, ""))] if value else []
+
+
+def _claude_rate(get, slot):
+    """The plan multiplier declared for one slot, as a number. `slot` is "" or "1".."16".
+
+    A DECLARATION THAT DOES NOT PARSE IS NOT AN ERROR HERE. This runs while a page is being
+    rendered, and a typo in secrets.env must not be the reason an operator cannot see which
+    keys have room left — so anything that is not a positive number reads as undeclared, which
+    is Pro, which is the cautious answer. A trailing "x" is allowed because "5x" is how the
+    plan is written everywhere else and typing it here should not silently mean Pro.
+    """
+    raw = (get(CLAUDE_RATE_PREFIX + slot) or "").strip().lower()
+    if raw.endswith("x"):
+        raw = raw[:-1].strip()
+    try:
+        rate = float(raw)
+    except ValueError:
+        return CLAUDE_DEFAULT_RATE
+    if rate <= 0:
+        return CLAUDE_DEFAULT_RATE
+    # An integral rate stays an int so the plan names key off it and "5x" does not print "5.0x".
+    return int(rate) if rate == int(rate) else rate
+
+
+def claude_plan(rate):
+    """The plan a multiplier names, for a page to print."""
+    if rate is None:
+        rate = CLAUDE_DEFAULT_RATE
+    return CLAUDE_PLAN_NAMES.get(rate) or f"{rate}x"
 
 
 def _claude_secrets_file(path):
@@ -262,8 +308,9 @@ def _claude_secrets_file(path):
     an empty answer — the page says "no keys" and that is a true sentence about what ffweb can
     see.
     """
-    wanted = {CLAUDE_TOKEN_PREFIX} | {CLAUDE_TOKEN_PREFIX + str(n)
-                                      for n in range(1, CLAUDE_TOKEN_MAX + 1)}
+    wanted = {CLAUDE_TOKEN_PREFIX, CLAUDE_RATE_PREFIX} | {
+        prefix + str(n) for prefix in (CLAUDE_TOKEN_PREFIX, CLAUDE_RATE_PREFIX)
+        for n in range(1, CLAUDE_TOKEN_MAX + 1)}
     out = {}
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
@@ -1611,7 +1658,8 @@ class ClaudeKeys:
 
     Nothing here can spend a key on anything but this. It is bearer credentials against two
     fixed URLs held in this class, never a URL from a request, and the tokens are never
-    rendered — a row identifies its key by name, by account, and by token_fingerprint().
+    rendered — a row identifies its key by name, by account, by the plan its slot declares, and
+    by token_fingerprint().
     """
 
     USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -1630,7 +1678,7 @@ class ClaudeKeys:
     # THIS COSTS A LITTLE OF THE THING IT MEASURES, which is worth saying out loud: about eight
     # input tokens and one output token, once per key per CLAUDE_USAGE_TTL_SECS. Against a
     # window measured in millions that is noise, but it is not nothing, and it is the reason the
-    # TTL is twenty minutes rather than one.
+    # TTL is a quarter of an hour rather than one minute.
     PROBE_URL = "https://api.anthropic.com/v1/messages"
     # The cheapest model on the account. The reply is thrown away — only the headers are read —
     # so max_tokens is 1 and the prompt is a full stop.
@@ -1755,10 +1803,15 @@ class ClaudeKeys:
             return {}, "Anthropic answered without any rate-limit headers"
         return found, ""
 
-    def _load(self, name, token):
-        """One key, fetched. The cache is not consulted here — see read()."""
+    def _load(self, name, token, rate=CLAUDE_DEFAULT_RATE):
+        """One key, fetched. The cache is not consulted here — see read().
+
+        `rate` rides along rather than being looked up here because it is a fact about the line
+        in secrets.env, not about anything Anthropic answers — it is on the record for every
+        key, including the ones this method could not reach at all.
+        """
         fingerprint = token_fingerprint(token)
-        rec = {"name": name, "fingerprint": fingerprint,
+        rec = {"name": name, "fingerprint": fingerprint, "rate": rate,
                "account": "", "plan": "", "windows": [], "source": "", "error": ""}
         with self._lock:
             closed = fingerprint in self._no_scope
@@ -1918,34 +1971,38 @@ class ClaudeKeys:
         records = [None] * len(pool)
         threads = []
 
-        def work(slot, name, token):
+        def work(slot, name, token, rate):
             key = token_fingerprint(token)
             with self._lock:
                 hit = self._cache.get(key)
             if hit and now - hit[0] < self.ttl:
-                records[slot] = dict(hit[1], age=int(now - hit[0]))
+                # The declared rate is taken from the POOL and not from the cached record: it
+                # comes out of secrets.env, so an edit there is meant to show up on the next
+                # reload rather than a quarter of an hour later with the usage numbers.
+                records[slot] = dict(hit[1], age=int(now - hit[0]), rate=rate)
                 return
-            rec = self._load(name, token)
+            rec = self._load(name, token, rate)
             with self._lock:
                 self._cache[key] = (now, rec)
             records[slot] = dict(rec, age=0)
 
-        for slot, (name, token) in enumerate(pool):
-            t = threading.Thread(target=work, args=(slot, name, token), daemon=True)
+        for slot, (name, token, rate) in enumerate(pool):
+            t = threading.Thread(target=work, args=(slot, name, token, rate), daemon=True)
             t.start()
             threads.append(t)
         deadline = time.time() + self.timeout * 2 + 5
         for t in threads:
             t.join(max(0.0, deadline - time.time()))
         out = []
-        for slot, (name, token) in enumerate(pool):
+        for slot, (name, token, rate) in enumerate(pool):
             rec = records[slot]
             if rec is None:
                 # The join gave up. Not a cache entry: a fetch that is still in flight will
                 # write one of its own when it lands, and the next reload picks it up.
-                rec = {"name": name, "fingerprint": token_fingerprint(token), "account": "",
-                       "plan": "", "windows": [], "source": "", "state": "unreachable",
-                       "age": 0, "error": f"no answer within {self.timeout}s"}
+                rec = {"name": name, "fingerprint": token_fingerprint(token), "rate": rate,
+                       "account": "", "plan": "", "windows": [], "source": "",
+                       "state": "unreachable", "age": 0,
+                       "error": f"no answer within {self.timeout}s"}
             # THE FIRST ONE IS THE ONE THAT GETS SPENT. Marked here rather than in the loader
             # because it is a fact about the pool's order, not about the key.
             rec["active"] = slot == 0
@@ -2887,14 +2944,17 @@ class App:
                 + esc(os.environ.get("FFBOX_SECRETS") or "~/.config/ffbox/secrets.env") +
                 ". Put one key per account in that file as " +
                 esc(CLAUDE_TOKEN_PREFIX) + "1, " + esc(CLAUDE_TOKEN_PREFIX) + "2, … "
-                "(each from <code>claude setup-token</code> signed in as that account) and "
-                "restart ffweb.</p>"], refresh=True)
+                "(each from <code>claude setup-token</code> signed in as that account), say "
+                "which plan each one is on beside it as " + esc(CLAUDE_RATE_PREFIX) +
+                "1=5, and restart ffweb.</p>"], refresh=True)
 
         head.append(
             "<p class=\"note\">" + esc(f"{len(rows)} key{'' if len(rows) == 1 else 's'}") +
             " in the pool. Usage is read from Anthropic at most once every " +
             esc(fmt_ttl(self.keys.ttl)) + ", so most reloads show the last reading and each "
-            "row says how old it is.</p>")
+            "row says how old it is. The plan on a row is what <code>" +
+            esc(CLAUDE_RATE_PREFIX) + "&lt;n&gt;</code> in secrets.env says it is — 1 for Pro, "
+            "5 or 20 for Max — since these tokens cannot be asked.</p>")
 
         body = []
         for rec in rows:
@@ -2904,7 +2964,13 @@ class App:
             meta.append("key " + esc(rec["fingerprint"]))
             if rec["account"]:
                 meta.append(esc(short(rec["account"], 80)))
+            # THE DECLARED PLAN IS ON EVERY ROW, including a revoked key's and one that timed
+            # out, because it is read from secrets.env rather than from Anthropic and is
+            # therefore the one thing about a key that is known whatever the network did.
+            meta.append(esc(claude_plan(rec.get("rate"))))
             if rec["plan"]:
+                # What Anthropic says, when it will say anything — a different source from the
+                # line above, so both stand rather than one quietly overwriting the other.
                 meta.append(esc(short(rec["plan"], 60)))
             meta.append(str(pill(rec["state"])))
             if rec.get("age"):
@@ -2930,13 +2996,6 @@ class App:
                 trows.append([w["label"], usage_bar(w["percent"]), note])
             if trows:
                 body.append(str(table(["window", "used", "resets"], trows)))
-                if rec.get("source") == "rate-limit headers":
-                    body.append(
-                        "<p class=\"note\">This token has no <code>user:profile</code> scope, "
-                        "so its usage document is closed to us and these two windows were read "
-                        "off a one-token API call instead. That is what <code>claude "
-                        "setup-token</code> mints, and it is why there is no account name and "
-                        "no per-model row here.</p>")
             else:
                 body.append("<p class=\"empty\">Anthropic reported no windows for this "
                             "key.</p>")
