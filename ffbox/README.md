@@ -855,6 +855,7 @@ $EDITOR ~/.config/ffbox/secrets.env
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` | one per Claude account, from `claude setup-token`; bills against that subscription. **Only the first non-empty one is spent** — the rest are inventory, reported on ffweb's `/claude` page. The unnumbered `CLAUDE_CODE_OAUTH_TOKEN` is the older spelling and still works |
 | `CLAUDE_CODE_RATE_TOKEN1`, `…2`, `…3` | which plan the token in the matching slot is on, as its multiplier: `1` for Pro, `5` for Max 5x, `20` for Max 20x. Read only by ffweb's `/claude` page, which cannot ask Anthropic (see below); an undeclared slot reads as `1` |
+| `CLAUDE_CODE_NAME_TOKEN1`, `…2`, `…3` | optional label for the token in the matching slot — ffweb's `/claude` page heads that row with it instead of the variable name, so a row reads `Loth` rather than `CLAUDE_CODE_OAUTH_TOKEN2`. Undeclared or blank keeps the variable name |
 | `UNITY_EMAIL` / `UNITY_PASSWORD` | required **even for a Personal license** — activation is an online serial activation |
 | `UNITY_SERIAL` *or* `UNITY_LICENSE_FILE` | the 27-char serial, or a `.ulf` to extract it from |
 
@@ -1975,9 +1976,10 @@ Readings are cached for **15 minutes** — the windows are five hours and seven 
 reading a quarter-hour old is the same answer for any decision this page supports, and the
 fallback costs a real (if tiny) inference call. The keys are fetched in parallel so a dead one
 does not hold up the page, a key that cannot be read at all says why in a sentence while the
-others still report, and **no token is ever rendered** — a row names its key by variable, by its
-declared plan, by the account Anthropic says it belongs to when it can learn it, and by eight
-hex characters of its sha256.
+others still report, and **no token is ever rendered** — a row names its key by its declared
+name (`CLAUDE_CODE_NAME_TOKEN<n>`, falling back to the variable name), by its declared plan, by
+the account Anthropic says it belongs to when it can learn it, and by eight hex characters of
+its sha256.
 
 `/status` reports on
 the machine rather than on ffwatch.db, and it does that by running `ffbox/ffstatus.sh --json` —
