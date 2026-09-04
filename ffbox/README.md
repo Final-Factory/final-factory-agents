@@ -1450,8 +1450,16 @@ holds no *git* credential, but it does hold `CLAUDE_CODE_OAUTH_TOKEN` and the Un
 secrets, and it can still reach the two vendors those belong to.
 `docs/docker-security-model.md` is the full account, including the gaps this README does not
 cover. `CREDENTIALS.md`, next to this file, is what to actually put in each token: the three
-GitHub credentials a box holds, the requests each one makes, and the fine-grained permission set
-that covers those and nothing more.
+kinds of GitHub credential a box holds, the requests each one makes, and the fine-grained
+permission set that covers those and nothing more.
+
+The pull-request token can be held **per pool**: name a key of `secrets.env` in
+`pools.<class>.github.pr_token` and that pool publishes with it instead of the box-wide
+`GH_PR_TOKEN`, so ffagent — the lane running text written by strangers — and ffdev need not share
+a credential. Point the two names at two different GitHub accounts and every branch and pull
+request says which lane proposed it. A pool that names a key it has not been given opens no pull
+request and does NOT fall back; `ffwatch status` says which key is missing. `ffbox/config.md`
+under `pools` has the shape.
 
 ### Idle agents: a container that is already warm
 

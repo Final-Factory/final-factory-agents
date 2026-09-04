@@ -41,6 +41,7 @@ import time
 import subprocess
 import sys
 import tempfile
+import types
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -7866,6 +7867,138 @@ def test_the_two_agent_classes_are_configured_independently():
           ffwatch.class_cfg(cfg) is ffwatch.class_cfg(cfg, "ffagent"), None)
 
 
+def test_each_pool_names_its_own_github_credentials():
+    """A pool may publish with its own credential, and it says WHICH ONE BY NAME.
+
+    `pools.<class>.github.pr_token` holds the key in ~/.config/ffbox/secrets.env whose value is
+    the token. The name is what goes in config.json because the token must not: that file sits
+    on disk beside the channel ids, ffweb reads it, and an operator edits it by hand.
+
+    THE ASSERTION THAT CARRIES THE FEATURE is the one about a named key that is not installed.
+    It must NOT fall back to the box-wide GH_PR_TOKEN. A fallback there would hand ffagent --
+    the lane that runs text written by strangers in a forum -- whatever credential the dev lane
+    publishes with, silently, at the exact moment somebody believed they had separated the two.
+    Refusing costs a pull request that the reconcile sweep opens as soon as the key is installed;
+    falling back costs the split itself, and nothing anywhere would say it had happened.
+
+    `container_token` is carried and read by nothing yet. It is asserted here so that the key
+    survives a config round trip before anything depends on it.
+    """
+    print("config: each pool names its own GitHub credentials")
+    root = os.path.join(TMPROOT, "poolcreds")
+    os.makedirs(root, exist_ok=True)
+    path = os.path.join(root, "config.json")
+
+    def load(doc):
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh)
+        saved, ffwatch.FFBOX_CONFIG = ffwatch.FFBOX_CONFIG, path
+        try:
+            return ffwatch.load_config()
+        finally:
+            ffwatch.FFBOX_CONFIG = saved
+
+    kept = {k: os.environ.get(k) for k in
+            ("GH_PR_TOKEN", "GH_TOKEN", "GH_PR_TOKEN_FFAGENT", "GH_PR_TOKEN_FFDEV")}
+    try:
+        for name in kept:
+            os.environ.pop(name, None)
+        os.environ["GH_PR_TOKEN"] = "boxwide"
+
+        # NOTHING NAMED IS THE BOX EVERY MACHINE ALREADY IS. Both pools resolve to the one
+        # token, which is what ffwatch did before pools could name anything.
+        cfg = load({"max_concurrent_runs": 6})
+        check("a pool that names nothing has both keys present and null",
+              (ffwatch.class_cfg(cfg, "ffagent")["github"]
+               == {"pr_token": None, "container_token": None}), None)
+        check("and both pools publish with the box-wide token",
+              (ffwatch.pr_token_for(cfg, "ffagent"), ffwatch.pr_token_for(cfg, "ffdev"))
+              == (("boxwide", None), ("boxwide", None)), None)
+
+        # ONE POOL NAMED, THE OTHER NOT -- the shape an operator reaches for first, and the one
+        # that proves there is no inheritance in the credential either.
+        os.environ["GH_PR_TOKEN_FFDEV"] = "devtoken"
+        cfg = load({"max_concurrent_runs": 6,
+                    "pools": {"ffdev": {"github": {"pr_token": "GH_PR_TOKEN_FFDEV"}}}})
+        check("the named pool publishes with its own token",
+              ffwatch.pr_token_for(cfg, "ffdev") == ("devtoken", None), None)
+        check("and the pool that named nothing still has the box-wide one",
+              ffwatch.pr_token_for(cfg, "ffagent") == ("boxwide", None), None)
+        check("a half-filled block still carries the key it did not mention",
+              ffwatch.class_cfg(cfg, "ffdev")["github"]["container_token"] is None, None)
+        check("the client picks the token up from the pool it is given",
+              (ffwatch.GitHub(cfg, "ffdev").token, ffwatch.GitHub(cfg, "ffagent").token,
+               ffwatch.GitHub(cfg).token) == ("devtoken", "boxwide", "boxwide"), None)
+
+        # THE ONE THAT MATTERS. ffagent names a key nobody installed; the box-wide token is
+        # sitting right there in the environment and must not be reached for.
+        cfg = load({"max_concurrent_runs": 6,
+                    "pools": {"ffagent": {"github": {"pr_token": "GH_PR_TOKEN_FFAGENT"}},
+                              "ffdev": {"github": {"pr_token": "GH_PR_TOKEN_FFDEV"}}}})
+        token, why = ffwatch.pr_token_for(cfg, "ffagent")
+        check("a named key that is not installed yields NO token", token == "", token)
+        check("and never the box-wide one", token != "boxwide", token)
+        check("and says which key is missing, by name",
+              "GH_PR_TOKEN_FFAGENT" in (why or "") and "ffagent" in (why or ""), why)
+        check("while the pool whose key IS installed is unaffected",
+              ffwatch.pr_token_for(cfg, "ffdev") == ("devtoken", None), None)
+        # Installing the key is enough; nothing caches the lookup, so the next sweep uses it.
+        os.environ["GH_PR_TOKEN_FFAGENT"] = "agenttoken"
+        check("installing the key is all it takes",
+              ffwatch.pr_token_for(cfg, "ffagent") == ("agenttoken", None), None)
+
+        # A NAME IS A NAME. Anything that is not a non-empty string is null rather than
+        # something a lookup could be attempted with.
+        cfg = load({"max_concurrent_runs": 6,
+                    "pools": {"ffagent": {"github": {"pr_token": "   ",
+                                                     "container_token": 7}},
+                              "ffdev": {"github": "GH_PR_TOKEN_FFDEV"}}})
+        check("blank and non-string names read as null",
+              (ffwatch.class_cfg(cfg, "ffagent")["github"]
+               == {"pr_token": None, "container_token": None}), None)
+        check("and so does a github block that is not an object at all",
+              (ffwatch.class_cfg(cfg, "ffdev")["github"]
+               == {"pr_token": None, "container_token": None}), None)
+
+        # container_token round-trips and is read by nothing yet.
+        cfg = load({"max_concurrent_runs": 6,
+                    "pools": {"ffagent": {"github": {"container_token": "GH_CONTAINER_FFAGENT"}}}})
+        check("container_token survives the round trip",
+              (ffwatch.class_cfg(cfg, "ffagent")["github"]["container_token"]
+               == "GH_CONTAINER_FFAGENT"), None)
+        check("and naming it alone changes nothing about publishing",
+              ffwatch.pr_token_for(cfg, "ffagent") == ("boxwide", None), None)
+
+        # `status` IS WHERE SOMEBODY LOOKS. The reply that carries a missing-key refusal goes to
+        # a Discord thread; the person who can fix it is at a terminal on the box. Reads cfg and
+        # the environment and nothing else, so it needs no installation to call.
+        def creds(cfg):
+            return ffwatch.Watcher.credential_status(types.SimpleNamespace(cfg=cfg))
+
+        check("a box that has split nothing says nothing about credentials",
+              creds(load({"max_concurrent_runs": 6})) == [], None)
+        cfg = load({"max_concurrent_runs": 6,
+                    "pools": {"ffagent": {"github": {"pr_token": "GH_PR_TOKEN_FFAGENT"}},
+                              "ffdev": {"github": {"pr_token": "GH_PR_TOKEN_FFDEV"}}}})
+        lines = creds(cfg)
+        check("a named key that is installed reports itself by name",
+              len(lines) == 2 and lines[0] == "pool ffagent: pull requests use GH_PR_TOKEN_FFAGENT",
+              lines)
+        os.environ.pop("GH_PR_TOKEN_FFDEV", None)
+        lines = creds(cfg)
+        check("and a named key that is missing says so where an operator will read it",
+              "NOT SET" in lines[1] and "GH_PR_TOKEN_FFDEV" in lines[1], lines)
+        check("without ever printing a token",
+              not any("devtoken" in ln or "boxwide" in ln or "agenttoken" in ln
+                      for ln in lines), lines)
+    finally:
+        for name, value in kept.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def test_each_class_is_created_on_its_own_network():
     """The egress fence is per class, and it is decided where the CONTAINER IS CREATED.
 
@@ -10689,6 +10822,7 @@ def main():
         test_an_ffdev_turn_runs_under_ffdevs_numbers,
         test_the_outer_launch_ceiling_clears_every_phase_clock,
         test_the_two_agent_classes_are_configured_independently,
+        test_each_pool_names_its_own_github_credentials,
         test_each_class_is_created_on_its_own_network,
         test_each_class_counts_only_its_own_containers,
         test_a_conversations_class_is_settled_when_it_opens,
