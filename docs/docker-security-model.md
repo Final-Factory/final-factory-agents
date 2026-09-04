@@ -72,15 +72,24 @@ every gate on publication reads a fact the container could not write.
 It used to be why the `answer` and `triage` lanes had no `Edit` and no `Write`. That was real
 containment while it lasted, and it is worth being honest about what removing it cost: text
 written by a stranger can now reach a run that edits files. What it did not cost is anything on
-the list below — the container still holds no git or GitHub credential, the host still owns the
-refspec, there is still no merge method, and the clone is still destroyed. The worst case was
+the list below — an ffagent container still holds no git or GitHub credential, the host still owns
+the refspec, there is still no merge method, and the clone is still destroyed. The worst case was
 always "one bad branch a human has to look at", and it still is.
+
+**Everything below is written about a container with no git credential, which since 2026-09-04 is
+a property of the POOL rather than of ffbox.** `pools.<class>.github.container_token` names a key
+of `secrets.env`, and a class that names one gets that token inside every container it runs.
+ffagent — the class this whole section is about, the one whose prompts are built from text written
+by strangers — names nothing, and the guarantees hold for it exactly as stated. For a class that
+DOES name one, read "When a pool carries a git credential" at the end before assuming any of them
+still applies.
 
 ## What the container actually holds
 
 The shorthand "the container holds no credential" is wrong, and worth correcting because people
-reason from it. The accurate claim is that it holds **exactly one** credential, and it is not a git
-or GitHub one.
+reason from it. The accurate claim is that an ffagent container holds **exactly one** credential,
+and it is not a git or GitHub one. A class whose `container_token` is set holds a second, which is
+a git one; see the last section.
 
 `ffbox` passes this into `docker run`:
 
@@ -115,12 +124,18 @@ for an account that also owns the Asset Store and org membership.
 What is absent, and deliberately: `gh`, any git remote credential, and `ffdiscord`. The container
 task checks for a stray `ffdiscord` on PATH at startup and says so loudly if one resolves.
 
+`gh` and `ffdiscord` are absent from every container whatever its class. The git remote credential
+is absent from every container whose class names no `container_token`, which is ffagent and is the
+default for anything added later.
+
 ## What contains it
 
 Six things, in descending order of how much weight they carry.
 
-**No push credential anywhere in the container.** `GH_PR_TOKEN` is host-side only. There is no
-authenticated remote in the clone. This is what makes "nothing merges" true.
+**No push credential in an ffagent container.** `GH_PR_TOKEN` is host-side only. There is no
+authenticated remote in an ffagent clone. This is what makes "nothing merges" true for the lane
+that reads strangers' text — and it is the item on this list that a `container_token` removes, for
+whichever class sets one. The other five stand whatever the class.
 
 **The host builds the refspec.** `push_bundle()` in `ffwatch.py` pushes
 `refs/ffbox/<branch>:refs/heads/<branch>`, where `<branch>` is `branch_prefix + run_id`, chosen
@@ -451,7 +466,9 @@ gets a new branch, and resumes a transcript that remembers edits the files no lo
 Fetching the conversation's prior branch into the clone would fix it and needs no credential in
 the container.
 
-## Considered and rejected: a credential inside the container
+## When a pool carries a git credential
+
+### Considered and rejected for ffagent, and taken for ffdev on 2026-09-04
 
 The proposal was to let the container push directly, bounded by GitHub permissions: create and
 push feature branches, never `master` or `develop`.
@@ -484,10 +501,69 @@ never a model reviewing a model's diff. Judging intent is exactly what prompt in
 and it would put a model back on the credentialed host, which is the one thing this design has
 kept clean.
 
+### What was actually done
+
+Every argument above still holds, and none of it was overturned. What changed is that it is no
+longer one decision for the whole box. `pools.<class>.github.container_token` names a key of
+`~/.config/ffbox/secrets.env`; `ffbox` forwards that variable into the containers of that class
+alone, and `entrypoint.sh` stages it as `~/.git-credentials` at 600 with a global
+`credential.helper store`. A class that names nothing has no such file and no such variable, which
+is the state every container was in before this existed.
+
+**ffagent names nothing, and that is where the argument above applies unchanged.** Its prompts are
+built from text written by strangers in a forum, the container is assumed hostile, and handing it
+a credential would undo the premise. Nothing in this repository points `container_token` at ffagent
+and nothing should.
+
+**ffdev names one, and it is a different lane.** Only an account in `discord.trust.operators` can
+open a conversation in it; its prompts are a developer's own words, and it already runs on the
+open bridge with no egress filter because a dev turn has to be able to read documentation and
+fetch a package. A pool trusted with unfiltered network access is not made meaningfully more
+dangerous by a scoped git credential — the exfiltration argument above assumes an attacker who can
+reach the prompt, and for ffdev that attacker is the operator.
+
+### What it costs, stated plainly
+
+For a class that carries one, **"nothing merges, ever" is no longer held by this repository.** It
+is held by the token's scope and by branch protection on GitHub, and by nothing else. Specifically:
+
+- The deny list does not hold it. `Bash(git push*)` is a tripwire that `sh -c 'git push'` walks
+  straight through, and it has been measured doing so. This was true before; it mattered less when
+  there was no credential for it to reach.
+- The host's refspec ownership does not hold it. That governs what `push_bundle` pushes, and an
+  agent with a credential is not going through `push_bundle`.
+- `GH_PR_TOKEN`'s missing contents:write does not hold it. That caps the pull-request opener on the
+  host, which is a different process with a different token.
+
+So the container token is the whole of the boundary, and it should be minted like it:
+
+| Permission | Level | Why |
+| --- | --- | --- |
+| Contents | **Read** | Fetch, pull, clone, history. This is the default and it is enough for almost everything a dev turn wants. |
+| Metadata | Read | Mandatory. |
+| Everything else | No access | Including Pull requests: the host opens those, and the container has no business doing it. |
+
+Contents **read** rather than write is the recommendation, and it is not a token half-configured.
+A run's work reaches origin through the harvest and `push_bundle` either way — that path is
+unchanged and is still how anything gets published — so contents:read costs the container nothing
+it was doing and removes direct-push from the table entirely. Widen it to write only if you decide
+agent runs may push mid-turn, and put branch protection on `master` and `develop` first.
+
+`ffwatch status` prints which key each pool carries and whether it is installed. `ffbox` says the
+same at launch, and warns when a class carrying a credential is put on the fenced network, where
+`github.com` is not in the allowlist and git fails at the SNI rather than at the credential.
+
+The credential is matched by HOST. It is offered to `github.com` and to nothing else, so a prompt
+that talks a run into cloning from somewhere else does not hand the token over with it.
+`GIT_TERMINAL_PROMPT=0` is set in every container so an unauthenticated host fails in one line
+that says what it is.
+
 ## Tests
 
-`python3 ffbox/test_ffwatch.py`. No network, no token, no Docker, no ZFS. The ones that pin this
-document:
+`python3 ffbox/test_ffwatch.py`, and `sh ffbox/test_container_credential.sh` for the section
+above — the latter runs the real `ffbox` against a stub `docker` and asserts that ffagent's
+containers are handed no credential, that ffdev's are, and that the token's value never reaches
+argv. No network, no token, no Docker, no ZFS. The ones that pin this document:
 
 - `test_allow_list_is_scope_not_a_boundary`
 - `test_the_agent_commits_its_own_work`

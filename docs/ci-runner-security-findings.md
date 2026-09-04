@@ -183,7 +183,7 @@ things learned doing it, both worth knowing before adding the same flags to ffbo
 `UNITY_PASSWORD` into the container. Any code running inside reads all four with `env`. No
 isolation helps, because they were deliberately handed over.
 
-`docker-security-model.md`'s "Considered and rejected: a credential inside the container" covers
+`docker-security-model.md`'s "When a pool carries a git credential" covers
 the decision about the *git* credential. These four are a separate question and do not appear to
 have had the same treatment.
 

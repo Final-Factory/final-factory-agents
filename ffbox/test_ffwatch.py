@@ -7881,8 +7881,9 @@ def test_each_pool_names_its_own_github_credentials():
     Refusing costs a pull request that the reconcile sweep opens as soon as the key is installed;
     falling back costs the split itself, and nothing anywhere would say it had happened.
 
-    `container_token` is carried and read by nothing yet. It is asserted here so that the key
-    survives a config round trip before anything depends on it.
+    `container_token` names the credential that goes INSIDE that pool's containers; what is
+    asserted here is only that it survives the config round trip and does not disturb publishing.
+    What it does with that name is ffbox's, and `ffbox/test_container_credential.sh` covers it.
     """
     print("config: each pool names its own GitHub credentials")
     root = os.path.join(TMPROOT, "poolcreds")
@@ -7960,7 +7961,8 @@ def test_each_pool_names_its_own_github_credentials():
               (ffwatch.class_cfg(cfg, "ffdev")["github"]
                == {"pr_token": None, "container_token": None}), None)
 
-        # container_token round-trips and is read by nothing yet.
+        # container_token round-trips, and naming one says nothing about pull requests: they are
+        # two credentials doing two jobs, and a pool may hold either without the other.
         cfg = load({"max_concurrent_runs": 6,
                     "pools": {"ffagent": {"github": {"container_token": "GH_CONTAINER_FFAGENT"}}}})
         check("container_token survives the round trip",
@@ -7991,6 +7993,22 @@ def test_each_pool_names_its_own_github_credentials():
         check("without ever printing a token",
               not any("devtoken" in ln or "boxwide" in ln or "agenttoken" in ln
                       for ln in lines), lines)
+
+        # THE CONTAINER TOKEN IS REPORTED TOO, and it is the one that matters more: it is a git
+        # credential INSIDE a container, and for the class carrying one it is the whole of what
+        # stands between an agent and a direct push. Nobody should have to read config.json to
+        # find out which pool has one.
+        cfg = load({"max_concurrent_runs": 6,
+                    "pools": {"ffdev": {"github": {"pr_token": "GH_PR_TOKEN_FFDEV",
+                                                   "container_token": "GH_CONTAINER_FFDEV"}}}})
+        os.environ["GH_PR_TOKEN_FFDEV"] = "devtoken"
+        lines = creds(cfg)
+        check("both of a pool's credentials appear on its one line",
+              len(lines) == 1 and lines[0] == ("pool ffdev: pull requests use GH_PR_TOKEN_FFDEV,"
+                                               " containers carry GH_CONTAINER_FFDEV (NOT SET)"),
+              lines)
+        check("and the pool carrying neither is not mentioned at all",
+              not any("ffagent" in ln for ln in lines), lines)
     finally:
         for name, value in kept.items():
             if value is None:

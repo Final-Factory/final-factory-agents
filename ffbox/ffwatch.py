@@ -5525,19 +5525,27 @@ class Watcher:
         runs while wondering why a lane stopped publishing is where it should be legible.
 
         THE NAME IS PRINTED AND THE VALUE NEVER IS. Whether the key is set is the whole of what
-        somebody needs in order to go and fix it.
+        somebody needs in order to go and fix it, and a status command is read over shoulders and
+        pasted into messages.
 
-        `container_token` is deliberately not reported: nothing reads it yet, and a status line
-        for it would imply it does something.
+        BOTH CREDENTIALS, because `container_token` stopped being inert on 2026-09-04 and is now
+        the more consequential of the two: it is a git credential inside a container, and for the
+        class that carries one it is the whole of what stands between an agent and a direct push.
+        A box should not have to read config.json to find out which of its pools has one.
         """
         lines = []
         for agent_class in AGENT_CLASSES:
-            name = (class_cfg(self.cfg, agent_class).get("github") or {}).get("pr_token")
-            if not name:
-                continue
-            installed = bool((os.environ.get(name) or "").strip())
-            lines.append(f"pool {agent_class}: pull requests use {name}"
-                         + ("" if installed else " — NOT SET, so this pool opens none"))
+            gh = class_cfg(self.cfg, agent_class).get("github") or {}
+            held = []
+            for key, does in (("pr_token", "pull requests use"),
+                              ("container_token", "containers carry")):
+                name = gh.get(key)
+                if not name:
+                    continue
+                installed = bool((os.environ.get(name) or "").strip())
+                held.append(f"{does} {name}" + ("" if installed else " (NOT SET)"))
+            if held:
+                lines.append(f"pool {agent_class}: " + ", ".join(held))
         return lines
 
     def pool_status(self):

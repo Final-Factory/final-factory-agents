@@ -1451,24 +1451,31 @@ branch and no PR — and no test run either, since the container skips the suite
 changed nothing, which is what makes verification affordable on a typed question. A triage verdict of `AUTOFIX` enqueues a separate fix turn, deliberately
 re-based onto `develop` and told so in its prompt.
 
-`GH_PR_TOKEN` is host-side only and never enters the container, which has no `gh` binary and no
-push credential. That, not the deny list, is what makes "nothing merges" true — and there is
-deliberately no merge method on the GitHub client. Note the scope of that claim: the container
-holds no *git* credential, but it does hold one Claude token — `CLAUDE_CODE_OAUTH_TOKEN`, the
-single account ffbox resolved out of the pool, never the others — and the Unity account secrets,
-and it can still reach the two vendors those belong to.
+`GH_PR_TOKEN` is host-side only and never enters the container, which has no `gh` binary. An
+ffagent container also has no push credential, and that, not the deny list, is what makes
+"nothing merges" true for the lane that reads strangers' text — there is deliberately no merge
+method on the GitHub client either. A pool that sets `container_token` gives that property up for
+itself, on purpose; see below. Note the scope of that claim: an ffagent container holds no *git*
+credential, but it does hold one Claude token — `CLAUDE_CODE_OAUTH_TOKEN`, the single account
+ffbox resolved out of the pool, never the others — and the Unity account secrets, and it can
+still reach the two vendors those belong to.
 `docs/docker-security-model.md` is the full account, including the gaps this README does not
 cover. `CREDENTIALS.md`, next to this file, is what to actually put in each token: the three
 kinds of GitHub credential a box holds, the requests each one makes, and the fine-grained
 permission set that covers those and nothing more.
 
-The pull-request token can be held **per pool**: name a key of `secrets.env` in
-`pools.<class>.github.pr_token` and that pool publishes with it instead of the box-wide
-`GH_PR_TOKEN`, so ffagent — the lane running text written by strangers — and ffdev need not share
-a credential. Point the two names at two different GitHub accounts and every branch and pull
+A pool can hold **its own GitHub credentials**, named in `pools.<class>.github`. `pr_token`
+names a key of `secrets.env` that this pool publishes with instead of the box-wide `GH_PR_TOKEN`,
+so ffagent — the lane running text written by strangers — and ffdev need not share one. Point the two names at two different GitHub accounts and every branch and pull
 request says which lane proposed it. A pool that names a key it has not been given opens no pull
-request and does NOT fall back; `ffwatch status` says which key is missing. `ffbox/config.md`
-under `pools` has the shape.
+request and does NOT fall back; `ffwatch status` says which key is missing.
+
+`container_token` names a token that goes **inside** that pool's containers, staged as
+`~/.git-credentials`, which is what makes `git fetch`/`pull`/`clone` work against GitHub in a run.
+ffdev has one; ffagent names nothing and must keep naming nothing. Mint it contents:READ — write
+means an agent that can push branches directly, and for that pool "nothing merges" then rests on
+branch protection rather than on anything here. `ffbox/CREDENTIALS.md` section 4 and
+`docs/docker-security-model.md` cover it; `ffbox/config.md` under `pools` has the shape.
 
 ### Idle agents: a container that is already warm
 
@@ -1915,6 +1922,11 @@ Offline tests: `python3 ffbox/test_ffwatch.py`. They stub `ffdiscord`, `ffbox` a
 they need no network, no token, no Docker and no ZFS. The end-to-end case has the stub container
 forge an `outbox.jsonl` and asserts that none of it reaches the wire — the reply that goes out
 is the host's, composed from the structured verdict.
+
+Three more, all offline and all against the real script rather than a stub of it:
+`python3 ffbox/test_ffweb.py`, `sh ffbox/test_pool_task.sh` (the staged container's idle
+failsafe), and `sh ffbox/test_container_credential.sh` (which pool's containers are handed a git
+credential, and that the token's value never reaches argv).
 
 ### The web UI (`ffweb`)
 

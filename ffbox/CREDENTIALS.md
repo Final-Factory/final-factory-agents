@@ -1,10 +1,11 @@
 # GitHub credentials on an ffbox host
 
-Three KINDS of GitHub credential live on a build box, and they are not interchangeable. Each
+Four KINDS of GitHub credential can live on a build box, and they are not interchangeable. Each
 one exists because a different process needs to talk to GitHub, and each should be minted
 separately so that a leak of one does not carry the others' capabilities. Kinds rather than
-tokens because the first one can be held per agent pool since 2026-09-04, so a box may carry two
-of it; see "One per pool" below.
+tokens because the first can be held per agent pool since 2026-09-04, so a box may carry two of
+it; see "One per pool" below. The fourth is optional, off by default, and is the only one that
+goes INSIDE a container — read section 4 before turning it on.
 
 Everything below was derived by reading the code that sends the requests **and then probing the
 live tokens against the API**. Both halves are necessary, and the first alone is what left a
@@ -100,8 +101,8 @@ TWO accounts buy an author on every branch and pull request that says which lane
 which is what lets branch protection, CODEOWNERS and a reviewer treat the lanes differently. The
 code is the same; what you point the names at is the decision.
 
-`container_token` sits beside it in the same block, is a key name in the same file, and is read
-by nothing yet.
+`container_token` sits beside it in the same block and is a key name in the same file. It is a
+different credential doing a different job, and it is section 4.
 
 **This splits the pull request and not the push.** Section 2's credential is still one file
 matched by host and still shared by both lanes and by CI.
@@ -213,10 +214,74 @@ allowed to fail a build, so nothing else breaks and nobody notices.
 Do not use a classic PAT here. The classic scope for the runner endpoints is `admin:org`, which
 is enormously wider than the one organization permission actually in use.
 
+## 4. The container token — the only credential that goes inside a container
+
+**Off unless a pool asks for it, and ffagent must never ask.** `pools.<class>.github.container_token`
+in `config.json` names the key in `secrets.env` whose value it is. `ffbox` forwards that variable
+into the containers of that class alone — as `-e FFBOX_GH_TOKEN` with no `=`, so the value comes
+from ffbox's own environment and never appears in argv — and `entrypoint.sh` stages it as
+`~/.git-credentials` at 600 with a global `credential.helper store`, while it is still root and
+before it drops to the run user. A class naming nothing gets no variable and no file, which is
+what every container had before this existed.
+
+It exists so an ffdev turn can do real git work: fetch what landed since its workspace was
+cached, read history that is not in the mirror, clone a sibling repository. `origin` in the
+container is already `https://github.com/Final-Factory/FinalFactory` — the workspace comes from
+CI's checkout — so a credential is the only piece that was missing.
+
+Resource owner: `Final-Factory`. Repository access: `Final-Factory/FinalFactory`, and add another
+repository only if a turn genuinely needs to read it.
+
+| Permission | Level |
+| --- | --- |
+| Contents | **Read** |
+| Metadata | Read (mandatory) |
+| Everything else | No access |
+
+CONTENTS **READ**, NOT WRITE, IS THE RECOMMENDATION, and it is not a token left half-configured.
+A run's work reaches origin through the harvest and `push_bundle` on the host, which is unchanged
+and is still how anything gets published, so read costs the container nothing it was doing.
+
+WHAT WRITE WOULD COST, stated so the choice is made deliberately: for a class carrying this token,
+"nothing merges, ever" is no longer held anywhere in this repository. It is held by the token's
+scope and by branch protection on GitHub. The three legs that hold it elsewhere all miss:
+
+- the agent's deny list does not hold it, because `Bash(git push*)` is a tripwire that
+  `sh -c 'git push'` walks straight through, measured;
+- the host owning the refspec does not hold it, because an agent with a credential is not going
+  through `push_bundle`;
+- `GH_PR_TOKEN` lacking contents:write does not hold it, because that caps a different process
+  holding a different token.
+
+So contents:write here means an agent that can push to any branch the token can reach, `master`
+included unless GitHub is protecting it. Turn it on only after branch protection is in place on
+`master` and `develop`, and only if you have decided that agent runs may push mid-turn.
+
+Give it no Pull requests permission. The host opens those, with `GH_PR_TOKEN`, and a container
+that can open one has a way to propose work that skipped every gate in `publish()`.
+
+The credential is matched by HOST, so it is offered to `github.com` and to nothing else — not to a
+package registry, not to whatever a prompt talks a run into cloning. `GIT_TERMINAL_PROMPT=0` is
+set in every container, so an unauthenticated host fails in one line that says so instead of
+reading a terminal that is not there.
+
+Two things that make it visible: `ffwatch status` names each pool's credentials and says whether
+they are installed, and `ffbox` says the same at launch. `ffbox` also warns when a class carrying
+this token runs on the fenced network, where `github.com` is absent from
+`ffbox/egress/allowlist.txt` and git fails at the SNI rather than at the credential — ffdev is on
+the open bridge, so this is a warning about a combination somebody configured, not about ffdev.
+
+Failure mode with too little: git inside the container fails with a 403 on fetch. Failure mode
+with too much: nothing fails, which is the problem.
+
+`docs/docker-security-model.md`, "When a pool carries a git credential", is the full argument,
+including why the same thing is refused for ffagent.
+
 ## Why the split is load-bearing
 
-The container holds no git credential and has no `gh` binary. That, not the agent's deny list,
-is what makes "nothing merges, ever" true: a deny pattern like `Bash(git push*)` is a tripwire
+An ffagent container holds no git credential and no container has a `gh` binary. That, not the
+agent's deny list, is what makes "nothing merges, ever" true for the lane that reads strangers'
+text — and section 4 is the one way that property is given up, per pool and on purpose: a deny pattern like `Bash(git push*)` is a tripwire
 that `sh -c 'git push'` walks straight through, and it has been measured doing so. Publication
 is physically the host's job.
 
