@@ -460,6 +460,35 @@ DEFAULTS = {
                    "summary why you did.",
     },
 
+    # WHAT THE HARNESS IS WILLING TO PUSH, PER BASE BRANCH (2026-09-03). One block per branch
+    # name — the same names publish_bases uses, because it is the same question asked from the
+    # other end — carrying one field:
+    #
+    #   "permissions": "all"        anything that earns a push gets one, which is what every
+    #                               base did before this block existed.
+    #                  "operators"  only work from a turn whose trust tier is `operator`: a
+    #                               Discord account in trust.operators, or a prompt typed on
+    #                               this box (`ffwatch submit`, the web page), which
+    #                               turn_trust() calls an operator's for the same reason —
+    #                               somebody with a login here wrote it.
+    #                  "none"       nothing, ever. Nothing is pushed, and nothing comes back for
+    #                               it later either — the bundle is left in the run directory
+    #                               like any other refusal's, and read by nothing.
+    #
+    # IT GATES THE PUSH, WHICH IS EARLIER THAN EVERY OTHER GATE IN publish(). The verification
+    # gate and the confidence gate withhold the PULL REQUEST and publish the branch anyway, so
+    # that work cannot be lost with the ZFS clone. This one answers a different question — may
+    # this work reach origin at all — and a base that says no leaves nothing on the remote to
+    # withhold a proposal about.
+    #
+    # EMPTY BY DEFAULT, exactly like `watch` and for the same reason: it is policy about one
+    # repository's branches, and a built-in answer would be a rule nobody reading the config
+    # can see — work would vanish and the file would not say why. A box with no `branches`
+    # block restricts nothing and behaves as every box did before this landed;
+    # 05-discord-setup.sh seeds the real policy into config.json, which is where an operator
+    # can read it, and ffbox/config.md documents it.
+    "branches": {},
+
     # -- verification (design section 14) --------------------------------------------------
     # The fast EditMode suite by default, matching the game repo's "run FFEditorTests unless
     # asked for everything" rule. Empty runs every EditMode assembly, which is the slow suite.
@@ -1219,6 +1248,77 @@ def discord_agent_class(cfg, author_id):
     return discord_pool(cfg, "operator_pool" if is_operator(cfg, author_id) else "user_pool")
 
 
+# ------------------------------------------------------------------------------------------
+# branch permissions  (what the harness may push)
+# ------------------------------------------------------------------------------------------
+# THE OTHER HALF OF THE TRUST TABLE ABOVE. turn_trust() answers who wrote the text a run was
+# built from; this answers what that run may leave on origin, keyed on the branch its work is
+# based on. Both are decided from config alone, neither is ever decided by a model, and neither
+# is ever read out of what the agent wrote about itself.
+
+BRANCH_PERMISSIONS = ("all", "operators", "none")
+# A BASE NOBODY LISTED IS UNRESTRICTED. `branches` is a set of rules about named branches, not
+# the list of branches a run may target — publish_bases is that list, and pr_base() has already
+# checked the name against it AND against the pushed commits before anything here is asked. A
+# name in one table and not the other is an omission on a line an operator can see, so it reads
+# as "no rule", never as "no".
+UNLISTED_BRANCH_PERMISSION = "all"
+# A BASE THE HARNESS COULD NOT ESTABLISH, and only once some rule exists. pr_base() answers None
+# when the pushed commits descend from no configured base, and then there is no rule to look up
+# — the one place this table has to guess. It guesses at the middle answer rather than the
+# permissive one: a box that has written any policy at all has said it cares where work goes,
+# and "we could not tell which branch this is for" must not be the way round it. With no table
+# configured this never applies and nothing is restricted.
+UNKNOWN_BASE_PERMISSION = "operators"
+# A `permissions` VALUE THAT IS NOT ONE OF THE THREE — the same shape as resolve_network_mode:
+# never raise, never invent a fourth answer, fall back in the safe direction. Not all the way
+# to "none", because a typo must not silently DESTROY a run's work; "operators" keeps a dev's
+# turn publishing and stops a stranger's, and config_warnings says which key was unreadable.
+UNREADABLE_BRANCH_PERMISSION = "operators"
+
+
+def branch_permission(cfg, base):
+    """What the config lets the harness push for work based on `base`, as one of
+    BRANCH_PERMISSIONS. Never raises and never returns anything else."""
+    table = cfg.get("branches") or {}
+    if not isinstance(table, dict) or not table:
+        return "all"
+    if not base:
+        return UNKNOWN_BASE_PERMISSION
+    block = table.get(base)
+    if not isinstance(block, dict):
+        return UNLISTED_BRANCH_PERMISSION
+    value = block.get("permissions")
+    value = value.strip().lower() if isinstance(value, str) else ""
+    return value if value in BRANCH_PERMISSIONS else UNREADABLE_BRANCH_PERMISSION
+
+
+def push_permitted(cfg, base, tier):
+    """(ok, reason). May the harness push work based on `base`, for a turn of this trust tier?
+
+    THE TIER IS THE TURN'S, NOT THE CONVERSATION'S. turn_trust() writes it when the turn is
+    created, from Discord's authenticated author.id or from the fact that the prompt was typed
+    on this box, and it is already the conservative reading of a batch: one player among the
+    authors makes the whole turn a player's. So "operators" here means what it says on the
+    Discord side — an account in trust.operators — and it also covers `ffwatch submit` and the
+    web page, which are somebody with a login on this machine.
+
+    The reason is written for a human reading a reply or the run page, and names the branch,
+    because "nothing was pushed" without the base is a sentence nobody can act on.
+    """
+    permission = branch_permission(cfg, base)
+    if permission == "all":
+        return True, None
+    named = base or "a base the harness could not establish"
+    if permission == "none":
+        return False, (f"the config allows the harness to push nothing based on {named}, "
+                       "so this work was discarded with the run")[:200]
+    if (tier or "player") == "operator":
+        return True, None
+    return False, (f"work based on {named} may only be pushed for an operator, and this turn "
+                   "is a player's, so it was discarded with the run")[:200]
+
+
 def watch_entry(cfg, alias):
     entry = (cfg.get("watch") or {}).get(alias or "")
     return entry if isinstance(entry, dict) else {}
@@ -1456,6 +1556,26 @@ def config_warnings(cfg):
         if entry.get("engage") not in ENGAGEMENTS:
             out.append(f"watch.{alias} declares no valid engage (got {entry.get('engage')!r}); "
                        f"waking only on a direct MENTION")
+    # WHAT THIS BOX WILL NOT PUSH, said out loud at startup. A branch closed to the harness is
+    # the one policy here whose effect is INVISIBLE from the outside: the run works, the agent
+    # reports a fix, and the commits go in the bin with the run directory. An operator who
+    # cannot see the rule reads that as the harness losing work. Nothing is printed for a box
+    # with no `branches` block, which is every box that has not opted in and is not a decision
+    # about anything.
+    for name in sorted((cfg.get("branches") or {}) if isinstance(cfg.get("branches"), dict)
+                       else {}):
+        block = (cfg.get("branches") or {}).get(name)
+        raw = block.get("permissions") if isinstance(block, dict) else None
+        permission = branch_permission(cfg, name)
+        if not isinstance(raw, str) or raw.strip().lower() not in BRANCH_PERMISSIONS:
+            out.append(f"branches.{name}.permissions is {raw!r}, which is not one of "
+                       f"{', '.join(BRANCH_PERMISSIONS)}; treating it as {permission.upper()}")
+        elif permission == "none":
+            out.append(f"branches.{name}: NOTHING based on {name} is pushed. A run whose work "
+                       f"descends from it is discarded with the run directory")
+        elif permission == "operators":
+            out.append(f"branches.{name}: work based on {name} is pushed only for an OPERATOR "
+                       f"— a Discord account in trust.operators, or a prompt typed on this box")
     # The clustering knobs are the other thing a channel runs on silently. Unlike venue and
     # engage these have a safe default rather than a fail-closed one, so this is information
     # and not a warning about a decision nobody made — but a channel clustering on numbers
@@ -6050,7 +6170,23 @@ class Watcher:
                       # situation it is already in, so that it commits onto the branch instead
                       # of making a second one and wondering why its name did not survive.
                       "conversation_branch": self.conversation_branch(conv),
-                      "choices": dict(self.cfg.get("publish_bases") or {})},
+                      "choices": dict(self.cfg.get("publish_bases") or {}),
+                      # WHICH OF THOSE THE HARNESS WOULD ACTUALLY PUBLISH, FOR THIS TURN.
+                      # `branches.<name>.permissions` is checked at the push and cannot be
+                      # argued with there, so a container that has not been told about it does
+                      # the one thing that wastes the whole run: takes the base it was told is
+                      # the default — master — writes the change, and has every commit refused.
+                      #
+                      # RESOLVED HERE, TO A LIST OF NAMES, because the tier is a host fact.
+                      # Sending the rule instead would put a second copy of it in the container,
+                      # where it could disagree with the one that is enforced; sending the
+                      # answer cannot. Empty is a real answer and the preamble says so: a
+                      # player's turn on a box that reserves both bases for operators can
+                      # publish nothing, and that is worth knowing before the work rather than
+                      # after it.
+                      "publishable": [name for name in (self.cfg.get("publish_bases") or {})
+                                      if push_permitted(self.cfg, name,
+                                                        turn["trust_tier"])[0]]},
             # Verification is on for every run. It costs nothing on a run that changed no files:
             # the container skips the suite when the tree is untouched, so a question does not
             # spend fifteen minutes proving it changed nothing.
@@ -6364,7 +6500,7 @@ class Watcher:
 
         THE CONTAINER NEVER TALKS TO GITHUB. restore-workspace.sh fills the workspace from
         `$MIRROR` with `+refs/heads/*:refs/remotes/origin/*`, so `--ref <branch>` resolves for a
-        run only if the mirror has that branch under refs/heads. push_bundle pushes from the
+        run only if the mirror has that branch under refs/heads. push_staged pushes from the
         GOLDEN CHECKOUT to origin and never touches the mirror, and what does refresh the mirror
         is the CI runners' own fetch (runners/lib/mirror.sh), driven by GitHub Actions on no
         schedule this daemon controls.
@@ -7638,6 +7774,15 @@ class Watcher:
         it cannot be lost with the ZFS clone; only the proposal to merge is withheld. No changed
         files means no branch and no PR at all.
 
+        THE ONE EXCEPTION IS THE BRANCH-PERMISSION GATE, and it is deliberately the earliest
+        thing here that can stop a publish: `branches.<base>.permissions` in the config decides
+        whether the harness may push work based on that branch at all, and for whom. A base set
+        to "none" is never pushed; one set to "operators" is pushed only for a turn whose trust
+        tier is operator. A refusal leaves nothing on origin and nothing for the reconcile sweep
+        to find, which is what "the work is discarded" means: nothing will act on those commits
+        again. Nothing here deletes them — the bundle stays in the run directory, as it does for
+        every other refusal in this method.
+
         LOCAL RUNS PUBLISH TOO, since 2026-08-23. A shell or web prompt used to return here
         immediately, on the reasoning that the person who typed it was standing at the terminal
         and could push it themselves. What they were actually left with was a patch file in a
@@ -7691,16 +7836,49 @@ class Watcher:
                 f"this run harvested {branch}, but conversation {conv['id']} publishes as "
                 f"{owned}; refusing to open a second branch for one conversation"[:200])
 
-        self.db.execute("UPDATE run SET bundle_path=?, changed_files=?, branch=? WHERE id=?",
-                        (bundle, len(changed), branch, run_row_id))
+        # THE FILE COUNT IS A FACT ABOUT THE RUN whatever happens to the work, so it is recorded
+        # before any gate can stop this. bundle_path and branch are not: see below.
+        self.db.execute("UPDATE run SET changed_files=? WHERE id=?", (len(changed), run_row_id))
 
-        ok, err = self.push_bundle(bundle, branch)
+        # STAGED, NOT PUSHED. Both decisions below need the run's commits to be here — pr_base
+        # ancestry-checks them, and the permission gate keys off its answer — and a fetch into
+        # refs/ffbox/ is local and reversible where a push is neither.
+        ok, err = self.stage_bundle(bundle, branch)
         if not ok:
             return self._no_branch(run_row_id, err)
-        # AFTER the push, because it is checked against the pushed commits. Recorded whether or
-        # not a PR follows: which branch the work is for is a fact about the work, and the
-        # verification gate below can withhold the PR without making that fact unavailable.
+        # Checked against the staged commits rather than the pushed ones: the same commits, one
+        # step earlier. Recorded whether or not a PR follows, because which branch the work is
+        # for is a fact about the work, and the verification gate below can withhold the PR
+        # without making that fact unavailable.
         base, base_reason = self.pr_base(run_row_id, run_dir, branch)
+        # MAY THIS WORK REACH ORIGIN AT ALL. Every other gate in this method withholds the PULL
+        # REQUEST and publishes the branch regardless, so nothing is lost with the ZFS clone.
+        # This one is not that: `branches.<base>.permissions` in the config says which base
+        # branches the harness may push work for and for whom, and a refusal here means the
+        # commits stay in the run directory and go with it. That is the point of it — the two
+        # things it stops are a stranger in a forum getting code onto origin, and anything at
+        # all landing next to a branch an operator has closed.
+        #
+        # THE TIER IS THE TURN'S, from turn_trust(), which read Discord's authenticated
+        # author.id or the fact that somebody typed the prompt on this box. Never the agent's
+        # word for who asked, and never the conversation's — a player answering in an
+        # operator's thread makes that TURN a player's, which is the conservative direction.
+        allowed, refusal = push_permitted(self.cfg, base, turn["trust_tier"])
+        if not allowed:
+            self.drop_staged(branch, owned)
+            return self._no_branch(run_row_id, refusal)
+
+        # BUNDLE_PATH IS THE SWEEP'S TO-DO LIST, and that is why it is written here rather than
+        # with changed_files above. reconcile_publication() selects the newest run that has one
+        # and finishes publishing it; a run this gate refused must never appear in that query,
+        # or a branch the config closed would be pushed fifteen minutes later by the thing whose
+        # whole job is to finish what publish() started. (The sweep re-checks the permission
+        # too. Both, because the invariant is worth more than either.)
+        self.db.execute("UPDATE run SET bundle_path=?, branch=? WHERE id=?",
+                        (bundle, branch, run_row_id))
+        ok, err = self.push_staged(branch)
+        if not ok:
+            return self._no_branch(run_row_id, err)
         # `owned` IS THE ANSWER TO "did this run make the branch or add to one". It was read
         # before the claim below, so it still says what the conversation looked like when the
         # run started publishing: set means an earlier turn already put this branch on origin
@@ -7857,8 +8035,10 @@ class Watcher:
         it VERIFIES it, which is a different and much shorter job:
 
           * the name is one of `publish_bases`, so the file cannot name an arbitrary ref, and
-          * `origin/<name>` is an ancestor of what we just pushed, so the pull request is a
-            proposal to fast-forward that branch rather than a diff against a stranger.
+          * `origin/<name>` is an ancestor of what the run harvested — read from
+            refs/ffbox/<branch>, which is staged before this is asked and pushed after — so the
+            pull request is a proposal to fast-forward that branch rather than a diff against a
+            stranger.
 
         Both matter because `run_dir` is bind-mounted into the container: the agent can write
         this file, and ffbox overwriting it at harvest is not something to lean on. What it
@@ -7966,6 +8146,11 @@ class Watcher:
         sitting still until a sweep comes past — design section 14's gate is not negotiable by
         the agent and it is not negotiable by the passage of time either.
 
+        IT RE-RUNS THE BRANCH-PERMISSION GATE for the same reason, one step earlier: a base the
+        config closes is not pushed here either. A run publish() refused has no `bundle_path`
+        and so is not selected by this method at all, which makes this the second lock on one
+        door — what it catches is a rule written AFTER a push failed for some ordinary reason.
+
         IT OPENS NOTHING FOR A HEAD THAT HAS EVER HAD A PULL REQUEST. Not an open one, not a
         merged one, and above all not one a human closed: this path has no new commits by
         construction — it exists precisely because nothing new was published — so there is
@@ -8017,12 +8202,33 @@ class Watcher:
             # A run whose push succeeded is done being pushed.
             if not os.path.exists(run["bundle_path"]):
                 return None                 # the clone is long gone; there is nothing to send
-            ok, err = self.push_bundle(run["bundle_path"], branch)
+            ok, err = self.stage_bundle(run["bundle_path"], branch)
             if not ok:
                 log(f"reconcile: {branch} still could not be pushed: {err}")
                 self.db.execute("UPDATE run SET no_branch_reason=? WHERE id=?", (err, run["id"]))
                 return None
             base, _ = self.pr_base(run["id"], run_dir, branch)
+            # THE BRANCH-PERMISSION GATE AGAIN, for the same reason the verification gate is
+            # re-run below: a push publish() refused is a decision, not a transient failure, and
+            # nothing may acquire a push by sitting still until a sweep comes past. A run that
+            # was refused has no bundle_path and never reaches this method at all, so this is
+            # the second lock on the same door — it catches the config being tightened AFTER a
+            # push failed for some ordinary reason, which is exactly when a stranded branch and
+            # a new rule about it meet.
+            turn = self.db.one("SELECT * FROM turn WHERE id=?", (run["turn_id"],))
+            allowed, refusal = push_permitted(self.cfg, base,
+                                              turn["trust_tier"] if turn else None)
+            if not allowed:
+                self.drop_staged(branch, owned)
+                log(f"reconcile: {branch} was not pushed — {refusal}")
+                self.db.execute("UPDATE run SET no_branch_reason=? WHERE id=?",
+                                (refusal, run["id"]))
+                return None
+            ok, err = self.push_staged(branch)
+            if not ok:
+                log(f"reconcile: {branch} still could not be pushed: {err}")
+                self.db.execute("UPDATE run SET no_branch_reason=? WHERE id=?", (err, run["id"]))
+                return None
             # `owned` carries the same meaning here as in publish(): read before the claim
             # below, so it still says whether an earlier turn had already put this branch on
             # origin — which is the difference between a reply that says a fix was created and
@@ -8175,8 +8381,18 @@ class Watcher:
                 opened += 1
         return opened
 
-    def push_bundle(self, bundle, branch):
-        """(ok, error). Fetch the run's commits out of the bundle and push them to the remote.
+    def _git(self, *args, timeout=600):
+        """One `git -C git_dir`, never raising. A publish must not die on a missing binary or a
+        hung fetch — every caller here turns a non-zero return into a reason a human reads."""
+        try:
+            return subprocess.run(["git", "-C", self.cfg["git_dir"], *args],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=timeout)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return subprocess.CompletedProcess(args, 1, "", f"{type(exc).__name__}: {exc}")
+
+    def stage_bundle(self, bundle, branch):
+        """(ok, error). Fetch the run's commits out of the bundle, LOCALLY. Pushes nothing.
 
         The bundle carries only base_sha..branch, so the host has to already have base_sha —
         `git bundle verify` is exactly that check, and running it first turns "the host is
@@ -8185,44 +8401,69 @@ class Watcher:
         The run's own commits land under refs/ffbox/, never under refs/heads/, and no checkout
         happens: git_dir is allowed to be the golden checkout that every ffbox clone is made
         from, and a publish must not be able to move an existing branch there or dirty its
-        working tree. The one local ref this does create is the published branch itself, with
-        its upstream configured — see set_upstream below.
+        working tree.
+
+        SEPARATE FROM THE PUSH SINCE 2026-09-03, because the two gates that sit between them
+        need the commits to be here to decide anything. pr_base() ancestry-checks the claimed
+        base against refs/ffbox/<branch>, and the branch-permission gate keys off the answer, so
+        the order has to be fetch, decide, push — a fetch into a private ref namespace is local
+        and reversible, and a push is neither.
+        """
+        git_dir = self.cfg["git_dir"]
+        remote = self.cfg["push_remote"]
+        if not os.path.isdir(os.path.join(git_dir, ".git")) and not os.path.isdir(
+                os.path.join(git_dir, "objects")):
+            return False, f"{git_dir} is not a git checkout, so nothing could be pushed"
+        fetched = self._git("fetch", "--quiet", remote)
+        if fetched.returncode != 0:
+            log(f"WARNING: could not refresh {remote} before publishing: "
+                f"{(fetched.stderr or '').strip()[:200]}")
+        verified = self._git("bundle", "verify", bundle)
+        if verified.returncode != 0:
+            return False, ("the work bundle's base commit is missing from the host checkout: "
+                           + (verified.stderr or verified.stdout or "").strip()[:200])
+        got = self._git("fetch", bundle, f"{branch}:refs/ffbox/{branch}")
+        if got.returncode != 0:
+            return False, "could not read the work bundle: " + \
+                (got.stderr or "").strip()[:200]
+        return True, None
+
+    def drop_staged(self, branch, owned=None):
+        """Delete the local refs/ffbox/<branch> a stage left behind. Best effort.
+
+        Called when a gate refuses the push. The golden checkout every clone is made from should
+        not accumulate refs for work that was refused — and for a base whose permission is
+        "none" the whole point is that the work is discarded, which a ref sitting in the host
+        checkout quietly contradicts. The bundle in the run directory is untouched either way,
+        so nothing here is the last copy of anything.
+
+        NOT ON A BRANCH THE CONVERSATION ALREADY PUBLISHED. `owned` is the conversation's branch
+        as it was before this run, so a value here means an earlier turn put these commits on
+        origin — and refs/ffbox/<branch> is then the ONLY thing mirror_take() can fetch from
+        when a later turn finds the mirror has lost the branch. Deleting it to tidy up after a
+        refusal would turn that recovery into a turn that cannot start at all. A refusal on a
+        branch that already exists is a continuation anyway, so the base is whatever the first
+        turn chose and the commits it is leaving behind descend from work already on origin.
+        """
+        if owned:
+            return
+        self._git("update-ref", "-d", f"refs/ffbox/{branch}")
+
+    def push_staged(self, branch):
+        """(ok, error). Push what stage_bundle fetched, and leave it checkoutable here.
 
         The GitHub token is deliberately NOT spliced into a push url. argv is world-readable
         through /proc, which is the same reason ffbox reads its secrets from an env file rather
         than the command line; the push uses whatever credential the host checkout already has.
+
+        The one local branch a publish creates is the published one itself, with its upstream
+        configured — see set_upstream below.
         """
-        git_dir = self.cfg["git_dir"]
         remote = self.cfg["push_remote"]
-        ref = f"refs/ffbox/{branch}"
-        if not os.path.isdir(os.path.join(git_dir, ".git")) and not os.path.isdir(
-                os.path.join(git_dir, "objects")):
-            return False, f"{git_dir} is not a git checkout, so nothing could be pushed"
-
-        def git(*args, timeout=600):
-            try:
-                return subprocess.run(["git", "-C", git_dir, *args], capture_output=True,
-                                      text=True, encoding="utf-8", errors="replace",
-                                      timeout=timeout)
-            except (OSError, subprocess.SubprocessError) as exc:
-                return subprocess.CompletedProcess(args, 1, "", f"{type(exc).__name__}: {exc}")
-
-        fetched = git("fetch", "--quiet", remote)
-        if fetched.returncode != 0:
-            log(f"WARNING: could not refresh {remote} before publishing: "
-                f"{(fetched.stderr or '').strip()[:200]}")
-        verified = git("bundle", "verify", bundle)
-        if verified.returncode != 0:
-            return False, ("the work bundle's base commit is missing from the host checkout: "
-                           + (verified.stderr or verified.stdout or "").strip()[:200])
-        got = git("fetch", bundle, f"{branch}:{ref}")
-        if got.returncode != 0:
-            return False, "could not read the work bundle: " + \
-                (got.stderr or "").strip()[:200]
-        pushed = git("push", remote, f"{ref}:refs/heads/{branch}")
+        pushed = self._git("push", remote, f"refs/ffbox/{branch}:refs/heads/{branch}")
         if pushed.returncode != 0:
             return False, f"push to {remote} failed: " + (pushed.stderr or "").strip()[:200]
-        self.set_upstream(git, remote, branch)
+        self.set_upstream(self._git, remote, branch)
         return True, None
 
     @staticmethod
