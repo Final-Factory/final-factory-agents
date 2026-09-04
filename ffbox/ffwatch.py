@@ -1499,6 +1499,17 @@ LOCAL_KINDS = ("shell", "web")
 # and so fell through engage_for() to "mention", which is true by accident.
 GATE_BYPASS_KINDS = LOCAL_KINDS + ("operator_dm", "directive", "mention")
 
+# THE TWO DOORBELLS A DIRECT MESSAGE CAN RING, and they are two because the listener knows the
+# operator table and can say which it is before ffwatch spends a REST call finding out. Only
+# `operator_dm` can become a conversation; `player_dm` exists so the harness gets the chance to
+# say one fixed sentence back (DM_AUTOREPLY_TEXT) to somebody it will not otherwise answer.
+# ingest_dm re-decides which is which from Discord's authenticated author id whichever kind
+# rang, so the split here is a hint about work to do and never a grant of trust.
+#
+# A listener too old to know `player_dm` simply never emits one, and every other path in this
+# file behaves exactly as it did — the new kind is additive on both sides of the doorbell.
+DM_DOORBELL_KINDS = ("operator_dm", "player_dm")
+
 
 # How to say where a local prompt was typed, for the one reason string each of them produces.
 # .get() rather than [], so a kind added to LOCAL_KINDS and forgotten here degrades to its own
@@ -1512,6 +1523,32 @@ def is_local_conversation(conv):
         return False
     kind = conv if isinstance(conv, str) else conv["kind"]
     return kind in LOCAL_KINDS
+
+
+# WHO TYPED THE TEXT — which is not the same question as where the answer goes, and conflating
+# the two is what kept an operator's DM being handed to the model as if it were a forum post.
+# A DIRECT kind is one whose words were typed straight at the agent by somebody this box already
+# trusts: the two local ingresses, and a DM from an account in trust.operators, which ingest_dm
+# authenticates against Discord's own author id before a conversation exists at all.
+#
+# It decides the SHAPE OF THE PROMPT: no <discord> fence, no untrusted-input framing, no role
+# and no player-facing policy. None of that is about a person with a login on this machine, or
+# an operator writing to Max in private, and the measured cost of pretending otherwise was a
+# policy refusal addressed to a player in answer to a question the owner asked.
+#
+# LOCAL_KINDS still decides WHERE THE ANSWER GOES, and the two lists now differ on exactly one
+# kind: an operator DM is direct AND has a thread to post back into. Keeping them apart is what
+# lets the DM take the trusted prompt without the harness also concluding it has nobody to
+# answer.
+DIRECT_KINDS = LOCAL_KINDS + ("operator_dm",)
+
+
+def is_direct_conversation(conv):
+    """True when this conversation's text was typed AT the agent by somebody trusted."""
+    if conv is None:
+        return False
+    kind = conv if isinstance(conv, str) else conv["kind"]
+    return kind in DIRECT_KINDS
 
 
 TRIGGER_BY_KIND = {
@@ -1562,6 +1599,36 @@ def ack_pending_local_id(discord_id):
 def ack_off_local_id(turn_id):
     """Marker on the removal, so a turn cannot queue two of them."""
     return f"ack-off:{turn_id}"
+
+
+# WHAT A PLAYER WHO DMs MAX GETS, and the whole of what they get: one line from the harness, no
+# container, no model, no classifier and no conversation. A DM is the one surface where an
+# answer helps exactly one person -- no moderator reading over it, nobody to correct it, and no
+# record the next player who asks the same thing can find -- which is why the listener dropped
+# these on the floor for months. Dropping them is still the right policy and was still the wrong
+# behaviour: somebody who writes to a bot and hears nothing cannot tell a policy from an outage.
+DM_AUTOREPLY_TEXT = ("Please @mention me in a public channel on discord. I want to make sure "
+                     "my information is available for everyone to learn from!")
+
+# HOW OFTEN ONE PERSON CAN BE TOLD THAT. A DM is a conversation to the person typing into it, so
+# three lines in a row is three doorbells, and repeating the same sentence at each of them reads
+# as a broken bot rather than a policy. Deliberately not a config key: it is a politeness
+# constant, not a decision a box makes differently from another box.
+DM_AUTOREPLY_COOLDOWN_SECS = 3600
+
+
+def dm_autoreply_local_id(author_id, message_id):
+    """The outbound `local_id` a player's auto-reply wears: dm-autoreply:<author>:<message>.
+
+    THE QUEUE IS THE RECORD. Nothing else is written -- there is no conversation, no turn and no
+    run for one of these -- so the row that sends it is also the row that remembers it, and both
+    questions the sender has to answer come off one indexed column with no JSON parsing: have we
+    already answered THIS message (drain_events re-reads from the last cursor after a crash and
+    the Gateway replays dispatches across a resume, so a doorbell does arrive twice), and how
+    recently did we answer THIS PERSON. Both halves are Discord snowflakes -- digits only -- so
+    neither can smuggle a wildcard into the LIKE that asks the second question.
+    """
+    return f"dm-autoreply:{author_id}:{message_id}"
 
 
 # What the sender knows how to put on the wire. Every row is composed by the host, but the
@@ -3230,11 +3297,10 @@ class Watcher:
         # channels on 2026-08-25; this is the ingest side, which the 15-minute sweep and a
         # doorbell written before that change can still reach.
         #
-        # operator_dm is exempt by construction — a DM has no channel to list, and ingest_dm()
-        # already drops any DM whose author is not in the operator set. catchup names no channel
-        # either; it is a "re-read everything watched" signal and sweep() reads only watched
-        # aliases.
-        if kind not in ("operator_dm", "catchup"):
+        # The DM kinds are exempt by construction — a DM has no channel to list, and ingest_dm()
+        # settles for itself who wrote it and what that earns. catchup names no channel either;
+        # it is a "re-read everything watched" signal and sweep() reads only watched aliases.
+        if kind not in DM_DOORBELL_KINDS + ("catchup",):
             alias = ev.get("channel") or alias_for_channel(self.cfg, ev.get("channel_id"))
             if not watch_entry(self.cfg, alias):
                 log(f"ignoring a {kind} doorbell from unwatched channel "
@@ -3244,7 +3310,7 @@ class Watcher:
             if kind in ("thread", "thread_message"):
                 return self.ingest_thread(ev.get("channel_id") or ev.get("id"),
                                           alias=ev.get("channel"))
-            if kind == "operator_dm":
+            if kind in DM_DOORBELL_KINDS:
                 return self.ingest_dm(ev)
             if kind in ("message", "player_mention", "operator_directive",
                         "lothsahn_directive"):
@@ -3300,20 +3366,25 @@ class Watcher:
         return conv_id
 
     def ingest_dm(self, ev):
-        """A direct message from an operator. Its own path, because a DM has no watch entry.
+        """A direct message to the bot. Two outcomes, and only one of them is a conversation.
 
-        Two things are settled HERE rather than at the doorbell, because the gateway dispatch
-        carries neither. That it really is a one-to-one DM: a group DM is channel type 3, looks
-        identical on the wire, and is dropped, because "private" means one recipient we trust
-        and not a room somebody can add people to. And that the author really is an operator:
-        the listener checked, and checking again costs one dictionary lookup and removes the
-        listener from the trust path entirely.
+        Both doorbell kinds land here -- `operator_dm` and `player_dm` -- because who sent it is
+        settled HERE and not at the doorbell. The listener checked; checking again costs one
+        dictionary lookup and removes the listener from the trust path entirely, which is what
+        makes a forged doorbell claiming an operator's id worth nothing.
+
+        An operator's DM becomes a conversation and runs a turn. Anybody else's is answered by
+        autoreply_player_dm with one fixed sentence and leaves nothing behind -- see
+        DM_AUTOREPLY_TEXT for why that is the policy and why silence was the wrong shape of it.
+
+        The other thing settled here is that it really is a one-to-one DM: a group DM is channel
+        type 3, looks identical on the wire, and is dropped whoever wrote it, because "private"
+        means one recipient and not a room somebody can add people to. That check comes before
+        the split, so a player in a group DM gets the same silence a group DM has always got --
+        the auto-reply is for the surface it names, and a room with an audience is not it.
         """
         channel_id = str(ev.get("channel_id"))
         author_id = str(ev.get("author_id") or "")
-        if not is_operator(self.cfg, author_id):
-            log(f"WARNING: dropping a DM doorbell from {author_id!r}, who is not an operator")
-            return None
         try:
             ch = ffd_json(self.cfg, ["channel", channel_id]) or {}
         except FFDiscordError as exc:
@@ -3322,6 +3393,9 @@ class Watcher:
         if int(ch.get("type") or 0) != 1:
             log(f"WARNING: dropping DM channel {channel_id}: type {ch.get('type')} is not a "
                 f"one-to-one DM, so it is not a private venue")
+            return None
+        if not is_operator(self.cfg, author_id):
+            self.autoreply_player_dm(channel_id, author_id, str(ev.get("id") or ""))
             return None
         msg = fetch_message(self.cfg, channel_id, str(ev.get("id")))
         if msg is None:
@@ -3354,6 +3428,42 @@ class Watcher:
         msg.setdefault("channel_id", channel_id)
         self.insert_message(conv_id, msg)
         return conv_id
+
+    def autoreply_player_dm(self, channel_id, author_id, message_id):
+        """Answer a non-operator's DM with one fixed sentence. Returns the nonce, or None.
+
+        THE HARNESS SAYS IT, not a container. Nothing here reads the message, opens a
+        conversation, mints a turn, runs a classifier or starts an agent: the reply does not
+        depend on what was said, so nothing needs to read it, and every one of those steps would
+        spend a model call to arrive at a constant. It is also the only reply in this system
+        composed before the text it answers was fetched, which is exactly what makes it safe on
+        a surface with no moderator.
+
+        It still goes out through the outbound queue rather than straight onto the wire, because
+        the queue is where the kill switch, the send ceilings, the retry with backoff, the nonce
+        that survives a crash and the dry-run all live. A row with a NULL conversation_id is the
+        record of it -- see dm_autoreply_local_id -- and the web page renders it beside
+        everything else the box has said.
+        """
+        if not (channel_id and author_id and message_id):
+            log(f"WARNING: a DM doorbell arrived without ids to answer it: "
+                f"channel={channel_id!r} author={author_id!r} message={message_id!r}")
+            return None
+        local_id = dm_autoreply_local_id(author_id, message_id)
+        if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=?", (local_id,), 0):
+            return None
+        since = (datetime.now(timezone.utc)
+                 - timedelta(seconds=DM_AUTOREPLY_COOLDOWN_SECS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id LIKE ?"
+                          " AND created_at>=?", (f"dm-autoreply:{author_id}:%", since), 0):
+            log(f"DM from {author_id}: already pointed at the public channels within the last "
+                f"{DM_AUTOREPLY_COOLDOWN_SECS}s, saying nothing")
+            return None
+        log(f"DM from {author_id}: not an operator — answering with the standing note and "
+            f"opening no conversation")
+        return self.record_outbound(None, None, "post",
+                                    {"channel": str(channel_id), "text": DM_AUTOREPLY_TEXT,
+                                     "silent": True, "local_id": local_id})
 
     # -- clustering (design section 4) -----------------------------------------------------
 
@@ -5596,10 +5706,15 @@ class Watcher:
             # venue: an operator DM is `private` and still a Discord conversation that must be
             # posted to. This one means there is no thread at all — the record is the reply.
             #
-            # The container reads it to pick its preamble: a local turn is not told it is
-            # answering a Discord thread, and is not told to keep its summary short, because
-            # nobody is going to truncate it.
+            # The container reads it for the half of the preamble that says where the answer
+            # goes: a local turn is not told it is answering a Discord thread, and is not told
+            # to keep its summary short, because nobody is going to truncate it.
             "local": is_local_conversation(conv),
+            # WHOSE WORDS THESE ARE, and the other half of the same choice. It picks the
+            # trusted prompt over the fenced one, so an operator DM reads like the shell does
+            # while still being a Discord conversation that gets posted back to. See
+            # DIRECT_KINDS.
+            "direct": is_direct_conversation(conv),
             "agent": cap["agent"],
             # `compact` is an instruction to the container and not a fact about the session:
             # run /compact against this id before the turn, then resume it as normal.
@@ -5751,23 +5866,32 @@ class Watcher:
         return "\n".join(lines)
 
     def render_prompt(self, job):
-        """Everything the player wrote is DATA. It is fenced and framed as untrusted input for
-        the same reason the classifier prompt is: a bug report saying 'ignore the above' is
-        material to investigate, never an instruction to follow."""
+        """Two prompts, chosen by who wrote the text.
+
+        Everything a PLAYER wrote is DATA. It is fenced and framed as untrusted input for the
+        same reason the classifier prompt is: a bug report saying 'ignore the above' is material
+        to investigate, never an instruction to follow.
+
+        Text somebody this box already trusts typed AT the agent -- the shell, the page, an
+        operator's DM -- is the prompt itself, with none of that framing. See DIRECT_KINDS.
+        """
         conv = job["conversation"]
         lane = job["lane"]
-        if job["local"]:
-            # NOT A DISCORD TURN. No <discord> fence, no untrusted-input framing, no role and no
-            # ff-discord policy: the prompt was typed by the person who owns this machine and
-            # they are waiting at a terminal. Measured the hard way — with the Discord framing
-            # in place, `ffbox "what file defines the belt merger?"` came back with a policy
-            # refusal addressed to a player, because the answerer role forbids naming repo
-            # internals to Discord users. Correct behaviour for that role; wrong conversation.
+        if job.get("direct"):
+            # NOT SOMETHING A STRANGER WROTE. No <discord> fence, no untrusted-input framing, no
+            # role and no ff-discord policy: this text was typed by the person who owns this
+            # machine, or DM'd by an account Discord authenticated as an operator. Measured the
+            # hard way — with the Discord framing in place, `ffbox "what file defines the belt
+            # merger?"` came back with a policy refusal addressed to a player, because the
+            # answerer role forbids naming repo internals to Discord users. Correct behaviour
+            # for that role; wrong conversation. An operator's DM is the same conversation with
+            # a thread on the end of it, and took the fenced prompt until 2026-09-03 only
+            # because this branch was keyed on where the answer goes rather than on who wrote
+            # the question. See DIRECT_KINDS.
             #
-            # KEYED ON LOCALITY, NOT ON THE LANE. It used to read `lane == "shell"`, which
-            # stopped being a question anybody could answer once shell and dev became one lane.
-            # The thing that was ever really being asked is whether there is a thread on the
-            # other end of this.
+            # KEYED ON DIRECTNESS, NOT ON THE LANE and no longer on locality. It read
+            # `lane == "shell"` until the shell lane was merged into dev, and `local` until the
+            # DM joined it. The thing being asked is whose words these are.
             #
             # EVERY message in the turn, not just the last. A turn batches whatever was typed
             # while the previous run was working (claim_turns), so a person who followed one
@@ -5775,11 +5899,24 @@ class Watcher:
             # correction delivered. Blank-line separated, the way they were typed.
             parts = ["\n\n".join((m["content"] or "").strip() for m in job["messages"]
                                  if (m["content"] or "").strip())]
+            # WHERE THE FILES WENT. A shell prompt carries none, but a DM can, and the fenced
+            # branch below is the only place that used to name them — so an operator who
+            # dropped a log in a DM would have had it downloaded, mounted, and never mentioned.
+            # Named rather than left to be found: cwd is the workspace, and a Read outside it
+            # is a permission request a `-p` run has nobody to answer (see the --add-dir note
+            # in discord-task.sh).
+            files = [a for m in job["messages"] for a in m["attachments"] if a.get("path")]
+            if files:
+                parts += ["", "Files that came with this, already downloaded and read-only:"]
+                parts += [f"    {a['path']} ({a['filename']}, {a['kind']})" for a in files]
             if job.get("note"):
                 parts += ["", "Harness instruction for this turn:", "", job["note"]]
             if job["resume_summary"]:
                 parts += ["", "The prior session transcript was lost. Host-rendered summary:",
                           "", job["resume_summary"]]
+            # NO failed_closed NOTE, and none is possible: every direct kind is in
+            # GATE_BYPASS_KINDS, so should_engage_for never runs a classifier over one and the
+            # column is 0 on every turn that reaches here.
             return "\n".join(parts)
         trust = job.get("trust") or {}
         venue = (job.get("venue") or {}).get("kind") or "public"

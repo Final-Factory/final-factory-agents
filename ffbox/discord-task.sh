@@ -652,6 +652,23 @@ PREAMBLE_NO_STATUS = (
     "is not a substitute for having had nothing to report."
 )
 
+# THE MIDDLE OF BOTH DIRECT PREAMBLES: what the run may do to the tree, and how what it does
+# survives a container that is about to be destroyed. Identical for the shell, the web page and
+# an operator's DM, and pulled out so it cannot drift between them — the three differ only in
+# who typed the question and where the answer goes, which is the half on either side of this.
+PREAMBLE_DIRECT_WORK = (
+    preamble_branch(job) + preamble_bases(job.get("bases")) + PREAMBLE_GIT + PREAMBLE_VERIFY +
+    " Say plainly what you changed and what you verified."
+)
+
+# THE FIELDS THAT ARE NOT PROSE, said once for both direct preambles. `summary` is the answer;
+# these three are read by the harness and by nobody else.
+PREAMBLE_DIRECT_FIELDS = (
+    " Three other fields are read by the harness rather than by a person — `confident` gates "
+    "the pull request, and `pr_title` and `pr_body` are what it is called and what it says; "
+    "the rest are bookkeeping for the record."
+)
+
 # A LOCAL TURN IS A DEV TURN WITH NOBODY TO POST TO, and since 2026-08-23 that is the whole
 # difference. It used to be much bigger: a locally typed prompt harvested a patch, was never
 # verified and never published, on the reasoning that the person who typed it was standing right
@@ -668,25 +685,55 @@ PREAMBLE_LOCAL = (
     "survives it is the branch you leave behind, which the harness pushes to origin and — "
     "when its own test run passes and you set `confident` — proposes as a pull request "
     "against develop."
-    + preamble_branch(job) + preamble_bases(job.get("bases")) + PREAMBLE_GIT + PREAMBLE_VERIFY +
-    " Say plainly what you changed and what you verified. "
-    "Put your whole answer in `summary`: it is printed verbatim to the terminal or the page, "
+    + PREAMBLE_DIRECT_WORK +
+    " Put your whole answer in `summary`: it is printed verbatim to the terminal or the page, "
     "so write it as prose for a person, at whatever length the question deserves. Nothing "
-    "truncates it and no length rule applies here. Three other fields are read by the harness "
-    "rather than by a person — `confident` gates the pull request, and `pr_title` and "
-    "`pr_body` are what it is called and what it says; the rest are bookkeeping for the record."
-    + PREAMBLE_NO_STATUS
+    "truncates it and no length rule applies here."
+    + PREAMBLE_DIRECT_FIELDS + PREAMBLE_NO_STATUS
 )
 
-# Appended to the DISCORD-bound preambles only. The host already refuses to lose an over-long
-# reply — compose_head cuts the summary at HEAD_CAP and attaches the rest as summary.md — but
-# that safety net produces a thread post that stops mid-sentence next to a file nobody opens.
-# Better output is shorter output, so the lane is told the constraint it is actually writing
-# against rather than being truncated into it. Deliberately NOT on PREAMBLE_LOCAL: a person at
-# a terminal wants the whole thing.
+# AN OPERATOR'S DM IS THE LOCAL TURN WITH A THREAD ON THE END OF IT, and as of 2026-09-03 it is
+# framed as one. It used to take the Discord preamble below and arrive with the message inside
+# an <discord> fence labelled untrusted, under the answerer's player-facing policy — the same
+# framing that made `ffbox "what file defines the belt merger?"` come back as a policy refusal
+# addressed to a player. The person on the other end of a DM is in trust.operators, checked
+# against Discord's own authenticated author id before this container was started; they are the
+# same people who type at this machine's shell, and asking from their sofa should not turn their
+# question into a stranger's.
+#
+# WHAT DOES NOT CARRY OVER FROM THE LOCAL TURN: the answer is posted, so it is written for
+# Discord's 2000 characters (the selection below appends PREAMBLE_LENGTH) rather than for a
+# terminal that truncates nothing.
+PREAMBLE_DM = (
+    "You are running one turn of a Final Factory session on the build server, started by an "
+    "OPERATOR who sent Max a direct message — one of the few accounts this box trusts the way "
+    "it trusts a login on the machine itself, authenticated by Discord's own author id before "
+    "this container existed. It is a one-to-one DM: nobody else can read what they wrote and "
+    "nobody else reads your answer, so file paths, source citations, unreleased work and "
+    "roadmap questions are all in scope and escalating a question back to the person who asked "
+    "it is a bug. Everything else is an ordinary dev turn and it ends the way one does: the "
+    "repository is checked out at " + WORKSPACE + " in a container that is destroyed when you "
+    "exit, and what survives it is the branch you leave behind, which the harness pushes to "
+    "origin and — when its own test run passes and you set `confident` — proposes as a pull "
+    "request against develop."
+    + PREAMBLE_DIRECT_WORK +
+    " Whatever you put in `summary` IS the reply: the harness posts it back into the DM for "
+    "you. There is no ffdiscord command in this container and skill text that tells you to run "
+    "one does not apply here, so do not report an inability to post as if it were the outcome "
+    "of the work. Do not open with an @-mention either — a DM already notifies them."
+    + PREAMBLE_DIRECT_FIELDS + PREAMBLE_NO_STATUS
+)
+
+# Appended to every preamble whose answer is POSTED — the thread lanes and an operator's DM
+# alike, because the 2000-character limit is Discord's and does not care who is reading. The
+# host already refuses to lose an over-long reply — compose_head cuts the summary at HEAD_CAP
+# and attaches the rest as summary.md — but that safety net produces a post that stops
+# mid-sentence next to a file nobody opens. Better output is shorter output, so the turn is told
+# the constraint it is actually writing against rather than being truncated into it.
+# Deliberately NOT on PREAMBLE_LOCAL: a person at a terminal wants the whole thing.
 PREAMBLE_LENGTH = (
     " Discord hard-limits a message to 2000 characters. Keep `summary` under about 1500 so it "
-    "lands whole: anything longer is cut in the thread and the remainder goes up as an "
+    "lands whole: anything longer is cut where it is posted and the remainder goes up as an "
     "attached file, which is a worse answer than a shorter one. Lead with the conclusion, give "
     "the evidence that supports it, and leave out the narrative of how you searched. If the "
     "detail genuinely will not fit, say what you found and what you would need to say next "
@@ -725,20 +772,31 @@ PREAMBLE_SPLIT = (
     "private venue, where your one reply already goes somewhere internals may be said."
 )
 
-# WHICH PREAMBLE is decided by `local`: is there a Discord thread on the other end of this, or
-# is the record the reply. That was already the only question here — the schema and the lane
-# stopped being able to answer it long ago, and now neither exists to try.
+# WHICH PREAMBLE takes two questions, not one. `direct` is WHO TYPED THE QUESTION: somebody this
+# box trusts, writing straight at the agent (the shell, the page, an operator's DM), or a
+# Discord user whose words are evidence and not instructions. `local` is WHERE THE ANSWER GOES:
+# into a thread, or nowhere but the record. They were one question while the only trusted text
+# came from this machine; an operator's DM is the case that splits them.
+#
+# The fallback keeps an older host's job.json working: one written before `direct` existed says
+# `local`, which is exactly what this used to read.
 schema_kind = job.get("verdict_schema")
 is_local = bool(job.get("local"))
+is_direct = bool(job.get("direct", job.get("local")))
 schema = None if schema_kind is None else VERDICT_SCHEMA
 if is_local:
     preamble = PREAMBLE_LOCAL
+elif is_direct:
+    preamble = PREAMBLE_DM + PREAMBLE_LENGTH
 else:
     preamble = PREAMBLE_TURN + PREAMBLE_LENGTH
 
 trust = job.get("trust") or {}
 venue = (job.get("venue") or {}).get("kind") or "public"
-if not is_local and trust.get("tier") == "operator" and venue == "public":
+# NEVER ON A DIRECT TURN. The split reply exists for an operator asking in front of players, and
+# a DM has no audience to write the public half for; the venue is private there anyway, so this
+# is belt to that braces.
+if not is_direct and trust.get("tier") == "operator" and venue == "public":
     preamble += PREAMBLE_SPLIT
 
 if (job.get("conversation") or {}).get("kind") in ("bug_report", "suggestion"):
@@ -866,8 +924,8 @@ if session.get("resume") and session.get("compact"):
     with open(argv_path + ".compact", "wb") as fh:
         fh.write(b"\0".join(a.encode("utf-8") for a in compact_argv))
 
-sys.stderr.write("kind=%s local=%s tools=%s resume=%s compact=%s\n" % (
-    (job.get("conversation") or {}).get("kind"), is_local, caps.get("tools"),
+sys.stderr.write("kind=%s local=%s direct=%s tools=%s resume=%s compact=%s\n" % (
+    (job.get("conversation") or {}).get("kind"), is_local, is_direct, caps.get("tools"),
     bool(session.get("resume")), bool(session.get("compact"))))
 ARGVEOF
 then

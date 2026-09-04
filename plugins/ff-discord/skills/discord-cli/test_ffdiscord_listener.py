@@ -185,7 +185,11 @@ li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "111", "id": "m3"
 check("bot and self messages do not ring", events() == [])
 
 li = fresh_listener()
-li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "333", "id": "m4", "author": {"id": "42"}})
+# guild_id ON THE DISPATCH, because Discord puts it there and it is the only thing separating
+# this from a DM: the DM branch is reached by its ABSENCE. A fixture that leaves it out is not
+# testing an unwatched channel, it is testing a direct message that happens to name one.
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "333", "id": "m4",
+                                       "guild_id": "1", "author": {"id": "42"}})
 check("unwatched channel does not ring", events() == [])
 
 li = fresh_listener()
@@ -212,7 +216,8 @@ check("but replies inside it still ring", len(events()) == 1)
 
 li = fresh_listener()
 li.handle_dispatch("THREAD_CREATE", {"id": "557", "parent_id": "444", "newly_created": True})
-li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "557", "id": "m7", "author": {"id": "43"}})
+li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "557", "id": "m7",
+                                       "guild_id": "1", "author": {"id": "43"}})
 check("thread under unwatched parent does not ring", events() == [])
 
 li = fresh_listener()
@@ -291,13 +296,15 @@ check("a DM from an operator rings as operator_dm, with no mention needed",
 li = fresh_listener()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "dm2", "id": "d2",
                                        "author": {"id": "42"}})
-check("a DM from anyone else rings nothing at all", events() == [])
+evs = events()
+check("a DM from anyone else rings as player_dm, which buys no agent and no conversation",
+      len(evs) == 1 and evs[0]["kind"] == "player_dm" and evs[0]["author_id"] == "42", evs)
 
 li = fresh_listener()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "dm3", "id": "d3",
                                        "author": {"id": "42"}, "mentions": [{"id": "999"}]})
-check("and mentioning the bot inside that DM does not get a stranger in either",
-      events() == [])
+check("and mentioning the bot inside that DM does not promote a stranger either",
+      [e["kind"] for e in events()] == ["player_dm"], events())
 
 li = fresh_listener()
 li.handle_dispatch("MESSAGE_CREATE", {"type": 0, "channel_id": "111", "id": "d4",

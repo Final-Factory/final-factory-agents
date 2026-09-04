@@ -2,6 +2,46 @@ Trusted ingress: who may be told what, and who may be obeyed
 ============================================================
 Draft for review. Proposed as section 23 of discord_persistent_design.txt.
 
+Revision 17, 2026-09-03: SECTION 11 IS AMENDED IN BOTH DIRECTIONS. An operator's DM stops
+being framed as a forum post, and a player's DM stops being answered with silence.
+
+The framing half. Revision 14 made everything that had been conditional on `lane == "shell"`
+conditional on is_local_conversation, on the reasoning that the real question was whether there
+is a thread on the other end. That was one question doing the work of two, and section 11 is
+where they come apart: an operator's DM has a thread AND was typed by somebody this box already
+trusts. It therefore arrived inside the <discord> fence, labelled untrusted, under the
+player-facing disclosure rules — the same treatment that once turned a locally typed question
+into a policy refusal addressed to a player. So there are now two predicates. is_local_conversation
+still decides WHERE THE ANSWER GOES (job["local"]: no thread, no outbound row, the record is the
+reply). is_direct_conversation decides WHOSE WORDS THESE ARE (job["direct"]: shell, web, or
+operator_dm — no fence, no untrusted framing, no role, no player policy). discord-task.sh picks
+between three preambles instead of two; the DM one is the local one with the answer posted and
+written to Discord's 2000 characters. An operator DM can carry attachments where a shell prompt
+cannot, so the direct prompt names their downloaded paths, which only the fenced branch used to.
+
+The silence half. This section argued that ignoring a non-operator DM was a deliberate choice
+rather than an oversight, and every word of that argument stands: a DM has no moderator, no
+other players to correct a wrong answer, and no public record, which makes it the best available
+place to work on a jailbreak in private. What it got wrong is that a policy nobody is told is
+indistinguishable from a bot that is down. The listener now rings `player_dm` where it used to
+emit nothing, and ffwatch answers it with one fixed sentence pointing at the public channels —
+DM_AUTOREPLY_TEXT, composed on the host before the message is fetched, and the message is never
+fetched. No conversation, no message row, no turn, no run, no classifier, no container. It is
+queued as an ordinary outbound row with a NULL conversation_id so the kill switch, the send
+ceilings, the retry and the page all apply; its local_id, `dm-autoreply:<author>:<message>`,
+answers both "have we already said this" and "how recently did we say it to this person", the
+second bounded at one an hour. The type-3 rule is unchanged and now covers the reply too: a group
+DM gets nothing at all, since the note is for the surface it names and a room with an audience is
+not that surface.
+
+The rule at the listener becomes:
+
+    no guild_id, and author.id in trust.operators   -> emit operator_dm
+    no guild_id, anyone else                        -> emit player_dm
+
+with ffwatch re-deciding which is which from the same authenticated id before it acts, so the
+kind on the doorbell is a hint about work to do and never a grant of trust.
+
 Revision 16, 2026-08-25: max_unity_runs IS GONE FROM THE CODE. Every mention of it anywhere in
 this document is historical — section 13 argued to keep it and reframe it as a resource ceiling,
 section 17 lists that reframing as work, and the notes at the end record it being raised from 1
