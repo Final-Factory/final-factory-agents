@@ -89,6 +89,27 @@ if v is not None and not isinstance(v, (dict, list)):
     print(v)
 ' "$FFBOX_CONFIG_JSON" "$1" 2>/dev/null
 }
+# THE POOL'S CREDENTIAL NAMES, out of pools.<class>.github in the same file. A second reader
+# rather than a parameter on the first, because they read different sections for different
+# reasons: _ffbox_cfg reads what is true of any container on this daemon, and this reads what is
+# true of one agent class.
+#
+# THE VALUE IS THE NAME OF AN ENVIRONMENT VARIABLE, never a token. Anything that is not a
+# non-empty string answers nothing, so a token pasted into the config as a number or an object
+# cannot be mistaken for a variable name. See ffbox/config.md under `pools`.
+_ffbox_pool_cfg() {
+    [ -r "$FFBOX_CONFIG_JSON" ] || return 0
+    python3 -c '
+import json, sys
+try:
+    v = (((json.load(open(sys.argv[1])).get("pools") or {}).get(sys.argv[2]) or {})
+         .get("github") or {}).get(sys.argv[3])
+except Exception:
+    sys.exit(0)
+if isinstance(v, str) and v.strip():
+    print(v.strip())
+' "$FFBOX_CONFIG_JSON" "$1" "$2" 2>/dev/null
+}
 WORKSPACE_SIZE=${FFBOX_WORKSPACE_SIZE:-$(_ffbox_cfg workspace_size)}
 [ -n "$WORKSPACE_SIZE" ] || WORKSPACE_SIZE=40g
 # THE SAME RESOURCE LIMITS THE CI LANE HAS, from the same section, because the two containers are
@@ -797,6 +818,55 @@ esac
 POOL_NAME="${NAME_PREFIX}pool-${STAGE_POOL:-$DISPATCH}"
 RUN_NAME="${NAME_PREFIX}${RUN_ID}"
 
+# --- the container's git credential ------------------------------------------------------------
+#
+# A CLASS THAT NAMES ONE GETS ONE, AND A CLASS THAT NAMES NOTHING GETS NOTHING. This is the only
+# way a git credential enters a container, and it is off unless pools.<class>.github.container_token
+# names a variable that is actually set. ffagent names nothing, deliberately, so the lane that runs
+# text written by strangers keeps the property the whole design rests on.
+#
+# READ THE DESIGN NOTE IN ffbox/CREDENTIALS.md BEFORE POINTING THIS AT A TOKEN. "Nothing merges,
+# ever" was held by the container having no credential at all; for a class that has one, it is held
+# by that token's SCOPE and by branch protection, and by nothing else in this repository. A deny
+# pattern like Bash(git push*) does not hold it -- `sh -c 'git push'` walks straight through, and
+# has been measured doing so.
+#
+# THE VALUE NEVER TOUCHES argv. `-e NAME` with no `=` tells docker to take it from OUR environment,
+# which is the same way CLAUDE_CODE_OAUTH_TOKEN gets in and the same reason ffwatch refuses to
+# splice a token into a push url: /proc/<pid>/cmdline is world-readable. It is renamed on the way
+# so the container side knows one name whichever pool it serves.
+#
+# IN RUN_ARGS, so a staged spare and a cold run are given the same thing. Creation-time like every
+# other flag: dispatch renames a container that already exists, so a spare carries whatever its
+# class named when it was STAGED. That is correct rather than a limitation -- the pools do not mix,
+# and a spare is only ever claimed by a turn of its own class.
+GH_TOKEN_ARGS=()
+_ffbox_token_env=$(_ffbox_pool_cfg "$AGENT_CLASS" container_token)
+if [ -n "$_ffbox_token_env" ]; then
+    FFBOX_GH_TOKEN=$(printenv "$_ffbox_token_env" 2>/dev/null || true)
+    if [ -n "$FFBOX_GH_TOKEN" ]; then
+        export FFBOX_GH_TOKEN
+        GH_TOKEN_ARGS=(-e FFBOX_GH_TOKEN)
+        echo "[ffbox] git credential: $AGENT_CLASS containers carry \$${_ffbox_token_env}"
+        # THE FENCE HAS NO github.com IN IT, so a credential on the filtered network is a
+        # credential nothing can use: the proxy refuses the SNI before any of this matters. Not
+        # fatal -- somebody may have added the name to the allowlist -- but silence here would
+        # look exactly like a bad token.
+        case "$NETWORK" in
+            bridge|host|none) ;;
+            *)  echo "ffbox: WARNING: $AGENT_CLASS carries a git credential but runs on" >&2
+                echo "       '$NETWORK', where github.com is not in ffbox/egress/allowlist.txt." >&2
+                echo "       git will fail at the SNI, not at the credential." >&2 ;;
+        esac
+    else
+        # SAID OUT LOUD AND NOT FATAL. The container starts and works; what it cannot do is talk
+        # to GitHub, and a run that discovers that halfway through has no way to report why.
+        echo "ffbox: WARNING: $AGENT_CLASS names $_ffbox_token_env as its container token," >&2
+        echo "       but that variable is not set here, so the container gets no git" >&2
+        echo "       credential. Put it in ~/.config/ffbox/secrets.env." >&2
+    fi
+fi
+
 POOL_IN=
 FINAL_OUT=
 if [ -n "$STAGE_POOL$DISPATCH" ]; then
@@ -1155,6 +1225,7 @@ RUN_ARGS=(
     "${ENTRY_ENV[@]}"
     "${UNITY_LICENCE_ARGS[@]}"
     -e CLAUDE_CODE_OAUTH_TOKEN
+    "${GH_TOKEN_ARGS[@]}"
     -e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
     -e DISABLE_AUTOUPDATER=1
     -e FFBOX_OUTPUT_FORMAT="$OUTPUT_FORMAT"

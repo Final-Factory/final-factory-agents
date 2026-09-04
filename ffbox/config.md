@@ -335,7 +335,7 @@ pool of its own and neither can take the other's warm container.
 | `pool_ref` | `null` | `null` | Which branch the pool stages. `null` follows `base_ref`. |
 | `network` | `"limited"` | `"full"` | The fence. See below. |
 | `github.pr_token` | `null` | `null` | The key in `secrets.env` holding the token this pool opens pull requests with. `null` uses the box-wide `GH_PR_TOKEN`. See below. |
-| `github.container_token` | `null` | `null` | Reserved. Read by nothing yet. |
+| `github.container_token` | `null` | `null` | The key in `secrets.env` holding a git credential put INSIDE this pool's containers. `null` means none, which is what ffagent must stay. See below. |
 
 **Four clocks, not one.** They run in order — warm-up, then the agent, then verification — and
 each is measured from its own marker, so a run can spend all of every one of them. Conflating
@@ -425,8 +425,28 @@ write, contents READ, and contents write nowhere near either of them.
 finds in `~/.git-credentials`, one file matched by host, and it is still shared by both lanes and
 by CI. Splitting that one is a separate job.
 
-`container_token` is a name this file accepts and nothing reads. It is here so the key exists
-before something depends on it.
+**`container_token` is the other half, and it is the consequential one.** It names a key of
+`secrets.env` whose token is put INSIDE every container of that class: `ffbox` forwards the
+variable (by name, so the value never reaches argv) and the container's entrypoint stages it as
+`~/.git-credentials` at 600 with a `credential.helper store`. That is what makes `git fetch`,
+`git pull` and `git clone` work against GitHub in a run, `origin` there already being the GitHub
+url CI checked out from.
+
+`null` means no variable and no credential file, which is what every container had before
+2026-09-04 and what **ffagent must stay**: its prompts are built from text written by strangers in
+a forum, and the container is assumed hostile.
+
+It only works on a pool whose `network` is `full`. `github.com` is not in
+`ffbox/egress/allowlist.txt`, so on the fenced network the proxy refuses the SNI and git fails
+before the credential is consulted; `ffbox` warns rather than refuses, since somebody may have
+edited the allowlist. ffdev is on the open bridge already.
+
+**Mint it contents:READ.** A run's work still reaches origin through the harvest and the host's
+`push_bundle`, so read costs a run nothing it was doing, and write means an agent that can push
+to any branch the token reaches. For a class carrying this token, "nothing merges, ever" is held
+by the token's scope and by branch protection on GitHub and by nothing in this repository — the
+deny list does not hold it, and never did. `ffbox/CREDENTIALS.md` section 4 has the permission
+table; `docs/docker-security-model.md` has the argument.
 
 ---
 

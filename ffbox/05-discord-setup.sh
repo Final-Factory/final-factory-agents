@@ -347,7 +347,14 @@ for key, value in (
         # opens no pull request and says which key is missing; it does NOT fall back, because a
         # fallback would hand this lane -- the one running text written by strangers -- whatever
         # credential the dev lane publishes with, at the moment somebody believed they had
-        # separated the two. container_token is reserved and read by nothing yet.
+        # separated the two.
+        #
+        # container_token IS A DIFFERENT AND MORE CONSEQUENTIAL KEY: the token it names is put
+        # INSIDE every container of this class, staged as ~/.git-credentials, which is what makes
+        # git fetch/pull/clone work against GitHub in a run. THIS POOL MUST KEEP IT null. Its
+        # prompts are built from text written by strangers in a forum and the container is assumed
+        # hostile; handing it a git credential undoes the premise the whole design rests on.
+        # ffbox/CREDENTIALS.md section 4.
         "github": {"pr_token": None, "container_token": None},
       },
       # THE SECOND AGENT CLASS. Same keys as "ffagent" above and the same meanings: the two are
@@ -385,6 +392,13 @@ for key, value in (
         # developer's shell on this box is trusted, which is what it is for.
         "network": "full",
         # Same keys and the same meanings as ffagent's above, and no inheritance between them.
+        #
+        # THIS is the pool container_token is for, if any is. Only an account in
+        # discord.trust.operators opens a conversation here, and it already runs unfenced -- a pool
+        # trusted with the whole internet is not made meaningfully more dangerous by a scoped git
+        # credential. Seeded null anyway: a token inside a container is a decision somebody makes
+        # on purpose, and CONTENTS:READ is the answer unless they have decided otherwise and put
+        # branch protection on master and develop first.
         "github": {"pr_token": None, "container_token": None},
       },
     }),

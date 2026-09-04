@@ -185,6 +185,45 @@ export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0=safe.directory
 export GIT_CONFIG_VALUE_0="$WORKSPACE"
 
+# GIT NEVER ASKS A QUESTION IN HERE. There is no terminal to answer it on, and the failure git
+# produces when it tries -- "could not read Username for 'https://github.com'" -- reads like a
+# broken url rather than a missing credential. Off, so an unauthenticated fetch fails in one line
+# that says what it is. Set whether or not there is a credential below: it is a property of being
+# a container, not of being an authenticated one.
+export GIT_TERMINAL_PROMPT=0
+
+# THE GIT CREDENTIAL, STAGED WHILE WE ARE STILL ROOT, and only when this container was given one.
+# ffbox passes FFBOX_GH_TOKEN only for an agent class whose pools.<class>.github.container_token
+# names a variable that is set; ffagent names nothing, so a container serving strangers' text
+# reaches this block with nothing in the variable and writes no credential at all.
+#
+# READ ffbox/CREDENTIALS.md SECTION 4. For a class that has one of these, the scope of the token
+# is what stands between an agent and a force-push to master. Nothing in this file constrains it.
+#
+# ~/.git-credentials RATHER THAN THE ENVIRONMENT ALONE, because git-lfs, a hook, and anything the
+# agent shells out to all find a credential helper and none of them inherit a variable reliably.
+# It matches by HOST, so the token is offered to github.com and to nothing else -- not to a
+# registry, not to a package host, not to whatever a prompt talks it into cloning.
+#
+# THE VALUE IS WRITTEN, NEVER ECHOED, and the file is the run user's at 600. Staged here for the
+# same reason the Unity licence below is: this is the last moment we are root, and the file has to
+# belong to the account the task runs as.
+if [ -n "${FFBOX_GH_TOKEN:-}" ]; then
+    _credfile="$home/.git-credentials"
+    if (umask 077; printf 'https://x-access-token:%s@github.com\n' "$FFBOX_GH_TOKEN" \
+            > "$_credfile") 2>/dev/null; then
+        # `|| :` under `set -e`: a container that cannot write a gitconfig is a container with
+        # no git credential, which is a degraded run and not a dead one. Dying here would take
+        # the whole turn down for the one capability it can most easily do without.
+        git config --file "$home/.gitconfig" credential.helper store || :
+        chown "$uid:$gid" "$_credfile" "$home/.gitconfig" 2>/dev/null || :
+        chmod 600 "$_credfile" 2>/dev/null || :
+        echo "[ffbox] git credential staged for $user (github.com)"
+    else
+        echo "[ffbox] WARNING: could not stage the git credential at $_credfile" >&2
+    fi
+fi
+
 # THE UNITY LICENCE, STAGED WHILE WE ARE STILL ROOT. This has to happen HERE and cannot be left to
 # unity-license.sh in the task, which is the obvious place for it.
 #
