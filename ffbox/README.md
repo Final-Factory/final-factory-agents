@@ -853,8 +853,8 @@ $EDITOR ~/.config/ffbox/secrets.env
 
 | variable | notes |
 |---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` | one per Claude account, from `claude setup-token`; bills against that subscription. **Only the first non-empty one is spent** — the rest are inventory, reported on ffweb's `/claude` page. The unnumbered `CLAUDE_CODE_OAUTH_TOKEN` is the older spelling and still works |
-| `CLAUDE_CODE_RATE_TOKEN1`, `…2`, `…3` | which plan the token in the matching slot is on, as its multiplier: `1` for Pro, `5` for Max 5x, `20` for Max 20x. Read only by ffweb's `/claude` page, which cannot ask Anthropic (see below); an undeclared slot reads as `1` |
+| `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` | one per Claude account, from `claude setup-token`; bills against that subscription. **All of them are spent** — ffwatch picks one per turn (see "Spending the pool" below). The unnumbered `CLAUDE_CODE_OAUTH_TOKEN` is the older spelling and still works |
+| `CLAUDE_CODE_RATE_TOKEN1`, `…2`, `…3` | which plan the token in the matching slot is on, as its multiplier: `1` for Pro, `5` for Max 5x, `20` for Max 20x. These tokens cannot ask Anthropic which plan they are on (see below), and the chooser needs it to weigh a percentage of one plan against a percentage of another; an undeclared slot reads as `1` |
 | `CLAUDE_CODE_NAME_TOKEN1`, `…2`, `…3` | optional label for the token in the matching slot — ffweb's `/claude` page heads that row with it instead of the variable name, so a row reads `Loth` rather than `CLAUDE_CODE_OAUTH_TOKEN2`. Undeclared or blank keeps the variable name |
 | `UNITY_EMAIL` / `UNITY_PASSWORD` | required **even for a Personal license** — activation is an online serial activation |
 | `UNITY_SERIAL` *or* `UNITY_LICENSE_FILE` | the 27-char serial, or a `.ulf` to extract it from |
@@ -863,13 +863,69 @@ $EDITOR ~/.config/ffbox/secrets.env
 instructions rather than failing twenty minutes into a Unity import. See `secrets.env.example`
 for why they live on the host rather than in the image or in argv.
 
-**Why the Claude token is a numbered pool.** A subscription has rolling limits, and the useful
-question on a busy box is not "am I out" but "which account still has room" — which cannot be
-asked about an account whose token nobody wrote down. So every account you might run this box
-on goes in the file, numbered, and `/claude` reports each one's five-hour and weekly usage.
-Moving the box onto another account is then reordering two lines and a restart, rather than an
-OAuth flow at the worst possible moment. A gap is not the end of the list: slot 2 filled with
-slot 1 blank is a revoked first key, and everything here keeps scanning.
+**Why the Claude token is a numbered pool.** A subscription has rolling limits, and one plan
+carrying a build server spends most of the week rate-limited while every other account sits
+untouched. So every account goes in the file, numbered, and the box spends all of them. A gap is
+not the end of the list: slot 2 filled with slot 1 blank is a revoked first key, and everything
+here keeps scanning.
+
+### Spending the pool
+
+`ffwatch` picks an account per turn — and for every gate and selector call it makes on the host,
+which on a busy channel is far more often than any agent runs. The rule is **not** "whoever has
+used least":
+
+> An account 75% through a window that refills in five minutes has a quarter of a plan that is
+> about to be thrown away — unspent window is not carried over, so spending it costs nothing. An
+> account 50% through a window with five days left has half a plan that has to last five days.
+> The first one is the one to spend, even though it looks busier.
+
+So each account is scored on the allowance it can still give **per second** before it refills,
+and the largest wins:
+
+```
+        rate × remaining
+       ------------------
+        seconds to reset
+```
+
+`remaining` is the share of the weekly window still unspent, `seconds to reset` is what makes the
+about-to-refill account win, and `rate` is the plan multiplier from `CLAUDE_CODE_RATE_TOKEN<n>` —
+which is what makes this a comparison of *tokens* rather than of percentages, since a quarter of
+a Max 20x plan is five whole Pro ones. Equal reset times cancel the time term, and it reduces to
+"the emptiest week".
+
+Two rules sit around that score. An account that has spent more than **60%** of its *five-hour*
+session is not offered work at all, whatever its week looks like: that is the headroom a human at
+a terminal needs on the same account, and it is a gate rather than a term so it cannot be
+outweighed. It un-gates itself as soon as that session turns over. And when *every* account is
+over the cap there is no good choice left, only the one that comes back first — the same score
+applied to the five-hour window instead of the week, so an account at 90% that refills in two
+minutes beats one at 65% with four hours to go.
+
+The numbers come from Anthropic, through the same `claude_keys` module that draws `/claude`, so
+the page and the box can never disagree about which account has room. `claude.five_hour_cap` and
+`claude.spread` in `~/.config/ffbox/config.json` are the knobs; `ffbox/config.md` documents them,
+and `ffwatch status` prints a line per account and says where the next turn is going:
+
+```
+claude accounts: 3  (cap 60% of the five-hour session; next turn goes to CLAUDE_CODE_OAUTH_TOKEN2)
+  because Loth has 22% of its weekly left, refilling in 41 minutes, on a Max 20x plan
+  CLAUDE_CODE_OAUTH_TOKEN1     Ben  Pro       5h= 72% in 2 hours   7d= 10% in 5 days     in-flight=1  OVER CAP
+  CLAUDE_CODE_OAUTH_TOKEN2     Loth Max 20x   5h=  5% in 4 hours   7d= 78% in 41 minutes in-flight=0
+  CLAUDE_CODE_OAUTH_TOKEN3          Max 5x    5h= 12% in 3 hours   7d= 40% in 6 days     in-flight=0
+```
+
+**The choice travels as a name, never as a token.** `ffwatch` hands `ffbox` a variable name
+(`--claude-key CLAUDE_CODE_OAUTH_TOKEN2`) and `ffbox` resolves it out of `secrets.env` itself, so
+no credential reaches argv — world-readable through `/proc` for the life of the call — or the
+database, which records the name against the run. `ffbox` refuses a name that is not one of its
+own Claude tokens rather than falling back, which is what stops a wrong `--claude-key` handing a
+container some other secret. A warm pool container is the one place the account arrives late: it
+was created hours before anyone knew which turn it would serve, so the host drops the chosen
+token into its read-only spool as `in/claude-token` (mode 0640 to the `ffbox-container` group)
+and `pool-task.sh` exports it before it `exec`s the turn — which is also why `/proc/1/environ`
+inside names one account and not two. That file is deleted when the run finishes.
 
 ## Results
 

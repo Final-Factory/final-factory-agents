@@ -254,7 +254,16 @@ CREATE TABLE IF NOT EXISTS run (
     -- it, 1 for every later turn of the same conversation, which adds commits to a branch a
     -- reviewer may already be reading. Written at publish time from conversation.branch, read
     -- back by the reply so it says "created" or "updated" and never guesses which.
-    branch_existed      INTEGER NOT NULL DEFAULT 0
+    branch_existed      INTEGER NOT NULL DEFAULT 0,
+    -- WHICH CLAUDE SUBSCRIPTION PAID FOR THIS RUN (v15), as the secrets.env variable holding
+    -- its token: CLAUDE_CODE_OAUTH_TOKEN2, say. The NAME, never the token, and never a bare
+    -- number either — the pool skips blank slots, so "the second key" and
+    -- "CLAUDE_CODE_OAUTH_TOKEN2" stop meaning the same thing the moment somebody revokes the
+    -- first, and only one of the two is still true afterwards.
+    --
+    -- NULL on a box holding one account, where there is nothing to record, and on every row
+    -- written before the column existed.
+    claude_key          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_run_turn ON run(turn_id);

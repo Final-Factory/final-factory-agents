@@ -198,6 +198,38 @@ if [ -r "$FFBOX_IN/env" ]; then
     done < "$FFBOX_IN/env"
 fi
 
+# --- the Claude account this turn is billed to ----------------------------------------------------
+#
+# ITS OWN FILE, not a key in the env above, and that is the point of the loop's FFBOX_* rule:
+# exactly one non-FFBOX_ variable is written into this container by the host, and it arrives
+# here, where there is nothing to reason about beyond "the token, or the one we were staged
+# with".
+#
+# WHY IT ARRIVES AT ALL. This container was created hours before it knew which turn it would
+# serve, so the CLAUDE_CODE_OAUTH_TOKEN it holds is whatever account the pool keeper staged it
+# with. ffwatch picks per TURN — the account with the most allowance per second left before it
+# refills — and docker cannot add an environment variable to a running container, so the host
+# drops the value into the read-only spool instead.
+#
+# EXPORTED BEFORE THE exec BELOW, which is what makes /proc/1/environ name one account rather
+# than two: the environ a reader sees is the one captured at the last execve, and the turn task
+# is that exec.
+#
+# A MISSING FILE IS NOT AN ERROR. A container staged by an ffbox from before this existed runs
+# the copy of THIS script that was bind-mounted at stage time, so the upgrade path is exactly
+# "keep the staged token" — which is what happens here by doing nothing.
+if [ -r "$FFBOX_IN/claude-token" ]; then
+    CLAUDE_CODE_OAUTH_TOKEN=$(cat "$FFBOX_IN/claude-token")
+    export CLAUDE_CODE_OAUTH_TOKEN
+    log "billing this turn to ${FFBOX_CLAUDE_KEY:-the staged account}"
+elif [ -n "${FFBOX_CLAUDE_KEY:-}" ]; then
+    # The host chose an account and its token did not arrive — a mode this container cannot
+    # read, or a group that does not exist here. Say so: the run still works, on the account it
+    # was staged with, and the difference would otherwise show up only as one account's usage
+    # never moving.
+    log "WARNING: no readable $FFBOX_IN/claude-token; keeping the account this container was staged with"
+fi
+
 # --- sync to what the turn asked for -------------------------------------------------------------
 #
 # The mirror is a live read-only mount, so a container staged four hours ago sees every commit

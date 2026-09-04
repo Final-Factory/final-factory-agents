@@ -235,6 +235,63 @@ moment.
 `send` is separate because it caps what reaches the wire. One run that loops writing intents
 would spray a thread no matter how few turns it took.
 
+## `claude`
+
+**Which Claude subscription pays for each turn.** The tokens are *not* here — they live in
+`~/.config/ffbox/secrets.env` as `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3`, with the plan each one
+is on declared beside it as `CLAUDE_CODE_RATE_TOKEN<n>`. This block only says how to choose
+between them.
+
+```json
+"claude": { "spread": true, "five_hour_cap": 0.6, "refresh_secs": 900, "timeout_secs": 10 }
+```
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `spread` | `true` | Off spends the first non-empty slot for everything, which is what this box did before 2026-09-04. A box holding one account never reads anything either way. |
+| `five_hour_cap` | `0.6` | The share of the **five-hour session** past which an account stops being offered work. |
+| `refresh_secs` | `900` | How often every account's windows are re-read. |
+| `timeout_secs` | `10` | How long one account's reading may take before it is written off for that refresh. |
+
+Not seeded — a box with no `claude` block gets exactly the defaults above.
+
+**The rule is not "whoever has used least".** An account 75% through a window that refills in
+five minutes has a quarter of a plan that is about to be thrown away, because unspent window is
+not carried over; an account 50% through a window with five days left has half a plan that has
+to last five days. So each account is scored on the allowance it can still give **per second**
+before it refills — `rate × remaining ÷ seconds-to-reset`, where `rate` is the plan multiplier —
+and the largest wins. Equal reset times cancel the time term and it reduces to "the emptiest
+week", which is what this was before resets were taken into account.
+
+Two rules sit around the score:
+
+1. An account at or above `five_hour_cap` of its **five-hour** session is not offered work at
+   all, whatever its week says. That is a gate rather than a term in the score so that a very
+   empty week cannot outweigh it, and it is the headroom a human at a terminal needs on the same
+   account. It un-gates itself when that session turns over.
+2. When every account is over the cap there is no good choice, only the one that comes back
+   first: the same score on the five-hour window instead of the week. `ffwatch` logs a line when
+   it lands here, because that state is the box running out of subscription rather than out of
+   work.
+
+Ties fall to the account carrying fewer runs, then to the lower slot, which is what spreads a
+cold box where every account reads identical.
+
+**Why 0.6 and not 1.0.** A session run to its ceiling stops a turn mid-flight, and the turn is
+lost rather than queued. The 40% left over also absorbs the age of the reading, which is up to
+`refresh_secs` old by construction.
+
+**Where the numbers come from.** Anthropic, through `ffbox/claude_keys.py` — the same module
+that draws ffweb's `/claude` page, so the page and the chooser cannot disagree. A key from
+`claude setup-token` has no `user:profile` scope and so cannot read its own usage document; such
+a key is asked one token of Haiku instead and its windows are read off the reply's rate-limit
+headers. That is why `refresh_secs` is a quarter of an hour and not a minute: the refresh is not
+free, and the windows it measures are five hours and seven days long. The reading happens on a
+thread on the daemon's pass and **never** on the launch path — a turn never waits on Anthropic.
+
+`ffwatch status` prints a line per account, what is left in each window and when it refills, and
+which account the next turn is going to.
+
 ## `web_host`, `web_port`
 
 Where `ffweb` listens. `06-services.sh` renders `web_host` into `ffweb.service`, so the unit

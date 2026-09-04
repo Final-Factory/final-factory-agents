@@ -227,6 +227,11 @@ MOUNTS=()
 # Both take the id of a directory under POOL_DIR that the caller has created; ffwatch's keeper
 # owns that lifecycle. design/ffbox_idle_agents_design.txt.
 STAGE_POOL=
+# WHICH CLAUDE ACCOUNT PAYS FOR THIS RUN, as the secrets.env variable holding its token and
+# never as the token. Empty means the first non-empty slot, which is the only one on a box with
+# one account and is what every run did before ffwatch started choosing. See the token pool
+# below, which also validates it.
+CLAUDE_KEY=${FFBOX_CLAUDE_KEY:-}
 DISPATCH=
 # DETACH: create the container and return, leaving it running. What ffwatch passes since the
 # host stopped supervising containers -- see FINISH below and
@@ -333,6 +338,12 @@ Options:
                        conversation was opened with. It does NOT pick the network — that comes
                        from --network, which ffwatch also passes, resolved from that pool's
                        "network" mode; see there.
+  --claude-key NAME    Which Claude subscription pays for this run, named as the secrets.env
+                       variable holding its token (CLAUDE_CODE_OAUTH_TOKEN2, say). A NAME,
+                       never a token — the value is resolved here, so no credential reaches
+                       argv. ffwatch passes the account with the most allowance per second
+                       before it refills; left off, the first non-empty slot is used. A name
+                       that is not one of this box's tokens is refused, not fallen back from.
   --agent-timeout N    Seconds of AGENT working time (default 1800). The clock starts when the
                        task creates <out>/.agent-started, not when ffbox does.
   --warmup-timeout N   Seconds for everything before that marker (default 3600).
@@ -379,6 +390,7 @@ while [ $# -gt 0 ]; do
         --detach)         DETACH=1; shift ;;
         --finish)         FINISH_DIR=${2:?--finish needs a run directory}; shift 2 ;;
         --idle-ttl)       IDLE_TTL=${2:?--idle-ttl needs seconds}; shift 2 ;;
+        --claude-key)     CLAUDE_KEY=${2:?--claude-key needs a variable name}; shift 2 ;;
         --agent-class)    AGENT_CLASS=${2:?--agent-class needs a name}; shift 2 ;;
         --agent-timeout)  AGENT_TIMEOUT=${2:?--agent-timeout needs seconds}; CLOCKS=1; shift 2 ;;
         --warmup-timeout) WARMUP_TIMEOUT=${2:?--warmup-timeout needs seconds}; CLOCKS=1; shift 2 ;;
@@ -508,48 +520,77 @@ fi
 # --- the Claude token pool ------------------------------------------------------------------
 #
 # secrets.env carries ONE TOKEN PER CLAUDE ACCOUNT, numbered from 1: CLAUDE_CODE_OAUTH_TOKEN1,
-# CLAUDE_CODE_OAUTH_TOKEN2, and so on. This resolves the pool down to the one that gets spent —
-# the first non-empty slot — and exports it under the unnumbered name, which is what the
-# `docker run` below passes with `-e CLAUDE_CODE_OAUTH_TOKEN` and what `claude` inside the
-# container reads. NOTHING PAST THIS POINT KNOWS THERE IS A POOL, on purpose: the container is
-# handed one credential and the choice of which one is a host-side decision made here.
+# CLAUDE_CODE_OAUTH_TOKEN2, and so on. This resolves the pool down to the one that gets spent
+# and exports it under the unnumbered name, which is what the `docker run` below passes with
+# `-e CLAUDE_CODE_OAUTH_TOKEN` and what `claude` inside the container reads. NOTHING PAST THIS
+# POINT KNOWS THERE IS A POOL, on purpose: the container is handed one credential, and which
+# one is a host-side decision made here.
 #
-# WHY A POOL AT ALL, WHEN ONLY ONE IS USED. A subscription has rolling limits, and the useful
-# question on a busy box is not "am I out" but "which account still has room" — which cannot be
-# answered about an account whose token nobody wrote down. So the extra slots are inventory:
-# ffweb's /claude page reads every one of them and reports its five-hour and weekly usage, and
-# moving the box onto another account is then an edit to this file rather than an OAuth flow at
-# the worst possible moment.
+# ALL OF THEM ARE SPENT SINCE 2026-09-04, and until then only the first was. ffwatch reads what
+# is left on every account — see claude_keys.py, which has the policy and the argument for it —
+# and passes the winner as --claude-key. Without that flag this still resolves to the first
+# non-empty slot, which is the only one on a box holding one account and is what a run typed by
+# hand at a terminal gets.
 #
 # A GAP IS NOT THE END OF THE LIST. Slot 2 set with slot 1 blank is somebody who revoked their
 # first key; a loop that stopped at the hole would run the box on nothing.
 #
 # The unnumbered name is the OLDER SPELLING and is still honoured when no numbered slot is set,
 # so a secrets.env written before this change keeps working with no edit.
+#
+# --claude-key NAMES ONE OF THEM, and is how ffwatch spends the pool instead of only its first
+# entry: it reads what is left on every account (see claude_keys.py) and passes the variable
+# whose account should pay for this turn. A NAME AND NEVER A TOKEN — argv is world-readable
+# through /proc for the life of the process and lands in a shell history, which is the same rule
+# that keeps GH_PR_TOKEN out of the push url.
+#
+# THE NAME IS CHECKED AGAINST THE POOL BEFORE IT IS DEREFERENCED. This turns a string from the
+# command line into a credential, so without the check `--claude-key GH_PR_TOKEN` would hand a
+# container the GitHub token as its Claude one. Only names this loop itself produced are
+# accepted; anything else is refused rather than quietly falling back, because a caller asking
+# for an account that is not there has a wrong idea about this box and running the turn on
+# another account would hide that.
 _ff_active_token=""
+_ff_active_name=""
 _ff_v=""
+_ff_wanted_ok=0
 for ((_ff_n = 1; _ff_n <= ${FFBOX_CLAUDE_TOKEN_MAX:-16}; _ff_n++)); do
     # Indirect expansion rather than eval: ${!name} takes the value of the variable NAMED by
     # another variable, which is bash doing the lookup instead of this script re-parsing a
     # string that holds a credential.
     _ff_name="CLAUDE_CODE_OAUTH_TOKEN${_ff_n}"
     _ff_v=${!_ff_name:-}
-    if [ -n "$_ff_v" ]; then
+    [ -n "$_ff_v" ] || continue
+    if [ -z "$_ff_active_token" ]; then
         _ff_active_token=$_ff_v
-        break
+        _ff_active_name=$_ff_name
+    fi
+    if [ -n "$CLAUDE_KEY" ] && [ "$_ff_name" = "$CLAUDE_KEY" ]; then
+        _ff_active_token=$_ff_v
+        _ff_active_name=$_ff_name
+        _ff_wanted_ok=1
     fi
 done
-[ -n "$_ff_active_token" ] || _ff_active_token=${CLAUDE_CODE_OAUTH_TOKEN:-}
+if [ -z "$_ff_active_token" ] && [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    _ff_active_token=${CLAUDE_CODE_OAUTH_TOKEN:-}
+    _ff_active_name=CLAUDE_CODE_OAUTH_TOKEN
+    [ "$CLAUDE_KEY" = "CLAUDE_CODE_OAUTH_TOKEN" ] && _ff_wanted_ok=1
+fi
 
 if [ -z "$_ff_active_token" ]; then
     echo "ffbox: no Claude token. Generate one with 'claude setup-token' and put it in" >&2
     echo "       $SECRETS as CLAUDE_CODE_OAUTH_TOKEN1 — it bills against your subscription," >&2
     echo "       not an API key. Further accounts go in as CLAUDE_CODE_OAUTH_TOKEN2 and up;" >&2
-    echo "       only the first is spent, the rest are reported on ffweb's /claude page." >&2
+    echo "       ffwatch spreads turns over all of them and ffweb's /claude page reports each." >&2
+    exit 78
+fi
+if [ -n "$CLAUDE_KEY" ] && [ "$_ff_wanted_ok" != 1 ]; then
+    echo "ffbox: --claude-key ${CLAUDE_KEY} names no Claude token in $SECRETS" >&2
     exit 78
 fi
 export CLAUDE_CODE_OAUTH_TOKEN="$_ff_active_token"
-unset _ff_active_token _ff_v _ff_n _ff_name
+CLAUDE_KEY=$_ff_active_name
+unset _ff_active_token _ff_active_name _ff_v _ff_n _ff_name _ff_wanted_ok
 
 # --- the Unity licence ---------------------------------------------------------------------------
 #
@@ -1344,7 +1385,36 @@ if [ -n "$DISPATCH" ]; then
         printf 'FFBOX_GIT_NAME=%s\n' "$FFBOX_GIT_NAME"
         printf 'FFBOX_GIT_EMAIL=%s\n' "$FFBOX_GIT_EMAIL"
         printf 'FFBOX_OUTPUT_FORMAT=%s\n' "$OUTPUT_FORMAT"
+        printf 'FFBOX_CLAUDE_KEY=%s\n' "$CLAUDE_KEY"
     } > "$POOL_IN/env"
+
+    # THE ACCOUNT, WHICH CANNOT RIDE IN THE FILE ABOVE. pool-task.sh honours only FFBOX_* keys
+    # out of `env`, deliberately — a loop that exported whatever it was handed could be given
+    # PATH or LD_PRELOAD — so the token comes in beside it as its own file and the env file
+    # carries only the NAME, for the log line.
+    #
+    # WHY IT HAS TO COME IN AT ALL, when a cold run gets this as -e: this container was created
+    # hours ago, before anybody knew which turn it would serve, and docker cannot add an
+    # environment variable to a container that is already running. It was staged with whatever
+    # account the keeper chose then; the turn's own choice is newer and made on fresher numbers.
+    # pool-task.sh REPLACES the variable with this before it execs the turn task, so
+    # /proc/1/environ inside names one subscription — the one this turn is billed to — and not
+    # both.
+    #
+    # 0640 TO THE CONTAINER'S GROUP. The spool directory is world-readable, because the
+    # container has to be able to read the job out of it, and a token written under that umask
+    # would be readable by every account on this box. ffbox-container is the group the
+    # container's namespace root maps to, which is the same route $OUT uses to be writable.
+    # Without that group — a dev box, a laptop — it stays 0600 and the run finds out, which is
+    # the right way round.
+    ( umask 077; printf '%s\n' "$CLAUDE_CODE_OAUTH_TOKEN" > "$POOL_IN/claude-token" )
+    if getent group ffbox-container >/dev/null 2>&1; then
+        chgrp ffbox-container "$POOL_IN/claude-token" 2>/dev/null \
+            && chmod 640 "$POOL_IN/claude-token" 2>/dev/null || {
+            echo "[ffbox] WARNING: could not give $POOL_IN/claude-token to the ffbox-container" >&2
+            echo "[ffbox]          group; this run keeps the account it was staged with." >&2
+        }
+    fi
     [ -f "$OUT/prompt.txt" ] && cp "$OUT/prompt.txt" "$POOL_IN/prompt.txt"
     [ -n "$JOB_FILE" ] && cp "$JOB_FILE" "$POOL_IN/job.json"
 
@@ -1365,6 +1435,7 @@ if [ -n "$DISPATCH" ]; then
     fi
     : > "$POOL_IN/dispatch"
     echo "[ffbox] dispatched into the pool container as ${RUN_NAME}"
+    echo "[ffbox] claude account ${CLAUDE_KEY} pays for this turn"
     # The id of the container this run is now in. Written on this route too, and by id rather
     # than by the name we have just moved, so the host has one answer to "which container is
     # this run" whichever way the run started.
@@ -1419,6 +1490,7 @@ else
     fi
     RUN_MACHINE_ID=$(ffbox_agent_machine_id "$RUN_SLOT")
     echo "[ffbox] agent slot ${RUN_SLOT} (Unity sees this slot as its own machine)"
+    echo "[ffbox] claude account ${CLAUDE_KEY} pays for this run"
     # 9>&- CLOSES THE ADMISSION LOCK IN THE CHILD, and it is not optional. fd 9 is the lock,
     # held open by `exec 9>>` in this shell, and a background command inherits every open
     # descriptor -- so this `docker run`, which stays up for the whole run, kept the lock's open

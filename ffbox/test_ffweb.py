@@ -55,6 +55,16 @@ os.makedirs(os.environ["FFDISCORD_HOME"], exist_ok=True)
 os.environ["FFBOX_CONFIG_DIR"] = os.path.join(TMPROOT, "ffbox-config")
 os.makedirs(os.environ["FFBOX_CONFIG_DIR"], exist_ok=True)
 
+# NO CLAUDE TOKEN REACHES THIS SUITE, whatever the machine running it exports. The pool is read
+# out of the environment first (see claude_keys.claude_token_pool), so a developer whose shell
+# carries CLAUDE_CODE_OAUTH_TOKEN1 and 2 would have `ffwatch status` and the account chooser
+# making REAL requests to Anthropic from an offline test run. FFBOX_CONFIG_DIR above already
+# points the file fallback at a scratch directory; this closes the other half.
+for _name in list(os.environ):
+    if _name.startswith(("CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_RATE_TOKEN")):
+        del os.environ[_name]
+
+
 sys.path.insert(0, HERE)
 import ffwatch   # noqa: E402
 import ffweb     # noqa: E402
