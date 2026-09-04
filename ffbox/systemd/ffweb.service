@@ -21,13 +21,19 @@
 #
 # It never writes the database itself: the connection is opened file:...?mode=ro and ffwatch
 # stays the sole writer. Where the page needs to act it shells out to ffwatch, and there are
-# two such surfaces, set independently:
+# three such surfaces, set independently:
 #
 #   The prompt box is ALWAYS ON, for anyone who gets past the login. It runs
 #   `ffwatch submit`, which queues the same turn `ffbox "..."` does, in the same disposable
 #   container that cannot reach Discord. Whoever holds the password holds shell-equivalent
 #   capability on this box, which is the same thing the login already meant — so the bind
 #   address above, not a flag, is the decision about who can do it.
+#
+#   The stop button on /status is ALWAYS ON too, and for that same reason: it runs
+#   `ffwatch stop --detach <container>`, which is a command whoever holds the password could
+#   run from a terminal here anyway. It is offered only on a container serving a turn, it asks
+#   on a page of its own first, and the stop is soft — the container keeps long enough to
+#   harvest its workspace and hand its Unity licence back.
 #
 #   --enable-actions (approve/reject on the outbound queue) is deliberately NOT set here. It
 #   shells out to `ffwatch approve`, and a unit that carries it would mean anything that can

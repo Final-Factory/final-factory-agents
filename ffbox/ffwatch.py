@@ -193,6 +193,21 @@ def resolve_network_mode(value, fallback):
 # ffbox/lib-workloads.sh carries the shell side of it as FFBOX_LICENCE_STOP_FLOOR.
 LICENCE_STOP_FLOOR = 120
 
+# WHAT A HAND STOP LEAVES BEHIND, in the run's out directory, beside ffbox's own ffbox-timeout.
+# A FILE AND NOT AN EXIT CODE, because the exit code cannot answer the question. `docker stop`
+# signals PID 1, and what the task script's status is at that moment depends on WHERE the run
+# had got to: interrupted in `wait` on the backgrounded agent it is 143, but interrupted during
+# warm-up -- the clone, the container, the Unity licence, which is minutes on this box and
+# exactly when somebody gets impatient enough to press the button -- it is whatever the last
+# foreground command returned, which is usually 0. finish_run scored that 0 as `done`, and a
+# done run with no verdict tells the person who asked "I had a look and came back with nothing
+# worth saying", which is a lie about a run nobody let finish.
+#
+# ITS OWN WORD, NOT ffbox-timeout. That file names which CLOCK expired and finish_run scores a
+# run carrying one as `timed_out`; a run somebody stopped did not run out of time, and the two
+# want opposite advice about whether to ask the question again.
+STOP_MARKER = "ffbox-stopped"
+
 
 def run_container_name(agent_class, run_id):
     """What ffbox will call the container serving this run."""
@@ -6760,6 +6775,11 @@ class Watcher:
         task = _read_json(os.path.join(run_dir, "task.json")) or {}
         timeout_kind = _read_text(os.path.join(run_dir, "ffbox-timeout"))
         base_sha = _read_text(os.path.join(run_dir, "base_sha.txt"))
+        # SOMEBODY STOPPED THIS RUN. Written by mark_run_stopped before the signal went out, and
+        # read here rather than inferred from `rc` because the exit code of a stopped container
+        # depends on where the run had got to -- see STOP_MARKER for the 0 that used to come back
+        # from a stop during warm-up and get scored as a clean, silent run.
+        stopped = bool(_read_text(os.path.join(run_dir, STOP_MARKER)))
 
         if timeout_kind == "verify" or rc == 125:
             # The VERIFY clock is the one timeout that is not the turn failing: the agent had
@@ -6768,6 +6788,16 @@ class Watcher:
             terminal = "failed" if (isinstance(result, dict) and result.get("is_error")) \
                 else "done"
             timeout_kind = "verify"
+        elif stopped:
+            # AHEAD OF THE EXIT CODE AND OF THE CLOCKS, because it is the only one of the three
+            # that knows a PERSON ended this. Below the verify branch on purpose, which is the
+            # one case where the agent had already finished and has an answer worth posting.
+            #
+            # `failed` rather than a state of its own: nothing downstream has a fourth ending to
+            # put anywhere, the run genuinely did not complete, and the reply says which kind of
+            # not-completing it was. What the operator reads is the private line below, and what
+            # a player reads is PUBLIC_STOPPED.
+            terminal = "failed"
         elif timeout_kind or rc in (123, 124):
             # design section 8: exceeding the agent clock is TERMINAL. Never a retry — a retry
             # of a run that has already burned 15 minutes just burns 15 more.
@@ -6845,11 +6875,16 @@ class Watcher:
             self.reconcile_publication(conv["id"], replying_run_id=run_row_id)
 
         self.index_transcript(run_row_id, conv["id"], job["session"]["id"])
-        self.record_reply(run_row_id, conv, turn, run_dir, terminal, result, timeout_kind, job)
+        self.record_reply(run_row_id, conv, turn, run_dir, terminal, result, timeout_kind, job,
+                          stopped=stopped)
 
         error = None
         if terminal == "timed_out":
             error = f"{timeout_kind or 'agent'} clock exceeded"
+        elif stopped:
+            # Ahead of the subtype, which says the same thing in the container's words and
+            # cannot say who. This is the line on the turn row and on the web page.
+            error = "stopped by hand from the box page or `ffwatch stop`"
         elif terminal == "failed":
             error = (result.get("subtype") or f"ffbox exited {rc}") if result else \
                 f"ffbox exited {rc}"
@@ -7081,7 +7116,8 @@ class Watcher:
              "dry" if self.dry_run else "pending", now_iso(), payload.get("local_id")))
         return nonce
 
-    def record_reply(self, run_row_id, conv, turn, run_dir, terminal, result, timeout_kind, job):
+    def record_reply(self, run_row_id, conv, turn, run_dir, terminal, result, timeout_kind, job,
+                     stopped=False):
         """Turn the run's outcome into outbound rows. Nothing is sent here — see send_pending.
 
         THE HOST IS THE ONLY COMPOSER. A turn says what it wants said by putting it in the
@@ -7114,7 +7150,8 @@ class Watcher:
         verification = self.db.one("SELECT * FROM verification WHERE run_id=?",
                                    (run_row_id,))
         head = compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
-                            verification=verification, publish=self.publish_facts(run_row_id))
+                            verification=verification, publish=self.publish_facts(run_row_id),
+                            stopped=stopped)
         last = job["messages"][-1] if job["messages"] else None
         payload = {"channel": reply_channel(conv), "text": head, "silent": True,
                    "reply_to": last["discord_id"] if last else None}
@@ -9294,6 +9331,128 @@ class Watcher:
             # stops this repeating: once the container is gone, run_container_live says so.
             self._clock_stopping.discard(run_id)
 
+    # -- stopping one container by hand ------------------------------------------------------
+
+    def workload_containers(self):
+        """{name: workload label} for every RUNNING container this harness owns.
+
+        THE LABEL IS THE MEMBERSHIP TEST, and it is the whole reason this exists rather than a
+        bare `docker stop` wherever one is wanted. `ffbox.workload` is set at creation on every
+        container ffbox and ffwatch make and on nothing else, so the egress proxies, the git
+        mirror and whatever else the operator runs on this daemon are outside the set by
+        construction -- which is the same line ffstatus.sh draws when it files a container under
+        `infrastructure` rather than in the workspace tables.
+
+        NAMES ARE COMPARED IN PYTHON, not handed to `docker ps --filter name=`. That filter is a
+        REGEX, so a name arriving from anywhere but this dict would be a pattern rather than a
+        string, and an anchored-looking one is still `.` matching any character. Listing the set
+        and testing membership has no such edge.
+        """
+        try:
+            proc = subprocess.run(
+                [self.cfg["docker"], "ps", "--filter", "label=ffbox.workload",
+                 "--format", '{{.Names}}\t{{.Label "ffbox.workload"}}'],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"could not list workload containers: {exc}")
+            return {}
+        if proc.returncode != 0:
+            log(f"could not list workload containers: {(proc.stderr or '').strip()}")
+            return {}
+        found = {}
+        for line in (proc.stdout or "").splitlines():
+            name, _, workload = line.partition("\t")
+            if name.strip():
+                found[name.strip()] = workload.strip()
+        return found
+
+    def mark_run_stopped(self, name):
+        """Record that the run in container `name` is being stopped by hand. Returns True if so.
+
+        WHY THE HOST WRITES THIS AND NOT THE CONTAINER. The container already says something --
+        discord-task.sh's trap lifts a result stub whose subtype is "the run was stopped before
+        the agent finished" -- but it says it for every stop, including the clock enforcer's, and
+        it cannot say WHO. This file is the only place that knows a person asked, so it is the
+        only place that can write it down.
+
+        A run with no row, or one already terminal, gets nothing: the container may be a staged
+        spare, a CI runner, or a run some other pass has already finished. Nothing here is fatal
+        -- a marker that could not be written costs the reply its accuracy, which is worth a log
+        line and not an exception in front of a stop somebody asked for.
+        """
+        run = self.db.one("SELECT * FROM run WHERE container_name=? AND terminal_state IS NULL"
+                          " ORDER BY id DESC LIMIT 1", (name,))
+        if run is None:
+            return False
+        out_dir = self.run_out_dir(run)
+        if not out_dir or not os.path.isdir(out_dir):
+            return False
+        try:
+            with open(os.path.join(out_dir, STOP_MARKER), "w", encoding="utf-8") as fh:
+                fh.write("hand\n")
+        except OSError as exc:
+            log(f"WARNING: could not mark run {run['ffbox_run_id']} as stopped by hand: {exc}")
+            return False
+        return True
+
+    def stop_workload(self, name, detach=False):
+        """Stop ONE workload container by name, softly. Returns (ok, one sentence).
+
+        WHAT AN OPERATOR MEANS BY "STOP THAT". `docker stop` signals PID 1, which is the task
+        script, and its traps are the only thing that harvests the workspace out of the tmpfs
+        and hands the Unity seat back -- see discord-task.sh's _ffbox_finish. So the grace is
+        floored at LICENCE_STOP_FLOOR exactly as _stop_expired_run and pool_drop floor theirs:
+        `docker stop --timeout` SIGKILLs when it runs out, kill_grace_secs is about an agent
+        ignoring SIGTERM and is far too short for an editor launch, and a stop that kills
+        part-way through the licence return leaks the seat until the slot is reused.
+
+        NO ffbox-timeout MARKER IS WRITTEN. That file names which CLOCK expired and finish_run
+        scores a run carrying one as `timed_out`; a container an operator stopped did not run out
+        of time, and labelling it that way would put a fiction in the record. The run finishes
+        down the ordinary path on whatever exit code the container reports.
+
+        NOTHING BUT A RUNNING WORKLOAD CONTAINER CAN BE NAMED. The name is looked up in
+        workload_containers() first, so infrastructure, a stranger's container, and a name that
+        is really a shell fragment all fail here rather than at docker.
+
+        --detach IS FOR ffweb. The wait is the grace period -- up to two minutes of harvest and
+        licence return -- and a page cannot hold a request open that long. The lookup above still
+        happens synchronously, so the caller's exit code still answers "was that a real
+        container"; what it stops waiting for is the stop itself, which docker finishes whether
+        or not this process is still here to watch.
+        """
+        workload = self.workload_containers().get(name)
+        if workload is None:
+            return False, (f"no ffbox container called {name} is running on this box "
+                           f"(names come from ffbox/ffstatus.sh)")
+        # BEFORE THE SIGNAL, and that ordering is the whole point: the container's trap runs the
+        # moment the stop lands, the host reads this directory after the container is gone, and a
+        # marker written afterwards would race a finish pass that had already scored the run.
+        self.mark_run_stopped(name)
+        grace = max(1, int(self.cfg["kill_grace_secs"]), LICENCE_STOP_FLOOR)
+        argv = [self.cfg["docker"], "stop", "--timeout", str(grace), name]
+        if detach:
+            try:
+                # start_new_session so it is not in this process's group: ffweb runs this as a
+                # subprocess of its own and a Ctrl-C, or a systemd restart, must not take the
+                # stop down half-way through the licence return. Orphaned to init, which reaps
+                # it -- there is no zombie left behind for a process that has already exited.
+                subprocess.Popen(argv, start_new_session=True, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError as exc:
+                return False, f"could not stop {name}: {exc}"
+            return True, (f"stopping {name} ({workload}); it has up to {grace}s to harvest its "
+                          f"workspace and hand its licence back")
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=grace + 60)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, f"could not stop {name}: {exc}"
+        if proc.returncode != 0:
+            why = (proc.stderr or "").strip() or f"docker exited {proc.returncode}"
+            return False, f"could not stop {name}: {why}"
+        return True, f"stopped {name} ({workload})"
+
     def sweep_dead_containers(self, older_than=3600):
         """Remove workload containers that have exited and that nothing came back for.
 
@@ -10176,6 +10335,14 @@ PUBLIC_TIMED_OUT = ("This one ran past the time I am allowed to spend on a singl
                     "stopped part way through and there is no answer to give. A narrower "
                     "question usually gets through.")
 
+# A turn a PERSON ended, from the box page or `ffwatch stop`. Neither of the two above fits it,
+# and both get the advice wrong in a different direction: nothing broke, so "something broke on
+# my end" is untrue, and the question is fine, so unlike a run that spent the whole ceiling
+# there is every reason to ask this one again unchanged. Written to the max-voice rules like
+# every other string a player reads.
+PUBLIC_STOPPED = ("A dev stopped this run part way through, so there's no answer to give. "
+                  "Nothing wrong with the question, so ask again and it'll have another go.")
+
 
 def answer_is_publishable(turn, terminal):
     """Does this reply carry the agent's own words at all?
@@ -10285,7 +10452,7 @@ def publish_footer(publish, correction):
 
 
 def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
-                 verification=None, publish=None):
+                 verification=None, publish=None, stopped=False):
     """The reply body. TWO SHAPES, chosen by the turn's venue.
 
     A PUBLIC reply is the agent's answer, and the only thing that may lead it is the one
@@ -10320,10 +10487,14 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         correction = public_correction(turn, verification, publish or {})
         footer = publish_footer(publish or {}, correction)
         if not answer_is_publishable(turn, terminal):
-            # A run stopped by its own ceiling is not a run that broke, and saying so costs
-            # nothing: `terminal` already distinguishes them, and the two want opposite advice
-            # about whether to ask again.
-            answer = PUBLIC_TIMED_OUT if terminal == "timed_out" else PUBLIC_NO_ANSWER
+            # THREE ENDINGS AND THREE SENTENCES, because the advice differs every time. A run
+            # stopped by its own ceiling is not a run that broke; a run a person stopped is
+            # neither, and is the only one of the three where asking exactly the same question
+            # again is the right thing to do.
+            if stopped:
+                answer = PUBLIC_STOPPED
+            else:
+                answer = PUBLIC_TIMED_OUT if terminal == "timed_out" else PUBLIC_NO_ANSWER
         else:
             answer = body or PUBLIC_NOTHING_TO_SAY
         out = f"{correction}\n\n{answer}" if correction else answer
@@ -10355,7 +10526,11 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # waiting on is not coming back.
         detail = str(result.get("subtype") or result.get("error") or "") \
             if isinstance(result, dict) else ""
-        said = f"the run {terminal.replace('_', ' ')}"
+        # `the run failed` is wrong for the one ending that was a decision. The subtype under it
+        # says the same thing in the container's words, and says it for the clock enforcer's
+        # stops too; this is the half that knows a person did it.
+        said = "the run was stopped by hand" if stopped \
+            else f"the run {terminal.replace('_', ' ')}"
         if timeout_kind:
             said += f" on the {timeout_kind} clock"
             # WHICH CEILING, so the operator reads the number they would have to change rather
@@ -10366,7 +10541,11 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
                 {"agent": "agent_secs", "warmup": "warmup_secs"}.get(timeout_kind, ""))
             if _ceiling:
                 said += f" after {human_gap(_ceiling)}"
-        if detail:
+        # NOT ON A HAND STOP. The container's subtype there is "the run was stopped before the
+        # agent finished", which is the sentence above again in the container's words, and
+        # "the run was stopped by hand: the run was stopped before the agent finished" is an
+        # operator reading the same fact twice.
+        if detail and not stopped:
             said += f": {detail}"
         lines.append(said[:300])
     elif timeout_kind:
@@ -10578,6 +10757,17 @@ def build_parser():
                     help="for drop: one pool id, or all the idle ones if omitted. For stage: "
                          "which agent class to stage (%s; default %s)."
                          % ("/".join(AGENT_CLASSES), DEFAULT_AGENT_CLASS))
+    # Stopping one container by hand, which is what the box page's `running` pill offers. Here
+    # rather than as a `docker stop` in ffweb for the reason every other write on that page is
+    # here: the soft-stop discipline (the licence floor, the workload-label test) lives in one
+    # place, and a second copy would be right on the day it was written.
+    sp = sub.add_parser("stop", help="stop a running workload container by name, softly")
+    sp.add_argument("name", nargs="+", help="container name(s), as ffbox/ffstatus.sh lists them")
+    sp.add_argument("--detach", action="store_true",
+                    help="issue the stop and return at once, instead of waiting out the grace "
+                         "period. The name is still checked first, so the exit code still says "
+                         "whether it was a real container. What ffweb uses -- the wait is up to "
+                         "two minutes and a page cannot hold a request open that long")
     sp = sub.add_parser("approve", help="release outbound rows held for approval")
     sp.add_argument("id", nargs="+", type=int, help="outbound row id(s) from `ffwatch status`")
     sp = sub.add_parser("submit", help="run a prompt through the pipeline (the local ingress)")
@@ -10724,6 +10914,16 @@ def main(argv=None):
         print("\n".join(lines) if lines
               else "every pool is off (no class has a non-zero pool.idle)")
         return 0
+    if args.cmd == "stop":
+        # Every name is attempted even after one fails: an operator clearing two containers
+        # should not have the second spared because the first had already exited.
+        worst = 0
+        for name in args.name:
+            ok, note = watcher.stop_workload(name, detach=args.detach)
+            print(note, file=sys.stdout if ok else sys.stderr)
+            if not ok:
+                worst = 1
+        return worst
     if args.cmd == "approve":
         done = watcher.approve(args.id)
         # Approving and then waiting up to poll_secs for the daemon to notice is fine, but a

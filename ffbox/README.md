@@ -1571,6 +1571,35 @@ than counting every `ffghr-*` container as a job in flight. It reads `docker ps`
 time; `--watch` refreshes it every five seconds and `--json` prints the same reading as one
 document, which is what the web page renders.
 
+**Stopping one of them:** `ffwatch stop <name>`, with a name from that first table. The stop is
+soft — `docker stop` with a grace floored at the licence round trip, so PID 1's traps harvest the
+workspace out of the ramdrive and hand the Unity seat back before docker's `SIGKILL` — and only a
+container carrying the `ffbox.workload` label can be named, so the egress proxies and the git
+mirror are outside the set by construction. Nothing is retried: the turn ends rather than being
+requeued. `--detach` issues the stop and returns instead of waiting out the grace period, which is
+how the web page calls it. A *staged spare* is not this command's business — `ffwatch pool drop
+<id>` retires one and deals with its spool directory too.
+
+**It writes a marker first, and that is not incidental.** Before the signal goes out, the run in
+that container gets an `ffbox-stopped` file in its output directory, and `finish_run` reads it
+ahead of the exit code. That is the difference between a reply that makes sense and one that
+lies, because **a stopped container has no reliable exit code**: `docker stop` signals PID 1, so
+a stop that lands while the task script is in `wait` on the backgrounded agent exits 143, but one
+that lands during warm-up — the clone, the container, the Unity licence, which is minutes on this
+box and exactly when somebody gets impatient enough to press the button — leaves `$?` as the last
+foreground command's status, which is normally 0. Scored on that 0 the run read `done` with no
+verdict, and the thread was told *"I had a look at this one and came back with nothing worth
+saying"* about a run nobody let finish. The marker makes the answer independent of where the
+signal landed.
+
+It is deliberately **not** `ffbox-timeout`. That file names which *clock* expired and scores the
+run `timed_out`, and the two want opposite advice: a run that spent the whole ceiling should not
+be asked again unchanged, and a run somebody stopped should be. So a stopped Discord turn gets a
+third public string beside `PUBLIC_TIMED_OUT` and `PUBLIC_NO_ANSWER` — it says a dev stopped the
+run and the question is fine to ask again — the 👀 comes off the message the way it does on every
+other ending (`finish_turn` is the one choke point, and `clear_ack` hangs off it), and the private
+shape tells an operator it was stopped by hand rather than that it failed.
+
 Above both tables it prints the load average and the memory, because a container count is not
 the unit that runs out: a workspace is a tmpfs, so it is resident RAM rather than disk, and the
 `in container workspaces` figure is the shared memory the ceiling is really rationing. A box at
@@ -1987,10 +2016,15 @@ the same script an operator runs in a terminal — rather than by growing its ow
 The rules for reading this box are fiddly enough (a dispatched spare still carries the pool
 label; an idle CI runner is a running container) that a second implementation would drift from
 the first, and an operator comparing the page against the terminal would have no way to know
-which one was lying. Nothing on the page acts: there are no buttons, because resizing a pool or
-stopping a container is ffwatch's and ffbox's to do. When the script cannot answer — docker
-down, the daemon wedged — the page says so in a sentence and stays a page, since that is exactly
-when somebody is looking at it.
+which one was lying. **One thing on the page acts**: the `running` state of a container serving a
+turn is a link, and the page behind it offers to stop that container. Nothing else does —
+resizing a pool, retiring a spare and minting a CI runner are decisions the keeper makes on a
+loop, so a button doing one of them would be undone on the next pass. Stopping a live turn is not
+that: nothing on the box puts a stopped run back. The click goes out through `ffwatch stop
+--detach` like every other write on this site, and the confirmation says what the person who
+asked will see — the 👀 coming off and a reply saying a dev stopped it. When the script cannot answer — docker down, the
+daemon wedged — the page says so in a sentence and stays a page, since that is exactly when
+somebody is looking at it.
 
 | route | what it is |
 |---|---|
@@ -2000,7 +2034,7 @@ when somebody is looking at it.
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
 | `/claude` | **the subscriptions**: every Claude account in the `secrets.env` pool, which one is actually spent, which plan its slot declares, and how much of each account's five-hour and weekly windows is gone, with the per-model weekly cap beside them where the token's scope allows it. Read from Anthropic over the network and cached for 15 minutes; no token appears on it |
-| `/status` | **the box**, and one of two pages here that read no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
+| `/status` | **the box**, and one of two pages here that read no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back. A `running` state is a link to `/stop?name=…`, which confirms and then stops that container |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 
@@ -2032,7 +2066,7 @@ the test suite asserts both that the connection rejects an `INSERT` and that the
 file's mtime is unchanged after a crawl of every route. Where the page needs to change
 something it shells out to ffwatch instead, which keeps the transition where the kill switch,
 the send-side rate limits and the retry bookkeeping already live, and is what lets the page
-move off this box later without the database moving with it. Three surfaces do that:
+move off this box later without the database moving with it. The surfaces that do it:
 
 The **prompt box** at the top of `/` runs `ffwatch submit --source web` and queues the same
 turn `ffbox "<prompt>"` does, in the same disposable container. The `--source` is recorded and
@@ -2133,6 +2167,23 @@ a forged POST that emptied someone's queue view would be a nuisance worth not ha
 is **off by default**, and the systemd unit does not carry it. The difference is disclosure, not
 capability: approving releases a reply into a public Discord thread, where a prompt runs work in
 a container that cannot post at all.
+
+**Stopping a container** from `/status` is the newest of them and has no flag either, for the
+prompt box's reason: whoever holds the password could open a terminal on this box and run
+`ffwatch stop` themselves, so the bind address and the login are the decision about who may. The
+`running` pill on a row serving a turn is a link; the page behind it names the container, shows
+its row, says what the stop costs and what survives it, and carries the button. **The
+confirmation is a page rather than a JavaScript `confirm()`**, and that is a CSP consequence
+rather than a preference: the policy here admits scripts by sha256 hash and nothing else, so an
+`onsubmit` attribute would be dropped silently by the browser and the button would stop a
+container with no dialog at all — a failure invisible until the day somebody used it. Only the
+`running` and `running*` states are offered it. A warm spare belongs to `ffwatch pool drop`,
+which deals with its spool directory as well, and a CI runner belongs to its slot supervisor,
+which would mint a replacement the moment this took one away; a button that something else
+immediately undoes is worse than no button. The POST re-reads the box before it acts, so a click
+on a row whose turn has since finished gets a sentence instead of a stop, and a mismatched
+`Origin` is refused — a forged POST that ended a fifteen-minute turn from a tab left open
+somewhere else is exactly what that check is for.
 
 **Nothing is served until someone signs in, and the wire is TLS.** Every route except the
 login form goes through the session check, so an unauthenticated request is a `303` to
