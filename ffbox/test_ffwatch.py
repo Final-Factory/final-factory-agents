@@ -65,6 +65,16 @@ os.makedirs(os.environ["FFDISCORD_HOME"], exist_ok=True)
 os.environ["FFBOX_CONFIG_DIR"] = os.path.join(TMPROOT, "ffbox-config")
 os.makedirs(os.environ["FFBOX_CONFIG_DIR"], exist_ok=True)
 
+# NO CLAUDE TOKEN REACHES THIS SUITE, whatever the machine running it exports. The pool is read
+# out of the environment first (see claude_keys.claude_token_pool), so a developer whose shell
+# carries CLAUDE_CODE_OAUTH_TOKEN1 and 2 would have `ffwatch status` and the account chooser
+# making REAL requests to Anthropic from an offline test run. FFBOX_CONFIG_DIR above already
+# points the file fallback at a scratch directory; this closes the other half.
+for _name in list(os.environ):
+    if _name.startswith(("CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_RATE_TOKEN")):
+        del os.environ[_name]
+
+
 sys.path.insert(0, HERE)
 import ffwatch  # noqa: E402
 
@@ -11127,7 +11137,7 @@ def test_the_classifier_tries_the_cheap_call_first_and_falls_back():
     # And the flow: a first call that parses is the only call.
     calls = []
 
-    def fake(cfg_, prompt_, schema_, structured, what):
+    def fake(cfg_, prompt_, schema_, structured, what, key=None):
         calls.append(structured)
         if not structured:
             return {"continues": 3, "reason": "ok"}, None
@@ -11145,7 +11155,7 @@ def test_the_classifier_tries_the_cheap_call_first_and_falls_back():
     # A first call that does not parse costs the second, under the flag.
     calls = []
 
-    def fake_bad(cfg_, prompt_, schema_, structured, what):
+    def fake_bad(cfg_, prompt_, schema_, structured, what, key=None):
         calls.append(structured)
         if not structured:
             return None, "output was not valid JSON"
@@ -11197,8 +11207,237 @@ def test_the_fast_answer_is_held_to_the_schema_the_flag_would_have_enforced():
           "a string passed as a boolean")
 
 
+# ------------------------------------------------------------------------------------------
+# the Claude subscriptions
+# ------------------------------------------------------------------------------------------
+#
+# THE POLICY IS A PURE FUNCTION and is tested as one: claude_keys.pick takes the readings and
+# answers an index, so every case below is a table rather than a box in a state. The daemon
+# half — that the answer reaches ffbox as a NAME and reaches the run row — is the last test.
+
+import claude_keys  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
+
+
+CLAUDE_NOW = 1_800_000_000.0
+
+
+def key_record(name, *, rate=1, five=10.0, seven=10.0, five_in=3600, seven_in=3 * 86400,
+               state="available", locked="", now=CLAUDE_NOW):
+    """One ClaudeKeys.read() record, with both windows and a reset time for each.
+
+    `now` is the clock the reset times are relative to. The policy tests pin it, because a
+    fixed clock is what makes them read as a table; the integration test uses the real one,
+    because the code path it exercises goes through pick() without a `now` of its own.
+    """
+    def at(secs):
+        if secs is None:
+            return None
+        return datetime.fromtimestamp(now + secs, timezone.utc).isoformat()
+    return {"name": name, "rate": rate, "state": state, "error": "", "windows": [
+        {"key": "five_hour", "label": "5-hour session", "percent": five,
+         "resets_at": at(five_in), "locked": locked},
+        {"key": "seven_day", "label": "weekly", "percent": seven,
+         "resets_at": at(seven_in), "locked": ""}]}
+
+
+def test_the_account_about_to_refill_is_the_one_worth_spending():
+    print("allowance per second, not lowest usage")
+    # THE CASE THE POLICY EXISTS FOR. A is three-quarters through its week and gets it back in
+    # five minutes; B is half through and has five days to go. A's remaining quarter is about to
+    # be thrown away — unspent window is not carried over — so spending it costs nothing, while
+    # every point of B's has to last the week. The busier-looking account is the right answer.
+    a = key_record("A", seven=75.0, seven_in=300)
+    b = key_record("B", seven=50.0, seven_in=5 * 86400)
+    i, why = claude_keys.pick([a, b], now=CLAUDE_NOW)
+    check("the one refilling in five minutes wins over the one that is emptier", i == 0, why)
+    check("and the reason says why", "5 minutes" in why and "25%" in why, why)
+
+    # Reverse the reset times and the answer reverses with them: nothing here is about the
+    # order of the pool or about which account is called what.
+    flipped = claude_keys.pick([key_record("A", seven=75.0, seven_in=5 * 86400),
+                                key_record("B", seven=50.0, seven_in=300)], now=CLAUDE_NOW)[0]
+    check("with the resets swapped, so is the choice", flipped == 1)
+
+
+def test_with_equal_resets_it_is_the_emptiest_week():
+    print("the old rule, still there underneath")
+    # When two accounts refill at the same moment the time term cancels, and what is left is
+    # exactly "lowest weekly usage" — which is what this was before the reset was taken into
+    # account, and it must still hold.
+    a = key_record("A", seven=40.0, seven_in=3 * 86400)
+    b = key_record("B", seven=12.0, seven_in=3 * 86400)
+    check("the emptier week takes it", claude_keys.pick([a, b], now=CLAUDE_NOW)[0] == 1)
+
+
+def test_a_bigger_plan_counts_for_more():
+    print("percentages of different-sized plans")
+    # A quarter of a Max 20x account is five whole Pro accounts. Comparing the percentages
+    # alone would hand the turn to the Pro key, which is the smaller amount of actual work.
+    pro = key_record("PRO", rate=1, seven=0.0)
+    max20 = key_record("MAX", rate=20, seven=75.0)
+    i, why = claude_keys.pick([pro, max20], now=CLAUDE_NOW)
+    check("a quarter of a Max 20x beats an untouched Pro", i == 1, why)
+    check("and the sentence names the plan", "Max 20x" in why, why)
+
+
+def test_the_five_hour_cap_is_a_gate_and_not_a_term():
+    print("the session cap")
+    # A's week is emptier by a mile, and A has spent its session. The cap is what stops the
+    # week's arithmetic reaching for an account that has no session left to run in.
+    a = key_record("A", five=65.0, seven=5.0)
+    b = key_record("B", five=10.0, seven=60.0)
+    check("a slot over the cap is passed over whatever its week says",
+          claude_keys.pick([a, b], now=CLAUDE_NOW)[0] == 1)
+    check("exactly at the cap is over it",
+          claude_keys.pick([key_record("A", five=60.0, seven=5.0), b], now=CLAUDE_NOW)[0] == 1)
+    check("just under it is not",
+          claude_keys.pick([key_record("A", five=59.9, seven=5.0), b], now=CLAUDE_NOW)[0] == 0)
+    # And the cap is configurable, because "60% of a session" is a judgement about how much
+    # room a human at the same account needs, not a fact.
+    check("a higher cap lets it through",
+          claude_keys.pick([a, b], cap=0.9, now=CLAUDE_NOW)[0] == 0)
+    # A window Anthropic has LOCKED is out regardless of the number under it.
+    check("a locked session is out even at 0%",
+          claude_keys.pick([key_record("A", five=0.0, seven=0.0, locked="exceeded"), b],
+                           now=CLAUDE_NOW)[0] == 1)
+
+
+def test_when_every_session_is_spent_it_is_the_one_that_comes_back_first():
+    print("nothing left under the cap")
+    # No good choice, only a least-bad one. The literal rule would be "lowest five-hour usage",
+    # which picks B — but A refills in two minutes and B in four hours, so A is the account
+    # that can actually do work soon. The same rate, applied to the session instead of the week.
+    a = key_record("A", five=90.0, five_in=120, seven=5.0)
+    b = key_record("B", five=65.0, five_in=4 * 3600, seven=5.0)
+    i, why = claude_keys.pick([a, b], now=CLAUDE_NOW)
+    check("the nearly-spent account that refills in two minutes wins", i == 0, why)
+    check("and the line says the box is out of session, not out of work",
+          "every key is at or above 60%" in why, why)
+
+
+def test_a_key_that_cannot_be_read_is_set_aside_not_believed():
+    print("an unreachable account")
+    # The failure that matters: an account whose windows did not come back has no percentages,
+    # and anything that read "no reading" as "nothing used" would hand it every turn on the box.
+    dead = {"name": "DEAD", "rate": 20, "state": "unreachable", "error": "401 — refused",
+            "windows": []}
+    live = key_record("LIVE", seven=80.0)
+    check("a revoked key is not treated as an empty one",
+          claude_keys.pick([dead, live], now=CLAUDE_NOW)[0] == 1)
+    i, why = claude_keys.pick([dead], now=CLAUDE_NOW)
+    check("but with nothing else it falls back to the pool's own order rather than refusing",
+          i == 0, why)
+    check("and says so", "falling back" in why, why)
+
+
+def test_a_reset_in_the_past_is_a_window_that_has_already_refilled():
+    print("a stale reading")
+    # A reading is a moment. Its reset time passing does not make the number wrong, it makes it
+    # spent: the window has refilled and nobody has told us. Scoring the difference as a
+    # negative number of seconds would inverate the ranking, which is the bug this guards.
+    stale = key_record("STALE", seven=95.0, seven_in=-600)
+    secs = claude_keys.seconds_to_reset(claude_keys.window_of(stale, "seven_day"),
+                                        "seven_day", now=CLAUDE_NOW)
+    check("a reset that has passed reads as a whole period ahead, never as negative",
+          secs == claude_keys.WINDOW_PERIOD_SECS["seven_day"], secs)
+    # And a window three seconds from refilling does not score as infinity.
+    soon = claude_keys.seconds_to_reset(
+        claude_keys.window_of(key_record("S", seven_in=3), "seven_day"), "seven_day",
+        now=CLAUDE_NOW)
+    check("and one about to reset is floored, not unbounded",
+          soon == claude_keys.MIN_SECONDS_TO_RESET, soon)
+
+
+def test_windows_are_found_by_key_and_never_by_their_label():
+    print("weekly is not weekly · Opus")
+    # `weekly` is a prefix of `weekly · Opus 4.5`, and the per-model caps sit in the same list.
+    # Matching on the label would have the chooser reading one model's cap as the account's week.
+    rec = key_record("A", seven=20.0)
+    rec["windows"].append({"key": "weekly_scoped", "label": "weekly · Opus 4.5",
+                           "percent": 99.0, "resets_at": None, "locked": ""})
+    check("the account's week is the one that is read",
+          claude_keys.window_of(rec, "seven_day")["percent"] == 20.0)
+
+
+def test_the_chosen_account_reaches_ffbox_as_a_name_and_lands_on_the_run():
+    print("the choice, all the way to the container")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(9301, "how do belts work?")]
+    case = Case("claude-roundtrip", fixture)
+    case.events(ask_event(9301))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    turn = case.rows("SELECT * FROM turn")[0]
+
+    saved = {k: v for k, v in os.environ.items() if k.startswith("CLAUDE_CODE_OAUTH_TOKEN")}
+    for k in saved:
+        os.environ.pop(k, None)
+    os.environ["CLAUDE_CODE_OAUTH_TOKEN1"] = "sk-ant-oat01-first"
+    os.environ["CLAUDE_CODE_OAUTH_TOKEN2"] = "sk-ant-oat01-second"
+    try:
+        # The reading is handed over rather than fetched: this suite makes no network calls, and
+        # what is under test here is the plumbing, not the policy.
+        real_now = time.time()
+        case.watcher._claude_records = [
+            key_record("CLAUDE_CODE_OAUTH_TOKEN1", seven=60.0, seven_in=4 * 86400,
+                       now=real_now),
+            key_record("CLAUDE_CODE_OAUTH_TOKEN2", seven=80.0, seven_in=300, now=real_now)]
+        case.watcher._claude_read_at = time.monotonic()
+        chosen, why = case.watcher.pick_claude_key()
+        check("the second account is chosen, because its week refills in five minutes",
+              chosen == "CLAUDE_CODE_OAUTH_TOKEN2", why)
+        case.watcher.launch(turn["id"])
+    finally:
+        for k in list(os.environ):
+            if k.startswith("CLAUDE_CODE_OAUTH_TOKEN"):
+                os.environ.pop(k, None)
+        os.environ.update(saved)
+
+    run = case.rows("SELECT * FROM run WHERE turn_id=?", (turn["id"],))[0]
+    check("the run row records which account paid for it",
+          run["claude_key"] == "CLAUDE_CODE_OAUTH_TOKEN2", run["claude_key"])
+    argv = json.load(open(os.path.join(os.path.dirname(run["stream_path"]),
+                                       "ffbox-argv.json"), encoding="utf-8"))
+    check("ffbox is told which account", "--claude-key" in argv, argv)
+    check("by name", argv[argv.index("--claude-key") + 1] == "CLAUDE_CODE_OAUTH_TOKEN2", argv)
+    check("AND NEVER BY TOKEN — argv is world-readable through /proc",
+          not any("sk-ant-oat01" in a for a in argv), argv)
+
+
+def test_a_box_with_one_account_is_left_exactly_as_it_was():
+    print("nothing to choose between")
+    case = Case("claude-single")
+    saved = {k: v for k, v in os.environ.items() if k.startswith("CLAUDE_CODE_OAUTH_TOKEN")}
+    for k in saved:
+        os.environ.pop(k, None)
+    os.environ["CLAUDE_CODE_OAUTH_TOKEN1"] = "sk-ant-oat01-only"
+    try:
+        check("no choice is made", case.watcher.pick_claude_key() == (None, ""))
+        check("and no reading is attempted, so no outbound request is made",
+              case.watcher.refresh_claude_keys() is False)
+        check("the status line says so plainly",
+              "not spreading" in "\n".join(case.watcher.claude_status()),
+              case.watcher.claude_status())
+    finally:
+        for k in list(os.environ):
+            if k.startswith("CLAUDE_CODE_OAUTH_TOKEN"):
+                os.environ.pop(k, None)
+        os.environ.update(saved)
+
+
 def main():
     tests = [
+        test_the_account_about_to_refill_is_the_one_worth_spending,
+        test_with_equal_resets_it_is_the_emptiest_week,
+        test_a_bigger_plan_counts_for_more,
+        test_the_five_hour_cap_is_a_gate_and_not_a_term,
+        test_when_every_session_is_spent_it_is_the_one_that_comes_back_first,
+        test_a_key_that_cannot_be_read_is_set_aside_not_believed,
+        test_a_reset_in_the_past_is_a_window_that_has_already_refilled,
+        test_windows_are_found_by_key_and_never_by_their_label,
+        test_the_chosen_account_reaches_ffbox_as_a_name_and_lands_on_the_run,
+        test_a_box_with_one_account_is_left_exactly_as_it_was,
         test_every_agent_container_carries_its_class,
         test_the_transcript_is_shared_before_the_host_first_looks,
         test_the_verification_directory_is_left_deletable,

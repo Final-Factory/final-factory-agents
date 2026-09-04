@@ -102,7 +102,20 @@ Claude tokens (`CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, one per account). `ffbox` res
 host-side and exports the single token it picked under the unnumbered name; `docker run -e
 CLAUDE_CODE_OAUTH_TOKEN` names that one variable, so the other accounts' tokens never cross into
 a container and an agent with shell reading its own environment finds one credential, not the
-box's whole subscription inventory. The container has network access, because the model is remote. An agent with
+box's whole subscription inventory.
+
+Since 2026-09-04 that token is CHOSEN PER TURN rather than being the first in the pool, and the
+guarantee is unchanged in the place it would be easiest to lose. `ffwatch` passes a variable
+NAME — `--claude-key CLAUDE_CODE_OAUTH_TOKEN2` — and `ffbox` dereferences it, so the choice
+travels through argv while the credential does not, and `ffbox` refuses a name that is not one of
+its own Claude tokens rather than handing a container whatever else that name might hold. A warm
+pool container is the one place two accounts could overlap: it was created hours earlier with
+whichever account was current then, and the turn's own account arrives afterwards through its
+read-only spool. It does not overlap, because `pool-task.sh` replaces the variable before it
+`exec`s the turn task and `/proc/1/environ` is captured at that `exec` — so what a compromised
+agent can read is the one account its own turn was billed to.
+
+The container has network access, because the model is remote. An agent with
 shell can read its own environment; what changed on 2026-08-23 is where it can send what it read.
 That token is still exposed to any run and should be scoped accordingly — it is long-lived, and a
 pooled container holds it for hours before a job arrives.

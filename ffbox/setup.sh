@@ -182,9 +182,9 @@ secrets_ready() {
   ( set +u
     . "$SECRETS" 2>/dev/null || exit 1
     # ANY slot in the Claude pool, not slot 1 specifically. secrets.env numbers the tokens from
-    # 1 (CLAUDE_CODE_OAUTH_TOKEN1, ...2, ...) and ffbox spends the first non-empty one, so a
-    # file whose slot 1 was emptied after a revocation is still a ready file. The unnumbered
-    # name is the older spelling and still counts.
+    # 1 (CLAUDE_CODE_OAUTH_TOKEN1, ...2, ...) and ffwatch spends whichever has room, so a file
+    # whose slot 1 was emptied after a revocation is still a ready file. The unnumbered name is
+    # the older spelling and still counts.
     n=1
     while [ "$n" -le 16 ]; do
       eval "v=\${CLAUDE_CODE_OAUTH_TOKEN${n}}"
