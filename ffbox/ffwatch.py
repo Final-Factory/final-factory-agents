@@ -2952,25 +2952,13 @@ class Watcher:
         # alias that cannot be resolved would otherwise write the same line to the journal four
         # times an hour forever.
         self._sweep_warned = set()
-        # -- the Claude subscriptions ---------------------------------------------------------
-        # The reader, its last answer, and the lock that keeps one refresh in flight at a time.
-        #
-        # THE ANSWER IS CACHED AND THE LAUNCH PATH NEVER BLOCKS ON IT. Reading a key's windows
-        # is an outbound request, and a launch that waited on one would put Anthropic's latency
-        # — or its timeout, four accounts deep — in front of every turn this box runs, on the
-        # daemon's own loop, where it would also stop replies going out. So the refresh is a
-        # pass step on a thread and `pick_claude_key` reads whatever the last one left behind.
-        # Before the first has landed there is nothing to choose on, and the answer is then the
-        # first key in the pool: this box's behaviour up to 2026-09-04, arrived at honestly.
+        # THE CLAUDE ACCOUNT READER. It caches each key's windows for `refresh_secs`, which is
+        # the whole of the rate-limiting on this: callers ask whenever they need an answer and
+        # the requests happen a quarter-hour apart.
         _claude_block = self.cfg.get("claude") or {}
         self._claude = claude_keys.ClaudeKeys(
             ttl=int(_claude_block.get("refresh_secs") or claude_keys.CLAUDE_USAGE_TTL_SECS),
             timeout=int(_claude_block.get("timeout_secs") or 10))
-        self._claude_records = []
-        self._claude_read_at = 0.0
-        self._claude_refreshing = False
-        self._claude_lock = threading.Lock()
-        self._claude_said = None
 
     # -- setup -----------------------------------------------------------------------------
 
@@ -5429,12 +5417,18 @@ class Watcher:
                                 os.path.join(self.cfg["plugins_dir"], self.cfg["plugin"]))
         if os.path.isdir(plugin_dir):
             cmd += ["--mount", f"{plugin_dir}:/ffbox/plugins/{self.cfg['plugin']}:ro"]
-        # WHICH ACCOUNT THIS SPARE IS CREATED WITH, which is not necessarily the one it ends up
-        # billing: dispatch chooses again, hours later, on numbers this staging could not have
-        # known, and hands the container the winner through its spool. It is passed anyway for
-        # the case where the two halves of the box are different builds — a container staged by
-        # an older ffbox runs an older pool-task.sh, which ignores the dispatched token and keeps
-        # this one — so that fallback is a considered account rather than always the first.
+        # WHICH ACCOUNT THIS SPARE IS CREATED WITH, AND THEREFORE BILLS. A container's
+        # environment is fixed when it is created and docker cannot add to it afterwards, so
+        # this is the only moment the choice can be made for a pooled run — the turn that
+        # eventually lands here may be hours away, and gets whichever account was chosen now.
+        #
+        # THE ALTERNATIVE WAS WORSE THAN THE STALENESS. Choosing again at dispatch meant getting
+        # the token into a running container: a file in its read-only spool, a group and a mode
+        # so it could read it and nobody else could, an export ordered before the exec so
+        # /proc/1/environ named one account, a fallback for when it did not arrive, and a
+        # deletion afterwards. All of that to replace a reading up to four hours old with a
+        # fresher one, on a box whose spares turn over as they are consumed anyway. The spare is
+        # staged with a considered account and the turn spends it.
         _staged_key = self.pick_claude_key()[0]
         if _staged_key:
             cmd += ["--claude-key", _staged_key]
@@ -5450,8 +5444,31 @@ class Watcher:
                 f"{(proc.stderr or '').strip()[:300]}")
             shutil.rmtree(d, ignore_errors=True)
             return None
-        log(f"pool: staging {agent_class} {pool_id} on {self.pool_branch(agent_class)}")
+        # RECORDED BESIDE THE SPOOL so the run this eventually serves can say which account
+        # paid for it. A NAME and not a token, so there is nothing here to protect: the file
+        # sits in a directory the container can already read, and reading it teaches a reader
+        # the name of a variable they would have to be on the host to dereference.
+        try:
+            with open(os.path.join(d, "claude-key"), "w", encoding="utf-8") as fh:
+                fh.write((_staged_key or "") + "\n")
+        except OSError as exc:  # noqa: BLE001 — bookkeeping must not fail a staging
+            log(f"pool: could not record {pool_id}'s Claude account: {exc}")
+        log(f"pool: staging {agent_class} {pool_id} on {self.pool_branch(agent_class)}"
+            f"{' billing ' + _staged_key if _staged_key else ''}")
         return pool_id
+
+    def pool_claude_key(self, pool_id):
+        """Which account the spare `pool_id` was staged with, or None.
+
+        None covers a spare staged before this was written down and a box with one account, and
+        both mean the same thing to the caller: nothing was chosen, so nothing is recorded.
+        """
+        try:
+            with open(os.path.join(self.pool_dir(pool_id), "claude-key"),
+                      encoding="utf-8") as fh:
+                return fh.read().strip() or None
+        except OSError:
+            return None
 
     def keep_pool(self):
         """Top EACH class's pool up to its own `idle_agents`. Returns the ids staged, [] for none.
@@ -6559,8 +6576,7 @@ class Watcher:
     # ======================================================================================
     #
     # THE POLICY IS IN claude_keys.pick AND THE ARGUMENT FOR IT IS THERE TOO. What lives here is
-    # the plumbing around it: when the windows are re-read, what happens while they have never
-    # been read, and how the answer reaches ffbox.
+    # only how the answer reaches ffbox.
     #
     # THE CHOICE TRAVELS AS A NAME, NEVER AS A TOKEN. `--claude-key CLAUDE_CODE_OAUTH_TOKEN2`
     # goes on ffbox's command line and ffbox resolves it out of secrets.env itself, so no
@@ -6568,6 +6584,15 @@ class Watcher:
     # the life of the call — or through the database. The one place a token is held at all is
     # the classifier's own environment, which is a child process's env rather than an argument,
     # and it is handed exactly one.
+    #
+    # READ WHEN ASKED, AND STALE IS FINE. This used to keep the last reading on the Watcher and
+    # refresh it on a background thread from the pass, so that a launch never waited on
+    # Anthropic. ClaudeKeys already caches for `refresh_secs`, so all that machinery bought was
+    # moving one cache miss per quarter-hour off the launch path — and paid for it with a
+    # thread, a lock, four fields of state and two hook sites that had to be kept in step. The
+    # reading is a couple of calls; the box is choosing between subscriptions, not counting
+    # them. So this asks, takes whatever comes back, and a reading up to fifteen minutes old is
+    # the answer.
 
     def claude_cfg(self):
         """The `claude` block, every key present. Never raises on a hand-edited config."""
@@ -6577,107 +6602,45 @@ class Watcher:
     def claude_spreads(self):
         """Is this box choosing between accounts at all?
 
-        False for a box with one key, which is most of them: the choice is the same either way
-        and the refresh would be an outbound request per quarter-hour to confirm it.
+        False for a box with one key, which is most of them: the choice is the same either way,
+        and this is what keeps such a box making no outbound request at all.
         """
         if not self.claude_cfg().get("spread"):
             return False
         return len(claude_keys.claude_token_pool()) > 1
 
-    def refresh_claude_keys(self, block=False):
-        """Re-read every account's windows, on a thread. Returns True if one was started.
+    def claude_records(self):
+        """Every account's windows, as ClaudeKeys.read() gives them. [] if none can be read.
 
-        RATE-LIMITED BY THE CONFIG AND BY THE READER BOTH. This will not start a refresh more
-        often than `refresh_secs`, and ClaudeKeys caches per key for the same interval, so a
-        second caller inside the window costs nothing at either layer.
-
-        `block` is for the CLI — `ffwatch status` wants numbers on the screen now and has no
-        loop to come back on. The daemon never passes it.
+        Cached inside ClaudeKeys for `refresh_secs`, so calling this per launch, per gate and
+        per staging costs one round of requests a quarter-hour and dictionary lookups after
+        that. Never raises: a box that cannot reach Anthropic still has to run turns, and the
+        callers all read [] as "nothing to choose on".
         """
         if not self.claude_spreads():
-            return False
-        every = float(self.claude_cfg().get("refresh_secs") or 900)
-        with self._claude_lock:
-            if self._claude_refreshing:
-                return False
-            if self._claude_records and time.monotonic() - self._claude_read_at < every:
-                return False
-            self._claude_refreshing = True
+            return []
+        try:
+            return self._claude.read()
+        except Exception as exc:  # noqa: BLE001 — a reading must not take down a launch
+            log(f"WARNING: could not read the Claude accounts: {type(exc).__name__}: {exc}")
+            return []
 
-        def work():
-            try:
-                records = self._claude.read()
-            except Exception as exc:  # noqa: BLE001 — a reading must not take down a pass
-                log(f"WARNING: could not read the Claude accounts: {type(exc).__name__}: {exc}")
-                records = []
-            with self._claude_lock:
-                self._claude_refreshing = False
-                if records:
-                    self._claude_records = records
-                    self._claude_read_at = time.monotonic()
-            # THE UNREADABLE ONES ARE SAID OUT LOUD, ONCE PER CHANGE. A key that answers 401 is
-            # a revoked token and a key that times out is a network problem, and both look
-            # identical from the outside: the box quietly stops using that account and nothing
-            # says why. The state is folded into one line and only logged when it changes, so a
-            # healthy box is silent and a broken key is one journal entry rather than four an
-            # hour.
-            broken = [f"{r['name']} ({r.get('error') or r.get('state')})"
-                      for r in records if not claude_keys.usable(r)]
-            said = ", ".join(broken)
-            if said != self._claude_said:
-                self._claude_said = said
-                if said:
-                    log(f"claude: cannot read {said}; those accounts will not be given work")
-                elif records:
-                    log(f"claude: all {len(records)} accounts readable")
-
-        if block:
-            work()
-            return True
-        threading.Thread(target=work, daemon=True).start()
-        return True
-
-    def claude_records(self):
-        """The last reading, or [] if none has landed yet."""
-        with self._claude_lock:
-            return list(self._claude_records)
-
-    def claude_inflight(self):
-        """{key name: runs in flight}. A tie-break, not a limit.
-
-        Its job is the cold start, where every account reads identical and the policy has
-        nothing to choose on: without it a queue of turns would all go to the first key and only
-        the first of them would have told us anything.
-        """
-        counts = {}
-        for row in self.db.query("SELECT claude_key AS k, COUNT(*) AS n FROM run"
-                                 " WHERE terminal_state IS NULL AND claude_key IS NOT NULL"
-                                 " GROUP BY claude_key"):
-            counts[row["k"]] = row["n"]
-        return counts
-
-    def pick_claude_key(self):
-        """(name, why) — which account the next turn is billed to. Never raises, never empty.
+    def pick_claude_key(self, records=None):
+        """(name, why) — which account the next turn is billed to. Never raises.
 
         `name` is None when this box has nothing to choose between, which is the signal to
         every caller to leave the pool's own order alone rather than to pass a name that means
         the same thing. That keeps a one-account box's command line, environment and run rows
         exactly as they were.
         """
-        if not self.claude_spreads():
-            return None, ""
-        records = self.claude_records()
+        records = self.claude_records() if records is None else records
         if not records:
-            # The first pass, or a box whose reading has never succeeded. There is nothing to
-            # choose on, so nothing is chosen.
-            return None, "no reading yet"
-        busy_by_name = self.claude_inflight()
-        busy = {i: busy_by_name.get(r["name"], 0) for i, r in enumerate(records)}
+            return None, ""
         try:
             cap = float(self.claude_cfg().get("five_hour_cap"))
         except (TypeError, ValueError):
             cap = DEFAULTS["claude"]["five_hour_cap"]
-        index, why = claude_keys.pick(records, cap=cap, busy=busy)
+        index, why = claude_keys.pick(records, cap=cap)
         return records[index]["name"], why
 
     def claude_status(self):
@@ -6690,11 +6653,9 @@ class Watcher:
             return [f"claude accounts: {len(pool)} — not spreading"
                     f"{' (claude.spread is off)' if len(pool) > 1 else ''}; "
                     f"every turn is billed to {pool[0][0]}"]
-        self.refresh_claude_keys(block=not self._claude_records)
         records = self.claude_records()
-        chosen, why = self.pick_claude_key()
+        chosen, why = self.pick_claude_key(records)
         cap = float(self.claude_cfg().get("five_hour_cap"))
-        busy = self.claude_inflight()
         out = [f"claude accounts: {len(pool)}  (cap {cap:.0%} of the five-hour session; "
                f"next turn goes to {chosen or pool[0][0]})"]
         if why:
@@ -6713,7 +6674,6 @@ class Watcher:
             out.append(f"  {rec['name']:<28} {(named + ' ') if named else ''}"
                        f"{claude_plan_label(rec)} "
                        + "  ".join(bits)
-                       + f"  in-flight={busy.get(rec['name'], 0)}"
                        + (f"  [{rec['error']}]" if rec.get("error") else "")
                        + gate)
         return out
@@ -6872,11 +6832,21 @@ class Watcher:
         # directory is the answer afterwards. finish_runs, the clock pass and `ffbox --finish`
         # all read it. design/ffbox_live_update_design.txt section 5.
         out_dir = os.path.join(self.pool_dir(pool_id), "out") if pool_id else run_dir
-        # WHICH SUBSCRIPTION PAYS FOR THIS TURN, settled before anything starts and recorded
-        # on the row. A NAME, not a token: ffbox turns it into a credential out of secrets.env,
-        # so nothing here or in argv holds one. None means this box has one account, or has not
-        # managed to read them, and the pool's own order stands.
-        claude_key, claude_why = self.pick_claude_key()
+        # WHICH SUBSCRIPTION PAYS FOR THIS TURN, recorded on the row before anything starts.
+        # A NAME, not a token: ffbox turns it into a credential out of secrets.env, so nothing
+        # here or in argv holds one. None means this box has one account, or could not read
+        # them, and the pool's own order stands.
+        #
+        # A POOLED RUN DOES NOT GET A CHOICE, and this is where that shows. Its container was
+        # created hours ago with an account in its environment, and docker cannot change that,
+        # so the honest thing to record is the account the spare was actually staged with
+        # rather than the one this moment's reading would prefer. A cold run is created now and
+        # is chosen now.
+        if pool_id:
+            claude_key = self.pool_claude_key(pool_id)
+            claude_why = "the account this warm container was staged with" if claude_key else ""
+        else:
+            claude_key, claude_why = self.pick_claude_key()
         cur = self.db.execute(
             "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, resumed,"
             " base_sha, unity, tools, disallowed, allowed, stream_path, branch,"
@@ -6906,13 +6876,14 @@ class Watcher:
             "--ref", ref,
             "--mount", f"{att_dir}:/ffbox/attachments:ro",
         ]
-        if claude_key:
+        if claude_key and not pool_id:
             # THE NAME, NOT THE TOKEN. ffbox reads secrets.env itself; a credential here would
             # sit in argv, which every account on the box can read through /proc for the life
-            # of the call. Passed on BOTH routes: a cold container gets it as -e, and a
-            # dispatch writes it into the spool the staged container is already reading — that
-            # container was created before anybody knew which turn, or which account, it would
-            # serve.
+            # of the call.
+            #
+            # COLD RUNS ONLY. A dispatch starts no container — it hands a job to one that has
+            # been up for hours — so there is nothing left for this to decide there; the
+            # account went in when the spare was staged, and above is where it is read back.
             cmd += ["--claude-key", claude_key]
         if pool_id:
             # Everything above that is a MOUNT is already on the staged container; what is left
@@ -7156,14 +7127,6 @@ class Watcher:
         if pool_id:
             moved = self.sweep_session_out(pool_id, conv["id"])
             log(f"pool: {pool_id} finished; swept {moved} transcript(s) home")
-            # AND THE TOKEN THE HOST DROPPED IN FOR THIS TURN GOES NOW. pool_drop deletes the
-            # whole spool when the container is reaped, so this only shortens the window — but
-            # the window is "a subscription token sitting in a file", and the container that
-            # could read it has already exited. Nothing else in that directory is a credential.
-            try:
-                os.unlink(os.path.join(self.pool_dir(pool_id), "in", "claude-token"))
-            except OSError:
-                pass
             self.db.execute("UPDATE run SET transcript_dir=NULL, stream_path=? WHERE id=?",
                             (os.path.join(run_dir, "stream.jsonl"), run_row_id))
 
@@ -10101,10 +10064,6 @@ class Watcher:
         # live index only ever catches a run some OTHER caller started. The daemon loop below
         # is where it earns its keep, ticking every poll_secs while a container works.
         self.index_live_runs()
-        # THE SUBSCRIPTION WINDOWS, re-read on their own clock rather than on this pass's.
-        # Cheap when nothing is due, a thread when something is, never anything a launch waits
-        # on.
-        self.refresh_claude_keys()
         self.join_launches()
         # AFTER THE JOIN, because the join is what makes the containers exist. In this
         # pass-at-a-time form the caller wants the whole turn to have happened when once()
@@ -10317,11 +10276,6 @@ class Watcher:
                     # than in one lump when the container exits. finish_run indexes the same
                     # transcript once more at the end; both are idempotent by uuid.
                     self.index_live_runs()
-                    # HERE AND IN once(), because the daemon does not call once(): it drives the
-                    # same steps itself, so a hook added to one reaches half the callers. That
-                    # is not hypothetical — the pool keeper went into once(), the daemon ran
-                    # this loop, and the live box staged nothing at all while reporting it had.
-                    self.refresh_claude_keys()
                     self.send_pending()
                     self.live_launches()
                 except KeyboardInterrupt:

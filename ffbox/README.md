@@ -911,9 +911,9 @@ and `ffwatch status` prints a line per account and says where the next turn is g
 ```
 claude accounts: 3  (cap 60% of the five-hour session; next turn goes to CLAUDE_CODE_OAUTH_TOKEN2)
   because Loth has 22% of its weekly left, refilling in 41 minutes, on a Max 20x plan
-  CLAUDE_CODE_OAUTH_TOKEN1     Ben  Pro       5h= 72% in 2 hours   7d= 10% in 5 days     in-flight=1  OVER CAP
-  CLAUDE_CODE_OAUTH_TOKEN2     Loth Max 20x   5h=  5% in 4 hours   7d= 78% in 41 minutes in-flight=0
-  CLAUDE_CODE_OAUTH_TOKEN3          Max 5x    5h= 12% in 3 hours   7d= 40% in 6 days     in-flight=0
+  CLAUDE_CODE_OAUTH_TOKEN1     Ben  Pro       5h= 72% in 2 hours   7d= 10% in 5 days       OVER CAP
+  CLAUDE_CODE_OAUTH_TOKEN2     Loth Max 20x   5h=  5% in 4 hours   7d= 78% in 41 minutes
+  CLAUDE_CODE_OAUTH_TOKEN3          Max 5x    5h= 12% in 3 hours   7d= 40% in 6 days
 ```
 
 **The choice travels as a name, never as a token.** `ffwatch` hands `ffbox` a variable name
@@ -921,11 +921,18 @@ claude accounts: 3  (cap 60% of the five-hour session; next turn goes to CLAUDE_
 no credential reaches argv — world-readable through `/proc` for the life of the call — or the
 database, which records the name against the run. `ffbox` refuses a name that is not one of its
 own Claude tokens rather than falling back, which is what stops a wrong `--claude-key` handing a
-container some other secret. A warm pool container is the one place the account arrives late: it
-was created hours before anyone knew which turn it would serve, so the host drops the chosen
-token into its read-only spool as `in/claude-token` (mode 0640 to the `ffbox-container` group)
-and `pool-task.sh` exports it before it `exec`s the turn — which is also why `/proc/1/environ`
-inside names one account and not two. That file is deleted when the run finishes.
+container some other secret.
+
+**A warm container spends the account it was staged with.** A container's environment is fixed
+when docker creates it and cannot be added to afterwards, so for a pooled run the choice is made
+when the spare is staged — possibly hours before the turn that lands in it. The reading behind
+that choice is therefore up to a few hours old, and the run row records the account the container
+actually holds rather than the one this moment would prefer. Spares turn over as they are
+consumed, so the pool spreads across accounts on its own; the alternative — getting a freshly
+chosen token into a running container through its spool, with a mode and a group so only it could
+read the file, an export ordered before the `exec`, a fallback for when it did not arrive and a
+deletion afterwards — was a great deal of machinery to buy a fresher number. Cold runs, which
+create their own container, are chosen at launch.
 
 ## Results
 
