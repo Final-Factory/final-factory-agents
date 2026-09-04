@@ -10,7 +10,9 @@ Discord Gateway websocket open and appends a single JSON line to
   - a new thread appears in a watched forum           -> kind "thread"
   - a human reply lands in such a thread              -> kind "thread_message"
   - an operator sends the bot a DIRECT MESSAGE        -> kind "operator_dm"
-    (a DM from anyone else rings nothing at all)
+  - anyone else sends the bot a DIRECT MESSAGE        -> kind "player_dm"
+    (which buys them one fixed sentence from the harness pointing at the public channels,
+     never an agent and never a conversation — ffwatch decides that, not this file)
   - the listener (re)started or lost resume state      -> kind "catchup"
 
 A CHANNEL NOT IN THE WATCH LIST GENERATES NOTHING, as of 2026-08-25. An @-mention or a reply
@@ -441,12 +443,25 @@ class Listener:
             # nobody @-mentions the bot, so that test says "not addressed" and the message
             # would be dropped.
             if not d.get("guild_id"):
-                if author_id in self.operator_ids:
-                    self.emit("operator_dm", None, ch, d.get("id"), author_id)
-                # Anyone else DMing the bot is ignored outright, and deliberately: any user who
-                # shares a guild can open one, and a DM has no moderator watching, no other
-                # players to correct a wrong answer, and no public record. #ask-assistant is the
-                # supported surface.
+                # WHICH KIND IS DECIDED HERE AND RE-DECIDED THERE. The operator set is the only
+                # thing this branch uses it for, and ffwatch checks the same author id again
+                # before it grants anything, so a doorbell claiming the wrong kind buys nothing.
+                #
+                # AND WHETHER THIS IS A DM AT ALL is re-decided there too, which matters more
+                # now that the branch has something to say. A guild message reaches here only
+                # if its dispatch arrived without a guild_id, and ffwatch fetches the channel
+                # and requires type 1 before it says a word — so the worst a missing field can
+                # buy is a wasted REST call, never the standing note posted into a channel.
+                #
+                # Anyone else's DM still gets no agent, no conversation and no answer to what
+                # they actually asked, and deliberately: any user who shares a guild can open
+                # one, and a DM has no moderator watching, no other players to correct a wrong
+                # answer, and no public record. #ask-assistant is the supported surface. What
+                # changed on 2026-09-03 is that this stopped being SILENT — the event rings so
+                # the harness can say that back in one fixed sentence, which a person can act
+                # on where being ignored looks the same as a bot that is down.
+                self.emit("operator_dm" if author_id in self.operator_ids else "player_dm",
+                          None, ch, d.get("id"), author_id)
                 return None
 
             # NOT a watched channel, so NOTHING rings — not even a direct @-mention, and not

@@ -11,7 +11,7 @@ front door decides only what goes in and where the answer is read.
 | ingress | what it does |
 |---|---|
 | **the shell** | `ffbox "<prompt>"` submits a turn and waits; the answer prints, the run is on the page, and any code it changed comes back as a pushed branch and a pull request, the same as a dev DM. Kind `shell` |
-| **Discord** | a thread or a mention becomes a turn; the harness composes and posts the reply |
+| **Discord** | a thread, a mention, or an operator's DM becomes a turn; the harness composes and posts the reply. A DM from anybody else is answered by the harness itself, with one line pointing at the public channels |
 | **the web page** | `ffweb` — every conversation, run, transcript and queued reply, whatever it came from; its prompt box starts one too, kind `web`, and a local conversation's reply box continues it |
 
 `ffbox --direct` is the exception: it clones and runs right here, skipping the database, the
@@ -1013,6 +1013,39 @@ split" shape; a box running without the selector wants a smaller `max_candidate_
 
 Full design and rationale: `design/conversation_clustering_design.txt`.
 
+### Direct messages
+
+A DM has no watch entry and no channel to list, so it takes its own path through ingest, and who
+sent it decides what it gets. The listener rings `operator_dm` or `player_dm` from Discord's
+authenticated `author.id`; `ffwatch` looks the same id up again before it acts on either, which
+is what keeps a doorbell from being a grant of trust. Both kinds are also checked for being a
+real one-to-one DM. A group DM is channel type 3, looks identical on the wire, and is dropped
+whoever wrote it, because private means one recipient and not a room somebody can add people to.
+
+**An operator's DM is a conversation.** It opens at a private venue in `discord.operator_pool`,
+runs a turn like any other, and the reply is posted back into the DM by the harness. What it does
+not get is the framing written for strangers: the message arrives as the prompt itself, under the
+DM preamble described above.
+
+**Anybody else's DM gets one sentence and nothing else.**
+
+> Please @mention me in a public channel on discord. I want to make sure my information is
+> available for everyone to learn from!
+
+That is `DM_AUTOREPLY_TEXT` in `ffwatch.py`, and the harness says it. No conversation, no
+message row, no turn, no run, no classifier and no container. The reply does not depend on what
+was asked, so nothing reads what was asked: the only Discord call the whole path makes is the one
+that establishes this is a one-to-one DM. It still goes out through the outbound queue rather than
+straight onto the wire, so it is held by the kill switch, counted by the send ceilings, retried
+with backoff, and visible on the page like everything else the box says. The row carries no
+conversation id, and its `local_id` (`dm-autoreply:<author>:<message>`) is what stops a replayed
+doorbell saying it twice and holds one person to one of these an hour.
+
+The policy behind the silence has not changed: a DM has no moderator watching, no other players
+to correct a wrong answer, and no record the next person to ask the same thing can find.
+#ask-assistant is the supported surface. What changed on 2026-09-03 is that the policy says so,
+because being ignored and being down look the same from the other end.
+
 ### The classifier sandbox
 
 The engagement gate and the conversation selector both run `claude -p` ON THE HOST, as the
@@ -1081,14 +1114,27 @@ The engagement gate survives the collapse and is all the classifier does now —
 Haiku, holding no tools. It fails **open**: a gate that cannot decide runs the turn, because a
 gate that silently swallowed a real bug report would look exactly like a quiet channel.
 
-What separates a locally typed prompt from a Discord one is `is_local_conversation`, not
-anything about capability, because the question was always whether there is a thread on the other end — and
-since 2026-08-23 that is the *only* difference. A local turn gets no `<discord>` fence and no
-outbound row; it is verified, branched, pushed and proposed as a pull request exactly like an
-operator's DM, under the same gates. It used to get none of that, on the reasoning that the
-person who typed it was standing at the terminal — what it actually produced was work stranded
-in a run directory after the ZFS clone holding it was destroyed. The container is told which
-kind of turn it is through `job["local"]`, and picks its preamble from that.
+What separates a locally typed prompt from a Discord one is not capability. Since 2026-08-23
+every turn is verified, branched, pushed and proposed as a pull request under the same gates; a
+local prompt used to get none of that, on the reasoning that the person who typed it was standing
+at the terminal, and what that produced was work stranded in a run directory after the ZFS clone
+holding it was destroyed.
+
+What is left is two questions the harness answers separately, and the container reads both off
+`job.json`. `is_local_conversation` asks WHERE THE ANSWER GOES: `job["local"]` means there is no
+thread on the other end, so nothing is queued for Discord and the record is the reply.
+`is_direct_conversation` asks WHOSE WORDS THESE ARE: `job["direct"]` means the text was typed at
+the agent by somebody this box already trusts, so it arrives as the prompt itself, with no
+`<discord>` fence, no untrusted-input framing, no role and no player-facing policy.
+
+The two were one question while the only trusted text came from this machine. An operator's DM is
+the case that splits them: it is direct AND has a thread to post back into. It took the fenced
+Discord prompt until 2026-09-03, which meant Lothsahn asking Max something from his phone had his
+question labelled untrusted and answered under the disclosure rules written for strangers — the
+same framing that once made `ffbox "what file defines the belt merger?"` come back as a policy
+refusal addressed to a player. `discord-task.sh` now picks between three preambles: the local one,
+the DM one (the same trusted framing, but the answer is posted and is written for Discord's 2000
+characters), and the fenced one every other Discord turn gets.
 
 Set it up with:
 

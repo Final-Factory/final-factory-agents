@@ -93,7 +93,7 @@ Gateway's `GUILD_MESSAGES` intent is guild-wide — Discord has no per-channel s
 the listener sees every channel the bot can read and filters. A channel on the list rings on
 every human message. **Everywhere else rings nothing at all, as of 2026-08-25** — an @-mention
 or a reply to the bot in an unlisted channel is logged and dropped, whoever sent it, operators
-included. An operator DM is unaffected, because a DM has no channel to list.
+included. DMs are unaffected, because a DM has no channel to list.
 
 **Omitting `--channels` reads the `watch` block** of `~/.config/ffbox/config.json`, the same
 file the CLI already reads for the token, the alias table and the operator ids. That is the one
@@ -109,16 +109,23 @@ fatal — those are normal, they fill themselves in on first use, and one of the
 the whole doorbell down. An alias typed into `--channels` that resolves to nothing still exits
 2, because that one is a caller's mistake and worth seeing at once.
 
-Event kinds: `message`, `thread`, `thread_message`, `operator_dm`, `catchup`. The listener no
+Event kinds: `message`, `thread`, `thread_message`, `operator_dm`, `player_dm`, `catchup`. The listener no
 longer emits `player_mention` or `lothsahn_directive`/`operator_directive`; ffwatch still
 understands them so that an older listener elsewhere keeps working. The line is a **doorbell, not the mail** — it carries ids only. The listener does
 not request the privileged MESSAGE_CONTENT intent and never sees message text, so the consumer
 still pulls through the normal cursor flow. Duplicate, late, or missed doorbells cost latency,
 never correctness.
 
-`operator_dm` is decided from Discord's own authenticated `author.id` on the dispatch, never
-from message content. That distinction is what makes it safe to key elevated trust off, and it
-is the only signal in this pipeline for which that is true.
+`operator_dm` versus `player_dm` is decided from Discord's own authenticated `author.id` on the
+dispatch, never from message content. That distinction is what makes it safe to key elevated
+trust off, and it is the only signal in this pipeline for which that is true. ffwatch looks the
+same id up again before it acts on either, so the kind on the line is a hint about work to do
+and never a grant.
+
+`player_dm` is new on 2026-09-03 and buys nobody an agent: a DM from anyone outside
+`trust.operators` opens no conversation and is answered by the harness with one fixed sentence
+pointing at the public channels. It used to be dropped here in the listener, which is the same
+policy said in the one way a person cannot tell apart from the bot being down.
 
 ## Configuration
 
