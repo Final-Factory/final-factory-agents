@@ -3184,8 +3184,7 @@ class App:
         head.append(
             "<p class=\"note\">" + esc(f"{len(rows)} key{'' if len(rows) == 1 else 's'}") +
             " in the pool. Usage is read from Anthropic at most once every " +
-            esc(fmt_ttl(self.keys.ttl)) + ", so most reloads show the last reading and each "
-            "row says how old it is.</p>")
+            esc(fmt_ttl(self.keys.ttl)) + ".</p>")
 
         body = []
         for rec in rows:
