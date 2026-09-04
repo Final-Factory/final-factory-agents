@@ -11222,6 +11222,39 @@ from datetime import datetime, timezone  # noqa: E402
 CLAUDE_NOW = 1_800_000_000.0
 
 
+class StubClaudeKeys:
+    """Stands in for the reader. ClaudeKeys.read() is the only thing the daemon asks of it, and
+    the only thing it does is talk to Anthropic — which this suite never does."""
+
+    def __init__(self, records):
+        self.records = records
+        self.reads = 0
+
+    def read(self, now=None):
+        self.reads += 1
+        return list(self.records)
+
+
+@contextlib.contextmanager
+def claude_pool(**tokens):
+    """Put exactly these CLAUDE_CODE_* variables in the environment for the block.
+
+    The suite clears the pool at import, so a case that wants one puts it back and takes it out
+    again — otherwise a box with two accounts leaks into every later launch.
+    """
+    saved = {k: v for k, v in os.environ.items() if k.startswith("CLAUDE_CODE_")}
+    for k in saved:
+        os.environ.pop(k, None)
+    os.environ.update(tokens)
+    try:
+        yield
+    finally:
+        for k in list(os.environ):
+            if k.startswith("CLAUDE_CODE_"):
+                os.environ.pop(k, None)
+        os.environ.update(saved)
+
+
 def key_record(name, *, rate=1, five=10.0, seven=10.0, five_in=3600, seven_in=3 * 86400,
                state="available", locked="", now=CLAUDE_NOW):
     """One ClaudeKeys.read() record, with both windows and a reset time for each.
@@ -11370,29 +11403,19 @@ def test_the_chosen_account_reaches_ffbox_as_a_name_and_lands_on_the_run():
     case.watcher.claim_turns()
     turn = case.rows("SELECT * FROM turn")[0]
 
-    saved = {k: v for k, v in os.environ.items() if k.startswith("CLAUDE_CODE_OAUTH_TOKEN")}
-    for k in saved:
-        os.environ.pop(k, None)
-    os.environ["CLAUDE_CODE_OAUTH_TOKEN1"] = "sk-ant-oat01-first"
-    os.environ["CLAUDE_CODE_OAUTH_TOKEN2"] = "sk-ant-oat01-second"
-    try:
+    with claude_pool(CLAUDE_CODE_OAUTH_TOKEN1="sk-ant-oat01-first",
+                     CLAUDE_CODE_OAUTH_TOKEN2="sk-ant-oat01-second"):
         # The reading is handed over rather than fetched: this suite makes no network calls, and
         # what is under test here is the plumbing, not the policy.
         real_now = time.time()
-        case.watcher._claude_records = [
+        case.watcher._claude = StubClaudeKeys([
             key_record("CLAUDE_CODE_OAUTH_TOKEN1", seven=60.0, seven_in=4 * 86400,
                        now=real_now),
-            key_record("CLAUDE_CODE_OAUTH_TOKEN2", seven=80.0, seven_in=300, now=real_now)]
-        case.watcher._claude_read_at = time.monotonic()
+            key_record("CLAUDE_CODE_OAUTH_TOKEN2", seven=80.0, seven_in=300, now=real_now)])
         chosen, why = case.watcher.pick_claude_key()
         check("the second account is chosen, because its week refills in five minutes",
               chosen == "CLAUDE_CODE_OAUTH_TOKEN2", why)
         case.watcher.launch(turn["id"])
-    finally:
-        for k in list(os.environ):
-            if k.startswith("CLAUDE_CODE_OAUTH_TOKEN"):
-                os.environ.pop(k, None)
-        os.environ.update(saved)
 
     run = case.rows("SELECT * FROM run WHERE turn_id=?", (turn["id"],))[0]
     check("the run row records which account paid for it",
@@ -11405,25 +11428,65 @@ def test_the_chosen_account_reaches_ffbox_as_a_name_and_lands_on_the_run():
           not any("sk-ant-oat01" in a for a in argv), argv)
 
 
+def test_a_warm_container_bills_the_account_it_was_staged_with():
+    print("a spare spends what it was created with")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(9401, "how do belts work?")]
+    case = Case("claude-pooled", fixture)
+    case.events(ask_event(9401))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    turn = case.rows("SELECT * FROM turn")[0]
+    w = case.watcher
+
+    # A spare, staged earlier, with slot 1 written down beside its spool the way pool_stage
+    # does. Everything else about the dispatch is stubbed: what is under test is which account
+    # the run is billed to, not the pool's own machinery.
+    os.makedirs(w.pool_dir("s9"), exist_ok=True)
+    with open(os.path.join(w.pool_dir("s9"), "claude-key"), "w", encoding="utf-8") as fh:
+        fh.write("CLAUDE_CODE_OAUTH_TOKEN1\n")
+    check("the staged account is read back", w.pool_claude_key("s9") == "CLAUDE_CODE_OAUTH_TOKEN1")
+    check("and a spool that never had one answers None", w.pool_claude_key("nope") is None)
+
+    with claude_pool(CLAUDE_CODE_OAUTH_TOKEN1="sk-ant-oat01-first",
+                     CLAUDE_CODE_OAUTH_TOKEN2="sk-ant-oat01-second"):
+        # The reading says slot 2 is far and away the better choice RIGHT NOW. It does not
+        # matter: this turn is going into a container that was created hours ago holding slot
+        # 1's token, and docker cannot change that.
+        real_now = time.time()
+        w._claude = StubClaudeKeys([
+            key_record("CLAUDE_CODE_OAUTH_TOKEN1", seven=90.0, seven_in=6 * 86400,
+                       now=real_now),
+            key_record("CLAUDE_CODE_OAUTH_TOKEN2", seven=1.0, seven_in=300, now=real_now)])
+        check("a cold launch now would take slot 2",
+              w.pick_claude_key()[0] == "CLAUDE_CODE_OAUTH_TOKEN2")
+        w.pool_claim_for = lambda ref, agent_class=None: "s9"
+        w.stage_session_into = lambda *a, **k: None
+        w.stage_attachments_into = lambda *a, **k: None
+        w.launch(turn["id"])
+
+    run = case.rows("SELECT * FROM run WHERE turn_id=?", (turn["id"],))[0]
+    check("the run is billed to the account its container actually holds",
+          run["claude_key"] == "CLAUDE_CODE_OAUTH_TOKEN1", run["claude_key"])
+    argv = json.load(open(os.path.join(os.path.dirname(run["stream_path"]),
+                                       "ffbox-argv.json"), encoding="utf-8"))
+    check("and no account is passed on the dispatch, which starts no container",
+          "--claude-key" not in argv, argv)
+
+
 def test_a_box_with_one_account_is_left_exactly_as_it_was():
     print("nothing to choose between")
     case = Case("claude-single")
-    saved = {k: v for k, v in os.environ.items() if k.startswith("CLAUDE_CODE_OAUTH_TOKEN")}
-    for k in saved:
-        os.environ.pop(k, None)
-    os.environ["CLAUDE_CODE_OAUTH_TOKEN1"] = "sk-ant-oat01-only"
-    try:
+    with claude_pool(CLAUDE_CODE_OAUTH_TOKEN1="sk-ant-oat01-only"):
+        # THE READER IS NEVER EVEN ASKED. A box with one account has the same answer either
+        # way, and this is what keeps it making no outbound request at all — which is also what
+        # keeps every other test in this file offline.
+        case.watcher._claude = StubClaudeKeys([key_record("CLAUDE_CODE_OAUTH_TOKEN1")])
         check("no choice is made", case.watcher.pick_claude_key() == (None, ""))
-        check("and no reading is attempted, so no outbound request is made",
-              case.watcher.refresh_claude_keys() is False)
+        check("and nothing is read", case.watcher._claude.reads == 0)
         check("the status line says so plainly",
               "not spreading" in "\n".join(case.watcher.claude_status()),
               case.watcher.claude_status())
-    finally:
-        for k in list(os.environ):
-            if k.startswith("CLAUDE_CODE_OAUTH_TOKEN"):
-                os.environ.pop(k, None)
-        os.environ.update(saved)
 
 
 def main():
@@ -11437,6 +11500,7 @@ def main():
         test_a_reset_in_the_past_is_a_window_that_has_already_refilled,
         test_windows_are_found_by_key_and_never_by_their_label,
         test_the_chosen_account_reaches_ffbox_as_a_name_and_lands_on_the_run,
+        test_a_warm_container_bills_the_account_it_was_staged_with,
         test_a_box_with_one_account_is_left_exactly_as_it_was,
         test_every_agent_container_carries_its_class,
         test_the_transcript_is_shared_before_the_host_first_looks,

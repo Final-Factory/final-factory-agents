@@ -777,12 +777,11 @@ def usable(record):
     return bool(record.get("windows"))
 
 
-def pick(records, cap=0.6, now=None, busy=None):
+def pick(records, cap=0.6, now=None):
     """(index, why) — which key in `records` the next turn should be billed to.
 
     `records` is ClaudeKeys.read()'s output, in pool order. `cap` is the share of the five-hour
-    window past which a slot is not offered work. `busy` is {index: runs in flight}, used only
-    to break a tie, which is what spreads a cold box where every key reads identical.
+    window past which a slot is not offered work.
 
     NEVER RETURNS NOTHING. This is on the launch path, and a turn that did not start because
     the chooser could not decide is a worse outcome than one that ran on a busy plan. With no
@@ -791,18 +790,16 @@ def pick(records, cap=0.6, now=None, busy=None):
     """
     if not records:
         return 0, "no Claude keys are configured"
-    busy = busy or {}
     live = [i for i, r in enumerate(records) if usable(r)]
     if not live:
         return 0, "no key could be read; falling back to the first in the pool"
 
     def rank(i, key):
-        # Descending on the rate, then on what is simply left, then on who is least busy, then
-        # on the slot number so the answer is stable rather than dependent on dict order.
+        # Descending on the rate, then on what is simply left, then on the slot number so the
+        # answer is stable rather than dependent on dict order.
         rec = records[i]
         return (-availability(rec, key, now),
                 -remaining_fraction(window_of(rec, key)),
-                busy.get(i, 0),
                 i)
 
     under = [i for i in live

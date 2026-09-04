@@ -274,8 +274,7 @@ Two rules sit around the score:
    it lands here, because that state is the box running out of subscription rather than out of
    work.
 
-Ties fall to the account carrying fewer runs, then to the lower slot, which is what spreads a
-cold box where every account reads identical.
+Ties fall to the lower slot, so the answer is stable rather than dependent on dict order.
 
 **Why 0.6 and not 1.0.** A session run to its ceiling stops a turn mid-flight, and the turn is
 lost rather than queued. The 40% left over also absorbs the age of the reading, which is up to
@@ -286,8 +285,21 @@ that draws ffweb's `/claude` page, so the page and the chooser cannot disagree. 
 `claude setup-token` has no `user:profile` scope and so cannot read its own usage document; such
 a key is asked one token of Haiku instead and its windows are read off the reply's rate-limit
 headers. That is why `refresh_secs` is a quarter of an hour and not a minute: the refresh is not
-free, and the windows it measures are five hours and seven days long. The reading happens on a
-thread on the daemon's pass and **never** on the launch path — a turn never waits on Anthropic.
+free, and the windows it measures are five hours and seven days long.
+
+**The reading is asked for when it is needed, and a stale one is fine.** `ClaudeKeys` caches per
+account for `refresh_secs`, so a launch, a gate call and a staging inside the same quarter-hour
+cost one round of requests between them and dictionary lookups after that. That does mean one
+launch per window pays a couple of HTTP calls; on a box choosing between subscriptions that is
+not a cost worth building machinery to avoid, and the earlier version — a background thread, a
+lock and four fields of cached state on the daemon — bought nothing else. An account that cannot
+be read is set aside rather than treated as empty, and if every account is unreadable the pool's
+own order stands.
+
+**A pooled run does not get a fresh choice at all.** A container's environment is fixed when
+docker creates it, so a warm spare is staged with an account and bills that account whenever its
+turn arrives, which may be hours later. `ffwatch` records the account the container actually
+holds, not the one the current reading would prefer.
 
 `ffwatch status` prints a line per account, what is left in each window and when it refills, and
 which account the next turn is going to.

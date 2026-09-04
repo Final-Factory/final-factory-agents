@@ -338,12 +338,15 @@ Options:
                        conversation was opened with. It does NOT pick the network — that comes
                        from --network, which ffwatch also passes, resolved from that pool's
                        "network" mode; see there.
-  --claude-key NAME    Which Claude subscription pays for this run, named as the secrets.env
-                       variable holding its token (CLAUDE_CODE_OAUTH_TOKEN2, say). A NAME,
-                       never a token — the value is resolved here, so no credential reaches
-                       argv. ffwatch passes the account with the most allowance per second
-                       before it refills; left off, the first non-empty slot is used. A name
-                       that is not one of this box's tokens is refused, not fallen back from.
+  --claude-key NAME    Which Claude subscription pays for the container this creates, named as
+                       the secrets.env variable holding its token (CLAUDE_CODE_OAUTH_TOKEN2,
+                       say). A NAME, never a token — the value is resolved here, so no
+                       credential reaches argv. ffwatch passes the account with the most
+                       allowance per second before it refills; left off, the first non-empty
+                       slot is used. A name that is not one of this box's tokens is refused,
+                       not fallen back from. Meaningless with --dispatch, which starts no
+                       container: a warm one keeps the account it was staged with, because a
+                       container's environment is fixed when it is created.
   --agent-timeout N    Seconds of AGENT working time (default 1800). The clock starts when the
                        task creates <out>/.agent-started, not when ffbox does.
   --warmup-timeout N   Seconds for everything before that marker (default 3600).
@@ -531,6 +534,11 @@ fi
 # and passes the winner as --claude-key. Without that flag this still resolves to the first
 # non-empty slot, which is the only one on a box holding one account and is what a run typed by
 # hand at a terminal gets.
+#
+# RESOLVED ONCE PER CONTAINER, at creation, because that is the only moment there is: docker
+# fixes an environment when it makes a container and cannot add to it afterwards. A warm spare
+# is therefore staged with an account and bills that account whenever its turn arrives, which
+# may be hours later.
 #
 # A GAP IS NOT THE END OF THE LIST. Slot 2 set with slot 1 blank is somebody who revoked their
 # first key; a loop that stopped at the hole would run the box on nothing.
@@ -1385,36 +1393,8 @@ if [ -n "$DISPATCH" ]; then
         printf 'FFBOX_GIT_NAME=%s\n' "$FFBOX_GIT_NAME"
         printf 'FFBOX_GIT_EMAIL=%s\n' "$FFBOX_GIT_EMAIL"
         printf 'FFBOX_OUTPUT_FORMAT=%s\n' "$OUTPUT_FORMAT"
-        printf 'FFBOX_CLAUDE_KEY=%s\n' "$CLAUDE_KEY"
     } > "$POOL_IN/env"
 
-    # THE ACCOUNT, WHICH CANNOT RIDE IN THE FILE ABOVE. pool-task.sh honours only FFBOX_* keys
-    # out of `env`, deliberately — a loop that exported whatever it was handed could be given
-    # PATH or LD_PRELOAD — so the token comes in beside it as its own file and the env file
-    # carries only the NAME, for the log line.
-    #
-    # WHY IT HAS TO COME IN AT ALL, when a cold run gets this as -e: this container was created
-    # hours ago, before anybody knew which turn it would serve, and docker cannot add an
-    # environment variable to a container that is already running. It was staged with whatever
-    # account the keeper chose then; the turn's own choice is newer and made on fresher numbers.
-    # pool-task.sh REPLACES the variable with this before it execs the turn task, so
-    # /proc/1/environ inside names one subscription — the one this turn is billed to — and not
-    # both.
-    #
-    # 0640 TO THE CONTAINER'S GROUP. The spool directory is world-readable, because the
-    # container has to be able to read the job out of it, and a token written under that umask
-    # would be readable by every account on this box. ffbox-container is the group the
-    # container's namespace root maps to, which is the same route $OUT uses to be writable.
-    # Without that group — a dev box, a laptop — it stays 0600 and the run finds out, which is
-    # the right way round.
-    ( umask 077; printf '%s\n' "$CLAUDE_CODE_OAUTH_TOKEN" > "$POOL_IN/claude-token" )
-    if getent group ffbox-container >/dev/null 2>&1; then
-        chgrp ffbox-container "$POOL_IN/claude-token" 2>/dev/null \
-            && chmod 640 "$POOL_IN/claude-token" 2>/dev/null || {
-            echo "[ffbox] WARNING: could not give $POOL_IN/claude-token to the ffbox-container" >&2
-            echo "[ffbox]          group; this run keeps the account it was staged with." >&2
-        }
-    fi
     [ -f "$OUT/prompt.txt" ] && cp "$OUT/prompt.txt" "$POOL_IN/prompt.txt"
     [ -n "$JOB_FILE" ] && cp "$JOB_FILE" "$POOL_IN/job.json"
 
@@ -1435,7 +1415,6 @@ if [ -n "$DISPATCH" ]; then
     fi
     : > "$POOL_IN/dispatch"
     echo "[ffbox] dispatched into the pool container as ${RUN_NAME}"
-    echo "[ffbox] claude account ${CLAUDE_KEY} pays for this turn"
     # The id of the container this run is now in. Written on this route too, and by id rather
     # than by the name we have just moved, so the host has one answer to "which container is
     # this run" whichever way the run started.
