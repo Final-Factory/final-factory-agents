@@ -656,6 +656,9 @@ REAL_FFWATCH = os.path.join(HERE, "ffwatch.py")
 # Every GET route, for the crawl tests. Kept in one place so a new route joins them by being
 # added here rather than by being remembered.
 ROUTES = ["/", "/lanes", "/outbound", "/status", "/claude", "/outbound?status=pending",
+          # The stop confirmation, for a container the stub document has running and for one
+          # nothing has ever heard of. Both are pages, which is the point of putting them here.
+          "/stop?name=ffbox-dev-t1-99aa", "/stop?name=nothing-by-that-name", "/stop",
           "/?kind=bug_report", "/?state=closed", "/?verdict=ANSWERED", "/?lane=answer",
           "/?read=all", "/?read=read", "/?read=unread",
           "/conversation/1", "/conversation/2", "/conversation/3", "/conversation/4",
@@ -1533,6 +1536,174 @@ def test_the_box_page_reports_what_the_status_script_said():
               "<form" not in text_of(body).replace('<form class="logout"', ""),
               text_of(body).count("<form"))
     finally:
+        srv.stop()
+
+
+def test_a_running_container_can_be_stopped_from_the_box_page():
+    """The box page's one control, end to end: the pill, the confirmation, the delegation.
+
+    THREE THINGS THAT ARE EASY TO GET WRONG SEPARATELY. The link has to appear on the rows
+    serving a turn and on no others — a button that retires a warm spare or a CI runner would
+    be undone by the keeper on its next pass, which is worse than no button. The confirmation
+    has to be a PAGE: the CSP admits scripts by hash only, so an onsubmit="confirm(...)" would
+    be dropped by the browser and the button would stop a container with no dialog at all, and
+    that failure is invisible until somebody uses it. And the stop itself has to go out through
+    `ffwatch stop`, which is where the licence grace and the workload-label test live.
+    """
+    print("stopping a container from the box page")
+    write_status_doc(FFSTATUS_DOC)
+    srv = serve()
+    try:
+        code, _h, body = srv.get("/status")
+        text = text_of(body)
+        check("the state of a container serving a turn is a link",
+              '/stop?name=ffbox-dev-t1-99aa' in text, text[text.find("ffbox-dev-t1-99aa"):][:300])
+        # THE PILL IS THE BUTTON. A column of its own would be empty on most rows, and the
+        # state word is what an operator is already reading when they decide a turn has gone on
+        # long enough. So the anchor wraps the pill, and the table gains no header.
+        check("and it is the pill itself that carries it, not a column of its own",
+              '<a class="stop" title="stop this container" '
+              'href="/stop?name=ffbox-dev-t1-99aa"><span class="pill running">' in text
+              and "<th>stop</th>" not in text,
+              text[text.find('class="stop"') - 40:][:220])
+        for name, why in (("ffbox-agent-pool-deadbeef", "a warm spare"),
+                          ("ffghr-testbox-1-abcd", "a busy CI runner"),
+                          ("ffghr-testbox-2-ef01", "an orphaned CI runner"),
+                          ("ffbox-egress", "infrastructure")):
+            check(f"{why} is not offered a stop", "/stop?name=" + name not in text, name)
+        check("and the page says once what the link does",
+              "harvest its workspace" in text, None)
+
+        # A cold-launched run: `running` with no star. The fixture has only the dispatched
+        # shape, and the two words come from different branches of ffstatus.sh's case.
+        write_status_doc(dict(FFSTATUS_DOC, containers=[
+            {"lane": "agent", "class": "ffagent", "name": "ffbox-agent-t9-cold", "slot": "1",
+             "state": "running", "ttl_secs": 900, "ref": None, "uptime": "4 minutes"}]))
+        code, _h, body = srv.get("/status")
+        check("a cold-launched run is offered a stop too",
+              "/stop?name=ffbox-agent-t9-cold" in text_of(body), text_of(body)[:0])
+        write_status_doc(FFSTATUS_DOC)
+
+        # --- the confirmation -----------------------------------------------------------
+        open(CALLS, "w").close()
+        code, _h, body = srv.get("/stop?name=ffbox-dev-t1-99aa")
+        conf = text_of(body)
+        check("the confirmation is a page", code == 200, code)
+        check("it names the container and shows the row it is about",
+              "ffbox-dev-t1-99aa" in conf and "ffdev" in conf, conf[:0])
+        check("it says what the stop costs and what survives it",
+              "Unity" in conf and "recorded as a failure" in conf, conf[:0])
+        check("it offers a way out that is not the button",
+              "leave it running" in conf)
+        check("the button is a POST, so the Origin check covers it",
+              'action="/actions/stop"' in conf and 'method="post"' in conf)
+        check("looking at the confirmation stops nothing",
+              os.path.getsize(CALLS) == 0)
+        # THE CSP ADMITS SCRIPTS BY HASH. An inline handler would be dropped silently, so the
+        # page must not have one -- this is the check that keeps a confirm() from creeping back.
+        check("and the confirmation needs no script to be a confirmation",
+              "onsubmit" not in conf and "onclick" not in conf and "confirm(" not in conf)
+
+        code, _h, body = srv.get("/stop?name=ffbox-agent-pool-deadbeef")
+        check("a warm spare typed into the URL by hand is refused in words",
+              code == 200 and "ffwatch pool drop" in text_of(body), code)
+        code, _h, body = srv.get("/stop?name=gone-already")
+        check("and a container that has finished says so rather than 404ing",
+              code == 200 and "No container by that name" in text_of(body), code)
+
+        # --- the stop ---------------------------------------------------------------------
+        open(CALLS, "w").close()
+        before = os.stat(DB_PATH)
+        code, hdr, _b = srv.post("/actions/stop", {"name": "ffbox-dev-t1-99aa"})
+        check("stopping redirects back to the box", code == 303, code)
+        where = urllib.parse.unquote(hdr.get("Location") or "")
+        # The acknowledgement is this file's own sentence, not ffwatch's stdout: that output is
+        # the config warnings it prints at startup with the one useful line buried in it.
+        check("carrying an acknowledgement rather than the subprocess's chatter",
+              where.startswith("/status?msg=stopping ffbox-dev-t1-99aa")
+              and "stub ffwatch" not in where, where)
+        calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
+        check("it was `ffwatch --state-dir <dir> stop --detach <name>`",
+              calls == [["--state-dir", STATE, "stop", "--detach", "ffbox-dev-t1-99aa"]], calls)
+        after = os.stat(DB_PATH)
+        check("and the UI wrote nothing itself",
+              (before.st_mtime_ns, before.st_size) == (after.st_mtime_ns, after.st_size))
+        # --detach is not a detail: the wait is the licence grace, up to two minutes, and a
+        # request held open that long is a page an operator gives up on.
+        check("the stop is detached, so the page does not wait out the grace period",
+              calls and "--detach" in calls[0], calls)
+
+        # NOT BEHIND --enable-actions, and asserted rather than assumed: `serve()` above passes
+        # enable_actions=False. That flag guards releasing a reply into a public Discord thread,
+        # which the login does not already imply; a stop on this box is a thing anyone who can
+        # sign in could do from a terminal here anyway.
+        check("and no flag was needed for it", srv.app.actions.enabled is False)
+
+        # --- what may not reach ffwatch ---------------------------------------------------
+        open(CALLS, "w").close()
+        code, hdr, _b = srv.post("/actions/stop", {"name": "ffbox-agent-pool-deadbeef"})
+        check("a spare cannot be stopped through the action either", code == 409, code)
+        code, _h, _b = srv.post("/actions/stop", {"name": "ffbox-egress"})
+        check("nor can infrastructure, which the status document files apart",
+              code == 303 and "no longer running" in
+              urllib.parse.unquote(_h.get("Location") or ""), (code, _h.get("Location")))
+        code, _h, _b = srv.post("/actions/stop", {"name": ""})
+        check("an empty name is refused", code == 400, code)
+        code, _h, _b = srv.post("/actions/stop", {"name": "; docker rm -f everything"})
+        check("a name that never appeared on the page is refused", code == 303, code)
+        check("nothing above reached ffwatch", os.path.getsize(CALLS) == 0,
+              open(CALLS, encoding="utf-8").read())
+
+        # A tab left open on another site must not be able to end a fifteen-minute turn.
+        code, _h, _b = srv.post("/actions/stop", {"name": "ffbox-dev-t1-99aa"},
+                                headers={"Origin": "http://evil.example"})
+        check("a cross-origin stop is refused", code == 403, code)
+        check("and it never reached ffwatch either", os.path.getsize(CALLS) == 0)
+
+        # The failure an operator has to be able to see: ffwatch refused (a container that
+        # exited between the page and the click, most often).
+        os.environ["FFWEB_TEST_RC"] = "1"
+        try:
+            code, hdr, _b = srv.post("/actions/stop", {"name": "ffbox-dev-t1-99aa"})
+        finally:
+            os.environ.pop("FFWEB_TEST_RC", None)
+        where = hdr.get("Location") or ""
+        check("a refusal from ffwatch comes back as a sentence on the box page",
+              code == 303 and
+              urllib.parse.unquote(where).startswith("/status?msg=failed:"), where)
+        _c, _h, body = srv.get(where)
+        check("and the box page renders it", "failed:" in text_of(body), text_of(body)[:0])
+
+        # docker down. The page still has to be a page, and it must not stop anything on a
+        # document it could not read.
+        open(CALLS, "w").close()
+        os.environ["FFWEB_TEST_STATUS_RC"] = "1"
+        try:
+            code, _h, body = srv.get("/stop?name=ffbox-dev-t1-99aa")
+            check("the confirmation survives a status script that cannot answer",
+                  code == 200 and "exit 1" in text_of(body), code)
+            code, hdr, _b = srv.post("/actions/stop", {"name": "ffbox-dev-t1-99aa"})
+            check("and nothing is stopped on a reading that does not exist",
+                  code == 303 and os.path.getsize(CALLS) == 0, code)
+        finally:
+            os.environ.pop("FFWEB_TEST_STATUS_RC", None)
+
+        # The name lands in an href, in a value= and in the page's text. It comes from
+        # `docker ps` by way of a shell script, so it is outside text like any other.
+        write_status_doc(dict(FFSTATUS_DOC, containers=[
+            {"lane": "agent", "class": "ffdev", "name": XSS, "slot": "1", "state": "running",
+             "ttl_secs": None, "ref": None, "uptime": "a minute"}]))
+        try:
+            _c, _h, body = srv.get("/status")
+            check("a container name cannot carry markup onto the box page",
+                  "<script>alert" not in text_of(body), text_of(body)[:0])
+            _c, _h, body = srv.get("/stop?name=" + urllib.parse.quote(XSS))
+            check("nor onto the confirmation it links to",
+                  "<script>alert" not in text_of(body), text_of(body)[:0])
+        finally:
+            write_status_doc(FFSTATUS_DOC)
+    finally:
+        write_status_doc(FFSTATUS_DOC)
         srv.stop()
 
 
@@ -3161,6 +3332,7 @@ def main():
         test_transcript_tree_nests_and_terminates,
         test_a_long_subagent_chain_is_not_truncated,
         test_the_box_page_reports_what_the_status_script_said,
+        test_a_running_container_can_be_stopped_from_the_box_page,
         test_the_claude_page_reports_every_key_in_the_pool,
         test_a_box_with_no_keys_says_what_to_write_and_where,
         test_the_pool_is_numbered_and_a_gap_is_not_the_end,

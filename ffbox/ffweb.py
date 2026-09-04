@@ -24,6 +24,14 @@ FOUR THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the pag
    is a row in the database like everything else on this page and it is not this process's to
    write, even though nothing outside this UI ever reads it back.
 
+   And the one thing here that acts on the MACHINE rather than on a row goes out the same way:
+   the box page's `running` pill offers to stop that container, and takes `ffwatch stop
+   --detach` to do it. The rules a soft stop has to obey — a grace that outlasts a Unity
+   licence return, and only a container carrying the `ffbox.workload` label — already live
+   next to the two other paths that stop a container, and a copy of them here would agree with
+   them on the day it was written. No flag in front of it either, and for the prompt box's
+   reason.
+
 2. THIS PAGE IS INTERNAL-ONLY AND NONE OF ITS TEXT IS EVER REUSED IN A DISCORD POST.
    transcript_event holds repo internals, file contents the agent read, and raw model
    thinking. The bind address decides who can reach that, and it is a deployment decision made
@@ -178,6 +186,20 @@ DEFAULT_AGENT_CLASS = "ffagent"
 # shared. It is two strings that change about once a year, and a wrong copy here shows a
 # useless id rather than breaking anything.
 LOCAL_KINDS = ("shell", "web")
+
+# Which state words on the box page name a container this page offers to stop. Both are the
+# agent lane serving a live turn -- ffstatus.sh writes `running` for one launched cold and
+# `running*` for one dispatched out of the warm pool, and the star is the only difference
+# between them.
+#
+# DELIBERATELY NOT THE POOL OR CI STATES. A staged spare is retired with `ffwatch pool drop`,
+# which also deals with its spool directory, and a CI runner belongs to its slot supervisor,
+# which would mint a replacement the moment this took one away. Offering a button that stops a
+# container something else immediately puts back is worse than offering nothing.
+#
+# A word that drifted out of step with ffstatus.sh costs a pill that is not a link — the page
+# goes on rendering, and the terminal still has `ffwatch stop`.
+STOPPABLE_STATES = ("running", "running*")
 
 # ---- the Claude token pool -------------------------------------------------------------
 # secrets.env carries one long-lived subscription token per Claude account, NUMBERED FROM 1:
@@ -1222,6 +1244,21 @@ form.mark button:hover { color: #d7dae0; border-color: #4a5261; }
    built-in default rather than this box's setting, and it stays that way until a person edits
    the file. That is the same class of thing as a failed run, so it is the same colour. */
 .pill.misconfigured { border-color: #a55; color: #e99; }
+/* The box page's one control. The `running` pill is a link to the page that offers to stop that
+   container, and it must not turn into one of the blue links in the nav: it is still a state
+   word, and the whole point of putting the control there is that the operator is already
+   looking at it. So the anchor takes the pill's colour, and what says it is clickable is the
+   cursor plus the pill going red under the pointer -- the colour this site uses for the states
+   that went wrong, which is the right warning for a button that ends a turn. */
+a.stop { color: inherit; cursor: pointer; }
+a.stop:hover { text-decoration: none; }
+a.stop:hover .pill { border-color: #a55; color: #e99; }
+/* And the button on that page. Red rather than the default grey, because it is the only control
+   on this site that destroys work in flight; everything else either queues something or ticks a
+   column. */
+form.stop { margin: 16px 0 8px; }
+form.stop button { border-color: #a55; color: #e99; padding: 5px 12px; }
+form.stop button:hover { background: #241c1c; }
 /* The sentence under it. A note is grey and easy to read past, and this one must not be. */
 .alert { color: #e99; border: 1px solid #a55; border-radius: 3px; background: #241c1c;
          padding: 8px 12px; margin: 0 0 18px; font-size: 13px; }
@@ -1576,6 +1613,28 @@ class FfwatchActions:
         An UPDATE issued from here would not merely duplicate a decision, it would fail.
         """
         return self._run(["close"] + [str(i) for i in ids])
+
+    def stop(self, name):
+        """Stop one workload container — `ffwatch stop --detach <name>`.
+
+        OUT THROUGH THE SUBPROCESS LIKE EVERYTHING ELSE, and here the rule earns more than
+        tidiness. A soft stop of an ffbox container is not `docker stop`: the grace has to clear
+        the licence floor or the SIGKILL lands part-way through an editor handing its seat back,
+        and only a container carrying `ffbox.workload` may be named at all. Both rules already
+        exist in ffwatch, next to the two other paths that stop a container; a copy here would
+        agree with them today and drift the first time one moved.
+
+        --detach because the wait is the grace period. ffwatch checks the name synchronously and
+        hands the stop itself to docker, so this returns in the time a `docker ps` takes and the
+        row disappears from the box page on one of its own refresh ticks.
+
+        NOT BEHIND --enable-actions, for the reason the prompt box is not: that flag guards
+        releasing a reply into a PUBLIC Discord thread, which is a capability the login does not
+        already imply. Stopping a container on this box is one that it does — whoever holds the
+        password could open a terminal here and run the same command — so the bind address and
+        the login are the decision about who may, exactly as they are for `ffwatch submit`.
+        """
+        return self._run(["stop", "--detach", name])
 
     def read(self, ids, read=True):
         """Tick conversations off, or put them back — `ffwatch read` / `ffwatch unread`.
@@ -2256,7 +2315,12 @@ class FFWebHandler(BaseHTTPRequestHandler):
         if path == "/outbound":
             return self._send(200, app.page_outbound(query))
         if path == "/status":
-            return self._send(200, app.page_status())
+            return self._send(200, app.page_status(query))
+        if path == "/stop":
+            # A GET that changes nothing: it renders the confirmation, and the POST it carries
+            # is the thing that acts. The name is not validated here — page_stop re-reads the
+            # box and says what it found, which covers a typo and a finished turn in one place.
+            return self._send(200, app.page_stop((query.get("name") or [""])[0]))
         if path == "/claude":
             return self._send(200, app.page_claude())
         m = re.fullmatch(r"/conversation/(\d+)", path)
@@ -2429,6 +2493,40 @@ class FFWebHandler(BaseHTTPRequestHandler):
             joiner = "&" if "?" in back else "?"
             return self._redirect(back + joiner + "msg=" +
                                   urllib.parse.quote("failed: " + short(out, 300)))
+
+        if path == "/actions/stop":
+            # No flag in front of this one either — see FfwatchActions.stop for why. The Origin
+            # check above covers it in its REFUSING form, which is what it is for: a forged POST
+            # that killed a fifteen-minute turn from a tab somebody left open elsewhere is
+            # exactly the thing that check exists to stop.
+            name = (form.get("name") or [""])[0].strip()
+            if not name:
+                return self._error(400, "stopping needs a container to stop")
+            # THE LIST IS THE ALLOWLIST. ffwatch checks the name again against `docker ps` and
+            # that is the check that counts, since it is the one holding the workload label; this
+            # one is here so a name that never appeared on this page cannot reach the subprocess
+            # at all, and so a click on a stale row gets a sentence instead of a stop.
+            doc, err = app.box.read()
+            if err:
+                return self._redirect("/status?msg=" + urllib.parse.quote(
+                    "could not read the box, so nothing was stopped: " + short(err, 200)))
+            row = next((c for c in (doc.get("containers") or [])
+                        if c.get("name") == name), None)
+            if row is None:
+                return self._redirect("/status?msg=" + urllib.parse.quote(
+                    name + " is no longer running; nothing was stopped"))
+            if row.get("state") not in STOPPABLE_STATES:
+                return self._error(409, f"{name} is {row.get('state')}, not running a turn")
+            ok, out = app.actions.stop(name)
+            # THE ACKNOWLEDGEMENT IS COMPOSED HERE, not lifted out of `out`. The same rule the
+            # prompt box follows: ffwatch's output on a good run is its startup chatter — the
+            # config warnings it prints every time — with the one line that matters somewhere in
+            # it, and none of that is an answer to "did it take". A failure still says everything
+            # it knows, because there the chatter may BE the reason.
+            note = (f"stopping {name}; it keeps long enough to harvest its workspace and hand "
+                    f"its licence back, then leaves this table"
+                    if ok else "failed: " + (short(out, 300) or "ffwatch said nothing"))
+            return self._redirect("/status?msg=" + urllib.parse.quote(note))
 
         if path not in ("/actions/approve", "/actions/reject"):
             return self._error(404, "no such action")
@@ -2778,7 +2876,7 @@ class App:
 
     # -- the box ------------------------------------------------------------------------
 
-    def page_status(self):
+    def page_status(self, query=None):
         """What this machine is holding right now, and what its pools were told to hold.
 
         THE ONLY PAGE HERE THAT DOES NOT READ ffwatch.db. Everything else on this site is a
@@ -2787,13 +2885,26 @@ class App:
         is wrong: the database says a turn was dispatched, and this says whether a container is
         actually up and which pool it came out of.
 
-        NOTHING HERE IS ACTIONABLE, on purpose. Stopping a container, resizing a pool or
-        retiring a spare are all ffwatch's or ffbox's to do, and a button on this page would be
-        this process reaching around the daemon that owns the ceiling — the same argument that
-        keeps every write on this site behind a subprocess to ffwatch.
+        ONE THING HERE IS ACTIONABLE: the `running` pill on a container serving a turn is a
+        link to the page that offers to stop it. Everything else is not, and for the reason this
+        paragraph used to give for all of it — resizing a pool, retiring a spare and minting a CI
+        runner are decisions the keeper makes on a loop, so a button doing one of them would be
+        this process reaching around the daemon that owns the ceiling, and the keeper would undo
+        it on its next pass anyway.
+
+        Stopping a live turn is not that. Nothing on this box is going to put a stopped run back,
+        so there is no loop to fight; what there IS is a discipline — the licence grace, the
+        workload-label test — and that stays where it already lives. The click goes out through
+        `ffwatch stop` like every other write on this site.
         """
         doc, err = self.box.read()
         head = ["<h1>this box</h1>"]
+        # What the stop button left behind. A note rather than a toast: "stopping X" is still
+        # true a minute later, when the row it names has not gone yet, and a message that fades
+        # after five seconds is the wrong shape for something the reader is meant to watch for.
+        msg = ((query or {}).get("msg") or [""])[0].strip()
+        if msg:
+            head.append("<p class=\"note\">" + esc(msg) + "</p>")
         if err:
             # A sentence and a live page, rather than a 500. What breaks the status read is
             # usually docker, which is also when somebody most wants to look at this page.
@@ -2898,9 +3009,21 @@ class App:
                              fmt_gib(machine.get("shmem_kb"))]])]
 
         rows = []
+        stoppable = 0
         for c in doc.get("containers") or []:
+            # THE PILL IS THE BUTTON, because the state word is the thing an operator is already
+            # looking at when they decide a turn has gone on long enough — a column of its own
+            # would be a column that is empty on most rows and that everybody reads past. The
+            # link is a GET to a confirmation page and changes nothing; the stop itself is the
+            # POST on that page.
+            cell = pill(c.get("state"))
+            if c.get("state") in STOPPABLE_STATES and c.get("name"):
+                stoppable += 1
+                cell = Raw("<a class=\"stop\" title=\"stop this container\" href="
+                           + attr("/stop?name=" + urllib.parse.quote(c["name"]))
+                           + ">" + str(cell) + "</a>")
             rows.append([c.get("lane") or "—", c.get("class") or "—", c.get("name") or "—",
-                         c.get("slot") or "—", pill(c.get("state")),
+                         c.get("slot") or "—", cell,
                          fmt_ttl(c.get("ttl_secs")), c.get("ref") or "—",
                          c.get("uptime") or "—"])
         # THE COUNT SITS ON THE HEADING, not in the line above it. It counts the rows of the
@@ -2910,6 +3033,14 @@ class App:
         body += ["<h2>containers <span class=\"count\">" + esc(f"{used}/{cap}") +
                  "</span></h2>",
                 table(["lane", "class", "name", "slot", "state", "ttl", "ref", "up"], rows)]
+        # SAID ONCE, UNDER THE TABLE, and only when there is a link up there to explain. A
+        # tooltip is not discoverable and a legend on an idle box would be a line about a control
+        # that is not on the page.
+        if stoppable:
+            body.append("<p class=\"note\">A <span class=\"pill running\">running</span> "
+                        "state is a link: it asks first, then stops that container softly — "
+                        "long enough for it to harvest its workspace and hand its Unity "
+                        "licence back.</p>")
 
         prows = []
         for pool in doc.get("pools") or []:
@@ -2935,6 +3066,85 @@ class App:
         # lasts minutes, so a faster reload would spend more of this box's docker socket than
         # it would tell anybody.
         return page("box", head + body, refresh=True)
+
+    # -- stopping one container ---------------------------------------------------------------
+
+    def page_stop(self, name):
+        """The confirmation in front of stopping a container. A GET; it changes nothing.
+
+        A PAGE RATHER THAN A JAVASCRIPT confirm(). The CSP here admits scripts BY HASH and
+        nothing else — there is no 'unsafe-inline' and no 'unsafe-hashes' — so an onsubmit
+        attribute would be silently dropped by the browser and the button would stop a container
+        with no dialog at all. That is the worst of the three outcomes, and it would only show up
+        on the day somebody used it. A page also survives a reader with script off, says what the
+        stop will actually do in more words than a dialog can hold, and shows the row it is about
+        so a click on the wrong line is caught here rather than afterwards.
+
+        IT RE-READS THE BOX rather than trusting the name in the URL. The link was rendered from
+        a document that may be a minute old, and a container that has finished in between is a
+        sentence to read, not a stop to issue.
+        """
+        doc, err = self.box.read()
+        head = ["<h1>stop " + esc(short(name, 120)) + "</h1>"]
+        back = "<p class=\"note\"><a href=\"/status\">back to the box</a></p>"
+        if err:
+            return page("stop", head + ["<p class=\"note\">" + esc(err) + "</p>", back])
+
+        row = next((c for c in (doc.get("containers") or []) if c.get("name") == name), None)
+        if row is None:
+            # The ordinary race, and the harmless one: the turn ended between the page being
+            # rendered and the pill being clicked. Not a 404 — the operator asked a reasonable
+            # question and the answer is "it is already gone".
+            return page("stop", head + [
+                "<p class=\"note\">No container by that name is running on this box now. It "
+                "most likely finished between this page being drawn and the click.</p>", back])
+        if row.get("state") not in STOPPABLE_STATES:
+            # Reachable by a hand-typed URL, and by a click on a page old enough that the row has
+            # changed state underneath it. Named states rather than a flat refusal, because the
+            # thing to do next depends on which one it is.
+            return page("stop", head + [
+                "<p class=\"note\">" + esc(name) + " is " +
+                esc(str(row.get("state") or "in some other state")) +
+                ", not running a turn. A staged spare is retired with "
+                "<code>ffwatch pool drop</code> and a CI runner belongs to its slot supervisor, "
+                "which would mint a replacement straight away.</p>", back])
+
+        body = [table(["lane", "class", "name", "slot", "state", "ttl", "ref", "up"],
+                      [[row.get("lane") or "—", row.get("class") or "—", row.get("name"),
+                        row.get("slot") or "—", pill(row.get("state")),
+                        fmt_ttl(row.get("ttl_secs")), row.get("ref") or "—",
+                        row.get("uptime") or "—"]])]
+        # WHAT IT COSTS AND WHAT IT DOES NOT, in that order, because the second half is the part
+        # that decides it. The stop is soft: PID 1's traps run, so the work bundle is harvested
+        # out of the tmpfs and the Unity seat goes back, and everything the agent had already
+        # committed is published exactly as it would have been. What is lost is the rest of the
+        # turn.
+        body.append(
+            "<p class=\"alert\">This ends the turn " + esc(name) + " is serving. The stop is a "
+            "soft one — the container is signalled and given a couple of minutes, which is long "
+            "enough for it to harvest its workspace out of the ramdrive and hand its Unity "
+            "licence back, so whatever the agent has already committed is still published the "
+            "usual way. What does not survive is the rest of the turn: the agent stops where it "
+            "is, and the run is recorded as a failure.</p>")
+        # WHAT THE PERSON WHO ASKED WILL SEE, which is the half of this decision that is not
+        # about the box. A Discord turn is somebody waiting in a thread, and the two things they
+        # notice are the 👀 going away and a reply arriving; both happen, and the reply says a
+        # dev stopped it rather than that something broke. Said here because it is the part an
+        # operator cannot check for themselves before pressing the button.
+        if row.get("lane") == "agent":
+            body.append(
+                "<p class=\"note\">If this turn came from Discord, the 👀 comes off the message "
+                "it was answering and the thread is told a dev stopped the run and that the "
+                "question is fine to ask again. A turn typed on this box just ends.</p>")
+        body.append(
+            "<form class=\"stop\" method=\"post\" action=\"/actions/stop\">"
+            "<input type=\"hidden\" name=\"name\" value=" + attr(row.get("name")) + ">"
+            "<button type=\"submit\">stop " + esc(short(name, 120)) + "</button></form>")
+        body.append("<p class=\"note\"><a href=\"/status\">leave it running</a></p>")
+        # NO REFRESH TICK. A page that reloads under somebody deciding is a page that can move
+        # the button out from under them, and there is nothing on it that goes stale in a way the
+        # POST does not check again anyway.
+        return page("stop", head + body)
 
     # -- the Claude keys ----------------------------------------------------------------------
 

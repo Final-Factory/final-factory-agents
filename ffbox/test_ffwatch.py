@@ -26,6 +26,7 @@ path gets exercised without a model call.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import contextlib
 import importlib
@@ -396,6 +397,25 @@ if mode == "timeout":
     with open(os.path.join(out, "ffbox-timeout"), "w", encoding="utf-8") as fh:
         fh.write("agent\n")
     sys.exit(124)
+
+# A RUN SOMEBODY STOPPED, reproduced exactly as the box leaves it. Two halves, written by two
+# different things in reality and by this stub together:
+#
+#   ffbox-stopped   the HOST's, from mark_run_stopped, before the signal went out.
+#   result.json     the CONTAINER's, from discord-task.sh's trap: `lift_result` finds no result
+#                   event in a stream the agent never finished and writes the stub below.
+#
+# AND AN EXIT CODE OF 0, which is the whole point of the case. `docker stop` signals PID 1, and
+# a stop landing during warm-up leaves $? as the last foreground command's status rather than
+# the 143 an interrupted `wait` gives. finish_run used to read that 0 as a clean run.
+if mode == "stopped":
+    container_rc(0)
+    with open(os.path.join(out, "ffbox-stopped"), "w", encoding="utf-8") as fh:
+        fh.write("hand\n")
+    with open(os.path.join(out, "result.json"), "w", encoding="utf-8") as fh:
+        json.dump({"type": "result", "is_error": True,
+                   "subtype": "the run was stopped before the agent finished"}, fh)
+    sys.exit(0)
 
 verdict = {"summary": "Checked the belt merger path; this is expected behaviour.",
            "change_required": False, "sources": ["Assets/Scripts/Belt.cs:120"]}
@@ -2045,6 +2065,150 @@ def test_timeout_is_terminal():
           and "clock" not in payload["text"], payload["text"][:300])
     check("and the clock that stopped it is on the record instead",
           "agent clock" in (turn["error"] or ""), dict(turn))
+
+
+def test_a_run_somebody_stopped_says_so_and_takes_its_mark_off():
+    """A Discord turn ended by hand, from the box page or `ffwatch stop`.
+
+    THE BUG THIS EXISTS FOR. finish_run picked the terminal state from the container's exit
+    code, and a `docker stop` does not have a reliable one: interrupted in `wait` on the
+    backgrounded agent the task script exits 143, but interrupted during warm-up -- the clone,
+    the container, the Unity licence, minutes on this box and exactly when somebody gets
+    impatient enough to press the button -- $? is the last foreground command's status, which is
+    0. So a stopped run scored `done` with no verdict, and the thread was told "I had a look at
+    this one and came back with nothing worth saying" about a run nobody let finish.
+
+    The marker is what makes the answer independent of where the signal landed. This case runs
+    the whole pipeline over the 0, which is the reading that used to be wrong.
+    """
+    print("a stopped run")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(10101, "why is my smelter idle")]
+    case = Case("stopped-run", fixture, mode="stopped")
+    case.events(ask_event(10101))
+    # THE DAEMON'S SHAPE, not once()'s, and here it is the whole point of the case. A real stop
+    # lands minutes into a run, long after the 👀 went out; once() joins the run before it
+    # sends, so the mark would never reach Discord and the removal this test is about would be
+    # dropped as an unsent row instead. Claim, send, then finish.
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    case.watcher.send_pending()
+    check("the mark is on the message while the run is in flight",
+          sent_calls(case, "react") == [["react", ASK_CHANNEL, "10101", ffwatch.ACK_EMOJI]],
+          sent_calls(case, "react"))
+    case.watcher.once()
+
+    run = case.rows("SELECT * FROM run")[0]
+    turn = case.rows("SELECT * FROM turn")[0]
+    check("the run is terminal, and NOT done", run["terminal_state"] == "failed", dict(run))
+    check("even though its container exited 0", run["exit_code"] == 0, dict(run))
+    check("the turn ends rather than being requeued", turn["status"] == "failed", dict(turn))
+    check("and the record says a person did it, not that ffbox exited 0",
+          "stopped by hand" in (turn["error"] or ""), dict(turn))
+    case.watcher.once()
+    check("a later pass does not retry it", len(case.rows("SELECT * FROM run")) == 1,
+          case.rows("SELECT * FROM run"))
+
+    posts = case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")
+    check("the thread gets exactly one reply", len(posts) == 1, posts)
+    text = json.loads(posts[0]["payload_json"])["text"]
+    check("it says a dev stopped the run", text.endswith(ffwatch.PUBLIC_STOPPED), text)
+    # The three withheld endings are three different sentences, and getting this one wrong is
+    # what the whole change is about: PUBLIC_NOTHING_TO_SAY claims a completed look.
+    check("and not that the run had nothing to say",
+          ffwatch.PUBLIC_NOTHING_TO_SAY not in text, text)
+    check("nor that something broke, which nothing did",
+          ffwatch.PUBLIC_NO_ANSWER not in text, text)
+    # 👀 GOES BACK OFF. finish_turn is the one choke point every terminal state passes through
+    # and clear_ack hangs off it, so this is really asserting that a hand stop IS an ending
+    # rather than a run left hanging -- which is the failure that would leave the mark on for
+    # ever and tell the asker their question is still being worked on.
+    check("and the 👀 comes back off the message",
+          sent_calls(case, "react")[-1]
+          == ["react", ASK_CHANNEL, "10101", ffwatch.ACK_EMOJI, "--remove"],
+          sent_calls(case, "react"))
+    marks = case.rows("SELECT * FROM outbound WHERE action IN ('react','unreact') ORDER BY id")
+    check("as a queued row like everything else the bot does",
+          [(m["action"], m["status"]) for m in marks]
+          == [("react", "sent"), ("unreact", "sent")], marks)
+    check("aimed at the message the mark went on",
+          json.loads(marks[0]["payload_json"])["message"]
+          == json.loads(marks[1]["payload_json"])["message"], marks)
+
+
+def test_the_marker_is_only_written_for_a_live_run():
+    """mark_run_stopped, which is the half of the fix that runs on the host.
+
+    It is handed a CONTAINER NAME, and most container names on this box are not runs at all: a
+    staged spare, a CI runner, infrastructure. A marker dropped next to the wrong run, or next
+    to one that has already been scored, would rewrite a finished answer.
+    """
+    print("marking a run stopped")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(10201, "belt question")]
+    case = Case("stop-marker", fixture)
+    case.events(ask_event(10201))
+    case.watcher.once()
+    run = case.rows("SELECT * FROM run")[0]
+    marker = os.path.join(case.watcher.run_out_dir(run), ffwatch.STOP_MARKER)
+
+    check("a finished run is not marked", not case.watcher.mark_run_stopped(
+        run["container_name"]), run["container_name"])
+    check("so nothing is written beside it", not os.path.exists(marker), marker)
+    for name in ("ffbox-agent-pool-deadbeef", "ffghr-testbox-1", "", "no-such-container"):
+        check(f"{name!r} names no run and is not marked",
+              not case.watcher.mark_run_stopped(name))
+
+    # And the live case, which is the one that matters: reopen the run and mark it.
+    case.db_exec("UPDATE run SET terminal_state=NULL WHERE id=?", (run["id"],))
+    check("a run still in flight is marked",
+          case.watcher.mark_run_stopped(run["container_name"]), run["container_name"])
+    check("the marker names the run's own out directory", os.path.exists(marker), marker)
+    check("and it is the file finish_run reads",
+          ffwatch.STOP_MARKER == "ffbox-stopped" and
+          ffwatch.STOP_MARKER != "ffbox-timeout", ffwatch.STOP_MARKER)
+
+
+def test_the_stopped_reply_reads_as_max():
+    """The player-facing string, against the max-voice rules it is bound by.
+
+    A constant nobody reads out loud is exactly where an em dash or an LLM tic survives review,
+    and this one is posted into a public thread as the whole of the reply.
+    """
+    print("the stopped reply's voice")
+    text = ffwatch.PUBLIC_STOPPED
+    check("no em or en dashes", "—" not in text and "–" not in text, text)
+    for phrase in ("I'd be happy", "Let's", "It's worth noting", "Feel free",
+                   "I hope this helps", "Certainly", "delve", "leverage", "utilize"):
+        check(f"no {phrase!r}", phrase.lower() not in text.lower(), text)
+    check("it uses contractions like a person", "'" in text, text)
+    # THE ADVICE IS THE POINT, and it is the opposite of PUBLIC_TIMED_OUT's. A run that spent
+    # the whole ceiling must not be asked again unchanged; a run somebody stopped should be.
+    check("it invites the same question back", "ask again" in text.lower(), text)
+    check("where a timed-out run deliberately does not",
+          "again" not in ffwatch.PUBLIC_TIMED_OUT.lower(), ffwatch.PUBLIC_TIMED_OUT)
+    check("and it does not claim anything broke",
+          "broke" not in text.lower() and "error" not in text.lower(), text)
+
+    # The two shapes of the reply, at the level compose_head decides them.
+    job = {"run_id": "d1t1-stop", "session": {"id": "S"}, "classification": {}, "messages": [],
+           "limits": {}}
+    stub = {"is_error": True, "subtype": "the run was stopped before the agent finished"}
+    public = {"venue": "public", "failed_closed": 0, "failed_closed_reason": None}
+    check("a public venue gets the sentence and nothing else",
+          ffwatch.compose_head(None, public, "failed", stub, {}, None, job, stopped=True)
+          == ffwatch.PUBLIC_STOPPED)
+    check("and without the flag it is still the plain no-answer note",
+          ffwatch.compose_head(None, public, "failed", stub, {}, None, job)
+          == ffwatch.PUBLIC_NO_ANSWER)
+    private = {"venue": "private", "failed_closed": 0, "failed_closed_reason": None}
+    text = ffwatch.compose_head(None, private, "failed", stub, {}, None, job, stopped=True)
+    check("an operator is told it was stopped rather than that it failed",
+          "stopped by hand" in text and "the run failed" not in text, text)
+    # The container's subtype says the same thing in its own words. Saying both is an operator
+    # reading one fact twice.
+    check("and is not told the same thing twice",
+          "stopped before the agent finished" not in text, text)
 
 
 def test_kill_switch():
@@ -5524,6 +5688,138 @@ def test_every_task_script_harvests_its_own_workspace():
               body.index("harvest-workspace.sh") < body.index("return_license"), body)
 
 
+def _without_docstrings(text):
+    """A Python source with every docstring line blanked out.
+
+    The scan below is looking for CALLS, and a line inside a triple-quoted string cannot be
+    one. It is the same exemption the `#` filter already grants for the same reason the comment
+    there gives: these files explain the rule they obey, and `docker stop --timeout` is the
+    right phrase for what a soft stop IS. A lint that cannot tell prose from a call forbids
+    writing the rule down next to the code that keeps it, which is where it is worth having.
+
+    Docstrings only — a string anywhere else is left alone, so a `subprocess.run` argv built
+    out of literals is still read.
+    """
+    lines = text.splitlines()
+    for node in ast.walk(ast.parse(text)):
+        if not isinstance(node, (ast.Module, ast.ClassDef,
+                                 ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        doc = node.body[0] if node.body else None
+        if (isinstance(doc, ast.Expr) and isinstance(doc.value, ast.Constant)
+                and isinstance(doc.value.value, str)):
+            for i in range(doc.lineno - 1, doc.end_lineno):
+                lines[i] = ""
+    return "\n".join(lines)
+
+
+DOCKER_STOP_STUB = """#!/bin/sh
+# A docker that can be asked what is running and told to stop one of them. Records its whole
+# argv, answers `ps` out of a file the case writes, and fails a `stop` on demand.
+printf '%s\\n' "$*" >> "$DSTOP_LOG"
+case "$1" in
+    ps) cat "$DSTOP_PS" ;;
+    stop) [ -n "${DSTOP_FAIL:-}" ] && { echo "no such container" >&2; exit 1; } ;;
+esac
+exit 0
+"""
+
+
+def test_stopping_one_container_by_hand():
+    """`ffwatch stop`, which is what the box page's `running` pill goes out through.
+
+    THREE RULES, AND EACH OF THEM IS A REAL FAILURE SOMEWHERE ELSE IN THIS FILE'S HISTORY. Only
+    a container carrying `ffbox.workload` may be named, so the egress proxy and the git mirror
+    are outside the set by construction rather than by an operator being careful. The grace
+    clears LICENCE_STOP_FLOOR, because `docker stop --timeout` SIGKILLs when it runs out and the
+    trap it would kill is the one handing a Unity seat back — the same bug pool_drop carried
+    from 2026-09-01. And the name is matched in PYTHON against the listing, never handed to
+    `--filter name=`, which is a regex.
+    """
+    print("stopping a container by hand")
+    case = Case("stop-by-hand")
+    log = os.path.join(case.root, "docker.log")
+    ps = os.path.join(case.root, "docker-ps.txt")
+    os.environ.update({"DSTOP_LOG": log, "DSTOP_PS": ps})
+    os.environ.pop("DSTOP_FAIL", None)
+    case.watcher.cfg["docker"] = write_stub(os.path.join(case.root, "docker_stop_stub.sh"),
+                                            DOCKER_STOP_STUB)
+    # What `docker ps --filter label=ffbox.workload` answers. The egress proxy is deliberately
+    # NOT in it: it carries no workload label, which is the same line ffstatus.sh draws when it
+    # files a container under `infrastructure`.
+    with open(ps, "w", encoding="utf-8") as fh:
+        fh.write("ffbox-dev-t1-99aa\tagent\n"
+                 "ffbox-agent-pool-deadbeef\tpool\n")
+
+    def lines():
+        return [ln for ln in io.open(log, encoding="utf-8").read().splitlines() if ln.strip()]
+
+    ok, note = case.watcher.stop_workload("ffbox-dev-t1-99aa")
+    check("a running workload container stops", ok, note)
+    check("and the answer names it and its lane",
+          "ffbox-dev-t1-99aa" in note and "agent" in note, note)
+    stops = [ln for ln in lines() if ln.startswith("stop ")]
+    check("exactly one stop was issued", len(stops) == 1, lines())
+    # THE FLOOR, NOT kill_grace_secs. The config ships 10, which is about an agent ignoring
+    # SIGTERM; the licence return is an editor launch and wants the whole two minutes.
+    check("it is a soft stop with at least the licence floor",
+          stops and stops[0] == f"stop --timeout {ffwatch.LICENCE_STOP_FLOOR} "
+                                f"ffbox-dev-t1-99aa", stops)
+    check("and the lookup asked docker for the workload label rather than for a name pattern",
+          any("label=ffbox.workload" in ln for ln in lines())
+          and not any("name=^" in ln for ln in lines()), lines())
+
+    # Membership, which is the whole guard. Everything below must stop nothing at all.
+    open(log, "w").close()
+    for name, why in (("ffbox-egress", "infrastructure carries no workload label"),
+                      ("ffbox-dev-t1-99a", "a name that is one character short"),
+                      ("ffbox-dev-t1-99aa ", "a name with a stray space"),
+                      ("ffbox-.ev-t1-99aa", "a name that would match as a regex"),
+                      ("", "an empty name")):
+        ok, note = case.watcher.stop_workload(name)
+        check(f"{why} is refused", not ok and "no ffbox container" in note, note)
+    check("and none of them reached docker stop",
+          not [ln for ln in lines() if ln.startswith("stop ")], lines())
+
+    # A docker that refuses. The sentence has to carry its reason: the usual cause is a
+    # container that exited between the page being drawn and the button being pressed.
+    open(log, "w").close()
+    os.environ["DSTOP_FAIL"] = "1"
+    try:
+        ok, note = case.watcher.stop_workload("ffbox-agent-pool-deadbeef")
+    finally:
+        os.environ.pop("DSTOP_FAIL", None)
+    check("a stop docker refuses is reported rather than claimed",
+          not ok and "no such container" in note, note)
+
+    # --detach, which is what ffweb uses: the wait is the grace period and a page cannot hold a
+    # request open for two minutes. The name is still checked before it returns.
+    open(log, "w").close()
+    ok, note = case.watcher.stop_workload("ffbox-dev-t1-99aa", detach=True)
+    check("a detached stop answers at once and says how long it gave the container",
+          ok and str(ffwatch.LICENCE_STOP_FLOOR) in note, note)
+    for _ in range(100):
+        if [ln for ln in lines() if ln.startswith("stop ")]:
+            break
+        time.sleep(0.05)
+    check("and the stop still went out",
+          [ln for ln in lines() if ln.startswith("stop ")] ==
+          [f"stop --timeout {ffwatch.LICENCE_STOP_FLOOR} ffbox-dev-t1-99aa"], lines())
+    open(log, "w").close()
+    ok, note = case.watcher.stop_workload("ffbox-egress", detach=True)
+    check("a detached stop still refuses a name that is not a workload container",
+          not ok and not [ln for ln in lines() if ln.startswith("stop ")], (note, lines()))
+
+    # A daemon that cannot be reached lists nothing, and nothing is what may be stopped on it.
+    open(log, "w").close()
+    os.remove(ps)
+    ok, note = case.watcher.stop_workload("ffbox-dev-t1-99aa")
+    check("a docker that cannot answer stops nothing",
+          not ok and not [ln for ln in lines() if ln.startswith("stop ")], (note, lines()))
+    for key in ("DSTOP_LOG", "DSTOP_PS"):
+        os.environ.pop(key, None)
+
+
 def test_destructive_docker_calls_name_the_container():
     """Design section 14 rule 2, checked against the source because it is a rule about what
     must NOT exist: there is deliberately no 'find stray Unity processes and work out which are
@@ -5534,9 +5830,10 @@ def test_destructive_docker_calls_name_the_container():
                for name in ("ffbox", "ffwatch.py", "discord-task.sh", "ffverify.sh")}
     # Comment lines are dropped first: several of these files say "never `docker kill`" in
     # prose, and a check that cannot tell that from a call would forbid explaining the rule.
-    code = {name: "\n".join(ln for ln in text.splitlines()
-                            if not ln.strip().startswith("#"))
-            for name, text in sources.items()}
+    code = {name: "\n".join(
+        ln for ln in (_without_docstrings(text) if name.endswith(".py") else text).splitlines()
+        if not ln.strip().startswith("#"))
+        for name, text in sources.items()}
     for name, text in code.items():
         # `docker kill` skips run-as-user.sh's SIGTERM trap, which is what returns the Unity
         # activation seat. Stopping always goes through `docker stop --timeout`.
@@ -5572,6 +5869,20 @@ def test_destructive_docker_calls_name_the_container():
     # And that it outlasts a licence return, which kill_grace_secs at 10 does not.
     check("and it stops it with at least the licence floor",
           'max(1, int(self.cfg["kill_grace_secs"]), LICENCE_STOP_FLOOR)' in sources["ffwatch.py"])
+    # THREE PLACES BUILD THAT ARGV and no others: the keeper retiring an aged-out spare, an
+    # operator dropping one, and `ffwatch stop` -- the hand stop ffweb's box page goes out
+    # through. (The clock enforcer is the fourth stop and is the same shape over `ref`, which
+    # is a container id where these three have a name.) A count rather than an `in`, because
+    # what would go wrong here is a FOURTH stop written some other way: with a filter instead
+    # of a name, or with kill_grace_secs instead of the floor.
+    check("every stop of a named container is built the same way, floor included",
+          sources["ffwatch.py"].count(
+              '[self.cfg["docker"], "stop", "--timeout", str(grace), name]') == 3,
+          sources["ffwatch.py"].count(
+              '[self.cfg["docker"], "stop", "--timeout", str(grace), name]'))
+    check("and the name it stops was matched against a listing, not sent as a docker filter",
+          '"--filter", "label=ffbox.workload",\n                 "--format"'
+          in sources["ffwatch.py"])
     # The names themselves, since they are now derived rather than literal: a class that loses
     # its prefix would otherwise only show up as a failed dispatch on a live box.
     check("ffbox derives one container-name prefix per agent class",
@@ -10957,6 +11268,9 @@ def main():
         test_batching_during_a_run,
         test_recover_crashed_run,
         test_timeout_is_terminal,
+        test_a_run_somebody_stopped_says_so_and_takes_its_mark_off,
+        test_the_marker_is_only_written_for_a_live_run,
+        test_the_stopped_reply_reads_as_max,
         test_kill_switch,
         test_transcript_index,
         test_a_reply_addresses_the_person_it_answers,
@@ -11030,6 +11344,7 @@ def main():
         test_the_classifier_runs_in_a_sandbox,
         test_every_task_script_harvests_its_own_workspace,
         test_destructive_docker_calls_name_the_container,
+        test_stopping_one_container_by_hand,
         test_the_run_is_on_the_filtered_network,
         test_the_agent_names_the_branch_it_publishes,
         test_a_local_run_publishes_like_a_dev_dm,
