@@ -65,13 +65,18 @@ subtle enough that a second implementation here would drift from the one people 
 work against, and the two disagreeing is worse than either being wrong.
 
 `/claude` reports on the SUBSCRIPTIONS — every Claude account whose token is in secrets.env, and
-how much of each account's five-hour and weekly window is gone — and it gets that from
-Anthropic's own OAuth usage endpoint over the network. THIS IS THE ONLY OUTBOUND REQUEST THIS
-PROCESS EVER MAKES, and it is here because the answer exists nowhere else: a rolling
-subscription window is counted by Anthropic and by nobody else, and the run costs the database
-does hold are a different quantity in different units. See ClaudeKeys for the rest of the
-argument, including why a failure renders as a sentence rather than a 500 and why no token is
-ever put on the page.
+how much of each account's five-hour and weekly window is gone. THESE ARE THE ONLY OUTBOUND
+REQUESTS THIS PROCESS EVER MAKES, and they are here because the answer exists nowhere else: a
+rolling subscription window is counted by Anthropic and by nobody else, and the run costs the
+database does hold are a different quantity in different units.
+
+There are two ways to get it and this page needs both, because the richer one is closed to the
+tokens ffbox actually runs on. Anthropic's OAuth usage endpoint gives the fullest answer —
+account identity, the per-model weekly caps — but needs the `user:profile` scope, and a token
+from `claude setup-token` does not carry it. Such a key is asked the cheapest possible question
+instead, one token of Haiku against /v1/messages, and the same two windows are read off the
+reply's headers. See ClaudeKeys for the rest of the argument, including why a failure renders as
+a sentence rather than a 500 and why no token is ever put on the page.
 
 Both read and neither acts: there is no button on either, because resizing a pool or stopping a
 container belongs to ffwatch and ffbox, and choosing which Claude account this box spends is an
@@ -108,7 +113,7 @@ import threading
 import time
 # For the run clock, whose started_at is an ISO timestamp with an offset that
 # time.strptime cannot take.
-from datetime import datetime
+from datetime import datetime, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -192,11 +197,16 @@ CLAUDE_TOKEN_PREFIX = "CLAUDE_CODE_OAUTH_TOKEN"
 # silently drop token 3 on a file that left 2 blank, and "read every variable that matches"
 # would make the pool depend on what else the unit happens to export.
 CLAUDE_TOKEN_MAX = 16
-# How long a usage reading stays good. The page ticks at a minute (see page_claude), so this is
-# the difference between one call per key per reader-minute and one per key per open browser
-# per minute — the same numbers either way, on a rate limit that is not ours to spend on
-# refreshes.
-CLAUDE_USAGE_TTL_SECS = 55
+# How long a usage reading stays good. TWENTY MINUTES, not a minute: these windows are five
+# hours and seven days long, so a reading a quarter-hour old is the same answer as a fresh one
+# for every decision this page supports, and the page ticks at a minute regardless. It is also
+# what keeps the fallback below honest — that path costs a (tiny) inference call per key per
+# refresh, and at this interval that is three calls an hour rather than sixty.
+CLAUDE_USAGE_TTL_SECS = 1200
+
+# The family of response headers every /v1/messages reply carries, and the fallback reading's
+# whole vocabulary. Named once because six strings are built from it.
+RATELIMIT_PREFIX = "anthropic-ratelimit-unified-"
 
 
 def claude_token_pool(env=None, secrets_path=None):
@@ -1606,6 +1616,26 @@ class ClaudeKeys:
 
     USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
     PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
+    # THE FALLBACK, AND WHY THERE HAS TO BE ONE. The two endpoints above need the `user:profile`
+    # OAuth scope, and a token from `claude setup-token` — which is the ONLY kind ffbox runs on,
+    # and the kind this whole page is about — does not carry it. It answers
+    #   403 oauth_scope_insufficient: OAuth token does not meet scope requirement user:profile
+    # and `claude setup-token` has no flag to ask for more. Measured 2026-09-04.
+    #
+    # But every /v1/messages response carries the same two windows in its headers, and that
+    # endpoint needs only `user:inference`, which every one of these tokens has. So a key that
+    # cannot read its own usage document is asked the cheapest possible question instead — one
+    # token of Haiku — and the answer is read off the reply's headers.
+    #
+    # THIS COSTS A LITTLE OF THE THING IT MEASURES, which is worth saying out loud: about eight
+    # input tokens and one output token, once per key per CLAUDE_USAGE_TTL_SECS. Against a
+    # window measured in millions that is noise, but it is not nothing, and it is the reason the
+    # TTL is twenty minutes rather than one.
+    PROBE_URL = "https://api.anthropic.com/v1/messages"
+    # The cheapest model on the account. The reply is thrown away — only the headers are read —
+    # so max_tokens is 1 and the prompt is a full stop.
+    PROBE_MODEL = "claude-haiku-4-5-20251001"
+    ANTHROPIC_VERSION = "2023-06-01"
     # The beta the OAuth-scoped surface is gated behind. Claude Code sends it on these calls and
     # so do we; without it the endpoints answer, but this is the contract they are documented
     # under and dropping it would be trusting an undocumented default.
@@ -1617,17 +1647,29 @@ class ClaudeKeys:
     # that somebody can move the box to another key before a run dies mid-verify.
     TIGHT_PCT = 80.0
 
-    def __init__(self, tokens=None, ttl=CLAUDE_USAGE_TTL_SECS, timeout=10, fetch=None):
+    def __init__(self, tokens=None, ttl=CLAUDE_USAGE_TTL_SECS, timeout=10, fetch=None,
+                 probe=None):
         # A callable rather than a list, because the pool is read out of the environment and a
         # value captured at construction would be a snapshot of the moment the server started.
         self._tokens = tokens if callable(tokens) else (
             (lambda: list(tokens)) if tokens is not None else claude_token_pool)
         self.ttl = ttl
         self.timeout = timeout
-        # The seam the offline tests use. It takes (url, token) and returns (document, error),
-        # which is the whole of what this class needs the network for.
+        # The seams the offline tests use. `fetch` takes (url, token) and returns
+        # (document, error); `probe` takes (token) and returns (headers, error). Two rather than
+        # one because they are genuinely different requests — a GET for a document and a POST
+        # whose body is thrown away — and a single seam would have to fake both.
         self.fetch = fetch or self._http
+        self.probe = probe or self._probe
         self._cache = {}
+        # Fingerprints whose usage document answered 403. A `claude setup-token` token will
+        # answer that EVERY time, for the life of the token, so asking again on each refresh is
+        # a call that cannot succeed — and Anthropic eventually answers those repeated refusals
+        # with a 429, which is how this page managed to report "rate-limited" about a key whose
+        # real problem was a missing scope. Remembering the verdict sends such a key straight to
+        # the probe. Deliberately NOT persisted: it costs one call to relearn after a restart,
+        # and a token that is later reissued with the scope should get a clean hearing.
+        self._no_scope = set()
         self._lock = threading.Lock()
 
     # -- the wire -------------------------------------------------------------------------
@@ -1653,7 +1695,12 @@ class ClaudeKeys:
                 return None, ("401 — this key was refused. Either it was revoked, or it is not "
                               "a `claude setup-token` token")
             if exc.code == 403:
-                return None, "403 — this key is not allowed to read its own usage"
+                # THE ORDINARY CASE, not an exotic one: this is what every `claude setup-token`
+                # token answers, because that flow does not grant `user:profile`. _load reads
+                # the "403" on the front of this string and falls back to the header probe, so
+                # the prefix is load-bearing rather than decoration.
+                return None, ("403 — this token has no `user:profile` scope, which the usage "
+                              "document needs; `claude setup-token` does not grant it")
             if exc.code == 429:
                 return None, "429 — Anthropic is rate-limiting the usage endpoint itself"
             return None, f"HTTP {exc.code} from {urllib.parse.urlsplit(url).path}"
@@ -1666,27 +1713,102 @@ class ClaudeKeys:
             return None, "the endpoint answered with something that is not JSON"
         return (doc, "") if isinstance(doc, dict) else (None, "unexpected shape from Anthropic")
 
+    def _probe(self, token):
+        """({lowercased header: value}, error) — the unified rate-limit headers off one call.
+
+        The reply is discarded. What is wanted is `anthropic-ratelimit-unified-5h-utilization`
+        and its six siblings, which ride on every /v1/messages response whatever it says.
+
+        A 429 IS AN ANSWER, NOT A FAILURE. A key that has actually run out answers this call
+        with a rate-limit error — and that response still carries the headers saying so, which
+        is precisely the state the page most needs to render. So the headers are taken off an
+        HTTPError too whenever they are there, and only a response with none of them left is
+        treated as a failed reading.
+        """
+        body = json.dumps({"model": self.PROBE_MODEL, "max_tokens": 1,
+                           "messages": [{"role": "user", "content": "."}]}).encode("utf-8")
+        req = urllib.request.Request(self.PROBE_URL, data=body, headers={
+            "Authorization": "Bearer " + token,
+            "anthropic-beta": self.BETA,
+            "anthropic-version": self.ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
+            "User-Agent": "ffweb/" + VERSION,
+        })
+        def unified(headers):
+            out = {k.lower(): v for k, v in headers.items()}
+            return out if any(k.startswith(RATELIMIT_PREFIX) for k in out) else {}
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                resp.read(1 << 16)
+                found = unified(resp.headers)
+        except urllib.error.HTTPError as exc:
+            found = unified(getattr(exc, "headers", None) or {})
+            if not found:
+                if exc.code == 401:
+                    return {}, ("401 — this key was refused. Either it was revoked, or it is "
+                                "not a `claude setup-token` token")
+                return {}, f"HTTP {exc.code} asking Anthropic for this key's limits"
+        except (urllib.error.URLError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            return {}, f"{type(exc).__name__}: {short(str(reason), 160)}"
+        if not found:
+            return {}, "Anthropic answered without any rate-limit headers"
+        return found, ""
+
     def _load(self, name, token):
         """One key, fetched. The cache is not consulted here — see read()."""
-        usage, err = self.fetch(self.USAGE_URL, token)
-        rec = {"name": name, "fingerprint": token_fingerprint(token),
-               "account": "", "plan": "", "windows": [], "error": err}
-        if err:
+        fingerprint = token_fingerprint(token)
+        rec = {"name": name, "fingerprint": fingerprint,
+               "account": "", "plan": "", "windows": [], "source": "", "error": ""}
+        with self._lock:
+            closed = fingerprint in self._no_scope
+        usage, err = (None, "403 — remembered") if closed else self.fetch(self.USAGE_URL, token)
+        if not err:
+            # SECOND, AND ONLY WHEN THE FIRST WORKED. The profile is the nicety — which of the
+            # accounts this is — and a key whose usage came back is a key whose name we can
+            # already print. Asking for it after the answer that matters keeps a slow profile
+            # call from deciding whether the page has numbers on it.
+            profile, perr = self.fetch(self.PROFILE_URL, token)
+            if not perr and profile:
+                account = profile.get("account") or {}
+                org = profile.get("organization") or {}
+                rec["account"] = str(account.get("email") or account.get("full_name") or "")
+                tier = str(org.get("rate_limit_tier") or "")
+                kind = str(org.get("organization_type") or "")
+                rec["plan"] = " ".join(p for p in (kind, "(" + tier + ")" if tier else "") if p)
+            rec["windows"] = self.windows(usage)
+            rec["source"] = "usage document"
+            rec["state"] = self.state(rec["windows"], "")
+            return rec
+
+        # THE FALLBACK, ON ANYTHING BUT A DEAD KEY. A 401 means the token itself is refused,
+        # and the probe would be a second call refused the same way — so that one reports and
+        # stops. EVERYTHING ELSE FALLS THROUGH, and the reason is a mistake this code made
+        # first: the fallback used to run on 403 alone, so when the usage endpoint answered 429
+        # instead the page said "Anthropic is rate-limiting" about a key whose actual problem
+        # was a missing scope, and never asked the question it could have answered. What the
+        # usage document says when it will not answer is not information this page has any use
+        # for; whether the key has room is.
+        if err.startswith("401"):
+            rec["error"] = err
             rec["state"] = "unreachable"
             return rec
-        # SECOND, AND ONLY WHEN THE FIRST WORKED. The profile is the nicety — which of the
-        # accounts this is — and a key whose usage came back is a key whose name we can already
-        # print. Asking for it after the answer that matters keeps a slow profile call from
-        # deciding whether the page has numbers on it.
-        profile, perr = self.fetch(self.PROFILE_URL, token)
-        if not perr and profile:
-            account = profile.get("account") or {}
-            org = profile.get("organization") or {}
-            rec["account"] = str(account.get("email") or account.get("full_name") or "")
-            tier = str(org.get("rate_limit_tier") or "")
-            kind = str(org.get("organization_type") or "")
-            rec["plan"] = " ".join(p for p in (kind, "(" + tier + ")" if tier else "") if p)
-        rec["windows"] = self.windows(usage)
+        if err.startswith("403"):
+            with self._lock:
+                self._no_scope.add(fingerprint)
+        headers, perr = self.probe(token)
+        if perr:
+            rec["error"] = perr
+            rec["state"] = "unreachable"
+            return rec
+        rec["windows"] = self.windows_from_headers(headers)
+        rec["source"] = "rate-limit headers"
+        if not rec["windows"]:
+            # Headers arrived and said nothing about the windows. Report the scope refusal
+            # rather than an empty table, because that is still the thing to fix.
+            rec["error"] = err
+            rec["state"] = "unreachable"
+            return rec
         rec["state"] = self.state(rec["windows"], "")
         return rec
 
@@ -1724,6 +1846,43 @@ class ClaudeKeys:
                          "percent": _as_pct(entry.get("percent")),
                          "resets_at": entry.get("resets_at"),
                          "locked": ""})
+        return rows
+
+    @staticmethod
+    def windows_from_headers(headers):
+        """The same two rows, read off a /v1/messages reply instead of the usage document.
+
+        THE PER-MODEL CAP IS NOT HERE and cannot be: the headers carry the account's five-hour
+        and seven-day windows and nothing scoped to a model, so a key read this way shows two
+        rows where a scoped key shows three. The page says which reading it got rather than
+        leaving somebody to wonder where the Opus row went.
+
+        `utilization` is a FRACTION on this surface (0.14) and a percentage on the usage
+        document (14.0). Multiplying here rather than at the call site is what keeps both paths
+        feeding the same renderer.
+        """
+        rows = []
+        overall = (headers.get(RATELIMIT_PREFIX + "status") or "").strip().lower()
+        for key, label in (("5h", "5-hour session"), ("7d", "weekly")):
+            util = headers.get(f"{RATELIMIT_PREFIX}{key}-utilization")
+            reset = headers.get(f"{RATELIMIT_PREFIX}{key}-reset")
+            if util is None and reset is None:
+                continue
+            status = (headers.get(f"{RATELIMIT_PREFIX}{key}-status") or "").strip().lower()
+            # An overall `rejected` with a per-window status that did not say so is still this
+            # window's problem when it is the one that is full; taking the worse of the two is
+            # how a locked key stops reading as merely busy.
+            locked = next((s for s in (status, overall) if s and s != "allowed"), "")
+            fraction = _as_float(util)
+            rows.append({"label": label,
+                         # ROUNDED, because 0.14 * 100 is 14.000000000000002 in binary floating
+                         # point and that lands in the record the rest of this file passes
+                         # around. The page would have printed "14%" regardless; two decimals
+                         # is the precision the usage document already sends.
+                         "percent": _as_pct(None if fraction is None
+                                            else round(fraction * 100.0, 2)),
+                         "resets_at": _epoch_iso(reset),
+                         "locked": locked})
         return rows
 
     @classmethod
@@ -1785,13 +1944,37 @@ class ClaudeKeys:
                 # The join gave up. Not a cache entry: a fetch that is still in flight will
                 # write one of its own when it lands, and the next reload picks it up.
                 rec = {"name": name, "fingerprint": token_fingerprint(token), "account": "",
-                       "plan": "", "windows": [], "state": "unreachable", "age": 0,
-                       "error": f"no answer within {self.timeout}s"}
+                       "plan": "", "windows": [], "source": "", "state": "unreachable",
+                       "age": 0, "error": f"no answer within {self.timeout}s"}
             # THE FIRST ONE IS THE ONE THAT GETS SPENT. Marked here rather than in the loader
             # because it is a fact about the pool's order, not about the key.
             rec["active"] = slot == 0
             out.append(rec)
         return out
+
+
+def _as_float(value):
+    """A header value, as a float. Headers are strings and any of them can be absent."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _epoch_iso(value):
+    """A unix timestamp out of a rate-limit header, in the shape fmt_reset already reads.
+
+    Converting here rather than teaching fmt_reset a second input format is what keeps one
+    renderer over both readings — the usage document sends ISO-8601 and the headers send
+    seconds, and the page should not know which one it got.
+    """
+    seconds = _as_float(value)
+    if seconds is None:
+        return None
+    try:
+        return datetime.fromtimestamp(seconds, timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def _as_pct(value):
@@ -2707,13 +2890,11 @@ class App:
                 "(each from <code>claude setup-token</code> signed in as that account) and "
                 "restart ffweb.</p>"], refresh=True)
 
-        spent = rows[0]["name"]
         head.append(
             "<p class=\"note\">" + esc(f"{len(rows)} key{'' if len(rows) == 1 else 's'}") +
-            " in the pool. Only " + esc(spent) + " is spent — ffbox hands that one to every "
-            "container and ffwatch classifies with it. The rest are read here and nowhere "
-            "else.<br>Usage comes from Anthropic and is cached for " +
-            esc(fmt_ttl(self.keys.ttl)) + "; the page reloads itself on the minute.</p>")
+            " in the pool. Usage is read from Anthropic at most once every " +
+            esc(fmt_ttl(self.keys.ttl)) + ", so most reloads show the last reading and each "
+            "row says how old it is.</p>")
 
         body = []
         for rec in rows:
@@ -2728,6 +2909,11 @@ class App:
             meta.append(str(pill(rec["state"])))
             if rec.get("age"):
                 meta.append("read " + esc(fmt_ttl(rec["age"])) + " ago")
+            # ONLY WHEN IT IS THE FALLBACK. "usage document" on every healthy row would be a
+            # word nobody needs; "rate-limit headers" is worth saying, because it is why that
+            # row has two windows and no account name where another has three and one.
+            if rec.get("source") == "rate-limit headers":
+                meta.append("via rate-limit headers")
             body.append("<div class=\"item key\"><div class=\"meta\">" +
                         " · ".join(meta) + "</div>")
             if rec["error"]:
@@ -2744,6 +2930,13 @@ class App:
                 trows.append([w["label"], usage_bar(w["percent"]), note])
             if trows:
                 body.append(str(table(["window", "used", "resets"], trows)))
+                if rec.get("source") == "rate-limit headers":
+                    body.append(
+                        "<p class=\"note\">This token has no <code>user:profile</code> scope, "
+                        "so its usage document is closed to us and these two windows were read "
+                        "off a one-token API call instead. That is what <code>claude "
+                        "setup-token</code> mints, and it is why there is no account name and "
+                        "no per-model row here.</p>")
             else:
                 body.append("<p class=\"empty\">Anthropic reported no windows for this "
                             "key.</p>")

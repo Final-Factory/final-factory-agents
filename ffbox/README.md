@@ -1938,14 +1938,27 @@ the certificate, because the standard library can serve TLS but cannot create an
 `/status` and `/claude` are the exceptions to "a page over the same database, and nothing else".
 
 `/claude` is the only page here that leaves the machine. It lists every Claude account whose
-token is in `secrets.env` with the share of its five-hour and weekly windows already spent, read
-from Anthropic's own OAuth usage endpoint — the answer exists nowhere else, since a rolling
-subscription window is counted by Anthropic and by nobody else, and the run costs in the
-database are a different quantity in different units. Readings are cached for a minute, the keys
-are fetched in parallel so a dead one does not hold up the page, a key that cannot be read says
-why in a sentence while the others still report, and **no token is ever rendered** — a row names
-its key by variable, by the account Anthropic says it belongs to, and by eight hex characters of
-its sha256.
+token is in `secrets.env` with the share of its five-hour and weekly windows already spent — the
+answer exists nowhere else, since a rolling subscription window is counted by Anthropic and by
+nobody else, and the run costs in the database are a different quantity in different units.
+
+**It reads that two different ways, and needs both.** Anthropic's OAuth usage endpoint gives the
+fullest answer — which account the key belongs to, and the per-model weekly caps — but requires
+the `user:profile` scope, and **`claude setup-token` does not grant it**: those tokens answer
+`403 oauth_scope_insufficient`, and that is the only kind of token ffbox itself runs on. So a key
+whose usage document is closed is asked the cheapest question available instead — one token of
+Haiku against `/v1/messages` — and the five-hour and weekly windows are read off that reply's
+headers, which need only the `user:inference` scope every one of these tokens has. Such a row
+says `via rate-limit headers` and carries two windows instead of three. A key that answers 403
+once is remembered, so the closed document is not asked again.
+
+Readings are cached for **20 minutes** — the windows are five hours and seven days long, so a
+reading a quarter-hour old is the same answer for any decision this page supports, and the
+fallback costs a real (if tiny) inference call. The keys are fetched in parallel so a dead one
+does not hold up the page, a key that cannot be read at all says why in a sentence while the
+others still report, and **no token is ever rendered** — a row names its key by variable, by the
+account Anthropic says it belongs to when it can learn it, and by eight hex characters of its
+sha256.
 
 `/status` reports on
 the machine rather than on ffwatch.db, and it does that by running `ffbox/ffstatus.sh --json` —
@@ -1965,7 +1978,7 @@ when somebody is looking at it.
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
-| `/claude` | **the subscriptions**: every Claude account in the `secrets.env` pool, which one is actually spent, and how much of each account's five-hour and weekly windows is gone, with the per-model weekly cap beside them. Read from Anthropic over the network and cached for a minute; no token appears on it |
+| `/claude` | **the subscriptions**: every Claude account in the `secrets.env` pool, which one is actually spent, and how much of each account's five-hour and weekly windows is gone, with the per-model weekly cap beside them where the token's scope allows it. Read from Anthropic over the network and cached for 20 minutes; no token appears on it |
 | `/status` | **the box**, and one of two pages here that read no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
