@@ -204,6 +204,13 @@ CLAUDE_TOKEN_MAX = 16
 # `claude setup-token` flow this box runs on does not grant it. An operator who knows which
 # account they signed in as knows this number, and a declared 5 is worth more than a blank.
 CLAUDE_RATE_PREFIX = "CLAUDE_CODE_RATE_TOKEN"
+# WHAT TO CALL EACH TOKEN, declared beside it as CLAUDE_CODE_NAME_TOKEN1 and numbered to match.
+# The variable name is a slot number, not a person, and on a box holding three accounts "Loth"
+# says which account a row is about where "CLAUDE_CODE_OAUTH_TOKEN2" only says where in the file
+# it sits. The page prints this INSTEAD OF the variable name when it is set, and an undeclared
+# or blank slot keeps the variable name, which is what every existing secrets.env has. Purely a
+# label: nothing is looked up by it and no container is told it.
+CLAUDE_NAME_PREFIX = "CLAUDE_CODE_NAME_TOKEN"
 # UNDECLARED MEANS PRO, the smallest plan there is. Guessing low is the safe direction: it makes
 # a key look like it has less room than it may really have, and the failure that costs a run is
 # believing a key has room it does not.
@@ -224,10 +231,11 @@ RATELIMIT_PREFIX = "anthropic-ratelimit-unified-"
 
 
 def claude_token_pool(env=None, secrets_path=None):
-    """[(name, token, rate)] — every Claude account this box holds, in the order spent.
+    """[(name, token, rate, label)] — every Claude account this box holds, in the order spent.
 
     `rate` is the plan multiplier declared beside the token as CLAUDE_CODE_RATE_TOKEN<n>, and
-    CLAUDE_DEFAULT_RATE when nothing declares one.
+    CLAUDE_DEFAULT_RATE when nothing declares one. `label` is what CLAUDE_CODE_NAME_TOKEN<n>
+    calls the account, and "" when nothing declares one — a page prints `label or name`.
 
     The environment first, because that is how the unit is fed: ffweb.service carries
     EnvironmentFile=-~/.config/ffbox/secrets.env, so under systemd the tokens are simply here.
@@ -235,9 +243,10 @@ def claude_token_pool(env=None, secrets_path=None):
     `python3 ffbox/ffweb.py` in a terminal show the same page the service does instead of an
     empty one that looks like a box with no keys.
 
-    NOTHING BUT THE TOKEN AND RATE NAMES COMES OUT OF THAT FILE. It also holds a Unity account
-    password and a GitHub token, and this process has no business learning either — so the read
-    is a filter against the names above rather than a `.env` parser that returns what it finds.
+    NOTHING BUT THE TOKEN, RATE AND NAME VARIABLES COMES OUT OF THAT FILE. It also holds a Unity
+    account password and a GitHub token, and this process has no business learning either — so
+    the read is a filter against the names above rather than a `.env` parser that returns what
+    it finds.
     """
     env = os.environ if env is None else env
     found = _claude_tokens_from(env.get)
@@ -263,11 +272,12 @@ def _claude_tokens_from(get):
         name = CLAUDE_TOKEN_PREFIX + str(n)
         value = (get(name) or "").strip()
         if value:
-            out.append((name, value, _claude_rate(get, str(n))))
+            out.append((name, value, _claude_rate(get, str(n)), _claude_name(get, str(n))))
     if out:
         return out
     value = (get(CLAUDE_TOKEN_PREFIX) or "").strip()
-    return [(CLAUDE_TOKEN_PREFIX, value, _claude_rate(get, ""))] if value else []
+    return [(CLAUDE_TOKEN_PREFIX, value, _claude_rate(get, ""),
+             _claude_name(get, ""))] if value else []
 
 
 def _claude_rate(get, slot):
@@ -292,6 +302,16 @@ def _claude_rate(get, slot):
     return int(rate) if rate == int(rate) else rate
 
 
+def _claude_name(get, slot):
+    """What one slot is called, or "" when nothing calls it anything. `slot` is "" or "1".."16".
+
+    A blank declaration is the same as no declaration: `CLAUDE_CODE_NAME_TOKEN2=` is a line
+    somebody started and left, and falling back to the variable name is a truthful row where an
+    empty one would be a page with a hole in it.
+    """
+    return (get(CLAUDE_NAME_PREFIX + slot) or "").strip()
+
+
 def claude_plan(rate):
     """The plan a multiplier names, for a page to print."""
     if rate is None:
@@ -308,9 +328,9 @@ def _claude_secrets_file(path):
     an empty answer — the page says "no keys" and that is a true sentence about what ffweb can
     see.
     """
-    wanted = {CLAUDE_TOKEN_PREFIX, CLAUDE_RATE_PREFIX} | {
-        prefix + str(n) for prefix in (CLAUDE_TOKEN_PREFIX, CLAUDE_RATE_PREFIX)
-        for n in range(1, CLAUDE_TOKEN_MAX + 1)}
+    prefixes = (CLAUDE_TOKEN_PREFIX, CLAUDE_RATE_PREFIX, CLAUDE_NAME_PREFIX)
+    wanted = set(prefixes) | {prefix + str(n) for prefix in prefixes
+                              for n in range(1, CLAUDE_TOKEN_MAX + 1)}
     out = {}
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
@@ -1803,15 +1823,15 @@ class ClaudeKeys:
             return {}, "Anthropic answered without any rate-limit headers"
         return found, ""
 
-    def _load(self, name, token, rate=CLAUDE_DEFAULT_RATE):
+    def _load(self, name, token, rate=CLAUDE_DEFAULT_RATE, label=""):
         """One key, fetched. The cache is not consulted here — see read().
 
-        `rate` rides along rather than being looked up here because it is a fact about the line
-        in secrets.env, not about anything Anthropic answers — it is on the record for every
-        key, including the ones this method could not reach at all.
+        `rate` and `label` ride along rather than being looked up here because they are facts
+        about the lines in secrets.env, not about anything Anthropic answers — they are on the
+        record for every key, including the ones this method could not reach at all.
         """
         fingerprint = token_fingerprint(token)
-        rec = {"name": name, "fingerprint": fingerprint, "rate": rate,
+        rec = {"name": name, "label": label, "fingerprint": fingerprint, "rate": rate,
                "account": "", "plan": "", "windows": [], "source": "", "error": ""}
         with self._lock:
             closed = fingerprint in self._no_scope
@@ -1971,35 +1991,37 @@ class ClaudeKeys:
         records = [None] * len(pool)
         threads = []
 
-        def work(slot, name, token, rate):
+        def work(slot, name, token, rate, label):
             key = token_fingerprint(token)
             with self._lock:
                 hit = self._cache.get(key)
             if hit and now - hit[0] < self.ttl:
-                # The declared rate is taken from the POOL and not from the cached record: it
-                # comes out of secrets.env, so an edit there is meant to show up on the next
-                # reload rather than a quarter of an hour later with the usage numbers.
-                records[slot] = dict(hit[1], age=int(now - hit[0]), rate=rate)
+                # The declared rate and name are taken from the POOL and not from the cached
+                # record: they come out of secrets.env, so an edit there is meant to show up on
+                # the next reload rather than a quarter of an hour later with the usage numbers.
+                records[slot] = dict(hit[1], age=int(now - hit[0]), rate=rate, label=label)
                 return
-            rec = self._load(name, token, rate)
+            rec = self._load(name, token, rate, label)
             with self._lock:
                 self._cache[key] = (now, rec)
             records[slot] = dict(rec, age=0)
 
-        for slot, (name, token, rate) in enumerate(pool):
-            t = threading.Thread(target=work, args=(slot, name, token, rate), daemon=True)
+        for slot, (name, token, rate, label) in enumerate(pool):
+            args = (slot, name, token, rate, label)
+            t = threading.Thread(target=work, args=args, daemon=True)
             t.start()
             threads.append(t)
         deadline = time.time() + self.timeout * 2 + 5
         for t in threads:
             t.join(max(0.0, deadline - time.time()))
         out = []
-        for slot, (name, token, rate) in enumerate(pool):
+        for slot, (name, token, rate, label) in enumerate(pool):
             rec = records[slot]
             if rec is None:
                 # The join gave up. Not a cache entry: a fetch that is still in flight will
                 # write one of its own when it lands, and the next reload picks it up.
-                rec = {"name": name, "fingerprint": token_fingerprint(token), "rate": rate,
+                rec = {"name": name, "label": label, "rate": rate,
+                       "fingerprint": token_fingerprint(token),
                        "account": "", "plan": "", "windows": [], "source": "",
                        "state": "unreachable", "age": 0,
                        "error": f"no answer within {self.timeout}s"}
@@ -2946,19 +2968,20 @@ class App:
                 esc(CLAUDE_TOKEN_PREFIX) + "1, " + esc(CLAUDE_TOKEN_PREFIX) + "2, … "
                 "(each from <code>claude setup-token</code> signed in as that account), say "
                 "which plan each one is on beside it as " + esc(CLAUDE_RATE_PREFIX) +
-                "1=5, and restart ffweb.</p>"], refresh=True)
+                "1=5, optionally what to call it as " + esc(CLAUDE_NAME_PREFIX) +
+                "1=Loth, and restart ffweb.</p>"], refresh=True)
 
         head.append(
             "<p class=\"note\">" + esc(f"{len(rows)} key{'' if len(rows) == 1 else 's'}") +
             " in the pool. Usage is read from Anthropic at most once every " +
             esc(fmt_ttl(self.keys.ttl)) + ", so most reloads show the last reading and each "
-            "row says how old it is. The plan on a row is what <code>" +
-            esc(CLAUDE_RATE_PREFIX) + "&lt;n&gt;</code> in secrets.env says it is — 1 for Pro, "
-            "5 or 20 for Max — since these tokens cannot be asked.</p>")
+            "row says how old it is.</p>")
 
         body = []
         for rec in rows:
-            meta = [esc(rec["name"])]
+            # THE DECLARED NAME WINS. CLAUDE_CODE_NAME_TOKEN<n> exists so a row can say whose
+            # account it is; the variable name is the fallback for every slot nobody named.
+            meta = [esc(rec.get("label") or rec["name"])]
             if rec["active"]:
                 meta.append(str(pill("active")))
             meta.append("key " + esc(rec["fingerprint"]))
