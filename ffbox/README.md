@@ -853,13 +853,21 @@ $EDITOR ~/.config/ffbox/secrets.env
 
 | variable | notes |
 |---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN` | from `claude setup-token`; bills against your subscription |
+| `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` | one per Claude account, from `claude setup-token`; bills against that subscription. **Only the first non-empty one is spent** — the rest are inventory, reported on ffweb's `/claude` page. The unnumbered `CLAUDE_CODE_OAUTH_TOKEN` is the older spelling and still works |
 | `UNITY_EMAIL` / `UNITY_PASSWORD` | required **even for a Personal license** — activation is an online serial activation |
 | `UNITY_SERIAL` *or* `UNITY_LICENSE_FILE` | the 27-char serial, or a `.ulf` to extract it from |
 
 `setup.sh` checks these are actually filled in before attempting stage 3, and skips it with
 instructions rather than failing twenty minutes into a Unity import. See `secrets.env.example`
 for why they live on the host rather than in the image or in argv.
+
+**Why the Claude token is a numbered pool.** A subscription has rolling limits, and the useful
+question on a busy box is not "am I out" but "which account still has room" — which cannot be
+asked about an account whose token nobody wrote down. So every account you might run this box
+on goes in the file, numbered, and `/claude` reports each one's five-hour and weekly usage.
+Moving the box onto another account is then reordering two lines and a restart, rather than an
+OAuth flow at the worst possible moment. A gap is not the end of the list: slot 2 filled with
+slot 1 blank is a revoked first key, and everything here keeps scanning.
 
 ## Results
 
@@ -1446,8 +1454,9 @@ re-based onto `develop` and told so in its prompt.
 `GH_PR_TOKEN` is host-side only and never enters the container, which has no `gh` binary and no
 push credential. That, not the deny list, is what makes "nothing merges" true — and there is
 deliberately no merge method on the GitHub client. Note the scope of that claim: the container
-holds no *git* credential, but it does hold `CLAUDE_CODE_OAUTH_TOKEN` and the Unity account
-secrets, and it can still reach the two vendors those belong to.
+holds no *git* credential, but it does hold one Claude token — `CLAUDE_CODE_OAUTH_TOKEN`, the
+single account ffbox resolved out of the pool, never the others — and the Unity account secrets,
+and it can still reach the two vendors those belong to.
 `docs/docker-security-model.md` is the full account, including the gaps this README does not
 cover. `CREDENTIALS.md`, next to this file, is what to actually put in each token: the three
 kinds of GitHub credential a box holds, the requests each one makes, and the fine-grained
@@ -1926,7 +1935,19 @@ from this directory as the sign-in backdrop; swap the file and the next login fo
 new one, with no restart. The one external program is `openssl`, run once to mint
 the certificate, because the standard library can serve TLS but cannot create an X.509.
 
-`/status` is the exception to "a page over the same database, and nothing else". It reports on
+`/status` and `/claude` are the exceptions to "a page over the same database, and nothing else".
+
+`/claude` is the only page here that leaves the machine. It lists every Claude account whose
+token is in `secrets.env` with the share of its five-hour and weekly windows already spent, read
+from Anthropic's own OAuth usage endpoint — the answer exists nowhere else, since a rolling
+subscription window is counted by Anthropic and by nobody else, and the run costs in the
+database are a different quantity in different units. Readings are cached for a minute, the keys
+are fetched in parallel so a dead one does not hold up the page, a key that cannot be read says
+why in a sentence while the others still report, and **no token is ever rendered** — a row names
+its key by variable, by the account Anthropic says it belongs to, and by eight hex characters of
+its sha256.
+
+`/status` reports on
 the machine rather than on ffwatch.db, and it does that by running `ffbox/ffstatus.sh --json` —
 the same script an operator runs in a terminal — rather than by growing its own docker parsing.
 The rules for reading this box are fiddly enough (a dispatched spare still carries the pool
@@ -1944,7 +1965,8 @@ when somebody is looking at it.
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
-| `/status` | **the box**, and the one page here that reads no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
+| `/claude` | **the subscriptions**: every Claude account in the `secrets.env` pool, which one is actually spent, and how much of each account's five-hour and weekly windows is gone, with the per-model weekly cap beside them. Read from Anthropic over the network and cached for a minute; no token appears on it |
+| `/status` | **the box**, and one of two pages here that read no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 

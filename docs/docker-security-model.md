@@ -88,7 +88,12 @@ or GitHub one.
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | Anthropic API access |
 
-That is the list. The container has network access, because the model is remote. An agent with
+That is the list, and "exactly one" is still exactly one now that `secrets.env` holds a POOL of
+Claude tokens (`CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, one per account). `ffbox` resolves the pool
+host-side and exports the single token it picked under the unnumbered name; `docker run -e
+CLAUDE_CODE_OAUTH_TOKEN` names that one variable, so the other accounts' tokens never cross into
+a container and an agent with shell reading its own environment finds one credential, not the
+box's whole subscription inventory. The container has network access, because the model is remote. An agent with
 shell can read its own environment; what changed on 2026-08-23 is where it can send what it read.
 That token is still exposed to any run and should be scoped accordingly — it is long-lived, and a
 pooled container holds it for hours before a job arrives.

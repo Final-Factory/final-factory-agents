@@ -281,7 +281,8 @@ class Server:
     _session_seq = 0
 
     def __init__(self, state, db_path, blobs, ffwatch_py, enable_actions=False, tls=False,
-                 login=True, session_path=None, ttl=ffweb.SESSION_TTL_SECS, ffstatus=None):
+                 login=True, session_path=None, ttl=ffweb.SESSION_TTL_SECS, ffstatus=None,
+                 claude_keys=None):
         scheme = "https" if tls else "http"
         # The port has to be known BEFORE App is built: App copies the set it is given, so an
         # allowlist filled in afterwards would silently stay empty and every case here would
@@ -304,7 +305,12 @@ class Server:
         self.app = ffweb.App(db_path, blobs, state, ffwatch_py,
                              enable_actions=enable_actions, quiet=True, origins=origins,
                              scheme=scheme, ffstatus=ffstatus or STUB_FFSTATUS,
-                             sessions=ffweb.Sessions(ttl=ttl, path=session_path))
+                             sessions=ffweb.Sessions(ttl=ttl, path=session_path),
+                             # NEVER the default ClaudeKeys: that one reads this machine's real
+                             # secrets.env and calls api.anthropic.com, and a test suite that
+                             # spends a subscription -- or fails on a laptop in a tunnel -- is
+                             # not an offline test suite.
+                             claude_keys=claude_keys or claude_keys_stub())
         ctx = None
         self.client_ctx = None
         if tls:
@@ -531,6 +537,77 @@ def write_status_doc(doc):
 write_status_doc(FFSTATUS_DOC)
 os.environ["FFWEB_TEST_STATUS_DOC"] = STATUS_DOC_PATH
 
+# ------------------------------------------------------------------------------------------
+# the Claude key pool
+#
+# Three accounts, one of each state the page has to render: a healthy one, one whose weekly
+# window is nearly gone, and one whose token has been revoked. The documents are trimmed copies
+# of what /api/oauth/usage and /api/oauth/profile actually answered on 2026-09-04 -- the shape
+# is the contract here, so a fixture invented from the field names would pass against a parser
+# that had never seen the real thing.
+# ------------------------------------------------------------------------------------------
+
+CLAUDE_POOL = [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-first-account-token"),
+               ("CLAUDE_CODE_OAUTH_TOKEN2", "sk-ant-oat01-second-account-token"),
+               ("CLAUDE_CODE_OAUTH_TOKEN3", "sk-ant-oat01-revoked-token")]
+
+
+def claude_usage(five, week, opus=0):
+    return {
+        "five_hour": {"utilization": five, "resets_at": "2026-09-04T09:59:59.923242+00:00",
+                      "limit_dollars": None, "locked_reason": None},
+        "seven_day": {"utilization": week, "resets_at": "2026-09-06T10:59:59.923262+00:00",
+                      "limit_dollars": None, "locked_reason": None},
+        # The endpoint sends a dozen null keys with codenames beside these two. One of them is
+        # here so the parser is proved to ignore what it does not know rather than to have
+        # never met it.
+        "nimbus_quill": {"utilization": 0.0, "resets_at": None, "locked_reason": None},
+        "limits": [
+            {"kind": "session", "group": "session", "percent": int(five), "severity": "normal",
+             "resets_at": "2026-09-04T09:59:59.923242+00:00", "scope": None,
+             "is_active": False},
+            {"kind": "weekly_all", "group": "weekly", "percent": int(week),
+             "severity": "normal", "resets_at": "2026-09-06T10:59:59.923262+00:00",
+             "scope": None, "is_active": True},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": opus, "severity": "normal",
+             "resets_at": "2026-09-06T10:59:59.923262+00:00",
+             "scope": {"model": {"id": None, "display_name": "Opus"}, "surface": None},
+             "is_active": opus > 0},
+        ],
+    }
+
+
+def claude_profile(email, tier):
+    return {"account": {"uuid": "0" * 8, "full_name": email.split("@")[0], "email": email},
+            "organization": {"name": email, "organization_type": "claude_max",
+                             "rate_limit_tier": tier, "subscription_status": "active"},
+            "application": {"name": "Claude Code", "slug": "claude-code"}}
+
+
+CLAUDE_ANSWERS = {
+    CLAUDE_POOL[0][1]: (claude_usage(7.0, 25.0), claude_profile("ben@example.com",
+                                                                "default_claude_max_5x")),
+    CLAUDE_POOL[1][1]: (claude_usage(4.0, 96.0, opus=100),
+                        claude_profile("loth@example.com", "default_claude_max_20x")),
+    CLAUDE_POOL[2][1]: None,
+}
+
+
+def claude_fetch(url, token):
+    """The seam ClaudeKeys takes instead of urllib. (document, error)."""
+    answer = CLAUDE_ANSWERS.get(token)
+    if answer is None:
+        return None, ("401 — this key was refused. Either it was revoked, or it is not a "
+                      "`claude setup-token` token")
+    usage, profile = answer
+    return (usage if url.endswith("/usage") else profile), ""
+
+
+def claude_keys_stub(pool=None, fetch=None, **kw):
+    return ffweb.ClaudeKeys(tokens=list(CLAUDE_POOL if pool is None else pool),
+                            fetch=fetch or claude_fetch, **kw)
+
+
 # The real thing, for the one case that has to prove the whole chain writes a row. Everywhere
 # else the stub is the point: it records argv and touches nothing, so "the UI delegated" is
 # asserted rather than inferred from a side effect that a stray UPDATE here would also produce.
@@ -538,7 +615,7 @@ REAL_FFWATCH = os.path.join(HERE, "ffwatch.py")
 
 # Every GET route, for the crawl tests. Kept in one place so a new route joins them by being
 # added here rather than by being remembered.
-ROUTES = ["/", "/lanes", "/outbound", "/status", "/outbound?status=pending",
+ROUTES = ["/", "/lanes", "/outbound", "/status", "/claude", "/outbound?status=pending",
           "/?kind=bug_report", "/?state=closed", "/?verdict=ANSWERED", "/?lane=answer",
           "/?read=all", "/?read=read", "/?read=unread",
           "/conversation/1", "/conversation/2", "/conversation/3", "/conversation/4",
@@ -546,9 +623,10 @@ ROUTES = ["/", "/lanes", "/outbound", "/status", "/outbound?status=pending",
          ["/blob/" + d for d in BLOB_IDS.values()]
 
 
-def serve(enable_actions=False, db_path=None, ffwatch_py=None, ffstatus=None):
+def serve(enable_actions=False, db_path=None, ffwatch_py=None, ffstatus=None,
+          claude_keys=None):
     return Server(STATE, db_path or DB_PATH, BLOBS, ffwatch_py or STUB_FFWATCH,
-                  enable_actions=enable_actions, ffstatus=ffstatus)
+                  enable_actions=enable_actions, ffstatus=ffstatus, claude_keys=claude_keys)
 
 
 
@@ -1416,6 +1494,164 @@ def test_the_box_page_reports_what_the_status_script_said():
               text_of(body).count("<form"))
     finally:
         srv.stop()
+
+
+def test_the_claude_page_reports_every_key_in_the_pool():
+    """One row per Claude account, the spent one marked, and no token on the page.
+
+    The point of the page is a decision — which account still has room — so what is checked is
+    that all three keys report INDEPENDENTLY. A pool where one key is revoked is the normal
+    state of a box somebody has been rotating accounts on, and a page that showed nothing
+    because of it would be worthless exactly then.
+    """
+    srv = serve()
+    try:
+        code, _hdr, body = srv.get("/claude")
+        text = text_of(body)
+        check("the claude page serves", code == 200, code)
+        check("every key in the pool has a row",
+              all(name in text for name, _t in CLAUDE_POOL),
+              [n for n, _t in CLAUDE_POOL if n not in text])
+        # THE WHOLE SECURITY PROPERTY OF THIS PAGE. It is read by anyone who got past one
+        # shared password, and a token on it is a subscription somebody can walk off with.
+        check("no token is on the page, not even truncated",
+              not any(tok[8:] in text for _n, tok in CLAUDE_POOL),
+              [n for n, tok in CLAUDE_POOL if tok[8:] in text])
+        check("a key is identified by a digest of itself instead",
+              all(ffweb.token_fingerprint(tok) in text for _n, tok in CLAUDE_POOL))
+        # Split per key, because "active" and a percentage both appear more than once on the
+        # page and a document-wide search would pass on the wrong row.
+        blocks = text.split('<div class="item key">')[1:]
+        check("one block per key", len(blocks) == 3, len(blocks))
+        check("the first key is the one marked as spent",
+              'class="pill active"' in blocks[0], blocks[0][:200])
+        check("and the others are not, because nothing spends them",
+              'class="pill active"' not in blocks[1] + blocks[2])
+        check("the account behind a key is named, so two keys are told apart by more than a hash",
+              "ben@example.com" in blocks[0] and "loth@example.com" in blocks[1], blocks[0][:400])
+        check("the five-hour and weekly windows are both reported",
+              "5-hour session" in blocks[0] and "weekly" in blocks[0], blocks[0][:600])
+        check("with the percentage Anthropic gave, not a recomputed one",
+              ">7%<" in blocks[0] and ">25%<" in blocks[0], blocks[0][:600])
+        check("a window says when it rolls over, as a countdown rather than a UTC timestamp",
+              "resets in" in blocks[0] and "2026-09-06T10:59" not in blocks[0],
+              blocks[0][:600])
+        # THE OPUS ROW IS THE ONE THAT BITES on a box doing real work, and it is only in the
+        # `limits` array -- there is no seven_day_opus object beside the other two.
+        check("the per-model weekly cap is on the page too",
+              "weekly · Opus" in blocks[1], blocks[1][:800])
+        check("a healthy key reads available",
+              'class="pill available"' in blocks[0], blocks[0][:300])
+        check("a key with a window nearly gone is called out before it runs out",
+              'class="pill exhausted"' in blocks[1], blocks[1][:300])
+        check("a revoked key says so in a sentence",
+              'class="pill unreachable"' in blocks[2] and "401" in blocks[2], blocks[2][:400])
+        check("and it does not take the other two off the page with it",
+              "ben@example.com" in text and "loth@example.com" in text)
+        check("the page says which one is actually spent",
+              "Only CLAUDE_CODE_OAUTH_TOKEN1 is spent" in text,
+              text[text.find("<p class=\"note\">"):][:300])
+    finally:
+        srv.stop()
+
+
+def test_a_box_with_no_keys_says_what_to_write_and_where():
+    """The empty pool is a real state — a fresh install — and the page is where somebody finds
+    out what the file wants. A blank page would send them to the source."""
+    srv = serve(claude_keys=claude_keys_stub(pool=[]))
+    try:
+        code, _hdr, body = srv.get("/claude")
+        text = text_of(body)
+        check("an empty pool still serves a page", code == 200, code)
+        check("it names the file and the numbered variables",
+              "secrets.env" in text and "CLAUDE_CODE_OAUTH_TOKEN1" in text
+              and "claude setup-token" in text,
+              text[text.find("<main>"):][:500])
+    finally:
+        srv.stop()
+
+
+def test_the_pool_is_numbered_and_a_gap_is_not_the_end():
+    """The numbering rule, which is written out three times (here, ffbox, ffwatch).
+
+    THE GAP CASE IS THE ONE THAT MATTERS. Somebody revokes their first account and blanks slot
+    1; a scan that stopped at the hole would leave the box with no token at all and no
+    explanation. So the rule is "every slot to the ceiling, skip the empty ones", and the
+    ACTIVE key is the first survivor rather than literally number 1.
+    """
+    print("the key pool is numbered, and a gap is not the end of it")
+    pool = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN1": "one",
+                                    "CLAUDE_CODE_OAUTH_TOKEN2": "two"})
+    check("the numbered slots come back in order", pool == [("CLAUDE_CODE_OAUTH_TOKEN1", "one"),
+                                                            ("CLAUDE_CODE_OAUTH_TOKEN2", "two")],
+          pool)
+    gapped = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN1": "  ",
+                                      "CLAUDE_CODE_OAUTH_TOKEN3": "three"})
+    check("a blank slot is skipped rather than ending the scan",
+          gapped == [("CLAUDE_CODE_OAUTH_TOKEN3", "three")], gapped)
+    legacy = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN": "old"})
+    check("the unnumbered spelling still reads as a pool of one",
+          legacy == [("CLAUDE_CODE_OAUTH_TOKEN", "old")], legacy)
+    both = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN": "old",
+                                    "CLAUDE_CODE_OAUTH_TOKEN1": "one"})
+    check("and it steps aside the moment a numbered slot exists, rather than being spent first",
+          both == [("CLAUDE_CODE_OAUTH_TOKEN1", "one")], both)
+    check("an environment with nothing in it is an empty pool, not an error",
+          ffweb.claude_token_pool({}, secrets_path=os.path.join(TMPROOT, "no-such-secrets")) == [])
+
+    # THE FILE FALLBACK. Under systemd the tokens are in the environment already
+    # (EnvironmentFile=), so this leg only runs for `python3 ffbox/ffweb.py` in a terminal --
+    # which is exactly when somebody is debugging and least wants an empty page.
+    path = os.path.join(TMPROOT, "secrets-fixture.env")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# a comment\n"
+                 "CLAUDE_CODE_OAUTH_TOKEN1=sk-ant-oat01-from-the-file\n"
+                 "export CLAUDE_CODE_OAUTH_TOKEN2=\"sk-ant-oat01-quoted\"\n"
+                 "UNITY_PASSWORD=hunter2\n"
+                 "GH_PR_TOKEN=ghp_nope\n")
+    from_file = ffweb.claude_token_pool({}, secrets_path=path)
+    check("a hand-run reads the tokens out of secrets.env",
+          from_file == [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-from-the-file"),
+                        ("CLAUDE_CODE_OAUTH_TOKEN2", "sk-ant-oat01-quoted")], from_file)
+    # It reads a file that also holds a Unity password and a GitHub token. Nothing but the
+    # Claude names may come out of it, and the check is on the VALUES because that is what
+    # would leak.
+    check("and nothing else in that file comes back with them",
+          not [v for _n, v in from_file if v in ("hunter2", "ghp_nope")], from_file)
+
+
+def test_a_usage_reading_is_cached_rather_than_fetched_per_reload():
+    """The page reloads itself on the minute and several people have it open.
+
+    Without the cache that is one call per key per browser per minute, spent on the rate limit
+    the page exists to report. The TTL is what makes the number on the page a reading rather
+    than a poll.
+    """
+    print("a usage reading is cached")
+    calls = []
+
+    def counting_fetch(url, token):
+        calls.append((url, token))
+        return claude_fetch(url, token)
+
+    keys = claude_keys_stub(fetch=counting_fetch)
+    first = keys.read()
+    n_first = len(calls)
+    second = keys.read()
+    check("the first read actually goes out", n_first > 0, n_first)
+    check("the second one does not", len(calls) == n_first, calls[n_first:])
+    check("and it returns the same numbers",
+          [r["windows"] for r in second] == [r["windows"] for r in first])
+    check("the cached rows say how old they are, so nobody reads a stale page as a live one",
+          all(r["age"] >= 0 for r in second), [r["age"] for r in second])
+    # A revoked key costs one call, not two: there is no profile worth fetching for a token
+    # that was refused.
+    check("a refused key is not asked a second question",
+          len([c for c in calls if c[1] == CLAUDE_POOL[2][1]]) == 1,
+          [c[0] for c in calls if c[1] == CLAUDE_POOL[2][1]])
+    aged = keys.read(now=time.time() + ffweb.CLAUDE_USAGE_TTL_SECS + 1)
+    check("and past the TTL it goes out again", len(calls) > n_first, len(calls))
+    check("still with an answer for every key", len(aged) == len(CLAUDE_POOL), len(aged))
 
 
 def test_actions_are_off_by_default():
@@ -2700,6 +2936,10 @@ def main():
         test_transcript_tree_nests_and_terminates,
         test_a_long_subagent_chain_is_not_truncated,
         test_the_box_page_reports_what_the_status_script_said,
+        test_the_claude_page_reports_every_key_in_the_pool,
+        test_a_box_with_no_keys_says_what_to_write_and_where,
+        test_the_pool_is_numbered_and_a_gap_is_not_the_end,
+        test_a_usage_reading_is_cached_rather_than_fetched_per_reload,
         test_actions_are_off_by_default,
         test_actions_call_ffwatch_not_the_database,
         test_the_agent_class_is_chosen_only_when_a_conversation_opens,

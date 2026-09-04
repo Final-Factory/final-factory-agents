@@ -484,11 +484,51 @@ else
     echo "       Run 'sh ffbox/setup.sh' to create it from the template." >&2
 fi
 
-if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-    echo "ffbox: CLAUDE_CODE_OAUTH_TOKEN is not set. Generate one with 'claude setup-token'" >&2
-    echo "       and put it in $SECRETS — it bills against your subscription, not an API key." >&2
+# --- the Claude token pool ------------------------------------------------------------------
+#
+# secrets.env carries ONE TOKEN PER CLAUDE ACCOUNT, numbered from 1: CLAUDE_CODE_OAUTH_TOKEN1,
+# CLAUDE_CODE_OAUTH_TOKEN2, and so on. This resolves the pool down to the one that gets spent —
+# the first non-empty slot — and exports it under the unnumbered name, which is what the
+# `docker run` below passes with `-e CLAUDE_CODE_OAUTH_TOKEN` and what `claude` inside the
+# container reads. NOTHING PAST THIS POINT KNOWS THERE IS A POOL, on purpose: the container is
+# handed one credential and the choice of which one is a host-side decision made here.
+#
+# WHY A POOL AT ALL, WHEN ONLY ONE IS USED. A subscription has rolling limits, and the useful
+# question on a busy box is not "am I out" but "which account still has room" — which cannot be
+# answered about an account whose token nobody wrote down. So the extra slots are inventory:
+# ffweb's /claude page reads every one of them and reports its five-hour and weekly usage, and
+# moving the box onto another account is then an edit to this file rather than an OAuth flow at
+# the worst possible moment.
+#
+# A GAP IS NOT THE END OF THE LIST. Slot 2 set with slot 1 blank is somebody who revoked their
+# first key; a loop that stopped at the hole would run the box on nothing.
+#
+# The unnumbered name is the OLDER SPELLING and is still honoured when no numbered slot is set,
+# so a secrets.env written before this change keeps working with no edit.
+_ff_active_token=""
+_ff_v=""
+for ((_ff_n = 1; _ff_n <= ${FFBOX_CLAUDE_TOKEN_MAX:-16}; _ff_n++)); do
+    # Indirect expansion rather than eval: ${!name} takes the value of the variable NAMED by
+    # another variable, which is bash doing the lookup instead of this script re-parsing a
+    # string that holds a credential.
+    _ff_name="CLAUDE_CODE_OAUTH_TOKEN${_ff_n}"
+    _ff_v=${!_ff_name:-}
+    if [ -n "$_ff_v" ]; then
+        _ff_active_token=$_ff_v
+        break
+    fi
+done
+[ -n "$_ff_active_token" ] || _ff_active_token=${CLAUDE_CODE_OAUTH_TOKEN:-}
+
+if [ -z "$_ff_active_token" ]; then
+    echo "ffbox: no Claude token. Generate one with 'claude setup-token' and put it in" >&2
+    echo "       $SECRETS as CLAUDE_CODE_OAUTH_TOKEN1 — it bills against your subscription," >&2
+    echo "       not an API key. Further accounts go in as CLAUDE_CODE_OAUTH_TOKEN2 and up;" >&2
+    echo "       only the first is spent, the rest are reported on ffweb's /claude page." >&2
     exit 78
 fi
+export CLAUDE_CODE_OAUTH_TOKEN="$_ff_active_token"
+unset _ff_active_token _ff_v _ff_n _ff_name
 
 # --- the Unity licence ---------------------------------------------------------------------------
 #

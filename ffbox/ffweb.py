@@ -56,19 +56,33 @@ FOUR THINGS THIS FILE IS BUILT AROUND. Changing any of them changes what the pag
    nothing signed it. HSTS is deliberately not sent: it would make that warning unbypassable
    on a certificate we already know is untrusted.
 
-ONE PAGE HERE IS NOT A VIEW OF THE DATABASE. `/status` reports on the MACHINE — the containers
-holding a workspace and the pool sizes behind them — and it gets that by running
-ffbox/ffstatus.sh, the same script an operator runs in a terminal, rather than by reading
-ffwatch.db or docker. The rules for counting this box are subtle enough that a second
-implementation here would drift from the one people check their work against, and the two
-disagreeing is worse than either being wrong. It reads and does not act: there is no button on
-that page, because resizing a pool or stopping a container belongs to ffwatch and ffbox.
+TWO PAGES HERE ARE NOT VIEWS OF THE DATABASE, and each reaches somewhere else for its answer.
 
-Standard library only — http.server, sqlite3 and ssl, no Flask, no CDN, no fonts, no network.
-The only foreign binary is `openssl`, run once to mint the self-signed certificate, because the
+`/status` reports on the MACHINE — the containers holding a workspace and the pool sizes behind
+them — and it gets that by running ffbox/ffstatus.sh, the same script an operator runs in a
+terminal, rather than by reading ffwatch.db or docker. The rules for counting this box are
+subtle enough that a second implementation here would drift from the one people check their
+work against, and the two disagreeing is worse than either being wrong.
+
+`/claude` reports on the SUBSCRIPTIONS — every Claude account whose token is in secrets.env, and
+how much of each account's five-hour and weekly window is gone — and it gets that from
+Anthropic's own OAuth usage endpoint over the network. THIS IS THE ONLY OUTBOUND REQUEST THIS
+PROCESS EVER MAKES, and it is here because the answer exists nowhere else: a rolling
+subscription window is counted by Anthropic and by nobody else, and the run costs the database
+does hold are a different quantity in different units. See ClaudeKeys for the rest of the
+argument, including why a failure renders as a sentence rather than a 500 and why no token is
+ever put on the page.
+
+Both read and neither acts: there is no button on either, because resizing a pool or stopping a
+container belongs to ffwatch and ffbox, and choosing which Claude account this box spends is an
+edit to secrets.env.
+
+Standard library only — http.server, sqlite3, ssl and urllib, no Flask, no CDN, no fonts. The
+only foreign binary is `openssl`, run once to mint the self-signed certificate, because the
 standard library can serve TLS but cannot create an X.509 certificate; the other subprocesses
-are this project's own scripts, ffwatch.py and ffstatus.sh. The CSS is inline and the page works
-with the machine unplugged.
+are this project's own scripts, ffwatch.py and ffstatus.sh. The CSS is inline and every page but
+/claude works with the machine unplugged — that one says why it is empty and the rest of the
+site is untouched.
 """
 
 from __future__ import annotations
@@ -95,7 +109,9 @@ import time
 # For the run clock, whose started_at is an ISO timestamp with an offset that
 # time.strptime cannot take.
 from datetime import datetime
+import urllib.error
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 for _stream in (sys.stdout, sys.stderr):
@@ -116,7 +132,7 @@ DEFAULT_GITHUB_REPO = "Final-Factory/FinalFactory"
 # Shown in the header so a person reading a page knows which build wrote it. The HTTP
 # server_version below is the protocol banner and moves for its own reasons; this is the
 # one a human is meant to read.
-VERSION = "0.9.3"
+VERSION = "0.9.4"
 
 # A turn in one of these has stopped; anything else is still on its way. Kept in step with
 # ffwatch's own list by hand, because this process deliberately imports nothing from it — it
@@ -157,6 +173,117 @@ DEFAULT_AGENT_CLASS = "ffagent"
 # shared. It is two strings that change about once a year, and a wrong copy here shows a
 # useless id rather than breaking anything.
 LOCAL_KINDS = ("shell", "web")
+
+# ---- the Claude token pool -------------------------------------------------------------
+# secrets.env carries one long-lived subscription token per Claude account, NUMBERED FROM 1:
+# CLAUDE_CODE_OAUTH_TOKEN1, CLAUDE_CODE_OAUTH_TOKEN2, and so on. Only the first non-empty one is
+# ever SPENT — ffbox hands that one to every container and ffwatch calls its classifier with it —
+# and the others are here so this page can say what is left on each account BEFORE the box is
+# pointed at one of them. The unnumbered CLAUDE_CODE_OAUTH_TOKEN is the older spelling and stands
+# in as a pool of one when no numbered name is set, so an install that predates the pool keeps
+# running untouched.
+#
+# THE SAME SIX LINES LIVE IN THREE PLACES — here, ffbox's preflight and ffwatch's classifier env
+# — because this file imports nothing from either of them (see the header). What a shared module
+# would buy is not worth what it would cost: a wrong copy here shows the wrong row on one page,
+# and the numbering is a rule about a file rather than an algorithm anybody will change.
+CLAUDE_TOKEN_PREFIX = "CLAUDE_CODE_OAUTH_TOKEN"
+# A ceiling on the scan, not a limit anybody will meet. Without one, "read until a gap" would
+# silently drop token 3 on a file that left 2 blank, and "read every variable that matches"
+# would make the pool depend on what else the unit happens to export.
+CLAUDE_TOKEN_MAX = 16
+# How long a usage reading stays good. The page ticks at a minute (see page_claude), so this is
+# the difference between one call per key per reader-minute and one per key per open browser
+# per minute — the same numbers either way, on a rate limit that is not ours to spend on
+# refreshes.
+CLAUDE_USAGE_TTL_SECS = 55
+
+
+def claude_token_pool(env=None, secrets_path=None):
+    """[(name, token)] — every Claude account this box holds, in the order they would be spent.
+
+    The environment first, because that is how the unit is fed: ffweb.service carries
+    EnvironmentFile=-~/.config/ffbox/secrets.env, so under systemd the tokens are simply here.
+    Only when it holds none does this read that file itself, which is what makes
+    `python3 ffbox/ffweb.py` in a terminal show the same page the service does instead of an
+    empty one that looks like a box with no keys.
+
+    NOTHING BUT THE TOKEN NAMES COMES OUT OF THAT FILE. It also holds a Unity account password
+    and a GitHub token, and this process has no business learning either — so the read is a
+    filter against the names above rather than a `.env` parser that returns what it finds.
+    """
+    env = os.environ if env is None else env
+    found = _claude_tokens_from(env.get)
+    if found:
+        return found
+    if secrets_path is None:
+        secrets_path = os.environ.get("FFBOX_SECRETS") or os.path.join(
+            os.path.expanduser(os.environ.get("FFBOX_CONFIG_DIR", "~/.config/ffbox")),
+            "secrets.env")
+    return _claude_tokens_from(_claude_secrets_file(os.path.expanduser(secrets_path)).get)
+
+
+def _claude_tokens_from(get):
+    """The numbering rule, over anything that answers get(name).
+
+    A GAP IS NOT THE END. CLAUDE_CODE_OAUTH_TOKEN2 set with 1 left blank is a person who
+    revoked their first key, and a scan that stopped at the hole would quietly run the box on
+    nothing. So every slot up to the ceiling is looked at and the empty ones are skipped, and
+    "the active one" is the first that survives that — not literally number 1.
+    """
+    out = []
+    for n in range(1, CLAUDE_TOKEN_MAX + 1):
+        name = CLAUDE_TOKEN_PREFIX + str(n)
+        value = (get(name) or "").strip()
+        if value:
+            out.append((name, value))
+    if out:
+        return out
+    value = (get(CLAUDE_TOKEN_PREFIX) or "").strip()
+    return [(CLAUDE_TOKEN_PREFIX, value)] if value else []
+
+
+def _claude_secrets_file(path):
+    """{name: value} for the token names only, out of a shell-style KEY=value file.
+
+    Deliberately not a shell: the file is sourced by ffbox with `.`, but running it to read two
+    variables would execute whatever else somebody put in it, from a process that serves a web
+    page. A line this cannot parse is skipped rather than guessed at, and an unreadable file is
+    an empty answer — the page says "no keys" and that is a true sentence about what ffweb can
+    see.
+    """
+    wanted = {CLAUDE_TOKEN_PREFIX} | {CLAUDE_TOKEN_PREFIX + str(n)
+                                      for n in range(1, CLAUDE_TOKEN_MAX + 1)}
+    out = {}
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, _, value = line.partition("=")
+                name = name.strip()
+                if name.startswith("export "):
+                    name = name[len("export "):].strip()
+                if name in wanted:
+                    value = value.strip()
+                    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                        value = value[1:-1]
+                    out[name] = value
+    except OSError:
+        return {}
+    return out
+
+
+def token_fingerprint(token):
+    """Eight hex characters of sha256(token).
+
+    Enough to tell two keys apart in a table, to match a row against a line in secrets.env by
+    running the same digest, and to survive being in a screenshot. The token itself never
+    reaches the page, not even truncated: the first characters of an sk-ant- key are a
+    guessable prefix and the last are the part worth having.
+    """
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()[:8]
 
 # ---- the credentials ----------------------------------------------------------------------
 # Hardcoded, on purpose and for now. The page is internal and a user table would be a database
@@ -670,6 +797,27 @@ def fmt_ttl(secs):
     return f"{secs}s"
 
 
+def fmt_reset(iso, now=None):
+    """When a rolling window rolls over, as the time until it does.
+
+    A COUNTDOWN AND NOT A TIMESTAMP, for the reason the box page gives its update clock one:
+    Anthropic sends these in UTC with an offset, this page is read on a machine in some other
+    zone, and "2026-09-04T09:59:59+00:00" is a subtraction the reader has to do before the
+    number means anything. `resets_at` is genuinely absent on a window that does not apply to
+    the account, which is an em dash rather than a zero.
+    """
+    if not iso:
+        return "—"
+    try:
+        when = datetime.fromisoformat(str(iso))
+    except (TypeError, ValueError):
+        return short(str(iso), 40)
+    left = int(when.timestamp() - (time.time() if now is None else now))
+    # Not fmt_ttl's "expired": a window past its reset has already rolled, and the endpoint is
+    # simply a few seconds behind the clock. Nothing has run out.
+    return "resets in " + fmt_ttl(left) if left > 0 else "resetting now"
+
+
 def _row(row, key, default=None):
     """A column that may not be there yet.
 
@@ -1000,6 +1148,26 @@ form.mark button:hover { color: #d7dae0; border-color: #4a5261; }
 /* The sentence under it. A note is grey and easy to read past, and this one must not be. */
 .alert { color: #e99; border: 1px solid #a55; border-radius: 3px; background: #241c1c;
          padding: 8px 12px; margin: 0 0 18px; font-size: 13px; }
+/* The claude page. `available` is the green one for the same reason a waiting container is:
+   it is the state a key is supposed to be in. `tight` is the amber warning, and the three red
+   ones are the distinct ways a key cannot be used — spent, locked by Anthropic, or not
+   answering at all — which are three different next moves and so are not one colour with three
+   words. */
+.pill.available { border-color: #4a6; color: #7d9; }
+.pill.tight { border-color: #a83; color: #eb8; }
+.pill.exhausted, .pill.locked, .pill.unreachable { border-color: #a55; color: #e99; }
+.pill.active { border-color: #468; color: #9bd; }
+/* The usage bar. A fixed track, so four keys line up down the column and the eye compares
+   lengths rather than reading four numbers. inline-block because it sits inside a table cell
+   beside its own percentage. */
+.bar { display: inline-block; vertical-align: middle; width: 150px; height: 9px;
+       background: #101216; border: 1px solid #2b313b; border-radius: 3px;
+       overflow: hidden; }
+.bar > span { display: block; height: 100%; background: #4a6; }
+.bar.tight > span { background: #a83; }
+.bar.full > span { background: #a55; }
+.pct { display: inline-block; min-width: 3.2em; text-align: right; }
+.item.key { border-left-color: #468; }
 /* A count that belongs to the heading it sits on: same line, quieter than the words. */
 h2 .count { color: #8f98a6; font-weight: 400; font-size: 13px; margin-left: 8px; }
 .item { border-left: 3px solid #333a45; padding: 6px 12px; margin: 8px 0; background: #1a1e25; }
@@ -1081,7 +1249,8 @@ def page(title, body_parts, banner="", refresh=False):
         "<title>" + esc(title) + " — ffweb</title><style>" + STYLE + "</style></head><body>"
         "<header><span class=\"brand\">ffweb</span>"
         "<a href=\"/\">conversations</a><a href=\"/lanes\">tiers</a>"
-        "<a href=\"/outbound\">outbound</a><a href=\"/status\">box</a>" + banner +
+        "<a href=\"/outbound\">outbound</a><a href=\"/status\">box</a>"
+        "<a href=\"/claude\">claude</a>" + banner +
         "<span class=\"version\">v" + VERSION + "</span>" +
         # POST, not a link: a GET that ends a session is a logout any page on the internet can
         # trigger with an <img>. The same Origin check the action routes use covers this one.
@@ -1169,6 +1338,27 @@ def pill(value):
     value = value or "—"
     cls = re.sub(r"[^a-z_]", "", str(value).lower())
     return Raw("<span class=\"pill " + esc(cls) + "\">" + esc(value) + "</span>")
+
+
+def usage_bar(percent):
+    """A percentage of a rolling window, as a bar and a number.
+
+    The bar is what makes four keys comparable at a glance — the number underneath is the
+    answer, but "is anything nearly gone" is a question about the shape of a column, and
+    reading four numbers to answer it is the work this page exists to remove. Its colour is the
+    same three-way split ClaudeKeys.state makes, so a row and its pill never disagree.
+
+    The width is clamped to 0-100 before it reaches the style attribute: the endpoint has no
+    reason to send 130, and a bar that overflows its track would be a rendering bug reported as
+    a usage bug. The unclamped figure is still what the text says.
+    """
+    if percent is None:
+        return Raw("<span class=\"empty\">—</span>")
+    pct = max(0.0, min(100.0, float(percent)))
+    cls = "bar full" if pct >= 100.0 else "bar tight" if pct >= ClaudeKeys.TIGHT_PCT else "bar"
+    return Raw("<span class=\"" + cls + "\"><span style=\"width:" + f"{pct:.0f}" +
+               "%\"></span></span> <span class=\"pct\">" + esc(f"{float(percent):.0f}%") +
+               "</span>")
 
 
 def fold_id(prefix, key):
@@ -1388,6 +1578,232 @@ class BoxStatus:
         return doc, ""
 
 
+class ClaudeKeys:
+    """How much is left on each Claude subscription in the pool, from Anthropic's own endpoint.
+
+    THE ONLY PLACE THIS PROCESS TALKS TO THE INTERNET, and the only reason it is allowed to:
+    the answer does not exist anywhere else. Usage against a subscription is not in ffwatch.db,
+    not on this disk and not derivable from the run costs the database does hold — those are
+    dollars of API-equivalent, and what runs a box out of road is a percentage of a rolling
+    window that Anthropic alone is counting. Two GETs per key, to
+    /api/oauth/usage (the windows) and /api/oauth/profile (whose account this is), both with the
+    key as a bearer token, both read-only.
+
+    A FAILURE IS A VALUE, exactly as it is for BoxStatus. A revoked key, an expired one, a
+    machine with no route out, a rate limit on the usage endpoint itself: every one of those
+    renders as a sentence on that key's row while the other keys still report. A page about
+    which keys are usable that goes blank when one of them is not would be useless on the day
+    it matters.
+
+    THE READINGS ARE CACHED, per key, for CLAUDE_USAGE_TTL_SECS. The page reloads itself on the
+    minute and several people can have it open; without the cache that is a call per key per
+    browser per minute, spent on the rate limit the page exists to protect.
+
+    Nothing here can spend a key on anything but this. It is bearer credentials against two
+    fixed URLs held in this class, never a URL from a request, and the tokens are never
+    rendered — a row identifies its key by name, by account, and by token_fingerprint().
+    """
+
+    USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+    PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
+    # The beta the OAuth-scoped surface is gated behind. Claude Code sends it on these calls and
+    # so do we; without it the endpoints answer, but this is the contract they are documented
+    # under and dropping it would be trusting an undocumented default.
+    BETA = "oauth-2025-04-20"
+
+    # Where a percentage stops being headroom and starts being a warning, and where it is gone.
+    # 80 rather than 90: the window it describes is five hours long, so a key at 80% has
+    # somewhere under an hour of ordinary work left in it and the point of saying so early is
+    # that somebody can move the box to another key before a run dies mid-verify.
+    TIGHT_PCT = 80.0
+
+    def __init__(self, tokens=None, ttl=CLAUDE_USAGE_TTL_SECS, timeout=10, fetch=None):
+        # A callable rather than a list, because the pool is read out of the environment and a
+        # value captured at construction would be a snapshot of the moment the server started.
+        self._tokens = tokens if callable(tokens) else (
+            (lambda: list(tokens)) if tokens is not None else claude_token_pool)
+        self.ttl = ttl
+        self.timeout = timeout
+        # The seam the offline tests use. It takes (url, token) and returns (document, error),
+        # which is the whole of what this class needs the network for.
+        self.fetch = fetch or self._http
+        self._cache = {}
+        self._lock = threading.Lock()
+
+    # -- the wire -------------------------------------------------------------------------
+
+    def _http(self, url, token):
+        """(document, error). One of the two is always falsy."""
+        req = urllib.request.Request(url, headers={
+            "Authorization": "Bearer " + token,
+            "anthropic-beta": self.BETA,
+            "Accept": "application/json",
+            "User-Agent": "ffweb/" + VERSION,
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                # A ceiling on a body this process did not ask the size of. The real documents
+                # are a couple of kilobytes; anything near this is not the answer.
+                raw = resp.read(1 << 20)
+        except urllib.error.HTTPError as exc:
+            # THE STATUS IS THE DIAGNOSIS on this endpoint and the body is rarely worth
+            # reading, so each of the ones that actually happens gets the sentence that names
+            # the next move rather than a number the reader has to look up.
+            if exc.code == 401:
+                return None, ("401 — this key was refused. Either it was revoked, or it is not "
+                              "a `claude setup-token` token")
+            if exc.code == 403:
+                return None, "403 — this key is not allowed to read its own usage"
+            if exc.code == 429:
+                return None, "429 — Anthropic is rate-limiting the usage endpoint itself"
+            return None, f"HTTP {exc.code} from {urllib.parse.urlsplit(url).path}"
+        except (urllib.error.URLError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            return None, f"{type(exc).__name__}: {short(str(reason), 160)}"
+        try:
+            doc = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            return None, "the endpoint answered with something that is not JSON"
+        return (doc, "") if isinstance(doc, dict) else (None, "unexpected shape from Anthropic")
+
+    def _load(self, name, token):
+        """One key, fetched. The cache is not consulted here — see read()."""
+        usage, err = self.fetch(self.USAGE_URL, token)
+        rec = {"name": name, "fingerprint": token_fingerprint(token),
+               "account": "", "plan": "", "windows": [], "error": err}
+        if err:
+            rec["state"] = "unreachable"
+            return rec
+        # SECOND, AND ONLY WHEN THE FIRST WORKED. The profile is the nicety — which of the
+        # accounts this is — and a key whose usage came back is a key whose name we can already
+        # print. Asking for it after the answer that matters keeps a slow profile call from
+        # deciding whether the page has numbers on it.
+        profile, perr = self.fetch(self.PROFILE_URL, token)
+        if not perr and profile:
+            account = profile.get("account") or {}
+            org = profile.get("organization") or {}
+            rec["account"] = str(account.get("email") or account.get("full_name") or "")
+            tier = str(org.get("rate_limit_tier") or "")
+            kind = str(org.get("organization_type") or "")
+            rec["plan"] = " ".join(p for p in (kind, "(" + tier + ")" if tier else "") if p)
+        rec["windows"] = self.windows(usage)
+        rec["state"] = self.state(rec["windows"], "")
+        return rec
+
+    # -- reading the document ---------------------------------------------------------------
+
+    @staticmethod
+    def windows(usage):
+        """The rolling limits, as rows, out of the usage document.
+
+        TWO SOURCES, ON PURPOSE. `five_hour` and `seven_day` are the named top-level objects and
+        are what everybody means by "the session limit" and "the weekly limit". The `limits`
+        array beside them carries the same two again PLUS the per-model weekly caps, which is
+        where the Opus number lives — the one that runs out first on a box doing real work. So
+        the two named windows are read from the top level and only the model-scoped entries are
+        taken out of the array, which is also why a document full of unfamiliar codenamed keys
+        (the endpoint has several, all null) contributes nothing here rather than a screen of
+        empty rows.
+        """
+        rows = []
+        for key, label in (("five_hour", "5-hour session"), ("seven_day", "weekly")):
+            block = usage.get(key)
+            if isinstance(block, dict):
+                rows.append({"label": label,
+                             "percent": _as_pct(block.get("utilization")),
+                             "resets_at": block.get("resets_at"),
+                             "locked": block.get("locked_reason") or ""})
+        for entry in usage.get("limits") or []:
+            if not isinstance(entry, dict) or entry.get("kind") != "weekly_scoped":
+                continue
+            model = ((entry.get("scope") or {}).get("model") or {})
+            name = model.get("display_name") or model.get("id")
+            if not name:
+                continue
+            rows.append({"label": "weekly · " + str(name),
+                         "percent": _as_pct(entry.get("percent")),
+                         "resets_at": entry.get("resets_at"),
+                         "locked": ""})
+        return rows
+
+    @classmethod
+    def state(cls, windows, error):
+        """One word for whether this key can be handed a run right now.
+
+        The worst window decides, because that is what a run would hit. `locked` outranks a
+        percentage: Anthropic saying a window is locked is a fact, and a utilisation figure
+        under it is only how the account got there.
+        """
+        if error:
+            return "unreachable"
+        if any(w.get("locked") for w in windows):
+            return "locked"
+        top = max([w["percent"] for w in windows if w["percent"] is not None] or [0.0])
+        if top >= 100.0:
+            return "exhausted"
+        if top >= cls.TIGHT_PCT:
+            return "tight"
+        return "available"
+
+    # -- the page's entry point --------------------------------------------------------------
+
+    def read(self, now=None):
+        """([record], stale_seconds) — one record per key in the pool, freshest first fetched.
+
+        The keys are fetched IN PARALLEL. Serially, a pool of four with one dead key would make
+        the page wait out that key's timeout before starting the next one, and the wait is the
+        whole difference between a page an operator refreshes and one they stop opening.
+        """
+        now = time.time() if now is None else now
+        pool = self._tokens()
+        records = [None] * len(pool)
+        threads = []
+
+        def work(slot, name, token):
+            key = token_fingerprint(token)
+            with self._lock:
+                hit = self._cache.get(key)
+            if hit and now - hit[0] < self.ttl:
+                records[slot] = dict(hit[1], age=int(now - hit[0]))
+                return
+            rec = self._load(name, token)
+            with self._lock:
+                self._cache[key] = (now, rec)
+            records[slot] = dict(rec, age=0)
+
+        for slot, (name, token) in enumerate(pool):
+            t = threading.Thread(target=work, args=(slot, name, token), daemon=True)
+            t.start()
+            threads.append(t)
+        deadline = time.time() + self.timeout * 2 + 5
+        for t in threads:
+            t.join(max(0.0, deadline - time.time()))
+        out = []
+        for slot, (name, token) in enumerate(pool):
+            rec = records[slot]
+            if rec is None:
+                # The join gave up. Not a cache entry: a fetch that is still in flight will
+                # write one of its own when it lands, and the next reload picks it up.
+                rec = {"name": name, "fingerprint": token_fingerprint(token), "account": "",
+                       "plan": "", "windows": [], "state": "unreachable", "age": 0,
+                       "error": f"no answer within {self.timeout}s"}
+            # THE FIRST ONE IS THE ONE THAT GETS SPENT. Marked here rather than in the loader
+            # because it is a fact about the pool's order, not about the key.
+            rec["active"] = slot == 0
+            out.append(rec)
+        return out
+
+
+def _as_pct(value):
+    """A utilisation out of the usage document, as a float, or None when it is not a number.
+
+    The endpoint sends `utilization` as a float on the named windows and `percent` as an int in
+    the limits array, and sends null for a window that does not apply to the account.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
 
 # ------------------------------------------------------------------------------------------
 # request handling
@@ -1579,6 +1995,8 @@ class FFWebHandler(BaseHTTPRequestHandler):
             return self._send(200, app.page_outbound(query))
         if path == "/status":
             return self._send(200, app.page_status())
+        if path == "/claude":
+            return self._send(200, app.page_claude())
         m = re.fullmatch(r"/conversation/(\d+)", path)
         if m:
             body = app.page_conversation(int(m.group(1)), query)
@@ -1878,7 +2296,8 @@ def blob_content_type(filename, declared):
 
 class App:
     def __init__(self, db_path, blobs_dir, state_dir, ffwatch_py, enable_actions=False,
-                 quiet=False, origins=(), scheme="https", sessions=None, ffstatus=None):
+                 quiet=False, origins=(), scheme="https", sessions=None, ffstatus=None,
+                 claude_keys=None):
         self.db = ReadOnlyDb(db_path)
         self.blobs_dir = os.path.realpath(blobs_dir)
         self.state_dir = state_dir
@@ -1886,6 +2305,11 @@ class App:
         # Beside this file unless a caller says otherwise. The box page reports on the machine
         # ffweb is running on, so the script it runs is the one shipped in this checkout.
         self.box = BoxStatus(ffstatus or os.path.join(HERE, "ffstatus.sh"))
+        # The Claude subscription pool. Constructed unconditionally and harmless when the box
+        # has no keys — it reads the environment when asked and opens no socket until somebody
+        # actually loads /claude. The parameter exists so the offline tests can hand it a
+        # fetcher that answers from a fixture instead of from Anthropic.
+        self.keys = claude_keys if claude_keys is not None else ClaudeKeys()
         self.quiet = quiet
         self.self_origins = set(origins)
         # The scheme this process is actually serving. It decides two things and only two:
@@ -2249,6 +2673,82 @@ class App:
         # lasts minutes, so a faster reload would spend more of this box's docker socket than
         # it would tell anybody.
         return page("box", head + body, refresh=True)
+
+    # -- the Claude keys ----------------------------------------------------------------------
+
+    def page_claude(self):
+        """Every Claude subscription this box was given, and how much of each is left.
+
+        THE SECOND PAGE HERE THAT IS NOT A VIEW OF ffwatch.db, and the first that leaves the
+        machine to fill itself in. See ClaudeKeys for why that is allowed at all: a rolling
+        subscription window is counted by Anthropic and by nobody else, so there is no local
+        row this could read instead. What the database DOES hold — what each run cost — is a
+        different quantity in different units and is on the conversations page already.
+
+        ONE KEY IS SPENT AND THE REST ARE INVENTORY. Everything that starts work uses the first
+        one in the pool; the others are here so that the decision to move the box onto another
+        account can be made before a run dies against a limit rather than after. That is why
+        this page has no button: choosing the key is an edit to secrets.env and a restart, and
+        a switch here would be this process reaching around the file that owns the answer.
+
+        NO TOKEN IS RENDERED. A row names its key by the variable it came from, by the account
+        Anthropic says it belongs to, and by eight hex characters of its digest — which is
+        enough to match a row against a line in secrets.env by running sha256 on it, and is not
+        a credential.
+        """
+        rows = self.keys.read()
+        head = ["<h1>claude keys</h1>"]
+        if not rows:
+            return page("claude", head + [
+                "<p class=\"note\">No Claude token in this process's environment, and none in "
+                + esc(os.environ.get("FFBOX_SECRETS") or "~/.config/ffbox/secrets.env") +
+                ". Put one key per account in that file as " +
+                esc(CLAUDE_TOKEN_PREFIX) + "1, " + esc(CLAUDE_TOKEN_PREFIX) + "2, … "
+                "(each from <code>claude setup-token</code> signed in as that account) and "
+                "restart ffweb.</p>"], refresh=True)
+
+        spent = rows[0]["name"]
+        head.append(
+            "<p class=\"note\">" + esc(f"{len(rows)} key{'' if len(rows) == 1 else 's'}") +
+            " in the pool. Only " + esc(spent) + " is spent — ffbox hands that one to every "
+            "container and ffwatch classifies with it. The rest are read here and nowhere "
+            "else.<br>Usage comes from Anthropic and is cached for " +
+            esc(fmt_ttl(self.keys.ttl)) + "; the page reloads itself on the minute.</p>")
+
+        body = []
+        for rec in rows:
+            meta = [esc(rec["name"])]
+            if rec["active"]:
+                meta.append(str(pill("active")))
+            meta.append("key " + esc(rec["fingerprint"]))
+            if rec["account"]:
+                meta.append(esc(short(rec["account"], 80)))
+            if rec["plan"]:
+                meta.append(esc(short(rec["plan"], 60)))
+            meta.append(str(pill(rec["state"])))
+            if rec.get("age"):
+                meta.append("read " + esc(fmt_ttl(rec["age"])) + " ago")
+            body.append("<div class=\"item key\"><div class=\"meta\">" +
+                        " · ".join(meta) + "</div>")
+            if rec["error"]:
+                # The one thing that goes wrong most often is a revoked key, and the sentence
+                # that says so is more use than an empty table under it. Nothing else is
+                # rendered for this key: there are no numbers to render.
+                body.append("<p class=\"note\">" + esc(short(rec["error"], 300)) + "</p></div>")
+                continue
+            trows = []
+            for w in rec["windows"]:
+                note = fmt_reset(w["resets_at"])
+                if w["locked"]:
+                    note = "locked: " + short(str(w["locked"]), 80)
+                trows.append([w["label"], usage_bar(w["percent"]), note])
+            if trows:
+                body.append(str(table(["window", "used", "resets"], trows)))
+            else:
+                body.append("<p class=\"empty\">Anthropic reported no windows for this "
+                            "key.</p>")
+            body.append("</div>")
+        return page("claude", head + body, refresh=True)
 
     # -- one conversation -------------------------------------------------------------------
 

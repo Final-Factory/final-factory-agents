@@ -2230,6 +2230,30 @@ def classifier_dir(cfg):
     return path
 
 
+# THE CLAUDE TOKEN POOL. secrets.env carries one token per Claude account, numbered from 1
+# (CLAUDE_CODE_OAUTH_TOKEN1, CLAUDE_CODE_OAUTH_TOKEN2, ...), and the FIRST NON-EMPTY ONE is the
+# one that gets spent — here, and in ffbox for every container it starts. The rest are inventory
+# that ffweb's /claude page reports usage for; nothing in this daemon reads them.
+#
+# The unnumbered name is the older spelling and is honoured when no numbered slot is set, so a
+# secrets.env written before the pool existed still works untouched. A gap is not the end of the
+# list: slot 2 set with slot 1 blank is a revoked first key, not an empty pool.
+#
+# The same rule is written out in ffbox and in ffweb.py, which imports nothing from this file.
+CLAUDE_TOKEN_PREFIX = "CLAUDE_CODE_OAUTH_TOKEN"
+CLAUDE_TOKEN_MAX = 16
+
+
+def active_claude_token(env=None):
+    """The one token this box spends, or "" when it holds none."""
+    env = os.environ if env is None else env
+    for n in range(1, CLAUDE_TOKEN_MAX + 1):
+        value = (env.get(CLAUDE_TOKEN_PREFIX + str(n)) or "").strip()
+        if value:
+            return value
+    return (env.get(CLAUDE_TOKEN_PREFIX) or "").strip()
+
+
 def classifier_invocation(cfg, prompt, schema, structured=True):
     """(argv, env, cwd, stdin) for one sandboxed model call.
 
@@ -2283,9 +2307,17 @@ def classifier_invocation(cfg, prompt, schema, structured=True):
            # IT IS A BUDGET AND NOT A CEILING: a run at 512 still produced 1441 thinking tokens.
            # What it does reliably is cut the long tail, which is what was hurting.
            "MAX_THINKING_TOKENS": str(cfg["classifier_thinking_tokens"])}
-    for passthrough in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "LANG", "LC_ALL"):
+    for passthrough in ("ANTHROPIC_API_KEY", "LANG", "LC_ALL"):
         if os.environ.get(passthrough):
             env[passthrough] = os.environ[passthrough]
+    # THE POOL, RESOLVED TO ONE. This is not a passthrough like the three above: the daemon's
+    # environment holds CLAUDE_CODE_OAUTH_TOKEN1..N and the classifier is handed exactly one
+    # credential, under the unnumbered name `claude` actually reads. A child that inherited the
+    # whole pool would be a subprocess holding every account this box has, to answer a
+    # pick-an-id question with one of them.
+    _token = active_claude_token()
+    if _token:
+        env[CLAUDE_TOKEN_PREFIX] = _token
     # The prompt goes on STDIN, never argv: as an argument it is visible in `ps` to every user
     # on the box for the life of the call, and it counts against ARG_MAX.
     return argv, env, classifier_dir(cfg), prompt
