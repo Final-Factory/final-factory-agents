@@ -52,6 +52,21 @@ FinalFactory2_clone_0, FinalFactory3, FinalFactory4, …). Do NOT hardcode a pro
 matching instance differs per working copy. An unpinned run can execute against — and report
 results from — the *wrong* project. Alternatively pass `unity_instance` per call.
 
+## Cross-machine runs and implementor legs contend for the same pinned editor
+
+A cross-machine determinism run and an `implementor`/`build-verifier` leg on the same machine
+fight over the ONE pinned editor: a leg's `refresh_unity` during a paired play session breaks
+the run, and a run's preflight fails on an editor that is mid-compile from a leg's edit.
+Sequence them — run first, leg after, or the reverse — never overlap, and put the "wait until
+`play_mode.is_playing` is false" rule in every leg brief so a delegated agent doesn't step on a
+live run it can't see.
+
+Also relevant when a leg runs from a worktree: `EnterWorktree` branches from `origin/MASTER` in
+this repo, not `develop` (`git reset --hard origin/develop` first — see
+[project memory](../project-memory/memories/enterworktree-cuts-from-master-not-develop.md)), and
+a worktree has no `Library/`, so compile verification still happens in the MAIN editor after an
+ff-merge, not in the worktree.
+
 ## Editor readiness and recovery are the agent's job
 
 Never ask the user to babysit imports, compiles, bridge recovery, or editor restarts. Verify,

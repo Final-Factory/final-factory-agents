@@ -289,6 +289,25 @@ no remote-MCP reach); the rolling report window evicts early heartbeats on long 
 non-interactive SSH session; fast-forward it with the exact command in
 `Documentation/Two-Machine-LAN-Dev-Pair.md:34-48` when the pre-flight hashes differ.
 
+**2026-09-03/04 cross-machine earlygame legs**, four traps: (1) the M3 editor launched over SSH
+had Burst DISABLED (the one-way automation-launcher switch, see
+[Burst is OFF by design](#burst-off-by-design) — this was the PERSISTENT setting, not the
+per-session runtime disable) and the 045 preflight fails closed on it — re-enable via
+`scripts/unity-cli.sh command --project-path <repo> eval_file file=<cs>` running
+`Unity.Burst.BurstCompiler.Options.EnableBurstCompilation = true;`, then the preflight reports
+"Burst queue is still compiling" for a few minutes — a retry loop on the audit script itself
+(90s cadence) is the simplest drain wait. (2) With `HOST_IP` auto-detected as the LAN address
+the client's UnityTransport got "Failed to connect" / `MaxConnectionAttempts` although raw UDP
+(`nc`) between the same hosts worked and the host bound `0.0.0.0:7777` — an SSH-launched Unity
+editor on a fresh Unity build is subject to macOS Local Network privacy and nobody clicked its
+prompt. `HOST_IP=<host Tailscale IP>` (100.x, the documented off-LAN override) joined first
+time; traffic to a 100.x address is not gated by that permission. (3) The verification capture
+cap `MaxVerificationSamples` was 4096 (`NetworkDeterminismAudit.cs`); a 240s opening+combat leg
+needs 6-8k host samples (the host's solo window while the client loads the transfer counts) —
+raised to 16384 (`b06d210bb`). (4) `verification-overflow` / `artifact-unreadable` verdicts
+carry `forkEvents` in `verdict.json` context: an empty list on an overflowed run still means the
+captured window compared clean.
+
 ## Built-player pair harness needs role-keyed identity, not per-copy keying {#built-pair-identity}
 
 (049 T028b, 2026-08-31, `22a8c8ca4`.) A built-player pair audit runs TWO PROCESSES OF ONE BUILD on
