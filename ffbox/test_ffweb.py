@@ -549,7 +549,13 @@ os.environ["FFWEB_TEST_STATUS_DOC"] = STATUS_DOC_PATH
 
 CLAUDE_POOL = [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-first-account-token"),
                ("CLAUDE_CODE_OAUTH_TOKEN2", "sk-ant-oat01-second-account-token"),
-               ("CLAUDE_CODE_OAUTH_TOKEN3", "sk-ant-oat01-revoked-token")]
+               ("CLAUDE_CODE_OAUTH_TOKEN3", "sk-ant-oat01-revoked-token"),
+               # THE KIND OF TOKEN THIS BOX ACTUALLY RUNS ON. `claude setup-token` mints a
+               # token without the `user:profile` scope, so its usage document answers 403 and
+               # the windows have to come off a /v1/messages reply's headers instead. Measured
+               # against the real endpoint on 2026-09-04; the first release of this page shipped
+               # without it and reported the 403 to the operator as if it were the answer.
+               ("CLAUDE_CODE_OAUTH_TOKEN4", "sk-ant-oat01-setup-token-no-scope")]
 
 
 def claude_usage(five, week, opus=0):
@@ -590,12 +596,29 @@ CLAUDE_ANSWERS = {
     CLAUDE_POOL[1][1]: (claude_usage(4.0, 96.0, opus=100),
                         claude_profile("loth@example.com", "default_claude_max_20x")),
     CLAUDE_POOL[2][1]: None,
+    CLAUDE_POOL[3][1]: "403",
+}
+
+# What a real /v1/messages reply carries, trimmed to the family the fallback reads. Utilization
+# is a FRACTION here and a percentage in the usage document, which is the trap this fixture
+# exists to keep the parser honest about.
+CLAUDE_HEADERS = {
+    "anthropic-ratelimit-unified-status": "allowed",
+    "anthropic-ratelimit-unified-5h-status": "allowed",
+    "anthropic-ratelimit-unified-5h-utilization": "0.14",
+    "anthropic-ratelimit-unified-5h-reset": "1788516000",
+    "anthropic-ratelimit-unified-7d-status": "allowed",
+    "anthropic-ratelimit-unified-7d-utilization": "0.26",
+    "anthropic-ratelimit-unified-7d-reset": "1788692400",
 }
 
 
 def claude_fetch(url, token):
-    """The seam ClaudeKeys takes instead of urllib. (document, error)."""
+    """The seam ClaudeKeys takes instead of urllib for the two JSON endpoints."""
     answer = CLAUDE_ANSWERS.get(token)
+    if answer == "403":
+        return None, ("403 — this token has no `user:profile` scope, which the usage document "
+                      "needs; `claude setup-token` does not grant it")
     if answer is None:
         return None, ("401 — this key was refused. Either it was revoked, or it is not a "
                       "`claude setup-token` token")
@@ -603,9 +626,16 @@ def claude_fetch(url, token):
     return (usage if url.endswith("/usage") else profile), ""
 
 
-def claude_keys_stub(pool=None, fetch=None, **kw):
+def claude_probe(token):
+    """The seam for the one-token /v1/messages call. (headers, error)."""
+    if CLAUDE_ANSWERS.get(token) == "403":
+        return dict(CLAUDE_HEADERS), ""
+    return {}, "401 — this key was refused"
+
+
+def claude_keys_stub(pool=None, fetch=None, probe=None, **kw):
     return ffweb.ClaudeKeys(tokens=list(CLAUDE_POOL if pool is None else pool),
-                            fetch=fetch or claude_fetch, **kw)
+                            fetch=fetch or claude_fetch, probe=probe or claude_probe, **kw)
 
 
 # The real thing, for the one case that has to prove the whole chain writes a row. Everywhere
@@ -1522,11 +1552,11 @@ def test_the_claude_page_reports_every_key_in_the_pool():
         # Split per key, because "active" and a percentage both appear more than once on the
         # page and a document-wide search would pass on the wrong row.
         blocks = text.split('<div class="item key">')[1:]
-        check("one block per key", len(blocks) == 3, len(blocks))
+        check("one block per key", len(blocks) == 4, len(blocks))
         check("the first key is the one marked as spent",
               'class="pill active"' in blocks[0], blocks[0][:200])
         check("and the others are not, because nothing spends them",
-              'class="pill active"' not in blocks[1] + blocks[2])
+              'class="pill active"' not in "".join(blocks[1:]))
         check("the account behind a key is named, so two keys are told apart by more than a hash",
               "ben@example.com" in blocks[0] and "loth@example.com" in blocks[1], blocks[0][:400])
         check("the five-hour and weekly windows are both reported",
@@ -1548,8 +1578,21 @@ def test_the_claude_page_reports_every_key_in_the_pool():
               'class="pill unreachable"' in blocks[2] and "401" in blocks[2], blocks[2][:400])
         check("and it does not take the other two off the page with it",
               "ben@example.com" in text and "loth@example.com" in text)
-        check("the page says which one is actually spent",
-              "Only CLAUDE_CODE_OAUTH_TOKEN1 is spent" in text,
+        # THE FALLBACK ROW, which is the shape every box running on `claude setup-token`
+        # tokens actually sees. Its windows must be real numbers, not the 403.
+        check("a key whose usage document is closed still reports its windows",
+              'class="pill available"' in blocks[3] and ">14%<" in blocks[3]
+              and ">26%<" in blocks[3], blocks[3][:700])
+        check("and the page says that reading came the other way",
+              "via rate-limit headers" in blocks[3], blocks[3][:400])
+        check("with the reason spelled out, since the fix is a different kind of token",
+              "user:profile" in blocks[3] and "setup-token" in blocks[3], blocks[3][-500:])
+        check("the fraction the headers send is rendered as a percentage, not as 0%",
+              ">0%<" not in blocks[3], blocks[3][:700])
+        check("the note says how often Anthropic is actually asked",
+              "once every 20m" in text, text[text.find("<p class=\"note\">"):][:300])
+        check("and the sentence about which key is spent is gone from it",
+              "is spent" not in text and "nowhere else" not in text,
               text[text.find("<p class=\"note\">"):][:300])
     finally:
         srv.stop()
@@ -1649,9 +1692,77 @@ def test_a_usage_reading_is_cached_rather_than_fetched_per_reload():
     check("a refused key is not asked a second question",
           len([c for c in calls if c[1] == CLAUDE_POOL[2][1]]) == 1,
           [c[0] for c in calls if c[1] == CLAUDE_POOL[2][1]])
+    check("the reading is held for twenty minutes, not for one",
+          ffweb.CLAUDE_USAGE_TTL_SECS == 1200, ffweb.CLAUDE_USAGE_TTL_SECS)
     aged = keys.read(now=time.time() + ffweb.CLAUDE_USAGE_TTL_SECS + 1)
     check("and past the TTL it goes out again", len(calls) > n_first, len(calls))
     check("still with an answer for every key", len(aged) == len(CLAUDE_POOL), len(aged))
+
+
+def test_a_key_that_cannot_read_its_usage_is_asked_the_other_way_once():
+    """The fallback, and the two mistakes that made it necessary.
+
+    FIRST: the usage document needs the `user:profile` scope and `claude setup-token` does not
+    grant it, so the only kind of token ffbox actually runs on answers 403 there. Shipping
+    without a fallback meant the page reported that 403 to an operator as though it were the
+    answer, about a key that was perfectly healthy.
+
+    SECOND: falling back on 403 ALONE was still wrong. A token that 403s does it on every
+    refresh, and Anthropic answers a run of those with a 429 — at which point the page said
+    "Anthropic is rate-limiting the usage endpoint" about a key whose real problem was the
+    scope, and never asked the question it could have answered. So the verdict is remembered,
+    and anything short of a refused token falls through to the probe.
+    """
+    print("a key that cannot read its usage is asked the other way")
+    fetches, probes = [], []
+
+    def fetch(url, token):
+        fetches.append(url)
+        return claude_fetch(url, token)
+
+    def probe(token):
+        probes.append(token)
+        return claude_probe(token)
+
+    scopeless = [CLAUDE_POOL[3]]
+    keys = claude_keys_stub(pool=scopeless, fetch=fetch, probe=probe)
+    rec = keys.read()[0]
+    check("the windows come back anyway", len(rec["windows"]) == 2, rec)
+    check("read off the headers rather than the document",
+          rec["source"] == "rate-limit headers", rec["source"])
+    check("the fraction in the header is a percentage on the record",
+          [w["percent"] for w in rec["windows"]] == [14.0, 26.0],
+          [w["percent"] for w in rec["windows"]])
+    check("the reset epoch became a time the page can count down to",
+          all(w["resets_at"] for w in rec["windows"]),
+          [w["resets_at"] for w in rec["windows"]])
+    check("and the key reads as usable, not as an error",
+          rec["state"] == "available" and not rec["error"], rec)
+
+    # THE MEMORY. A second read past the TTL must not ask the closed document again.
+    before = len(fetches)
+    keys.read(now=time.time() + ffweb.CLAUDE_USAGE_TTL_SECS + 1)
+    check("the closed usage document is not asked a second time",
+          len(fetches) == before, fetches[before:])
+    check("but the probe is, because that reading is the one that goes stale",
+          len(probes) == 2, probes)
+
+    # A 429 ON THE DOCUMENT IS NOT A VERDICT ABOUT THE KEY. It must still fall through.
+    def rate_limited(url, token):
+        return None, "429 — Anthropic is rate-limiting the usage endpoint itself"
+
+    busy = claude_keys_stub(pool=scopeless, fetch=rate_limited, probe=probe)
+    rec = busy.read()[0]
+    check("a rate-limited usage endpoint does not stop the page answering the question",
+          rec["state"] == "available" and rec["source"] == "rate-limit headers", rec)
+
+    # A DEAD KEY, THOUGH, IS NOT PROBED. The probe would be refused the same way.
+    before = len(probes)
+    dead = claude_keys_stub(pool=[CLAUDE_POOL[2]], fetch=fetch, probe=probe)
+    rec = dead.read()[0]
+    check("a refused token reports and stops rather than paying for a second refusal",
+          rec["state"] == "unreachable" and "401" in rec["error"]
+          and len(probes) == before, (rec["error"], probes[before:]))
 
 
 def test_actions_are_off_by_default():
@@ -2940,6 +3051,7 @@ def main():
         test_a_box_with_no_keys_says_what_to_write_and_where,
         test_the_pool_is_numbered_and_a_gap_is_not_the_end,
         test_a_usage_reading_is_cached_rather_than_fetched_per_reload,
+        test_a_key_that_cannot_read_its_usage_is_asked_the_other_way_once,
         test_actions_are_off_by_default,
         test_actions_call_ffwatch_not_the_database,
         test_the_agent_class_is_chosen_only_when_a_conversation_opens,
