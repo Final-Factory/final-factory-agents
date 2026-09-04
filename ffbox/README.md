@@ -1185,6 +1185,7 @@ because a moderation queue nobody can see is not a moderation queue.
 | `~/.config/ffbox/draining` | drain flag. Launches pause; replies still go out. Written by the updater, lifted when it finishes. See "Staying current". |
 | `~/.config/ffbox/update.stop-running` | armed by hand. Makes the next update wait for running containers and then stop them, instead of leaving them working. For a fix that has to apply to what is running now. |
 | `~/.config/ffbox/update.disabled` | pauses the self-update timer. Separate from the kill switch: pausing replies and pausing code updates are different intents. |
+| `~/.config/ffbox/config.invalid` | written by `ffwatch` while its config failsafe is on, cleared when it lifts. Carries a one-line `reason`. `ffstatus` reads it to keep saying `misconfigured` after a repair that this ffwatch process cannot pick up without a restart. |
 | `~/.config/ffbox/update.applying` | written by the updater once it has decided there is work, cleared on every exit path. Carries `started_at` and a one-line `reason`. Its presence is what makes `ffstatus` say `updating` rather than `checking` — see "What is on the box right now". |
 | `~/.config/ffbox/update.config-sha` | one `name hash` line per start-time-only file — `config.json` and `secrets.env` — as the running services started on them. The updater compares it every tick and restarts when a line no longer matches; see "Staying current". |
 
@@ -1550,7 +1551,7 @@ the unit that runs out: a workspace is a tmpfs, so it is resident RAM rather tha
 four of ten containers with no memory left is a box whose ceiling is wrong, and that is only
 visible with the two on one screen.
 
-The header line ends in one of four words, with the reason under it. That is not decoration: a
+The header line ends in one of five words, with the reason under it. That is not decoration: a
 box mid-update is *supposed* to look empty, because a drain is exactly "finish what you are
 doing and take nothing new", so without the word the healthy middle of an update reads as an
 outage.
@@ -1561,6 +1562,16 @@ outage.
 | `checking` | the updater is running — which every five minutes it is — and has decided nothing |
 | `updating` | an update is landing: new code is being merged and the box restarted onto it |
 | `drained` | a lane is drained with no update behind it — the weekly image rebuild, or a hand-set flag |
+| `misconfigured` | `~/.config/ffbox/config.json` does not parse. Nothing launches on either lane, and every target below the line is a built-in default rather than this box's setting |
+
+`misconfigured` is the only one of the five that nobody chose, which is why it is red where
+`updating` and `drained` are amber, and why it is read first: an update ends and a drain is
+lifted, but a config file with a stray comma in it sits there launching nothing until a person
+opens it. `ffstatus.sh` parses the file itself, so it needs no daemon to see a broken one; the
+flag `ffwatch` writes at `~/.config/ffbox/config.invalid` carries the half only `ffwatch` knows,
+which is that it *came up* on a broken file, is running on built-in defaults and will keep
+refusing until it is restarted. See "When this file does not parse" in `ffbox/config.md` for
+what each reader does.
 
 `updating` comes from a flag, `~/.config/ffbox/update.applying`, that `update_ffbox.sh` writes at
 the top of its section 3 and clears on every exit path. That line is the exact boundary past
@@ -1925,7 +1936,7 @@ when somebody is looking at it.
 | `/run/<id>` | that run's transcript as a tree — thinking inline, each subagent's work collapsed inside the tool call that spawned it |
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
-| `/status` | **the box**, and the one page here that reads no database: whether it is `running`, `checking`, `updating` or `drained` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
+| `/status` | **the box**, and the one page here that reads no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 

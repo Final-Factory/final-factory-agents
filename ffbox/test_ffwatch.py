@@ -6160,6 +6160,99 @@ def test_drain_never_blocks_on_a_dead_daemon():
     case.watcher.resume()
 
 
+def test_config_failsafe_stops_every_launch():
+    """A config file that does not parse launches nothing, and says so on disk.
+
+    THE FAILURE THIS PREVENTS. Every reader of ~/.config/ffbox/config.json answers {} for a file
+    it cannot parse -- this file's loader included -- so a stray comma does not stop anything: it
+    silently swaps a built-in default in for every clock, ceiling, network mode and pool size on
+    the box, and the turns keep coming out of containers configured by nobody. The failsafe is
+    that they stop instead.
+
+    A PAUSE, NOT A FAILURE, exactly like the drain above it: the turn stays queued, the ingest
+    keeps working, and the queue moves the moment the file parses.
+    """
+    print("config failsafe: a file that does not parse launches nothing")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(9600, "what does a splitter do?")]
+    case = Case("configfailsafe", fixture)
+    case.events(ask_event(9600))
+    flag = ffwatch.FFBOX_CONFIG_FAILSAFE
+    try:
+        with open(ffwatch.FFBOX_CONFIG, "w", encoding="utf-8") as fh:
+            # The trailing comma, which is what this actually happens as.
+            fh.write('{"max_concurrent_runs": 6,}\n')
+        case.watcher.once()
+        check("nothing is launched while the config does not parse",
+              len(case.rows("SELECT * FROM run")) == 0, case.rows("SELECT * FROM run"))
+        turn = case.rows("SELECT * FROM turn")[0]
+        check("the turn stays queued rather than failing", turn["status"] == "queued", turn)
+        check("the pool keeper stages nothing either", case.watcher.keep_pool() == [])
+        # THE FLAG IS THE ONLY WAY ffstatus.sh CAN SEE THE LATCH BELOW, so it is written for
+        # every failsafe rather than only for that one -- one flag, one meaning.
+        reason = ""
+        if os.path.exists(flag):
+            with open(flag, encoding="utf-8") as fh:
+                reason = fh.read()
+        check("and the failsafe is announced on disk, where a status command can read it",
+              reason.startswith("reason=") and "is not valid JSON" in reason, reason)
+        # The parse error is re-read from disk every pass, so this needs no restart.
+        with open(ffwatch.FFBOX_CONFIG, "w", encoding="utf-8") as fh:
+            fh.write('{"max_concurrent_runs": 6}\n')
+        case.watcher.once()
+        check("repairing the file lifts it, with the queued turn intact",
+              len(case.rows("SELECT * FROM run")) == 1, case.rows("SELECT * FROM run"))
+        check("and the flag is cleared", not os.path.exists(flag))
+    finally:
+        for path in (ffwatch.FFBOX_CONFIG, flag):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_config_failsafe_latches_after_a_broken_startup():
+    """A daemon that CAME UP on a broken file stays down until it is restarted.
+
+    ffwatch reads the config once, in main(), and loops for weeks off that dict -- so a process
+    that started while the file was broken is running on built-in defaults, and repairing the
+    file does nothing for it. Resuming there would be the failure this whole thing exists to
+    prevent, one step later: launching turns out of a config nobody chose, on a box whose
+    operator has just watched the fault clear.
+
+    Nothing has to be done by hand. config.json is one of the files update_ffbox.sh watches, so
+    the repair earns a restart within a poll or two, and the restart is what lifts this.
+    """
+    print("config failsafe: a broken startup latches until a restart")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(9700, "and what about the merger?")]
+    flag = ffwatch.FFBOX_CONFIG_FAILSAFE
+    try:
+        with open(ffwatch.FFBOX_CONFIG, "w", encoding="utf-8") as fh:
+            fh.write("{ this is not json\n")
+        # Case() builds its watcher out of load_config(), which is the startup this is about.
+        case = Case("configlatch", fixture)
+        check("load_config records WHY the file said nothing",
+              "is not valid JSON" in (case.cfg.get("_config_error") or ""),
+              case.cfg.get("_config_error"))
+        check("and the warning that goes to the journal leads with it",
+              "BUILT-IN DEFAULTS" in (ffwatch.config_warnings(case.cfg) or [""])[0],
+              ffwatch.config_warnings(case.cfg)[:1])
+        # The operator fixes the file. Every OTHER reader on the box is well again; this process
+        # is not, because it is still holding the defaults it came up on.
+        with open(ffwatch.FFBOX_CONFIG, "w", encoding="utf-8") as fh:
+            fh.write('{"max_concurrent_runs": 6}\n')
+        case.events(ask_event(9700))
+        case.watcher.once()
+        check("a repaired file does not resume a process running on defaults",
+              len(case.rows("SELECT * FROM run")) == 0, case.rows("SELECT * FROM run"))
+        check("and the reason says what does",
+              "restarted" in (case.watcher.config_failsafe() or ""),
+              case.watcher.config_failsafe())
+    finally:
+        for path in (ffwatch.FFBOX_CONFIG, flag):
+            if os.path.exists(path):
+                os.remove(path)
+
+
 def test_a_local_conversation_never_reaches_discord():
     """A shell conversation cannot be swept into a turn, and cannot queue an outbound row.
 
@@ -10747,6 +10840,8 @@ def main():
         test_the_keeper_expires_a_stale_spare_and_never_a_claimed_one,
         test_the_project_directory_survives_a_workspace_move,
         test_draining_destroys_what_is_idle_and_nothing_else,
+        test_config_failsafe_stops_every_launch,
+        test_config_failsafe_latches_after_a_broken_startup,
         test_a_shutdown_waits_for_the_host_not_only_for_the_containers,
         test_the_updater_waits_for_the_host_and_not_for_containers,
         test_the_updater_records_when_an_update_actually_landed,

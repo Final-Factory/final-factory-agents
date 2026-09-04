@@ -992,6 +992,14 @@ form.mark button:hover { color: #d7dae0; border-color: #4a5261; }
    sees a warning colour that often stops reading it. */
 .pill.updating, .pill.drained { border-color: #a83; color: #eb8; }
 .pill.checking { border-color: #333a45; color: #8f98a6; }
+/* AND RED FOR THE ONE NOBODY CHOSE. A config file that does not parse is not the machine doing
+   as it was told: nothing launches on either lane, every target further down the page is a
+   built-in default rather than this box's setting, and it stays that way until a person edits
+   the file. That is the same class of thing as a failed run, so it is the same colour. */
+.pill.misconfigured { border-color: #a55; color: #e99; }
+/* The sentence under it. A note is grey and easy to read past, and this one must not be. */
+.alert { color: #e99; border: 1px solid #a55; border-radius: 3px; background: #241c1c;
+         padding: 8px 12px; margin: 0 0 18px; font-size: 13px; }
 /* A count that belongs to the heading it sits on: same line, quieter than the words. */
 h2 .count { color: #8f98a6; font-weight: 400; font-size: 13px; margin-left: 8px; }
 .item { border-left: 3px solid #333a45; padding: 6px 12px; margin: 8px 0; background: #1a1e25; }
@@ -2153,12 +2161,30 @@ class App:
         head.append("<p class=\"note\">" + esc(str(doc.get("host") or "this box")) +
                     " · read at " + esc(short(str(doc.get("generated_at") or ""), 40)) +
                     " · " + str(pill(state)) +
-                    (" " + esc(short(str(maint.get("reason")), 120))
+                    # LONGER FOR THE MISCONFIGURED CASE, and only for it. The other reasons are
+                    # a sentence this box composed; this one ends in a parser's "line 12 column
+                    # 3", which is the whole of what its reader has to go on, and 120 characters
+                    # cut it off exactly there.
+                    (" " + esc(short(str(maint.get("reason")),
+                                     240 if state == "misconfigured" else 120))
                      if maint.get("reason") else "") +
                     # A <br> rather than a second <p>: the two .note paragraphs would collapse
                     # to an 18px gap and read as unrelated lines, when this is the same note
                     # continued.
                     "<br>" + clock + "</p>")
+
+        # A CONFIG THAT DOES NOT PARSE GETS A LINE OF ITS OWN, in the loud colour and above
+        # everything it makes provisional. The pill in the note says the word; this says what it
+        # COSTS, which is the part that decides whether the reader stops reading the numbers
+        # below and goes to fix a file. ffstatus.sh refuses to launch for exactly this reason
+        # (so does ffbox's preflight, and so does ffwatch's scheduler) — the page is where an
+        # operator finds out, and it is not a place to be subtle.
+        alert = []
+        if state == "misconfigured":
+            alert = ["<p class=\"alert\">This box is starting no containers. Its config file "
+                     "does not parse, so every target below is a built-in default rather than "
+                     "what this machine was configured for. Fix the JSON and the lanes resume "
+                     "by themselves.</p>"]
 
         # --- the machine ---------------------------------------------------------------
         #
@@ -2169,7 +2195,7 @@ class App:
         # state for the minutes between a deploy and the unit restarting — so the section is
         # skipped rather than rendered full of em dashes.
         machine = doc.get("machine") or {}
-        body = []
+        body = list(alert)
         if machine:
             # mem_* rather than total/used: `used` is the container count a few lines down,
             # and borrowing the name here put 275619444/10 on the containers heading.

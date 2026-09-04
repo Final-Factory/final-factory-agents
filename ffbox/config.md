@@ -29,9 +29,30 @@ Three layers, least specific first:
 3. the environment — `FFWATCH_*` for the agent lane, `FFGITHUBRUNNERS_*` for the CI lane,
    `FFBOX_*` for the container limits
 
-A missing file is not an error anywhere: every reader falls back to its defaults. A
-malformed file is fatal in the CI lane and treated as absent by `ffwatch`, which is why
-`05-discord-setup.sh` refuses to run against JSON it cannot parse rather than overwriting it.
+A missing file is not an error anywhere: every reader falls back to its defaults. A file
+that is *there* and does not parse is a different thing entirely — see the next section.
+
+## When this file does not parse
+
+Nothing starts. Every reader here answers `{}` for a file it cannot parse, so a stray comma
+does not fail loudly — it silently substitutes a built-in default for the workspace size, the
+memory ceiling, the pool sizes, the clocks, the network mode and the watched channels, and the
+box carries on running turns configured by nobody. Since 2026-09-03 that is a failsafe instead:
+
+| Where | What it does |
+|---|---|
+| `ffbox` | refuses in its preflight, exit 78, before any container is created. `--finish` is exempt: a run whose container is already gone must still be able to harvest |
+| `ffwatch` | comes up on the defaults so the ingest keeps working, and launches nothing — no turns, no pool spares. It re-reads the file every pass, so a fix lifts it within seconds |
+| `ffgithubrunners` | fatal, as it always has been |
+| `05-discord-setup.sh` | refuses rather than overwriting the file it cannot read |
+| `ffstatus.sh`, ffweb's box page | say `misconfigured`, in red, with the parser's line and column |
+
+One case does need a restart. `ffwatch` reads this file once, in `main()`, and loops for weeks
+off that dict — so a daemon that *started* while the file was broken is running on defaults, and
+repairing the file cannot reach it. It latches there and says so, and `update_ffbox.sh` restarts
+it within a poll or two because `config.json` is one of the files it watches. While that latch
+is on, `ffwatch` writes `~/.config/ffbox/config.invalid` with the reason in it, which is how
+`ffstatus.sh` knows to keep saying `misconfigured` for a file that now parses for everyone else.
 
 `ffwatch` ignores any top-level key it does not know, so `githubrunner`, `discord` and a
 stray `_help` are dropped before it merges anything. It also accepts every top-level key
@@ -631,7 +652,7 @@ commit as a change here:
 | `ffbox/05-discord-setup.sh` | the seeded template — which keys a fresh box gets and with what values |
 | `ffbox/ffwatch.py` (`DEFAULTS`, `ENV_OVERRIDES`, `load_config`) | every key the agent lane reads, its default, and its env override |
 | `ffbox/runners/lib/config.sh` | every key the CI lane reads and its default |
-| `ffbox/ffbox` | the three `container` limits an agent run is launched with |
+| `ffbox/ffbox` | the three `container` limits an agent run is launched with, and the preflight that refuses to start anything when this file does not parse |
 
 Adding, renaming, moving or retiring a key without updating this file leaves the only
 documentation the operator has saying something untrue, and there is no longer a `_help`

@@ -857,20 +857,57 @@ def _deep_merge(base, over):
 
 
 def _read_config_json(path):
-    """A config file that is missing, unreadable or malformed is {} — never an exception.
+    """(what the config file holds, why it could not be read) — never an exception.
 
     Named apart from the _read_json further down, which returns None for a missing file: that
     one reads a run's result.json, where "absent" and "empty" are different outcomes.
 
-    ffwatch runs unattended under systemd. Refusing to start because somebody left a trailing
-    comma in a config file is a worse outcome than running on the defaults and saying so.
+    ffwatch runs unattended under systemd. Refusing to START because somebody left a trailing
+    comma in a config file is a worse outcome than coming up on the defaults: the ingest keeps
+    working, the daemon can be talked to, and the box can say what is wrong with it. What it
+    must NOT do is carry on LAUNCHING as if nothing happened -- every clock, ceiling, network
+    mode and channel in there would silently be a built-in default rather than what the machine
+    was configured for. So the reason comes back beside the contents, and the failsafe above
+    Watcher.schedule() is what acts on it.
+
+    A MISSING FILE IS NOT AN ERROR and answers None here. `ffwatch init` seeds one, the offline
+    suite runs with nothing installed at all, and a box part-way through setup is a box on the
+    defaults ON PURPOSE. Present-and-unreadable is a different thing from absent, which is why
+    FileNotFoundError is caught apart from the rest of OSError.
     """
     try:
         with open(path, "r", encoding="utf-8") as fh:
             loaded = json.load(fh)
-        return loaded if isinstance(loaded, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
+    except FileNotFoundError:
+        return {}, None
+    except OSError as exc:
+        return {}, f"{path} cannot be read: {exc.strerror or exc}"
+    except json.JSONDecodeError as exc:
+        # str(exc) already carries the line and column, which is the whole of what an operator
+        # needs to go and fix it.
+        return {}, f"{path} is not valid JSON: {exc}"
+    if not isinstance(loaded, dict):
+        return {}, (f"{path} holds a {type(loaded).__name__}, not a JSON object of settings")
+    return loaded, None
+
+
+# WHERE THE FAILSAFE IS ANNOUNCED, at a path derived from the config directory rather than out
+# of the config file -- a setting inside a file that does not parse cannot be read to find out
+# that it does not parse. Same shape and the same `reason=` line as update_ffbox.sh's
+# update.applying flag, and ffstatus.sh reads it the same way: the daemon is the only thing that
+# knows it came up on defaults and is latched, and this file is how it says so to a status
+# command running in somebody else's terminal.
+FFBOX_CONFIG_FAILSAFE = os.path.join(FFBOX_CONFIG_DIR, "config.invalid")
+
+
+def config_error(path=None):
+    """Why the config file does not parse RIGHT NOW, or None. Reads disk on every call.
+
+    Deliberately not the snapshot in cfg: a file edited by hand at 2am is exactly the case this
+    exists for, and a daemon that only ever looked once would keep launching turns out of a
+    config nobody can read any more.
+    """
+    return _read_config_json(path or FFBOX_CONFIG)[1]
 
 
 def _pool_section(ffbox_raw, name):
@@ -957,7 +994,7 @@ def load_config():
     A missing config file is not an error — `ffwatch init` seeds one, and the offline suite
     runs with nothing installed at all.
     """
-    ffbox_raw = _read_config_json(FFBOX_CONFIG)
+    ffbox_raw, config_read_error = _read_config_json(FFBOX_CONFIG)
     # Keys may sit at the top level of the ffbox file or under "ffwatch". Both spellings are
     # accepted so a hand edit does not have to guess which one this file wants. Anything that
     # is not a setting we know is ignored.
@@ -1006,6 +1043,12 @@ def load_config():
     # as one. Deliberately falsey for an empty file too: a file with nothing in it has said
     # nothing about which channels this box watches.
     cfg["_config_read"] = bool(ffbox_raw)
+    # AND WHY IT SAID NOTHING, when the reason was that it could not be read. None for a file
+    # that parsed and for one that is simply not there; a sentence for a file that exists and
+    # is broken. Everything below still runs -- the defaults are what this process comes up on
+    # -- but Watcher.config_failsafe() latches on this and launches nothing while it is set,
+    # because "the defaults" is not what this box was configured for.
+    cfg["_config_error"] = config_read_error
     for env_name, (key, caster) in ENV_OVERRIDES.items():
         val = os.environ.get(env_name)
         if val:
@@ -1177,7 +1220,7 @@ def discord_channels(cfg):
     Disk wins on a key both have, because disk is the newer of the two by construction.
     """
     merged = dict((cfg.get("_discord") or {}).get("channels") or {})
-    section = _read_config_json(FFBOX_CONFIG).get(DISCORD_SECTION)
+    section = _read_config_json(FFBOX_CONFIG)[0].get(DISCORD_SECTION)
     on_disk = section.get("channels") if isinstance(section, dict) else None
     if isinstance(on_disk, dict):
         merged.update(on_disk)
@@ -1345,6 +1388,14 @@ def config_warnings(cfg):
     exactly like working software until somebody expects otherwise.
     """
     out = []
+    # FIRST, because it is the one that makes every line under it a lie. A config that did not
+    # parse means every value this process is about to report on is a built-in default, so the
+    # sentence about who is trusted and which channels are watched describes the defaults and
+    # not the machine.
+    if cfg.get("_config_error"):
+        out.append(
+            str(cfg["_config_error"]) + ": this process is running on BUILT-IN DEFAULTS and "
+            "will launch no containers until the file parses and ffwatch is restarted")
     if not operators(cfg):
         raw = ((cfg.get("_discord") or {}).get("trust") or {})
         present = isinstance(raw, dict) and raw.get("operators")
@@ -2692,6 +2743,12 @@ class Watcher:
         # does not try this class again. Set only where a staging attempt actually failed.
         self._pool_stage_after = {}
         self._drain_logged = False
+        # THE FAILSAFE'S LAST READING, so the flag file is written and removed on the change
+        # rather than on every pass, and the journal gets one line per transition instead of one
+        # every fifteen seconds. Starts as the sentinel and not as None: the first pass of a
+        # healthy daemon must still SYNC, because that is what clears a flag left behind by the
+        # process before it.
+        self._config_failsafe = _UNSET
         # Sweep complaints are per-alias-per-process. The sweep runs every catchup_secs, so an
         # alias that cannot be resolved would otherwise write the same line to the journal four
         # times an hour forever.
@@ -2945,6 +3002,75 @@ class Watcher:
             except OSError as exc:
                 log(f"WARNING: could not freeze {plugin_src}: {exc}; mounting the checkout copy")
         return frozen
+
+    # -- the config failsafe -----------------------------------------------------------------
+    #
+    # THE THIRD REASON NOTHING LAUNCHES, beside the kill switch and the drain, and the only one
+    # nobody chose. A config file that does not parse is read as {} everywhere it is read, so
+    # every clock, ceiling, network mode, pool size and watched channel silently becomes a
+    # built-in default -- and a box that keeps launching turns under those is a box quietly
+    # doing something other than what it was configured for. Refusing to launch is the failsafe;
+    # ingest, sending, harvesting and `--finish` all keep working, because none of them creates a
+    # container and a run already in flight must still be able to land.
+
+    def config_failsafe(self):
+        """Why this box is launching nothing because of its config file, or None.
+
+        TWO WAYS IN, AND THEY CLEAR DIFFERENTLY.
+
+        BROKEN NOW. The file is re-read from disk on every call, so a config edited badly under
+        a running daemon stops launches within a pass. It lifts itself the moment the file
+        parses again: this process is still holding the good config it started on.
+
+        BROKEN AT STARTUP. load_config left the reason in cfg, and this process is running on
+        DEFAULTS -- there is no reload path, so fixing the file does not fix this process. That
+        latches until somebody restarts ffwatch, and the reason says so, because a box that
+        resumed launching here would resume on the defaults rather than on the config that was
+        just repaired. That is the failure this whole thing exists to prevent.
+        """
+        loaded = self.cfg.get("_config_error")
+        live = config_error()
+        if loaded:
+            reason = f"{loaded} when ffwatch started"
+            if live:
+                reason += "; it still does not"
+            else:
+                reason += "; it parses again now"
+            reason += (" — this process is running on built-in defaults and launches nothing "
+                       "until ffwatch is restarted")
+        elif live:
+            reason = f"{live} — launching nothing until it does"
+        else:
+            reason = None
+        self._sync_failsafe_flag(reason)
+        return reason
+
+    def _sync_failsafe_flag(self, reason):
+        """Say it on disk, for the status commands that are not this process.
+
+        ffstatus.sh parses the config file itself and needs nothing from us to see a broken one
+        — but the LATCH is ours alone: after a repair the file parses for everybody while this
+        daemon is still refusing, and a status page that said "running" there would be wrong in
+        the direction that costs an operator an hour. So the flag is written, and cleared when
+        the failsafe lifts.
+
+        A FAILED WRITE IS NOT FATAL. It costs the status pages a sentence; it does not change
+        what launches, because config_failsafe()'s return value is what the schedulers read.
+        """
+        if reason == self._config_failsafe:
+            return
+        self._config_failsafe = reason
+        try:
+            if reason:
+                os.makedirs(os.path.dirname(FFBOX_CONFIG_FAILSAFE), exist_ok=True)
+                with open(FFBOX_CONFIG_FAILSAFE, "w", encoding="utf-8") as fh:
+                    fh.write(f"reason={reason}\n")
+                log(f"CONFIG FAILSAFE: {reason}")
+            elif os.path.exists(FFBOX_CONFIG_FAILSAFE):
+                os.remove(FFBOX_CONFIG_FAILSAFE)
+                log("the config file parses; the failsafe is lifted and launching resumes")
+        except OSError as exc:
+            log(f"WARNING: could not update {FFBOX_CONFIG_FAILSAFE}: {exc}")
 
     # -- kill switch / rate limits ---------------------------------------------------------
 
@@ -5122,7 +5248,10 @@ class Watcher:
         # is a stat per spare and hands the actual stop to a thread.
         self.pool_expire()
         self.pool_reap()
-        if self.killed() or self.draining():
+        # THE EXPIRY AND THE REAP RUN FIRST EVEN IN THE FAILSAFE, and that is deliberate: a
+        # spare staged before the config broke still has a clock, and letting it run out is the
+        # box shedding containers rather than accumulating them. What stops is the topping up.
+        if self.config_failsafe() or self.killed() or self.draining():
             return []
         staged = []
         containers = self.pool_containers()
@@ -5407,6 +5536,12 @@ class Watcher:
 
     def schedule(self):
         """Start what may start. Never blocks; launches run on their own threads."""
+        # BEFORE THE SWITCHES, because it is the one that says the switches themselves cannot be
+        # trusted: kill_switch and drain_switch are paths out of the config file, and a config
+        # that did not parse gave us the built-in ones. No per-pass line here — the transition is
+        # logged where the flag is written, and this is checked every pass forever.
+        if self.config_failsafe():
+            return []
         if self.killed():
             if not self._kill_switch_logged:
                 log(f"kill switch present ({self.cfg['kill_switch']}) — not launching anything")
