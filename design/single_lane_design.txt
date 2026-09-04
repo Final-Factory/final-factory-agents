@@ -2,6 +2,9 @@ Single-lane ffbox design
 ========================
 
 Revision 1, 2026-08-25.
+Revision 4, 2026-09-04: section 9's first detail is out of date. Pushing is now gated per base
+branch by the config's `branches` table; the section is annotated rather than rewritten, since
+what it records is the reasoning that led there.
 Revision 3, 2026-08-25: IMPLEMENTED, except for one item that is not a code change. Sections 2,
 3, 4, 5, 6, 7, 8 and 10 are shipped, along with the harvest half of section 9. The tests in
 section 12 were rewritten alongside, and the plugin and documentation work in section 14 is
@@ -309,11 +312,20 @@ diff.
 
 Two details decide how bad that is.
 
-THE PUSH IS UNCONDITIONAL. In publish(), push_bundle() runs before verification_gate() and
-before the `confident` check. That ordering is deliberate: work is always published so it
-cannot be lost with the clone, and only the proposal to merge is withheld. So gating publication
-on the tests is not what happens today, and it cannot fully be, because the branch is the
-trigger and the branch always goes up.
+THE PUSH IS UNCONDITIONAL. In publish(), the push runs before verification_gate() and before
+the `confident` check. That ordering is deliberate: work is always published so it cannot be
+lost with the clone, and only the proposal to merge is withheld. So gating publication on the
+tests is not what happens today, and it cannot fully be, because the branch is the trigger and
+the branch always goes up.
+
+  No longer unconditional as of 2026-09-04. The `branches` table in the config decides, per
+  base branch, whether the harness may push work for it at all: `none` pushes nothing, and
+  `operators` pushes only for a turn whose author is in trust.operators or who typed the
+  prompt on the box. It sits between the bundle fetch and the push, which is why publish()
+  now stages into refs/ffbox/ first. This box seeds master `none` and develop `operators`, so
+  the paragraph below about what the owner accepts no longer describes it: a stranger's forum
+  post produces no branch here, and the fixes named in this section are still the ones that
+  matter for a box that widens a base back to `all`.
 
 TESTS PASSING DOES NOT HELP. GitHub runs the workflow definition as it exists on the pushed
 branch, not the one on develop. An agent does not need to write game code that fails. It edits

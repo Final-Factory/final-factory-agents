@@ -137,7 +137,7 @@ authenticated remote in an ffagent clone. This is what makes "nothing merges" tr
 that reads strangers' text — and it is the item on this list that a `container_token` removes, for
 whichever class sets one. The other five stand whatever the class.
 
-**The host builds the refspec.** `push_bundle()` in `ffwatch.py` pushes
+**The host builds the refspec.** `push_staged()` in `ffwatch.py` pushes
 `refs/ffbox/<branch>:refs/heads/<branch>`, where `<branch>` is `branch_prefix + run_id`, chosen
 by the host before the container starts and validated by `ffbox` against `[A-Za-z0-9._/-]` with
 no leading `-`, no `:` and no `..`. The container cannot name `master` or `develop` because it
@@ -530,8 +530,8 @@ is held by the token's scope and by branch protection on GitHub, and by nothing 
 - The deny list does not hold it. `Bash(git push*)` is a tripwire that `sh -c 'git push'` walks
   straight through, and it has been measured doing so. This was true before; it mattered less when
   there was no credential for it to reach.
-- The host's refspec ownership does not hold it. That governs what `push_bundle` pushes, and an
-  agent with a credential is not going through `push_bundle`.
+- The host's refspec ownership does not hold it. That governs what `push_staged` pushes, and an
+  agent with a credential is not going through `push_staged`.
 - `GH_PR_TOKEN`'s missing contents:write does not hold it. That caps the pull-request opener on the
   host, which is a different process with a different token.
 
@@ -544,7 +544,7 @@ So the container token is the whole of the boundary, and it should be minted lik
 | Everything else | No access | Including Pull requests: the host opens those, and the container has no business doing it. |
 
 Contents **read** rather than write is the recommendation, and it is not a token half-configured.
-A run's work reaches origin through the harvest and `push_bundle` either way — that path is
+A run's work reaches origin through the harvest and `push_staged` either way — that path is
 unchanged and is still how anything gets published — so contents:read costs the container nothing
 it was doing and removes direct-push from the table entirely. Widen it to write only if you decide
 agent runs may push mid-turn, and put branch protection on `master` and `develop` first.

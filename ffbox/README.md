@@ -58,10 +58,10 @@ Everything ffbox owns on a machine lives in one directory:
 ```
 ~/.config/ffbox/secrets.env        tokens, the Unity account
 ~/.config/ffbox/config.json        EVERY setting this box has, in five parts: the pipeline at the
-                                   top level (watch, rate_limits, web_host/web_port, and
-                                   max_concurrent_runs, the ceiling on containers that BOTH lanes
-                                   count against); "container" for what is true of a container
-                                   whichever lane started it (workspace_size, memory,
+                                   top level (watch, branches, rate_limits, web_host/web_port,
+                                   and max_concurrent_runs, the ceiling on containers that BOTH
+                                   lanes count against); "container" for what is true of a
+                                   container whichever lane started it (workspace_size, memory,
                                    pids_limit); "pools", one block per AGENT CLASS ("ffagent"
                                    and "ffdev") for what governs a run of that kind (base_ref,
                                    the four clocks, pool, network) — independent of each other,
@@ -1399,6 +1399,42 @@ and the agent cannot touch:
   what otherwise refreshes the mirror is the CI runners' own fetch on no schedule this daemon
   controls. If the branch cannot be put there, the turn fails rather than starting somewhere
   else; see the gates above.
+- **What may be pushed at all** (2026-09-03). `branches` in the config is a table of rules keyed
+  on the base branch a run's work descends from, each carrying one field: `permissions` is `all`,
+  `operators` or `none`. `all` is what every base did before this existed. `operators` pushes only
+  for a turn whose trust tier is `operator` — an account in `discord.trust.operators`, or a prompt
+  typed on this box — so a player's turn in a forum is refused. `none` pushes nothing for anybody.
+
+  **It is the one gate that withholds the branch.** Everything else here publishes the work and
+  withholds only the proposal, so nothing is lost with the ZFS clone; a base closed in this table
+  leaves nothing on origin, the run records no `bundle_path`, and the reconcile sweep therefore
+  never comes back to it — the work is discarded in the sense that nothing will ever act on it
+  again. Nothing here DELETES anything: the bundle stays in the run directory like every other
+  refusal's, and a human who wants to rescue one can still fetch it by hand. The gate runs after
+  the bundle is fetched into `refs/ffbox/` (which is what `pr_base()` needs to answer at all) and
+  before the push. A refusal deletes that staged ref too, unless the conversation had already published the
+  branch on an earlier turn — that ref is what `mirror_take()` recovers the branch from, and
+  tidying it away would leave a later turn unable to start at all.
+
+  **The agent is told before it works, not after.** The clone starts at `base_ref` (`master`) and
+  `publish_bases` lists master first and calls it the default, so on a box that closes master the
+  likeliest thing an agent can do is write the entire change on a base every commit is refused
+  from. So `job["bases"]["publishable"]` carries the answer for THIS turn — the host resolves the
+  table against the turn's trust tier, because the tier is a host fact and a second copy of the
+  rule in the container is a copy that can disagree with the one that is enforced — and
+  `preamble_bases()` marks each closed base in the list, names the one the clone is standing on
+  when that is closed, and points the "if it is unclear" fallback at an open base instead of at
+  the first one listed. When nothing is open the agent is told that plainly, so its summary does
+  not promise a review that cannot happen. A continuation is told the same fact without the
+  instruction: its base was settled by the turn that created the branch and switching now is the
+  one move that costs a Unity reimport and still publishes nothing.
+
+  `ffwatch`'s own default is an EMPTY table — a box that has not opted in restricts nothing, and a
+  container whose job carries no `publishable` key (an older host) treats every base as open,
+  which is what that host will really do. The policy is written in `config.json`, which is where
+  an operator can read it, and stage 5 seeds `master: none` / `develop: operators`. `ffwatch` logs
+  it at startup, because a rule whose entire visible effect is that work disappears has to be said
+  somewhere. See `ffbox/config.md`.
 - **The pull request.** Opened through the stdlib GitHub client, targeting **the branch the work
   is based on** — `master` for a fix to the build players are running, `develop` for everything
   else. The agent chooses by choosing what it branches from; ffbox reads that back out of the
@@ -1444,10 +1480,12 @@ and the agent cannot touch:
   Merged is not closed: commits pushed on top of a merged pull request are a new proposal and
   get one of their own.
 
-Confidence gates the pull request, not the branch: the work is always published so it cannot be
-lost with the ZFS clone, and only the proposal to merge is withheld. So does the base: a branch
-whose base the harness cannot establish is pushed and then left alone, because a pull request
-into a guessed branch is a proposal to ship unreleased work to players. No PR opens without
+Confidence gates the pull request, not the branch: the work is published so it cannot be lost
+with the ZFS clone, and only the proposal to merge is withheld. So does the base: a branch whose
+base the harness cannot establish is pushed and then left alone, because a pull request into a
+guessed branch is a proposal to ship unreleased work to players. The `branches` table above is
+the one exception to all of that, and the earlier question — whether this work may reach origin
+at all. No PR opens without
 `compiled=true` and zero test failures, whatever the agent claims. Zero changed files means no
 branch and no PR — and no test run either, since the container skips the suite when the run
 changed nothing, which is what makes verification affordable on a typed question. A triage verdict of `AUTOFIX` enqueues a separate fix turn, deliberately
@@ -1909,7 +1947,9 @@ that is the whole mechanism — nothing else has to be told. At harvest ffbox ta
 specific base the work descends from: a branch off develop has master behind it as well, and
 develop is the descendant of the two, so develop wins; a branch off master does not have develop
 behind it at all. Work descending from neither is refused rather than published against a base
-nobody can name. The local mirror carries every branch and its LFS objects, and the run fetches
+nobody can name. What happens to the work once the base is known is the `branches` table's — a
+base whose `permissions` are `none` is never pushed, and one set to `operators` is pushed only
+for an operator's turn. The local mirror carries every branch and its LFS objects, and the run fetches
 it before the container starts, because the container has no network and can only check out what
 the workspace already holds.
 
