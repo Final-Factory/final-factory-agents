@@ -28,8 +28,9 @@ CLAUDE.md still listed them as "active".)
    - **Living docs** (must be accurate as current guidance — audit these): `docs/*.md`,
      `Documentation/*.md`, root `CLAUDE.md` / `README.md`, any component `README.md`, the
      **header comments of the root `run_*.sh` harness scripts** (they are runbook docs — the
-     "expect the counter to print 0" class of claim lives there), and **Claude memory**
-     (`MEMORY.md` + the per-fact memory files) — a stale memory misleads every future session.
+     "expect the counter to print 0" class of claim lives there), and shared **project memory**
+     (the `project-memory` skill index plus its per-fact files) — stale memory misleads every
+     future session.
    - **Generated-shape references** (a doc whose whole job is to mirror a structure in code, so
      it is stale the moment that structure moves — check it key by key against the code, not by
      reading it for plausibility): `ffbox/config.md` against the seeded template in
@@ -58,10 +59,16 @@ CLAUDE.md still listed them as "active".)
      fix (living doc), annotate (historical), or leave (other lane's still-true expectation —
      e.g. a control-run's "zero verdicts" PASS criterion is not the same claim).
 
-3. **Fan out READ-ONLY auditors** (parallel `Agent` subagents; use a `Workflow` only if the user has
-   opted into multi-agent orchestration). Split the doc set into coherent groups (~8–13 docs each).
+3. **Fan out READ-ONLY auditors.** Split the doc set into coherent groups (~8–13 docs each).
    Give every auditor: (a) the ground-truth list from step 1 verbatim, (b) the explicit
    out-of-scope residuals ("do NOT flag these"), (c) this rubric. Auditors REPORT ONLY, never edit.
+
+   - **Claude Code:** use the repo's normal read-only review workflow or direct read-only agents;
+     keep the declared Claude role models.
+   - **Codex:** spawn at most three direct `reviewer` children on Terra at high effort, with
+     distinct angles such as factual status, paths/APIs, and indexes/cross-references. Never invoke
+     the `claude` CLI or pretend the Claude workflow ran. The parent re-opens every cited source,
+     adjudicates the findings, and performs all edits.
 
    **Report only concrete factual staleness:**
    - Status claims now wrong — "open/in-progress/TODO/planned/not yet/proposed/unfixed" for something
@@ -93,8 +100,8 @@ CLAUDE.md still listed them as "active".)
 
 6. **Commit (and push if the user asked) in coherent chunks.** Group by doc area with clear messages
    (`docs: correct stale <area> — <what>`). Per repo policy, push only when the user OKs; on a shared
-   branch `git fetch` + rebase before every push. Update Claude memory if you learned a durable fact
-   about where docs drift or a corrected premise.
+   branch `git fetch` + rebase before every push. Update the shared `project-memory` skill through
+   `publish-skills` if you learned a durable fact about where docs drift or a corrected premise.
 
 7. **Report a tight disposition.** Summarize: what was stale and fixed, what was verified-current,
    what was deliberately left (dated snapshots, out-of-scope). Lead with the highest-impact
@@ -105,7 +112,7 @@ CLAUDE.md still listed them as "active".)
   the code wins — chase the code.
 - Feature "status" is a git fact, not a prose fact: done-locally ≠ pushed, and stale "unpushed" notes
   mislead in the other direction once the branch advances.
-- Scale the fan-out to the doc count. A handful of docs: audit inline. Dozens: parallel subagents.
-  Reserve a `Workflow` for when the user explicitly opts into orchestration.
+- Scale the fan-out to the doc count. A handful of docs: audit inline. Dozens: parallel read-only
+  auditors, subject to the runtime limits above.
 - Bias toward leaving historical/research docs as dated records (annotate, don't rewrite); bias
   toward aggressively fixing anything that presents itself as current guidance.

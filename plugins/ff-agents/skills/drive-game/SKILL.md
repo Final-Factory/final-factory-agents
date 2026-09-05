@@ -1,9 +1,9 @@
 ---
 name: drive-game
-description: Drive the running Final Factory game in the Unity editor via the MCP bridge — enter play mode, inject keyboard input (press or hold keys, open the in-game menu), and load saves. Use when asked to run the game, interact with it, press/hold keys, open the menu, or otherwise control the live game from Claude. Also the canonical screenshot recipe (both capture channels, Free Aspect, the GameView-focus trap) that the playtest/massdriver skills and the UI + playtest-harness docs all point at. Proven gameplay recipes (menus, saves, crafting, placement, research) live in recipes.md next to this file.
+description: Drive the running Final Factory game in the Unity editor via the MCP bridge — enter play mode, inject keyboard input (press or hold keys, open the in-game menu), and load saves. Use when asked to run the game, interact with it, press/hold keys, open the menu, or otherwise control the live game from Claude Code or Codex. Also the canonical screenshot recipe (both capture channels, Free Aspect, the GameView-focus trap) that the playtest/massdriver skills and the UI + playtest-harness docs all point at. Proven gameplay recipes (menus, saves, crafting, placement, research) live in recipes.md next to this file.
 ---
 
-# Driving the Final Factory game from Claude
+# Driving the Final Factory game from an agent runtime
 
 ## ⛔ MANDATORY preflight — run BOTH checks, every time
 
@@ -246,7 +246,7 @@ UnityEditor.EditorApplication.Step(); UnityEditor.EditorApplication.Step(); // c
   is what fixes that.
 - ⚠️ **NEVER `gv.Focus()` while a blueprint is live in hand** — the OS focus click can commit the
   blueprint at whatever world position happens to be hovered. Use Channel A instead.
-- This is an in-editor `EditorWindow.Focus()`, which Claude issues itself. **Nothing here requires
+- This is an in-editor `EditorWindow.Focus()`, which the agent issues itself. **Nothing here requires
   the user to bring the Unity app to the foreground**, and it does not un-occlude the editor —
   the player loop still only advances on `Step()` (see Check 2 above).
 

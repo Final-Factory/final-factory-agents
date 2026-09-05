@@ -7,11 +7,11 @@ description: Add, edit, or fix a Claude skill / subagent role, or record a durab
 
 Skills and subagent roles are NOT in the game repo. They live in the
 **final-factory-agents** marketplace repo (`https://github.com/Final-Factory/final-factory-agents`)
-and are installed as Claude Code plugins at user scope. Editing anything under a game-repo
+and are installed as Claude Code and Codex plugins at user scope. Editing anything under a game-repo
 `.claude/` directory does nothing — those copies were removed on purpose.
 
-Live sessions read from Claude Code's own clone plus a per-version cache, **not** from any
-working checkout. So an edit only reaches anybody after a version bump + push + update.
+Live sessions read from each runtime's managed marketplace clone and per-version cache, **not**
+from any working checkout. So an edit only reaches anybody after a version bump + push + update.
 
 ## 1. Locate the working checkout — STOP if it cannot be verified
 
@@ -99,10 +99,24 @@ leaving the manifests half-updated.
 ## 4. Validate, commit, push
 
 ```sh
-sh bumpVersion.sh --check       # versions agree across all three files
-claude plugin validate .        # manifests parse and resolve
-git add -A && git commit -m "<what changed>" && git push
+sh bumpVersion.sh --check       # mandatory: versions agree across all three files
+jq empty .claude-plugin/marketplace.json .agents/plugins/marketplace.json \
+  plugins/*/.claude-plugin/plugin.json plugins/*/.codex-plugin/plugin.json
 ```
+
+The version check and JSON parse are mandatory on every host. If `jq` is unavailable, use another
+installed JSON parser and report the exact command. Then run the validators provided by the
+installed runtimes:
+
+- If Claude Code is installed, run `claude plugin validate .`.
+- If Codex is installed, inspect `codex plugin --help`. Run its plugin validation command when
+  that build exposes one. Do not invent a command from a different Codex version.
+- Codex 0.153.4 has no standalone plugin validator. For it, the mandatory JSON/version checks plus
+  the post-push registration check in step 5 are the Codex validation path. Do not describe the
+  plugin as unvalidated merely because the CLI has no separate `validate` verb.
+
+After those checks pass, stage only the intended files, commit, and push. The driver owns the
+actual commit and push.
 
 The manifests are UTF-8 with literal em-dashes. `bumpVersion.sh` uses sed, which rewrites only
 the matched bytes; never reimplement a version edit by parsing and re-serializing the JSON,
@@ -115,6 +129,9 @@ sh registerAgents.sh            # in the marketplace checkout: pulls + installs 
 ```
 
 It registers/updates both Claude Code and Codex — whichever CLIs are on the machine.
+On a Codex-only host, run `sh registerAgents.sh --codex`, then verify with `codex plugin list` that
+the expected plugin and version are registered. A successful script exit without the list check
+is not the final registration verdict.
 
 Then tell the user plainly: **open Claude Code sessions must be restarted** to pick up the
 change — plugins are discovered only at session start, so the edit is not live in the current
