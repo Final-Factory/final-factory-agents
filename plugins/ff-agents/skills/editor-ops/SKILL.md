@@ -1,12 +1,36 @@
 ---
 name: editor-ops
-description: Final Factory Unity editor operations via the MCP bridge — pinning the right editor instance, compile verification after code changes (the stale-assembly and .meta false-green traps), running the EditMode test suites, editor readiness/recovery when the bridge is down or the editor hangs, the Unity CLI fallback channel, long-background-run monitoring, and editor memory capture. Use BEFORE any task that needs the live editor - running tests, verifying a compile, entering play mode, recovering a stuck editor or bridge, or monitoring a long build/audit run.
+description: Final Factory Unity editor operations via the MCP bridge — pinning the right editor instance, compile verification after code changes (the stale-assembly and .meta false-green traps), running the EditMode test suites, editor readiness/recovery when the bridge is down or the editor hangs, the Unity CLI recovery channel, long-background-run monitoring, and editor memory capture. Use BEFORE any task that needs the live editor - running tests, verifying a compile, entering play mode, recovering a stuck editor or bridge, or monitoring a long build/audit run.
 ---
 
 # Editor operations (MCP bridge, verification, recovery)
 
 This is the full operational detail behind the game repo CLAUDE.md's Build & Test kernel
 (moved here by feature 061 so it loads on demand). The rules below are binding, not advisory.
+
+## Runtime translation
+
+The workflows in this shared skill apply to both Claude Code and Codex. Use the native tools
+that the current runtime exposes; do not invoke one agent runtime's CLI from the other.
+
+- **Claude Code roles keep their declared Claude models.** In particular, `game-driver` and the
+  other plugin roles remain Claude roles; do not rewrite them to use Codex models.
+- **Codex routing:** the main driver is Astra; designed implementation goes to Sol at medium
+  effort; focused lookups go to scout on Luna at low effort; broad exploration goes to Explore
+  on Terra at low effort; mechanical edits go to mech-executor on Terra at medium effort; review
+  angles go to reviewer on Terra at high effort. These are runtime adapters, not changes to the
+  Claude role definitions. For the live topology and worker CLI recipe, read
+  [`references/codex-fleet.md`](references/codex-fleet.md).
+- **Unity MCP works in both runtimes.** Inspect the current tool and resource inventory for the
+  Unity MCP server, read `mcpforunity://instances`, match the instance by its absolute project
+  path, and pin it before any editor action. A different tool prefix or an initially hidden tool
+  does not mean Codex lacks Unity MCP; discover the available tools before declaring the bridge
+  unavailable.
+
+The standalone `unity` CLI is for a remote editor, targeted recovery, or a runtime where the
+Unity MCP tools truly are unavailable after discovery. State which of those reasons applies.
+When MCP returns, re-pin the matching project and verify any CLI result through MCP before using
+it as the final compile, test, or play-mode verdict.
 
 ## The MCP bridge is the primary editor-control channel
 
@@ -284,17 +308,17 @@ default — symlink/copy it once per machine, e.g.
 `ln -s "$(pwd)/scripts/unity-cli.sh" ~/.local/bin/unity && chmod +x ~/.local/bin/unity`,
 then invoke it as `unity` like the Windows CLI.
 
-It is genuinely useful beyond the down-bridge case: `unity command --project-path <path>
-recompile` + `recompile_status` returns structured `{status,failed,errors}` JSON, a cleaner
-compile-verification signal than grepping `Editor.log`; `eval_file file=<path.cs>` runs
-arbitrary C# on any project path directly, handy for probing two paired editors without
-swapping MCP's `set_active_instance`. When the MCP bridge is down this is also the sanctioned
-*diagnostic and recovery* channel — it does NOT replace MCP as the authoritative normal-work
-channel; it lets you answer "is the editor alive / compiling / in play mode?" without the
-bridge: `unity status`, `unity command editor_status`, `unity command eval 'return <expr>;'`
+Use this channel for a remote editor, targeted bridge recovery, or when the current runtime has
+no Unity MCP tools after discovery. `unity command --project-path <path> recompile` plus
+`recompile_status` returns structured `{status,failed,errors}` JSON, and `eval_file
+file=<path.cs>` runs C# against an explicitly selected project. It lets you answer "is the editor
+alive / compiling / in play mode?" while MCP is unavailable: `unity status`, `unity command
+editor_status`, `unity command eval 'return <expr>;'`
 (full statement with `return`+`;`; on Windows PS 5.1 eats embedded double quotes — keep code
 quote-free or use a file via `eval_file`; the Mac shim has no such quoting trap since it isn't
-PowerShell, but `eval_file` is still cleaner for anything nontrivial).
+PowerShell, but `eval_file` is still cleaner for anything nontrivial). Record why this fallback
+was needed. Once MCP is available again, re-pin the path-matching instance and confirm the final
+state there.
 
 ⚠️ **Always target with `--project-path <abs path>`** — it is the ONLY working selector
 (routes correctly with multiple servers, hard-fails if that project isn't connected). On
@@ -470,8 +494,9 @@ builds. Enable Burst and let its queue drain before the run — see "Before ANY 
 
 **Why not file-based checks**: they're slow and error-prone in a lot of edge cases (e.g. a
 compile failure in the editor may never update the watched file, hanging the watcher forever).
-Recover MCP first; if targeted recovery genuinely fails, report that compile/test proof
-remains unavailable.
+Recover MCP first. If the runtime truly has no Unity MCP tools, use the explicitly reported CLI
+fallback above and verify the result through MCP when a later session exposes it. If neither
+channel can produce evidence, report exactly which compile/test proof remains unavailable.
 
 **Deterministic hooks back this ritual** (feature 061; the game repo's `.claude/settings.json`
 + `scripts/hooks/`, state under `Library/ClaudeHookState/`). What each signal means and how to
@@ -501,15 +526,18 @@ same stale-assembly trap (see the `determinism-audit` skill).
 
 ## Long background runs (player builds, paired audits, multi-minute test jobs)
 
-Claude monitors and reports — the user must never have to ask "what's the verdict?". The
-moment such a run starts, arm a Monitor on its log that fires on phase transitions AND every
-terminal state (verdict lines, `error`/`Exception`, build failure, script exit — silence must
-not be able to mean "crashed"), then post progress/verdicts to the user as the events land,
-unprompted. A background task's completion notification alone is not enough for runs with
-long silent phases (a 20-minute shader compile looks identical to a hang without a phase
-monitor). Transitions alone are ALSO not enough — a single phase can take 20+ minutes, so the
-monitor must emit a periodic progress heartbeat (~3 min: current phase + the underlying log's
-last line). The user should see steady progress, never a gap long enough to make them ask.
+Keep ownership until every run reaches a terminal state; the user must never have to ask for the
+verdict. In Claude Code, arm a Monitor that reports phase changes, periodic progress, and every
+terminal state. In Codex, use its native wait tool when the job exposes one; otherwise poll in
+the active turn with bounded waits of at most 60 seconds. After each wait, inspect both the phase
+and terminal signals (`verdict`, `error`/`Exception`, build failure, process exit), report useful
+progress, and wait again until completion or a concrete blocker. Do not end the turn merely
+because a background command is still running.
+
+A completion notification alone is insufficient for long silent phases. A single phase can take
+20 minutes, so provide a progress heartbeat about every three minutes with the current phase and
+the underlying log's last meaningful line. Silence must not be able to mean that the process
+crashed.
 
 ## Building
 

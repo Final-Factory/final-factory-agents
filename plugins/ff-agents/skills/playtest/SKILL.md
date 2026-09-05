@@ -207,11 +207,20 @@ the F7 power ratio + F4 pendingReason are the discriminators the harness gives y
 
 ## Delegating drive legs (cost control)
 
-Fully-specified pump-and-poll legs (fly here, mine until N, click through a craft chain,
-poll a wait to completion) go to the **game-driver** subagent (Sonnet) — the role ships in
-this plugin (`ff-agents`) — hand it the exact command list + termination condition + what JSON to
-bring back; keep goal choice and JUDGMENT in the orchestrating session. Spot-check its
-returns against `observe.state` — the journal doesn't lie.
+Fully specified pump-and-poll legs (fly here, mine until N, click through a craft chain, poll a
+wait to completion) can be delegated, while goal choice and judgment stay in the parent.
+
+- **Claude Code:** use the plugin's `game-driver` role on its declared Sonnet model. Give it the
+  exact command list, termination condition, and JSON to return.
+- **Codex:** there is no packaged `game-driver` role. Either execute the leg in the main driver or
+  spawn one native direct child on `gpt-5.6-terra` at `medium` effort, using a fresh bounded
+  brief with the complete game-driver instructions: exact
+  project and MCP pin, allowed commands, the 600-Step cap, terminal condition, evidence to return,
+  no judgment, no editor recovery outside `editor-ops`, and no grandchildren. Use native bounded
+  waits of at most 60 seconds and keep the child active until it returns a terminal result; never
+  end a child turn merely to wait for a background action.
+
+Check delegated results against `observe.state` and the journal before using them.
 
 ## Cleanup checklist (SC-006 — leave no trace)
 

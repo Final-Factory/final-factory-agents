@@ -5,9 +5,9 @@ description: Hand a hard problem to the deep-thinker agent (Fable, high effort) 
 
 # deep-think
 
-Delegate a hard problem to `deep-thinker` (Fable, high effort). The driver model (Opus 5) stays
-the main worker; this skill buys lateral thinking on the problems where that matters, without
-paying Fable rates for ordinary work.
+Delegate a hard problem to `deep-thinker` at high effort. The parent remains the main worker and
+owns the decision. This skill buys a separate line of reasoning where that matters without using
+the highest-cost role for ordinary work.
 
 **Invocation**: `/deep-think <problem>` (Claude Code) · `$deep-think <problem>` (Codex).
 `$ARGUMENTS` is the problem statement accompanying this invocation.
@@ -89,8 +89,9 @@ assumptions as facts. Re-read it before sending.
 
 - **Claude Code**: spawn the `deep-thinker` agent (`model: fable`, `effort: high`) — the role
   ships in this plugin (`ff-agents`); no repo-local setup is needed.
-- **Codex**: spawn the `deep-thinker` role (`.codex/agents/deep-thinker.toml`). Never invoke the
-  `claude` CLI. Record the runtime/model actually used; never claim Codex ran Fable.
+- **Codex**: spawn the repo-local `deep-thinker` adapter on Terra at high effort
+  (`.codex/agents/deep-thinker.toml`). Never invoke the `claude` CLI. Record the runtime/model
+  actually used; never claim Codex ran Fable.
 
 ## Brief template
 

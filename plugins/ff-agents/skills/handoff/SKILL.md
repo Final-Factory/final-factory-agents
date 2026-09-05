@@ -1,10 +1,14 @@
 ---
 name: handoff
+# Claude Code-only execution hint. Codex reads the shared skill body and ignores this field.
 model: claude-sonnet-5
 description: Prepare a clean handoff before the user clears context. Captures the current work state (what's done, what's next, blockers, key facts) into the durable session-handoff + memory + docs and commits it, so the next Claude Code or Codex session can resume with zero prior context. Invoke when the user says they're about to clear context, wants a handoff/checkpoint, or asks to "save context" / "write a handoff".
 ---
 
 # Handoff: prepare for a context clear
+
+The frontmatter model keeps Claude Code's handoff work on Sonnet 5. It does not select or imply a
+Codex model.
 
 The user is about to wipe the conversation. Everything not written to a **durable, committed**
 location is lost. Your job: distill the current state so a fresh agent session (no memory of this session)

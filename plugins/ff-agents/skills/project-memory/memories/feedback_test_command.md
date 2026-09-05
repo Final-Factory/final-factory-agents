@@ -15,7 +15,8 @@ test runs (it's superseded by `run_tests` and was masking MCP-bridge outages). T
 still holds in spirit: a test path that hangs/times out usually means the editor or bridge is
 wrong, not that the tooling needs replacing — surface it, don't paper over it.
 
-**How to apply:** Use `run_tests`/`get_test_job`. If the MCP bridge isn't up, STOP and tell the
-user (see [[feedback-mcp-bridge-down-stop]]) rather than falling back to the trigger. The
-file-trigger channel survives only inside the paired determinism-audit scripts; the clone
-recompile in those flows now goes through the bridge too (pin the clone instance, `refresh_unity`).
+**How to apply:** Use `run_tests`/`get_test_job`. If the MCP bridge is unavailable, report it and
+perform the targeted recovery in [[feedback-mcp-bridge-down-recover]] and `editor-ops` rather than
+falling back to the trigger. The file-trigger channel survives only inside the paired
+determinism-audit scripts; the clone recompile in those flows now goes through the bridge too
+(pin the clone instance, `refresh_unity`).

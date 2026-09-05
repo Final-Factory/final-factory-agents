@@ -27,3 +27,14 @@ Diagnose absence via: `mcp-logs-UnityMCP` folder under
 `AppData/Local/claude-cli-nodejs/Cache/<project>/` (missing = never launched), and the fresh
 `~/.unity-mcp/unity-mcp-port-*.json` (editor bridge is up). Related editor-readiness rule lives
 in CLAUDE.md's "Step 0 — FAIL FAST". See also [[playmode-needs-main-scene]].
+
+
+## Codex translation (2026-09-05)
+
+The incident above describes Claude configuration, not a prerequisite for Codex. Codex reads
+MCP registrations from its active user/project configuration. Inspect the current tool inventory
+and existing `mcp_servers` entries first; when absent, register the server with `codex mcp add`
+and the machine's actual uvx path. Never invoke `claude mcp add` to repair a Codex session.
+The local Codex 0.153.4 `mcp add --help` exposes stdio registration; the takeover session
+discovered `mcpforunity://instances` and pinned the expected M5 Assets path successfully.
+Follow `editor-ops` for pinning and targeted recovery; its fleet reference covers remote access.
