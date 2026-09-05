@@ -1,6 +1,6 @@
 ---
 name: deep-think
-description: Hand a hard problem to the deep-thinker agent (Codex: Astra, extra-high effort; Claude Code: Fable, high effort) — spec/plan authoring, adversarial review of a plan or diagnosis, or root-causing a bug that resisted a first pass. Builds the brief so the agent is grounded but NOT anchored by the driver's assumptions.
+description: Hand a hard problem to the deep-thinker agent (Astra extra-high in Codex; Fable high in Claude Code) — spec/plan authoring, adversarial review of a plan or diagnosis, or root-causing a bug that resisted a first pass. Builds the brief so the agent is grounded but NOT anchored by the driver's assumptions.
 ---
 
 # deep-think
