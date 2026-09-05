@@ -1,6 +1,6 @@
 {
   "name": "ff-agents",
-  "version": "1.8.30",
+  "version": "1.8.31",
   "description": "Core Final Factory development tooling — delegation subagent roles and the day-to-day workflow skills.",
   "author": {
     "name": "Final Factory"
