@@ -1,11 +1,11 @@
 ---
 name: deep-think
-description: Hand a hard problem to the deep-thinker agent (Fable, high effort) — spec/plan authoring, adversarial review of a plan or diagnosis, or root-causing a bug that resisted a first pass. Builds the brief so the agent is grounded but NOT anchored by the driver's assumptions.
+description: Hand a hard problem to the deep-thinker agent (Codex: Astra, extra-high effort; Claude Code: Fable, high effort) — spec/plan authoring, adversarial review of a plan or diagnosis, or root-causing a bug that resisted a first pass. Builds the brief so the agent is grounded but NOT anchored by the driver's assumptions.
 ---
 
 # deep-think
 
-Delegate a hard problem to `deep-thinker` at high effort. The parent remains the main worker and
+Delegate a hard problem to `deep-thinker` at the runtime-specific effort below. The parent remains the main worker and
 owns the decision. This skill buys a separate line of reasoning where that matters without using
 the highest-cost role for ordinary work.
 
@@ -89,15 +89,17 @@ assumptions as facts. Re-read it before sending.
 
 - **Claude Code**: spawn the `deep-thinker` agent (`model: fable`, `effort: high`) — the role
   ships in this plugin (`ff-agents`); no repo-local setup is needed.
-- **Codex**: spawn the repo-local `deep-thinker` adapter on Terra at high effort
+- **Codex**: spawn the repo-local `deep-thinker` adapter on `gpt-6-astra` at extra-high effort (`model_reasoning_effort: xhigh`)
   (`.codex/agents/deep-thinker.toml`). Never invoke the `claude` CLI. Record the runtime/model
-  actually used; never claim Codex ran Fable.
+  actually used; never claim Codex ran Fable. If the active session still exposes a stale role,
+  use a fresh bounded brief with explicit `gpt-6-astra` / `xhigh` and the full deep-thinker
+  policy until the role reloads; do not silently use the old model.
 
 ## Brief template
 
 ```
 You are investigating <one-sentence problem> in <repo path>, branch <branch>, HEAD <sha>.
-Think at high effort. MANDATE: <read-only | may write exactly these paths: ...>.
+Think at the configured effort (Codex: xhigh; Claude Code: high). MANDATE: <read-only | may write exactly these paths: ...>.
 
 ## The question
 <state it as a question>
