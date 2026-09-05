@@ -14,6 +14,7 @@ a native child is not a remote worker merely because its prompt names M3 or BEAS
 | Broad source exploration | gpt-5.6-terra / low | explore |
 | Fully specified mechanical edits | gpt-5.6-terra / medium | mech-executor |
 | Independent requested review angle | gpt-5.6-terra / high | reviewer |
+| Hard-problem specialist via deep-think | gpt-6-astra / xhigh | deep-thinker |
 
 Claude keeps its own role models. The game repo's `.codex/agents/*.toml` adapters carry Codex
 settings; a plugin reload does not prove an already-running task has reloaded role definitions.
