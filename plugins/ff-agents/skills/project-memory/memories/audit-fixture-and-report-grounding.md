@@ -37,7 +37,7 @@ A placed blueprint does not prove its power topology works. Inspect actual grid 
 nonzero power before using it as a regression fixture. The nine-structure distributor fixture
 uses Trash hubs to connect each solar panel and distributor; ordinary removal needs a spawned
 Construction Bot and enough time to complete the task. Require ordered functional observations
-in addition to full peer fingerprints. Sources: `scripts/audit/run_power_distribution_audit.sh`
+in addition to full peer fingerprints. Sources: `scripts/audit/run_power_distributor_audit.sh`
 and `specs/065-power-distributor-many-to-one/plan.md` (revision `c66abb571`).
 
 Event cleanup must match the cadence of its consumers and retire only events visible to that
