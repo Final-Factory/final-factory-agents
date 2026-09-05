@@ -49,7 +49,7 @@ worktrees and apply to ALL branches.
 - [No external edits to open Unity scenes](memories/no-external-edits-to-open-unity-scenes.md) — Write/Edit on an open .unity/.prefab raises a modal reload dialog that blocks the main thread and hangs the MCP bridge; edit via SerializedObject + SaveScene instead
 - [Unity keyword-remap shader crash](memories/unity-keyword-remap-shader-crash.md) — known Unity engine bug crashing import worker on ParticlesUnlit fallback keyword remap
 - [wsay voice notifications](memories/wsay-voice-notifications.md) — global hooks speak via wsay when Claude finishes (Stop) or needs input (Notification); don't disable
-- [Profiling ECS + fork pin bumps](memories/knn-profiling-and-fork-pin-gotchas.md) — ProfilerRecorder never samples system markers (use ProfilerDriver.enabled + GetRawFrameDataView); clone Packages/ can be a real dir: copy manifests + Client.Resolve() on the clone, verify PackageCache sha + fresh assembly mtime before trusting any run
+- [Profiling ECS + fork pin bumps](memories/knn-profiling-and-fork-pin-gotchas.md) — Unity 6000.3.19f1/game revision `7d696256c` can record exact main-thread system markers with a qualified `ProfilerRecorder` recipe; samples are inclusive diagnostics, not additive production budgets; preserve the `ProfilerDriver` fallback; clone Packages/ can be a real dir: copy manifests + Client.Resolve() on the clone, verify PackageCache sha + fresh assembly mtime before trusting any run
 
 ## ECS / Burst / baking
 
@@ -85,6 +85,7 @@ worktrees and apply to ALL branches.
 - [`cmd | tee log || true` clobbers PIPESTATUS](memories/shell-tee-pipestatus.md) — the exit code is always 0 regardless of `cmd`'s real result; use `set +e`/`set -e` around the pipe instead
 - [Guard tests follow the landed fix, not the proposed one](memories/guard-tests-follow-the-landed-fix-not-the-proposed-one.md) — a guard written alongside a proposed fix design encodes that design's invariant (055 R37: a writer-side guard would have failed the reader-side fix that actually landed at `7304103d6`); re-derive from what shipped, and treat a census guard's unreviewed count as the deliverable to adjudicate, not noise to silence
 - [EnterWorktree cuts from master, not develop](memories/enterworktree-cuts-from-master-not-develop.md) — the default `worktree.baseRef=fresh` branches from `origin/master`, but Final Factory integrates on `develop`, so a fresh worktree is missing every in-flight spec's files; first command in any new worktree is `git reset --hard origin/develop`, verified with `git log -1`
+- [Audit fixtures and report grounding](memories/audit-fixture-and-report-grounding.md) — source-count agreement never replaces the full fingerprint comparator; a join fixture must create construction tasks before asserting its witness; inspect baked prefab components before assigning a loader fault; normalize only extractor line endings and keep raw report bytes
 
 ## Gameplay diagnosis & live-test recipes
 
