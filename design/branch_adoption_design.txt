@@ -163,12 +163,18 @@ guarantee has to move from construction to a check.
 THE RULE. ffbox may CREATE a branch on origin only under `branch_prefix`. Outside the prefix
 it may only ADD COMMITS to a branch that is already there.
 
-Enforced in `push_bundle`, after the fetch it already does and before the push: when the name
-is not under `branch_prefix`, `refs/remotes/<push_remote>/<name>` must resolve, or the run
-refuses with `_no_branch` and says the branch is not on origin. Read from the remote-tracking
-ref and not from the database, because the conversation row records what was true at adoption,
-and a branch deleted since then is exactly the case this refuses: re-creating a foreign-named
-branch from a bundle is creation, whoever asked for it.
+Enforced in `push_bundle`, before the push: when the name is not under `branch_prefix`, the
+remote must already have it, or the run refuses with `_no_branch` and says so. Not from the
+database, because the conversation row records what was true at adoption, and a branch deleted
+since then is exactly the case this refuses: re-creating a foreign-named branch from a bundle
+is creation, whoever asked for it.
+
+And not from `refs/remotes/<push_remote>/<name>` either, which is where revision 2 put it. That
+ref outlives a branch deleted on the remote -- the fetch on this path has no `--prune`, and
+adding one would be this daemon quietly rewriting refs in a checkout it shares -- so the
+tracking ref would say yes for exactly the branch this is meant to refuse. One
+`ls-remote --heads` asks the question the rule is about. It also answers `run.branch_existed`,
+which is why push_bundle returns it.
 
 Since the push is not a force push, what this permits outside the prefix is the fast-forward
 of a branch somebody else published, and nothing else.

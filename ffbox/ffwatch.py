@@ -7044,7 +7044,10 @@ class Watcher:
                 f"branch and this daemon does not move those")
             return False
         remote = self.cfg["push_remote"]
-        fetched = self.git_here("fetch", "--quiet", remote, branch)
+        # AN EXPLICIT REFSPEC, so the remote-tracking ref is updated whatever this git's
+        # opportunistic-update rules are: the next two steps read it by name.
+        fetched = self.git_here("fetch", "--quiet", remote,
+                                f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}")
         if fetched.returncode != 0:
             log(f"WARNING: could not fetch {branch} from {remote}: "
                 f"{(fetched.stderr or '').strip()[:200]}")
@@ -9105,8 +9108,14 @@ class Watcher:
                 f"{(fetched.stderr or '').strip()[:200]}")
         # WAS THIS BRANCH ALREADY ON THE REMOTE. Two questions are answered by the one lookup:
         # what run.branch_existed records, and the prefix rule below.
-        existed = git("rev-parse", "--verify", "--quiet",
-                      f"refs/remotes/{remote}/{branch}^{{commit}}").returncode == 0
+        #
+        # ASKED OF THE REMOTE, not of a remote-tracking ref. The fetch above has no --prune, so
+        # refs/remotes/<remote>/<branch> outlives a branch DELETED on the remote — and "deleted
+        # since it was adopted" is exactly the case the prefix rule has to refuse. Pruning
+        # instead would be one daemon quietly rewriting refs in a checkout it shares. One
+        # ls-remote answers the question the rule is actually about.
+        listed = git("ls-remote", "--heads", remote, f"refs/heads/{branch}")
+        existed = listed.returncode == 0 and bool((listed.stdout or "").strip())
         # THE PREFIX RULE. ffbox may CREATE a branch on the remote only under branch_prefix;
         # outside it, it may only ADD COMMITS to a branch that is already there. Until adoption
         # existed nothing could reach here with an unprefixed name -- launch coerces the name it
@@ -9115,10 +9124,10 @@ class Watcher:
         # onto a branch somebody else pushed, and the difference between adding to that branch
         # and conjuring a new top-level name on the remote is exactly this test.
         #
-        # READ OFF THE REMOTE-TRACKING REF, not off conversation.branch_adopted_at: the row says
-        # the branch was there when it was adopted, and a branch deleted since then is precisely
-        # the case this refuses. If the fetch above failed, this reads a stale answer and can
-        # refuse a branch that does exist -- which is the safe direction, and the run says so.
+        # READ OFF THE REMOTE, not off conversation.branch_adopted_at: the row says the branch
+        # was there when it was adopted, and a branch deleted since then is precisely the case
+        # this refuses. If the remote could not be reached, this refuses a branch that does
+        # exist -- the safe direction, and the run says so.
         if not branch.startswith(self.cfg["branch_prefix"]) and not existed:
             return False, (f"{branch} is outside {self.cfg['branch_prefix']} and is not on "
                            f"{remote}; ffbox adds commits to a branch somebody else pushed but "
