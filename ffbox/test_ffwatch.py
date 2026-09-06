@@ -10715,6 +10715,41 @@ def test_the_scheduler_asks_about_the_ref_the_launch_will_use():
           case.rows("SELECT status FROM turn ORDER BY id DESC")[0]["status"])
 
 
+def test_an_adopted_branch_is_described_as_somebody_elses_work():
+    """The preamble tells the truth about whose commits are under the run.
+
+    Same mechanism as a continuation, opposite fact. On a branch this conversation built, the
+    commits are its own earlier turns' and the tree is its working state. On an adopted one they
+    are a person's, on origin, possibly under review — and an agent told they were its own
+    earlier work would treat somebody's considered branch as a draft it had left lying about.
+    """
+    print("adoption: what the container is told about the branch")
+    job = dict(JOB_SKELETON)
+    job["bases"] = {"checked_out": "loth/save-fix", "checked_out_base": "develop",
+                    "conversation_branch": "loth/save-fix", "branch_adopted": True,
+                    "choices": {"master": "the released build", "develop": "next version"}}
+    pre = preamble_for(job, "adoptedpre")
+    check("it says the conversation did not create this branch",
+          "DID NOT CREATE" in pre and "loth/save-fix" in pre, pre[:600])
+    check("and that the work on it is somebody else's",
+          "somebody else pushed" in pre, pre[:600])
+    check("it is told to read the branch before changing it",
+          "READ THE BRANCH BEFORE YOU CHANGE IT" in pre, pre[:600])
+    check("not to branch or switch", "DO NOT" in pre and "make a branch" in pre, pre[:600])
+    check("and not to rewrite what is already there",
+          "rebase, revert, amend" in pre, pre[:600])
+    check("the base-choosing instruction is still gone — that was settled by whoever made it",
+          "git checkout -b <name> origin/<base>" not in pre, pre[:600])
+
+    # THE ORDINARY CONTINUATION IS UNCHANGED. It is the same field that decides, so a bug in
+    # the flag would show up as a conversation being told a stranger made its own last turn.
+    job["bases"]["branch_adopted"] = False
+    plain = preamble_for(job, "plainpre")
+    check("a branch the conversation built is still described as its own work",
+          "ALREADY ON THIS CONVERSATION'S BRANCH" in plain and "DID NOT CREATE" not in plain,
+          plain[:400])
+
+
 def test_a_conversation_can_be_told_which_branch_it_owns():
     """Adoption: a thread works on a branch somebody else pushed, and keeps working on it.
 
@@ -12443,6 +12478,7 @@ def main():
         test_a_submission_cannot_name_a_branch_the_conversation_does_not_own,
         test_the_mirror_is_only_written_inside_the_pipelines_own_namespace,
         test_the_scheduler_asks_about_the_ref_the_launch_will_use,
+        test_an_adopted_branch_is_described_as_somebody_elses_work,
         test_a_conversation_can_be_told_which_branch_it_owns,
         test_only_an_operator_may_name_a_branch_from_discord,
         test_a_directive_only_message_adopts_and_asks_for_no_turn,

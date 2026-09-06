@@ -1551,6 +1551,68 @@ Unity editor and no git credential should not be carrying the instructions for u
 Mounts are creation-time, so an edit here reaches the pool as its staged spares age out.
 `ffbox/config.md` under `pools` has the shape and the fallback rules.
 
+### Adopting a branch somebody else pushed
+
+A conversation normally gets its branch by pushing one, and the harness mints the name: the
+first run to publish claims `ffbox/<something>-<run id>` and every later turn of that thread
+starts on it and publishes back onto it. That is wrong for one job people actually have —
+here is a branch from a laptop session or another agent's run, work on THAT.
+
+So a conversation can be told which branch it owns instead:
+
+```bash
+python3 ffbox/ffwatch.py adopt --conversation 51 --branch loth/save-fix
+```
+
+and, in a watched Discord channel, a line whose whole content is
+
+```
+!branch loth/save-fix
+```
+
+**Only an operator's `!branch` counts.** It is recognised from the author id Discord
+authenticated, never from anything the message says about who wrote it. In anybody else's
+message the line is ordinary text — not acted on, not refused, and not answered, because a
+reply saying "you may not do that" would tell a stranger that a command exists, that this box
+has operators and that they are not one. The host logs the attempt; the channel hears nothing.
+A message that is ONLY the directive gets no turn at all, and the operator is posted a line
+saying where the work will land, refusals included.
+
+**Before it owns one, and only then.** A conversation keeps its branch for life, so adoption is
+refused once the thread has published; it is also refused for a name git would not take, for
+`master`/`develop`/`main`, for a branch the remote does not have, and for one another open
+conversation is working on. Every refusal happens at the adopt rather than at the far end of a
+twenty-minute run.
+
+Three things behave differently on an adopted branch, and they are the whole of the feature
+beyond the column:
+
+- **The mirror copy comes from origin.** A container sees only the local mirror, and the usual
+  route into it copies `refs/ffbox/<branch>` out of the golden checkout — a ref that exists
+  only for a branch this box pushed. An adopted branch is synced from origin instead, on every
+  launch rather than only when the mirror lacks it, so an operator can push a commit of their
+  own between two turns and the next turn starts on top of it.
+- **The published range starts where the run did.** Harvest normally measures from
+  `origin/master` or `origin/develop`, which on somebody else's branch means the range carries
+  their commits: the identity check every agent range is held to would refuse the whole
+  publication for "commits claim an identity this run does not own", and the changed-file
+  ceiling would count their files against this run. `--range-from-start` moves the bottom of
+  the range and leaves the base NAME alone, so the pull request still targets the right branch.
+  The fence itself is unchanged — a commit the run made wearing a person's name is still
+  refused.
+- **The branch is added to, never created.** Everything ffbox publishes lives under `ffbox/`.
+  Outside that prefix it may only fast-forward a branch the remote already has, checked at the
+  push against the remote-tracking ref rather than against the database — a branch deleted
+  since it was adopted is exactly the case to refuse.
+
+An open pull request on the branch is reused rather than duplicated, which is the point of
+adopting one for review work. A pull request a human closed stays closed. And nothing else
+should push to the branch while a turn is in flight: the run's own push is not a force push, so
+a branch that moved underneath it is a non-fast-forward, and the turn loses its publication.
+
+The page says `adopted by <who>` beside the branch, and labels the file count as that turn's,
+because on an adopted branch it is no longer the branch's total.
+
 ### Idle agents: a container that is already warm
 
 A request used to wait about forty seconds before the model read a word of it. Measured on

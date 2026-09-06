@@ -9,7 +9,30 @@ current publish path: `ffwatch.py` (`ADDED_COLUMNS`/`init_schema`, `insert_messa
 
 Effort: **S** under an hour, **M** an afternoon, **L** a day or more.
 
-## Status: not started
+## Status: IMPLEMENTED, offline suites green, not yet verified on live traffic
+
+A through K are implemented across three commits. `test_ffwatch.py` and `test_ffweb.py` both
+pass. L is the part offline tests cannot reach — a real origin, a real mirror, a real
+container — and is open.
+
+**What changed from the design while building it**, all recorded in the design's revision 3:
+
+- **F belongs to Tier A as well.** The design filed the mirror sync under Tier B because the
+  fence is drawn around the prefix. The fence is not what fails first: `mirror_take` fills the
+  mirror from `refs/ffbox/<branch>` IN THE HOST CHECKOUT, and that ref exists only for a branch
+  this box pushed. An adopted `ffbox/` branch has no copy there either, so the sync keys on
+  ADOPTED rather than on the name, and Tier A needs it. Caught by the Tier A end-to-end test
+  failing at launch with BranchUnavailable.
+- **F1 fetches into the mirror rather than pushing out of the checkout**, which is the shape
+  `mirror_take` already has: the credential stays in the checkout and the mirror is never given
+  a network.
+- **E3 is dropped.** Re-checking the claimed container's branch in `launch` means another
+  `docker ps` to re-derive what `pool_claim_for` decided a line earlier. The rule is pinned by
+  test instead (E4).
+- **D3 changed push_bundle's return** to `(ok, error, existed)`. Two call sites, both updated.
+- **H5's local_id** is `adopt:<conv>:<message>`, not `adopt:<conv>`: the dedupe that matters is
+  `insert_message`'s rowcount check, which is what makes a sweep's re-read of the thread post
+  nothing, and a per-message id keeps two directives in one thread distinguishable in the queue.
 
 ## What already exists
 
@@ -79,9 +102,9 @@ reason.
 - **B3** On success: one UPDATE writing `branch`, `branch_adopted_at=now_iso()`,
   `branch_adopted_by=by`, guarded `WHERE id=? AND branch IS NULL` so two ingresses racing
   cannot both claim. A rowcount of 0 is a refusal, not a success.
-- **B4** After the write, call `mirror_sync_from_origin` (F) when the name is outside
-  `branch_prefix`, and report its failure as a refusal — with the row already written, so the
-  operator can retry the sync rather than re-adopt. Say which happened in the reason.
+- **B4** After the write, call `mirror_sync_from_origin` (F) for EVERY adopted name — see the
+  status block; the prefix is not the question. Report its failure in the reason with the row
+  already written, so the operator can retry the sync rather than re-adopt.
 - **B5** `PROTECTED_BRANCHES` in ffwatch: today the list lives in `ffbox`
   (`FFBOX_PROTECTED_BRANCHES`, defaulting to `develop master main`) and in
   `harvest-workspace.sh:56`. ffwatch needs the same names for B2. Read them from
@@ -135,9 +158,8 @@ Design §10.
   a conversation's `base_sha` is a pinned sha, `looks_like_sha` is true, and the pre-check has
   been answering yes for any warm container of the class while `launch` cold-started on the
   conversation's branch. On a full box that is a run started past a ceiling with no room for it.
-- **E3** In `launch`, after `pool_claim_for` returns a container, assert its branch is the ref;
-  put it back and cold-launch if not. Cheap, and it makes design §10's rule a property of the
-  code rather than of `pool_claim_for`'s current implementation.
+- **E3** DROPPED. Asking the question again in `launch` means another `docker ps` to
+  re-derive what `pool_claim_for` decided a line earlier. E4 pins the rule instead.
 - **E4** Tests: a conversation on a branch no pool is staged on is not offered a warm
   container; the scheduler's pre-check and `launch` are asked about the same ref for the same
   turn (assert on the argument, not on the outcome, so the test still means something when the
@@ -145,7 +167,7 @@ Design §10.
 
 ## F — mirror_sync_from_origin (M)
 
-Design §8. Tier B.
+Design §8. Both tiers, not Tier B — see the status block.
 
 - **F1** `mirror_sync_from_origin(branch)` -> bool, beside `mirror_take` (ffwatch.py:6771):
   `git -C <git_dir> fetch --quiet <push_remote>`, then
@@ -154,12 +176,14 @@ Design §8. Tier B.
 - **F2** Its docstring carries the argument for why its fence differs from `mirror_take`'s: it
   can only write the value origin already has, so the worst it does is make the mirror agree
   with GitHub sooner than the runners' fetch would.
-- **F3** Call it at adoption (B4).
+- **F3** Call it at adoption (B4), for every adopted name.
 - **F4** Call it at EVERY launch of an adopted conversation, replacing the
   `if not mirror_carries(...) and not mirror_take(...)` guard for that case only
   (ffwatch.py:7028-7046). A conversation with `branch_adopted_at IS NULL` keeps `mirror_take`
   exactly as it is. A failed sync still raises `BranchUnavailable` with the existing message.
-- **F5** Route the post-publish `mirror_take(branch)` at 8248 through whichever suits the name.
+- **F5** Route the post-publish `mirror_take(branch)` at 8248 BY THE NAME — the one place the
+  prefix is the right question, because a push has just happened and the commits are in both
+  places. Same in `reconcile_publication`.
 - **F6** Tests: refuses `master`; writes only origin's value; a launch of an adopted
   conversation syncs even when `mirror_carries` is already true.
 
@@ -203,8 +227,9 @@ Design §6.
   `gate_reason` = the outcome, so `pending_messages` never turns it into a turn. A message that
   carries a directive AND a prompt is not gated.
 - **H5** The acknowledgement: `record_outbound(None, conv_id, "post", ...)` in
-  `record_blocked_reply`'s shape, with `local_id = f"adopt:{conv_id}"` so a re-read cannot post
-  it twice. Both outcomes get one — the refusal reason is as useful as the confirmation.
+  `record_blocked_reply`'s shape, with `local_id = f"adopt:{conv_id}:{message_id}"`. What stops
+  a re-read posting twice is `insert_message`'s rowcount check, not the id. Both outcomes get
+  one — the refusal reason is as useful as the confirmation.
 - **H6** A directive that lands while a run is in flight adopts and says the branch takes
   effect on the NEXT turn. It does not try to move the running container.
 - **H7** Tests: an operator's directive-only message adopts and creates no turn; an operator's
