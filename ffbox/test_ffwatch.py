@@ -11050,6 +11050,19 @@ def test_the_harness_never_creates_a_branch_outside_its_prefix():
     check("the same work goes onto the branch once it exists", ok, err)
     check("and it reports that it added to one rather than made it", existed is True)
 
+    # AND IT IS READ OFF THE REMOTE EVERY TIME. The checkout still carries
+    # refs/remotes/origin/loth/absent from the fetch above — the push path has no --prune, and
+    # pruning would be this daemon rewriting refs in a checkout it shares — so a stale tracking
+    # ref would put the branch back the moment somebody deleted it, which is the deletion this
+    # rule exists to refuse.
+    git_run("-C", scratch, "push", "-q", "origin", "--delete", "loth/absent")
+    check("the tracking ref is still there, which is the trap",
+          git_run("-C", host, "rev-parse", "--verify", "--quiet",
+                  "refs/remotes/origin/loth/absent").returncode == 0)
+    ok, err, existed = case.watcher.push_bundle(bundle, "loth/absent")
+    check("a branch deleted since it was adopted is not re-created", not ok, err)
+    check("and the run says why", "not on origin" in (err or ""), err)
+
 
 def _pulls_for(branch):
     return [p for p in GH_STATE["pulls"] if p["_head"] == branch]
