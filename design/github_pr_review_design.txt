@@ -5,6 +5,8 @@
 Revision 2, 2026-09-06: section 3 was wrong, and section 3a says how. This feature is a
 consumer of `design/branch_adoption_design.txt`, which landed the same day, and cannot be
 built before it.
+Revision 3, 2026-09-06: adoption is implemented and on master. 3a records what that changed and
+what it takes off this design's plate; 3b is the four things it alters here.
 
 A comment on a Final Factory pull request saying `#codereview` starts an ffdev run against that
 pull request's branch. The run reviews the diff, applies the fixes it is confident in, commits
@@ -99,47 +101,83 @@ What this lane must not do is invent a branch. If the pull request's head is mis
 mirror and from `git_dir`, `BranchUnavailable` is the right outcome and the reply says so.
 
 
-3a. What section 3 got wrong, and the dependency it hides
-----------------------------------------------------------
+3a. What section 3 got wrong, and how adoption fixed it
+--------------------------------------------------------
 
-Revision 1 said the branch machinery was "the whole feature". It is not, and the part it misses
-is fatal rather than cosmetic. Every reader of `conversation.branch` behaves as described above,
-but a pull request branch is a branch this box did not create and whose commits somebody else
-wrote, and three things assume otherwise.
+Revision 1 said the branch machinery was "the whole feature". It is not. A pull request branch is
+one this box did not create, carrying commits somebody else wrote, and the harvest computes its
+foreign-identity check over `PUBLISH_BASE_SHA..BRANCH` where the base comes from the `--base-refs`
+scan -- `origin/master`, not where the run started. On a pull request branch that range holds the
+author's own commits under the author's own email, so `harvest-workspace.sh:149` refuses with
+"commits claim an identity this run does not own" and nothing reaches origin. Every run. The
+changed-file ceiling counted the whole branch for the same reason, and `push_bundle` had no
+prefix validation because until then nothing could hand it a name from outside `ffbox/`.
 
-**The identity fence refuses the publish, on every run.** `harvest-workspace.sh` computes
+`design/branch_adoption_design.txt` was written the same day and is now implemented and on
+master. It fixes all three, and none of the work belongs to this design:
 
-    FOREIGN=$(g log --format='%ae%n%ce' "${PUBLISH_BASE_SHA}..${BRANCH}" | grep -Fxv "$GIT_EMAIL")
+  * `ffbox --range-from-start` sets `FFBOX_RANGE_FROM_START=1`, and the harvest starts the range
+    at the sha the run was checked out at instead of at the base. `launch` passes it whenever
+    `conversation_adopted(conv)` is true, so the identity fence keeps its real scope -- every
+    commit this run made, none that were on origin before -- and the ceiling counts this run's
+    files.
+  * the prefix rule at `push_bundle` now permits an unprefixed name that is already on the
+    remote and refuses to create one, which is exactly the pull request case, permitted.
+  * `mirror_sync_from_origin` puts origin's copy of the branch in the mirror before every turn,
+    unconditionally for an adopted conversation.
 
-and refuses with "commits claim an identity this run does not own" when it finds anything.
-`PUBLISH_BASE_SHA` comes from the `--base-refs` scan, so it is `origin/master` or
-`origin/develop`, not where the run started. On a pull request branch that range contains the
-author's own commits, wearing the author's own email. The harvest refuses, `publish()` gets no
-branch, and nothing reaches origin. The same check runs again on the host at `ffbox:1743`.
+The blocker is gone. What is left is that this feature must go through adoption's front door
+rather than around it, which is 3b.
 
-**The changed-file ceiling counts the whole branch**, so a `#codereview` on a large pull request
-can blow a limit meant to bound what one run did.
 
-**`push_bundle` has no prefix validation**, and a pull request branch is the first name to reach
-it from outside `ffbox/`. That the prefix holds today is a property of `launch` coercing the name
-and the harvest rename building one, not of a check.
+3b. What adoption alters in this design
+----------------------------------------
 
-All three are `design/branch_adoption_design.txt`, revision 1, sections 9 and 5.6, written the
-same day this was. Its answer is a `--range-from-start` flag carrying
-`FFBOX_RANGE_FROM_START=1`, which replaces `PUBLISH_BASE_SHA` with the sha the run was checked
-out at, so the range is this conversation's own commits and the fence keeps its real scope: every
-commit the run made, and none that were on origin before the conversation opened.
+**The conversation is adopted, not hand-written.** Revision 1 said to open the conversation with
+`branch` and `github_pr` "already filled in". `adopt_branch()` is documented as the one writer
+for both existing ingresses, "so the rules below cannot come to differ by which door somebody
+used", and `#codereview` is a third door. It writes the column directly and inherits none of the
+five checks. So the sequence is three steps and not one: create the conversation, call
+`adopt_branch(conv_id, head, by=<the commenter>)`, and only then create the turn. `github_pr` is
+still written directly -- adoption has nothing to say about it.
 
-So `#codereview` is a **consumer of branch adoption, Tier B** in that design's taxonomy -- a
-foreign branch name carrying foreign commits. Section 1's list is unchanged and none of it is
-wasted, but nothing in C, D or E of the task list can be verified end to end until adoption
-exists. Sections 3, 5, 6 and 7 of that design also answer questions this one never asked: an
-adopted branch never takes a warm container, and the mirror needs a sync before a foreign name
-can be checked out.
+**Most of the refusal set is adoption's, not ours.** `adopt_branch` already refuses a name git
+will not take, a protected branch or a publish base, a branch that is not on the remote, a branch
+another conversation has a turn in flight on, a conversation that already owns a branch, and one
+that has already published. Each refusal is a sentence written to be posted, so C2 shrinks to
+posting `reason` verbatim and adds only the checks adoption cannot make: the pull request must be
+open, and its head must not be a fork's. Re-deriving the rest here would be a second copy of a
+rule that exists to have one copy.
 
-The dependency runs one way. Adoption does not need this feature, and its own ingress is an
-operator typing `!branch` in Discord.
+**The in-flight refusal is a gate, not an outbound row.** The cross-check behind revision 2 found
+that `claim_turns` would resurrect a refused trigger into a turn, and proposed borrowing the DM
+autoreply's `local_id` idiom with no message row at all. There is a better mechanism already
+here, and `take_branch_directive` uses it: write the message, then set `message.gate` and
+`gate_reason`. `pending_messages` selects `gate IS NULL`, so a gated message never becomes a
+turn, and `adopt_branch`'s own busy check ignores gated messages too. That keeps the
+`message.discord_id` UNIQUE dedupe, which the no-row version threw away, and it puts the reason
+in the record beside the message it belongs to.
 
+**The prompt shrinks.** `discord-task.sh:559` already renders an adopted-branch preamble, and it
+says most of what a review run needs told: read the branch before you change it, `git log` and
+`git diff` against the base, those commits are somebody's considered work, add commits on top, do
+not branch or switch, do not rebase or amend or revert, fix what is wrong with a new commit. D1
+adds the review instruction and nothing about branch discipline.
+
+Three consequences worth writing down because none of them is obvious from the code:
+
+  * **Every `#codereview` run is a cold launch.** `pool_claim_for` matches a warm container on
+    branch, and no spare is ever staged on a pull request branch, so the pool misses by
+    construction. Nothing needs to enforce "an adopted branch never takes a warm container"; the
+    branch match already does. It costs the cold path plus a Unity delta import, inside
+    `warmup_secs`, which is 3600 and untouched by this.
+  * **A second `#codereview` reviews the current head.** The mirror sync runs before every turn,
+    so a commit the author pushed between two reviews is in front of the container. Without that
+    the second review would read a stale tree and its push would be a non-fast-forward.
+  * **A branch deleted mid-run refuses at the publish**, by the prefix rule, read off the remote
+    with `ls-remote` rather than off a tracking ref. Merging the pull request while the review is
+    running is the ordinary way to reach this, and refusing is right -- the work has nowhere to
+    go and the run says so.
 
 4. Who may start one
 --------------------
