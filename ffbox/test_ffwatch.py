@@ -3537,6 +3537,13 @@ def test_schema_migrates_an_existing_database():
               {"attempts", "last_attempt_at", "last_error", "local_id"} <= outbound,
               sorted(outbound))
         check("conversation gains is_thread", "is_thread" in conversation, sorted(conversation))
+        # v16. NULL on every existing row is the right answer and there is no backfill: every
+        # branch any conversation owns today was claimed by a push, which is what NULL means.
+        check("and the adoption columns, empty, which reads as claimed-by-a-push",
+              {"branch_adopted_at", "branch_adopted_by"} <= conversation
+              and conn.execute("SELECT COUNT(*) FROM conversation"
+                               " WHERE branch_adopted_at IS NOT NULL").fetchone()[0] == 0,
+              sorted(conversation))
         check("the rows that were already there survive",
               conn.execute("SELECT COUNT(*) FROM outbound").fetchone()[0] == 1
               and conn.execute("SELECT COUNT(*) FROM conversation").fetchone()[0] == 1)
@@ -10777,6 +10784,13 @@ def test_a_conversation_can_be_told_which_branch_it_owns():
           (conv["branch_adopted_at"], conv["branch_adopted_by"]))
     check("ffwatch agrees that this conversation adopted",
           case.watcher.conversation_adopted(conv))
+    # THE GUARD, for a row read before the migration ran or one with no branch at all. Both
+    # answer no rather than raising, which is what every other reader of these columns does.
+    check("a row from before the columns existed reads as not adopted",
+          case.watcher.conversation_adopted({"branch": "x"}) is False
+          and case.watcher.conversation_adopted(None) is False
+          and case.watcher.conversation_adopted(
+              {"branch": None, "branch_adopted_at": "now"}) is False)
     # The mirror is the only place a container can see a branch, and nothing this box published
     # is under refs/ffbox/loth/save-fix, so the copy has to come from origin.
     check("the branch is in the mirror, from origin",
@@ -11010,6 +11024,65 @@ def test_adoption_refuses_what_it_cannot_safely_take():
 
     ok, reason = case.watcher.adopt_branch(conv["id"], "loth/taken", by="op")
     check("adopting twice is refused — a conversation keeps its branch for life", not ok, reason)
+
+    # AND A CONVERSATION THAT HAS PUBLISHED is refused even with its branch cleared by hand,
+    # which is the other half of the same rule: re-pointing it would strand what it pushed.
+    case.watcher.db.execute("UPDATE conversation SET branch=NULL, branch_adopted_at=NULL"
+                            " WHERE id=?", (conv["id"],))
+    turn = case.rows("SELECT * FROM turn ORDER BY id")[0]
+    case.watcher.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, pushed, branch)"
+        " VALUES(?,'d1t9-pushed',1,'ffbox/already')", (turn["id"],))
+    ok, reason = case.watcher.adopt_branch(conv["id"], "loth/taken", by="op")
+    check("a conversation that already published cannot be re-pointed", not ok, reason)
+
+
+def test_the_mirror_sync_writes_only_what_origin_says():
+    """The other mirror door, and its own fence.
+
+    mirror_take may write refs/heads/ffbox/* and nothing else, because it copies a ref the RUN
+    produced. This one copies what ORIGIN has, so it may write a name outside the prefix — that
+    is the whole point of it — and it still refuses the protected names, because a `develop` in
+    the mirror that moves on this daemon's schedule rather than the runners' is a debugging
+    problem nobody should be handed.
+    """
+    print("publication: the mirror sync from origin")
+    case = bug_case("mirrorsync", venue="private")
+    origin, host = git_origin(case)
+    mirror = mirror_of(case)
+    before = git_run("-C", mirror, "rev-parse", "develop").stdout.strip()
+
+    check("a protected branch is refused", case.watcher.mirror_sync_from_origin("develop")
+          is False)
+    check("and nothing moved",
+          git_run("-C", mirror, "rev-parse", "develop").stdout.strip() == before)
+    check("a branch the remote does not have is refused too",
+          case.watcher.mirror_sync_from_origin("loth/never") is False)
+
+    head = push_a_stranger_branch(host, "loth/synced")
+    check("a name outside the prefix IS allowed here, unlike mirror_take",
+          case.watcher.mirror_sync_from_origin("loth/synced") is True)
+    check("and what lands is exactly what origin says",
+          git_run("-C", mirror, "rev-parse", "refs/heads/loth/synced").stdout.strip() == head,
+          git_run("-C", mirror, "rev-parse", "refs/heads/loth/synced").stdout)
+    check("mirror_take would still have refused it",
+          case.watcher.mirror_take("loth/synced") is False)
+
+    # AND IT FOLLOWS THE BRANCH. An operator pushing a commit of their own between two turns is
+    # the ordinary way to work on a shared branch.
+    git_run("-C", host, "checkout", "-q", "--detach", "refs/remotes/origin/loth/synced")
+    with open(os.path.join(host, "Assets", "Save2.cs"), "w", encoding="utf-8") as fh:
+        fh.write("// another commit by hand\n")
+    git_run("-C", host, "add", "-A")
+    git_run("-C", host, "-c", "user.name=Loth", "-c", "user.email=loth@example.invalid",
+            "commit", "-qm", "more by hand")
+    moved = git_run("-C", host, "rev-parse", "HEAD").stdout.strip()
+    git_run("-C", host, "push", "-q", "origin", "HEAD:refs/heads/loth/synced")
+    git_run("-C", host, "fetch", "-q", "origin")
+    check("a second sync brings the newer head", case.watcher.mirror_sync_from_origin(
+        "loth/synced") and git_run("-C", mirror, "rev-parse",
+                                   "refs/heads/loth/synced").stdout.strip() == moved,
+          (moved, git_run("-C", mirror, "rev-parse", "refs/heads/loth/synced").stdout))
 
 
 def test_the_harness_never_creates_a_branch_outside_its_prefix():
@@ -12497,6 +12570,7 @@ def main():
         test_a_directive_only_message_adopts_and_asks_for_no_turn,
         test_a_directive_beside_a_question_keeps_its_turn,
         test_adoption_refuses_what_it_cannot_safely_take,
+        test_the_mirror_sync_writes_only_what_origin_says,
         test_the_harness_never_creates_a_branch_outside_its_prefix,
         test_the_keeper_expires_a_stale_spare_and_never_a_claimed_one,
         test_the_project_directory_survives_a_workspace_move,
