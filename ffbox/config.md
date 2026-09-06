@@ -390,8 +390,9 @@ A conversation picks its class when it is **opened** — the dropdown on the web
 new-prompt box, or `ffwatch submit --agent ffdev` — and every later turn of it runs in the
 same kind of container, so there is no dropdown when replying. A Discord conversation has no
 dropdown either: `discord.user_pool` and `discord.operator_pool` pick by which side of
-`discord.trust.operators` the account that opened it falls on. Each class is staged into a
-pool of its own and neither can take the other's warm container.
+`discord.trust.operators` the account that opened it falls on — and a Discord conversation in
+an unfenced class is demoted to `user_pool` for good if anybody outside that table posts in it.
+Each class is staged into a pool of its own and neither can take the other's warm container.
 
 | Key | ffagent | ffdev | What it is |
 |---|---|---|---|
@@ -698,9 +699,14 @@ seeded: without it `ffdiscord ask` refuses to post rather than sending an anonym
 
 Which pool a Discord conversation opens in, decided by who opened it. A message whose
 Discord-authenticated author is in `trust.operators` opens its conversation in
-`operator_pool`; everybody else opens one in `user_pool`. The pool is settled when the
-conversation is opened and never moves afterwards, so an operator answering in a player's
-thread does not promote it.
+`operator_pool`; everybody else opens one in `user_pool`.
+
+It moves in exactly one direction afterwards. An operator answering in a player's thread does
+not promote it — nothing promotes anything — but a conversation that opened in an unfenced
+class is moved to `user_pool` on the first message from anybody outside `trust.operators`, and
+stays there for the rest of its life. Our own bot's replies do not count; any other bot does.
+The change takes effect on the conversation's next turn, since a container's network is fixed
+when it is created. Local `shell` and `web` conversations are not subject to it.
 
 Defaults `"ffagent"` and `"ffdev"`. This pair is a trust boundary rather than a scheduling
 preference: `ffagent`'s network is `limited` and `ffdev`'s is `full`, so pointing `user_pool`

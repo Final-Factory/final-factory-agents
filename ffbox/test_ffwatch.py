@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
-import contextlib
+import copy
 import importlib
 import inspect
 import io
@@ -1153,6 +1153,40 @@ def test_which_pool_a_discord_author_gets_is_read_from_the_trust_table():
           ffwatch.discord_agent_class(typo, LOTHSAHN) == "ffdev", None)
 
 
+def test_where_a_conversation_goes_when_a_stranger_speaks_in_it():
+    """The policy half of the demotion, keyed on the network rather than on a class name.
+
+    A configuration reader like discord_agent_class() above: it answers WHERE, and
+    demote_for_stranger() decides WHETHER anyone should be moved there.
+    """
+    print("stranger demotion: the policy")
+    cfg = ffwatch.load_config()
+    check("an unfenced conversation falls back to the fenced class",
+          ffwatch.stranger_downgrade_class(cfg, "ffdev") == "ffagent", None)
+    check("and one already behind the fence has nothing left to lose",
+          ffwatch.stranger_downgrade_class(cfg, "ffagent") is None, None)
+
+    # NOT BY NAME. A box that puts ffdev back behind the fence has two fenced classes and
+    # nothing to demote, whatever the class is called.
+    fenced = copy.deepcopy(cfg)
+    fenced["agent_classes"]["ffdev"]["network"] = "limited"
+    check("a class that is not unfenced is not demoted",
+          ffwatch.stranger_downgrade_class(fenced, "ffdev") is None, None)
+
+    # AND IT REFUSES TO MOVE ONE UNFENCED CLASS ONTO ANOTHER. A box whose user_pool is itself
+    # "full" has opted out of the split; moving the conversation sideways would read as a
+    # demotion while changing nothing about what the container can reach.
+    opted_out = copy.deepcopy(cfg)
+    opted_out["_discord"] = {"user_pool": "ffdev", "operator_pool": "ffdev"}
+    check("a box with no fenced pool to fall back to moves nothing",
+          ffwatch.stranger_downgrade_class(opted_out, "ffdev") is None, None)
+
+    both = copy.deepcopy(cfg)
+    both["_discord"] = {"user_pool": "ffagent", "operator_pool": "ffagent"}
+    check("and user_pool is where it goes, read from the config",
+          ffwatch.stranger_downgrade_class(both, "ffdev") == "ffagent", None)
+
+
 def test_a_discord_conversation_opens_in_the_pool_its_opener_earns():
     """The ingress end of the same rule, and the "whoever opened it decides" half of it.
 
@@ -1181,25 +1215,57 @@ def test_a_discord_conversation_opens_in_the_pool_its_opener_earns():
           case.rows("SELECT COUNT(*) c FROM message")[0]["c"] == 2
           and convs[0]["agent_class"] == "ffagent", convs)
 
-    # AN OPERATOR OPENS ONE. Unfenced, and it stays that way when a player joins in -- which is
-    # the case worth knowing about, and why operator_pool belongs on a class you are willing to
-    # let a public channel reach. docs/docker-security-model.md says so out loud.
+    # AN OPERATOR OPENS ONE. Unfenced -- until a player joins in, which is the case worth
+    # knowing about, and which now takes the class back rather than carrying the player's text
+    # into a container with the whole internet in it.
     fixture2 = base_fixture()
     root2 = message(4811, "look at the belt throughput regression", author=LOTHSAHN,
                     name="lothsahn")
-    fixture2["messages"][ASK_CHANNEL] = [root2, message(4812, "seeing it too", ref=root2)]
     case2 = Case("pool-operator", fixture2)
     case2.cfg["_discord"]["trust"] = ops
     ev = ask_event(4811)
     ev["author_id"] = LOTHSAHN
-    case2.events(ev, ask_event(4812))
+    fixture2["messages"][ASK_CHANNEL] = [root2]
+    case2.write_fixture(fixture2)
+    case2.events(ev)
     case2.watcher.drain_events()
     convs2 = case2.rows("SELECT * FROM conversation")
     check("an operator's message opens one conversation", len(convs2) == 1, convs2)
     check("in the unfenced class", convs2[0]["agent_class"] == "ffdev", convs2)
-    check("which a player joining does not demote",
-          case2.rows("SELECT COUNT(*) c FROM message")[0]["c"] == 2
-          and convs2[0]["agent_class"] == "ffdev", convs2)
+
+    # AND THE BOT'S OWN REPLY DOES NOT DEMOTE IT. Max's answers come back through the sweep
+    # like every other message in the thread; if they counted, every unfenced conversation
+    # would fence itself on its own first answer.
+    fixture2["messages"][ASK_CHANNEL] = [
+        root2, message(4812, "on it", author=BOT, name="max", bot=True, ref=root2)]
+    case2.write_fixture(fixture2)
+    case2.events(ask_event(4812))
+    case2.watcher.drain_events()
+    convs2 = case2.rows("SELECT * FROM conversation")
+    check("our own bot answering in it does not demote it",
+          convs2[0]["agent_class"] == "ffdev", convs2)
+
+    # A PLAYER DOES. One message from anybody not in trust.operators, and the rest of the
+    # conversation runs behind the fence.
+    fixture2["messages"][ASK_CHANNEL].append(message(4813, "seeing it too", ref=root2))
+    case2.write_fixture(fixture2)
+    case2.events(ask_event(4813))
+    case2.watcher.drain_events()
+    convs2 = case2.rows("SELECT * FROM conversation")
+    check("a player joining demotes it to the fenced class",
+          case2.rows("SELECT COUNT(*) c FROM message")[0]["c"] == 3
+          and convs2[0]["agent_class"] == "ffagent", convs2)
+
+    # ONE-WAY. The operator speaking again does not buy the network back -- the player's text
+    # is in the chain and in the session transcript this conversation resumes.
+    fixture2["messages"][ASK_CHANNEL].append(
+        message(4814, "fixed on my branch", author=LOTHSAHN, name="lothsahn", ref=root2))
+    case2.write_fixture(fixture2)
+    case2.events(ask_event(4814))
+    case2.watcher.drain_events()
+    convs2 = case2.rows("SELECT * FROM conversation")
+    check("and the operator answering again does not promote it back",
+          convs2[0]["agent_class"] == "ffagent", convs2)
 
     # AND THE TURN'S TIER IS STILL THE TURN'S. The class says which container; trust_tier says
     # what that container may say and do. A player in the batch makes the turn a player's
@@ -11867,6 +11933,7 @@ def main():
         test_the_classifier_tries_the_cheap_call_first_and_falls_back,
         test_the_fast_answer_is_held_to_the_schema_the_flag_would_have_enforced,
         test_which_pool_a_discord_author_gets_is_read_from_the_trust_table,
+        test_where_a_conversation_goes_when_a_stranger_speaks_in_it,
         test_a_discord_conversation_opens_in_the_pool_its_opener_earns,
     ]
     for fn in tests:

@@ -1843,11 +1843,14 @@ the allowlist proxy described below; `ffdev` runs `"full"`, the ordinary `bridge
 internet, no allowlist and no SNI filter, so a dev turn can search the web, read documentation
 and fetch a package without an operator editing `allowlist.txt` first. That also hands it this
 machine's LAN address, so it is trusted the way a developer's own shell on this box is trusted.
-What keeps that defensible is that **no text written by a stranger can start an unfenced
+What keeps that defensible is that **no text written by a stranger reaches an unfenced
 container**: a Discord conversation opens in `discord.user_pool`, which is `ffagent`, unless the
 account that opened it is in `discord.trust.operators`, in which case it opens in
 `discord.operator_pool`, which is `ffdev`. An operator directive is dev work by the person who
-owns the box, so it gets the class dev work runs in; everything else stays behind the fence.
+owns the box, so it gets the class dev work runs in; everything else stays behind the fence. And
+a conversation that opened unfenced is demoted to `user_pool` as soon as anybody outside the
+trust table posts in it, so the guarantee covers the whole life of a thread and not only its
+first message — see "Whoever OPENED the conversation decides" below.
 `docs/docker-security-model.md` has the full argument under "The class that is not fenced".
 Putting ffdev back behind the fence is `"network": "limited"`, a restart, and `pool drop` for
 anything already staged; pointing Discord's operators back at the fenced class is
@@ -1871,9 +1874,12 @@ python3 ffbox/ffwatch.py pool stage ffdev
 `ffwatch submit --agent ffdev` at a terminal. It is written on the conversation and every later
 turn of that conversation reads it back, so there is deliberately no dropdown on the reply box
 and `--agent` is ignored with a note under `--conversation`. A conversation is pinned to a base
-sha, resumes one session transcript and owns one branch; moving its class mid-flight would change
-the clocks that session has been running under and, once the classes differ on `base_ref`, the
-tree its transcript has been citing `file.cs:214` positions against.
+sha, resumes one session transcript and owns one branch; letting a reply re-pick the class would
+change the clocks that session has been running under whenever the operator felt like it, which
+is not a choice worth offering. The stranger demotion below is the one exception, and it is a
+narrow one: it only ever tightens the clocks, it is not something anybody chooses, and it does not
+touch the tree — `run_ref` reaches for the conversation's branch and then its pinned `base_sha`
+long before any class's `base_ref`.
 
 **A Discord conversation gets no dropdown either**, and it does not need one: the `"discord"`
 section names a class per side of the trust table, and ingest reads Discord's authenticated
@@ -1886,15 +1892,37 @@ author id to pick between them.
 }
 ```
 
-**Whoever OPENED the conversation decides**, which is the same rule the dropdown obeys and the
-conservative reading of it. A forum thread a player started stays `ffagent` for its whole life
-even after Lothsahn answers in it — the alternative would carry a stranger's text into an
-unfenced container the moment a trusted account replied. It also runs the other way: a thread an
-operator opened in a public channel stays `ffdev` even if a player joins in, so `operator_pool`
-belongs on a class you are willing to let a public channel reach. On a box with nobody in
-`trust.operators` — which is what the template ships — every Discord conversation is a user's.
-A name that is not an agent class falls back to the default with a `WARNING` in the journal
-rather than writing a class no pool can serve.
+**Whoever OPENED the conversation decides what it OPENS as**, which is the same rule the dropdown
+obeys. A forum thread a player started stays `ffagent` for its whole life even after Lothsahn
+answers in it — there is no promotion path, in Discord or anywhere else.
+
+**And a stranger takes the unfenced class back.** The moment anybody outside `trust.operators`
+posts in an `ffdev` conversation, it is moved to `user_pool` and stays there. A dev thread an
+operator opened in a public channel therefore loses its internet the first time a player joins in,
+instead of running the player's text in a container with the whole internet and a git credential
+in it. The ratchet is one-way on purpose: the operator answering again does not buy the network
+back, because the player's text is already in the chain and in the session transcript the
+conversation resumes.
+
+Two things it deliberately does not treat as a stranger's message, and one it does. Max's own
+replies come back through the 15-minute sweep like every other message in a thread, so they are
+skipped — otherwise every unfenced conversation would fence itself on its own first answer. Local
+`shell` and `web` conversations are exempt entirely: their class is chosen at the terminal or the
+page by whoever runs the box, and their author id is a unix uid that must never be looked up in
+the trust table. Any OTHER bot IS a stranger — a webhook relaying a fork's PR title is exactly the
+text the fence exists for.
+
+The demotion lands on the **next** turn. A container's network is fixed when it is created and
+dispatch cannot move it, so a run already in flight finishes in the container it started in; the
+message that caused the demotion was never part of that run anyway, since `create_turn` leaves a
+message arriving mid-run unclaimed. Nothing else about the conversation moves with it — it keeps
+its pinned `base_sha` and its branch, which is what `run_ref` reaches for ahead of any class's
+`base_ref`, so the tree its transcript has been citing `file.cs:214` positions against is the same
+tree after the demotion as before.
+
+On a box with nobody in `trust.operators` — which is what the template ships — every Discord
+conversation is a user's. A name that is not an agent class falls back to the default with a
+`WARNING` in the journal rather than writing a class no pool can serve.
 
 Every agent container carries `ffbox.agent.class`, set at creation and surviving the rename at
 dispatch, and that label is what the two pools count and claim by. A container with no such label
