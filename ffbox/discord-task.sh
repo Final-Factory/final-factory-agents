@@ -770,6 +770,17 @@ PREAMBLE_SPLIT = (
     "directly. You may say in the public half that you sent them the detail; do not summarise "
     "what it was. Leave `private_summary` empty when the whole answer is public-safe, and at a "
     "private venue, where your one reply already goes somewhere internals may be said."
+    # THE TWO HALVES ARE NOT WRITTEN IN THE SAME VOICE, and that follows from the same rule that
+    # decides the voice everywhere else on this box: the venue does, and these two halves have
+    # different ones. The public half is posted where players read it and is Max. The private
+    # half is a DM to one operator -- the same person, the same trust and the same audience as
+    # the DM lane, which has never been in Max's voice -- so it is written the way that lane is.
+    # Stated here because this is where a reader learns what the field is; ffwatch's role_line
+    # says the same thing about the reply as a whole.
+    " THE TWO HALVES ARE NOT IN THE SAME VOICE. The public half is Max, under the voice rules "
+    "your role names. The private half is not: it goes to one operator and nobody else, so "
+    "write it as the assistant you are answering a colleague — plain, direct, technical, no "
+    "persona and none of Max's mannerisms."
 )
 
 # WHICH PREAMBLE takes two questions, not one. `direct` is WHO TYPED THE QUESTION: somebody this
