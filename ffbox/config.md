@@ -793,6 +793,7 @@ because a box normally wants one.
 | `github.api_base` | `https://api.github.com` | |
 | `github.trigger` | `"#codereview"` | The word that starts a review run when it appears in a comment on a pull request. Matched case-insensitively against the whole comment; nothing else is parsed out of it. `""` turns the poller off. |
 | `github.review_pool` | `"ffdev"` | Which agent class a review runs in. `"ffagent"` puts it behind the fence, where it will not be able to push. |
+| `github.poll_secs` | `60` | How often the comment poller looks. Its own clock and its own worker, not `catchup_secs`. |
 
 The token itself is read from the environment, not from this file, so it is never written to
 disk beside channel ids and never lands in a config a container could see. A token that IS in
@@ -812,6 +813,17 @@ new is opened. `design/github_pr_review_design.txt` is the whole of it.
 
 Who may start one is the top-level [`operators`](#operators) block, not a table of its own.
 Somebody with no `github` id cannot start a review, which is the right answer rather than a gap.
+
+**Polled once a minute, on a watcher of its own.** `github.poll_secs` is 60 and is not
+`catchup_secs`: the Discord sweep is sixteen sequential CLI calls and wants a quarter of an hour
+between them, while this is one conditional HTTPS request. It has its own worker and its own
+error boundary, so a Discord outage delays a review rather than silently stopping reviews
+altogether — which is what the two sharing `catchup_pass` actually meant.
+
+Polls are nearly free: the cursor keeps the `ETag` and the request carries `If-None-Match`, and
+GitHub does not count a 304 against the rate limit. The query asks for `direction=desc` so the
+newest comment sits on page one, which is what makes a 304 there a sound answer about the whole
+query — under `asc` a new comment lands on the last page and page one would be unchanged.
 
 The first poll on a box records the moment it started watching and answers nothing older, the
 same watermark a Discord channel gets. Turning the trigger on does not answer the repository's

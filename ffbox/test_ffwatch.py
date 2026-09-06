@@ -4037,7 +4037,7 @@ GH_STATE = {"next_number": 41, "pulls": [], "requests": [], "fail_next": [],
             # oldest first the way GitHub does under sort=updated&direction=asc; `posted` and
             # `reactions` record what the harness said back, so a test can assert the box wrote
             # exactly once.
-            "comments": [], "posted": [], "reactions": []}
+            "comments": [], "posted": [], "reactions": [], "not_modified": 0}
 GH_SERVER = {"base": None}
 
 
@@ -4070,6 +4070,18 @@ class MockGitHub(BaseHTTPRequestHandler):
                               {"message": "You have exceeded a secondary rate limit"})
         path, _, raw_query = self.path.partition("?")
         if path == "/repos/Final-Factory/FinalFactory/issues/comments":
+            # An ETag over the comment set, so a conditional request can be answered 304 the
+            # way GitHub answers one. Keyed on the ids and their stamps, which is what changes
+            # when somebody comments or edits.
+            tag = '"%s"' % hash(tuple(sorted(
+                (c.get("id"), c.get("updated_at")) for c in GH_STATE["comments"])))
+            if self.headers.get("If-None-Match") == tag:
+                GH_STATE["not_modified"] += 1
+                self.send_response(304)
+                self.send_header("ETag", tag)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             # parse_qs rather than splitting on "page=", which also matches inside "per_page="
             # and read the page number as 100.
             query = urllib.parse.parse_qs(raw_query)
@@ -4078,7 +4090,18 @@ class MockGitHub(BaseHTTPRequestHandler):
             per = int((query.get("per_page") or ["100"])[0])
             rows = [c for c in GH_STATE["comments"]
                     if not since or (c.get("updated_at") or "") >= since]
-            return self._send(200, rows[(page - 1) * per:page * per])
+            # NEWEST FIRST when asked, which is what the poller asks for: under `asc` a new
+            # comment lands on the last page and page one's ETag would say "nothing new".
+            if (query.get("direction") or ["asc"])[0] == "desc":
+                rows = list(reversed(rows))
+            body = json.dumps(rows[(page - 1) * per:page * per]).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("ETag", tag)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if re.match(r"^/repos/Final-Factory/FinalFactory/pulls/\d+$", path):
             number = int(path.rsplit("/", 1)[1])
             found = next((p for p in GH_STATE["pulls"] if p["number"] == number), None)
@@ -4922,10 +4945,32 @@ def test_the_github_client_reads_comments_and_says_things_back():
          "user": {"id": 10092359, "login": "Lothsahn"},
          "issue_url": "https://api.github.com/repos/Final-Factory/FinalFactory/issues/7"},
     ]
-    check("every comment comes back with no cursor",
-          [c["id"] for c in gh.list_issue_comments()] == [11, 12], None)
-    check("and `since` drops what was already read",
-          [c["id"] for c in gh.list_issue_comments(since="2026-09-06T00:00:00Z")] == [12], None)
+    rows, tag = gh.list_issue_comments()
+    check("every comment comes back with no cursor, oldest first",
+          [c["id"] for c in rows] == [11, 12], None)
+    check("and an ETag comes with them", bool(tag), tag)
+    rows, _ = gh.list_issue_comments(since="2026-09-06T00:00:00Z")
+    check("and `since` drops what was already read", [c["id"] for c in rows] == [12], None)
+
+    # A CONDITIONAL REQUEST THAT STILL MATCHES IS FREE. GitHub answers 304 and does not count
+    # it against the rate limit, which is what lets this poll once a minute; the caller has to
+    # tell that apart from an empty list, because one means "keep your cursor" and the other
+    # means "advance it".
+    GH_STATE["not_modified"] = 0
+    again, tag2 = gh.list_issue_comments(etag=tag)
+    check("an unchanged set answers NOT_MODIFIED rather than a list",
+          again is ffwatch.NOT_MODIFIED and GH_STATE["not_modified"] == 1, again)
+    check("and hands back the same etag to send next time", tag2 == tag, (tag, tag2))
+    a_comment_row = {"id": 13, "body": "later", "updated_at": "2026-09-07T10:00:00Z",
+                     "user": {"id": 1, "login": "someone"},
+                     "issue_url": "https://api.github.com/repos/Final-Factory/FinalFactory/issues/7"}
+    GH_STATE["comments"].append(a_comment_row)
+    changed, tag3 = gh.list_issue_comments(etag=tag)
+    check("a new comment breaks the etag and the rows come back",
+          changed is not ffwatch.NOT_MODIFIED and [c["id"] for c in changed] == [11, 12, 13],
+          changed)
+    check("with a new etag", tag3 != tag, (tag, tag3))
+    GH_STATE["comments"] = [c for c in GH_STATE["comments"] if c["id"] != 13]
 
     # PAGING IS BOUNDED, not exhaustive: a backlog past the ceiling waits for the next sweep
     # rather than holding the loop open.
@@ -4934,10 +4979,9 @@ def test_the_github_client_reads_comments_and_says_things_back():
          "user": {"id": 1, "login": "someone"},
          "issue_url": "https://api.github.com/repos/Final-Factory/FinalFactory/issues/7"}
         for i in range(7)]
-    check("a second page is followed",
-          len(gh.list_issue_comments(per_page=3)) == 7, None)
+    check("a second page is followed", len(gh.list_issue_comments(per_page=3)[0]) == 7, None)
     check("but not past the ceiling",
-          len(gh.list_issue_comments(per_page=3, max_pages=2)) == 6, None)
+          len(gh.list_issue_comments(per_page=3, max_pages=2)[0]) == 6, None)
 
     GH_STATE["pulls"] = [
         {"number": 7, "html_url": "https://github.com/x/y/pull/7", "title": "A fix",
@@ -11370,6 +11414,38 @@ def test_the_review_workflow_is_taken_from_the_base_and_not_from_the_branch():
           task.index("setup_review_workflow\n") < task.index('"$FFBOX_OUT/argv"'), None)
 
 
+def test_the_comment_poll_is_not_the_discord_sweeps_passenger():
+    """It has its own worker, its own clock and its own error boundary."""
+    print("#codereview: its own watcher")
+    import inspect
+    catchup = inspect.getsource(ffwatch.Watcher.catchup_pass)
+    # THE DEFECT THIS FIXES. The three ran in sequence under one try/except, so a Discord
+    # failure did not delay the GitHub poll, it SKIPPED it -- and logged the whole pass as a
+    # catchup error, so the journal said nothing about GitHub at all.
+    check("the catchup pass no longer carries the poll",
+          "self.poll_github()" not in catchup, catchup[-300:])
+    check("it still carries the sweep and the reconcile",
+          "self.sweep()" in catchup and "self.reconcile_publications()" in catchup, catchup)
+
+    starter = inspect.getsource(ffwatch.Watcher.start_github_poll)
+    check("the poll runs on a worker of its own",
+          "threading.Thread" in starter and "ffwatch-github" in starter, starter[:300])
+    check("guarded, so a failure never takes the daemon down",
+          "except Exception" in starter and "poll_github" in starter, starter[:400])
+    check("and one at a time, so a slow poll does not stack",
+          "is_alive()" in starter, starter[:300])
+
+    loop = inspect.getsource(ffwatch.Watcher.run).split("while True:")[1]
+    check("the loop drives it on a clock of its own, not on catchup_secs",
+          "start_github_poll()" in loop and "last_github" in loop, loop[:600])
+    check("and that clock is github.poll_secs",
+          "poll_secs" in loop.split("last_github")[1][:400], loop[:800])
+    check("which defaults to a minute rather than a quarter of an hour",
+          ffwatch.DEFAULTS["github"]["poll_secs"] == 60
+          and ffwatch.DEFAULTS["catchup_secs"] == 900,
+          (ffwatch.DEFAULTS["github"]["poll_secs"], ffwatch.DEFAULTS["catchup_secs"]))
+
+
 def test_a_first_poll_answers_nothing_that_predates_it():
     """A box turning this on does not answer the repository's whole history."""
     print("#codereview: watching from now")
@@ -11386,7 +11462,7 @@ def test_a_first_poll_answers_nothing_that_predates_it():
 
     check("the first poll starts nothing", case.watcher.poll_github() == [], None)
     check("and says nothing", (GH_STATE["posted"], GH_STATE["reactions"]) == ([], []), GH_STATE)
-    since, _ = case.watcher.read_github_cursor()
+    since, _, _ = case.watcher.read_github_cursor()
     check("but it records the moment it started watching", bool(since), since)
     check("and a comment older than that stays history",
           case.watcher.poll_github() == [], None)
@@ -13227,6 +13303,7 @@ def main():
         test_only_an_operator_may_name_a_branch_from_discord,
         test_a_directive_only_message_adopts_and_asks_for_no_turn,
         test_a_directive_beside_a_question_keeps_its_turn,
+        test_the_comment_poll_is_not_the_discord_sweeps_passenger,
         test_a_first_poll_answers_nothing_that_predates_it,
         test_the_review_workflow_is_taken_from_the_base_and_not_from_the_branch,
         test_a_codereview_comment_starts_a_review_on_the_pull_requests_own_branch,

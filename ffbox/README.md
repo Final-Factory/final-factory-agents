@@ -2151,10 +2151,23 @@ harvest cannot rename it, `--range-from-start` keeps the identity fence off the 
 commits, and `publish()` finds the pull request already recorded and opens nothing. See
 "Branch adoption" above; `#codereview` is one of its consumers rather than a second copy of it.
 
-**Polled, not pushed.** One request per sweep to `/repos/<repo>/issues/comments`, which is
-repo-wide, so watching every open pull request costs what watching one costs. A webhook would
-need this box reachable from the internet and a secret to rotate, to save a latency nobody is
-waiting on: a review takes the better part of an hour.
+**Polled, not pushed, once a minute on a watcher of its own.** One request to
+`/repos/<repo>/issues/comments`, which is repo-wide, so watching every open pull request costs
+what watching one costs. `github.poll_secs` is 60 and is deliberately not `catchup_secs`: the
+two shared `catchup_pass` at first — three calls in sequence under one try/except — which meant
+a Discord failure did not delay the GitHub poll but SKIPPED it, and logged the whole pass as a
+Discord error. Separate worker, separate clock, separate error boundary.
+
+The poll costs almost nothing: the cursor keeps an `ETag`, the request carries `If-None-Match`,
+and GitHub does not count a 304 against the rate limit. `direction=desc` puts the newest comment
+on page one, which is what makes a 304 there mean "nothing new" about the whole query rather
+than about one page of it.
+
+**Why not events.** GitHub has no Gateway. Discord hands out a persistent outbound socket, which
+is why `ffdiscord-listener` gets real events with nothing listening inbound; there is no
+equivalent for repository events. Push means a webhook, and that means either a port open to the
+internet or routing through the self-hosted Actions runners — which would put a host unix socket
+in front of PR-authored workflow code. Neither is worth buying 59 seconds.
 
 **Who may start one.** The top-level `operators` block, which names each person once and carries
 their id for each service — it was `operators` until this landed, and moved out

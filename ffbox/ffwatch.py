@@ -663,6 +663,18 @@ DEFAULTS = {
         # to say so and then find out that a fenced container cannot push, rather than have the
         # choice buried in code.
         "review_pool": "ffdev",
+        # HOW OFTEN THE COMMENT POLLER LOOKS, and it is its own number rather than
+        # catchup_secs. The Discord sweep is sixteen sequential CLI calls and wants a quarter
+        # of an hour between them; this is ONE conditional HTTPS request, and GitHub does not
+        # count a 304 against the rate limit, so a quiet minute costs a round trip and nothing
+        # else. 60 spends 60 of an hourly 5000 in the worst case and far less in practice.
+        #
+        # GitHub has no Gateway. Discord hands out a persistent outbound socket, which is why
+        # ffdiscord-listener gets real events with no inbound exposure; there is no equivalent
+        # for repository events, and the alternatives are a webhook (a port open to the
+        # internet) or routing through a CI runner (a host socket reachable by PR-authored
+        # workflow code). Polling this cheaply is the better trade, and this is the knob.
+        "poll_secs": 60,
         # WHOSE COMMENT MAY START ONE is not here: it is the top-level `operators` block, which
         # names each person once and carries their id for each service. See operator_ids().
     },
@@ -3115,6 +3127,11 @@ def safe_name(name):
 
 GITHUB_UA = "ffwatch (Final Factory)"
 
+# "GitHub says nothing has changed since the ETag you sent." Distinct from an empty list, which
+# means "something changed and the answer is now nothing": the caller advances its cursor on the
+# second and must leave it alone on the first.
+NOT_MODIFIED = object()
+
 
 class BranchUnavailable(RuntimeError):
     """A conversation's own branch could not be put in front of the container.
@@ -3190,21 +3207,40 @@ class GitHub:
         self.token, self.token_error = pr_token_for(cfg, agent_class)
         self.base = gh.get("base") or "develop"
 
-    def _request(self, method, path, body=None, retries=4, sleep=time.sleep):
+    def _request(self, method, path, body=None, retries=4, sleep=time.sleep,
+                 etag=None, conditional=False):
+        """The response body, or (body, etag) when `conditional`.
+
+        A CONDITIONAL GET IS FREE WHEN NOTHING CHANGED. GitHub answers 304 to an
+        If-None-Match that still matches, and a 304 does not count against the rate limit --
+        which is what lets the comment poller run once a minute instead of once a quarter hour.
+        The caller gets NOT_MODIFIED and keeps the cursor it had.
+        """
         url = f"{self.api_base}{path}"
         data = json.dumps(body).encode("utf-8") if body is not None else None
         for attempt in range(retries):
-            req = urllib.request.Request(url, data=data, method=method, headers={
+            headers = {
                 "Authorization": f"Bearer {self.token}",
                 "Accept": "application/vnd.github+json",
                 "User-Agent": GITHUB_UA,
                 "Content-Type": "application/json",
-            })
+            }
+            if conditional and etag:
+                headers["If-None-Match"] = etag
+            req = urllib.request.Request(url, data=data, method=method, headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=60) as resp:
                     payload = resp.read()
-                    return json.loads(payload) if payload else {}
+                    parsed = json.loads(payload) if payload else {}
+                    if conditional:
+                        return parsed, resp.headers.get("ETag")
+                    return parsed
             except urllib.error.HTTPError as exc:
+                # 304 BEFORE THE ERROR HANDLING BELOW, because it is not an error: urllib
+                # raises for anything that is not 2xx, and this is the successful answer to a
+                # conditional request.
+                if exc.code == 304 and conditional:
+                    return NOT_MODIFIED, etag
                 text = exc.read().decode("utf-8", "replace")
                 # 403 and 429 are both how GitHub reports the SECONDARY rate limit, which is
                 # transient and unrelated to the token being wrong. Retrying a genuine
@@ -3258,7 +3294,7 @@ class GitHub:
                 "merged": bool(pull.get("merged_at") or pull.get("merged"))}
 
 
-    def list_issue_comments(self, since=None, per_page=100, max_pages=10):
+    def list_issue_comments(self, since=None, per_page=100, max_pages=10, etag=None):
         """Comments on this repository's issues AND pull requests, newest activity last.
 
         ONE REQUEST FOR THE WHOLE REPOSITORY, which is why the poller is affordable at all:
@@ -3274,20 +3310,33 @@ class GitHub:
         Paged to a ceiling rather than to exhaustion. A sweep that would need more than
         `max_pages` is a backlog nobody is waiting on, and the cursor does not advance past what
         was read, so the rest arrives next sweep instead of holding the loop.
+
+        Returns (comments oldest-first, etag), or (NOT_MODIFIED, etag) when the conditional
+        request says nothing has changed.
         """
-        out, page = [], 1
-        while page <= max_pages:
-            query = f"?sort=updated&direction=asc&per_page={per_page}&page={page}"
+        def url(page):
+            q = f"?sort=updated&direction=desc&per_page={per_page}&page={page}"
             if since:
-                query += f"&since={urllib.parse.quote(str(since))}"
-            got = self._request("GET", f"/repos/{self.repo}/issues/comments{query}")
+                q += f"&since={urllib.parse.quote(str(since))}"
+            return f"/repos/{self.repo}/issues/comments{q}"
+
+        # NEWEST FIRST, WHICH IS WHAT MAKES THE ETag MEAN ANYTHING. Under `asc` a new comment
+        # lands on the LAST page and page one is unchanged, so a 304 there would say "nothing
+        # new" while something was. Under `desc` every new comment changes page one, so the
+        # conditional request on it is a sound answer about the whole query.
+        first, new_etag = self._request("GET", url(1), etag=etag, conditional=True)
+        if first is NOT_MODIFIED:
+            return NOT_MODIFIED, etag
+        out = list(first) if isinstance(first, list) else []
+        page = 1
+        while len(out) >= per_page * page and page < max_pages:
+            page += 1
+            got = self._request("GET", url(page))
             if not isinstance(got, list) or not got:
                 break
             out.extend(got)
-            if len(got) < per_page:
-                break
-            page += 1
-        return out
+        # Oldest first for the caller, which walks them in the order they were written.
+        return list(reversed(out)), new_etag
 
     def pull_request(self, number):
         """The facts a review run needs before it opens anything, or None.
@@ -3426,6 +3475,9 @@ class Watcher:
         # are here, which is what keeps a pass-at-a-time caller fully synchronous.
         self._doorbell = None
         self._catchup = None
+        # THE COMMENT POLLER'S OWN WORKER. Separate from _catchup so a slow or failing Discord
+        # sweep cannot hold it up or swallow it; see start_github_poll.
+        self._github_poll = None
         self._catchup_async = False     # run() sets this; ingest_event reads it
         self._catchup_wanted = False    # a `catchup` doorbell arrived; the loop starts a worker
         # index_transcript is called from TWO threads for the same run — the scheduler's live
@@ -11397,7 +11449,7 @@ class Watcher:
         return os.path.join(self.state_dir, "github.cursor.json")
 
     def read_github_cursor(self):
-        """(since, seen). How far the poller has read, and what it has already acted on.
+        """(since, seen, etag). How far the poller has read, what it acted on, and the ETag.
 
         TWO THINGS BECAUSE ONE IS NOT ENOUGH. `since` is a timestamp and GitHub's filter is
         inclusive, so the comment that set it comes back on the next sweep; several comments can
@@ -11407,16 +11459,17 @@ class Watcher:
         try:
             with open(self.github_cursor_path, "r", encoding="utf-8") as fh:
                 got = json.load(fh)
-            return (got.get("since") or None), [str(i) for i in (got.get("seen") or [])]
+            return ((got.get("since") or None), [str(i) for i in (got.get("seen") or [])],
+                    got.get("etag") or None)
         except (OSError, json.JSONDecodeError, AttributeError):
-            return None, []
+            return None, [], None
 
-    def write_github_cursor(self, since, seen):
-        # BOUNDED, because this file is rewritten every sweep and a repository accumulates
+    def write_github_cursor(self, since, seen, etag=None):
+        # BOUNDED, because this file is rewritten every poll and a repository accumulates
         # comments forever. The tail is what a re-read of `since` can possibly show us again.
         tmp = f"{self.github_cursor_path}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"since": since, "seen": [str(i) for i in seen][-500:]}, fh)
+            json.dump({"since": since, "seen": [str(i) for i in seen][-500:], "etag": etag}, fh)
         os.replace(tmp, self.github_cursor_path)
 
     def github_review_pool(self):
@@ -11458,7 +11511,7 @@ class Watcher:
             if gh.token_error:
                 log(f"#codereview: no poll — {gh.token_error}")
             return []
-        since, seen = self.read_github_cursor()
+        since, seen, etag = self.read_github_cursor()
         # FROM NOW, NOT FROM THE BEGINNING OF THE REPOSITORY. With no cursor the filter is
         # absent and GitHub hands back every comment it has, none of which is in `seen` -- so a
         # box turning this on for the first time would answer every `#codereview` anybody has
@@ -11467,14 +11520,19 @@ class Watcher:
         # answer: record the moment and start from it.
         if since is None:
             since = now_iso()
-            self.write_github_cursor(since, seen)
+            self.write_github_cursor(since, seen, None)
             log(f"#codereview: watching {gh.repo} from now; comments before this moment are "
                 f"history and will not start a review")
             return []
         try:
-            comments = gh.list_issue_comments(since=since)
+            comments, etag = gh.list_issue_comments(since=since, etag=etag)
         except GitHubError as exc:
             log(f"#codereview: could not read comments: {exc}")
+            return []
+        # NOTHING CHANGED, AND THE CURSOR IS LEFT EXACTLY AS IT WAS. This is the ordinary
+        # outcome of a poll and it costs no rate limit at all, which is the whole reason this
+        # runs once a minute rather than once a quarter of an hour.
+        if comments is NOT_MODIFIED:
             return []
         seen_set = set(seen)
         newest, created = since, []
@@ -11498,7 +11556,7 @@ class Watcher:
             seen.append(comment_id)
             if turn_id:
                 created.append(turn_id)
-        self.write_github_cursor(newest, seen)
+        self.write_github_cursor(newest, seen, etag)
         return created
 
     def take_review_trigger(self, gh, comment, trigger, agent_class):
@@ -11638,8 +11696,39 @@ class Watcher:
         outage — because everything else is already ingested and deduped by discord_id.
         """
         self.sweep()
-        self.poll_github()
+        # poll_github is NOT here any more, and its absence is the point. These three ran in
+        # sequence under one try/except, so a Discord failure did not merely delay the GitHub
+        # poll -- it skipped it, and logged the whole thing as a catchup error. A Discord outage
+        # silently stopping code reviews is not a trade anybody chose. It has its own worker,
+        # its own clock and its own error boundary now; see start_github_poll.
         self.reconcile_publications()
+
+    def start_github_poll(self):
+        """Kick off a GitHub comment poll if one is not already running. True if it started.
+
+        THE SHAPE start_catchup ALREADY HAS, and deliberately a second copy of it rather than a
+        parameter on the first: what the two share is "run this on a worker, one at a time, and
+        never let it take the daemon down". What they do not share is a clock, a failure mode or
+        a reason to run, and folding them together is what produced a poll a Discord outage
+        could stop.
+
+        ON A WORKER AND NOT ON THE LOOP, for the reason the sweep is: this is network I/O with a
+        60-second timeout and four retries behind it, and the loop it would block is the one
+        holding the doorbell, the acknowledgements and the scheduler.
+        """
+        if self._github_poll is not None and self._github_poll.is_alive():
+            return False
+
+        def guarded():
+            try:
+                self.poll_github()
+            except Exception as exc:  # noqa: BLE001 — a worker must never take the daemon down
+                log(f"ERROR in the #codereview poll: {type(exc).__name__}: {exc}")
+
+        self._github_poll = threading.Thread(target=guarded, name="ffwatch-github",
+                                             daemon=True)
+        self._github_poll.start()
+        return True
 
     def start_catchup(self):
         """Kick off a catchup pass if one is not already running. Returns True if it started.
@@ -11684,6 +11773,9 @@ class Watcher:
         self._catchup_async = True
         self.recover()
         last_sweep = 0.0
+        # 0.0 so the first pass polls at once: a daemon that has just started is exactly when
+        # somebody is watching to see whether it works.
+        last_github = 0.0
         try:
             while True:
                 try:
@@ -11696,6 +11788,14 @@ class Watcher:
                         if self.start_catchup():
                             self._catchup_wanted = False
                             last_sweep = time.time()
+                    # ITS OWN CLOCK, a minute rather than a quarter of an hour, because a
+                    # conditional GET that answers 304 costs no rate limit and the latency a
+                    # person actually waits is the time between these.
+                    if time.time() - last_github >= float(
+                            (self.cfg.get("github") or {}).get("poll_secs")
+                            or DEFAULTS["github"]["poll_secs"]):
+                        if self.start_github_poll():
+                            last_github = time.time()
                     self.claim_turns()
                     # BEFORE THE EXPENSIVE HALF, for the reason spelled out in once(): the
                     # acknowledgement create_turn just queued is worth nothing late, and
