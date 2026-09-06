@@ -558,8 +558,11 @@ def sflake(offset_secs=0, seq=0):
 
 
 def message(mid, content, *, channel=ASK_CHANNEL, author=PLAYER, name="player",
-            ref=None, attachments=None, bot=False):
-    m = {"id": str(mid), "channel_id": channel, "type": 0,
+            ref=None, attachments=None, bot=False, mtype=0):
+    """`mtype` is Discord's message type. 0 is somebody talking and it is what almost every
+    test wants; the system events (18 THREAD_CREATED, 6 CHANNEL_PINNED_MESSAGE) arrive through
+    the same read wearing the author of whoever triggered them, which is the whole problem."""
+    m = {"id": str(mid), "channel_id": channel, "type": mtype,
          "timestamp": "2026-08-21T00:00:00.000000+00:00",
          "author": {"id": author, "username": name, "global_name": name, "bot": bot},
          "content": content, "attachments": attachments or []}
@@ -1556,6 +1559,98 @@ def test_a_mention_only_channel_stays_quiet():
     case2.watcher.claim_turns()
     check("a second pass does not resurrect it",
           len(case2.rows("SELECT * FROM turn")) == 1)
+
+
+def test_a_thread_creation_notice_is_not_somebody_talking():
+    """Discord's own events arrive as messages, and one of them impersonates a question well.
+
+    THREAD_CREATED (type 18) lands in the PARENT channel carrying the thread's NAME as its
+    content, the author of whoever opened it, and THE THREAD'S OWN ID as its message id. Seen
+    on the build server 2026-09-06, the day agent_testing moved to `engage: all`: the title
+    "Counting Lines of Code 4" was ingested as a message, engaged on its own, and ran a full
+    container turn that Discord then refused every word of — that id is not a message inside
+    the thread, so the ack came back 404 and the reply 400. The run was invisible end to end
+    while holding the conversation busy, and the real follow-up typed meanwhile waited on it.
+
+    The case runs on the suite's default watch block, which is `engage: all` with a classifier
+    that fails open — the exact conditions that let the title through.
+    """
+    print("system messages: a thread notice is not a question")
+    title_id, real_id = sflake(0, 1), sflake(60, 2)
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [
+        message(title_id, "Counting Lines of Code 4", mtype=18),
+        message(real_id, "how many lines does that branch add?"),
+    ]
+    case = Case("system-thread-notice", fixture)
+    case.watcher.sweep()
+    case.watcher.claim_turns()
+    turns = case.rows("SELECT * FROM turn")
+    check("the thread notice does not make a turn of its own", len(turns) == 1, turns)
+    claimed = [m["discord_id"] for m in
+               case.rows("SELECT * FROM message WHERE turn_id IS NOT NULL")]
+    check("and the one turn there is belongs to what the person actually typed",
+          claimed == [real_id], claimed)
+    check("the notice is never stored, so it opens no conversation of its own",
+          case.rows("SELECT * FROM message WHERE discord_id=?", (title_id,)) == [],
+          case.rows("SELECT * FROM message"))
+    check("one conversation, not two", len(case.rows("SELECT * FROM conversation")) == 1,
+          case.rows("SELECT id, title FROM conversation"))
+
+    # THE DOORBELL SAYS IT TOO. The sweep is what fired in production, but this path is the one
+    # that opens conversations, and the notice's id IS the thread's — so an unfiltered doorbell
+    # would file the title into the thread's own conversation as though somebody had typed it.
+    case.events(ask_event(title_id))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    check("a doorbell carrying the same notice is refused as well",
+          case.rows("SELECT * FROM message WHERE discord_id=?", (title_id,)) == [])
+    check("and still no second conversation",
+          len(case.rows("SELECT * FROM conversation")) == 1)
+
+    # THE DIRECTION THIS MUST FAIL IN. A payload with no `type` at all is a person's. Discord
+    # has always sent the field; silencing real messages over a shape nobody imagined is the
+    # one outcome worse than answering a title.
+    typeless_id = sflake(120, 3)
+    fixture = case.read_fixture()
+    typeless = message(typeless_id, "and does that include the tests?")
+    typeless.pop("type")
+    fixture["messages"][ASK_CHANNEL].append(typeless)
+    case.write_fixture(fixture)
+    case.watcher.sweep()
+    stored = case.rows("SELECT * FROM message WHERE discord_id=?", (typeless_id,))
+    check("a message with no type at all is read as a person's, not as Discord's",
+          stored and stored[0]["gate"] is None, stored)
+
+
+def test_a_system_event_inside_a_thread_is_history_and_nothing_else():
+    """The other way in. A thread bundle carries whatever Discord filed inside the thread
+    alongside the real posts, and those reach insert_message rather than the sweep's filter —
+    so they come in GATED instead of dropped, exactly as a pre-attach message does. The row is
+    what advances in_watermark_id past them, and the report itself still opens its turn."""
+    print("system messages: inside a thread")
+    post_id, pinned_id = sflake(0, 1), sflake(60, 2)
+    fixture = base_fixture()
+    bug_thread(fixture, "31000", "belt merger drops items", [
+        message(post_id, "it drops one item in eight", channel="31000"),
+        message(pinned_id, "", channel="31000", mtype=6),      # CHANNEL_PINNED_MESSAGE
+    ])
+    fixture["thread_lists"][BUG_FORUM] = [{"id": "31000", "name": "belt merger drops items"}]
+    case = Case("system-in-thread", fixture)
+    case.watcher.sweep()
+    case.watcher.claim_turns()
+    stored = {m["discord_id"]: m for m in case.rows("SELECT * FROM message")}
+    check("the system event is kept as history", pinned_id in stored, sorted(stored))
+    check("but marked so no scheduler pass reconsiders it",
+          stored.get(pinned_id, {}).get("gate") == "none", stored.get(pinned_id))
+    check("with a reason naming Discord rather than the engagement gate",
+          "system message" in (stored.get(pinned_id, {}).get("gate_reason") or ""),
+          stored.get(pinned_id, {}).get("gate_reason"))
+    turns = case.rows("SELECT * FROM turn")
+    check("the report still opens its turn", len(turns) == 1, turns)
+    claimed = [m["discord_id"] for m in
+               case.rows("SELECT * FROM message WHERE turn_id IS NOT NULL")]
+    check("and that turn claims the post alone", claimed == [post_id], claimed)
 
 
 def test_the_gate_declines_a_message_that_asks_nothing():
@@ -12996,6 +13091,8 @@ def main():
         test_a_run_that_ran_out_of_time_still_says_so,
         test_a_verification_that_never_ran_does_not_read_as_one_that_failed,
         test_a_mention_only_channel_stays_quiet,
+        test_a_thread_creation_notice_is_not_somebody_talking,
+        test_a_system_event_inside_a_thread_is_history_and_nothing_else,
         test_the_gate_declines_a_message_that_asks_nothing,
         test_the_gate_answers_when_it_is_unsure,
         test_evidence_and_thread_openings_never_reach_the_gate,

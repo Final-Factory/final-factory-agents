@@ -191,6 +191,13 @@ it cannot resolve to a snowflake.
 | `engage` | `all`, `mention` | `mention` | Whether every human message is considered, or only one that @-mentions the bot or replies to it. |
 | `ping` | `true`, `false` | `false` | Whether a reply there may @-mention a human. |
 
+`engage: all` means every message a PERSON wrote. Discord's own events in a channel — somebody
+started a thread, somebody pinned something, somebody joined — are messages in the API and are
+dropped before the gate ever sees them, whichever way this is set. The thread-creation notice
+is the one that looked convincing: it lands in the PARENT channel carrying the new thread's
+name as its content and the thread's own id as its message id, so a channel on `all` used to
+answer its own thread titles.
+
 `venue` and `engage` are declared here and never read off Discord's permission bits: a role
 edit that widened a channel would otherwise reclassify it silently, and the first sign would
 be a file path posted where it should not be. Both fall closed when omitted, and `ffwatch`

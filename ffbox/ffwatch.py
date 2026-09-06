@@ -2194,6 +2194,44 @@ def turn_options(turn):
         return {}
 
 
+# THE MESSAGE TYPES A PERSON ACTUALLY WROTE. Discord files its own events into a channel as
+# messages too — somebody started a thread, somebody pinned something, somebody joined — and
+# they arrive through the same read as the prose, wearing the author of whoever triggered them.
+#
+# THREAD_CREATED (type 18) is the one that cost something. It lands in the PARENT channel
+# carrying the thread's NAME as its content and the THREAD'S OWN ID as its message id, so it
+# reads exactly like that person saying the title out loud in the channel. Seen on 2026-09-06 in
+# agent_testing, the day the channel moved to `engage: all`: "Counting Lines of Code 4" was
+# ingested as a message, cleared the gate on its own ("appears to reference a task or request
+# for code counting analysis" — faithful to the prompt, and it is a title), and ran a full
+# container turn. Discord then refused every word of it: reacting to that id inside the thread
+# is a 404 and replying to it is a 400, because the message lives in the parent channel and not
+# in the thread. So the run was invisible from end to end — no 👀, no post — while holding the
+# conversation busy, which made the follow-up typed meanwhile wait 33 seconds for a turn nobody
+# could see.
+#
+# A CLOSED ALLOWLIST, not a list of the system types to drop. Discord adds types, and one nobody
+# here has heard of is far more likely to be a new system event than a new way of saying
+# something. 0 is an ordinary message and 19 is a reply. A FORUM thread's starter post is type 0
+# — verified against a live bug_reports thread — so the one place that depends on ingesting a
+# starter is untouched by this.
+HUMAN_MESSAGE_TYPES = (0, 19)
+
+
+def system_message_reason(msg):
+    """Why this payload is Discord talking rather than a person, or None when it is a person.
+
+    A payload with NO `type` at all reads as a person's. The field has been on every message
+    object Discord has ever returned, but the direction this must not fail in is silencing real
+    messages because some fetch came back in a shape not imagined here — the same reasoning that
+    makes the engagement gate fail open.
+    """
+    kind = msg.get("type")
+    if isinstance(kind, bool) or not isinstance(kind, int) or kind in HUMAN_MESSAGE_TYPES:
+        return None
+    return f"a Discord system message (type {kind}), not something a person said"
+
+
 def reply_mention(conv, message):
     """The user id a reply should open by @-mentioning, or None.
 
@@ -4047,6 +4085,12 @@ class Watcher:
         # gate declines through.
         alias = self.db.scalar("SELECT watch_alias FROM conversation WHERE id=?", (conv_id,))
         stale = self.before_attach(alias, discord_id)
+        # A SYSTEM EVENT COMES IN GATED for the same two reasons a pre-attach message does: it
+        # is part of what this conversation looks like, and the row is what advances
+        # in_watermark_id past it. The sweep drops these before they ever reach here, so what
+        # this catches is the other way in — a thread bundle, which carries whatever Discord
+        # filed inside the thread alongside the real posts.
+        system = system_message_reason(msg)
         cur = self.db.execute(
             "INSERT OR IGNORE INTO message(conversation_id, discord_id, direction, author_id,"
             " author_name, is_bot, content, referenced_discord_id, turn_id, created_at,"
@@ -4063,8 +4107,8 @@ class Watcher:
              # WHICH RULE PUT IT HERE. Recorded on every message, not only the ones a model
              # touched: a routing call nobody can inspect is one nobody can debug.
              routed_by, (routed_reason or None),
-             "none" if stale else None,
-             (f"posted before {alias} was attached to this box" if stale else None)))
+             "none" if (stale or system) else None,
+             (f"posted before {alias} was attached to this box" if stale else system)))
         if cur.rowcount == 0:
             return None                        # already ingested; a duplicate doorbell
         message_id = cur.lastrowid
@@ -4908,6 +4952,15 @@ class Watcher:
         alias = ev.get("channel")
         conv_kind = self.conversation_kind(ev.get("kind"), alias)
 
+        # The doorbell's own way in. Said again here rather than left to the sweep's filter,
+        # because this path opens conversations: a THREAD_CREATED event carries the thread's id
+        # as its message id, so upsert_conversation would match the thread's own conversation
+        # by that id and file the title into it as though somebody had typed it there.
+        system = system_message_reason(msg)
+        if system:
+            log(f"ignoring {message_id} in {alias or channel_id}: {system}")
+            return None
+
         # ALREADY OURS. The sweep re-reads every watched channel every catchup_secs, so most of
         # what arrives here has been ingested already; message.discord_id UNIQUE makes the
         # insert a no-op, but routing it again is not free and it is not harmless. It re-runs
@@ -5046,6 +5099,14 @@ class Watcher:
                 if not spec.get("forum"):
                     for m in ffd_json(self.cfg, ["read", target, "--limit", limit]) or []:
                         if (m.get("author") or {}).get("bot"):
+                            continue
+                        # DROPPED HERE, not gated after a fetch. The read above already handed
+                        # over the whole message, so recognising a system event costs a
+                        # dictionary lookup — where letting it through costs a fetch_message, a
+                        # routing decision, possibly a conversation of its own, and it costs
+                        # them on EVERY sweep, since a row that is never inserted is a row
+                        # discord_id cannot dedupe.
+                        if system_message_reason(m):
                             continue
                         self.ingest_event({"kind": "message", "channel": alias,
                                            "channel_id": m.get("channel_id"), "id": m.get("id"),
