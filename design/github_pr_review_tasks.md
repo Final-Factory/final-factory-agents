@@ -8,18 +8,11 @@ argv builder), and `05-discord-setup.sh` for config seeding.
 
 Effort: **S** under an hour, **M** an afternoon, **L** a day or more.
 
-## Status: BLOCKED on branch adoption, except A3 which is DONE
+## Status: UNBLOCKED. A3 done; B through G open.
 
-**Dependency.** C, D and E cannot be verified end to end until
-`design/branch_adoption_tasks.md` is implemented. A `#codereview` target is a foreign branch
-carrying foreign commits, so the harvest's identity fence refuses to publish on every run
-(`harvest-workspace.sh:148-150`, again at `ffbox:1743`), the changed-file ceiling counts the
-whole pull request, and `push_bundle` gets its first name from outside the `ffbox/` prefix.
-Adoption's `--range-from-start` is the fix, and it does not exist yet. Design section 3a has the
-argument. Adoption does not depend on this feature, so the order is adoption first, then C
-onward.
-
-**A3 is done and pushed** -- it is independent of all of that.
+Branch adoption is implemented and on master (`72843e1`..`2458986`), so the dependency this file
+carried is discharged. Design section 3b lists what it alters here, and the task text below is
+updated for it. **A3 is done and pushed.**
 
 ## A. Config and credentials
 
@@ -49,13 +42,20 @@ onward.
 - **C1 (M).** `poll_github()`, called from `catchup_pass` beside the Discord sweep. Cursor file in
   `state_dir`. For each comment since the cursor: match the trigger, look the author id up in
   `github.trust.operators`, and drop everything else without a network call.
-- **C2 (M).** The refusal set, each recording the comment against the cursor so it is decided
-  once: author not an operator (silent), pull request closed, head in a fork, head branch in
-  neither the mirror nor `git_dir`. The last three post a comment saying which; the first does
-  not, because answering a stranger tells them the trigger exists.
+- **C2 (S).** The refusal set, each recording the comment against the cursor so it is decided
+  once. **Two checks only** -- the pull request must be open, and its head must not be a fork's
+  -- because `adopt_branch()` already refuses an unusable name, a protected branch or publish
+  base, a branch that is not on the remote, a branch another conversation has a turn in flight
+  on, a conversation that already owns one, and one that has already published. Post its
+  `reason` verbatim: every one is written to be read by whoever asked. The not-an-operator case
+  stays silent, because answering a stranger tells them the trigger exists.
 - **C3 (M).** `github_pr` conversation kind. `thread_id` = `github:pr:<number>`,
-  `agent_class` from `github.review_pool`, `branch` and `github_pr` filled in at creation from
-  B2. It is not a `LOCAL_KIND` -- it has somewhere to post -- and it belongs in
+  `agent_class` from `github.review_pool`, `github_pr` filled in at creation from B2. The branch
+  is **adopted, not written**: create the conversation, then `adopt_branch(conv_id, head,
+  by=<commenter id>)`, then `create_turn`, in that order -- adoption refuses a conversation that
+  already owns a branch, and the turn must not launch before the column is set. Do not route it
+  through `take_branch_directive()`: that looks its author up in `discord.trust.operators`, and
+  a GitHub id must never be tested against a table of Discord snowflakes (the C6 hazard). It is not a `LOCAL_KIND` -- it has somewhere to post -- and it belongs in
   `GATE_BYPASS_KINDS` and `DIRECT_KINDS`. Schema comment on `conversation.kind` updated.
 - **C4 (M).** The in-flight refusal: `conversation.state IN ('queued','running')` posts a comment
   naming the run and creates no turn. This is where `github_pr` deliberately differs from
@@ -63,12 +63,15 @@ onward.
 
   **It must not leave an unclaimed message row.** `claim_turns` selects every conversation
   holding a message with `turn_id IS NULL` whose kind is not in `LOCAL_KINDS`, so a refused
-  trigger recorded as a message becomes a turn on the pass after the running one ends -- which
-  is precisely the "silently start a second review when the first finishes" outcome the refusal
-  exists to prevent. The refusal therefore takes the shape the DM autoreply already uses: an
-  outbound row with `local_id` = `codereview-refused:<comment id>` and no conversation id and no
-  message row. That id is what holds one comment to one refusal across a replayed sweep, since
-  the `message.discord_id` dedupe is not available to a path that writes no message.
+  trigger recorded as a plain message becomes a turn on the pass after the running one ends --
+  precisely the "silently start a second review when the first finishes" outcome the refusal
+  exists to prevent. Use the **message gate**, which `take_branch_directive` already uses for
+  the same problem: insert the message, then set `gate='codereview_busy'` and `gate_reason`.
+  `pending_messages` selects `gate IS NULL`, so a gated message never becomes a turn, and
+  `adopt_branch`'s busy check skips gated messages too. This supersedes the outbound `local_id`
+  scheme an earlier revision proposed, which threw away the `message.discord_id` dedupe to solve
+  a problem the gate already solves.
+
 - **C5 (S).** `demote_for_stranger()` must not fire on a `github_pr` conversation. Exempt it the
   way local kinds are exempt, and put the reason in the code: the prompt carries no commenter
   text, so there is no stranger's words to fence.
@@ -86,8 +89,11 @@ onward.
 
 - **D1 (M).** The turn prompt, built by the harness from B2 and the diff range. It names the pull
   request, the branch, the base, and instructs: run `/code-review-sonnet`, investigate what it
-  returns, apply the findings that survive, commit onto the current branch. No level argument.
-  No commenter text, and a test asserting the comment body appears nowhere in the built prompt.
+  returns, apply the findings that survive, commit. No level argument. No commenter text, and a
+  test asserting the comment body appears nowhere in the built prompt. It says **nothing about
+  branch discipline**: `discord-task.sh:559` already renders the adopted-branch preamble, which
+  covers reading the branch first, adding commits on top, and not rebasing, amending, reverting
+  or switching.
 - **D2 (S).** `Workflow` added to this lane's capability set in **both** places: the `--tools`
   set and the `--allowedTools` list. Measured 2026-09-06 on claude 2.1.263 -- `--tools` alone
   gets "Review dynamic workflow before running", which a `-p` run has nobody to answer, and the
@@ -137,6 +143,17 @@ onward.
 - **G3.** `#codereview` twice in quick succession: the second is refused with a comment naming
   the first run.
 - **G4.** A fork pull request: refused with a comment, no container created.
+
+## Facts about this lane that the code decides, not this design
+
+- **Every run is a cold launch.** `pool_claim_for` matches a warm container on branch and no
+  spare is staged on a pull request branch, so the pool misses by construction. Cold path plus a
+  Unity delta import, inside the untouched `warmup_secs` of 3600.
+- **A repeat `#codereview` reviews the current head**, because `mirror_sync_from_origin` runs
+  before every turn of an adopted conversation.
+- **A branch deleted mid-run refuses at the publish**, by the prefix rule read off `ls-remote`.
+  Merging the pull request while a review runs is the ordinary way to reach it.
+- `run.branch_existed` comes from that same lookup, so E2 can say "added to" rather than guess.
 
 ## Confirmed sound while cross-checking
 
