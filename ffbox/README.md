@@ -1580,8 +1580,10 @@ saying where the work will land, refusals included.
 
 **Before it owns one, and only then.** A conversation keeps its branch for life, so adoption is
 refused once the thread has published; it is also refused for a name git would not take, for
-`master`/`develop`/`main`, for a branch the remote does not have, and for one another open
-conversation is working on. Every refusal happens at the adopt rather than at the far end of a
+`master`/`develop`/`main`, for a branch the remote does not have, and for one another
+conversation has a turn in flight on. A thread that merely worked on the branch and finished
+does not hold it — that is the case adoption exists for — and the acknowledgement names it, so
+you know a new message in that thread would put another turn on the same branch. Every refusal happens at the adopt rather than at the far end of a
 twenty-minute run.
 
 Three things behave differently on an adopted branch, and they are the whole of the feature

@@ -110,7 +110,8 @@ reason.
 - **B2** The five checks of design §5, in that order, each with its own message:
   ref format (`git check-ref-format --branch`); not protected and not a `publish_bases` key;
   `refs/remotes/<push_remote>/<name>` resolves in `git_dir` after a fetch; no other
-  non-closed conversation owns the name; this conversation owns no branch and has no run with
+  conversation has a turn IN FLIGHT on the name (design 5.4 revision 4 — NOT "not closed",
+  which refused the first real use); this conversation owns no branch and has no run with
   `pushed=1`.
 - **B3** On success: one UPDATE writing `branch`, `branch_adopted_at=now_iso()`,
   `branch_adopted_by=by`, guarded `WHERE id=? AND branch IS NULL` so two ingresses racing

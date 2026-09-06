@@ -7113,12 +7113,32 @@ class Watcher:
                          f"refs/remotes/{remote}/{branch}^{{commit}}").returncode != 0:
             return False, (f"`{branch}` is not on {remote}. A conversation can only adopt a "
                            f"branch that already exists; push it first.")
-        other = self.db.one("SELECT id FROM conversation WHERE branch=? AND id<>?"
-                            " AND state<>'closed'", (branch, conv_id))
-        if other is not None:
-            return False, (f"conversation {other['id']} is already working on `{branch}`. One "
-                           f"branch belongs to one conversation, or the two race each other "
-                           f"for a fast-forward.")
+        # A BRANCH ANOTHER CONVERSATION IS WORKING ON RIGHT NOW, and only that. The hazard is
+        # two turns pushing to one branch at the same time: the second is a non-fast-forward,
+        # origin rejects it, and that turn loses its publication.
+        #
+        # THE FIRST VERSION OF THIS TESTED state<>'closed' AND WAS WRONG, on a box where three
+        # conversations out of fifty-nine have ever reached `closed`. A conversation goes idle
+        # when its turn ends and stays there; `closed` is written by the clustering sweep when
+        # a channel has moved on, and by `ffwatch close`. So "not closed" meant "any
+        # conversation that has ever owned this branch, ever" -- which made the main case this
+        # feature exists for, picking up a branch an earlier run left behind, impossible. It
+        # refused the first real attempt: a new thread in #agent-testing naming the branch of a
+        # bug thread that had been finished for four days.
+        #
+        # An unclaimed message counts as in flight too. It becomes a turn on the next pass, and
+        # the conversation is still `idle` until it does.
+        busy = self.db.one(
+            "SELECT c.id AS id FROM conversation c WHERE c.branch=? AND c.id<>?"
+            "   AND (c.state IN ('queued','running')"
+            "        OR EXISTS (SELECT 1 FROM message m WHERE m.conversation_id=c.id"
+            "                    AND m.turn_id IS NULL AND m.direction='in' AND m.is_bot=0"
+            "                    AND m.gate IS NULL))"
+            " LIMIT 1", (branch, conv_id))
+        if busy is not None:
+            return False, (f"conversation {busy['id']} has a turn in flight on `{branch}`. Two "
+                           f"turns pushing to one branch race each other for a fast-forward "
+                           f"and the loser loses its work — try again when it has finished.")
         if self.conversation_branch(conv):
             return False, (f"this conversation already publishes as "
                            f"`{self.conversation_branch(conv)}`, and a conversation keeps its "
@@ -7138,6 +7158,14 @@ class Watcher:
         if not done.rowcount:
             return False, "something else claimed this conversation's branch first"
         log(f"conversation {conv_id}: adopted {branch} (by {by})")
+        # WHO ELSE HAS IT, said rather than refused. The branch is not exclusive any more, and
+        # the thing an operator has to know is that a message in that other thread would put a
+        # turn on this branch too.
+        also = self.db.one("SELECT id FROM conversation WHERE branch=? AND id<>? ORDER BY id",
+                           (branch, conv_id))
+        shared = ("" if also is None else
+                  f" Conversation {also['id']} has worked on this branch before; a new message "
+                  f"in that thread would put another turn on it.")
         # THE MIRROR, IMMEDIATELY, AND FOR EVERY ADOPTED NAME — the prefix does not come into
         # it. mirror_take fills the mirror from `refs/ffbox/<branch>` in the host checkout,
         # which exists only for a branch THIS BOX pushed; an adopted branch was pushed by
@@ -7148,8 +7176,8 @@ class Watcher:
         if not self.mirror_sync_from_origin(branch):
             return True, (f"this conversation publishes as `{branch}`, but the branch could not "
                           f"be put in the local mirror. Its next turn will try again and will "
-                          f"say so if it still cannot start.")
-        return True, f"this conversation publishes as `{branch}`"
+                          f"say so if it still cannot start." + shared)
+        return True, f"this conversation publishes as `{branch}`" + shared
 
     # ======================================================================================
     # the Claude subscriptions
