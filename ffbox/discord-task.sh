@@ -600,11 +600,23 @@ def preamble_branch(job):
     if not branch:
         return PREAMBLE_BRANCH_NEW
     if bases.get("branch_adopted"):
+        # WHICH PULL REQUEST, when the host looked it up and found one. "a pull request may
+        # already be open" is true and useless: the container holds no GitHub credential, so an
+        # agent told only that cannot go and find out, and what it is actually deciding — how
+        # carefully to treat the commits under it, and where its own will be read — turns on
+        # the answer. The host records it when the branch is adopted; see
+        # record_branch_pull_request in ffwatch.py.
+        review = bases.get("conversation_pr")
+        # NEUTRAL ABOUT THE STATE on purpose: the column holds the pull request for this
+        # branch whether it is open, merged or closed by a person, and the container is being
+        # told where to look rather than what to conclude.
+        under = (f"the branch already has a pull request ({review})"
+                 if review else "a pull request may already be open against them")
         return (
             f" YOU ARE ON `{branch}`, WHICH THIS CONVERSATION DID NOT CREATE. An operator "
             "pointed this thread at a branch somebody else pushed, and it is checked out at "
-            "their work. Those commits are theirs, they are on origin, and a pull request may "
-            "already be open against them: READ THE BRANCH BEFORE YOU CHANGE IT — `git log` "
+            f"their work. Those commits are theirs, they are on origin, and {under}: "
+            "READ THE BRANCH BEFORE YOU CHANGE IT — `git log` "
             "and `git diff` against the base — because what you are looking at is somebody's "
             "considered work and not a draft you left lying about. Add commits on top. DO NOT "
             "make a branch and do not switch to one: the harness publishes this branch by name "

@@ -104,6 +104,16 @@ CREATE TABLE IF NOT EXISTS conversation (
     -- an operator answering later in a stranger's thread does not promote it.
     agent_class         TEXT NOT NULL DEFAULT 'ffagent',
     github_issue        TEXT,
+    -- THE PULL REQUEST THIS CONVERSATION'S BRANCH IS UNDER — a url when there is one and a
+    -- bare number when the API answered without one. Any state: open, merged, or closed by a
+    -- person, because publish() reads it to keep from opening a second one for a head somebody
+    -- already ruled on.
+    --
+    -- It is a fact about the BRANCH rather than about a run, which is why adoption fills it in
+    -- too (see record_branch_pull_request in ffwatch.py). Until that landed every writer was
+    -- downstream of a run of THIS conversation pushing, so a thread pointed at somebody else's
+    -- branch — which by definition has pushed nothing — left it empty forever, and five threads
+    -- on one branch had one row between them that knew about the review they were all under.
     github_pr           TEXT,
     created_at          TEXT,
     last_activity_at    TEXT
