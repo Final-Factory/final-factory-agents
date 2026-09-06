@@ -11746,6 +11746,143 @@ def test_a_review_answers_on_the_pull_request_and_never_on_discord():
     check("and its venue is private", turn["venue"] == "private", dict(turn))
 
 
+def test_adopting_a_branch_takes_the_pull_request_with_it():
+    """A thread pointed at somebody's branch learns what is already proposed with it.
+
+    THE HOLE THIS FILLS. conversation.github_pr had three writers and every one of them is
+    downstream of a run OF THAT CONVERSATION pushing — publish(), the reconcile sweep, and the
+    #codereview ingress, which is handed the number by the comment that started it. A thread
+    that adopts a branch has pushed nothing, so it recorded nothing, and neither did the four
+    other threads pointed at the same branch: on the live box, five conversations on
+    ffbox/inventory-window-drag-clamp-d44t1-e4c99e4c and one of them knowing about the pull
+    request they were all working under.
+
+    The pull request is a fact about the BRANCH. Whoever takes the branch may have it.
+    """
+    print("publication: adoption records the branch's pull request")
+    case = bug_case("adoptpr", venue="private")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/save-fix")
+    review_cfg(case)
+    a_pull_request(77, "loth/save-fix")
+    conv = case.rows("SELECT * FROM conversation")[0]
+
+    ok, reason = case.watcher.adopt_branch(conv["id"], "loth/save-fix", by="op")
+    check("the branch is adopted", ok, reason)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("and the pull request already on it is recorded on the conversation",
+          conv["github_pr"] == "https://github.com/Final-Factory/FinalFactory/pull/77",
+          conv["github_pr"])
+    # ON ITS OWN LINE, like the sentence about the other threads. An operator is being told
+    # three separate things and run together they read as one long line.
+    check("the ack names it, as something a person can click, on a line of its own",
+          "\nIt is already under pull request "
+          "[#77](https://github.com/Final-Factory/FinalFactory/pull/77)." in reason, reason)
+    check("the branch sentence is still the first line",
+          reason.splitlines()[0] == "this conversation is now on branch `loth/save-fix`.",
+          reason)
+
+    # AND THE CONTAINER IS TOLD. The agent cannot go and look — no GitHub credential reaches
+    # it — so "a pull request may already be open" is a fact it has no way to resolve.
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    run = _latest_run(case)
+    job = json.load(open(os.path.join(os.path.dirname(run["stream_path"]), "job.json"),
+                         encoding="utf-8"))
+    check("the job carries the pull request beside the branch",
+          job["bases"]["conversation_pr"]
+          == "https://github.com/Final-Factory/FinalFactory/pull/77", job["bases"])
+    pre = preamble_for(job, "adoptprpre")
+    check("and the preamble names it rather than saying one may exist",
+          "the branch already has a pull request "
+          "(https://github.com/Final-Factory/FinalFactory/pull/77)" in pre
+          and "may already be open" not in pre, pre[:900])
+
+
+def test_a_pull_request_a_person_closed_is_recorded_and_said_plainly():
+    """Every state, because the three mean different things to whoever typed `!branch`.
+
+    pull_request_for answers about closed and merged pull requests for a reason — a closed one
+    is a decision publish() must not walk back through — and an adopting thread has the same
+    interest in knowing. What changes is the sentence: "it is already under review" would be
+    false of both.
+    """
+    print("publication: adoption reports a closed pull request as closed")
+    case = bug_case("adoptprclosed", venue="private")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/abandoned")
+    review_cfg(case)
+    a_pull_request(81, "loth/abandoned", state="closed")
+    conv = case.rows("SELECT * FROM conversation")[0]
+
+    ok, reason = case.watcher.adopt_branch(conv["id"], "loth/abandoned", by="op")
+    check("the branch is still adopted — a closed pull request is not a refusal", ok, reason)
+    check("and the ack says it was closed without a merge",
+          "was closed without merging, so the harness will not open another." in reason, reason)
+    check("the closed one is recorded, which is what stops publish() opening a second",
+          case.rows("SELECT * FROM conversation")[0]["github_pr"]
+          == "https://github.com/Final-Factory/FinalFactory/pull/81", None)
+
+    # A BRANCH WITH NOTHING ON IT SAYS NOTHING. The ack is one sentence again, and the row
+    # stays empty rather than recording a pull request that does not exist.
+    other = bug_case("adoptprnone", venue="private")
+    o2, h2 = git_origin(other)
+    push_a_stranger_branch(h2, "loth/fresh")
+    review_cfg(other)
+    conv2 = other.rows("SELECT * FROM conversation")[0]
+    ok, reason = other.watcher.adopt_branch(conv2["id"], "loth/fresh", by="op")
+    check("adopted with no pull request to report",
+          ok and reason == "this conversation is now on branch `loth/fresh`.", reason)
+    check("and nothing was recorded", other.rows("SELECT * FROM conversation")[0]["github_pr"]
+          is None, None)
+
+
+def test_the_sweep_backfills_a_thread_that_adopted_before_the_pull_request_existed():
+    """Adoption asks once; the sweep is what covers everything that asked too early.
+
+    THE TWO CASES IT IS FOR, and they are the same case a sweep apart. A thread adopts a branch
+    an hour before anybody opens a pull request for it, or it adopted before this code existed
+    at all — every conversation on the box, the day this ships. Neither has a run to publish, so
+    the reconcile's old query never selected them: it started at `bundle_path IS NOT NULL`,
+    which is a run that harvested something, which an adopting thread has not got.
+
+    NARROWER THAN "any conversation with a branch and no pull request", deliberately. A branch
+    this box pushed and did not open a pull request for was refused one by the gates, and asking
+    GitHub about that every fifteen minutes would find nothing every time, forever.
+    """
+    print("publication: the sweep records a pull request an adopted branch acquires later")
+    case = bug_case("adoptprlate", venue="private")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/later")
+    review_cfg(case)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    ok, reason = case.watcher.adopt_branch(conv["id"], "loth/later", by="op")
+    check("adopted with no pull request anywhere yet", ok, reason)
+    check("so nothing is recorded", case.rows("SELECT * FROM conversation")[0]["github_pr"]
+          is None, None)
+
+    a_pull_request(90, "loth/later")
+    case.watcher.reconcile_publications()
+    check("the sweep finds it and records it",
+          case.rows("SELECT * FROM conversation")[0]["github_pr"]
+          == "https://github.com/Final-Factory/FinalFactory/pull/90", None)
+
+    # AND IT IS FINISHED WITH THE CONVERSATION. The query drops a row the moment the column is
+    # filled, so a branch under review does not cost a GitHub call every sweep for a week.
+    asked = len([r for r in GH_STATE["requests"] if "pulls?head=" in r[1]])
+    case.watcher.reconcile_publications()
+    check("a second sweep asks GitHub nothing at all",
+          len([r for r in GH_STATE["requests"] if "pulls?head=" in r[1]]) == asked, None)
+
+    # A CONVERSATION THAT NEVER ADOPTED IS NOT SWEPT. Its branch, if it has one, came from a
+    # push of its own, and the pull request it has not got was refused by the gates.
+    case.watcher.db.execute("UPDATE conversation SET github_pr=NULL, branch_adopted_at=NULL,"
+                            " branch_adopted_by=NULL WHERE id=?", (conv["id"],))
+    case.watcher.reconcile_publications()
+    check("a branch this box pushed itself is left alone",
+          len([r for r in GH_STATE["requests"] if "pulls?head=" in r[1]]) == asked
+          and case.rows("SELECT * FROM conversation")[0]["github_pr"] is None, None)
+
+
 def test_adoption_refuses_what_it_cannot_safely_take():
     """Every refusal is at the adopt, not at the far end of a twenty-minute run."""
     print("publication: what a conversation may adopt")
@@ -13377,6 +13514,9 @@ def main():
         test_a_second_trigger_while_a_review_runs_is_refused_and_never_resurrected,
         test_a_review_answers_on_the_pull_request_and_never_on_discord,
         test_adoption_refuses_what_it_cannot_safely_take,
+        test_adopting_a_branch_takes_the_pull_request_with_it,
+        test_a_pull_request_a_person_closed_is_recorded_and_said_plainly,
+        test_the_sweep_backfills_a_thread_that_adopted_before_the_pull_request_existed,
         test_the_mirror_sync_writes_only_what_origin_says,
         test_the_harness_never_creates_a_branch_outside_its_prefix,
         test_the_keeper_expires_a_stale_spare_and_never_a_claimed_one,

@@ -2045,6 +2045,33 @@ def conversation_ref(conv):
     return f"[{conv['id']}]({link})" if link else str(conv["id"])
 
 
+def pull_request_note(pull):
+    """The sentence an adoption ack adds about a pull request already on the branch, or "".
+
+    ON ITS OWN LINE and its own sentence, for the reason the "who else has worked on this"
+    sentence is: an operator reading the ack is being told three separate facts — which branch
+    this thread is on, what is already proposed with it, and who else is in the same place —
+    and run together they read as one long line with a branch name in the middle.
+
+    THE STATE IS SAID OUT LOUD because the three mean different things to whoever typed
+    `!branch`. Open is somewhere this thread's next commits will be reviewed; merged is work
+    that has already landed, so a thread adding to the branch is proposing something new; closed
+    without a merge is somebody's decision, and the harness will not walk back through it.
+    """
+    if not pull:
+        return ""
+    number = pull.get("number")
+    url = (pull.get("url") or "").strip()
+    named = f"#{number}" if number else "the pull request"
+    named = f"[{named}]({url})" if url else named
+    if pull.get("merged"):
+        return f"\nPull request {named} on this branch has already been merged."
+    if (pull.get("state") or "") != "open":
+        return (f"\nPull request {named} on this branch was closed without merging, so the "
+                f"harness will not open another.")
+    return f"\nIt is already under pull request {named}."
+
+
 def is_local_conversation(conv):
     """True when this conversation has nowhere to post. Takes a row, a dict, or a bare kind."""
     if conv is None:
@@ -7018,6 +7045,12 @@ class Watcher:
                       # somebody else's, and the difference decides whether the agent may treat
                       # what is there as its own working state or has to read it first.
                       "branch_adopted": self.conversation_adopted(conv),
+                      # AND WHAT IS ALREADY PROPOSED WITH IT, when the harness knows. An
+                      # adopted branch is usually already under review, and an agent that does
+                      # not know that reads "a pull request may be open" and has no way to find
+                      # out — the container holds no GitHub credential and cannot go and look.
+                      # A url or a bare number, whichever conversation.github_pr holds.
+                      "conversation_pr": (conv["github_pr"] or None),
                       "choices": dict(self.cfg.get("publish_bases") or {})},
             # Verification is on for every run. It costs nothing on a run that changed no files:
             # the container skips the suite when the tree is untouched, so a question does not
@@ -7737,6 +7770,16 @@ class Watcher:
         if not done.rowcount:
             return False, "something else claimed this conversation's branch first"
         log(f"conversation {conv_id}: adopted {branch} (by {by})")
+        # AND WHAT IS ALREADY PROPOSED WITH IT. A branch somebody else pushed is very often
+        # already under review, and until now the thread that adopted it had no idea: every
+        # writer of conversation.github_pr needed a run OF THIS CONVERSATION to have pushed
+        # something first, which an adopting thread has not done and may never do. That left
+        # several threads on one branch and one of them — the one that made it — knowing about
+        # the pull request. `conv` predates the claim above, which is exactly what this wants:
+        # a #codereview conversation already recorded its own pull request before it got here
+        # and is skipped without a call.
+        pull = self.record_branch_pull_request(conv, branch)
+        note = pull_request_note(pull)
         # WHO ELSE HAS IT, said rather than refused. The branch is not exclusive any more, so
         # naming the other threads is what lets an operator go and look at them — and each one
         # is a link, because "conversation 44" is a number a person then has to go and find.
@@ -7759,11 +7802,63 @@ class Watcher:
         if not self.mirror_sync_from_origin(branch):
             return True, (f"this conversation is now on branch `{branch}`, but the branch "
                           f"could not be put in the local mirror. Its next turn will try again "
-                          f"and will say so if it still cannot start." + shared)
+                          f"and will say so if it still cannot start." + note + shared)
         # THE FULL STOP IS LOAD-BEARING: `shared` is another sentence after this one, and
         # without it the post read "...on branch `ffbox/inventory-window-drag-clamp-d44t1-
         # e4c99e4c Conversation 44 has worked on this branch before".
-        return True, f"this conversation is now on branch `{branch}`." + shared
+        return True, f"this conversation is now on branch `{branch}`." + note + shared
+
+    def record_branch_pull_request(self, conv, branch, gh=None):
+        """Find the pull request GitHub already has for `branch` and record it. Returns it.
+
+        WHY A THREAD HAS TO GO AND ASK. conversation.github_pr is written in three places and
+        every one of them is downstream of a run of THIS conversation pushing: publish() when it
+        opens or reuses one, the reconcile sweep when it finds one, and the #codereview ingress,
+        which is handed the number by the comment that started it. A conversation that adopts a
+        branch has pushed nothing — that is the whole point of adoption — so it recorded no pull
+        request, and neither did the four other threads pointed at the same branch. The branch
+        was under review the entire time and only the thread that created it knew.
+
+        The pull request is a fact about the BRANCH, not about the run that happened to push it,
+        so anybody who takes the branch may have it.
+
+        NEVER RAISES AND NEVER REFUSES ANYTHING. Every caller has already done the thing it
+        cares about by the time this runs — the branch is claimed, the sweep is under way — and
+        GitHub being down, tokenless or simply out of pull requests are all the same answer
+        here: None, and the record is no worse than it was.
+        """
+        if conv is None or not branch:
+            return None
+        try:
+            if (conv["github_pr"] or "").strip():
+                return None             # already known, and asking again could only agree
+        except (IndexError, KeyError):
+            pass
+        gh = gh or GitHub(self.cfg, self.conversation_class(conv))
+        if not gh.token or not gh.repo:
+            return None
+        try:
+            pull = gh.pull_request_for(branch)
+        except GitHubError as exc:
+            log(f"conversation {conv['id']}: could not look up a pull request for {branch}: "
+                f"{exc}")
+            return None
+        if not pull:
+            return None
+        # EVERY STATE IS RECORDED, not just an open one, for the reason pull_request_for returns
+        # every state: a closed pull request is a decision somebody made about this branch, and
+        # publish() reads the column to keep from walking back through it.
+        #
+        # GUARDED ON THE COLUMN BEING EMPTY, like the other writers: a launch thread publishing
+        # this same conversation can have filled it in since the row was read, and its answer
+        # came from the same branch and the same endpoint.
+        self.db.execute(
+            "UPDATE conversation SET github_pr=?"
+            " WHERE id=? AND (github_pr IS NULL OR github_pr='')",
+            (str(pull.get("url") or pull.get("number") or ""), conv["id"]))
+        log(f"conversation {conv['id']}: {branch} is PR #{pull.get('number')} "
+            f"({'merged' if pull.get('merged') else pull.get('state')})")
+        return pull
 
     # ======================================================================================
     # the Claude subscriptions
@@ -9507,6 +9602,17 @@ class Watcher:
             " WHERE t.conversation_id = ? AND r.bundle_path IS NOT NULL"
             " ORDER BY r.id DESC LIMIT 1", (conv_id,))
         if run is None:
+            # NOTHING TO PUBLISH IS NOT NOTHING TO RECORD. A conversation that adopted a branch
+            # owns one without ever having pushed, and the pull request already on that branch
+            # is the fact it is missing — see record_branch_pull_request. The sweep's query is
+            # what keeps this from being a GitHub call for every conversation on the box: only
+            # an adopted branch with no pull request recorded gets this far.
+            branch = self.conversation_branch(conv)
+            if branch and self.conversation_adopted(conv):
+                pull = self.record_branch_pull_request(conv, branch)
+                if pull:
+                    return {"branch": branch, "pr_number": pull.get("number"),
+                            "pr_url": pull.get("url")}
             return None
 
         run_dir = os.path.dirname(run["bundle_path"])
@@ -9664,6 +9770,16 @@ class Watcher:
         repairs itself later than that, so a branch nobody has touched since is a person's to
         decide about rather than the harness's to keep retrying at them.
 
+        THE SECOND HALF OF THE `WHERE` IS THE ADOPTED BRANCHES, which have nothing to publish
+        and are here for the other half of the job: recording the pull request the branch
+        ALREADY has. Adoption is the one way a conversation comes to own a branch without ever
+        pushing to it, so it is the one way conversation.branch is set while conversation.
+        github_pr stays empty forever — which is how a branch ended up with five threads on it,
+        four of them unaware of the pull request they were all working under. It is deliberately
+        narrower than "any conversation with a branch and no pull request": a branch this box
+        pushed and did not open a pull request for was refused one by the gates, and asking
+        GitHub about it every sweep would find nothing every time, forever.
+
         THE LOCK, because this runs on the daemon thread while launch threads are publishing on
         their own. Without it a sweep landing in the seconds between a run's push and its
         create_pull_request would see a branch with no pull request, quite correctly, and open
@@ -9674,9 +9790,10 @@ class Watcher:
                   ).strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = self.db.query(
             "SELECT DISTINCT c.id AS id FROM conversation c"
-            " JOIN turn t ON t.conversation_id = c.id"
-            " JOIN run r ON r.turn_id = t.id"
-            " WHERE r.bundle_path IS NOT NULL"
+            " LEFT JOIN turn t ON t.conversation_id = c.id"
+            " LEFT JOIN run r ON r.turn_id = t.id AND r.bundle_path IS NOT NULL"
+            " WHERE (r.id IS NOT NULL"
+            "        OR (c.branch IS NOT NULL AND c.branch_adopted_at IS NOT NULL))"
             "   AND (c.github_pr IS NULL OR c.github_pr = '')"
             "   AND COALESCE(c.last_activity_at, c.created_at, '') >= ?", (cutoff,))
         opened = 0
