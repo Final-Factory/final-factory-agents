@@ -7177,7 +7177,10 @@ class Watcher:
             return True, (f"this conversation publishes as `{branch}`, but the branch could not "
                           f"be put in the local mirror. Its next turn will try again and will "
                           f"say so if it still cannot start." + shared)
-        return True, f"this conversation publishes as `{branch}`" + shared
+        # THE FULL STOP IS LOAD-BEARING: `shared` is another sentence appended to this one, and
+        # without it the post read "...publishes as `ffbox/inventory-window-drag-clamp-d44t1-
+        # e4c99e4c Conversation 44 has worked on this branch before".
+        return True, f"this conversation publishes as `{branch}`." + shared
 
     # ======================================================================================
     # the Claude subscriptions

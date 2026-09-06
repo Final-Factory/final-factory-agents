@@ -10952,8 +10952,8 @@ def test_a_directive_only_message_adopts_and_asks_for_no_turn():
           case.rows("SELECT * FROM turn"))
     posted = [json.loads(r["payload_json"])["text"]
               for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
-    check("the operator is told where the work will land",
-          posted and posted[-1].startswith("ok — ") and "loth/alone" in posted[-1], posted)
+    check("the operator is told where the work will land, as a sentence",
+          posted and posted[-1] == "ok — this conversation publishes as `loth/alone`.", posted)
 
     # A REFUSAL IS ANSWERED TOO. Somebody who typed a branch name and heard nothing would
     # reasonably assume it worked.
