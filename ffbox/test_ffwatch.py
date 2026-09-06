@@ -8296,7 +8296,7 @@ def test_the_two_agent_classes_are_configured_independently():
                 "pools": {"ffagent": {"agent_secs": 999, "base_ref": "develop",
                                       "pool": {"idle": 2, "max": -1}}}})
     check("ffdev does not inherit ffagent's clocks",
-          ffwatch.class_cfg(cfg, "ffdev")["agent_secs"] == 1800, None)
+          ffwatch.class_cfg(cfg, "ffdev")["agent_secs"] == 7200, None)
     check("nor its base branch",
           ffwatch.class_cfg(cfg, "ffdev")["base_ref"] == "master", None)
     check("and gets its own pool defaults, 1 idle and a ceiling of 3",

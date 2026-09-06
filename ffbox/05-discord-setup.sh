@@ -383,7 +383,7 @@ for key, value in (
       # same kind of container.
       "ffdev": {
         "base_ref": "master",
-        "agent_secs": 1800,
+        "agent_secs": 7200,
         "warmup_secs": 3600,
         "verify_secs": 1800,
         "kill_grace_secs": 10,
