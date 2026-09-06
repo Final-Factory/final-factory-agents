@@ -2028,6 +2028,23 @@ def discord_link(conv):
     return f"https://discord.com/channels/{guild}/{channel}/{thread}" if channel else None
 
 
+def conversation_ref(conv):
+    """How to NAME another conversation in a sentence somebody reads: `[85](link)`, or `85`.
+
+    Every place that mentions one of these owes the reader a way to get to it — "conversation
+    85" is a number a person then has to go and find, and the id is not something Discord's
+    search will match. The adoption confirmation has said it with a link since it was written;
+    the REFUSAL beside it said the bare number, which is the sentence somebody actually needs
+    the link from, because it is the one telling them to go and look at the other thread.
+
+    A LOCAL CONVERSATION IS A NUMBER, and deliberately: `ffwatch submit` opens one with no
+    Discord side at all, and half a link with a blank where the thread goes is worse than a
+    bare id somebody can pass straight to `ffwatch`.
+    """
+    link = discord_link(conv)
+    return f"[{conv['id']}]({link})" if link else str(conv["id"])
+
+
 def is_local_conversation(conv):
     """True when this conversation has nowhere to post. Takes a row, a dict, or a bare kind."""
     if conv is None:
@@ -4204,8 +4221,9 @@ class Watcher:
         A MESSAGE THAT IS ONLY THE DIRECTIVE IS GATED, so it never becomes a turn: create_turn
         builds turns out of pending_messages, which selects `gate IS NULL`, and this is the same
         door the engagement gate declines through. A message that carries a directive AND a
-        question keeps its turn — the answer to the question is what the operator asked for, and
-        the branch is where it will be written.
+        question keeps its turn ONLY IF THE BRANCH WAS ADOPTED — the answer to the question is
+        what the operator asked for, and the branch is where it will be written, so a refusal
+        leaves nowhere for it to land and gates the message too. See the comment on that.
         """
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
         if conv is None or is_local_conversation(conv):
@@ -4220,12 +4238,33 @@ class Watcher:
             return None
         ok, reason = self.adopt_branch(conv_id, branch, by=author_id)
         alone = is_only_branch_directive(content)
-        if alone:
-            # The gate is what keeps this out of a turn. The reason goes in the row beside it so
-            # the record says what the message was and what happened, not merely that something
-            # declined to answer it.
+        # NO BRANCH, NO TURN — and that is two rules, not one. A directive on its own has no
+        # question in it to answer. A REFUSED directive has one and must still not run it: the
+        # operator asked for work on a named branch, this conversation did not get that branch,
+        # and a turn now would go and do the work against the default base instead. Answering
+        # the wrong tree confidently is worse than not answering, because the reply looks like
+        # the one that was asked for.
+        #
+        # Seen on 2026-09-06 in conversation 86: `!branch <b>` plus "count the lines of code on
+        # this branch" was refused because conversation 85 held the branch, and the turn ran
+        # anyway, spent a container, and counted something nobody had asked about.
+        #
+        # The gate is what keeps it out of a turn — create_turn builds turns out of
+        # pending_messages, which selects `gate IS NULL`, the same door the engagement gate
+        # declines through. The reason goes in the row beside it so the record says what the
+        # message was and what happened to it, not merely that something declined to answer.
+        if alone or not ok:
             self.db.execute("UPDATE message SET gate='branch_directive', gate_reason=?"
                             " WHERE id=?", (reason[:200], message_id))
+        else:
+            # AND THE GATE COMES OFF IF THE BRANCH LANDS LATER. The invariant this keeps is
+            # "gated exactly when the directive did not land", which a single failed attempt
+            # would otherwise settle for good — an adopt that lost the `git fetch` and refused
+            # with "not on origin" would leave a question that can never be answered even once
+            # the branch is plainly there. Guarded on OUR OWN gate value, so this can never lift
+            # the engagement gate's decision or the pre-attach watermark's.
+            self.db.execute("UPDATE message SET gate=NULL, gate_reason=NULL"
+                            " WHERE id=? AND gate='branch_directive'", (message_id,))
         # ONE POST EITHER WAY. A refusal is as much an answer as a confirmation, and an operator
         # who typed a branch name into a thread and heard nothing back would reasonably assume
         # it worked. On a message that also carries a prompt the turn's own reply is coming, but
@@ -4236,6 +4275,12 @@ class Watcher:
         if ok and running:
             text += (" A turn is already in flight on the old base; this takes effect on the "
                      "next one.")
+        elif not ok and not alone:
+            # SAY THAT THE REST WENT UNREAD. The gate above is silent, and an operator who
+            # attached a question to the directive would otherwise sit waiting for an answer
+            # that is never coming — the refusal alone reads as being about the branch only.
+            text += (" The rest of that message was not acted on: it asks for work on a branch "
+                     "this conversation does not have. Send it again once this is sorted.")
         last = self.db.one("SELECT * FROM message WHERE id=?", (message_id,))
         self.record_outbound(None, conv_id, "post", {
             "channel": reply_channel(conv), "text": text, "silent": True,
@@ -7655,17 +7700,24 @@ class Watcher:
         #
         # An unclaimed message counts as in flight too. It becomes a turn on the next pass, and
         # the conversation is still `idle` until it does.
+        #
+        # THE WHOLE ROW, not just the id: this refusal names the other conversation and so owes
+        # the reader a link to it, which discord_link needs the channel columns for.
         busy = self.db.one(
-            "SELECT c.id AS id FROM conversation c WHERE c.branch=? AND c.id<>?"
+            "SELECT c.id AS id, c.kind AS kind, c.guild_id AS guild_id,"
+            "       c.channel_id AS channel_id, c.thread_id AS thread_id,"
+            "       c.is_thread AS is_thread"
+            "  FROM conversation c WHERE c.branch=? AND c.id<>?"
             "   AND (c.state IN ('queued','running')"
             "        OR EXISTS (SELECT 1 FROM message m WHERE m.conversation_id=c.id"
             "                    AND m.turn_id IS NULL AND m.direction='in' AND m.is_bot=0"
             "                    AND m.gate IS NULL))"
             " LIMIT 1", (branch, conv_id))
         if busy is not None:
-            return False, (f"conversation {busy['id']} has a turn in flight on `{branch}`. Two "
-                           f"turns pushing to one branch race each other for a fast-forward "
-                           f"and the loser loses its work — try again when it has finished.")
+            return False, (f"conversation {conversation_ref(busy)} has a turn in flight on "
+                           f"`{branch}`. Two turns pushing to one branch race each other for a "
+                           f"fast-forward and the loser loses its work — try again when it has "
+                           f"finished.")
         if self.conversation_branch(conv):
             return False, (f"this conversation is already on branch "
                            f"`{self.conversation_branch(conv)}`, and a conversation keeps its "
@@ -7693,13 +7745,7 @@ class Watcher:
         others = self.conversations_on_branch(branch, exclude=conv_id)
         shared = ""
         if others:
-            named = []
-            for other in others:
-                link = discord_link(other)
-                # A LOCAL CONVERSATION IS A NUMBER. `ffwatch submit` opens one with no Discord
-                # side at all, and half a link with a blank where the thread goes is worse than
-                # the bare id somebody can pass to `ffwatch`.
-                named.append(f"[{other['id']}]({link})" if link else str(other["id"]))
+            named = [conversation_ref(other) for other in others]
             many = len(named) > 1
             shared = ("\nConversation" + ("s " if many else " ") + ", ".join(named)
                       + (" have" if many else " has") + " worked on this branch before.")

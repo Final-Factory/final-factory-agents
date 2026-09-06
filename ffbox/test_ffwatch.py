@@ -11343,6 +11343,70 @@ def test_a_directive_beside_a_question_keeps_its_turn():
     check("a turn is made for it", case.watcher.create_turn(conv) is not None)
 
 
+def test_a_refused_directive_links_the_thread_holding_it_and_spends_no_turn():
+    """Two things a refusal owed the operator, both found live on 2026-09-06 in conversation 86.
+
+    A `!branch` line plus a question was refused because another conversation held the branch
+    with a turn in flight. The refusal named that conversation by bare number — the one sentence
+    in the whole pipeline that tells somebody to go and look at another thread, and the only one
+    that did not link to it. And the message kept its turn, so a container went and answered the
+    question against the default base: the count the operator got back was of a tree they had
+    not asked about, wearing the confidence of the one they had.
+    """
+    print("adoption: a refusal links the other thread and answers nothing")
+    text = "!branch loth/contended\nhey max, how many lines does this branch add?"
+    case, _ = branch_directive_case("directive-refused-busy", text, author=LOTHSAHN)
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/contended")
+
+    # THE THREAD ALREADY ON IT, with a turn in flight. Real Discord columns, because the whole
+    # point of the first half of this test is that the refusal can build a link out of them.
+    guild, other_thread = "530867164866150410", "1546238861989126245"
+    holder = case.watcher.upsert_conversation(
+        other_thread, kind="ask", channel_id=ASK_CHANNEL, guild_id=guild,
+        title="the thread already on it", root_message_id=other_thread,
+        opener=LOTHSAHN, is_thread=True, alias="ask_claude")
+    case.db_exec("UPDATE conversation SET branch=?, state='running' WHERE id=?",
+                 ("loth/contended", holder))
+
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    case.watcher.take_branch_directive(1, msg["id"], {"id": LOTHSAHN}, text)
+
+    conv = case.rows("SELECT * FROM conversation WHERE id=1")[0]
+    check("nothing was adopted", conv["branch"] is None, conv["branch"])
+    posted = [json.loads(r["payload_json"])["text"]
+              for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+    check("the operator is told, out loud", posted and posted[-1].startswith("no — "), posted)
+    check("and the conversation holding the branch is a LINK, not a number to go and find",
+          posted and f"[{holder}](https://discord.com/channels/{guild}/{other_thread})"
+          in posted[-1], posted)
+
+    # AND NO TURN. The question rode in on a message whose branch was refused, so there is
+    # nowhere for its answer to land.
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    check("the message is gated even though it carries a question",
+          msg["gate"] == "branch_directive", msg)
+    check("with the refusal itself as the reason on the row",
+          "in flight" in (msg["gate_reason"] or ""), msg["gate_reason"])
+    check("so no turn is made and no container is spent",
+          case.watcher.create_turn(conv) is None, case.rows("SELECT * FROM turn"))
+    check("and the reply says the question went unread, rather than leaving them waiting",
+          posted and "was not acted on" in posted[-1], posted)
+
+    # A LOCAL CONVERSATION IS STILL A NUMBER. `ffwatch submit` opens one with no Discord side,
+    # and half a link with a blank where the thread goes is worse than an id somebody can type.
+    case.db_exec("UPDATE conversation SET kind='shell', branch=NULL WHERE id=?", (holder,))
+    case.db_exec("UPDATE conversation SET branch=NULL WHERE id=1")
+    local = case.watcher.upsert_conversation(
+        "9001", kind="shell", channel_id=None, guild_id=None, title="typed at the terminal",
+        root_message_id="9001", is_thread=False)
+    case.db_exec("UPDATE conversation SET branch=?, state='running' WHERE id=?",
+                 ("loth/contended", local))
+    ok, reason = case.watcher.adopt_branch(1, "loth/contended", by=LOTHSAHN)
+    check("a conversation with no Discord side is named by its bare id",
+          not ok and f"conversation {local} has a turn in flight" in reason, reason)
+
+
 def review_cfg(case, *, operators=None, trigger="#codereview"):
     """Point this case's watcher at the mock GitHub and give it an operator table."""
     case.watcher.cfg["github"] = dict(case.watcher.cfg.get("github") or {}, **{
@@ -13303,6 +13367,7 @@ def main():
         test_only_an_operator_may_name_a_branch_from_discord,
         test_a_directive_only_message_adopts_and_asks_for_no_turn,
         test_a_directive_beside_a_question_keeps_its_turn,
+        test_a_refused_directive_links_the_thread_holding_it_and_spends_no_turn,
         test_the_comment_poll_is_not_the_discord_sweeps_passenger,
         test_a_first_poll_answers_nothing_that_predates_it,
         test_the_review_workflow_is_taken_from_the_base_and_not_from_the_branch,
