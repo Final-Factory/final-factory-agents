@@ -101,3 +101,34 @@ explicit old-hash preconditions, record the new identity/provenance, and revalid
 Never silently accept a mismatch or claim the old hash still holds. The charge audit exposed a
 15-byte status change among 524 files; excluding that exact runtime file leaves 523 static files.
 No simulation comparison is waived. Source: feature 066 plan and the manifest adapter regression.
+
+
+## Startup and restore witnesses (2026-09-06)
+
+Before calling `SaveGameManager.LoadGame` in a newly entered editor session, require completed
+`StartController` startup, a real `ItemConfig` singleton, and the title-screen dependencies such
+as `Hotbar.Instance`. `StartController.Loaded` alone is insufficient: it is set in `finally`,
+including after initialization failure (`StartController.cs:507-517`). Check the fresh startup
+errors too. A premature call can fail in `TitleScreenManager.PrepareSceneForGame` and leave
+`SaveProcessState.Performing` without ever opening the archive. CPU activity and changing RSS
+are not proof of forward load progress. Read the archive/stage counters and actual entity count;
+label the attempt a harness failure when archive reading never began.
+
+A restore comparison must exercise capture, actual ECS loading and production grid reconstruction.
+`GoldenSaveFixtureManifest.Decode` is an archive census; even its columnar-fast branch materializes
+payloads for inspection and never creates ECS entities. Compare the retained host after reset with
+the reconstructed client after reset: `GameStateRpcManager.ServeSaveFileWhenHostReady` resets all
+peers before capturing. Preserve the existing forced recharge behavior. Advance mature fixtures
+through every intervening heartbeat; jumping directly to each phase does not exercise its history.
+Assert the reset flag immediately after consumption, rather than clearing it in the test loop.
+Source: `ChargeRestoreRoundTripTest.CapturedChargeState_RebuiltGridMatchesMatureGridAfterSymmetricReset`
+(game commit `bc2dde97a`). Synthetic stale receipts do not establish authentic old-save provenance.
+
+For the small laser depletion fixture, place Laser(0,0), Capacitor(0,1), and an Up-facing Solar at
+(0,-2). The solar is two tiles long and must connect directly to the turret; putting it behind the
+capacitor or at(0,-1) leaves a separate grid. Verify actual membership before adding the target.
+Use ordinary `GameInitializer.SetGameplaySettings` with `DisableEnemies` before manually placing
+Razor Spawner; `DisableEnemyGeneration` does not prevent that spawner producing ships
+(`EnemyShipSpawnerSystem.OnUpdate`). Record actual target health with paid/denied charge and
+storage, not just the beam. Input: `ValidationScenarios/charge/laser-depletion.ffbp.txt`; solo
+proof and its limits are in feature066's plan at `bc2dde97a`.
