@@ -874,6 +874,35 @@ def test_an_operator_dm_is_a_private_venue():
           "private_summary" not in pre, pre[-500:])
 
 
+def test_the_two_halves_of_a_split_reply_are_not_in_one_voice():
+    """An operator asking in public gets Max in the channel and plain prose in the DM.
+
+    The public half is posted where players read it, so it is Max. The private half is a DM to
+    one operator -- the same person, the same trust and the same audience as the DM lane, which
+    has never been in Max's voice -- so it is written the way that lane is. Both halves come out
+    of ONE run, so this is the only place the distinction has to be made inside a single prompt.
+    """
+    print("split reply: two halves, two voices")
+    operator_public = dict(JOB_SKELETON, local=False, direct=False,
+                           trust={"tier": "operator", "actor": LOTHSAHN, "why": "configured"},
+                           venue={"kind": "public"})
+    pre = preamble_for(operator_public, "split-voices")
+    check("the split is asked for at all", "private_summary" in pre, pre[-900:])
+    check("and it says the two halves are not in the same voice",
+          "THE TWO HALVES ARE NOT IN THE SAME VOICE" in pre, pre[-900:])
+    check("the public half is Max", "The public half is Max" in pre, pre[-900:])
+    check("and the private half is not",
+          "The private half is not" in pre and "none of Max's mannerisms" in pre, pre[-900:])
+
+    # NOT ON A TURN WITH NO SECOND HALF. A player's turn never gets the split preamble, so it
+    # never gets this either -- there is one reply, it is public, and it is Max.
+    player_public = dict(JOB_SKELETON, local=False, direct=False,
+                         trust={"tier": "player", "actor": "", "why": ""},
+                         venue={"kind": "public"})
+    check("a player's turn is told nothing about a voice it has no second half to use",
+          "THE TWO HALVES" not in preamble_for(player_public, "split-voices-player"))
+
+
 def test_a_group_dm_is_answered_by_nobody():
     print("group DMs")
     group = base_fixture()
@@ -1053,6 +1082,10 @@ def test_tier_and_venue_reach_the_container():
     check("and names every plugin directory it was given, so their files can be opened",
           job["plugin_dirs"] and all(d in prompt for d in job["plugin_dirs"]),
           (job.get("plugin_dirs"), prompt[:400]))
+    # VOICE IS THE VENUE'S DECISION, not the asker's. This is an OPERATOR asking, and the answer
+    # still goes out as Max, because a player scrolling the channel finds it either way.
+    check("a public venue takes the ff-discord voice however trusted the asker",
+          "role and the ff-discord skills for policy and voice" in prompt, prompt[:600])
 
     # The same person, in a channel declared private. No split, everything in place.
     priv = base_fixture()
@@ -1078,6 +1111,17 @@ def test_tier_and_venue_reach_the_container():
           "PRIVATE channel" in job2["prompt"] and "Answer fully" in job2["prompt"],
           job2["prompt"][:600])
     check("and does not ask for a split", "STANDS ALONE" not in job2["prompt"])
+    # THE OTHER THING THE VENUE DECIDES. Nobody but the people who run the box reads this, so
+    # there is no audience for a persona -- and the exception has to be stated rather than
+    # merely omitted, because the role file and the max-voice skill both say the voice binds
+    # every surface that posts as Max.
+    check("a private venue still names the role, for policy and process",
+          "role for policy and process" in job2["prompt"], job2["prompt"][:600])
+    check("but excepts the voice loudly enough to beat the role text it overrides",
+          "VOICE does not apply" in job2["prompt"]
+          and "`max-voice` skill" in job2["prompt"], job2["prompt"][:600])
+    check("and never asks for the voice a public turn gets",
+          "policy and voice" not in job2["prompt"], job2["prompt"][:600])
 
 
 def test_a_player_never_inherits_an_operators_clearance():
@@ -11785,6 +11829,7 @@ def main():
         test_a_channel_put_back_after_a_break_joins_as_a_new_one,
         test_a_comment_on_a_pre_attach_thread_does_not_reopen_the_whole_report,
         test_an_operator_in_public_gets_a_split_reply,
+        test_the_two_halves_of_a_split_reply_are_not_in_one_voice,
         test_a_player_never_gets_a_private_half,
         test_an_undeliverable_private_half_never_becomes_public,
         test_an_operator_dm_is_a_private_venue,
