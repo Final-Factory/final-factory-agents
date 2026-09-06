@@ -27,6 +27,9 @@ OUT=${FFBOX_OUT:-/ffbox/out}
 BRANCH=${FFBOX_BRANCH:-}
 BRANCH_PREFIX=${FFBOX_BRANCH_PREFIX:-}
 BASE_REFS=${FFBOX_BASE_REFS:-}
+# WHERE THE PUBLISHED RANGE STARTS, when the answer is not "the base this work descends from".
+# See the block below the base scan.
+RANGE_FROM_START=${FFBOX_RANGE_FROM_START:-0}
 # FROM THE FILE, NOT JUST THE ENVIRONMENT. restore-workspace.sh records base_sha.txt at the moment
 # it finishes preparing the tree -- which is the only time anyone knows it. The host cannot pass it
 # in: it launches the container before the workspace exists, so there is no sha to name yet.
@@ -112,6 +115,37 @@ if [ -z "$PUBLISH_BASE_SHA" ] && [ -n "$BASE_SHA" ] \
     PUBLISH_BASE_SHA=$BASE_SHA
 fi
 [ -z "$PUBLISH_BASE" ] || log "this work is based on $PUBLISH_BASE"
+
+# THE RANGE STARTS WHERE THE RUN DID, when the host asks for it -- which it does for a run
+# continuing a branch it did not create.
+#
+# The two questions the scan above answers get separated here. WHICH NAMED BRANCH THIS WORK IS
+# FOR stays as it is: PUBLISH_BASE is untouched, publish_base.txt still names master or develop,
+# and the pull request still targets it. WHERE THE PUBLISHED RANGE BEGINS moves to the commit
+# restore-workspace.sh left the workspace on.
+#
+# Without this a run on somebody else's branch bundles origin/develop..HEAD, which carries every
+# commit they put on it: the identity check below then refuses the whole publication for
+# "commits claim an identity this run does not own", and the host's changed-file ceiling counts
+# their files against this run. Both are correct about the range and wrong about the question --
+# what either is meant to bound is what THIS RUN did.
+#
+# AN ANCESTRY TEST AND NO FALLBACK. If the run's start commit is not behind HEAD, something
+# rewrote history underneath the run, and the honest answer is to refuse here rather than
+# quietly bundle from the base ref and produce the identity refusal three steps later with a
+# message about the wrong thing.
+if [ "$RANGE_FROM_START" = "1" ]; then
+    if [ -z "$BASE_SHA" ]; then
+        harvest_failed "the harness asked for the range to start where the run did, but no start commit was recorded"
+        exit 0
+    fi
+    if ! g merge-base --is-ancestor "$BASE_SHA" HEAD 2>/dev/null; then
+        harvest_failed "the work does not descend from the commit this run started at ($BASE_SHA)"
+        exit 0
+    fi
+    PUBLISH_BASE_SHA=$BASE_SHA
+    log "the range starts at the commit this run began on ($BASE_SHA)"
+fi
 
 g add -A -- . ':(exclude).github' 2>/dev/null || true
 if ! g diff --cached --quiet 2>/dev/null; then

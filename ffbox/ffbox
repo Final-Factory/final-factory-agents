@@ -198,6 +198,7 @@ REF=
 BRANCH=
 BRANCH_PREFIX=
 BASE_REFS=
+RANGE_FROM_START=0
 TASK=
 JOB_FILE=
 RUN_ID_OVERRIDE=
@@ -309,6 +310,13 @@ Options:
                        for not descending from the ref the run was checked out at. The name is
                        written to <results>/publish_base.txt, which is what the pull request
                        ends up targeting. Empty means the checked-out commit is the only base.
+  --range-from-start   Harvest the range from the commit the run STARTED at rather than from
+                       the base under --base-refs. For a run continuing a branch somebody else
+                       pushed: without it the range begins at origin/develop and carries their
+                       commits, which fails the identity check every run's own range is held to
+                       and counts their files against this run's ceilings. The base NAME still
+                       comes from --base-refs, so the pull request still targets the right
+                       branch.
   --branch-prefix P    Let the agent name the published branch. When the run ends on a branch
                        it made itself, the bundle is harvested as P<that name>-<run id> instead
                        of NAME, so a reviewer reads "ffbox/belt-merger-priority-<id>" rather
@@ -383,6 +391,7 @@ while [ $# -gt 0 ]; do
         --branch)         BRANCH=${2:?--branch needs a name}; shift 2 ;;
         --branch-prefix)  BRANCH_PREFIX=${2:?--branch-prefix needs a prefix}; shift 2 ;;
         --base-refs)      BASE_REFS=${2:?--base-refs needs a list}; shift 2 ;;
+        --range-from-start) RANGE_FROM_START=1; shift ;;
         --task)           TASK=${2:?--task needs a path}; CLOCKS=1; shift 2 ;;
         --job-file)       JOB_FILE=${2:?--job-file needs a path}; CLOCKS=1; shift 2 ;;
         --mount)          MOUNTS+=("${2:?--mount needs HOST:CONTAINER[:ro]}"); shift 2 ;;
@@ -1209,6 +1218,7 @@ WORKSPACE_ENV=(
     -e "FFBOX_BRANCH=$BRANCH"
     -e "FFBOX_BRANCH_PREFIX=$BRANCH_PREFIX"
     -e "FFBOX_BASE_REFS=$BASE_REFS"
+    -e "FFBOX_RANGE_FROM_START=$RANGE_FROM_START"
     -e "FFBOX_RUN_ID=$RUN_ID"
     -e "FFBOX_GIT_NAME=$FFBOX_GIT_NAME"
     -e "FFBOX_GIT_EMAIL=$FFBOX_GIT_EMAIL"
@@ -1389,6 +1399,7 @@ if [ -n "$DISPATCH" ]; then
         printf 'FFBOX_BRANCH=%s\n' "$BRANCH"
         printf 'FFBOX_BRANCH_PREFIX=%s\n' "$BRANCH_PREFIX"
         printf 'FFBOX_BASE_REFS=%s\n' "$BASE_REFS"
+        printf 'FFBOX_RANGE_FROM_START=%s\n' "$RANGE_FROM_START"
         printf 'FFBOX_RUN_ID=%s\n' "$RUN_ID"
         printf 'FFBOX_GIT_NAME=%s\n' "$FFBOX_GIT_NAME"
         printf 'FFBOX_GIT_EMAIL=%s\n' "$FFBOX_GIT_EMAIL"
