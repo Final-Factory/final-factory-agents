@@ -10953,7 +10953,8 @@ def test_a_directive_only_message_adopts_and_asks_for_no_turn():
     posted = [json.loads(r["payload_json"])["text"]
               for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
     check("the operator is told where the work will land, as a sentence",
-          posted and posted[-1] == "ok — this conversation publishes as `loth/alone`.", posted)
+          posted and posted[-1] == "ok — this conversation is now on branch `loth/alone`.",
+          posted)
 
     # A REFUSAL IS ANSWERED TOO. Somebody who typed a branch name and heard nothing would
     # reasonably assume it worked.
@@ -11019,7 +11020,8 @@ def test_adoption_refuses_what_it_cannot_safely_take():
     # attempt, a new thread naming the branch of a bug thread finished four days earlier.
     other = case.watcher.db.execute(
         "INSERT INTO conversation(thread_id, kind, state, is_thread, session_generation,"
-        " created_at, branch) VALUES('90001','ask','running',1,1,?,'loth/taken')",
+        " created_at, branch, guild_id, channel_id)"
+        " VALUES('90001','ask','running',1,1,?,'loth/taken','5308','1069')",
         (ffwatch.now_iso(),)).lastrowid
     refused("loth/taken", "a branch a running conversation owns is refused")
     case.watcher.db.execute("UPDATE conversation SET state='queued' WHERE id=?", (other,))
@@ -11038,8 +11040,27 @@ def test_adoption_refuses_what_it_cannot_safely_take():
     ok, reason = case.watcher.adopt_branch(conv["id"], "loth/taken", by="op")
     check("but a conversation that is merely FINISHED does not hold the branch hostage",
           ok, reason)
-    check("and the answer says who else has worked on it",
-          f"Conversation {other} has worked on this branch" in reason, reason)
+    # WHO ELSE HAS IT, on its own line, and as something a person can click. "conversation 44"
+    # is a number somebody then has to go and find in Discord.
+    check("and the answer names who else has worked on it, on a line of its own",
+          reason.endswith(f"has worked on this branch before.")
+          and f"\nConversation [{other}](https://discord.com/channels/" in reason, reason)
+    check("the branch sentence is still the first line",
+          reason.splitlines()[0] == "this conversation is now on branch `loth/taken`.", reason)
+
+    # A CONVERSATION WITH NO DISCORD SIDE IS A BARE NUMBER. Half a link, with a blank where the
+    # thread goes, is worse than an id somebody can pass to `ffwatch`.
+    local = case.watcher.db.execute(
+        "INSERT INTO conversation(thread_id, kind, state, is_thread, session_generation,"
+        " created_at, branch) VALUES('90003','shell','idle',0,1,?,'loth/taken')",
+        (ffwatch.now_iso(),)).lastrowid
+    case.watcher.db.execute("UPDATE conversation SET branch=NULL, branch_adopted_at=NULL"
+                            " WHERE id=?", (conv["id"],))
+    ok, reason = case.watcher.adopt_branch(conv["id"], "loth/taken", by="op")
+    check("two other conversations are listed together, and read as a plural",
+          ok and f"Conversations [{other}](https://discord.com/channels/5308/90001), "
+                 f"{local} have worked on this branch before." in reason, reason)
+    case.watcher.db.execute("DELETE FROM conversation WHERE id=?", (local,))
 
     ok, reason = case.watcher.adopt_branch(conv["id"], "loth/taken", by="op")
     check("adopting twice is refused — a conversation keeps its branch for life", not ok, reason)

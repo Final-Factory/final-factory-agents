@@ -1837,6 +1837,35 @@ def is_only_branch_directive(content):
     return len(lines) == 1 and BRANCH_DIRECTIVE_RE.fullmatch(lines[0].strip()) is not None
 
 
+def discord_link(conv):
+    """A jump link to where this conversation lives, or None when it has no Discord side.
+
+    A THREAD IS A CHANNEL everywhere in Discord's API, so a thread conversation links to its own
+    id. A reply chain in a text channel is not: there `thread_id` holds the ROOT MESSAGE id,
+    which is the third segment of a message link and the channel is the second. `is_thread`
+    records which shape this is, because the ids alone do not say -- the same distinction
+    reply_channel makes, for the same reason.
+
+    Guarded for the columns being absent, like every other reader of a row this daemon may have
+    read before a migration: a link nobody can build is a name without a link, not an exception
+    in the middle of composing a reply.
+    """
+    if conv is None or is_local_conversation(conv):
+        return None
+    try:
+        guild = str(conv["guild_id"] or "").strip()
+        thread = str(conv["thread_id"] or "").strip()
+        channel = str(conv["channel_id"] or "").strip()
+        threaded = conv["is_thread"]
+    except (IndexError, KeyError):
+        return None
+    if not guild or not thread:
+        return None
+    if threaded:
+        return f"https://discord.com/channels/{guild}/{thread}"
+    return f"https://discord.com/channels/{guild}/{channel}/{thread}" if channel else None
+
+
 def is_local_conversation(conv):
     """True when this conversation has nowhere to post. Takes a row, a dict, or a bare kind."""
     if conv is None:
@@ -7076,6 +7105,27 @@ class Watcher:
         log(f"mirror: synced {branch} from {remote}")
         return True
 
+    def conversations_on_branch(self, branch, exclude=None):
+        """Every conversation that has worked on `branch`, oldest first.
+
+        OWNING IT OR HAVING PUSHED IT, because the two can differ. `conversation.branch` is the
+        claim and a pushed run row is the act: a conversation that published more than once
+        before the one-branch rule existed has a run on a branch its column does not name.
+        Conversation 30 on the build server is exactly that — it left
+        ffbox/antimatter-cloud-phantom-stability-d30t3-... behind when its column moved to the
+        d30t4 name — and "who has worked on this branch" wants both halves of that.
+        """
+        return self.db.query(
+            "SELECT DISTINCT c.id AS id, c.kind AS kind, c.guild_id AS guild_id,"
+            "       c.channel_id AS channel_id, c.thread_id AS thread_id,"
+            "       c.is_thread AS is_thread"
+            "  FROM conversation c"
+            "  LEFT JOIN turn t ON t.conversation_id = c.id"
+            "  LEFT JOIN run r ON r.turn_id = t.id AND r.pushed = 1"
+            " WHERE c.id <> ? AND (c.branch = ? OR r.branch = ?)"
+            " ORDER BY c.id",
+            (exclude if exclude is not None else -1, branch, branch))
+
     def adopt_branch(self, conv_id, branch, by):
         """Tell a conversation which branch it owns. Returns (ok, reason).
 
@@ -7140,9 +7190,9 @@ class Watcher:
                            f"turns pushing to one branch race each other for a fast-forward "
                            f"and the loser loses its work — try again when it has finished.")
         if self.conversation_branch(conv):
-            return False, (f"this conversation already publishes as "
+            return False, (f"this conversation is already on branch "
                            f"`{self.conversation_branch(conv)}`, and a conversation keeps its "
-                           f"branch for life. Close it and open another one.")
+                           f"branch for life. Open a new thread for another branch.")
         pushed = self.db.scalar(
             "SELECT COUNT(*) FROM run r JOIN turn t ON t.id=r.turn_id"
             " WHERE t.conversation_id=? AND r.pushed=1", (conv_id,), 0)
@@ -7158,14 +7208,24 @@ class Watcher:
         if not done.rowcount:
             return False, "something else claimed this conversation's branch first"
         log(f"conversation {conv_id}: adopted {branch} (by {by})")
-        # WHO ELSE HAS IT, said rather than refused. The branch is not exclusive any more, and
-        # the thing an operator has to know is that a message in that other thread would put a
-        # turn on this branch too.
-        also = self.db.one("SELECT id FROM conversation WHERE branch=? AND id<>? ORDER BY id",
-                           (branch, conv_id))
-        shared = ("" if also is None else
-                  f" Conversation {also['id']} has worked on this branch before; a new message "
-                  f"in that thread would put another turn on it.")
+        # WHO ELSE HAS IT, said rather than refused. The branch is not exclusive any more, so
+        # naming the other threads is what lets an operator go and look at them — and each one
+        # is a link, because "conversation 44" is a number a person then has to go and find.
+        # ON ITS OWN LINE: this is a second sentence about somebody else's thread, and run onto
+        # the end of the first it read as one long line with a branch name in the middle.
+        others = self.conversations_on_branch(branch, exclude=conv_id)
+        shared = ""
+        if others:
+            named = []
+            for other in others:
+                link = discord_link(other)
+                # A LOCAL CONVERSATION IS A NUMBER. `ffwatch submit` opens one with no Discord
+                # side at all, and half a link with a blank where the thread goes is worse than
+                # the bare id somebody can pass to `ffwatch`.
+                named.append(f"[{other['id']}]({link})" if link else str(other["id"]))
+            many = len(named) > 1
+            shared = ("\nConversation" + ("s " if many else " ") + ", ".join(named)
+                      + (" have" if many else " has") + " worked on this branch before.")
         # THE MIRROR, IMMEDIATELY, AND FOR EVERY ADOPTED NAME — the prefix does not come into
         # it. mirror_take fills the mirror from `refs/ffbox/<branch>` in the host checkout,
         # which exists only for a branch THIS BOX pushed; an adopted branch was pushed by
@@ -7174,13 +7234,13 @@ class Watcher:
         # correct and re-running the sync is cheap, whereas rolling the row back would leave an
         # operator holding a thread that says it adopted nothing.
         if not self.mirror_sync_from_origin(branch):
-            return True, (f"this conversation publishes as `{branch}`, but the branch could not "
-                          f"be put in the local mirror. Its next turn will try again and will "
-                          f"say so if it still cannot start." + shared)
-        # THE FULL STOP IS LOAD-BEARING: `shared` is another sentence appended to this one, and
-        # without it the post read "...publishes as `ffbox/inventory-window-drag-clamp-d44t1-
+            return True, (f"this conversation is now on branch `{branch}`, but the branch "
+                          f"could not be put in the local mirror. Its next turn will try again "
+                          f"and will say so if it still cannot start." + shared)
+        # THE FULL STOP IS LOAD-BEARING: `shared` is another sentence after this one, and
+        # without it the post read "...on branch `ffbox/inventory-window-drag-clamp-d44t1-
         # e4c99e4c Conversation 44 has worked on this branch before".
-        return True, f"this conversation publishes as `{branch}`." + shared
+        return True, f"this conversation is now on branch `{branch}`." + shared
 
     # ======================================================================================
     # the Claude subscriptions
