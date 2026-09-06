@@ -326,15 +326,21 @@ if branch and os.environ.get("FFBOX_STUB_GIT_ORIGIN"):
     # produce a fresh branch carrying a second copy of the first turn's work, which is exactly
     # the bug this is meant to prove is gone.
     #
-    # ONLY FOR A CONTINUATION, which is what an --ref under `ffbox/` means and the only case
-    # where the run is told to stay where it was put. Every other run starts wherever the clone
-    # landed and then MOVES — the preamble's whole job is to make it branch from the base the
-    # change belongs on — so FFBOX_STUB_BASE stands in for that choice, and a stub that followed
-    # --ref unconditionally would publish `master`-based work for every test that asked for
-    # develop. It did, and pr_base rejected all of it for not descending from develop.
+    # ONLY FOR A CONTINUATION, which is the only case where the run is told to stay where it was
+    # put. Every other run starts wherever the clone landed and then MOVES — the preamble's whole
+    # job is to make it branch from the base the change belongs on — so FFBOX_STUB_BASE stands in
+    # for that choice, and a stub that followed --ref unconditionally would publish `master`-based
+    # work for every test that asked for develop. It did, and pr_base rejected all of it for not
+    # descending from develop.
+    #
+    # "A CONTINUATION" IS "NO --branch-prefix", which is exactly what launch() means by it: the
+    # flag is withheld once the conversation's published name is settled, because renaming is
+    # how an agent names a NEW branch. Testing the ffbox/ prefix instead was the same rule read
+    # off the name, and it stopped being the same rule when a conversation could be handed a
+    # branch somebody else pushed under a name of their own.
     start = base
     ref = opt("--ref")
-    if (ref and ref.startswith("ffbox/")
+    if (ref and not opt("--branch-prefix")
             and git("-C", work, "rev-parse", "--verify", "--quiet",
                     "origin/%s^{commit}" % ref).returncode == 0):
         start = git("-C", work, "rev-parse", "origin/" + ref).stdout.strip()
@@ -356,8 +362,14 @@ if branch and os.environ.get("FFBOX_STUB_GIT_ORIGIN"):
         # base..branch`, not the files this one turn touched. On a continuation those differ —
         # the branch carries the earlier turn's files too — and the count the database records
         # and the page shows is the branch's, not the turn's.
+        #
+        # UNLESS --range-from-start, which moves the bottom of the range to the commit the run
+        # was checked out at. That is what an adopted branch is given, because the range is
+        # otherwise measured from origin/develop and carries every commit the person who made
+        # the branch put on it — their identity, their files, against this run's ceilings.
+        range_base = start if "--range-from-start" in argv else base
         listed = git("-C", work, "diff", "--name-only",
-                     "%s..%s" % (base, branch)).stdout.strip()
+                     "%s..%s" % (range_base, branch)).stdout.strip()
         with open(os.path.join(out, "changed_files.txt"), "w", encoding="utf-8") as fh:
             fh.write((listed or "\n".join(changed)) + "\n")
         with open(os.path.join(out, "branch.txt"), "w", encoding="utf-8") as fh:
@@ -365,7 +377,7 @@ if branch and os.environ.get("FFBOX_STUB_GIT_ORIGIN"):
         with open(os.path.join(out, "publish_base.txt"), "w", encoding="utf-8") as fh:
             fh.write(base_branch + "\n")
         git("-C", work, "bundle", "create", os.path.join(out, "work.bundle"),
-            "%s..%s" % (base, branch))
+            "%s..%s" % (range_base, branch))
 
 # A harvest ffbox refused: the range rewrote history below its base, carried a commit claiming
 # somebody else, or blew a ceiling. ffbox removes the branch and bundle and leaves the reason.
@@ -10520,6 +10532,181 @@ def test_the_mirror_is_only_written_inside_the_pipelines_own_namespace():
           not case.watcher.mirror_carries("ffbox/never-existed"))
 
 
+def push_a_stranger_branch(host, name, *, base="develop", files=("Assets/Save.cs",)):
+    """A branch on origin that this box did not make, with a commit by somebody else on it.
+
+    Committed under a person's identity on purpose: everything ffbox publishes is held to
+    carrying ffbox@final-factory.invalid, and the whole difficulty of working on a branch
+    somebody else pushed is that the commits already on it are theirs.
+    """
+    git_run("-C", host, "fetch", "-q", "origin")
+    git_run("-C", host, "checkout", "-q", "--detach", "origin/" + base)
+    for name_ in files:
+        path = os.path.join(host, name_)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("// by a person\n")
+    git_run("-C", host, "add", "-A")
+    git_run("-C", host, "-c", "user.name=Loth", "-c", "user.email=loth@example.invalid",
+            "commit", "-qm", "save fix, by hand")
+    head = git_run("-C", host, "rev-parse", "HEAD").stdout.strip()
+    git_run("-C", host, "push", "-q", "origin", "HEAD:refs/heads/" + name)
+    git_run("-C", host, "checkout", "-q", "--detach", "origin/" + base)
+    git_run("-C", host, "fetch", "-q", "origin")
+    return head
+
+
+def test_a_conversation_can_be_told_which_branch_it_owns():
+    """Adoption: a thread works on a branch somebody else pushed, and keeps working on it.
+
+    THE CASE THIS EXISTS FOR. An operator has a branch — from a Claude Code session on a
+    laptop, or another agent's run — and wants a thread to fix it up and take the review on
+    the pull request it already has. Before this, asking for that produced a SECOND branch:
+    the conversation had no branch, so the run started at the base, and the harvest renamed
+    whatever the agent ended on into ffbox/<name>-<run id>.
+
+    A conversation may now be told which branch it owns, and every reader of that column then
+    does the rest — the same column, and the same readers, that a conversation gets by pushing.
+    """
+    print("publication: a conversation adopts a branch it did not create")
+    case = bug_case("adoptbranch", venue="private")
+    origin, host = git_origin(case)
+    theirs = push_a_stranger_branch(host, "loth/save-fix")
+    conv = case.rows("SELECT * FROM conversation")[0]
+
+    ok, reason = case.watcher.adopt_branch(conv["id"], "loth/save-fix", by="900000000000000001")
+    check("the branch is adopted", ok, reason)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("the conversation owns it from now on", conv["branch"] == "loth/save-fix", conv["branch"])
+    check("and the record says it was told rather than that it pushed one",
+          bool(conv["branch_adopted_at"]) and conv["branch_adopted_by"] == "900000000000000001",
+          (conv["branch_adopted_at"], conv["branch_adopted_by"]))
+    check("ffwatch agrees that this conversation adopted",
+          case.watcher.conversation_adopted(conv))
+    # The mirror is the only place a container can see a branch, and nothing this box published
+    # is under refs/ffbox/loth/save-fix, so the copy has to come from origin.
+    check("the branch is in the mirror, from origin",
+          git_run("-C", mirror_of(case), "rev-parse", "refs/heads/loth/save-fix").stdout.strip()
+          == theirs, git_run("-C", mirror_of(case), "rev-parse",
+                             "refs/heads/loth/save-fix").stdout)
+
+    escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    run = _latest_run(case)
+    run_dir = os.path.dirname(run["stream_path"])
+    argv = json.load(open(os.path.join(run_dir, "ffbox-argv.json"), encoding="utf-8"))
+    check("the FIRST turn starts on the adopted branch",
+          argv[argv.index("--ref") + 1] == "loth/save-fix", argv)
+    check("and is told to publish under that exact name",
+          argv[argv.index("--branch") + 1] == "loth/save-fix", argv)
+    check("with no --branch-prefix, so the harvest cannot rename it",
+          "--branch-prefix" not in argv, argv)
+    check("and the range starts where the run did, not at the base",
+          "--range-from-start" in argv, argv)
+
+    check("the run published onto the adopted branch", run["pushed"] == 1
+          and run["branch"] == "loth/save-fix", (run["pushed"], run["branch"]))
+    check("and recorded that the branch was already on the remote",
+          run["branch_existed"] == 1, run["branch_existed"])
+    check("only this run's own file is counted, not the branch's whole history",
+          run["changed_files"] == 1, run["changed_files"])
+    check("the pull request still targets the base the branch descends from",
+          run["pr_base"] == "develop", run["pr_base"])
+
+    heads = sorted(ln.split()[-1] for ln in
+                   git_run("-C", host, "ls-remote", "--heads", "origin").stdout.splitlines())
+    check("no second branch was created on the remote",
+          heads == ["refs/heads/develop", "refs/heads/loth/save-fix", "refs/heads/master"],
+          heads)
+    remote_head = git_run("-C", host, "ls-remote", "origin",
+                          "refs/heads/loth/save-fix").stdout.split()[0]
+    check("the branch moved forward rather than being replaced",
+          git_run("-C", host, "merge-base", "--is-ancestor", theirs,
+                  remote_head).returncode == 0, (theirs, remote_head))
+
+    # A SECOND TURN behaves like any other continuation: same branch, same pull request.
+    escalate(case, changed=["Assets/Merger.cs"], verify=PASSING_VERIFY)
+    second = _latest_run(case)
+    check("the next turn stays on it", second["branch"] == "loth/save-fix", second["branch"])
+    check("and the conversation still owns exactly that",
+          case.rows("SELECT * FROM conversation")[0]["branch"] == "loth/save-fix")
+    check("one pull request across both turns",
+          second["pr_number"] == run["pr_number"], (run["pr_number"], second["pr_number"]))
+
+
+def test_adoption_refuses_what_it_cannot_safely_take():
+    """Every refusal is at the adopt, not at the far end of a twenty-minute run."""
+    print("publication: what a conversation may adopt")
+    case = bug_case("adoptrefuse", venue="private")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/taken")
+    conv = case.rows("SELECT * FROM conversation")[0]
+
+    def refused(branch, why):
+        ok, reason = case.watcher.adopt_branch(conv["id"], branch, by="op")
+        check(why, not ok, reason)
+        return reason
+
+    refused("not a branch name..", "a name git would not accept is refused")
+    refused("develop", "a protected branch is refused")
+    refused("master", "so is the other one")
+    refused("loth/never-pushed", "a branch that is not on the remote is refused")
+    check("and nothing was written by any of that",
+          case.rows("SELECT * FROM conversation")[0]["branch"] is None)
+
+    # A branch another live conversation is working on. One branch, one conversation, or the
+    # two race each other for a fast-forward.
+    other = case.watcher.db.execute(
+        "INSERT INTO conversation(thread_id, kind, state, is_thread, session_generation,"
+        " created_at, branch) VALUES('90001','ask','idle',1,1,?,'loth/taken')",
+        (ffwatch.now_iso(),)).lastrowid
+    refused("loth/taken", "a branch another open conversation owns is refused")
+    case.watcher.db.execute("UPDATE conversation SET state='closed' WHERE id=?", (other,))
+    ok, reason = case.watcher.adopt_branch(conv["id"], "loth/taken", by="op")
+    check("but the same branch is free once that conversation is closed", ok, reason)
+
+    ok, reason = case.watcher.adopt_branch(conv["id"], "loth/taken", by="op")
+    check("adopting twice is refused — a conversation keeps its branch for life", not ok, reason)
+
+
+def test_the_harness_never_creates_a_branch_outside_its_prefix():
+    """ffbox may ADD COMMITS to a branch somebody else pushed. It may not create one.
+
+    Until adoption existed nothing could hand push_bundle a name outside `ffbox/` — launch
+    coerces the name it is given and the harvest rename builds one out of the prefix — so the
+    rule was a property of the callers and never a check. It is a check now, and it is read off
+    the remote rather than off the conversation row: a branch deleted since it was adopted is
+    exactly the case this refuses.
+    """
+    print("publication: the prefix rule at the push")
+    case = bug_case("prefixrule", venue="private")
+    origin, host = git_origin(case)
+    scratch = os.path.join(case.root, "scratch")
+    git_run("clone", "-q", origin, scratch)
+    git_run("-C", scratch, "config", "user.email", "ffbox@final-factory.invalid")
+    git_run("-C", scratch, "config", "user.name", "ffbox")
+    git_run("-C", scratch, "checkout", "-q", "-B", "loth/absent", "origin/develop")
+    with open(os.path.join(scratch, "Assets", "Belt.cs"), "a", encoding="utf-8") as fh:
+        fh.write("// agent work\n")
+    git_run("-C", scratch, "add", "-A")
+    git_run("-C", scratch, "commit", "-qm", "ffbox: agent work")
+    bundle = os.path.join(case.root, "work.bundle")
+    git_run("-C", scratch, "bundle", "create", bundle, "origin/develop..loth/absent")
+
+    ok, err, existed = case.watcher.push_bundle(bundle, "loth/absent")
+    check("a name outside the prefix that the remote does not have is refused", not ok, err)
+    check("and the reason says why", "never creates one outside its own prefix" in (err or ""),
+          err)
+    check("nothing was created", not any("loth/absent" in ln for ln in git_run(
+        "-C", host, "ls-remote", "--heads", "origin").stdout.splitlines()))
+    check("and it reports the branch was not there", existed is False)
+
+    # The same push, once somebody else has put the branch on the remote.
+    git_run("-C", scratch, "push", "-q", "origin", "origin/develop:refs/heads/loth/absent")
+    ok, err, existed = case.watcher.push_bundle(bundle, "loth/absent")
+    check("the same work goes onto the branch once it exists", ok, err)
+    check("and it reports that it added to one rather than made it", existed is True)
+
+
 def _pulls_for(branch):
     return [p for p in GH_STATE["pulls"] if p["_head"] == branch]
 
@@ -11945,6 +12132,9 @@ def main():
         test_a_second_branch_is_refused_at_the_push,
         test_a_submission_cannot_name_a_branch_the_conversation_does_not_own,
         test_the_mirror_is_only_written_inside_the_pipelines_own_namespace,
+        test_a_conversation_can_be_told_which_branch_it_owns,
+        test_adoption_refuses_what_it_cannot_safely_take,
+        test_the_harness_never_creates_a_branch_outside_its_prefix,
         test_the_keeper_expires_a_stale_spare_and_never_a_claimed_one,
         test_the_project_directory_survives_a_workspace_move,
         test_draining_destroys_what_is_idle_and_nothing_else,

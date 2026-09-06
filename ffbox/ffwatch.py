@@ -80,7 +80,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # THE ONE MODULE THIS DAEMON IMPORTS FROM BESIDE IT, and it is deliberately not ffweb: the
 # Claude subscription pool moved into claude_keys.py on 2026-09-04 precisely so that the
@@ -442,6 +442,17 @@ ADDED_COLUMNS = [
     # NULL for a row written before the column existed, and for a box holding one account,
     # where the question does not arise.
     ("run", "claude_key", "TEXT"),
+    # -- v16, branch adoption -----------------------------------------------------------------
+    # WHEN AND BY WHOM this conversation was told which branch it owns, instead of claiming one
+    # by pushing it. NULL is "claimed by a push", which is every conversation that existed
+    # before this column and every one opened without a `!branch` directive.
+    #
+    # Two columns rather than a flag, for the reason run.branch_existed is kept: when somebody
+    # later asks why a run's commits are sitting on a branch the harness did not create, the
+    # record answers without anyone reading a log. `_at` is also the flag every reader tests —
+    # see conversation_adopted, which requires a branch beside it.
+    ("conversation", "branch_adopted_at", "TEXT"),
+    ("conversation", "branch_adopted_by", "TEXT"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -481,6 +492,15 @@ FFBOX_NS = uuid.UUID("2f0d4ec6-0e2a-5b8c-9a71-6d3f4c8b1e05")
 
 # ------------------------------------------------------------------------------------------
 # configuration
+# BRANCHES THIS PIPELINE NEVER PUSHES TO. A MIRROR of ffbox's own PROTECTED_BRANCHES (there:
+# `FFBOX_PROTECTED_BRANCHES`, defaulting to `develop master main`), which is the original and
+# the one that actually refuses a run at harvest. ffwatch carries a copy because adoption and
+# the mirror sync both have to answer the same question before any container exists, and ffbox
+# is shell that cannot be imported — the same arrangement ffweb.py uses for LOCAL_KINDS. Keep
+# the two lists equal; a name in one and not the other is a refusal that arrives at the wrong
+# end of a twenty-minute run.
+PROTECTED_BRANCHES = ("develop", "master", "main")
+
 # ------------------------------------------------------------------------------------------
 # Defaults in code, overlaid with ~/.config/ffbox/config.json, then env overrides. The file may
 # put the keys at the top level or under an "ffwatch" key; both read the same, because the
@@ -2299,6 +2319,11 @@ class Db:
                     "  SELECT 1 FROM run r JOIN turn t ON t.id = r.turn_id"
                     "   WHERE t.conversation_id = conversation.id AND r.pushed = 1"
                     "     AND r.branch IS NOT NULL)")
+            # v16 (2026-09-06): branch adoption. NO STATEMENT HERE ON PURPOSE. The two columns
+            # ADDED_COLUMNS supplies are NULL on every existing row and NULL is the correct
+            # answer for all of them — every branch any conversation owns today was claimed by
+            # a push, which is what NULL means. Written down so the next reader does not go
+            # looking for the rewrite that is missing.
             have = self.conn.execute(
                 "SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
             if have < SCHEMA_VERSION:
@@ -6722,6 +6747,25 @@ class Watcher:
             return None
 
     @staticmethod
+    def conversation_adopted(conv):
+        """Was this conversation TOLD which branch it owns, rather than claiming one by pushing?
+
+        Guarded for a missing column like conversation_branch above, and for the same reason:
+        the columns are v16 and a caller can be holding a row read before the migration ran.
+
+        BOTH COLUMNS, and that is not belt and braces. `branch_adopted_at` alone would answer
+        yes for a conversation whose adoption was recorded and whose branch was then cleared by
+        some future path; every caller of this is about to do something to a branch, so the
+        branch has to be there for the answer to mean anything.
+        """
+        try:
+            if conv is None or not conv["branch"]:
+                return False
+            return bool(conv["branch_adopted_at"])
+        except (IndexError, KeyError):
+            return False
+
+    @staticmethod
     def conversation_class(conv, column="agent_class"):
         """Which agent class runs this conversation's turns. Always one of AGENT_CLASSES.
 
@@ -6848,6 +6892,152 @@ class Watcher:
             return False
         log(f"mirror: took {branch} from {self.cfg['git_dir']}")
         return True
+
+    def git_here(self, *args, timeout=300):
+        """Run git in the host checkout. Returns a CompletedProcess, never raises.
+
+        The same shape push_bundle's local `git()` has, lifted out because adoption and the
+        mirror sync ask the checkout the same questions before any run exists. A subprocess
+        failure comes back as returncode 1 with the exception text in stderr, so every caller
+        below reads one thing rather than two.
+        """
+        try:
+            return subprocess.run(["git", "-C", self.cfg["git_dir"], *args],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=timeout)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return subprocess.CompletedProcess(args, 1, "", f"{type(exc).__name__}: {exc}")
+
+    def mirror_sync_from_origin(self, branch):
+        """Put origin's `branch` into the mirror, so a container can start on a branch we did
+        not publish. Returns True when the mirror ends up carrying it.
+
+        THE SIBLING OF mirror_take, AND THE FENCE IS DIFFERENT ON PURPOSE. mirror_take copies a
+        ref the RUN produced, so an unprefixed name there would let a run's own work stand in
+        the mirror as somebody else's branch, and it refuses anything outside `ffbox/`. This one
+        can only ever write the value ORIGIN ALREADY HAS: the worst it can do is make the mirror
+        agree with GitHub sooner than the CI runners' own fetch would (runners/lib/mirror.sh).
+        That is why it may write a name outside the prefix and mirror_take may not.
+
+        It still refuses the protected names. A `develop` in the mirror that moves on this
+        daemon's schedule rather than the runners' is a debugging problem nobody should be
+        handed, and no adoption needs it.
+
+        TWO STEPS AND THE FIRST IS IN THE CHECKOUT: the host fetches origin, which is where the
+        credential lives, and the mirror then fetches from the host over the same local path
+        mirror_take uses. The mirror is never given a network or a token by this daemon.
+        """
+        mirror = self.cfg.get("mirror_repo")
+        if not branch or not mirror or not os.path.isdir(mirror):
+            return False
+        if branch in PROTECTED_BRANCHES or branch in (self.cfg.get("publish_bases") or {}):
+            log(f"WARNING: refusing to sync {branch!r} into the mirror — it is a protected "
+                f"branch and this daemon does not move those")
+            return False
+        remote = self.cfg["push_remote"]
+        fetched = self.git_here("fetch", "--quiet", remote, branch)
+        if fetched.returncode != 0:
+            log(f"WARNING: could not fetch {branch} from {remote}: "
+                f"{(fetched.stderr or '').strip()[:200]}")
+            return False
+        # FROM THE REMOTE-TRACKING REF, not from FETCH_HEAD: the fetch above updates
+        # refs/remotes/<remote>/<branch> under the default refspec, and naming it here is what
+        # makes this "the value origin has" rather than "whatever the last fetch happened to
+        # leave behind" — which on a checkout somebody has been working in by hand is not the
+        # same thing.
+        src = f"refs/remotes/{remote}/{branch}"
+        if self.git_here("rev-parse", "--verify", "--quiet", f"{src}^{{commit}}").returncode != 0:
+            log(f"WARNING: {remote} has no {branch}, so it cannot go in the mirror")
+            return False
+        try:
+            done = subprocess.run(
+                ["git", "-C", mirror, "fetch", "--quiet", self.cfg["git_dir"],
+                 f"+{src}:refs/heads/{branch}"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"WARNING: could not put {branch} in the mirror: {type(exc).__name__}: {exc}")
+            return False
+        if done.returncode != 0:
+            log(f"WARNING: could not put {branch} in the mirror: "
+                f"{(done.stderr or '').strip()[:200]}")
+            return False
+        log(f"mirror: synced {branch} from {remote}")
+        return True
+
+    def adopt_branch(self, conv_id, branch, by):
+        """Tell a conversation which branch it owns. Returns (ok, reason).
+
+        THE ONE WRITER, for both ingresses — `ffwatch adopt` and the `!branch` directive — so
+        the rules below cannot come to differ by which door somebody used.
+
+        Every reader of conversation.branch already does the rest: the run starts on it
+        (run_ref), the harvest cannot rename it (launch withholds --branch-prefix), and publish
+        refuses any other name for this conversation. What this adds is that the column can be
+        filled by somebody saying so, instead of only by a run that pushed.
+
+        IT REFUSES RATHER THAN ADAPTS, and never raises for an ordinary refusal: the reason is a
+        sentence that gets posted into a Discord thread or printed at a terminal. The five
+        checks are ordered cheapest-first, and each one exists because the alternative is a
+        conversation that fails at the far end of a twenty-minute run.
+        """
+        branch = (branch or "").strip()
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+        if conv is None:
+            return False, f"there is no conversation {conv_id}"
+        if not branch:
+            return False, "no branch name was given"
+        if self.git_here("check-ref-format", "--branch", branch).returncode != 0:
+            return False, f"`{branch}` is not a usable git branch name"
+        # PROTECTED FIRST, because it is the one refusal that is about the branch rather than
+        # about this conversation. A run that ends on master is already turned away at the
+        # harvest and again on the host; adopting master would build a conversation every turn
+        # of which fails at the very end, having spent a container to get there.
+        if branch in PROTECTED_BRANCHES or branch in (self.cfg.get("publish_bases") or {}):
+            return False, (f"`{branch}` is a protected branch and this pipeline never pushes "
+                           f"to one")
+        remote = self.cfg["push_remote"]
+        self.git_here("fetch", "--quiet", remote)
+        if self.git_here("rev-parse", "--verify", "--quiet",
+                         f"refs/remotes/{remote}/{branch}^{{commit}}").returncode != 0:
+            return False, (f"`{branch}` is not on {remote}. A conversation can only adopt a "
+                           f"branch that already exists; push it first.")
+        other = self.db.one("SELECT id FROM conversation WHERE branch=? AND id<>?"
+                            " AND state<>'closed'", (branch, conv_id))
+        if other is not None:
+            return False, (f"conversation {other['id']} is already working on `{branch}`. One "
+                           f"branch belongs to one conversation, or the two race each other "
+                           f"for a fast-forward.")
+        if self.conversation_branch(conv):
+            return False, (f"this conversation already publishes as "
+                           f"`{self.conversation_branch(conv)}`, and a conversation keeps its "
+                           f"branch for life. Close it and open another one.")
+        pushed = self.db.scalar(
+            "SELECT COUNT(*) FROM run r JOIN turn t ON t.id=r.turn_id"
+            " WHERE t.conversation_id=? AND r.pushed=1", (conv_id,), 0)
+        if pushed:
+            return False, ("this conversation has already published work, so pointing it at "
+                           "another branch would strand what it pushed")
+        # GUARDED ON branch IS NULL, so two ingresses racing cannot both claim. A rowcount of
+        # zero here means somebody else got there between the read above and this write, which
+        # is a refusal and not a success.
+        done = self.db.execute(
+            "UPDATE conversation SET branch=?, branch_adopted_at=?, branch_adopted_by=?"
+            " WHERE id=? AND branch IS NULL", (branch, now_iso(), str(by or "?"), conv_id))
+        if not done.rowcount:
+            return False, "something else claimed this conversation's branch first"
+        log(f"conversation {conv_id}: adopted {branch} (by {by})")
+        # THE MIRROR, IMMEDIATELY, AND FOR EVERY ADOPTED NAME — the prefix does not come into
+        # it. mirror_take fills the mirror from `refs/ffbox/<branch>` in the host checkout,
+        # which exists only for a branch THIS BOX pushed; an adopted branch was pushed by
+        # somebody else, so that ref is absent whatever the branch is called and origin is the
+        # only place its commits can come from. Reported rather than undone: the claim is
+        # correct and re-running the sync is cheap, whereas rolling the row back would leave an
+        # operator holding a thread that says it adopted nothing.
+        if not self.mirror_sync_from_origin(branch):
+            return True, (f"this conversation publishes as `{branch}`, but the branch could not "
+                          f"be put in the local mirror. Its next turn will try again and will "
+                          f"say so if it still cannot start.")
+        return True, f"this conversation publishes as `{branch}`"
 
     # ======================================================================================
     # the Claude subscriptions
@@ -7058,6 +7248,7 @@ class Watcher:
             log(f"run {run_id}: ignoring --branch {options['branch']!r}; conversation "
                 f"{conv['id']} already publishes as {conv_branch}")
         ref = self.run_ref(turn, conv)
+        adopted = self.conversation_adopted(conv)
         if conv_branch:
             branch = conv_branch
             # The container resolves --ref against the mirror and nothing else, so a branch that
@@ -7065,18 +7256,33 @@ class Watcher:
             # after the warm-up: mirror_take is cheap and local, and the alternative is a turn
             # that dies with "ref … resolves to nothing" for a reason having nothing to do with
             # what was asked.
-            if not self.mirror_carries(conv_branch) and not self.mirror_take(conv_branch):
+            #
+            # AN ADOPTED BRANCH GOES THE OTHER WAY, and unconditionally. mirror_take copies
+            # refs/ffbox/<branch> out of the host checkout, which exists only for a branch this
+            # box pushed — an adopted branch was pushed by somebody else, so origin is the only
+            # place its commits are. Unconditionally, because the branch may have MOVED there:
+            # an operator pushing a commit of their own between two turns is the ordinary way to
+            # work on a shared branch, and a turn that started on a stale copy would offer
+            # origin a non-fast-forward and lose its work at the very end.
+            if adopted:
+                ok_mirror = self.mirror_sync_from_origin(conv_branch)
+            else:
+                ok_mirror = (self.mirror_carries(conv_branch)
+                             or self.mirror_take(conv_branch))
+            if not ok_mirror:
                 # AND IF IT STILL CANNOT BE DONE, THE TURN FAILS. There is deliberately no
                 # fallback: every route past this point creates a second branch on the
                 # conversation or a push that is rejected, and both are worse than a turn that
                 # says plainly it could not start. A human has something to act on — the branch
                 # is missing from the mirror and from the host checkout both, which normally
                 # means it was deleted after a merge — and the conversation is still intact.
+                where = (f"is not on {self.cfg['push_remote']}" if adopted
+                         else f"is in neither the mirror nor {self.cfg['git_dir']}")
                 raise BranchUnavailable(
-                    f"conversation {conv['id']} publishes as {conv_branch}, and that branch is "
-                    f"in neither the mirror nor {self.cfg['git_dir']}, so this turn cannot "
-                    f"continue it. Nothing was run. Put the branch back, or close this "
-                    f"conversation so the next message starts a new one.")
+                    f"conversation {conv['id']} publishes as {conv_branch}, and that branch "
+                    f"{where}, so this turn cannot continue it. Nothing was run. Put the "
+                    f"branch back, or close this conversation so the next message starts a "
+                    f"new one.")
         # NOTHING IS EVICTED HERE, AND THAT IS THE POINT. Until 2026-09-01 a cold launch that
         # found memory short destroyed a warm container to make room for itself. With one pool
         # that was a trade inside one lane. With two it is one class taking another's warm
@@ -7235,6 +7441,13 @@ class Watcher:
             # Most-preferred first, which is also how ffbox breaks a tie between two branches
             # sitting on the same commit.
             cmd += ["--base-refs", " ".join(self.cfg.get("publish_bases") or {})]
+            # AN ADOPTED BRANCH PUBLISHES ONLY WHAT THIS CONVERSATION ADDED. The line above
+            # still decides which base the pull request targets; this decides where the
+            # published range begins, and on a branch somebody else pushed those are different
+            # commits. Without it the range carries their work, which fails the identity check
+            # every run's range is held to and counts their files against this run's ceilings.
+            if adopted:
+                cmd += ["--range-from-start"]
 
         # DETACHED, AND THE CONTAINER IS NOT THIS THREAD'S ANY MORE. ffbox creates it, records
         # its id and its ceilings, and returns; the clock pass enforces the ceilings and
@@ -8248,21 +8461,22 @@ class Watcher:
         self.db.execute("UPDATE run SET bundle_path=?, changed_files=?, branch=? WHERE id=?",
                         (bundle, len(changed), branch, run_row_id))
 
-        ok, err = self.push_bundle(bundle, branch)
+        ok, err, existed = self.push_bundle(bundle, branch)
         if not ok:
             return self._no_branch(run_row_id, err)
         # AFTER the push, because it is checked against the pushed commits. Recorded whether or
         # not a PR follows: which branch the work is for is a fact about the work, and the
         # verification gate below can withhold the PR without making that fact unavailable.
         base, base_reason = self.pr_base(run_row_id, run_dir, branch)
-        # `owned` IS THE ANSWER TO "did this run make the branch or add to one". It was read
-        # before the claim below, so it still says what the conversation looked like when the
-        # run started publishing: set means an earlier turn already put this branch on origin
-        # and a reviewer may be part-way through it, NULL means this push created it. Recorded
-        # rather than worked out at reply time, because by then the claim has been written and
-        # the two cases are indistinguishable from the row.
+        # `existed` IS THE ANSWER TO "did this run make the branch or add to one", and it comes
+        # from what push_bundle looked up on the remote a moment before pushing. It used to be
+        # derived from whether the conversation already owned a name, which was a good proxy
+        # while the only way to own one was to have pushed it: an adopted conversation owns a
+        # name on its FIRST turn, and that proxy would report every one of them as a branch an
+        # earlier turn had built. The column asks about the remote, so it is answered from the
+        # remote.
         self.db.execute("UPDATE run SET pushed=1, pr_base=?, branch_existed=? WHERE id=?",
-                        (base, 1 if owned else 0, run_row_id))
+                        (base, 1 if existed else 0, run_row_id))
         # THE CONVERSATION CLAIMS THE BRANCH, here and nowhere else, because here is the first
         # moment it names something that exists on origin. Everything that makes later turns
         # continue this work reads that column: run_ref starts them on it, launch() passes it as
@@ -8278,7 +8492,17 @@ class Watcher:
                         (branch, conv["id"]))
         # So the NEXT turn can start on it: the container resolves --ref against the mirror, and
         # nothing but the CI runners' own fetch otherwise puts a branch there. See mirror_take.
-        self.mirror_take(branch)
+        #
+        # BY THE NAME, not by whether the conversation adopted. What has just happened is a
+        # push, so the commits are on origin AND under refs/ffbox/<branch> in the host checkout,
+        # and either route would carry them. mirror_take is the cheap local one and is what a
+        # prefixed name takes; a name outside the prefix is one mirror_take refuses on principle
+        # (it must not be able to move a branch CI reads), so that one comes back from origin
+        # instead, which is the same commits by a longer road.
+        if branch.startswith(self.cfg["branch_prefix"]):
+            self.mirror_take(branch)
+        else:
+            self.mirror_sync_from_origin(branch)
         log(f"run {run_row_id}: pushed {branch} -> {base or '?'} ({len(changed)} file(s))")
         if base is None:
             return self._no_pr(run_row_id, conv, branch, base_reason)
@@ -8571,23 +8795,26 @@ class Watcher:
             # A run whose push succeeded is done being pushed.
             if not os.path.exists(run["bundle_path"]):
                 return None                 # the clone is long gone; there is nothing to send
-            ok, err = self.push_bundle(run["bundle_path"], branch)
+            ok, err, existed = self.push_bundle(run["bundle_path"], branch)
             if not ok:
                 log(f"reconcile: {branch} still could not be pushed: {err}")
                 self.db.execute("UPDATE run SET no_branch_reason=? WHERE id=?", (err, run["id"]))
                 return None
             base, _ = self.pr_base(run["id"], run_dir, branch)
-            # `owned` carries the same meaning here as in publish(): read before the claim
-            # below, so it still says whether an earlier turn had already put this branch on
-            # origin — which is the difference between a reply that says a fix was created and
-            # one that says it was updated.
+            # `existed` carries the same meaning here as in publish(): what the remote said a
+            # moment before the push, which is the difference between a reply that says a fix
+            # was created and one that says it was updated.
             self.db.execute(
                 "UPDATE run SET branch=?, pushed=1, pr_base=?, branch_existed=?,"
                 " no_branch_reason=NULL WHERE id=?",
-                (branch, base, 1 if owned else 0, run["id"]))
+                (branch, base, 1 if existed else 0, run["id"]))
             self.db.execute("UPDATE conversation SET branch=? WHERE id=? AND branch IS NULL",
                             (branch, conv_id))
-            self.mirror_take(branch)
+            # By the name, exactly as publish() does it — see the comment there.
+            if branch.startswith(self.cfg["branch_prefix"]):
+                self.mirror_take(branch)
+            else:
+                self.mirror_sync_from_origin(branch)
             log(f"reconcile: pushed {branch} for conversation {conv_id}")
             run = self.db.one("SELECT * FROM run WHERE id=?", (run["id"],))
 
@@ -8730,7 +8957,9 @@ class Watcher:
         return opened
 
     def push_bundle(self, bundle, branch):
-        """(ok, error). Fetch the run's commits out of the bundle and push them to the remote.
+        """(ok, error, existed). Fetch the run's commits out of the bundle and push them to
+        the remote. `existed` is whether the remote already had this branch a moment before the
+        push, which is what run.branch_existed records and what the prefix rule below turns on.
 
         The bundle carries only base_sha..branch, so the host has to already have base_sha —
         `git bundle verify` is exactly that check, and running it first turns "the host is
@@ -8751,7 +8980,7 @@ class Watcher:
         ref = f"refs/ffbox/{branch}"
         if not os.path.isdir(os.path.join(git_dir, ".git")) and not os.path.isdir(
                 os.path.join(git_dir, "objects")):
-            return False, f"{git_dir} is not a git checkout, so nothing could be pushed"
+            return False, f"{git_dir} is not a git checkout, so nothing could be pushed", False
 
         def git(*args, timeout=600):
             try:
@@ -8765,19 +8994,48 @@ class Watcher:
         if fetched.returncode != 0:
             log(f"WARNING: could not refresh {remote} before publishing: "
                 f"{(fetched.stderr or '').strip()[:200]}")
+        # WAS THIS BRANCH ALREADY ON THE REMOTE. Two questions are answered by the one lookup:
+        # what run.branch_existed records, and the prefix rule below.
+        existed = git("rev-parse", "--verify", "--quiet",
+                      f"refs/remotes/{remote}/{branch}^{{commit}}").returncode == 0
+        # THE PREFIX RULE. ffbox may CREATE a branch on the remote only under branch_prefix;
+        # outside it, it may only ADD COMMITS to a branch that is already there. Until adoption
+        # existed nothing could reach here with an unprefixed name -- launch coerces the name it
+        # is given and the harvest rename builds one out of the prefix -- so the guarantee was a
+        # property of the callers and never a check. A conversation can now be told to publish
+        # onto a branch somebody else pushed, and the difference between adding to that branch
+        # and conjuring a new top-level name on the remote is exactly this test.
+        #
+        # READ OFF THE REMOTE-TRACKING REF, not off conversation.branch_adopted_at: the row says
+        # the branch was there when it was adopted, and a branch deleted since then is precisely
+        # the case this refuses. If the fetch above failed, this reads a stale answer and can
+        # refuse a branch that does exist -- which is the safe direction, and the run says so.
+        if not branch.startswith(self.cfg["branch_prefix"]) and not existed:
+            return False, (f"{branch} is outside {self.cfg['branch_prefix']} and is not on "
+                           f"{remote}; ffbox adds commits to a branch somebody else pushed but "
+                           f"never creates one outside its own prefix"), False
         verified = git("bundle", "verify", bundle)
         if verified.returncode != 0:
             return False, ("the work bundle's base commit is missing from the host checkout: "
-                           + (verified.stderr or verified.stdout or "").strip()[:200])
+                           + (verified.stderr or verified.stdout or "").strip()[:200]), existed
         got = git("fetch", bundle, f"{branch}:{ref}")
         if got.returncode != 0:
             return False, "could not read the work bundle: " + \
-                (got.stderr or "").strip()[:200]
+                (got.stderr or "").strip()[:200], existed
         pushed = git("push", remote, f"{ref}:refs/heads/{branch}")
         if pushed.returncode != 0:
-            return False, f"push to {remote} failed: " + (pushed.stderr or "").strip()[:200]
+            # THE LIKELY CAUSE NAMED, because git's own message ("non-fast-forward", "fetch
+            # first") sends people to look at this box when the answer is that the branch moved
+            # somewhere else. A conversation owns its branch for the length of the conversation;
+            # a push to it from anywhere else while a turn is in flight costs that turn its
+            # publication.
+            hint = ("" if existed is False else
+                    f" — {branch} may have moved on {remote} since this run started; nothing "
+                    f"but this conversation should push to it while a turn is running")
+            return False, (f"push to {remote} failed: "
+                           + (pushed.stderr or "").strip()[:200] + hint), existed
         self.set_upstream(git, remote, branch)
-        return True, None
+        return True, None, existed
 
     @staticmethod
     def set_upstream(git, remote, branch):
@@ -11375,6 +11633,18 @@ def build_parser():
     sp.add_argument("id", nargs="+", type=int, help="conversation id(s)")
     sp = sub.add_parser("close", help="end a conversation, so new messages start a fresh one")
     sp.add_argument("id", nargs="+", type=int, help="conversation id(s)")
+
+    sp = sub.add_parser("adopt", help="tie a conversation to a branch that already exists")
+    sp.add_argument("--conversation", type=int, required=True, metavar="ID",
+                    help="the conversation that will own the branch")
+    sp.add_argument("--branch", required=True, metavar="NAME",
+                    help="a branch already on the remote. From then on this conversation "
+                         "starts every turn on it and publishes back onto it, exactly as if "
+                         "it had pushed the branch itself. Only before it owns one: a "
+                         "conversation keeps its branch for life. Outside the ffbox/ prefix "
+                         "the harness may add commits to the branch but will never create it, "
+                         "so a branch deleted from the remote stops being publishable.")
+    sp.add_argument("--json", action="store_true", help="print the result as JSON")
     return p
 
 
@@ -11501,6 +11771,18 @@ def main(argv=None):
                 done.append(cid)
         print(f"closed {len(done)} conversation(s)")
         return 0 if done else 1
+    if args.cmd == "adopt":
+        # by=the unix login, which is what a local ingress can honestly say about who asked.
+        # The directive path passes a Discord snowflake instead; branch_adopted_by holds
+        # whichever, because the question it answers is "who do I go and ask about this".
+        ok, reason = watcher.adopt_branch(args.conversation, args.branch,
+                                          by=getpass.getuser())
+        if args.json:
+            print(json.dumps({"ok": ok, "conversation": args.conversation,
+                              "branch": args.branch if ok else None, "reason": reason}))
+        else:
+            print(reason if ok else f"refused: {reason}", file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
     if args.cmd in ("read", "unread"):
         done = (watcher.mark_read if args.cmd == "read" else watcher.mark_unread)(args.id)
         print(f"marked {len(done)} conversation(s) {args.cmd}")
