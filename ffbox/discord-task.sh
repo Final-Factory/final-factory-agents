@@ -766,7 +766,7 @@ PREAMBLE_LOCAL = (
 # framed as one. It used to take the Discord preamble below and arrive with the message inside
 # an <discord> fence labelled untrusted, under the answerer's player-facing policy — the same
 # framing that made `ffbox "what file defines the belt merger?"` come back as a policy refusal
-# addressed to a player. The person on the other end of a DM is in trust.operators, checked
+# addressed to a player. The person on the other end of a DM is in the operators table, checked
 # against Discord's own authenticated author id before this container was started; they are the
 # same people who type at this machine's shell, and asking from their sofa should not turn their
 # question into a stranger's.

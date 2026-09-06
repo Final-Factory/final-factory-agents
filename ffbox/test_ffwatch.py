@@ -1479,8 +1479,18 @@ def test_config_warnings_name_every_silent_default():
     usernames = ffwatch._deep_merge(ffwatch.DEFAULTS, {})
     usernames["_discord"] = {"trust": {"operators": {"ben": ".slims"}}}
     check("a table of usernames warns that it holds no ids",
-          "no numeric ids" in " ".join(ffwatch.config_warnings(usernames)),
+          "no numeric discord ids" in " ".join(ffwatch.config_warnings(usernames)),
           ffwatch.config_warnings(usernames))
+    # AND IT NAMES WHICHEVER LOCATION THIS BOX ACTUALLY USES. Telling somebody whose operators
+    # are all in the old place to go and look at an empty new one is worse than saying nothing.
+    check("a box that predates the move is pointed at the old location",
+          "discord.trust.operators" in " ".join(ffwatch.config_warnings(usernames)),
+          ffwatch.config_warnings(usernames))
+    moved = ffwatch._deep_merge(ffwatch.DEFAULTS, {})
+    moved["operators"] = {"ben": {"discord": ".slims"}}
+    warned = " ".join(ffwatch.config_warnings(moved))
+    check("and a box that has moved is pointed at the new one",
+          "operators in the config" in warned and "discord.trust" not in warned, warned)
 
 
 BOT = "999000999"
@@ -4754,32 +4764,54 @@ def test_no_changed_files_means_no_branch_and_no_pr():
           text[:400])
 
 
-def test_the_github_operator_table_is_its_own():
-    print("github operators")
-    cfg = {"github": {"trust": {"operators": {"loth": 10092359, "ben": "22", "typo": "not-an-id"}}},
-           "_discord": {"trust": {"operators": {"loth": "800000000000000001"}}}}
-
-    check("numeric ids are kept",
-          ffwatch.github_operators(cfg) == {"loth": "10092359", "ben": "22"},
-          ffwatch.github_operators(cfg))
-    check("a non-numeric entry is dropped rather than kept",
-          "typo" not in ffwatch.github_operators(cfg), None)
-    check("an operator's github id is recognised",
-          ffwatch.is_github_operator(cfg, 10092359), None)
-    check("and a stranger's is not", not ffwatch.is_github_operator(cfg, 999), None)
-
-    # THE TWO TABLES ARE NOT ONE TABLE. This is the check that matters: the id spaces are
-    # unrelated, so a Discord snowflake must never open the GitHub door and vice versa.
-    check("a discord operator is not a github operator",
-          not ffwatch.is_github_operator(cfg, "800000000000000001"), None)
-    check("and a github operator is not a discord one",
-          not ffwatch.is_operator(cfg, "10092359"), None)
-    check("neither table falls back to the other when its own is empty",
-          (ffwatch.github_operators({"_discord": {"trust": {"operators": {"a": "1"}}}}),
-           ffwatch.operators({"github": {"trust": {"operators": {"a": "1"}}}})) == ({}, {}),
+def test_one_operator_block_serves_both_services_without_sharing_ids():
+    """One list of PEOPLE, one id per service, and the two never test each other's ids."""
+    print("operators: one block, two services")
+    cfg = {"operators": {
+        "loth": {"discord": "800000000000000001", "github": 10092359},
+        "ben": {"discord": "800000000000000002"},
+        "typo": {"discord": ".slims", "github": "not-an-id"},
+    }}
+    check("each service reads its own field",
+          (ffwatch.operators(cfg), ffwatch.github_operators(cfg))
+          == ({"loth": "800000000000000001", "ben": "800000000000000002"},
+              {"loth": "10092359"}),
+          (ffwatch.operators(cfg), ffwatch.github_operators(cfg)))
+    check("a person with no github id simply cannot start a review",
+          "ben" not in ffwatch.github_operators(cfg), None)
+    check("and a non-numeric id is dropped per service, not per person",
+          "typo" not in ffwatch.operators(cfg)
+          and "typo" not in ffwatch.github_operators(cfg), None)
+    check("an operator is recognised on each service",
+          ffwatch.is_operator(cfg, "800000000000000001")
+          and ffwatch.is_github_operator(cfg, 10092359), None)
+    check("and a stranger on neither",
+          not ffwatch.is_operator(cfg, "999") and not ffwatch.is_github_operator(cfg, 999),
           None)
-    check("an empty table trusts nobody",
-          not ffwatch.is_github_operator({"github": {}}, 10092359), None)
+
+    # SHARING THE BLOCK IS NOT SHARING THE SET, and this is the check that matters. The id
+    # spaces are unrelated, so a Discord snowflake colliding with a GitHub user id must not be
+    # a way in — and it is not, because it is never tested on the other side.
+    check("a discord snowflake is not a github operator",
+          not ffwatch.is_github_operator(cfg, "800000000000000001"), None)
+    check("and a github id is not a discord one",
+          not ffwatch.is_operator(cfg, "10092359"), None)
+    check("an empty block trusts nobody anywhere",
+          not ffwatch.is_operator({"operators": {}}, "800000000000000001")
+          and not ffwatch.is_github_operator({"operators": {}}, 10092359), None)
+
+    # THE OLD SHAPE STILL READS, for Discord only. Every box before 2026-09-06 keeps its
+    # operators in discord.trust.operators, and it is a FALLBACK rather than a merge: a box that
+    # has the new block uses it and nothing else, so removing somebody there removes them
+    # instead of leaving them trusted from a stale copy two sections away.
+    legacy = {"_discord": {"trust": {"operators": {"loth": "800000000000000001"}}}}
+    check("a box that predates the move keeps its discord operators",
+          ffwatch.operators(legacy) == {"loth": "800000000000000001"}, None)
+    check("and gets no github operators from it, because it named none",
+          ffwatch.github_operators(legacy) == {}, None)
+    both = dict(legacy, operators={"ben": {"discord": "800000000000000002"}})
+    check("the new block WINS rather than merging, so a removal is a removal",
+          ffwatch.operators(both) == {"ben": "800000000000000002"}, ffwatch.operators(both))
 
 
 def test_the_github_client_reads_comments_and_says_things_back():
@@ -11177,8 +11209,9 @@ def review_cfg(case, *, operators=None, trigger="#codereview"):
     case.watcher.cfg["github"] = dict(case.watcher.cfg.get("github") or {}, **{
         "api_base": github_base(), "repo": "Final-Factory/FinalFactory", "base": "develop",
         "token": "gh-test-token", "trigger": trigger, "review_pool": "ffdev",
-        "trust": {"operators": {"loth": "10092359"} if operators is None else operators},
     })
+    case.watcher.cfg["operators"] = ({"loth": {"github": "10092359"}} if operators is None
+                                     else operators)
     GH_STATE["comments"], GH_STATE["posted"], GH_STATE["reactions"] = [], [], []
     GH_STATE["pulls"] = []
     try:
@@ -13058,7 +13091,7 @@ def main():
         test_the_agent_commits_its_own_work,
         test_harvest_refuses_a_rewritten_or_forged_range,
         test_a_refused_harvest_is_reported,
-        test_the_github_operator_table_is_its_own,
+        test_one_operator_block_serves_both_services_without_sharing_ids,
         test_the_github_client_reads_comments_and_says_things_back,
         test_github_client_retries_and_cannot_merge,
         test_verification_results_path_is_per_invocation,

@@ -1167,7 +1167,7 @@ rolling 24 hours for anything a player caused, operators uncapped) and the split
 capability is uniform.
 
 The same lookup also picks **which agent class the conversation opens in** — `discord.user_pool`
-for a stranger, `discord.operator_pool` for an account in `trust.operators` — so an operator
+for a stranger, `discord.operator_pool` for an account in `operators` — so an operator
 directive in Discord runs in the class dev work runs in, and everything else stays behind the
 egress fence. That is a different question from the tier: the class says which container, the
 tier says what that container may say and do, and a turn that batches one player's message into
@@ -1917,7 +1917,7 @@ and fetch a package without an operator editing `allowlist.txt` first. That also
 machine's LAN address, so it is trusted the way a developer's own shell on this box is trusted.
 What keeps that defensible is that **no text written by a stranger reaches an unfenced
 container**: a Discord conversation opens in `discord.user_pool`, which is `ffagent`, unless the
-account that opened it is in `discord.trust.operators`, in which case it opens in
+account that opened it is in `operators`, in which case it opens in
 `discord.operator_pool`, which is `ffdev`. An operator directive is dev work by the person who
 owns the box, so it gets the class dev work runs in; everything else stays behind the fence. And
 a conversation that opened unfenced is demoted to `user_pool` as soon as anybody outside the
@@ -1959,8 +1959,8 @@ author id to pick between them.
 
 ```jsonc
 "discord": {
-  "user_pool":     "ffagent",   // anybody not in trust.operators — the fenced class
-  "operator_pool": "ffdev"      // an account in trust.operators — the unfenced one
+  "user_pool":     "ffagent",   // anybody not in operators — the fenced class
+  "operator_pool": "ffdev"      // an account in operators — the unfenced one
 }
 ```
 
@@ -1968,7 +1968,7 @@ author id to pick between them.
 obeys. A forum thread a player started stays `ffagent` for its whole life even after Lothsahn
 answers in it — there is no promotion path, in Discord or anywhere else.
 
-**And a stranger takes the unfenced class back.** The moment anybody outside `trust.operators`
+**And a stranger takes the unfenced class back.** The moment anybody outside `operators`
 posts in an `ffdev` conversation, it is moved to `user_pool` and stays there. A dev thread an
 operator opened in a public channel therefore loses its internet the first time a player joins in,
 instead of running the player's text in a container with the whole internet and a git credential
@@ -1992,7 +1992,7 @@ its pinned `base_sha` and its branch, which is what `run_ref` reaches for ahead 
 `base_ref`, so the tree its transcript has been citing `file.cs:214` positions against is the same
 tree after the demotion as before.
 
-On a box with nobody in `trust.operators` — which is what the template ships — every Discord
+On a box with nobody in `operators` — which is what the template ships — every Discord
 conversation is a user's. A name that is not an agent class falls back to the default with a
 `WARNING` in the journal rather than writing a class no pool can serve.
 
@@ -2140,11 +2140,8 @@ what it did. Nothing merges, and no second pull request is opened: the work land
 a reviewer is already reading.
 
 ```jsonc
-"github": {
-  "trigger": "#codereview",
-  "review_pool": "ffdev",
-  "trust": { "operators": { "lothsahn": 10092359 } }
-}
+"operators": { "lothsahn": { "discord": "1932...", "github": 10092359 } },
+"github":    { "trigger": "#codereview", "review_pool": "ffdev" }
 ```
 
 Most of this is machinery that already existed. The conversation **adopts** the pull request's
@@ -2159,10 +2156,12 @@ repo-wide, so watching every open pull request costs what watching one costs. A 
 need this box reachable from the internet and a secret to rotate, to save a latency nobody is
 waiting on: a review takes the better part of an hour.
 
-**Who may start one.** `github.trust.operators`, name to NUMERIC GitHub user id, and a table of
-its own that shares nothing with `discord.trust.operators` — the id spaces are unrelated, and a
-snowflake colliding with a GitHub user id would be a way in. `author_association` is not
-consulted: OWNER and MEMBER are handed out for reasons that have nothing to do with this
+**Who may start one.** The top-level `operators` block, which names each person once and carries
+their id for each service — it was `operators` until this landed, and moved out
+because two tables of the same people is two things to keep in step. Sharing the block is not
+sharing the ids: the `github` field is the only thing tested here, so a Discord snowflake
+colliding with a GitHub user id is not a way in. Somebody with no `github` id cannot start a
+review. `author_association` is not consulted: OWNER and MEMBER are handed out for reasons that have nothing to do with this
 machine, and a review run pushes commits. A comment from anybody else is ignored in silence,
 for the reason a `!branch` line from a stranger is: a refusal tells them the trigger exists and
 that they are not an operator.
