@@ -61,6 +61,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -626,6 +627,23 @@ DEFAULTS = {
         # ~/.git-credentials. See ffbox/CREDENTIALS.md.
         "token_env": "GH_PR_TOKEN",
         "token": None,
+        # THE #codereview TRIGGER (design/github_pr_review_design.txt). A comment on a pull
+        # request whose text holds this word starts a review run on that pull request's branch.
+        # A word rather than a regex: it is matched case-insensitively against the comment body
+        # and nothing else is parsed out of it, which is what keeps the prompt free of anything
+        # a person wrote. An empty string turns the poller off.
+        "trigger": "#codereview",
+        # WHICH AGENT CLASS A REVIEW RUNS IN. Named rather than hardcoded for the same reason
+        # discord.operator_pool is: a box that wants to put this behind the fence should be able
+        # to say so and then find out that a fenced container cannot push, rather than have the
+        # choice buried in code.
+        "review_pool": "ffdev",
+        # WHOSE COMMENT MAY START ONE. Name to NUMERIC GitHub user id, the same shape and the
+        # same argument as discord.trust.operators: a login can be renamed, so a trust key
+        # somebody can claim by renaming is not a trust key. Empty means nobody can trigger a
+        # review, which is the right default for a box that has not been told who its operators
+        # are -- and the poller still costs one request a sweep, so turning it off is `trigger`.
+        "trust": {"operators": {}},
     },
 
     # ceilings (design section 8). Three separate clocks; conflating them makes a slow Unity
@@ -1359,6 +1377,33 @@ def operators(cfg):
 def is_operator(cfg, author_id):
     """Discord's authenticated author.id, looked up. Never a name, never message content."""
     return bool(author_id) and str(author_id) in set(operators(cfg).values())
+
+
+def github_operators(cfg):
+    """{name: numeric github user id} for the accounts that may start a review, {} for none.
+
+    THE SIBLING OF operators(), AND DELIBERATELY NOT THE SAME TABLE. Both answer "may this
+    account command the box", and both drop anything that is not a digit string for the same
+    reason -- a renameable handle is not a trust key. What they must never do is share a set:
+    the id spaces are unrelated, and a Discord snowflake that happened to collide with a GitHub
+    user id would be a way in. Two tables, two readers, no fallback from one to the other.
+    """
+    raw = ((cfg.get("github") or {}).get("trust") or {})
+    ops = raw.get("operators") if isinstance(raw, dict) else None
+    if not isinstance(ops, dict):
+        return {}
+    return {str(k): str(v) for k, v in ops.items() if str(v).isdigit()}
+
+
+def is_github_operator(cfg, user_id):
+    """GitHub's own comment author id, looked up. Never a login, never the comment body.
+
+    `author_association` is deliberately NOT consulted. It says what the account's relationship
+    to the repository is, which is a different and much weaker question than whether this box
+    takes instructions from it -- OWNER and MEMBER are handed out for reasons that have nothing
+    to do with this machine, and a review run pushes commits.
+    """
+    return bool(user_id) and str(user_id) in set(github_operators(cfg).values())
 
 
 # WHICH POOL DISCORD TRAFFIC LANDS IN, and it is two answers rather than one because the two
@@ -3051,6 +3096,102 @@ class GitHub:
         return {"number": pull.get("number"), "url": pull.get("html_url"),
                 "state": pull.get("state") or "closed",
                 "merged": bool(pull.get("merged_at") or pull.get("merged"))}
+
+
+    def list_issue_comments(self, since=None, per_page=100, max_pages=10):
+        """Comments on this repository's issues AND pull requests, newest activity last.
+
+        ONE REQUEST FOR THE WHOLE REPOSITORY, which is why the poller is affordable at all:
+        /issues/comments is repo-wide, so watching every open pull request costs the same as
+        watching one. A pull request's conversation comments are issue comments -- the review
+        comments left on the diff are a different endpoint and deliberately not read here.
+
+        `since` is an ISO timestamp and the filter is on UPDATED, not created, so an edited
+        comment comes back. That is on purpose: somebody who typed the trigger into a comment
+        they then fixed a typo in still meant it. The caller dedupes on comment id, so a comment
+        that keeps being edited is seen once.
+
+        Paged to a ceiling rather than to exhaustion. A sweep that would need more than
+        `max_pages` is a backlog nobody is waiting on, and the cursor does not advance past what
+        was read, so the rest arrives next sweep instead of holding the loop.
+        """
+        out, page = [], 1
+        while page <= max_pages:
+            query = f"?sort=updated&direction=asc&per_page={per_page}&page={page}"
+            if since:
+                query += f"&since={urllib.parse.quote(str(since))}"
+            got = self._request("GET", f"/repos/{self.repo}/issues/comments{query}")
+            if not isinstance(got, list) or not got:
+                break
+            out.extend(got)
+            if len(got) < per_page:
+                break
+            page += 1
+        return out
+
+    def pull_request(self, number):
+        """The facts a review run needs before it opens anything, or None.
+
+        `head_repo` is what answers "is this a fork", and it is read off the API rather than
+        inferred from the branch name: a fork's head branch can be called anything, including
+        something that looks local. None means GitHub did not return a head repository at all,
+        which happens when the fork has been deleted, and is treated as a fork by the caller
+        because it is certainly not this repository.
+        """
+        try:
+            got = self._request("GET", f"/repos/{self.repo}/pulls/{int(number)}")
+        except GitHubError as exc:
+            # A 404 IS AN ANSWER. The number came out of a comment's issue_url, so it can name
+            # something that has been deleted, or an issue rather than a pull request -- both of
+            # which mean "there is no pull request here" and neither of which is a fault worth
+            # raising into the sweep. Anything else still is.
+            if exc.status == 404:
+                return None
+            raise
+        if not isinstance(got, dict) or not got.get("number"):
+            return None
+        head = got.get("head") or {}
+        base = got.get("base") or {}
+        return {
+            "number": got.get("number"),
+            "url": got.get("html_url"),
+            "title": got.get("title") or "",
+            "state": got.get("state") or "closed",
+            "merged": bool(got.get("merged_at") or got.get("merged")),
+            "draft": bool(got.get("draft")),
+            "head_ref": head.get("ref") or "",
+            "head_sha": head.get("sha") or "",
+            "head_repo": ((head.get("repo") or {}) or {}).get("full_name") or "",
+            "base_ref": base.get("ref") or "",
+        }
+
+    def create_issue_comment(self, number, body):
+        """Say something on a pull request's conversation. Returns the new comment's id.
+
+        The issues endpoint, because a pull request IS an issue for comment purposes. There is
+        no review-comment method and no approve method here for the same reason there is no
+        merge: what this box may do to a pull request is add a branch and say something, and a
+        capability that does not exist cannot be reached for by a later edit.
+        """
+        made = self._request("POST", f"/repos/{self.repo}/issues/{int(number)}/comments",
+                             {"body": body})
+        return (made or {}).get("id")
+
+    def react_to_comment(self, comment_id, content="eyes"):
+        """Put a reaction on one issue comment. True when GitHub took it.
+
+        Best effort by design: this is the acknowledgement that says a trigger was seen, and
+        failing to place it must never cost the run it is acknowledging. A repeat is a no-op on
+        GitHub's side, which is what makes a replayed sweep harmless here.
+        """
+        try:
+            self._request("POST",
+                          f"/repos/{self.repo}/issues/comments/{int(comment_id)}/reactions",
+                          {"content": content})
+            return True
+        except GitHubError as exc:
+            log(f"WARNING: could not react to comment {comment_id}: {exc}")
+            return False
 
 
 class ConversationLock:

@@ -35,6 +35,7 @@ import io
 import json
 import os
 import re
+import urllib.parse
 import socket
 import sqlite3
 import shutil
@@ -3926,7 +3927,12 @@ def test_sender_accounts_for_mention_expansion():
 GH_STATE = {"next_number": 41, "pulls": [], "requests": [], "fail_next": [],
             # Refuses the CREATE while the list call still works, which is the shape a
             # token that may read pull requests but not repository contents actually has.
-            "fail_post": []}
+            "fail_post": [],
+            # The #codereview ingress reads these. `comments` is what /issues/comments serves,
+            # oldest first the way GitHub does under sort=updated&direction=asc; `posted` and
+            # `reactions` record what the harness said back, so a test can assert the box wrote
+            # exactly once.
+            "comments": [], "posted": [], "reactions": []}
 GH_SERVER = {"base": None}
 
 
@@ -3957,6 +3963,23 @@ class MockGitHub(BaseHTTPRequestHandler):
         if GH_STATE["fail_next"]:
             return self._send(GH_STATE["fail_next"].pop(0),
                               {"message": "You have exceeded a secondary rate limit"})
+        path, _, raw_query = self.path.partition("?")
+        if path == "/repos/Final-Factory/FinalFactory/issues/comments":
+            # parse_qs rather than splitting on "page=", which also matches inside "per_page="
+            # and read the page number as 100.
+            query = urllib.parse.parse_qs(raw_query)
+            since = (query.get("since") or [""])[0]
+            page = int((query.get("page") or ["1"])[0])
+            per = int((query.get("per_page") or ["100"])[0])
+            rows = [c for c in GH_STATE["comments"]
+                    if not since or (c.get("updated_at") or "") >= since]
+            return self._send(200, rows[(page - 1) * per:page * per])
+        if re.match(r"^/repos/Final-Factory/FinalFactory/pulls/\d+$", path):
+            number = int(path.rsplit("/", 1)[1])
+            found = next((p for p in GH_STATE["pulls"] if p["number"] == number), None)
+            if found is None:
+                return self._send(404, {"message": "Not Found"})
+            return self._send(200, found)
         head = ""
         if "head=" in self.path:
             head = self.path.split("head=", 1)[1].split("&")[0].split(":")[-1]
@@ -3978,6 +4001,15 @@ class MockGitHub(BaseHTTPRequestHandler):
         if GH_STATE["fail_next"]:
             return self._send(GH_STATE["fail_next"].pop(0),
                               {"message": "You have exceeded a secondary rate limit"})
+        made = re.match(r"^/repos/Final-Factory/FinalFactory/issues/(\d+)/comments$", self.path)
+        if made:
+            GH_STATE["posted"].append((int(made.group(1)), body.get("body") or ""))
+            return self._send(201, {"id": 900000 + len(GH_STATE["posted"])})
+        acted = re.match(
+            r"^/repos/Final-Factory/FinalFactory/issues/comments/(\d+)/reactions$", self.path)
+        if acted:
+            GH_STATE["reactions"].append((int(acted.group(1)), body.get("content")))
+            return self._send(201, {"id": 1})
         if GH_STATE["fail_post"]:
             return self._send(GH_STATE["fail_post"].pop(0),
                               {"message": "Validation Failed", "errors": [
@@ -4720,6 +4752,108 @@ def test_no_changed_files_means_no_branch_and_no_pr():
         (run["id"],))[0]["payload_json"])["text"]
     check("the reply explains the absence instead of omitting it", "no branch" in text,
           text[:400])
+
+
+def test_the_github_operator_table_is_its_own():
+    print("github operators")
+    cfg = {"github": {"trust": {"operators": {"loth": 10092359, "ben": "22", "typo": "not-an-id"}}},
+           "_discord": {"trust": {"operators": {"loth": "800000000000000001"}}}}
+
+    check("numeric ids are kept",
+          ffwatch.github_operators(cfg) == {"loth": "10092359", "ben": "22"},
+          ffwatch.github_operators(cfg))
+    check("a non-numeric entry is dropped rather than kept",
+          "typo" not in ffwatch.github_operators(cfg), None)
+    check("an operator's github id is recognised",
+          ffwatch.is_github_operator(cfg, 10092359), None)
+    check("and a stranger's is not", not ffwatch.is_github_operator(cfg, 999), None)
+
+    # THE TWO TABLES ARE NOT ONE TABLE. This is the check that matters: the id spaces are
+    # unrelated, so a Discord snowflake must never open the GitHub door and vice versa.
+    check("a discord operator is not a github operator",
+          not ffwatch.is_github_operator(cfg, "800000000000000001"), None)
+    check("and a github operator is not a discord one",
+          not ffwatch.is_operator(cfg, "10092359"), None)
+    check("neither table falls back to the other when its own is empty",
+          (ffwatch.github_operators({"_discord": {"trust": {"operators": {"a": "1"}}}}),
+           ffwatch.operators({"github": {"trust": {"operators": {"a": "1"}}}})) == ({}, {}),
+          None)
+    check("an empty table trusts nobody",
+          not ffwatch.is_github_operator({"github": {}}, 10092359), None)
+
+
+def test_the_github_client_reads_comments_and_says_things_back():
+    print("github comments")
+    cfg = {"github": {"api_base": github_base(), "repo": "Final-Factory/FinalFactory",
+                      "base": "develop", "token": "gh-test-token"}}
+    gh = ffwatch.GitHub(cfg)
+    GH_STATE["comments"] = [
+        {"id": 11, "body": "looks good", "updated_at": "2026-09-05T10:00:00Z",
+         "user": {"id": 10092359, "login": "Lothsahn"},
+         "issue_url": "https://api.github.com/repos/Final-Factory/FinalFactory/issues/7"},
+        {"id": 12, "body": "#codereview please", "updated_at": "2026-09-06T10:00:00Z",
+         "user": {"id": 10092359, "login": "Lothsahn"},
+         "issue_url": "https://api.github.com/repos/Final-Factory/FinalFactory/issues/7"},
+    ]
+    check("every comment comes back with no cursor",
+          [c["id"] for c in gh.list_issue_comments()] == [11, 12], None)
+    check("and `since` drops what was already read",
+          [c["id"] for c in gh.list_issue_comments(since="2026-09-06T00:00:00Z")] == [12], None)
+
+    # PAGING IS BOUNDED, not exhaustive: a backlog past the ceiling waits for the next sweep
+    # rather than holding the loop open.
+    GH_STATE["comments"] = [
+        {"id": 100 + i, "body": "x", "updated_at": "2026-09-06T10:00:00Z",
+         "user": {"id": 1, "login": "someone"},
+         "issue_url": "https://api.github.com/repos/Final-Factory/FinalFactory/issues/7"}
+        for i in range(7)]
+    check("a second page is followed",
+          len(gh.list_issue_comments(per_page=3)) == 7, None)
+    check("but not past the ceiling",
+          len(gh.list_issue_comments(per_page=3, max_pages=2)) == 6, None)
+
+    GH_STATE["pulls"] = [
+        {"number": 7, "html_url": "https://github.com/x/y/pull/7", "title": "A fix",
+         "state": "open", "merged_at": None, "draft": False, "_head": "feature/x",
+         "head": {"ref": "feature/x", "sha": "abc123",
+                  "repo": {"full_name": "Final-Factory/FinalFactory"}},
+         "base": {"ref": "master"}},
+        {"number": 8, "html_url": "https://github.com/x/y/pull/8", "title": "From a fork",
+         "state": "open", "merged_at": None, "draft": False, "_head": "patch-1",
+         "head": {"ref": "patch-1", "sha": "def456",
+                  "repo": {"full_name": "somebody/FinalFactory"}},
+         "base": {"ref": "master"}},
+    ]
+    ours, theirs = gh.pull_request(7), gh.pull_request(8)
+    check("a pull request reports its head branch and base",
+          (ours["head_ref"], ours["base_ref"], ours["state"]) == ("feature/x", "master", "open"),
+          ours)
+    check("an in-repo head names this repository",
+          ours["head_repo"] == "Final-Factory/FinalFactory", ours)
+    check("and a fork's head names the fork, which is what refuses it",
+          theirs["head_repo"] == "somebody/FinalFactory", theirs)
+    check("a pull request that is not there is None", gh.pull_request(999) is None, None)
+
+    GH_STATE["posted"], GH_STATE["reactions"] = [], []
+    check("a comment can be posted onto the conversation",
+          gh.create_issue_comment(7, "done") is not None
+          and GH_STATE["posted"] == [(7, "done")], GH_STATE["posted"])
+    check("and a reaction placed on the comment that asked",
+          gh.react_to_comment(12) and GH_STATE["reactions"] == [(12, "eyes")],
+          GH_STATE["reactions"])
+
+    # A REACTION IS AN ACKNOWLEDGEMENT AND NEVER A DEPENDENCY. Failing to place it must not
+    # cost the run it is acknowledging, so it swallows the error and says so.
+    GH_STATE["fail_next"] = [404, 404, 404, 404]
+    check("a reaction that cannot be placed is not fatal",
+          gh.react_to_comment(12) is False, None)
+    GH_STATE["fail_next"] = []
+    GH_STATE["comments"], GH_STATE["pulls"] = [], []
+
+    # The absence that makes "nothing merges" true. It is asserted here as well as on the class
+    # because these methods are the ones a later edit would be tempted to add a sibling to.
+    check("and there is still no way to merge anything",
+          not [n for n in dir(gh) if "merge" in n.lower()], None)
 
 
 def test_github_client_retries_and_cannot_merge():
@@ -12572,6 +12706,8 @@ def main():
         test_the_agent_commits_its_own_work,
         test_harvest_refuses_a_rewritten_or_forged_range,
         test_a_refused_harvest_is_reported,
+        test_the_github_operator_table_is_its_own,
+        test_the_github_client_reads_comments_and_says_things_back,
         test_github_client_retries_and_cannot_merge,
         test_verification_results_path_is_per_invocation,
         test_messages_cluster_into_one_conversation,

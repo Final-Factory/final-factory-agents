@@ -750,10 +750,44 @@ because a box normally wants one.
 | `github.base` | `"master"` | The fallback when a run's own base cannot be established. Tracks the first key of `publish_bases`. |
 | `github.token_env` | `"GH_PR_TOKEN"` | Named for the one thing it may do. The credential that can write code is the one git finds in `~/.git-credentials`. See `ffbox/CREDENTIALS.md`. |
 | `github.api_base` | `https://api.github.com` | |
+| `github.trigger` | `"#codereview"` | The word that starts a review run when it appears in a comment on a pull request. Matched case-insensitively against the whole comment; nothing else is parsed out of it. `""` turns the poller off. |
+| `github.review_pool` | `"ffdev"` | Which agent class a review runs in. `"ffagent"` puts it behind the fence, where it will not be able to push. |
+| `github.trust.operators` | `{}` | Name to NUMERIC GitHub user id. Whose comment may start a review. |
 
 The token itself is read from the environment, not from this file, so it is never written to
 disk beside channel ids and never lands in a config a container could see. A token that IS in
 the file still works, for a machine with no systemd `EnvironmentFile`.
+
+### `#codereview`
+
+A comment saying `#codereview` on a pull request starts an ffdev run against that pull
+request's branch: it reviews the diff, applies what it is confident in, commits onto the branch
+the pull request already points at, and the harness posts a comment. Nothing merges and nothing
+new is opened. `design/github_pr_review_design.txt` is the whole of it.
+
+```jsonc
+"github": {
+  "trigger": "#codereview",
+  "review_pool": "ffdev",
+  "trust": { "operators": { "lothsahn": 10092359 } }
+}
+```
+
+**Ids, not logins**, for the reason `discord.trust.operators` gives: a handle can be renamed.
+The two tables are separate and neither falls back to the other -- the id spaces are unrelated,
+and a Discord snowflake colliding with a GitHub user id would be a way in. Empty means nobody
+can start a review, which is what a box that has not been told its operators should do.
+
+`author_association` is not consulted. OWNER and MEMBER are handed out for reasons that have
+nothing to do with this machine, and a review run pushes commits.
+
+**A comment from anybody else is ignored in silence** -- no reply, no reaction, nothing in the
+thread. Answering would tell a stranger that the trigger exists, that this box has operators,
+and that they are not one.
+
+The comment selects the run and nothing else: the prompt is built by the harness out of the
+pull request number, the branch, the base and the diff, and carries no text anybody wrote. That
+is what keeps an unfenced container out of reach of a public comment box.
 
 ## Conversation clustering
 
