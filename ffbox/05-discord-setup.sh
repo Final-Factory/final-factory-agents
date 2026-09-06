@@ -356,6 +356,16 @@ for key, value in (
         # hostile; handing it a git credential undoes the premise the whole design rests on.
         # ffbox/CREDENTIALS.md section 4.
         "github": {"pr_token": None, "container_token": None},
+        # WHICH PLUGIN TREES THIS CLASS'S CONTAINERS GET, by directory name under this checkout's
+        # plugins/. Each is mounted read-only at /ffbox/plugins/<name> and loaded for the turn.
+        #
+        # THIS POOL GETS ff-discord AND NOTHING ELSE. Its prompts are built from text written by
+        # strangers in a forum, and every skill in the container is surface that text gets to aim
+        # at: ff-agents carries the editor operations, the determinism audit and the game-driving
+        # recipes, none of which a player bug report has any business reaching. Not a fence -- the
+        # fence is the network and the absent credential -- but scope: a lane that cannot do a
+        # thing should not carry the instructions for doing it.
+        "plugins": ["ff-discord"],
       },
       # THE SECOND AGENT CLASS. Same keys as "ffagent" above and the same meanings: the two are
       # separate blocks with no inheritance between them, so ffdev reads THIS and never
@@ -400,6 +410,19 @@ for key, value in (
         # on purpose, and CONTENTS:READ is the answer unless they have decided otherwise and put
         # branch protection on master and develop first.
         "github": {"pr_token": None, "container_token": None},
+        # Same key and the same meaning as ffagent's above, and THIS is the class that gets more
+        # than one. An ffdev turn is an operator's own Claude Code session with the operator not
+        # sitting there, so it wants what that session has: project-memory above all -- 67 files
+        # of Unity, Burst/ECS and baking lessons whose whole purpose is that nobody re-learns
+        # them -- plus plain-writing for the commit messages the harness builds a PR out of.
+        #
+        # ORDER IS THE LOAD ORDER, and ff-discord stays first: max-voice binds everything this
+        # lane posts, so it is the one that must load even if another fails to mount.
+        #
+        # NOT ff-speckit, deliberately. discord-dev-agent is scoped to changes small enough for
+        # one pass and says outright it is not a substitute for the Spec Kit process; mounting
+        # the skills for that process would read as permission to run it.
+        "plugins": ["ff-discord", "ff-agents"],
       },
     }),
     # Turns per rolling 24 hours, keyed on TRUST TIER — who wrote the text, not which lane it

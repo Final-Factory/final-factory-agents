@@ -823,19 +823,39 @@ if session.get("resume"):
 else:
     argv += ["--session-id", session["id"]]
 
-if job.get("plugin_dir"):
+# WHICH PLUGINS THIS TURN GETS, AND THE HOST DECIDED. The list is per agent class -- ffagent gets
+# ff-discord alone, ffdev gets ff-agents too -- and it arrives resolved to container paths, so
+# nothing here knows a plugin name or a host directory.
+#
+# `plugin_dir` IS THE OLDER SINGULAR KEY, read as a one-element list. This is not politeness about
+# an old field: a staged spare carries the turn task it was STAGED with, so THIS script may be the
+# pre-2026-09-05 one reading a new job, or the new one reading a job from a run directory written
+# before the change. Both directions have to work while spares from either side are still warm.
+_plugin_dirs = job.get("plugin_dirs")
+if not isinstance(_plugin_dirs, list):
+    _plugin_dirs = [job["plugin_dir"]] if job.get("plugin_dir") else []
+for _plugin_dir in _plugin_dirs:
+    # SKIPPED IF IT IS NOT THERE, which is the other half of the same spare problem: a container
+    # staged before ffdev gained ff-agents has no /ffbox/plugins/ff-agents, and a mount cannot be
+    # added to a container that already exists. Pointing --plugin-dir at a path that does not
+    # exist is a startup error over one missing plugin; skipping it costs that turn the skills and
+    # nothing else. It also covers a plugin whose freeze failed on the host.
+    if not os.path.isdir(_plugin_dir):
+        continue
     # AND THE SAME DIRECTORY AS AN ADDED ONE, for the same reason the attachments mount is
     # named below. --plugin-dir makes the plugin's skills and roles LOADABLE; it does not make
     # the files READABLE. The tree is mounted outside cwd, so the moment the agent opens one by
-    # path — and the prompt tells it to, "they are loaded from /ffbox/plugins/ff-discord" — Read
-    # raises an out-of-tree permission request that a `-p` run has nobody to answer, and the
-    # turn logs "Claude requested permissions to read from
-    # /ffbox/plugins/ff-discord/agents/discord-dev-agent.md, but you haven't granted it yet".
-    # The role text it was told to follow is the thing it cannot see.
+    # path — and the prompt names every loaded directory — Read raises an out-of-tree permission
+    # request that a `-p` run has nobody to answer, and the turn logs "Claude requested
+    # permissions to read from /ffbox/plugins/ff-discord/agents/discord-dev-agent.md, but you
+    # haven't granted it yet". The role text it was told to follow is the thing it cannot see.
     #
-    # READ, not write: ffwatch mounts the plugin :ro on the host side, so this widens what the
+    # READ, not write: ffwatch mounts every plugin :ro on the host side, so this widens what the
     # agent may look at and nothing else.
-    argv += ["--plugin-dir", job["plugin_dir"], "--add-dir", job["plugin_dir"]]
+    #
+    # BOTH FLAGS REPEAT, one pair per plugin: --plugin-dir is documented repeatable and --add-dir
+    # takes a directory per occurrence.
+    argv += ["--plugin-dir", _plugin_dir, "--add-dir", _plugin_dir]
 
 argv += [
     # THE CHECKOUT'S OWN CONFIG IS NEVER A SOURCE OF CAPABILITY. `user` here is

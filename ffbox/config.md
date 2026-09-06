@@ -113,7 +113,8 @@ already there:
       "idle_agent_ttl_secs": 14400,
       "pool_ref": null,
       "network": "limited",
-      "github": { "pr_token": null, "container_token": null }
+      "github": { "pr_token": null, "container_token": null },
+      "plugins": ["ff-discord"]
     },
     "ffdev": {
       "base_ref": "master",
@@ -125,7 +126,8 @@ already there:
       "idle_agent_ttl_secs": 14400,
       "pool_ref": null,
       "network": "full",
-      "github": { "pr_token": null, "container_token": null }
+      "github": { "pr_token": null, "container_token": null },
+      "plugins": ["ff-discord", "ff-agents"]
     }
   },
   "rate_limits": {
@@ -405,6 +407,7 @@ pool of its own and neither can take the other's warm container.
 | `network` | `"limited"` | `"full"` | The fence. See below. |
 | `github.pr_token` | `null` | `null` | The key in `secrets.env` holding the token this pool opens pull requests with. `null` uses the box-wide `GH_PR_TOKEN`. See below. |
 | `github.container_token` | `null` | `null` | The key in `secrets.env` holding a git credential put INSIDE this pool's containers. `null` means none, which is what ffagent must stay. See below. |
+| `plugins` | `["ff-discord"]` | `["ff-discord", "ff-agents"]` | Which plugin trees this class's containers get, by directory name under `plugins_dir`. See below. |
 
 **Four clocks, not one.** They run in order — warm-up, then the agent, then verification — and
 each is measured from its own marker, so a run can spend all of every one of them. Conflating
@@ -516,6 +519,38 @@ to any branch the token reaches. For a class carrying this token, "nothing merge
 by the token's scope and by branch protection on GitHub and by nothing in this repository — the
 deny list does not hold it, and never did. `ffbox/CREDENTIALS.md` section 4 has the permission
 table; `docs/docker-security-model.md` has the argument.
+
+## `plugins` — which skills each lane carries
+
+Each name is a directory under `plugins_dir`. Every one is frozen into the run's own directory,
+mounted read-only at `/ffbox/plugins/<name>`, and loaded for the turn with `--plugin-dir`; the
+same path is granted with `--add-dir`, without which the agent can load a role but not open the
+file it was told to follow. Order is the load order.
+
+**The two classes ship different sets, and that is the point.** `ffdev` gets `ff-agents` as well
+as `ff-discord`: an ffdev turn is an operator's own Claude Code session with the operator not
+sitting there, so it wants what that session has — `project-memory` above all, plus
+`plain-writing` for the commit messages the harness builds a pull request out of. `ffagent` gets
+`ff-discord` alone. Its prompts are built from text written by strangers in a forum, and every
+skill in the container is surface that text gets to aim at; the engineering skills are not
+withheld as a fence — the fence is the network and the absent credential — but as scope. A lane
+that cannot run the Unity editor should not be carrying the editor's operating instructions.
+
+`ff-speckit` is on neither, deliberately. `discord-dev-agent` is scoped to changes small enough
+for one pass and says outright that it is not a substitute for the Spec Kit process; mounting the
+skills for that process would read as permission to run it.
+
+A bare string is read as one name. `[]` means no plugins at all, which is a thing you may
+configure; a value that is not a list of names — `null`, a number, an object — is a typo and
+falls back to that class's own default, never to the other class's. A name that is not a single
+directory name is dropped with a log line, because the value is pasted into a host path and into
+a mount target.
+
+**A change reaches the pool as spares turn over.** Mounts are fixed when a container is created
+and `--dispatch` renames one that already exists, so a container staged before the edit keeps the
+set it was staged with until it retires — `idle_agent_ttl_secs`, four hours by default. Nothing
+breaks in between: the container skips a plugin directory that is not there rather than failing
+the turn.
 
 ---
 
@@ -758,7 +793,7 @@ asked for; in `watch` the keys are channel identities, and inheriting four of th
 | `kill_switch` | `~/.config/ffbox/discord.disabled` | Stops launches **and** holds every outbound row. |
 | `drain_switch` | `~/.config/ffbox/draining` | Stops launches only, so an in-flight run's replies still reach Discord while the updater waits for it to end. |
 | `events_path` | `~/.config/ffbox/discord/events.jsonl` | |
-| `plugins_dir`, `plugin` | this checkout's `plugins/`, `ff-discord` | What the container gets. |
+| `plugins_dir` | this checkout's `plugins/` | WHERE plugin trees are read from. WHICH ones a container gets is `plugins` in its pool block. |
 | `task_script`, `pool_task`, `ffverify`, `ffbox`, `ffdiscord`, `docker`, `claude_bin` | paths beside `ffwatch.py`, or resolved on PATH | External commands and the scripts handed to a container. |
 
 ## Environment overrides

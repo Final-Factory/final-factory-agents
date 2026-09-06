@@ -288,8 +288,8 @@ Eight things worth knowing:
   child of `ffwatch` in its cgroup, so `systemctl stop ffbox.target` signalled it and its trap
   stopped every container on the box.
 
-  The run also reads *copies* of the task script, `ffverify` and the plugin tree, taken into its
-  own directory at launch, so the merge has nothing to reach.
+  The run also reads *copies* of the task script, `ffverify` and its class's plugin trees, taken
+  into its own directory at launch, so the merge has nothing to reach.
 
 - **What it does still wait for is the host.** A container is where the agent works, but the
   branch push, the pull request and the Discord reply happen on the host after it exits, in a
@@ -1542,6 +1542,15 @@ means an agent that can push branches directly, and for that pool "nothing merge
 branch protection rather than on anything here. `ffbox/CREDENTIALS.md` section 4 and
 `docs/docker-security-model.md` cover it; `ffbox/config.md` under `pools` has the shape.
 
+A pool also names **which skills its containers carry**, in `pools.<class>.plugins`. ffdev gets
+`ff-discord` and `ff-agents`; ffagent gets `ff-discord` alone. An ffdev turn is an operator's own
+Claude Code session with the operator not sitting there, so it wants what that session has —
+`project-memory` most of all. ffagent's prompts are built from text written by strangers in a
+forum, and the engineering skills are kept off it as scope rather than as fence: a lane with no
+Unity editor and no git credential should not be carrying the instructions for using either.
+Mounts are creation-time, so an edit here reaches the pool as its staged spares age out.
+`ffbox/config.md` under `pools` has the shape and the fallback rules.
+
 ### Idle agents: a container that is already warm
 
 A request used to wait about forty seconds before the model read a word of it. Measured on
@@ -2314,9 +2323,11 @@ what would fail if the SAN were ever dropped.
   is the same trade golden made, without the host-side Unity.
 - **`ffghr-gitmirror` is load-bearing for runs too.** With no golden to fall back on, a run whose
   mirror fetch fails refuses to start rather than working from a stale tar.
-- **`ff-agents` plugins are not installed in the image.** Claude runs without the Final Factory
-  skills and roles. Adding `registerAgents.sh` to the Dockerfile (or bind-mounting the plugin
-  cache) is the obvious next step.
+- **A run's Claude gets the plugins its class is configured with, and nothing installs any in
+  the image.** Since 2026-09-05 `pools.<class>.plugins` names them and they are bind-mounted per
+  run: `ffdev` carries `ff-discord` and `ff-agents`, `ffagent` carries `ff-discord` alone. The
+  image itself still has no plugins and no `registerAgents.sh`, which is deliberate — a mount is
+  per class and pinned per run, and baking one in would be neither.
 - **No concurrency guard in `ffbox` itself.** Nothing at this level stops two runs sharing one
   Unity activation or one golden snapshot name; the `$$`-suffixed run IDs make collisions
   unlikely but not impossible. `ffwatch` bounds runs above it (`max_concurrent_runs`, which is
