@@ -6099,7 +6099,7 @@ class Watcher:
         # run on ffagent's numbers for every turn and disagree with what launch() then does.
         queued = self.db.query(
             "SELECT t.*, c.state AS conv_state, c.base_sha AS conv_base_sha,"
-            " c.agent_class AS conv_agent_class FROM turn t"
+            " c.agent_class AS conv_agent_class, c.branch AS conv_branch FROM turn t"
             " JOIN conversation c ON c.id=t.conversation_id"
             " WHERE t.status='queued' ORDER BY t.queued_at, t.id")
         for turn in queued:
@@ -6118,10 +6118,21 @@ class Watcher:
             # turn to a container that is already running creates nothing, so neither the box
             # nor this lane is asked for another place.
             turn_class = self.conversation_class(turn, "conv_agent_class")
+            # THE REF launch() WILL ACTUALLY USE, through the one ladder that decides it.
+            # This used to re-derive it here as "--ref, else the pinned base sha, else the
+            # class's base_ref", which ignored the conversation's own branch and so answered a
+            # different question than the launch: from turn 2 a conversation's base_sha is a
+            # pinned sha, looks_like_sha is true, and pool_would_serve said yes for any warm
+            # container of the class — while launch() went on to ask pool_claim_for about the
+            # BRANCH, missed, and cold-launched. On a full box that is a run started past a
+            # ceiling that had no room for it. run_ref reads only these three fields off the
+            # conversation, so the JOINed row stands in for one.
+            ref = self.run_ref(turn, {"id": turn["conversation_id"],
+                                      "branch": turn["conv_branch"],
+                                      "base_sha": turn["conv_base_sha"],
+                                      "agent_class": turn_class}, log_override=False)
             if ((self.workload_room() <= 0 or self.agent_room(turn_class) <= 0)
-                    and not self.pool_would_serve(
-                        (turn_options(turn).get("ref") or turn["conv_base_sha"]
-                         or class_cfg(self.cfg, turn_class)["base_ref"]), turn_class)):
+                    and not self.pool_would_serve(ref, turn_class)):
                 break
             cap = CAPABILITIES
             if turn["conv_state"] == "running":
@@ -6788,7 +6799,7 @@ class Watcher:
             return DEFAULT_AGENT_CLASS
         return got if got in AGENT_CLASSES else DEFAULT_AGENT_CLASS
 
-    def run_ref(self, turn, conv):
+    def run_ref(self, turn, conv, log_override=True):
         """WHERE THIS RUN'S CLONE STARTS, and the one place that ladder is written.
 
         A conversation that has published owns a branch, and its next turn starts on that
@@ -6808,11 +6819,20 @@ class Watcher:
         from another base is offered to origin as a non-fast-forward push, which is rejected,
         which loses the turn's work. The override survives for a conversation that owns no
         branch yet, which is every first turn and every shell prompt.
+
+        `conv` is a conversation row or ANYTHING THAT ANSWERS THE SAME THREE KEYS — branch,
+        base_sha, agent_class. schedule() holds a JOINed turn row rather than a conversation
+        and hands over a dict built from it, because the pre-check that decides whether a turn
+        may start has to ask about the ref this will return and not about one of its own.
+        `log_override=False` is for that caller: it asks on every pass while a turn is queued,
+        and the note below would otherwise be repeated all day.
         """
         conv_branch = self.conversation_branch(conv)
         override = turn_options(turn).get("ref")
         if conv_branch:
-            if override and override != conv_branch:
+            if override and override != conv_branch and log_override:
+                # NOT FROM THE SCHEDULER, which asks this question again on every pass while a
+                # turn sits queued and would otherwise say the same sentence all day.
                 log(f"conversation {conv['id']}: ignoring --ref {override!r}; its work "
                     f"continues on {conv_branch}")
             return conv_branch
