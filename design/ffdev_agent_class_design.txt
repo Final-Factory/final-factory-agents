@@ -56,11 +56,23 @@ the property section 5 rests on is unchanged: no text written by somebody outsid
 reaches an unfenced container. An account in trust.operators opens an ffdev one, because an
 operator directive in Discord is the same dev work as a prompt typed into the page.
 
-Still not a goal: a class that moves. Whoever OPENED the conversation decides, once, for the same
-reason the web page has no dropdown on its reply box (section 6). An operator answering in a
-player's thread does not promote it; a player joining a thread an operator opened in a public
-channel does not demote it, which is the case to watch and is written up in
-docs/docker-security-model.md.
+Whoever OPENED the conversation decides what it OPENS as, for the same reason the web page has no
+dropdown on its reply box (section 6), and an operator answering in a player's thread does not
+promote it. There is no promotion path anywhere.
+
+AMENDED 2026-09-05: the class does move, in one direction. "A player joining a thread an operator
+opened in a public channel does not demote it" was written here as the case to watch, and watching
+it was not enough -- it is a player's text in a container with the whole internet and a git
+credential. Watcher.demote_for_stranger() now moves such a conversation to discord.user_pool on
+the ingest of the first message from anybody outside trust.operators, and nothing moves it back.
+
+What section 2's objection actually forbids is a class that moves ARBITRARILY, and the one-way
+ratchet does not run into it. The clocks can only get stricter, never looser. The tree does not
+move at all: run_ref() reaches for the conversation's branch and then its pinned base_sha long
+before it falls back to the class's base_ref, so a conversation past its first turn is standing on
+the same tree its transcript has been citing whichever class it now runs in. And nothing tries to
+move a run in flight -- a container's network is fixed at creation, so the fence lands on the next
+turn, which is the first turn that can read the stranger's message at all.
 
 
 2. Why a class and not a flag on the turn

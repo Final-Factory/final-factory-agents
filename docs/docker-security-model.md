@@ -272,15 +272,25 @@ Three properties hold that line, and all three are worth checking before changin
   `trust.operators`, which stores snowflakes and drops anything that is not all digits. A
   username is renameable and message text is a stranger's to write; neither can reach this
   decision.
-- **The opener decides, once.** The class is written when the conversation is created and never
-  moved, so an operator replying in a player's thread does not promote it into `ffdev`. The
-  reverse is the case to watch: a conversation an operator opens in a *public* channel keeps
-  `ffdev` even if players then join the thread, and their text runs in an unfenced container at
-  player trust tier. Set `operator_pool` to `ffagent` if that is not a trade you want, or keep
-  operator-opened conversations to DMs and private channels.
+- **The opener decides what it opens as; a stranger can take that away.** The class is written
+  when the conversation is created, and it only ever moves one way afterwards. An operator
+  replying in a player's thread does not promote it into `ffdev` — there is no promotion path at
+  all. But since 2026-09-05 a conversation an operator opened in a *public* channel is demoted to
+  `user_pool` the moment anybody outside `trust.operators` posts in it, so a player joining a dev
+  thread costs that thread its internet from the next turn on rather than running their text in an
+  unfenced container. It is a one-way ratchet: the operator speaking again does not buy the
+  network back, because the stranger's text is already in the chain and in the session transcript
+  the conversation resumes. Our own bot's replies do not count as a stranger's; any other bot
+  does, a webhook relaying a fork's PR title being exactly the case. The demotion lands on the
+  NEXT turn — a container's network is fixed when it is created, so a run already in flight
+  finishes in the container it started in, and that run never sees the message anyway.
 - **A blank trust table trusts nobody.** The template seeds `trust.operators` with an example
   name and an empty id, and every reader filters for a numeric one, so an unconfigured box routes
   every Discord conversation to `user_pool`.
+
+What the demotion does NOT cover is the turn already running when the stranger posts, and one
+narrower gap it cannot: an operator who quotes or pastes a stranger's text themselves is still an
+operator saying it, and no id check can see that.
 
 Two consequences worth stating plainly. An `ffdev` container is as trusted as a developer's own
 shell on this box, so everything under "The container is assumed hostile" is an `ffagent`

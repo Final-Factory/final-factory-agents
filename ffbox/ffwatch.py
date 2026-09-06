@@ -1369,13 +1369,41 @@ def discord_pool(cfg, key):
 
 
 def discord_agent_class(cfg, author_id):
-    """Which agent class a Discord conversation OPENED by this author runs in.
+    """Which agent class a Discord conversation OPENED by this author starts in.
+
+    Starts in, not runs in: an unfenced conversation gives that class up the moment somebody
+    who is not an operator posts in it. See Watcher.demote_for_stranger.
 
     Decided from Discord's authenticated author.id through the same trust table that decides
     everything else about who is speaking -- never from a username, never from message text.
     An unknown author, and every author on a box with no operators configured, is a user.
     """
     return discord_pool(cfg, "operator_pool" if is_operator(cfg, author_id) else "user_pool")
+
+
+def stranger_downgrade_class(cfg, agent_class):
+    """Where a conversation running in `agent_class` goes when a stranger speaks in it.
+
+    None means it stays where it is, which is the answer for every conversation that is already
+    behind the fence -- there is nothing left to take away.
+
+    KEYED ON THE NETWORK, NOT ON THE CLASS NAME. What a stranger's message costs a conversation
+    is the open internet and the git credential that comes with it, and `network` is the one
+    field that says whether it has them. A box that renames its classes, or points both Discord
+    pools at one of them, gets the right answer without this function knowing anything about
+    which names mean what.
+
+    It refuses to move a conversation onto another "full" class for the same reason. A box whose
+    `user_pool` is itself unfenced has opted out of the split entirely; there is no fence to fall
+    back to, and quietly moving the conversation sideways would look like a demotion while
+    changing nothing about what the container can reach.
+    """
+    if class_cfg(cfg, agent_class).get("network") != "full":
+        return None
+    target = discord_pool(cfg, "user_pool")
+    if target == agent_class or class_cfg(cfg, target).get("network") == "full":
+        return None
+    return target
 
 
 def watch_entry(cfg, alias):
@@ -3580,7 +3608,9 @@ class Watcher:
 
         `agent_class` is written ON CREATION ONLY and the UPDATE branch deliberately does not
         touch it: a conversation's class is settled by its opening turn, and a later upsert --
-        which every subsequent message in a Discord thread performs -- must never move it.
+        which every subsequent message in a Discord thread performs -- must never move it. The
+        one thing that DOES move it afterwards is demote_for_stranger(), from the ingest of a
+        message rather than from here, and it only ever moves a conversation towards the fence.
 
         THE DISCORD INGRESS PASSES IT EXPLICITLY, from discord_agent_class() on the account that
         opened the conversation: discord.user_pool for a stranger, discord.operator_pool for an
@@ -3702,6 +3732,10 @@ class Watcher:
                         " WHERE id=? AND (in_watermark_id IS NULL OR CAST(in_watermark_id AS"
                         " INTEGER) < CAST(? AS INTEGER))",
                         (now_iso(), discord_id, conv_id, discord_id))
+        # A STRANGER IN THE CHAIN TAKES THE FENCE BACK. Checked on every message that is
+        # actually new -- the rowcount check above already dropped the duplicates, so a
+        # re-read of a thread cannot re-log a demotion that happened days ago.
+        self.demote_for_stranger(conv_id, author)
         # THE BACKLOG'S ATTACHMENTS COME DOWN TOO, and that is a deliberate one-time cost —
         # attaching a busy forum pulls every log and save zip in its visible history. Discord's
         # attachment URLs are signed and expire, and nothing re-visits a message once it is
@@ -3711,6 +3745,64 @@ class Watcher:
         # context. attachment_max_bytes still bounds each one.
         self.download_attachments(conv_id, message_id, msg)
         return message_id
+
+    def demote_for_stranger(self, conv_id, author):
+        """Move a conversation out of the unfenced class the moment a stranger speaks in it.
+
+        Returns the class it was moved to, or None when nothing moved.
+
+        THE OPENER STILL CHOOSES WHAT A CONVERSATION STARTS AS, and upsert_conversation is still
+        the only thing that writes that. What this adds is the other end: an operator's thread in
+        a public channel is one message away from carrying a stranger's text, and it used to
+        carry that text into a container with the whole internet and a git credential in it. Any
+        non-operator in the chain now costs the conversation that container from its next turn
+        on. "Whoever opened it decides" survives as the rule for OPENING; it is no longer the
+        rule for the whole life of the thread.
+
+        ONE-WAY, and that is the entire safety argument. stranger_downgrade_class only ever
+        answers with a fenced class, so a stranger can cost a conversation its network and can
+        never hand one back -- there is deliberately no promotion path anywhere, not even when
+        the message is deleted afterwards. The text was in the chain, and the session transcript
+        this conversation resumes has already read it.
+
+        OUR OWN BOT IS NOT A STRANGER. Max's own replies come back through the 15-minute sweep
+        like every other message in the thread, so without this every unfenced conversation
+        would demote itself on its own first answer. Any OTHER bot is: a webhook relaying a
+        fork's PR title is precisely the text the fence exists for. When the bot's own id could
+        not be resolved -- bot_id() says so loudly and caches None -- this falls closed and
+        demotes, because a degraded whoami costing dev threads their internet is the cheaper
+        half of that trade.
+
+        LOCAL CONVERSATIONS ARE NOT SUBJECT TO IT. Their class is chosen at the terminal or the
+        page by whoever runs the box, their `author_id` is a unix uid rather than a snowflake,
+        and a uid that happened to be all digits must never be looked up in the trust table --
+        the same reason upsert_conversation takes the class as an argument instead of deriving
+        one.
+
+        A RUN ALREADY IN FLIGHT KEEPS ITS CONTAINER. A container's network is fixed when it is
+        created and dispatch cannot move it, so the fence lands on the next turn -- which is the
+        turn that will actually read the stranger's message. The one already running never sees
+        it: create_turn leaves a message that arrives mid-run unclaimed on purpose.
+        """
+        conv = self.db.one("SELECT id, kind, agent_class FROM conversation WHERE id=?",
+                           (conv_id,))
+        if conv is None or is_local_conversation(conv):
+            return None
+        current = self.conversation_class(conv)
+        target = stranger_downgrade_class(self.cfg, current)
+        if target is None:
+            return None
+        author_id = str((author or {}).get("id") or "")
+        if is_operator(self.cfg, author_id):
+            return None
+        me = self.bot_id()
+        if me and author_id == str(me):
+            return None
+        self.db.execute("UPDATE conversation SET agent_class=? WHERE id=?", (target, conv_id))
+        who = (author or {}).get("global_name") or (author or {}).get("username") or "?"
+        log(f"conversation {conv_id}: {current} -> {target}; {who} ({author_id or 'no author'}) "
+            f"is not in trust.operators, so this conversation is fenced from its next turn on")
+        return target
 
     def download_attachments(self, conv_id, message_id, msg):
         """Content-addressed at ingest, because Discord's attachment URLs are signed and
@@ -3821,11 +3913,11 @@ class Watcher:
             opener=meta.get("owner_id"),
             is_thread=True,
             alias=alias,
-            # WHOEVER OPENED THE THREAD decides the class, not whoever spoke last. A forum
-            # thread a player started stays a player's for its whole life even after an
-            # operator answers in it, which is the conservative direction: the alternative is
-            # a conversation carrying a stranger's text into the unfenced class the moment a
-            # trusted account replies.
+            # WHOEVER OPENED THE THREAD decides what it OPENS in, not whoever spoke last. A
+            # forum thread a player started stays a player's for its whole life even after an
+            # operator answers in it -- there is no promotion path. The other direction is not
+            # symmetric any more: demote_for_stranger() takes an operator-opened thread back
+            # behind the fence as soon as anybody else posts in it.
             agent_class=discord_agent_class(self.cfg, meta.get("owner_id")))
         for m in msgs:
             m.setdefault("channel_id", str(thread_id))
