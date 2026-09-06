@@ -1,0 +1,274 @@
+#codereview: a pull request comment starts a review run
+=======================================================
+
+2026-09-06.
+
+A comment on a Final Factory pull request saying `#codereview` starts an ffdev run against that
+pull request's branch. The run reviews the diff, applies the fixes it is confident in, commits
+them onto the same branch the pull request already points at, and the harness posts a comment
+saying what it did. Nothing merges, and nothing new is opened: the work lands under the pull
+request a reviewer is already reading.
+
+Almost none of this is new machinery. ffwatch already turns a message into a conversation, a
+conversation into a turn, and a turn into one container; already checks a workspace out at a
+conversation's own branch and publishes back onto it; already holds the GitHub credential on the
+host so no container can speak as the bot. What is missing is an ingress that reads GitHub
+instead of Discord, a reply lane that writes GitHub instead of Discord, and a prompt.
+
+
+1. What gets built
+------------------
+
+  1. A GitHub comment poller in ffwatch's sweep, reading repository issue comments since a
+     cursor and matching `#codereview` from an account in a new `github.trust.operators` table.
+  2. A `github_pr` conversation kind, keyed on the pull request, opened in `ffdev` with its
+     `branch` and `github_pr` columns already filled in from the GitHub API.
+  3. A `github` destination for the outbound queue, so a reply and an acknowledging reaction go
+     through the same persist-before-send path every Discord reply takes.
+  4. The `Workflow` tool in this lane's capability set, in both `--tools` and `--allowedTools`
+     (section 5 has the measurement), and the `code-review-sonnet` workflow script placed where
+     a container can find it.
+  5. ffdev's `agent_secs` raised from 1800 to 7200. ffagent's stays at 1800.
+
+Not a goal: inline review comments on the diff. The harness posts one comment on the pull
+request conversation. `github-pr-review` in ff-agents already does per-line comments from a
+person's own account, and that is a different thing with a different author.
+
+Not a goal: reviewing a fork's pull request. Section 4 is the argument.
+
+Not a goal: a webhook. Section 2 is the argument.
+
+Not a goal: an effort argument. `#codereview` and nothing else. The workflow's own default is
+`high`, which is what a bare `/code-review-sonnet` at a keyboard runs, and one behaviour is
+enough to start with. An argument can be added later without disturbing anything here.
+
+
+2. The trigger, and why it is polled
+------------------------------------
+
+Every sweep, ffwatch asks GitHub for
+`GET /repos/{repo}/issues/comments?sort=updated&since=<cursor>`. That is one request for the
+whole repository, it returns pull request conversation comments as well as issue comments, and
+the cursor lives in `state_dir` beside `events.cursor.json`.
+
+A webhook would be faster and is worse here. It needs this box reachable from the internet, a
+signature-verifying endpoint added to ffweb, and a secret to rotate. A GitHub Action on the
+self-hosted runners would need a path from inside a CI container back to the ffwatch host.
+Neither buys anything: `#codereview` starts a run that takes the better part of an hour, and
+waiting up to `catchup_secs` for it to start is not a cost anybody notices.
+
+The comment id is the message key. `message.discord_id` is UNIQUE, so a replayed sweep inserts
+nothing and therefore creates no second turn, which is the same dedupe a duplicated Discord
+doorbell gets and needs no new column to hold it.
+
+The conversation is keyed on the pull request rather than the comment: `thread_id` is
+`github:pr:<number>`. A second `#codereview` on the same pull request is a follow-up turn on the
+same conversation, so it resumes the same session and the review remembers what the last one
+found and rejected. That is worth having. A review that has already argued itself out of a
+finding should not have to argue itself out of it again.
+
+
+3. Why the existing branch machinery is the whole feature
+---------------------------------------------------------
+
+From `launch()`:
+
+    A CONVERSATION THAT HAS PUBLISHED KEEPS ITS BRANCH, and every later turn of it starts on
+    that branch and publishes back onto it.
+
+Open the conversation with `branch` set to the pull request's head and `github_pr` set to its
+url, and every part of "check out the branch, commit onto it, push it back, do not open a second
+pull request" is already written and already tested. `launch()` resolves the ref, calls
+`mirror_take` if the mirror does not carry the branch yet, and passes the settled name as
+`--branch` with no `--branch-prefix`, so the harvest publishes exactly that name.
+`push_bundle()` pushes `refs/ffbox/<branch>` to `refs/heads/<branch>` without `--force`, which
+is a fast-forward because the run started at that head. `publish()` finds `conv["github_pr"]`
+already set and opens nothing.
+
+Two properties of `publish()` matter and are already true. Confidence gates the pull request and
+not the branch, so fixes reach the branch even when the verification phase is unhappy -- and
+since the pull request exists, there is no gate left to fail. And the one-conversation-one-branch
+assertion fires if the harvest ever comes back with a different name, which is the check that
+turns a mistake into a refusal instead of a second branch carrying a second copy of the same
+work.
+
+What this lane must not do is invent a branch. If the pull request's head is missing from the
+mirror and from `git_dir`, `BranchUnavailable` is the right outcome and the reply says so.
+
+
+4. Who may start one
+--------------------
+
+`ffdev` is the class with no fence: the ordinary bridge, the whole internet, this box's LAN
+address, and a git credential. The rule the fence rests on is that no text written by a stranger
+starts an unfenced container. A pull request comment is a public write surface, so this lane owes
+that rule an answer.
+
+The gate is a new `github.trust.operators` table, name to numeric GitHub user id, read the same
+way `discord.trust.operators` is read and for the same reason: a login can be renamed, so a trust
+key somebody can claim by renaming is not a trust key. A comment from anybody else is recorded
+against the cursor and ignored. It is not downgraded to `ffagent`, because a fenced container has
+no push credential and could not do the job, and because a run that writes commits to a branch is
+not a capability to hand a stranger at any fence level. `author_association` is a useful second
+check and not a sufficient first one.
+
+That covers the comment. It does not cover the diff, which is the part a container actually
+reads, and which was written by whoever opened the pull request. Two requirements close it, and
+both are checked before a conversation is created:
+
+  - the head must be a branch in this repository, not a fork's. A fork head cannot be pushed to
+    anyway, so this reads as a consequence of the push. It is written down as a requirement
+    because it is doing security work: creating an in-repo branch needs push access to the
+    repository, so the diff was authored by somebody who already has it.
+  - the pull request must be open.
+
+`demote_for_stranger()`, added on 2026-09-05, moves an unfenced Discord conversation to the
+fenced class the first time somebody outside `trust.operators` posts in it, because in Discord
+the messages *are* the prompt and a stranger joining a thread puts their words in front of the
+model. This lane needs no equivalent, and the reason is worth stating rather than leaving to be
+rediscovered: **the prompt is built entirely by the harness.** Pull request number, branch, base,
+diff. No commenter's text reaches the container, not even the operator's -- `#codereview` selects
+nothing but the run. A stranger commenting on the pull request cannot reach a container, so there
+is nothing to demote.
+
+If that ever stops being true -- if somebody adds free text after `#codereview` and passes it
+through -- the demotion rule comes back with it. The property is the absence of a channel, not a
+filter on one.
+
+
+5. What the container runs
+--------------------------
+
+The turn prompt tells the agent to run `/code-review-sonnet`, then investigate and apply what it
+returns, then commit. Not `/code-review high --fix`, and the reason is cost.
+
+`/code-review-sonnet` is a workflow: `.claude/workflows/code-review-sonnet.js`, tracked in the
+game repo. It fans out one finder per correctness angle plus one covering the cleanup angles,
+then one independent verifier per distinct `(file, line)`, and **every one of those subagents is
+pinned to sonnet**. That pinning is the entire point of the file; its own description says so.
+The driver session is opus, and an opus fan-out at high effort costs several times what this
+does for a review of the same shape.
+
+`/code-review high --fix` reaches the same workflow when workflows are enabled, and falls back to
+inline cells fanning out on the session model when they are not. The fallback is silent and it is
+opus. Naming the workflow is what makes the cost a property of the invocation instead of a
+property of the environment.
+
+The workflow returns findings and stops. It has no apply stage, and it does not need one: the
+findings come back to the opus driver, which investigates them against the code and applies the
+ones that survive. That is what happens when you type `/code-review-sonnet` at a keyboard, and it
+is the division of labour the file is built around -- sonnet does the wide reading, opus does the
+judging and the editing. The prompt has to say "apply them and commit", because a session with
+nobody watching will otherwise report and stop.
+
+With no level argument the workflow runs at `high`, which is what `LEVEL = FIRST_IS_LEVEL ? FIRST
+: "high"` says and what a bare `/code-review-sonnet` at a keyboard gets: three correctness
+finders plus one cleanup finder, at most thirty candidates, no sweep pass, at most ten findings.
+The harness passes no level, so this lane and a local session cannot drift apart.
+
+Two things have to change for the workflow to run at all.
+
+**The `Workflow` tool is not in the capability set, and adding it takes two entries rather
+than one.** `CAPABILITY_TOOLS` is `"Read,Grep,Glob,Edit,Write,Bash"`, an allow list of built-in
+tools passed as `--tools`. `Workflow` is absent from it, which is not the same as blocked -- the
+deny list, `TRIPWIRE`, is entirely git verbs.
+
+Naming it in `--tools` is necessary and not sufficient. Measured on 2026-09-06 against
+claude 2.1.263, with a two-line probe workflow and haiku:
+
+    --tools "Read,Workflow"                        -> "Review dynamic workflow before running"
+    --tools "Read,Workflow" --allowedTools Workflow -> {"marker":"FFPROBE-OK"}, 29ms
+
+Running a workflow script raises a permission request of its own, and a `-p` run has nobody to
+answer it, so the first form is a turn that dies at the review step having done nothing. The
+second clears it. So `Workflow` goes in `CAPABILITY_TOOLS` **and** in `CAPABILITY_ALLOWED`, which
+is the list already carrying bare `Bash` for exactly this reason: `--permission-mode acceptEdits`
+auto-approves edits and nothing else.
+
+That is the same shape as the measurement behind the attachments `--add-dir` flag, and it fails
+the same way if missed: the lane answers that it could not do the thing, which is true and
+useless. Both entries are this lane's only.
+
+It is worth being explicit about what that tool is, because the name collides. `Workflow` runs a
+local JavaScript orchestration script that spawns subagents. It has nothing to do with GitHub
+Actions. A container that wanted to edit `.github/workflows/*.yml` would do it with `Edit` or
+`Write`, both of which are already in the allow list today, and withholding `Workflow` prevents
+none of that. What prevents an Actions change landing unreviewed is that nothing merges: the
+`GitHub` client has no merge method, deliberately, and every push arrives on a branch under a
+pull request. If a harder stop is wanted, it belongs in the harvest as a refusal on paths under
+`.github/workflows/`, next to the check that every commit carries
+`ffbox@final-factory.invalid`. That is a separate change and is listed as an open question.
+
+**The workflow file is not discoverable.** `discord-task.sh` passes `--setting-sources user`,
+which excludes `project`, and `.claude/workflows/` is project scope. Adding `project` is the
+wrong fix: that exclusion is what keeps the game repo's own settings from being a source of
+capability now that the workspace is trusted, and it should stay. The task copies the script into
+`$CLAUDE_CONFIG_DIR/workflows/` instead, which is `/ffbox/claude/workflows/` and is user scope.
+
+That user-scope path is measured too, in the same probe: a script dropped in
+`$CLAUDE_CONFIG_DIR/workflows/` is found and run under `--setting-sources user`, with no project
+scope anywhere. The CLI resolves user scope to `join(configDir, "workflows")`.
+
+The copy is taken **from the base ref, not from the head under review**. Otherwise the branch
+being reviewed supplies the script that reviews it, which is a straightforward way to get a
+review to find nothing.
+
+ffdev already mounts `ff-agents` since 2026-09-05, so project-memory is in the container and the
+review reads against sixty-odd files of accumulated Unity and Burst lessons rather than cold.
+`TRIPWIRE` stays exactly as it is: the agent never pushes, the harness does.
+
+
+6. The clock
+------------
+
+ffdev's `agent_secs` goes from 1800 to 7200. A high-effort review is one scope pass, four
+finders, a verifier for each distinct location, and a synthesis, and then the driver still has to
+read the findings, check them against the code, and write the fixes. Thirty minutes does not
+cover it.
+
+ffagent's stays at 1800. The two classes have separate blocks precisely so one can move without
+the other, and this is the first time that has been worth doing.
+
+`verify_secs` stays at 1800 as well. A review that touches many assemblies could exceed it, but
+exceeding it exits 125, and 125 is not the turn failing -- the agent had already finished, the
+fixes are already committed, and the run lands unverified. That is the correct outcome for a
+change that is going to be read by a human before it merges.
+
+The number is written into `<out>/clock` when a container is created, so this changes the next
+run and never one in flight, and warm ffdev spares keep 1800 until they age out at
+`idle_agent_ttl_secs`, four hours. Four files carry it: the defaults in `ffwatch.py`, the seeded
+template in `05-discord-setup.sh`, the live `~/.config/ffbox/config.json`, and `config.md`, which
+documents both the example and the per-class table.
+
+
+7. Saying something back
+------------------------
+
+Two writes, both through the outbound queue rather than straight onto the wire, so both are held
+by the kill switch, counted by the send ceilings, retried with backoff, visible on the page, and
+capable of being held for approval:
+
+  - a reaction on the triggering comment as soon as the turn is queued, so the person who typed
+    it knows it was seen. `react` is already an outbound action.
+  - a comment on the pull request when the run ends, composed by the harness from the run's
+    structured verdict: what was fixed, what was found and deliberately left, whether
+    verification passed, and the run id.
+
+The verdict is read from the container's `result.json` through the existing `--json-schema`
+path. Nothing scrapes the agent's prose for a number or a branch name, which is the same rule
+that already makes the recorded pull request number a fact rather than a guess.
+
+A second `#codereview` while a run is in flight is refused with a comment naming the run, rather
+than queued. Queueing is what `follow_up()` does for a local conversation and it is right there:
+somebody typing two messages at a terminal meant both. Here the person cannot see that a run is
+already going, and silently starting a second review after the first one finishes is not what
+they asked for. The comment is recorded against the cursor either way, so it is refused once and
+not once per sweep.
+
+
+8. Open questions
+-----------------
+
+  - Should the harvest refuse changes under `.github/workflows/`? It is a small change and this
+    design does not need it. It is the thing that would actually enforce "no unreviewed Actions
+    edits", which withholding the `Workflow` tool does not.
