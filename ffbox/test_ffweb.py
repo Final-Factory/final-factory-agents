@@ -35,6 +35,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 
 for _stream in (sys.stdout, sys.stderr):
@@ -578,11 +579,24 @@ CLAUDE_POOL = [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-first-account-token", 
                 ffweb.CLAUDE_DEFAULT_RATE, "")]
 
 
+# WHEN THE WINDOWS ROLL OVER, COMPUTED RATHER THAN CAPTURED, and the one part of these
+# documents that is not a copy of what the endpoint answered. The captured values were
+# 2026-09-04T09:59 and 2026-09-06T10:59, and they did what a pinned future timestamp always
+# does: at 10:59 on 2026-09-06 the weekly window fell into the past, fmt_reset correctly
+# rendered "resetting now" instead of a countdown, and the check asserting the countdown began
+# failing on a suite nobody had touched. The SHAPE is what the fixture is for -- ISO 8601 with
+# microseconds and a +00:00 offset, which is the offset fmt_reset has to parse -- and the shape
+# survives being generated. Both branches of fmt_reset are pinned directly below the page
+# check, since making these always-future would otherwise leave "resetting now" uncovered.
+FIVE_RESET = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+WEEK_RESET = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+
+
 def claude_usage(five, week, opus=0):
     return {
-        "five_hour": {"utilization": five, "resets_at": "2026-09-04T09:59:59.923242+00:00",
+        "five_hour": {"utilization": five, "resets_at": FIVE_RESET,
                       "limit_dollars": None, "locked_reason": None},
-        "seven_day": {"utilization": week, "resets_at": "2026-09-06T10:59:59.923262+00:00",
+        "seven_day": {"utilization": week, "resets_at": WEEK_RESET,
                       "limit_dollars": None, "locked_reason": None},
         # The endpoint sends a dozen null keys with codenames beside these two. One of them is
         # here so the parser is proved to ignore what it does not know rather than to have
@@ -590,13 +604,13 @@ def claude_usage(five, week, opus=0):
         "nimbus_quill": {"utilization": 0.0, "resets_at": None, "locked_reason": None},
         "limits": [
             {"kind": "session", "group": "session", "percent": int(five), "severity": "normal",
-             "resets_at": "2026-09-04T09:59:59.923242+00:00", "scope": None,
+             "resets_at": FIVE_RESET, "scope": None,
              "is_active": False},
             {"kind": "weekly_all", "group": "weekly", "percent": int(week),
-             "severity": "normal", "resets_at": "2026-09-06T10:59:59.923262+00:00",
+             "severity": "normal", "resets_at": WEEK_RESET,
              "scope": None, "is_active": True},
             {"kind": "weekly_scoped", "group": "weekly", "percent": opus, "severity": "normal",
-             "resets_at": "2026-09-06T10:59:59.923262+00:00",
+             "resets_at": WEEK_RESET,
              "scope": {"model": {"id": None, "display_name": "Opus"}, "surface": None},
              "is_active": opus > 0},
         ],
@@ -1755,8 +1769,15 @@ def test_the_claude_page_reports_every_key_in_the_pool():
         check("with the percentage Anthropic gave, not a recomputed one",
               ">7%<" in blocks[0] and ">25%<" in blocks[0], blocks[0][:600])
         check("a window says when it rolls over, as a countdown rather than a UTC timestamp",
-              "resets in" in blocks[0] and "2026-09-06T10:59" not in blocks[0],
-              blocks[0][:600])
+              "resets in" in blocks[0] and WEEK_RESET not in blocks[0], blocks[0][:600])
+        # BOTH BRANCHES, straight at fmt_reset. The page can only show one of them per run, and
+        # the other used to be covered by accident -- by a fixture timestamp that had gone
+        # stale, which is how "resetting now" came to be asserted as a bug.
+        check("a window already past its reset says so instead of counting down",
+              ffweb.fmt_reset(FIVE_RESET).startswith("resets in")
+              and ffweb.fmt_reset((datetime.now(timezone.utc) - timedelta(minutes=5))
+                                  .isoformat()) == "resetting now",
+              ffweb.fmt_reset(FIVE_RESET))
         # THE OPUS ROW IS THE ONE THAT BITES on a box doing real work, and it is only in the
         # `limits` array -- there is no seven_day_opus object beside the other two.
         check("the per-model weekly cap is on the page too",
