@@ -33,6 +33,19 @@ container — and is open.
 - **H5's local_id** is `adopt:<conv>:<message>`, not `adopt:<conv>`: the dedupe that matters is
   `insert_message`'s rowcount check, which is what makes a sweep's re-read of the thread post
   nothing, and a per-message id keeps two directives in one thread distinguishable in the queue.
+- **D1 asks the remote, not a tracking ref.** Revision 2 of the design said to read
+  `refs/remotes/origin/<branch>`. That ref outlives a branch DELETED on the remote — the
+  publish path's fetch has no `--prune`, and adding one would be this daemon rewriting refs in
+  a checkout it shares — so it would have said yes for exactly the case the rule refuses. One
+  `ls-remote --heads` per publish, which also answers `run.branch_existed`. There is a test
+  that deletes the branch between two pushes of the same bundle.
+
+**Where the tests live.** `test_ffwatch.py`: the end-to-end adoption (Tier B, both turns), the
+refusals, the prefix rule including the deletion, the mirror sync's own fence, the scheduler and
+the pool, the `!branch` ingress (operator, player, directive-only, directive-plus-prompt,
+re-read), the preamble, the harvest range through `run_harvest`, and the v16 migration.
+`test_ffweb.py`: the branch note. Tier A is covered by the same machinery as Tier B — the
+end-to-end test uses a foreign name because it is the stricter case.
 
 ## What already exists
 
