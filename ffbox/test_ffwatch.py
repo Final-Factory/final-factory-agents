@@ -622,7 +622,11 @@ class Case:
                         "bug_reports": {"kind": "bug_report", "forum": True,
                                         "venue": venue, "engage": "all"}}
         cfg["plugins_dir"] = os.path.join(self.root, "plugins")
-        os.makedirs(os.path.join(cfg["plugins_dir"], "ff-discord"), exist_ok=True)
+        # BOTH TREES, because the classes carry different sets and freeze_mounts silently skips a
+        # name this checkout does not have. Without ff-agents here an ffdev test would prove the
+        # mount was absent for the wrong reason.
+        for _plugin in ("ff-discord", "ff-agents"):
+            os.makedirs(os.path.join(cfg["plugins_dir"], _plugin), exist_ok=True)
         cfg["approve_before_send"] = approve
         # THE WATCH BLOCK ABOVE IS A DECISION, whatever the machine running the suite happens
         # to have in ~/.config/ffbox/config.json. load_config sets this from whether a real
@@ -1042,6 +1046,13 @@ def test_tier_and_venue_reach_the_container():
           "HARNESS FACT" in prompt and "OPERATOR" in prompt, prompt[:400])
     check("and tells it to write a public half that stands alone",
           "STANDS ALONE" in prompt and "private half" in prompt, prompt[:800])
+    # AND WHERE THE PLUGINS ARE. This branch tells the agent to follow a role it must open BY
+    # PATH, and cwd is the workspace -- so a directory the prompt does not name is one the agent
+    # has no reason to look in, whatever --add-dir granted. Every mounted plugin is named, not
+    # just the one carrying the role.
+    check("and names every plugin directory it was given, so their files can be opened",
+          job["plugin_dirs"] and all(d in prompt for d in job["plugin_dirs"]),
+          (job.get("plugin_dirs"), prompt[:400]))
 
     # The same person, in a channel declared private. No split, everything in place.
     priv = base_fixture()
@@ -2604,9 +2615,18 @@ def test_container_argv_is_valid():
         with open(argv_path, "rb") as fh:
             return fh.read().decode("utf-8").split("\0"), proc.stderr
 
+    # REAL DIRECTORIES, because the builder now skips a plugin path that is not there -- see
+    # the spare-container note beside the loop in discord-task.sh. Standing in for
+    # /ffbox/plugins/<name>, which no test host has.
+    plug = os.path.join(TMPROOT, "plugins")
+    ff_discord = os.path.join(plug, "ff-discord")
+    ff_agents = os.path.join(plug, "ff-agents")
+    os.makedirs(ff_discord, exist_ok=True)
+    os.makedirs(ff_agents, exist_ok=True)
+
     sid = str(uuid.uuid4())
     answer = {"prompt": "why does the belt stall?", "lane": "answer",
-              "verdict_schema": "question", "plugin_dir": "/ffbox/plugins/ff-discord",
+              "verdict_schema": "question", "plugin_dirs": [ff_discord],
               "session": {"id": sid, "resume": False},
               "capabilities": {"tools": "Read,Grep,Glob,Bash", "disallowed": [],
                                "allowed": ["Bash(ffverify)",
@@ -2641,9 +2661,9 @@ def test_container_argv_is_valid():
     # "Claude requested permissions to read from .../agents/discord-dev-agent.md, but you
     # haven't granted it yet" and runs without the role text it was told to obey.
     check("the plugin directory is granted, or the role and skill files cannot be opened",
-          "/ffbox/plugins/ff-discord" in added
+          ff_discord in added
           and "--plugin-dir" in argv
-          and argv[argv.index("--plugin-dir") + 1] == "/ffbox/plugins/ff-discord", argv)
+          and argv[argv.index("--plugin-dir") + 1] == ff_discord, argv)
     check("turn 1 opens the session id rather than resuming",
           "--session-id" in argv and argv[argv.index("--session-id") + 1] == sid
           and "--resume" not in argv, argv)
@@ -2668,8 +2688,9 @@ def test_container_argv_is_valid():
           "there is no ffdiscord command in this container" in preamble
           and "the harness posts it" in preamble, preamble[-260:])
     check("the plugin is loaded by directory",
-          "--plugin-dir" in argv and argv[argv.index("--plugin-dir") + 1]
-          == "/ffbox/plugins/ff-discord", argv)
+          "--plugin-dir" in argv and argv[argv.index("--plugin-dir") + 1] == ff_discord, argv)
+    check("and an ffagent turn gets that one plugin and no other",
+          argv.count("--plugin-dir") == 1, argv)
     check("subagent text is forwarded into the stream",
           "--forward-subagent-text" in argv, argv)
     schema = json.loads(argv[argv.index("--json-schema") + 1])
@@ -2707,6 +2728,40 @@ def test_container_argv_is_valid():
     schema = json.loads(argv[argv.index("--json-schema") + 1])
     check("a write lane gets the change verdict schema",
           "changed_anything" in schema["properties"], schema)
+
+    # --- more than one plugin, which is what an ffdev turn gets --------------------------------
+    #
+    # THE FLAGS HAVE TO REPEAT RATHER THAN CONCATENATE. --plugin-dir is documented repeatable and
+    # --add-dir takes one directory per occurrence; a builder that joined two paths with a comma
+    # or a colon would look right here and load neither plugin in the container.
+    dev = dict(answer, plugin_dirs=[ff_discord, ff_agents])
+    argv, err = build(dev)
+    argv = argv or []
+    added = [argv[i + 1] for i, a in enumerate(argv) if a == "--add-dir"]
+    loaded = [argv[i + 1] for i, a in enumerate(argv) if a == "--plugin-dir"]
+    check("an ffdev turn loads every plugin the host listed, in order",
+          loaded == [ff_discord, ff_agents], loaded)
+    check("and each one is readable as well as loadable",
+          ff_discord in added and ff_agents in added, added)
+
+    # A PATH THAT IS NOT THERE IS SKIPPED, NOT PASSED. A spare staged before ffdev gained
+    # ff-agents has no such directory and a mount cannot be added to a container that already
+    # exists; handing --plugin-dir a missing path would fail the whole turn over one plugin.
+    argv, err = build(dict(answer, plugin_dirs=[ff_discord, "/ffbox/plugins/not-installed"]))
+    argv = argv or []
+    loaded = [argv[i + 1] for i, a in enumerate(argv) if a == "--plugin-dir"]
+    check("a plugin directory that is not in this container is skipped, not passed",
+          loaded == [ff_discord], loaded)
+
+    # THE OLD SINGULAR KEY STILL WORKS, and it has to for as long as a spare staged before
+    # 2026-09-05 can still be dispatched: that container carries the OLDER task script, and a
+    # run directory written before the change is replayed with this one.
+    argv, err = build({k: v for k, v in answer.items() if k != "plugin_dirs"}
+                      | {"plugin_dir": ff_discord})
+    argv = argv or []
+    loaded = [argv[i + 1] for i, a in enumerate(argv) if a == "--plugin-dir"]
+    check("a job carrying the pre-2026-09-05 plugin_dir key still loads its plugin",
+          loaded == [ff_discord], loaded)
 
 
 def test_failed_launch_frees_the_slot():
@@ -5994,7 +6049,7 @@ def test_shell_is_an_ingress_not_a_second_pipeline():
     # run gets max-voice and the rest of the ff-discord skills; what it does not get is a
     # Discord fence or a player-facing disclosure rule.
     check("the ff-discord plugin is mounted, so its skills are available",
-          job["plugin_dir"] and job["plugin_dir"].endswith("ff-discord"), job["plugin_dir"])
+          any(d.endswith("ff-discord") for d in job["plugin_dirs"]), job["plugin_dirs"])
     check("the shell ingress is an operator at a private venue",
           (job["trust"]["tier"], job["venue"]["kind"]) == ("operator", "private"), job["trust"])
     check("nothing is queued for Discord, because there is no thread to answer",
@@ -7983,6 +8038,31 @@ def test_an_ffdev_turn_runs_under_ffdevs_numbers():
     check("and job.json's verify clock is the one ffbox was given",
           str(job["limits"]["verify_secs"]) == argv[argv.index("--verify-timeout") + 1], job["limits"])
 
+    # WHICH SKILLS THIS LANE CARRIES IS PART OF THE CLASS TOO, since 2026-09-05. An ffdev turn is
+    # an operator's own Claude Code session with the operator not sitting there, so it gets
+    # ff-agents -- project-memory above all -- on top of the ff-discord plugin that carries the
+    # role and the voice. The mounts and job.json are two separate readers of the same list, and
+    # the container is told the paths in its prompt, so all three have to agree.
+    mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "--mount"]
+    check("an ffdev container is given both of its class's plugin trees",
+          [m.split(":")[1] for m in mounts if "/ffbox/plugins/" in m]
+          == ["/ffbox/plugins/ff-discord", "/ffbox/plugins/ff-agents"], mounts)
+    check("and job.json names the same two, in the same order",
+          job["plugin_dirs"] == ["/ffbox/plugins/ff-discord", "/ffbox/plugins/ff-agents"],
+          job.get("plugin_dirs"))
+    # NOT THE PROMPT, HERE. This turn came from the web box, which is a DIRECT kind: the
+    # operator's typed words are the prompt with no framing, no role and deliberately no mention
+    # of ff-discord at all. The plugins are still mounted and still loaded -- Claude Code
+    # discovers a --plugin-dir's skills by itself -- and the Discord branch, which tells the
+    # agent to open a role file BY PATH, is where the directories have to be named. That is
+    # checked in the trust-tier test against a real Discord turn.
+    # THE FROZEN COPIES ARE WHAT GETS MOUNTED, not the checkout, for both of them -- the updater
+    # fast-forwards the checkout while containers are running and a directory mount has no inode
+    # to pin.
+    check("and each source is this run's own frozen copy, not the live checkout",
+          all(m.split(":")[0].startswith(run_dir)
+              for m in mounts if "/ffbox/plugins/" in m), mounts)
+
     # An ffagent conversation on the same box is unaffected by any of it.
     w.submit("an ordinary question", kind="web")
     w.schedule()
@@ -7991,6 +8071,13 @@ def test_an_ffdev_turn_runs_under_ffdevs_numbers():
              if r["ffbox_run_id"] != run["ffbox_run_id"]][0]
     argv2 = json.load(open(os.path.join(w.conv_dir(2), "runs", other["ffbox_run_id"],
                                         "ffbox-argv.json"), encoding="utf-8"))
+    # AND IT DOES NOT GET ff-agents. This is the half of the split that matters: the lane whose
+    # prompts are built from text written by strangers carries the Discord plugin and nothing
+    # else, and a change that gave both classes the same set would still pass every check above.
+    mounts2 = [argv2[i + 1] for i, a in enumerate(argv2) if a == "--mount"]
+    check("and carries only the Discord plugin, never the engineering skills",
+          [m.split(":")[1] for m in mounts2 if "/ffbox/plugins/" in m]
+          == ["/ffbox/plugins/ff-discord"], mounts2)
     check("an ffagent turn on the same box is unaffected",
           argv2[argv2.index("--agent-class") + 1] == "ffagent"
           and argv2[argv2.index("--agent-timeout") + 1] == str(
@@ -8186,6 +8273,80 @@ def test_the_two_agent_classes_are_configured_independently():
     check("an unknown class raises rather than falling back", raised, None)
     check("and None is the default class",
           ffwatch.class_cfg(cfg) is ffwatch.class_cfg(cfg, "ffagent"), None)
+
+
+def test_each_class_gets_its_own_plugins():
+    """WHICH SKILLS A LANE CARRIES IS A PER-CLASS DECISION, and the two classes disagree.
+
+    Until 2026-09-05 one box-wide `plugin` name went into every container, so there was no way to
+    say "the dev lane gets the engineering skills and the lane running text written by strangers
+    does not". This pins that they diverge by default and that a config file can move either one
+    without moving the other -- the same property the network and the clocks have.
+
+    THE DEFAULTS ARE THE POINT, not just the plumbing. ffagent carrying ff-agents would hand a
+    forum bug report the editor operations, the determinism audit and the game-driving recipes;
+    ffdev NOT carrying it is the gap this existed to close, project-memory above all.
+    """
+    print("config: plugins are per class")
+    root = os.path.join(TMPROOT, "pluginscfg")
+    os.makedirs(root, exist_ok=True)
+    path = os.path.join(root, "config.json")
+
+    def load(doc):
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh)
+        saved, ffwatch.FFBOX_CONFIG = ffwatch.FFBOX_CONFIG, path
+        try:
+            return ffwatch.load_config()
+        finally:
+            ffwatch.FFBOX_CONFIG = saved
+
+    cfg = load({})
+    check("ffagent carries the Discord plugin and nothing else",
+          ffwatch.class_cfg(cfg, "ffagent")["plugins"] == ["ff-discord"], None)
+    check("and ffdev carries the engineering skills as well",
+          ffwatch.class_cfg(cfg, "ffdev")["plugins"] == ["ff-discord", "ff-agents"], None)
+    # ORDER IS THE LOAD ORDER and ff-discord stays first: max-voice binds everything this lane
+    # posts, so it is the one that must be there even if another fails to mount.
+    check("with the voice plugin first, which is the one that must always load",
+          ffwatch.class_cfg(cfg, "ffdev")["plugins"][0] == "ff-discord", None)
+
+    # Set one, and the other does not move. Same no-inheritance rule as everything else in a
+    # class block; a shared derivation here would quietly re-arm the lane this split disarmed.
+    cfg = load({"pools": {"ffdev": {"plugins": ["ff-discord"]}}})
+    check("a class reads its own list", ffwatch.class_cfg(cfg, "ffdev")["plugins"]
+          == ["ff-discord"], None)
+    check("and the other class is untouched by it",
+          ffwatch.class_cfg(cfg, "ffagent")["plugins"] == ["ff-discord"], None)
+
+    # THE EMPTY LIST IS AN ANSWER, not a typo: a lane may be configured to carry no plugin at
+    # all. It has to be distinguishable from a missing key, which is why this is not "falsy
+    # means default".
+    cfg = load({"pools": {"ffagent": {"plugins": []}}})
+    check("an empty list means no plugins, not the default set",
+          ffwatch.class_cfg(cfg, "ffagent")["plugins"] == [], None)
+
+    # A BARE STRING IS ONE NAME. It cannot be misread as anything else, and it is what somebody
+    # writes on the first try.
+    cfg = load({"pools": {"ffdev": {"plugins": "ff-agents"}}})
+    check("a bare string is read as one plugin",
+          ffwatch.class_cfg(cfg, "ffdev")["plugins"] == ["ff-agents"], None)
+
+    # A VALUE THAT IS NOT A LIST OF NAMES FALLS BACK TO THIS CLASS'S DEFAULT, never to the
+    # other's -- which is what keeps a mangled ffagent block from inheriting ff-agents.
+    cfg = load({"pools": {"ffagent": {"plugins": 7}}})
+    check("a value that is not a list falls back to that class's own default",
+          ffwatch.class_cfg(cfg, "ffagent")["plugins"] == ["ff-discord"], None)
+
+    # PATH SEPARATORS AND TRAVERSAL ARE DROPPED. This value is pasted into a host source path
+    # and into a mount target inside the container, and it comes out of a file edited by hand.
+    cfg = load({"pools": {"ffdev": {"plugins": ["../../etc", "ff-agents", "a/b", "", 3]}}})
+    check("a name that is not one directory name is dropped, and the rest still load",
+          ffwatch.class_cfg(cfg, "ffdev")["plugins"] == ["ff-agents"], None)
+    # Duplicates would mount the same tree twice and pass --plugin-dir twice.
+    cfg = load({"pools": {"ffdev": {"plugins": ["ff-agents", "ff-agents"]}}})
+    check("and a repeated name is loaded once",
+          ffwatch.class_cfg(cfg, "ffdev")["plugins"] == ["ff-agents"], None)
 
 
 def test_each_pool_names_its_own_github_credentials():
@@ -9049,30 +9210,39 @@ def test_a_run_reads_frozen_copies_not_the_checkout():
     w = case.watcher
 
     checkout = os.path.join(case.root, "checkout")
-    os.makedirs(os.path.join(checkout, "plugins", "ff-discord", "skills"), exist_ok=True)
+    for plugin in ("ff-discord", "ff-agents"):
+        os.makedirs(os.path.join(checkout, "plugins", plugin, "skills"), exist_ok=True)
     task = os.path.join(checkout, "discord-task.sh")
     verify = os.path.join(checkout, "ffverify.sh")
     for path, text in ((task, "#!/bin/sh\n# the task as it was when this run started\n"),
                        (verify, "#!/bin/sh\n# ffverify as it was then\n"),
                        (os.path.join(checkout, "plugins", "ff-discord", "skills", "s.md"),
-                        "a skill\n")):
+                        "a skill\n"),
+                       (os.path.join(checkout, "plugins", "ff-agents", "skills", "s.md"),
+                        "an engineering skill\n")):
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(text)
     w.cfg["task_script"] = task
     w.cfg["ffverify"] = verify
     w.cfg["plugins_dir"] = os.path.join(checkout, "plugins")
-    w.cfg["plugin"] = "ff-discord"
 
     dest = os.path.join(case.root, "run1", "mounts")
-    frozen = w.freeze_mounts(dest)
+    # THE CLASS'S LIST, PASSED IN, which is the whole of what makes ffdev's plugin set different
+    # from ffagent's. A name this checkout does not carry is skipped rather than raising.
+    frozen = w.freeze_mounts(dest, ["ff-discord", "ff-agents", "ff-nonesuch"])
 
     check("the task script is copied", os.path.isfile(frozen.get("task_script", "")), frozen)
     check("ffverify is copied", os.path.isfile(frozen.get("ffverify", "")), frozen)
     check("and the copies are the run's, not the checkout's",
           frozen.get("task_script", "").startswith(dest), frozen)
-    check("the plugin tree is copied too", os.path.isdir(frozen.get("plugin_dir", "")), frozen)
+    plugin_dirs = frozen.get("plugin_dirs") or {}
+    check("every plugin the class named is copied too",
+          all(os.path.isdir(plugin_dirs.get(n, "")) for n in ("ff-discord", "ff-agents")),
+          frozen)
     check("under the run's own directory, which is what the checkout's could never be",
-          frozen.get("plugin_dir", "").startswith(dest), frozen)
+          all(p.startswith(dest) for p in plugin_dirs.values()), frozen)
+    check("and a plugin this checkout does not carry is simply absent, not a failed run",
+          "ff-nonesuch" not in plugin_dirs, plugin_dirs)
 
     # Now do to the source what a merge does, including to the DIRECTORY, which is the mount that
     # was never safe.
@@ -9085,11 +9255,11 @@ def test_a_run_reads_frozen_copies_not_the_checkout():
     check("a change to the checkout does not reach a run that already started",
           "a commit landed" not in open(frozen["task_script"], encoding="utf-8").read(), None)
     check("nor does one to the plugin tree, which is the mount with no inode to pin",
-          "rewritten" not in open(os.path.join(frozen["plugin_dir"], "skills", "s.md"),
+          "rewritten" not in open(os.path.join(plugin_dirs["ff-discord"], "skills", "s.md"),
                                   encoding="utf-8").read(), None)
 
     # And the next run does get it, because freezing happens per launch rather than once.
-    again = w.freeze_mounts(os.path.join(case.root, "run2", "mounts"))
+    again = w.freeze_mounts(os.path.join(case.root, "run2", "mounts"), ["ff-discord"])
     check("while the next run does get it",
           "a commit landed" in open(again["task_script"], encoding="utf-8").read(), None)
 
@@ -11510,6 +11680,7 @@ def main():
         test_an_ffdev_turn_runs_under_ffdevs_numbers,
         test_the_outer_launch_ceiling_clears_every_phase_clock,
         test_the_two_agent_classes_are_configured_independently,
+        test_each_class_gets_its_own_plugins,
         test_each_pool_names_its_own_github_credentials,
         test_each_class_is_created_on_its_own_network,
         test_each_class_counts_only_its_own_containers,
