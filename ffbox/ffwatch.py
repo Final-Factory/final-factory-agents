@@ -1814,6 +1814,29 @@ DM_DOORBELL_KINDS = ("operator_dm", "player_dm")
 LOCAL_KIND_ORIGIN = {"shell": "this machine's shell", "web": "the web page"}
 
 
+# THE OPERATOR DIRECTIVE THAT NAMES A BRANCH. A line whose whole content is `!branch <name>`,
+# in a message an operator wrote. It is recognised from the Discord-authenticated author id on
+# the stored row and from nothing in the text: what a message SAYS about who wrote it is worth
+# nothing here, as it is everywhere else in this file.
+#
+# Anchored to a whole line, and to the start of it, so a sentence discussing the directive --
+# "tell it `!branch feature/x`" -- is prose and stays prose. A player's identical line is prose
+# too, for a different reason: they are not an operator, and nothing below runs for them.
+BRANCH_DIRECTIVE_RE = re.compile(r"^\s*!branch\s+(\S+)\s*$", re.MULTILINE)
+
+
+def branch_directive(content):
+    """The branch a `!branch` line names, or None. First one wins."""
+    found = BRANCH_DIRECTIVE_RE.search(content or "")
+    return found.group(1) if found else None
+
+
+def is_only_branch_directive(content):
+    """True when the message is the directive and nothing else — no question to answer."""
+    lines = [ln for ln in (content or "").splitlines() if ln.strip()]
+    return len(lines) == 1 and BRANCH_DIRECTIVE_RE.fullmatch(lines[0].strip()) is not None
+
+
 def is_local_conversation(conv):
     """True when this conversation has nowhere to post. Takes a row, a dict, or a bare kind."""
     if conv is None:
@@ -3761,6 +3784,10 @@ class Watcher:
         # actually new -- the rowcount check above already dropped the duplicates, so a
         # re-read of a thread cannot re-log a demotion that happened days ago.
         self.demote_for_stranger(conv_id, author)
+        # AND AN OPERATOR MAY NAME THE BRANCH. Beside the demotion because it is the other thing
+        # decided per new message about WHO IS SPEAKING, and on the same "actually new" path so
+        # a re-read of a thread cannot adopt twice or post its answer twice.
+        self.take_branch_directive(conv_id, message_id, author, msg.get("content") or "")
         # THE BACKLOG'S ATTACHMENTS COME DOWN TOO, and that is a deliberate one-time cost —
         # attaching a busy forum pulls every log and save zip in its visible history. Discord's
         # attachment URLs are signed and expire, and nothing re-visits a message once it is
@@ -3770,6 +3797,63 @@ class Watcher:
         # context. attachment_max_bytes still bounds each one.
         self.download_attachments(conv_id, message_id, msg)
         return message_id
+
+    def take_branch_directive(self, conv_id, message_id, author, content):
+        """Act on a `!branch <name>` line, if an operator wrote one. Returns the branch or None.
+
+        OPERATORS ONLY, AND SILENTLY OTHERWISE. For anybody else the line is ordinary text: it
+        is not acted on, not refused, and not mentioned. There is deliberately no "you may not
+        do that" reply, because that sentence is worth more to a stranger than the command is —
+        it confirms that a command exists, that this box has operators, and that the account
+        trying it is not one. The host logs the attempt so an operator can see it; the channel
+        is told nothing.
+
+        NOT ON A LOCAL CONVERSATION. is_operator looks an id up in a table of Discord
+        snowflakes, and submit() writes this box's unix uid as the author id — a login that
+        happens to be all digits must never be looked up there. `ffwatch adopt` is the local
+        ingress, and it needs no such table.
+
+        A MESSAGE THAT IS ONLY THE DIRECTIVE IS GATED, so it never becomes a turn: create_turn
+        builds turns out of pending_messages, which selects `gate IS NULL`, and this is the same
+        door the engagement gate declines through. A message that carries a directive AND a
+        question keeps its turn — the answer to the question is what the operator asked for, and
+        the branch is where it will be written.
+        """
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+        if conv is None or is_local_conversation(conv):
+            return None
+        branch = branch_directive(content)
+        if not branch:
+            return None
+        author_id = str((author or {}).get("id") or "")
+        if not is_operator(self.cfg, author_id):
+            log(f"conversation {conv_id}: ignoring a !branch line from {author_id or '?'}, who "
+                f"is not in discord.trust.operators")
+            return None
+        ok, reason = self.adopt_branch(conv_id, branch, by=author_id)
+        alone = is_only_branch_directive(content)
+        if alone:
+            # The gate is what keeps this out of a turn. The reason goes in the row beside it so
+            # the record says what the message was and what happened, not merely that something
+            # declined to answer it.
+            self.db.execute("UPDATE message SET gate='branch_directive', gate_reason=?"
+                            " WHERE id=?", (reason[:200], message_id))
+        # ONE POST EITHER WAY. A refusal is as much an answer as a confirmation, and an operator
+        # who typed a branch name into a thread and heard nothing back would reasonably assume
+        # it worked. On a message that also carries a prompt the turn's own reply is coming, but
+        # this is the only line that says where the work is going to land.
+        running = self.db.scalar("SELECT COUNT(*) FROM turn WHERE conversation_id=?"
+                                 " AND status IN ('running','queued')", (conv_id,), 0)
+        text = ("ok — " if ok else "no — ") + reason
+        if ok and running:
+            text += (" A turn is already in flight on the old base; this takes effect on the "
+                     "next one.")
+        last = self.db.one("SELECT * FROM message WHERE id=?", (message_id,))
+        self.record_outbound(None, conv_id, "post", {
+            "channel": reply_channel(conv), "text": text, "silent": True,
+            "local_id": f"adopt:{conv_id}:{message_id}",
+            "reply_to": last["discord_id"] if last else None})
+        return branch if ok else None
 
     def demote_for_stranger(self, conv_id, author):
         """Move a conversation out of the unfenced class the moment a stranger speaks in it.
