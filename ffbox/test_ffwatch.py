@@ -4987,6 +4987,14 @@ def test_the_run_is_on_the_filtered_network():
     # and off the other, so that list is what these assert on — and that every `docker run` in
     # the file is built from it.
     run = src.partition("RUN_ARGS=(")[2].partition(")\n")[0]
+    # ONE LEVEL OF INDIRECTION ON THE COLD PATH, since 2026-09-06. A cold run has two forms now --
+    # `-d` when it is detached, attached when a person is watching it -- and they share
+    # COLD_RUN_ARGS for the same reason both paths share RUN_ARGS: a fence that is on one form and
+    # off the other is the failure this test exists to prevent. So naming either list satisfies a
+    # start, and the shared list is asserted to carry RUN_ARGS itself.
+    cold = src.partition("COLD_RUN_ARGS=(")[2].partition("\n    )\n")[0]
+    check("the cold run's two forms share one list, and it carries the fence and the image",
+          '"${RUN_ARGS[@]}"' in cold and '"$IMAGE"' in cold, cold)
     # `in` rather than `startswith`: a container start is legitimately an assignment when the
     # caller needs the id back -- `_CID=$(docker run -d ...)` -- and a matcher that only saw the
     # bare form would silently stop checking that one. Comments are excluded so the prose around
@@ -4994,7 +5002,8 @@ def test_the_run_is_on_the_filtered_network():
     starts = [ln for ln in src.splitlines()
               if "docker run" in ln and not ln.strip().startswith("#")]
     check("every container is started from the one argument list",
-          len(starts) >= 2 and all('"${RUN_ARGS[@]}"' in
+          len(starts) >= 2 and all('"${COLD_RUN_ARGS[@]}"' in ln
+                                   or '"${RUN_ARGS[@]}"' in
                                    src.partition(ln)[2].partition("$IMAGE")[0] for ln in starts),
           starts)
     check("the container is given a network explicitly", '"${NETWORK_ARGS[@]}"' in run)
@@ -8026,11 +8035,21 @@ def test_the_admission_lock_does_not_ride_into_the_run():
     # release. A later edit that drops the redirection is the outage coming back.
     with open(os.path.join(HERE, "ffbox"), encoding="utf-8") as fh:
         src = fh.read()
-    check("the cold run's docker run closes the lock in the child",
-          '"$IMAGE" 9>&- &' in src, None)
+    check("the cold run's supervised docker run closes the lock in the child",
+          '"${COLD_RUN_ARGS[@]}" 9>&- &' in src, None)
+    check("and so does its detached form",
+          '"${COLD_RUN_ARGS[@]}" 9>&-)' in src, None)
     check("and so does the staged one", '"$IMAGE" 9>&-)' in src, None)
+    # BY THE STARTS THEMSELVES rather than by counting a literal, so a fourth `docker run` cannot
+    # be added without this failing. The two cold forms carry the redirection on their own line;
+    # the staged one spells its arguments out, so its close sits on the last line of the list.
+    starts = [ln.strip() for ln in src.splitlines()
+              if "docker run" in ln and not ln.strip().startswith("#")]
     check("nothing creates a container under the lock without closing it",
-          src.count('"$IMAGE" 9>&-') == 2 and '"$IMAGE" &' not in src, None)
+          len(starts) == 3
+          and sum("9>&-" in ln for ln in starts) == 2
+          and src.count('"$IMAGE" 9>&-)') == 1
+          and '"$IMAGE" &' not in src, starts)
     check("and staging asks for the lock with a bound on the wait",
           'ffbox_workload_lock_acquire "${FFBOX_STAGE_LOCK_WAIT:-30}"' in src, None)
 
@@ -9382,6 +9401,15 @@ def test_a_detached_run_is_not_stopped_by_its_launcher():
     the pipeline used to cost every run on the box. Under --detach the trap has to walk past a
     container it deliberately left running, and ffwatch has to actually pass --detach.
 
+    AND THE TRAP IS ONLY HALF OF IT, which cost conversation 61 on 2026-09-06. A cold run's
+    container was created by an ATTACHED `docker run`, backgrounded so the clock loop could watch
+    it; under --detach ffbox exited and left that client running. Orphaning a process reparents
+    it, it does not move it between cgroups, so the client sat in ffwatch.service's -- and
+    --sig-proxy is on by default off a TTY, so KillMode=control-group SIGTERMed the client and
+    the client passed it to the container. The run died at 143, 110 seconds into a 7200-second
+    ceiling, with the trap below working exactly as written. The pooled run beside it survived,
+    because --stage-pool has always used `-d` and leaves no client to signal.
+
     Checked against the source, because it is a rule about what must NOT happen and there is no
     container in this suite to observe it not happening to.
     """
@@ -9399,13 +9427,29 @@ def test_a_detached_run_is_not_stopped_by_its_launcher():
           '"$DETACHED_OK" = 1' in body, body[:400])
     check("before it would stop anything",
           body.index('DETACHED_OK') < body.index("docker stop"), None)
+
+    # THE DETACH BLOCK, FOUND BY ITS BANNER rather than by the first `$DETACH` test in the file.
+    # The cold run branches on the same condition now, and splitting on the condition would
+    # quietly start reading that block instead while still passing.
+    detach_block = ffbox_src.split("# --- detach ---", 1)[1][:1600]
     check("and the flag is only set once the container exists",
-          "DETACHED_OK=1" in ffbox_src.split("if [ \"$DETACH\" = 1 ]; then", 1)[1][:200], None)
+          "DETACHED_OK=1" in detach_block, detach_block[:400])
 
     # And the other half: ffbox must not sit in its clock loop or wait for a container it has
     # handed over, or the launch thread outlives the container again.
-    detach_block = ffbox_src.split("if [ \"$DETACH\" = 1 ]; then", 1)[1][:400]
     check("it exits rather than falling through to the wait", "exit 0" in detach_block, None)
+
+    # AND IT LEAVES NOTHING BEHIND THAT STILL HOLDS THE CONTAINER. The docstring's second half:
+    # only `-d` ends the client, and a client that outlives ffbox is a signal path into the
+    # container that no trap in this script can close.
+    cold = ffbox_src.split("COLD_RUN_ARGS=(", 1)[1].split("# --- detach ---", 1)[0]
+    check("a detached cold run creates its container with -d",
+          'RUN_CID=$(docker run -d "${COLD_RUN_ARGS[@]}"' in cold, cold[:800])
+    check("and only the supervised branch backgrounds an attached client",
+          cold.index('if [ "$DETACH" = 1 ]; then')
+          < cold.index("docker run -d")
+          < cold.index("\n    else\n")
+          < cold.index('docker run "${COLD_RUN_ARGS[@]}" 9>&- &'), None)
 
 
 def test_a_live_container_is_adopted_not_requeued():
