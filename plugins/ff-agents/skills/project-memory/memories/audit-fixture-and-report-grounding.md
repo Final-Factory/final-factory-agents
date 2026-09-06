@@ -49,3 +49,37 @@ tests when changing cleanup or producer ordering. Sources: `EventCleanupSystem<T
 `PowerTransmitterEventCleanupSystem`, `PowerTransmitterEventLifetimeTest`, and
 `AttackEventLifetimeTest` (game revision `228a6e69a`). The unit regressions passed there; the
 live Dyson receiver replacement still requires its separate paired verification.
+
+## Charge fixtures (2026-09-06)
+
+A prefab authoring-file search is not a complete component census. Configuration initialization
+can add components to item prefabs: `ConfigLoadingUtil.InitializePowerComponents` adds
+`ChargeConsumer` when the configured consumption rate is positive. Inspect the initialized
+`ItemConfig.ItemPrefabs` or placed entity before concluding a consumer is absent. Source:
+`Assets/Scripts/Helpers/ConfigLoadingUtil.cs`, `InitializePowerComponents`.
+
+Verify actual grid membership, ordinary demand and output filters before blaming gameplay code.
+A Spawner Chest also supplies 500 power, making it unsuitable as the direct feeder of a
+charge-starvation fixture. Adjacent independent modules do not automatically form one grid.
+A mass-driver output connector with no selected item is deliberately set to `FilterAll`;
+set an explicit item in the blueprint or through the normal networked setting operation.
+Sources: `StationGridMembershipSystem`, `ConnectorPostPlacementSystem.ConnectorPostPlacementJob.Execute`,
+`ForceFilterSystem.ForceFilter`, and the live matrix in
+`specs/066-laser-turret-charge-never-deducted/plan.md`. The accepted fixture is
+`ValidationScenarios/charge/charged-driver.ffbp.txt` (game commit `acda1152e`).
+
+Size the supply using the actual timer gates: `MassDriverSystem.MassDriveTimerJob.Execute`
+compares the same timer with both RearmTime and LoadTime, so rearm is part of the loading cycle.
+A fixture that shows grants and deliveries may still never exhaust charge. Require each peer
+to witness storage decrease, a denied positive-cost attempt, recharge, a renewed grant, and a
+later inventory increase, in addition to the full comparator. Compare the delivery with a
+baseline at or after the renewed grant; an earlier delivery must not satisfy that stage.
+Sources: `scripts/audit/assert_charge_observations.py`, `scripts/audit/run_charge_settlement_audit.sh`.
+
+Budget instrumentation as well as simulation time. `NetworkDeterminismAudit.MaxCriticalEvents`
+is 256, shared with lifecycle and operation evidence; exceeding it fails the strict verdict.
+The charge wrapper records 64 groups of three adjacent inspections (192 records), with 1.61-second
+waits to avoid sampling only one grid-calculation phase. Adjacent instantaneous bootstrap commands
+run in one heartbeat (`LocalMultiplayerAutomationBootstrap.ExecuteChainedCommandsAsync`). Install
+an early sampler before setting AutoStartInEditor true: merely writing an armed automation config
+can enter Play before a separate editor-play command. Preserve the raw reports and natural exits.
