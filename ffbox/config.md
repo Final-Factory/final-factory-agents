@@ -778,6 +778,10 @@ The two tables are separate and neither falls back to the other -- the id spaces
 and a Discord snowflake colliding with a GitHub user id would be a way in. Empty means nobody
 can start a review, which is what a box that has not been told its operators should do.
 
+The first poll on a box records the moment it started watching and answers nothing older, the
+same watermark a Discord channel gets. Turning the trigger on does not answer the repository's
+back catalogue.
+
 `author_association` is not consulted. OWNER and MEMBER are handed out for reasons that have
 nothing to do with this machine, and a review run pushes commits.
 

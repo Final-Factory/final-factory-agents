@@ -304,6 +304,44 @@ PRE_AGENT_HEAD=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo "")
 export CLAUDE_CONFIG_DIR=/ffbox/claude
 mkdir -p "$CLAUDE_CONFIG_DIR"
 
+# ------------------------------------------------------------------------------------------
+# the review workflow, for a #codereview turn
+# ------------------------------------------------------------------------------------------
+# /code-review-sonnet IS a workflow -- .claude/workflows/code-review-sonnet.js, tracked in the
+# game repo -- and the argv below passes `--setting-sources user`, which excludes `project`.
+# That exclusion is what keeps the checkout's own settings from being a source of capability
+# now that the workspace is trusted, and it stays. User scope is $CLAUDE_CONFIG_DIR/workflows,
+# so a copy placed there is discovered with no widening of anything. Measured on claude 2.1.263.
+#
+# FROM THE BASE REF, NEVER FROM THE CHECKED-OUT HEAD. The tree is standing on the branch being
+# reviewed, and taking the script from there would let the branch under review supply the
+# script that reviews it -- a one-line edit away from a review that finds nothing. `git show`
+# against origin/<base> reads the committed file without touching the working tree.
+#
+# QUIET WHEN IT CANNOT BE DONE. A base that does not carry the file yet is a turn that runs
+# without the workflow and says so through its own output; failing the run here would be worse
+# and is not this script's call to make.
+setup_review_workflow() {
+    local base src dest
+    base=$(python3 -c "
+import json, sys
+job = json.load(open(sys.argv[1]))
+review = job.get('review') or {}
+sys.stdout.write(str(review.get('base') or '') if review else '')
+" "$JOB_FILE" 2>/dev/null || echo "")
+    [ -n "$base" ] || return 0
+    src=".claude/workflows/code-review-sonnet.js"
+    dest="$CLAUDE_CONFIG_DIR/workflows"
+    mkdir -p "$dest"
+    if git -C "$WORKSPACE" show "origin/$base:$src" > "$dest/code-review-sonnet.js" 2>/dev/null \
+            && [ -s "$dest/code-review-sonnet.js" ]; then
+        log "review workflow taken from origin/$base"
+    else
+        rm -f "$dest/code-review-sonnet.js"
+        log "WARNING: origin/$base carries no $src; this turn has no review workflow"
+    fi
+}
+
 # THE HOST HAS TO BE ABLE TO READ THAT FILE WHILE IT IS STILL BEING WRITTEN, and since the
 # shared daemon it cannot without help. This is the mirror image of the resume bug in
 # ffwatch.py's share_with_container: there the container could not read what the host wrote,
@@ -417,6 +455,11 @@ share_transcript_loop() {
 # and ignored, so nothing depends on a trust flag a fresh directory would not have.
 log "workspace trust: not granted, deliberately — this run's capabilities come from job.json,"
 log "                 not from .claude/settings.json in the checkout (see the note above)"
+
+# THE REVIEW WORKFLOW GOES IN BEFORE THE ARGV IS BUILT, because the argv names
+# --setting-sources user and the workflow has to already be under $CLAUDE_CONFIG_DIR by the
+# time claude starts reading it. A no-op on every turn that is not a review.
+setup_review_workflow
 
 # job.json is JSON with player-authored text in it. Parse it with python3 (present in the
 # image) rather than sed/grep — a hand-rolled shell parser is exactly how a bug report

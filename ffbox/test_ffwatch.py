@@ -6389,7 +6389,9 @@ def test_the_shell_lane_was_merged_into_dev():
           ffwatch.CAPABILITIES["allowed"] == ["Bash"], ffwatch.CAPABILITIES["allowed"])
     check("the local kinds still bypass the gate, along with the addressed Discord kinds",
           set(ffwatch.GATE_BYPASS_KINDS)
-          == {"shell", "web", "operator_dm", "directive", "mention"},
+          # github_pr is here because its prompt is built by the harness out of the pull
+          # request: there is no text for a classifier to read and nothing for it to decide.
+          == {"shell", "web", "operator_dm", "directive", "mention", "github_pr"},
           ffwatch.GATE_BYPASS_KINDS)
 
     # -- the rate limit -------------------------------------------------------------------
@@ -11126,6 +11128,312 @@ def test_a_directive_beside_a_question_keeps_its_turn():
     check("a turn is made for it", case.watcher.create_turn(conv) is not None)
 
 
+def review_cfg(case, *, operators=None, trigger="#codereview"):
+    """Point this case's watcher at the mock GitHub and give it an operator table."""
+    case.watcher.cfg["github"] = dict(case.watcher.cfg.get("github") or {}, **{
+        "api_base": github_base(), "repo": "Final-Factory/FinalFactory", "base": "develop",
+        "token": "gh-test-token", "trigger": trigger, "review_pool": "ffdev",
+        "trust": {"operators": {"loth": "10092359"} if operators is None else operators},
+    })
+    GH_STATE["comments"], GH_STATE["posted"], GH_STATE["reactions"] = [], [], []
+    GH_STATE["pulls"] = []
+    try:
+        os.remove(case.watcher.github_cursor_path)
+    except OSError:
+        pass
+    # THE WATERMARK PASS. With no cursor the first poll records the moment and acts on nothing,
+    # so every test here has to get past it before it can seed a comment. Tested on its own in
+    # test_a_first_poll_answers_nothing_that_predates_it.
+    case.watcher.poll_github()
+    case.watcher.write_github_cursor("2000-01-01T00:00:00Z", [])
+
+
+def a_pull_request(number, head, *, state="open", repo="Final-Factory/FinalFactory",
+                   base="develop", merged=False):
+    GH_STATE["pulls"].append({
+        "number": number, "html_url": "https://github.com/Final-Factory/FinalFactory/pull/%d"
+                                      % number,
+        "title": "a change", "state": state, "merged_at": "x" if merged else None,
+        "draft": False, "_head": head,
+        "head": {"ref": head, "sha": "0" * 40, "repo": {"full_name": repo}},
+        "base": {"ref": base}})
+
+
+def a_comment(cid, number, body, *, author=10092359, login="Lothsahn",
+              stamp="2026-09-06T12:00:00Z"):
+    GH_STATE["comments"].append({
+        "id": cid, "body": body, "updated_at": stamp,
+        "user": {"id": author, "login": login},
+        "issue_url": "https://api.github.com/repos/Final-Factory/FinalFactory/issues/%d"
+                     % number})
+
+
+def test_the_review_workflow_is_taken_from_the_base_and_not_from_the_branch():
+    """The container copies code-review-sonnet.js out of the BASE ref.
+
+    Asserted against the source, the way the pool tests assert that launch() contains no
+    pool_drop: what matters is the absence of a read from the working tree, and there is no way
+    to observe that from outside a container. The live end-to-end run is what proves the copy
+    lands; this is what stops the ref being quietly changed to something in the checkout.
+    """
+    print("#codereview: where the workflow comes from")
+    task = open(os.path.join(os.path.dirname(ffwatch.__file__), "discord-task.sh"),
+                encoding="utf-8").read()
+    body = task[task.index("setup_review_workflow() {"):]
+    body = body[:body.index("\n}\n")]
+
+    # FROM THE BASE REF. Reading it out of $WORKSPACE would let the branch under review supply
+    # the script that reviews it, which is one commit away from a review that finds nothing.
+    check("the workflow is read from origin/<base> with git show",
+          'git -C "$WORKSPACE" show "origin/$base:$src"' in body, body[:400])
+    check("and never copied out of the checked-out tree",
+          "cp " not in body and "$WORKSPACE/.claude" not in body, body[:400])
+    check("into user scope, where --setting-sources user will find it",
+          'dest="$CLAUDE_CONFIG_DIR/workflows"' in body, body[:400])
+    check("a turn that is not a review does nothing at all",
+          '[ -n "$base" ] || return 0' in body, body[:400])
+    check("and a base that does not carry the file leaves none behind",
+          'rm -f "$dest/code-review-sonnet.js"' in body, body[:400])
+    check("it runs before the argv is built, or claude would not see it",
+          task.index("setup_review_workflow\n") < task.index('"$FFBOX_OUT/argv"'), None)
+
+
+def test_a_first_poll_answers_nothing_that_predates_it():
+    """A box turning this on does not answer the repository's whole history."""
+    print("#codereview: watching from now")
+    case = Case("codereviewwatermark")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    try:
+        os.remove(case.watcher.github_cursor_path)
+    except OSError:
+        pass
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(4001, 41, "#codereview", stamp="2026-01-01T00:00:00Z")
+
+    check("the first poll starts nothing", case.watcher.poll_github() == [], None)
+    check("and says nothing", (GH_STATE["posted"], GH_STATE["reactions"]) == ([], []), GH_STATE)
+    since, _ = case.watcher.read_github_cursor()
+    check("but it records the moment it started watching", bool(since), since)
+    check("and a comment older than that stays history",
+          case.watcher.poll_github() == [], None)
+
+    # Anything from AFTER the watermark is ordinary work.
+    a_comment(4002, 41, "#codereview", stamp="2099-01-01T00:00:00Z")
+    check("while one that arrives afterwards is answered",
+          len(case.watcher.poll_github()) == 1, None)
+
+
+def test_a_codereview_comment_starts_a_review_on_the_pull_requests_own_branch():
+    print("#codereview: the happy path")
+    # A BARE CASE, not bug_case: this lane needs a watcher and a remote, not a Discord
+    # thread that has already run a turn. Building one would launch a container stub
+    # and leave its threads behind for whatever runs next.
+    case = Case("codereview")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(5001, 41, "nice. #codereview please")
+
+    created = case.watcher.poll_github()
+    check("a trigger from an operator makes a turn", len(created) == 1, created)
+
+    conv = case.rows("SELECT * FROM conversation WHERE kind='github_pr'")
+    check("in a conversation keyed on the pull request",
+          len(conv) == 1 and conv[0]["thread_id"] == "github:pr:41", conv)
+    conv = conv[0]
+    check("opened in the unfenced class", conv["agent_class"] == "ffdev", conv["agent_class"])
+    check("which ADOPTED the pull request's own branch rather than inventing one",
+          conv["branch"] == "loth/pr-branch" and conv["branch_adopted_at"], dict(conv))
+    check("and recorded the pull request and its base",
+          (conv["github_pr"], conv["github_base"])
+          == ("https://github.com/Final-Factory/FinalFactory/pull/41", "develop"), dict(conv))
+    # QUEUED FIRST, SENT BY THE SENDER. The mark is an outbound row like everything else this
+    # box says, so it passes the kill switch, the approval queue and the send ceilings on its
+    # way out rather than going straight onto the wire from the ingress.
+    check("the acknowledgement is queued, not yet on GitHub",
+          GH_STATE["reactions"] == [], GH_STATE["reactions"])
+    case.watcher.send_pending()
+    check("and the sender puts it on the triggering comment",
+          GH_STATE["reactions"] == [(5001, "eyes")], GH_STATE["reactions"])
+    check("and nothing was posted, because nothing has happened yet",
+          GH_STATE["posted"] == [], GH_STATE["posted"])
+
+    # THE PROMPT IS THE WHOLE POINT. Not one character the commenter typed may reach it: that
+    # absence is what lets a public comment box start an unfenced container at all.
+    turn = case.rows("SELECT * FROM turn WHERE id=?", (created[0],))[0]
+    job = case.watcher.build_job(turn, conv, "r1", case.root)
+    prompt = job["prompt"]
+    check("the prompt names the pull request and its branch",
+          "#41" in prompt and "loth/pr-branch" in prompt, prompt[:300])
+    check("it runs the sonnet workflow by name, with no level argument",
+          "/code-review-sonnet" in prompt and "code-review high" not in prompt, prompt[:400])
+    check("it asks for the findings to be checked and then applied",
+          "Fix the ones that survive" in prompt, prompt[:600])
+    check("NOTHING THE COMMENTER WROTE IS IN IT",
+          "nice." not in prompt and "please" not in prompt, prompt)
+    check("and the review lane carries the Workflow tool in both lists",
+          (job["capabilities"]["tools"].endswith(",Workflow")
+           and "Workflow" in job["capabilities"]["allowed"]), job["capabilities"])
+
+    # A REPEAT TRIGGER IS THE SAME CONVERSATION, so the review resumes its own session and
+    # remembers what it already ruled out.
+    case.watcher.db.execute("UPDATE conversation SET state='idle' WHERE id=?", (conv["id"],))
+    a_comment(5002, 41, "#codereview again", stamp="2026-09-06T13:00:00Z")
+    again = case.watcher.poll_github()
+    check("a second trigger continues the same conversation",
+          len(again) == 1 and len(case.rows("SELECT * FROM conversation WHERE kind='github_pr'"))
+          == 1, again)
+
+
+def test_a_codereview_trigger_is_decided_once_and_only_for_an_operator():
+    print("#codereview: who may, and how often")
+    # A BARE CASE, not bug_case: this lane needs a watcher and a remote, not a Discord
+    # thread that has already run a turn. Building one would launch a container stub
+    # and leave its threads behind for whatever runs next.
+    case = Case("codereviewgate")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+
+    # A STRANGER IS IGNORED IN SILENCE. A refusal posted into a public pull request tells
+    # somebody who is not an operator that the trigger exists and that they are not one.
+    a_comment(6001, 41, "#codereview", author=999, login="passerby")
+    check("a stranger's trigger starts nothing", case.watcher.poll_github() == [], None)
+    check("and is answered with nothing at all",
+          (GH_STATE["posted"], GH_STATE["reactions"]) == ([], []), GH_STATE)
+    check("no conversation was opened for it",
+          not case.rows("SELECT * FROM conversation WHERE kind='github_pr'"), None)
+
+    # DECIDED ONCE. The cursor filters on `updated`, which is inclusive, so the comment that set
+    # it comes back next sweep; `seen` is what actually stops a second decision.
+    check("a re-read of the same comment decides nothing again",
+          case.watcher.poll_github() == [], None)
+
+    a_comment(6002, 41, "no trigger here", stamp="2026-09-06T13:00:00Z")
+    check("a comment without the trigger is not a review", case.watcher.poll_github() == [],
+          None)
+
+    # AN EMPTY OPERATOR TABLE SPENDS NOTHING. The shipped default trusts nobody, and a box that
+    # has not filled it in should not be asking GitHub anything once a sweep.
+    review_cfg(case, operators={})
+    a_comment(6003, 41, "#codereview")
+    before = len(GH_STATE["requests"])
+    check("with no operators configured, no request is made",
+          case.watcher.poll_github() == [] and len(GH_STATE["requests"]) == before, None)
+
+    review_cfg(case, trigger="")
+    a_comment(6004, 41, "#codereview")
+    before = len(GH_STATE["requests"])
+    check("and an empty trigger turns the poller off outright",
+          case.watcher.poll_github() == [] and len(GH_STATE["requests"]) == before, None)
+
+
+def test_a_review_refuses_what_it_cannot_commit_onto():
+    print("#codereview: the refusals")
+    # A BARE CASE, not bug_case: this lane needs a watcher and a remote, not a Discord
+    # thread that has already run a turn. Building one would launch a container stub
+    # and leave its threads behind for whatever runs next.
+    case = Case("codereviewrefuse")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+
+    def refused(cid, number, body, why, expect):
+        review_cfg(case)
+        GH_STATE["pulls"] = list(PULLS)
+        a_comment(cid, number, body)
+        check(why, case.watcher.poll_github() == [], None)
+        said = " ".join(t for _, t in GH_STATE["posted"])
+        check(f"  and says so on the pull request: {expect}", expect in said, said or "(silent)")
+
+    PULLS = []
+    a_pull_request(42, "loth/pr-branch", state="closed")
+    a_pull_request(43, "patch-1", repo="somebody/FinalFactory")
+    a_pull_request(44, "master")
+    a_pull_request(45, "loth/never-pushed")
+    PULLS = list(GH_STATE["pulls"])
+
+    refused(7001, 42, "#codereview", "a closed pull request is refused", "closed")
+    refused(7002, 43, "#codereview", "a fork's pull request is refused", "somebody/FinalFactory")
+    # THESE TWO ARE ADOPTION'S OWN REFUSALS, posted verbatim rather than re-derived here.
+    refused(7003, 44, "#codereview", "a pull request whose head is protected is refused",
+            "protected branch")
+    refused(7004, 45, "#codereview", "and one whose head is not on the remote is refused",
+            "not on origin")
+    check("none of them opened a conversation that owns a branch",
+          not case.rows("SELECT * FROM conversation WHERE kind='github_pr'"
+                        " AND branch IS NOT NULL"), None)
+
+
+def test_a_second_trigger_while_a_review_runs_is_refused_and_never_resurrected():
+    print("#codereview: one review at a time")
+    # A BARE CASE, not bug_case: this lane needs a watcher and a remote, not a Discord
+    # thread that has already run a turn. Building one would launch a container stub
+    # and leave its threads behind for whatever runs next.
+    case = Case("codereviewbusy")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(8001, 41, "#codereview")
+    case.watcher.poll_github()
+    conv = case.rows("SELECT * FROM conversation WHERE kind='github_pr'")[0]
+    case.watcher.db.execute("UPDATE conversation SET state='running' WHERE id=?", (conv["id"],))
+
+    GH_STATE["posted"] = []
+    a_comment(8002, 41, "#codereview", stamp="2026-09-06T13:00:00Z")
+    check("a second trigger while one is running starts nothing",
+          case.watcher.poll_github() == [], None)
+    check("and says why, naming the conversation",
+          any("already running" in t for _, t in GH_STATE["posted"]), GH_STATE["posted"])
+
+    # THE GATE IS THE WHOLE POINT. claim_turns picks up any unclaimed message on a conversation
+    # whose kind is not local, so a refusal recorded as a plain message would become a turn on
+    # the pass after the running one ends -- which is exactly the second review the refusal was
+    # supposed to prevent.
+    row = case.rows("SELECT * FROM message WHERE discord_id='8002'")[0]
+    check("the refused comment is recorded", row is not None, None)
+    check("but gated, so no session will ever read it",
+          row["gate"] == "codereview_busy" and "already running" in (row["gate_reason"] or ""),
+          dict(row))
+    case.watcher.db.execute("UPDATE conversation SET state='idle' WHERE id=?", (conv["id"],))
+    check("and when the run ends it does NOT become a turn",
+          not any(t for t in case.watcher.claim_turns()), None)
+
+
+def test_a_review_answers_on_the_pull_request_and_never_on_discord():
+    print("#codereview: the reply")
+    # A BARE CASE, not bug_case: this lane needs a watcher and a remote, not a Discord
+    # thread that has already run a turn. Building one would launch a container stub
+    # and leave its threads behind for whatever runs next.
+    case = Case("codereviewreply")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(9001, 41, "#codereview")
+    case.watcher.poll_github()
+    conv = case.rows("SELECT * FROM conversation WHERE kind='github_pr'")[0]
+
+    rows = case.rows("SELECT * FROM outbound WHERE conversation_id=?", (conv["id"],))
+    check("the acknowledgement is an outbound row like everything else this box says",
+          len(rows) == 1 and rows[0]["action"] == "react", rows)
+    payload = json.loads(rows[0]["payload_json"])
+    check("addressed to the comment, not to a Discord channel",
+          payload.get("pr_comment") == "9001" and "channel" not in payload, payload)
+
+    # A REVIEW IS AN OPERATOR'S TURN AND A PRIVATE ONE. The lookup that answers this for Discord
+    # reads a table of snowflakes, and a GitHub id is never in it -- so without its own branch
+    # every review would come back a player's and take the player-facing framing.
+    turn = case.rows("SELECT * FROM turn WHERE conversation_id=?", (conv["id"],))[0]
+    check("the turn is an operator's, resolved against github.trust.operators",
+          turn["trust_tier"] == "operator", dict(turn))
+    check("and its venue is private", turn["venue"] == "private", dict(turn))
+
+
 def test_adoption_refuses_what_it_cannot_safely_take():
     """Every refusal is at the adopt, not at the far end of a twenty-minute run."""
     print("publication: what a conversation may adopt")
@@ -12745,6 +13053,13 @@ def main():
         test_only_an_operator_may_name_a_branch_from_discord,
         test_a_directive_only_message_adopts_and_asks_for_no_turn,
         test_a_directive_beside_a_question_keeps_its_turn,
+        test_a_first_poll_answers_nothing_that_predates_it,
+        test_the_review_workflow_is_taken_from_the_base_and_not_from_the_branch,
+        test_a_codereview_comment_starts_a_review_on_the_pull_requests_own_branch,
+        test_a_codereview_trigger_is_decided_once_and_only_for_an_operator,
+        test_a_review_refuses_what_it_cannot_commit_onto,
+        test_a_second_trigger_while_a_review_runs_is_refused_and_never_resurrected,
+        test_a_review_answers_on_the_pull_request_and_never_on_discord,
         test_adoption_refuses_what_it_cannot_safely_take,
         test_the_mirror_sync_writes_only_what_origin_says,
         test_the_harness_never_creates_a_branch_outside_its_prefix,
