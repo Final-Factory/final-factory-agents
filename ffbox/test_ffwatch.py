@@ -10792,6 +10792,156 @@ def test_a_conversation_can_be_told_which_branch_it_owns():
           second["pr_number"] == run["pr_number"], (run["pr_number"], second["pr_number"]))
 
 
+def branch_directive_case(name, text, *, author=None):
+    """One message in #ask_claude, ingested, with an origin and a mirror behind it.
+
+    Returns (case, fixture) so a caller can append the next message and ingest that too, which
+    is how the directive is actually reached: through insert_message, on a message that is
+    genuinely new.
+
+    `author` defaults to a player. LOTHSAHN is the configured operator, so passing it is what
+    makes the same words a directive rather than prose.
+    """
+    fixture = base_fixture()
+    root = message(4901, text, author=author or "800000000000000009",
+                   name="lothsahn" if author else "someone")
+    fixture["messages"][ASK_CHANNEL] = [root]
+    case = Case(name, fixture)
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    ev = ask_event(4901)
+    if author:
+        ev["author_id"] = author
+    case.events(ev)
+    case.watcher.drain_events()
+    return case, fixture
+
+
+def say_in_channel(case, fixture, msg_id, text, *, author):
+    """Another message in the same channel, ingested the way the sweep would."""
+    fixture["messages"][ASK_CHANNEL].append(
+        message(msg_id, text, author=author, name="lothsahn", ref=None))
+    case.write_fixture(fixture)
+    ev = ask_event(msg_id)
+    ev["author_id"] = author
+    case.events(ev)
+    case.watcher.drain_events()
+
+
+def test_only_an_operator_may_name_a_branch_from_discord():
+    """`!branch` is an operator directive. In anybody else's message it is a sentence.
+
+    Recognised from the author id Discord authenticated and stored on the row, never from
+    anything the text claims about who wrote it — the rule the whole ingress runs on.
+
+    A player's identical line is not refused, not answered and not mentioned. That silence is
+    deliberate: a reply saying "you may not do that" tells a stranger that a command exists,
+    that this box has operators, and that they are not one, which is worth more to them than
+    the command would have been.
+    """
+    print("adoption: the !branch directive")
+    # THROUGH THE INGRESS, not by calling the handler: the directive is acted on inside
+    # insert_message, on the rowcount check that says the message is genuinely new, and that is
+    # the half a re-read of a thread depends on.
+    case, fixture = branch_directive_case("directive-op", "look at the save bug",
+                                          author=LOTHSAHN)
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/from-discord")
+    say_in_channel(case, fixture, 4902, "!branch loth/from-discord", author=LOTHSAHN)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("an operator's !branch is acted on at the ingest",
+          conv["branch"] == "loth/from-discord", conv["branch"])
+    check("and the mirror has the branch, so a turn could start on it",
+          case.watcher.mirror_carries("loth/from-discord"))
+    posted = [json.loads(r["payload_json"])["text"]
+              for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+    check("the operator is answered", posted and posted[-1].startswith("ok — "), posted)
+
+    # RE-READING THE THREAD DOES NOT DO IT AGAIN. The sweep re-reads every watched channel.
+    case.write_fixture(fixture)
+    case.events(ask_event(4902))
+    case.watcher.drain_events()
+    posted_again = case.rows("SELECT COUNT(*) c FROM outbound WHERE action='post'")[0]["c"]
+    check("a re-read of the same message adopts nothing and says nothing",
+          posted_again == len(posted), (posted_again, len(posted)))
+
+    # A PLAYER SAYS THE SAME WORDS.
+    case2, fixture2 = branch_directive_case("directive-player", "how do belts work?")
+    origin2, host2 = git_origin(case2)
+    push_a_stranger_branch(host2, "loth/from-discord")
+    say_in_channel(case2, fixture2, 4903, "!branch loth/from-discord",
+                   author="800000000000000009")
+    conv2 = case2.rows("SELECT * FROM conversation")[0]
+    check("a player's !branch adopts nothing", conv2["branch"] is None, conv2["branch"])
+    check("and nothing is posted back at them",
+          case2.rows("SELECT COUNT(*) c FROM outbound WHERE action='post'")[0]["c"] == 0)
+    said = case2.rows("SELECT * FROM message WHERE discord_id='4903'")
+    check("their message is an ordinary one, gate and all",
+          said and said[0]["gate"] is None, said)
+
+
+def test_a_directive_only_message_adopts_and_asks_for_no_turn():
+    """The whole message is the command, so there is nothing to answer and no turn to spend."""
+    print("adoption: a directive on its own")
+    case, _ = branch_directive_case("directive-alone", "!branch loth/alone",
+                                    author=LOTHSAHN)
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/alone")
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    case.watcher.take_branch_directive(1, msg["id"], {"id": LOTHSAHN}, "!branch loth/alone")
+
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("the conversation adopted it", conv["branch"] == "loth/alone", conv["branch"])
+    check("recorded against the operator who said so",
+          conv["branch_adopted_by"] == LOTHSAHN, conv["branch_adopted_by"])
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    check("the message is gated, so it never becomes a turn",
+          msg["gate"] == "branch_directive", msg["gate"])
+    check("and the row says what happened to it", "loth/alone" in (msg["gate_reason"] or ""),
+          msg["gate_reason"])
+    check("no turn was made for it",
+          case.watcher.create_turn(case.rows("SELECT * FROM conversation")[0]) is None,
+          case.rows("SELECT * FROM turn"))
+    posted = [json.loads(r["payload_json"])["text"]
+              for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+    check("the operator is told where the work will land",
+          posted and posted[-1].startswith("ok — ") and "loth/alone" in posted[-1], posted)
+
+    # A REFUSAL IS ANSWERED TOO. Somebody who typed a branch name and heard nothing would
+    # reasonably assume it worked.
+    case2, _ = branch_directive_case("directive-refused", "!branch develop",
+                                     author=LOTHSAHN)
+    git_origin(case2)
+    msg2 = case2.rows("SELECT * FROM message ORDER BY id")[0]
+    case2.watcher.take_branch_directive(1, msg2["id"], {"id": LOTHSAHN}, "!branch develop")
+    posted2 = [json.loads(r["payload_json"])["text"]
+               for r in case2.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+    check("a protected branch is refused, out loud",
+          posted2 and posted2[-1].startswith("no — ") and "protected" in posted2[-1], posted2)
+    check("and nothing was adopted",
+          case2.rows("SELECT * FROM conversation")[0]["branch"] is None)
+
+
+def test_a_directive_beside_a_question_keeps_its_turn():
+    """The question is what the operator asked for; the branch is where the answer lands."""
+    print("adoption: a directive with a prompt")
+    case, _ = branch_directive_case(
+        "directive-prompt",
+        "!branch loth/with-prompt\nfix the save corruption on this branch",
+        author=LOTHSAHN)
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/with-prompt")
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    case.watcher.take_branch_directive(
+        1, msg["id"], {"id": LOTHSAHN},
+        "!branch loth/with-prompt\nfix the save corruption on this branch")
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("it adopted", conv["branch"] == "loth/with-prompt", conv["branch"])
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    check("and the message is NOT gated, so the question still gets answered",
+          msg["gate"] is None, msg["gate"])
+    check("a turn is made for it", case.watcher.create_turn(conv) is not None)
+
+
 def test_adoption_refuses_what_it_cannot_safely_take():
     """Every refusal is at the adopt, not at the far end of a twenty-minute run."""
     print("publication: what a conversation may adopt")
@@ -12294,6 +12444,9 @@ def main():
         test_the_mirror_is_only_written_inside_the_pipelines_own_namespace,
         test_the_scheduler_asks_about_the_ref_the_launch_will_use,
         test_a_conversation_can_be_told_which_branch_it_owns,
+        test_only_an_operator_may_name_a_branch_from_discord,
+        test_a_directive_only_message_adopts_and_asks_for_no_turn,
+        test_a_directive_beside_a_question_keeps_its_turn,
         test_adoption_refuses_what_it_cannot_safely_take,
         test_the_harness_never_creates_a_branch_outside_its_prefix,
         test_the_keeper_expires_a_stale_spare_and_never_a_claimed_one,
