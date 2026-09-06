@@ -11011,16 +11011,35 @@ def test_adoption_refuses_what_it_cannot_safely_take():
     check("and nothing was written by any of that",
           case.rows("SELECT * FROM conversation")[0]["branch"] is None)
 
-    # A branch another live conversation is working on. One branch, one conversation, or the
-    # two race each other for a fast-forward.
+    # A BRANCH ANOTHER CONVERSATION IS WORKING ON RIGHT NOW is refused, and one it merely
+    # WORKED ON is not. The first version of this rule tested state<>'closed' and refused both,
+    # which made the case the feature exists for — picking up a branch an earlier run left
+    # behind — impossible: a conversation goes idle when its turn ends and stays there, and on
+    # the live box three out of fifty-nine had ever reached `closed`. It refused the first real
+    # attempt, a new thread naming the branch of a bug thread finished four days earlier.
     other = case.watcher.db.execute(
         "INSERT INTO conversation(thread_id, kind, state, is_thread, session_generation,"
-        " created_at, branch) VALUES('90001','ask','idle',1,1,?,'loth/taken')",
+        " created_at, branch) VALUES('90001','ask','running',1,1,?,'loth/taken')",
         (ffwatch.now_iso(),)).lastrowid
-    refused("loth/taken", "a branch another open conversation owns is refused")
-    case.watcher.db.execute("UPDATE conversation SET state='closed' WHERE id=?", (other,))
+    refused("loth/taken", "a branch a running conversation owns is refused")
+    case.watcher.db.execute("UPDATE conversation SET state='queued' WHERE id=?", (other,))
+    refused("loth/taken", "and so is one with a turn queued on it")
+
+    # IDLE WITH AN UNCLAIMED MESSAGE is still in flight: the message becomes a turn on the next
+    # pass and the conversation is `idle` until it does.
+    case.watcher.db.execute("UPDATE conversation SET state='idle' WHERE id=?", (other,))
+    case.watcher.db.execute(
+        "INSERT INTO message(conversation_id, discord_id, direction, author_id, is_bot,"
+        " content, created_at) VALUES(?,'90002','in','800000000000000009',0,'more please',?)",
+        (other, ffwatch.now_iso()))
+    refused("loth/taken", "an idle conversation with a message waiting is in flight too")
+
+    case.watcher.db.execute("UPDATE message SET gate='none' WHERE discord_id='90002'")
     ok, reason = case.watcher.adopt_branch(conv["id"], "loth/taken", by="op")
-    check("but the same branch is free once that conversation is closed", ok, reason)
+    check("but a conversation that is merely FINISHED does not hold the branch hostage",
+          ok, reason)
+    check("and the answer says who else has worked on it",
+          f"Conversation {other} has worked on this branch" in reason, reason)
 
     ok, reason = case.watcher.adopt_branch(conv["id"], "loth/taken", by="op")
     check("adopting twice is refused — a conversation keeps its branch for life", not ok, reason)

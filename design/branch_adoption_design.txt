@@ -9,6 +9,13 @@ and the only outright refusal guards the mirror, not origin. `push_bundle` pushe
 is given. Adoption is the first path that can hand it a name outside the prefix, so 5.6 turns
 the construction argument into a check at the push: outside the prefix, add commits to a
 branch origin already has, never create one. Section 14 and the tests in 16 follow it.
+Revision 4, 2026-09-06: 5.4, the one-conversation-per-branch check, rewritten after it
+refused the first real use. A new thread in #agent-testing named the branch of a bug thread
+that had been finished for four days, and was told "conversation 44 is already working on it".
+It was not working on anything: it was `idle`, which is where every conversation sits between
+turns and where nearly all of them sit forever. The rule was meant to be about a race and was
+written as a rule about history. It now refuses only a turn actually in flight, and says who
+else has the branch instead of refusing on their behalf.
 Revision 3, 2026-09-06: written while implementing, and the corrections are all in the same
 direction -- the prefix is a smaller part of this than revision 1 thought. Section 8 was filed
 under Tier B and belongs to both tiers: mirror_take reads a ref out of the host checkout that
@@ -130,11 +137,20 @@ it. It refuses rather than adapts, and every refusal carries the reason back to 
      check that the branch EXISTS on origin, and it doubles as proof that the golden checkout
      can see it, which section 9 needs at publish time.
 
-  4. No other conversation owns it:
-     `SELECT id FROM conversation WHERE branch=? AND state<>'closed'`. One branch, one
-     conversation, in both directions. Adopting a CLOSED conversation's branch is allowed and
-     is the Tier A case; adopting a live one's would give two threads a shared branch and two
-     agents a race for a fast-forward.
+  4. No other conversation has a turn IN FLIGHT on it -- queued, running, or holding an
+     unclaimed message that is about to become one. The hazard is two turns pushing to one
+     branch at the same time: the second is a non-fast-forward, origin rejects it, and that
+     turn loses its publication. A conversation that merely worked on the branch and finished
+     does not hold it, and the acknowledgement names it so the operator knows a message in
+     that thread would put another turn on the branch.
+
+     Revision 4 rewrote this check. It read `state<>'closed'`, on the reasoning that a live
+     conversation's branch should not be taken -- and `closed` turned out to be nearly
+     unreachable: a conversation goes idle when its turn ends and stays there, and `closed` is
+     written only by the clustering sweep when the channel has moved on, or by `ffwatch close`.
+     Three of fifty-nine conversations on the live box had ever reached it. So the check meant
+     "any conversation that has ever owned this branch, ever", which made the Tier A case
+     impossible. It refused the first real attempt at the feature.
 
   5. This conversation owns no branch and has no run that pushed. Re-pointing a conversation
      that has already published would strand its pull request against a branch its next turn
