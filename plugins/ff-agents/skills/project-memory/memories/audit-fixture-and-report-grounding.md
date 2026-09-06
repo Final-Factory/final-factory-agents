@@ -83,3 +83,21 @@ waits to avoid sampling only one grid-calculation phase. Adjacent instantaneous 
 run in one heartbeat (`LocalMultiplayerAutomationBootstrap.ExecuteChainedCommandsAsync`). Install
 an early sampler before setting AutoStartInEditor true: merely writing an armed automation config
 can enter Play before a separate editor-play command. Preserve the raw reports and natural exits.
+
+
+## Mac standalone artifact status (2026-09-06)
+
+A standalone run rewrites `.ff-local-automation-status.json` inside the selected Mac `.app` root.
+`LocalMultiplayerAutomationSessionConfigStore.GetCurrentProjectRoot` derives that location from
+`Application.dataPath`; changing the process working directory does not fix it. Windows runtime
+files live at the build root. Artifact identity excludes only the two exact automation config/status
+filenames at those known locations. Executable/data bytes and same-named files elsewhere remain
+hashed. Keep writer and validator aligned (`run_determinism_testcases.sh`, `run_cross_platform_peer.py`);
+the fake-peer regression proves repeated runs and rejects real-data tampering.
+
+If an old manifest counted runtime status, preserve the original manifest, changed status and
+pre-correction identity outside the artifact. Identify the specific mutation, correct metadata under
+explicit old-hash preconditions, record the new identity/provenance, and revalidate after the next run.
+Never silently accept a mismatch or claim the old hash still holds. The charge audit exposed a
+15-byte status change among 524 files; excluding that exact runtime file leaves 523 static files.
+No simulation comparison is waived. Source: feature 066 plan and the manifest adapter regression.
