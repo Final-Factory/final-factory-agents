@@ -1455,11 +1455,13 @@ if [ -n "$DISPATCH" ]; then
         DOCKER_PID=$!
     fi
 else
-    # THE CEILING, TAKEN THE LONG WAY ROUND. This `docker run` is not detached -- it stays in the
-    # foreground for the whole run so the clock loop below can watch it -- so the lock cannot wrap
-    # it the way it wraps a staged container. Acquire, count, start, wait for the container to
+    # THE CEILING, TAKEN THE LONG WAY ROUND. Acquire, count, start, wait for the container to
     # exist, release: the window the lock has to cover is "counted but not yet countable", and
-    # holding it any longer would stop CI admitting anything for the length of a run.
+    # holding it any longer would stop CI admitting anything for the length of a run. Supervised,
+    # this `docker run` stays in the foreground for the whole run so the clock loop below can
+    # watch it, so the lock cannot wrap it the way it wraps a staged container; detached, `-d`
+    # returns as soon as the container exists and the window is as short as the staged path's.
+    # Four steps either way, because the lock has to cover the same thing on both.
     if ! ffbox_workload_lock_acquire; then
         echo "ffbox: could not take the admission lock; refusing rather than overshooting" >&2
         exit 77
@@ -1483,10 +1485,11 @@ else
     echo "[ffbox] claude account ${CLAUDE_KEY} pays for this run"
     # 9>&- CLOSES THE ADMISSION LOCK IN THE CHILD, and it is not optional. fd 9 is the lock,
     # held open by `exec 9>>` in this shell, and a background command inherits every open
-    # descriptor -- so this `docker run`, which stays up for the whole run, kept the lock's open
-    # file description alive long after the release below closed OUR copy of it. flock is held
-    # until the LAST descriptor on that description goes, so the box's admission lock was held
-    # for the length of every cold run.
+    # descriptor -- so the SUPERVISED `docker run` below, which stays up for the whole run, kept
+    # the lock's open file description alive long after the release below closed OUR copy of it.
+    # flock is held until the LAST descriptor on that description goes, so the box's admission
+    # lock was held for the length of every cold run. On both branches now, because the rule is
+    # about the descriptor and not about how long a particular command usually takes.
     #
     # WHAT THAT COST, measured on the build server 2026-09-02: `ffbox --stage-pool` blocks on
     # `flock 9` with no timeout, so every pool staging attempted during a run waited forever and
@@ -1509,20 +1512,57 @@ else
     # verified 774/774 clean into "the run failed". The container is removed explicitly instead --
     # by this script's cleanup below while it is the one waiting, and by ffwatch's sweep for a
     # container whose host process did not come back.
-    docker run \
-        --name "$RUN_NAME" \
-        --label "$FFBOX_WORKLOAD_LABEL=agent" \
-        --label "ffbox.slot=${RUN_SLOT}" \
-        --label "ffbox.run.id=${RUN_ID}" \
-        "${RUN_ARGS[@]}" \
-        -v "$OUT:/ffbox/out" \
-        -e "FFBOX_MACHINE_ID=$RUN_MACHINE_ID" \
-        "$IMAGE" 9>&- &
-    DOCKER_PID=$!
-    ffbox_workload_await_container "$RUN_NAME" "$DOCKER_PID"
-    # The id, now that there is one. A container that never came up leaves the claim naming it,
-    # and the next scan recycles the number because nothing by that name is running.
-    RUN_CID=$(docker inspect --format '{{.Id}}' "$RUN_NAME" 2>/dev/null)
+    COLD_RUN_ARGS=(
+        --name "$RUN_NAME"
+        --label "$FFBOX_WORKLOAD_LABEL=agent"
+        --label "ffbox.slot=${RUN_SLOT}"
+        --label "ffbox.run.id=${RUN_ID}"
+        "${RUN_ARGS[@]}"
+        -v "$OUT:/ffbox/out"
+        -e "FFBOX_MACHINE_ID=$RUN_MACHINE_ID"
+        "$IMAGE"
+    )
+    # DETACHED MEANS `-d`, NOT A BACKGROUNDED CLIENT, and conversation 61 on 2026-09-06 is why.
+    #
+    # An attached `docker run` PROXIES THE SIGNALS IT RECEIVES to the container: --sig-proxy is on
+    # by default whenever the client is not on a TTY, which is every run this daemon starts. So
+    # the client is a second handle on the container, and backgrounding it does not put it out of
+    # reach -- a process that is orphaned is reparented, and reparenting does not move it between
+    # cgroups. It stayed in ffwatch.service's, which is KillMode=control-group, so
+    # `systemctl stop ffbox.target` in update_ffbox.sh SIGTERMed the leftover client, the client
+    # passed the signal on, and a run 110 seconds into a 7200-second ceiling exited 143.
+    #
+    # The trap fix in cleanup() was necessary and not sufficient. ffbox let go of the container
+    # and left the docker CLI holding it. `-d` leaves no client at all, which is what --stage-pool
+    # has always done -- and it is exactly why a POOLED run came through the same update untouched
+    # while the cold one beside it died. Two creation paths, one of them detached in name only.
+    #
+    # The supervised form stays attached, and must: `--direct` and a plain `ffbox "prompt"` have a
+    # person watching, and the clock loop below waits on $DOCKER_PID.
+    if [ "$DETACH" = 1 ]; then
+        # No await, because there is nothing to wait for -- `docker run -d` does not return until
+        # the container exists, so the next count already sees it. The id comes back on stdout
+        # rather than out of a later `inspect`, for the same reason the staged path takes it that
+        # way: it is the value docker just used, not one re-derived from a name.
+        RUN_CID=$(docker run -d "${COLD_RUN_ARGS[@]}" 9>&-)
+        _run_rc=$?
+        if [ "$_run_rc" -ne 0 ] || [ -z "$RUN_CID" ]; then
+            # NOTHING TO ADOPT, so say so rather than exiting 0 and leaving ffwatch's finish pass
+            # looking for a container that was never made. The slot goes back; the EXIT trap
+            # removes whatever half-made thing is wearing the name.
+            ffbox_agent_slot_release "$RUN_SLOT"
+            ffbox_workload_lock_release
+            echo "ffbox: could not start ${RUN_NAME}" >&2
+            exit "$(( _run_rc == 0 ? 1 : _run_rc ))"
+        fi
+    else
+        docker run "${COLD_RUN_ARGS[@]}" 9>&- &
+        DOCKER_PID=$!
+        ffbox_workload_await_container "$RUN_NAME" "$DOCKER_PID"
+        # The id, now that there is one. A container that never came up leaves the claim naming
+        # it, and the next scan recycles the number because nothing by that name is running.
+        RUN_CID=$(docker inspect --format '{{.Id}}' "$RUN_NAME" 2>/dev/null)
+    fi
     ffbox_agent_slot_confirm "$RUN_SLOT" "$RUN_CID"
     ffbox_write_container_id "$RUN_CID"
     ffbox_write_clock
