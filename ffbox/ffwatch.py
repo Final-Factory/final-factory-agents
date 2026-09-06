@@ -81,7 +81,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # THE ONE MODULE THIS DAEMON IMPORTS FROM BESIDE IT, and it is deliberately not ffweb: the
 # Claude subscription pool moved into claude_keys.py on 2026-09-04 precisely so that the
@@ -454,6 +454,13 @@ ADDED_COLUMNS = [
     # see conversation_adopted, which requires a branch beside it.
     ("conversation", "branch_adopted_at", "TEXT"),
     ("conversation", "branch_adopted_by", "TEXT"),
+    # WHICH BRANCH THE PULL REQUEST TARGETS, recorded when a #codereview conversation opens.
+    # The review prompt needs a diff range and the honest end of one is the pull request's own
+    # base, which is a fact the API answered once. Re-deriving it later would mean either a
+    # network call inside build_job -- which is synchronous and must not depend on GitHub being
+    # up -- or a guess from publish_bases, and a review that diffs against the wrong base reads
+    # somebody else's commits as this branch's work.
+    ("conversation", "github_base", "TEXT"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -1395,6 +1402,18 @@ def github_operators(cfg):
     return {str(k): str(v) for k, v in ops.items() if str(v).isdigit()}
 
 
+def _issue_number_from_url(issue_url):
+    """The number out of a comment's `issue_url`, or None.
+
+    A comment does not carry the pull request number directly; `issue_url` is the only place it
+    appears, as the last path segment of
+    https://api.github.com/repos/<owner>/<repo>/issues/<n>. Parsed rather than pattern-matched
+    against a hostname so a GitHub Enterprise api_base works unchanged.
+    """
+    tail = (str(issue_url or "").rstrip("/").rsplit("/", 1) + [""])[1]
+    return int(tail) if tail.isdigit() else None
+
+
 def is_github_operator(cfg, user_id):
     """GitHub's own comment author id, looked up. Never a login, never the comment body.
 
@@ -1821,6 +1840,46 @@ CAPABILITIES = {
     "permission_mode": "acceptEdits",
 }
 
+# WHAT A REVIEW LANE GETS ON TOP, and this is the only lane that gets anything on top.
+# /code-review-sonnet IS a workflow -- .claude/workflows/code-review-sonnet.js in the game repo,
+# executed by the Workflow tool -- so without the tool the name resolves to nothing and the turn
+# falls back to a review this design deliberately did not ask for.
+#
+# BOTH LISTS, and that is measured rather than assumed. On claude 2.1.263, 2026-09-06:
+#
+#     --tools "Read,Workflow"                         -> "Review dynamic workflow before running"
+#     --tools "Read,Workflow" --allowedTools Workflow -> ran, 29ms
+#
+# Running a workflow raises a permission request of its own, and a `-p` run has nobody to answer
+# it, so naming it in --tools alone buys a turn that dies at the review step having done nothing.
+# The allow list is the same one already carrying bare `Bash` for exactly this reason:
+# --permission-mode acceptEdits auto-approves edits and nothing else.
+#
+# NOT ON THE DISCORD LANES. The workflow spends a fan-out of sonnet subagents; a lane answering
+# a forum post has no use for one, and every tool in a container built from a stranger's text is
+# surface that text gets to aim at.
+REVIEW_TOOL = "Workflow"
+
+# What a review puts on the comment that asked for it. GitHub's reaction vocabulary is
+# fixed and does not include Discord's 👀, so this is the nearest thing it has.
+GITHUB_ACK_REACTION = "eyes"
+
+
+def capabilities_for(conv):
+    """The capability set this conversation's container runs under.
+
+    One dict for every lane but the review one, which is the shape this has always had: the
+    fence is the network and the absent credential, not a per-kind tool list. What the review
+    lane adds is the one tool its workflow cannot run without.
+    """
+    kind = conv if isinstance(conv, str) else (conv["kind"] if conv is not None else None)
+    if kind != GITHUB_KIND:
+        return CAPABILITIES
+    return dict(CAPABILITIES,
+                tools=CAPABILITIES["tools"] + "," + REVIEW_TOOL,
+                allowed=list(CAPABILITIES["allowed"]) + [REVIEW_TOOL])
+
+
 # Kinds with NO Discord side. A prompt typed at this machine's shell, or into the web page, has
 # no thread and no channel to answer — the record is the reply (see record_reply) — so nothing
 # about it may enter the Discord pipeline. Naming that once, here, is what lets the two places
@@ -1834,12 +1893,18 @@ CAPABILITIES = {
 # has posted in.
 LOCAL_KINDS = ("shell", "web")
 
+# A REVIEW STARTED BY A COMMENT ON A PULL REQUEST (design/github_pr_review_design.txt). It is
+# NOT a local kind -- it has somewhere to post, and that somewhere is GitHub rather than Discord,
+# which is the one place in this file where "not local" stops meaning "Discord". send_one is
+# where that fork lives; everything else treats it as an ordinary conversation with a thread.
+GITHUB_KIND = "github_pr"
+
 # The gate is skipped for anything already addressed to the bot by somebody this box trusts.
 # shell and web are typed by a person with a login here; operator_dm and directive come from an
 # account whose id Discord authenticated; mention means somebody said the bot's name. Stated
 # rather than emergent: operator_dm used to skip the gate only because a DM has no watch alias
 # and so fell through engage_for() to "mention", which is true by accident.
-GATE_BYPASS_KINDS = LOCAL_KINDS + ("operator_dm", "directive", "mention")
+GATE_BYPASS_KINDS = LOCAL_KINDS + ("operator_dm", "directive", "mention", GITHUB_KIND)
 
 # THE TWO DOORBELLS A DIRECT MESSAGE CAN RING, and they are two because the listener knows the
 # operator table and can say which it is before ffwatch spends a REST call finding out. Only
@@ -1934,7 +1999,7 @@ def is_local_conversation(conv):
 # kind: an operator DM is direct AND has a thread to post back into. Keeping them apart is what
 # lets the DM take the trusted prompt without the harness also concluding it has nobody to
 # answer.
-DIRECT_KINDS = LOCAL_KINDS + ("operator_dm",)
+DIRECT_KINDS = LOCAL_KINDS + ("operator_dm", GITHUB_KIND)
 
 
 def is_direct_conversation(conv):
@@ -1975,6 +2040,23 @@ def ack_local_id(turn_id):
     ended, and "the conversation's latest 👀" would then take the new turn's mark off.
     """
     return f"ack:{turn_id}"
+
+
+def ack_payload(conv, message_id, local_id):
+    """The outbound payload for "this is being worked on", addressed to the right surface.
+
+    ONE BUILDER FOR BOTH SITES. The mark is queued from two places -- mark_working, when the
+    harness has already decided to answer, and the fallback in the turn path for everything
+    else -- and they had a copy each. A review acknowledges on GitHub rather than on Discord, so
+    a second copy is a second thing to remember: the first version of this branched in
+    mark_working alone, and the fallback quietly kept sending a Discord reaction addressed to a
+    channel called `github:pr:41`.
+    """
+    if conv is not None and conv["kind"] == GITHUB_KIND:
+        return {"pr_comment": str(message_id), "emoji": GITHUB_ACK_REACTION,
+                "local_id": local_id}
+    return {"channel": reply_channel(conv), "message": str(message_id), "emoji": ACK_EMOJI,
+            "local_id": local_id}
 
 
 def ack_pending_local_id(discord_id):
@@ -4067,6 +4149,17 @@ class Watcher:
                            (conv_id,))
         if conv is None or is_local_conversation(conv):
             return None
+        # A REVIEW HAS NO CHAIN FOR A STRANGER TO GET INTO. Everything the container reads is
+        # built by the harness out of the pull request number, the branch, the base and the diff;
+        # no comment text is carried, not even the operator's, so a stranger commenting on the
+        # pull request has not put a word in front of the model and there is nothing to fence.
+        # What covers the DIFF, which a stranger really could have written, is the in-repo head
+        # requirement at ingest: creating a branch here needs push access.
+        #
+        # This exemption is only sound while that stays true. If free text after the trigger is
+        # ever passed through, the demotion comes back with it.
+        if conv["kind"] == GITHUB_KIND:
+            return None
         current = self.conversation_class(conv)
         target = stranger_downgrade_class(self.cfg, current)
         if target is None:
@@ -5036,6 +5129,14 @@ class Watcher:
             who = conv["opener_discord_id"] or conv["kind"]
             return "operator", who, ("typed into "
                                      + LOCAL_KIND_ORIGIN.get(conv["kind"], conv["kind"]))
+        # A REVIEW IS AN OPERATOR'S TURN, AND THE LOOKUP BELOW CANNOT SAY SO. Its authors are
+        # GitHub user ids and `operators()` reads a table of Discord snowflakes, so every id
+        # would miss and every review would come back a player's -- taking the player-facing
+        # framing and policy for a prompt this box wrote itself. poll_github has already checked
+        # the commenter against github.trust.operators, which is the table that governs here,
+        # and a conversation only exists because that check passed.
+        if conv["kind"] == GITHUB_KIND:
+            return "operator", (conv["opener_discord_id"] or ""), "github.trust.operators"
         authors = [str(m["author_id"] or "") for m in msgs]
         ops = operators(self.cfg)
         by_id = {uid: name for name, uid in ops.items()}
@@ -5053,7 +5154,12 @@ class Watcher:
         answer — at a terminal, or on a page nobody else is signed in to. Everything else is
         public unless a watch entry says otherwise, including a channel nobody has classified.
         """
-        if is_local_conversation(conv) or conv["kind"] == "operator_dm":
+        # A REVIEW IS PRIVATE for the same reason a local prompt is: the person who asked is
+        # the only one waiting on the answer, and its "channel" is a pull request rather than a
+        # watched room. Without this it falls through to venue_for(None) and comes back public,
+        # which is the reading that puts a reply in the player-facing register.
+        if (is_local_conversation(conv) or conv["kind"] == "operator_dm"
+                or conv["kind"] == GITHUB_KIND):
             # A DM has no watch entry, so its venue is derived rather than declared. There is
             # only one value it can take: a DM that is not with an operator never became a
             # conversation at all (see ingest_dm).
@@ -5144,9 +5250,8 @@ class Watcher:
                                " LIMIT 1", (local_id,))
         if existing is not None:
             return existing["id"]
-        nonce = self.record_outbound(None, conv["id"], "react", {
-            "channel": reply_channel(conv), "message": msg["discord_id"],
-            "emoji": ACK_EMOJI, "local_id": local_id})
+        nonce = self.record_outbound(None, conv["id"], "react",
+                                     ack_payload(conv, msg["discord_id"], local_id))
         if nonce is None:
             return None
         row = self.db.one("SELECT * FROM outbound WHERE nonce=?", (nonce,))
@@ -5178,9 +5283,8 @@ class Watcher:
             return row["id"]
         # No early mark: a turn the gate reached without always_a_turn forcing it, or a path
         # that does not mark at all. Queue it the way this always did.
-        self.record_outbound(None, conv["id"], "react", {
-            "channel": reply_channel(conv), "message": msg["discord_id"],
-            "emoji": ACK_EMOJI, "local_id": ack_local_id(turn_id)})
+        self.record_outbound(None, conv["id"], "react",
+                             ack_payload(conv, msg["discord_id"], ack_local_id(turn_id)))
         return None
 
     def retire_ack(self, local_id, reason):
@@ -6388,7 +6492,6 @@ class Watcher:
             if ((self.workload_room() <= 0 or self.agent_room(turn_class) <= 0)
                     and not self.pool_would_serve(ref, turn_class)):
                 break
-            cap = CAPABILITIES
             if turn["conv_state"] == "running":
                 continue
             if self.rate_limited(turn["trust_tier"]):
@@ -6544,7 +6647,7 @@ class Watcher:
         """
         agent_class = agent_class or self.conversation_class(conv)
         ccfg = ccfg or class_cfg(self.cfg, agent_class)
-        cap = CAPABILITIES
+        cap = capabilities_for(conv)
         msgs = self.db.query(
             "SELECT * FROM message WHERE turn_id=? ORDER BY CAST(discord_id AS INTEGER)",
             (turn["id"],))
@@ -6655,6 +6758,10 @@ class Watcher:
             # `compact` is an instruction to the container and not a fact about the session:
             # run /compact against this id before the turn, then resume it as normal.
             "session": {"id": session_id, "resume": bool(resume), "compact": compact},
+            # THE PULL REQUEST THIS TURN IS REVIEWING, or absent. Facts only: number, branch,
+            # base. Deliberately not the comment that triggered it -- render_prompt builds the
+            # whole prompt out of these three, so nothing anybody typed reaches the container.
+            "review": self.review_facts(conv),
             "capabilities": {"tools": cap["tools"], "disallowed": list(cap["disallowed"]),
                              "allowed": list(cap.get("allowed") or []),
                              "permission_mode": "acceptEdits",
@@ -6816,6 +6923,55 @@ class Watcher:
             lines.append("")
         return "\n".join(lines)
 
+    def render_review_prompt(self, job, review):
+        """The whole prompt for a #codereview turn, built from the pull request and nothing else.
+
+        NOT ONE WORD OF IT CAME FROM A COMMENT. The trigger selected this run; it contributed no
+        text, and the message row it was recorded in is never read here. That is the property the
+        whole security argument rests on -- a public comment box cannot put a sentence in front
+        of a model running in an unfenced container -- and there is a test that asserts the
+        comment body appears nowhere in what this returns.
+
+        IT SAYS NOTHING ABOUT BRANCH DISCIPLINE either, and that is not an omission.
+        discord-task.sh renders the adopted-branch preamble ahead of this text, and it already
+        covers reading the branch before changing it, adding commits on top, and not rebasing,
+        amending, reverting or switching. Saying it twice in different words is how the two come
+        to disagree.
+
+        NO LEVEL ARGUMENT. Bare `/code-review-sonnet` runs at the workflow's own default, which
+        is `high`, so this lane and a session where somebody types the same thing cannot drift
+        apart. The workflow pins every subagent it spawns to sonnet, which is why it is named
+        rather than reached through /code-review -- that route falls back to a fan-out on the
+        session model when workflows are off, and the session model is opus.
+        """
+        base = review["base"] or self.cfg["github"]["base"]
+        parts = [
+            f"Review pull request #{review['number']} and fix what is wrong with it.",
+            "",
+            f"You are standing on its branch, `{review['branch'] or '?'}`, which targets "
+            f"`{base}`. The change under review is the diff from `origin/{base}` to `HEAD`.",
+            "",
+            "Do this:",
+            "",
+            "1. Run `/code-review-sonnet`. Pass no arguments: its own default effort is the "
+            "one to use, and it reviews the working tree's diff.",
+            "2. Take the findings it returns and check each one against the code yourself. It "
+            "reports; you decide. A finding you cannot reproduce by reading the code is one to "
+            "drop, and saying so is a result.",
+            "3. Fix the ones that survive. Prefer the smallest change that removes the defect.",
+            "4. Commit. One commit per distinct fix reads better in review than one big one.",
+            "",
+            "Leave alone anything you are not confident about, and say what you left and why. "
+            "A review that changes three things it understood is worth more than one that "
+            "changed nine and guessed at six of them.",
+        ]
+        if job.get("note"):
+            parts += ["", "Harness instruction for this turn:", "", job["note"]]
+        if job["resume_summary"]:
+            parts += ["", "The prior session transcript was lost. Host-rendered summary:",
+                      "", job["resume_summary"]]
+        return "\n".join(parts)
+
     def render_prompt(self, job):
         """Two prompts, chosen by who wrote the text.
 
@@ -6828,6 +6984,9 @@ class Watcher:
         """
         conv = job["conversation"]
         lane = job["lane"]
+        review = job.get("review")
+        if review:
+            return self.render_review_prompt(job, review)
         if job.get("direct"):
             # NOT SOMETHING A STRANGER WROTE. No <discord> fence, no untrusted-input framing, no
             # role and no ff-discord policy: this text was typed by the person who owns this
@@ -7034,6 +7193,30 @@ class Watcher:
             return bool(conv["branch_adopted_at"])
         except (IndexError, KeyError):
             return False
+
+    @staticmethod
+    def review_facts(conv):
+        """{number, base, url} for a #codereview conversation, or None for anything else.
+
+        Read off the conversation rather than passed down from the poller, because a second
+        turn of the same conversation -- a repeat trigger -- has to build the same prompt from
+        the same three facts without another API call.
+        """
+        try:
+            if conv is None or conv["kind"] != GITHUB_KIND:
+                return None
+            tail = str(conv["thread_id"] or "").rsplit(":", 1)[-1]
+            number = int(tail) if tail.isdigit() else None
+            base = conv["github_base"] or ""
+            url = conv["github_pr"] or ""
+            # THE BRANCH COMES FROM HERE, not from job["conversation"], which is a projection
+            # with a fixed set of keys rather than the row.
+            branch = conv["branch"] or ""
+        except (IndexError, KeyError):
+            return None
+        if number is None:
+            return None
+        return {"number": number, "base": base, "url": url, "branch": branch}
 
     @staticmethod
     def conversation_class(conv, column="agent_class"):
@@ -7522,7 +7705,7 @@ class Watcher:
     def launch(self, turn_id):
         turn = self.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (turn["conversation_id"],))
-        cap = CAPABILITIES
+        cap = capabilities_for(conv)
         # WHICH KIND OF CONTAINER, settled when this conversation was opened. Everything below
         # that is a clock, a base branch or a pool comes from `ccfg` rather than `self.cfg`;
         # anything that is about the pipeline rather than the container still comes from the
@@ -8264,6 +8447,19 @@ class Watcher:
                             verification=verification, publish=self.publish_facts(run_row_id),
                             stopped=stopped)
         last = job["messages"][-1] if job["messages"] else None
+        # A REVIEW ANSWERS ON THE PULL REQUEST. compose_head is deliberately the same composer
+        # every other lane uses -- what the turn wants said, plus the harness's own facts about
+        # verification and publication -- because the question "what happened to this run" has
+        # one answer whichever surface it is read on. Only the envelope changes.
+        if conv["kind"] == GITHUB_KIND:
+            review = self.review_facts(conv)
+            if review is None:
+                log(f"conversation {conv['id']}: a review with no pull request number; "
+                    f"nothing to answer")
+                return 0
+            self.record_outbound(run_row_id, conv["id"], "post",
+                                 {"pr": review["number"], "text": head})
+            return 1
         payload = {"channel": reply_channel(conv), "text": head, "silent": True,
                    "reply_to": last["discord_id"] if last else None}
         asker = reply_mention(conv, last)
@@ -9698,6 +9894,36 @@ class Watcher:
                         f"hour, the per_conversation_hour limit")
         return None
 
+    def send_github(self, row, payload):
+        """One outbound row onto GitHub. True when it landed.
+
+        A FAILURE LEAVES THE ROW RETRYABLE, exactly as the Discord path does: _send_failed
+        records the error and the backoff, and the sweep comes back to it. The one thing that
+        is terminal is a row this cannot make sense of, which is a bug rather than an outage.
+        """
+        conv = (self.db.one("SELECT agent_class FROM conversation WHERE id=?",
+                            (row["conversation_id"],)) if row["conversation_id"] else None)
+        gh = GitHub(self.cfg, self.conversation_class(conv) if conv is not None else None)
+        if not gh.token or not gh.repo:
+            return self._send_failed(row, gh.token_error or "this box has no GitHub token")
+        try:
+            if payload.get("pr_comment"):
+                ok = gh.react_to_comment(payload["pr_comment"],
+                                         payload.get("emoji") or GITHUB_ACK_REACTION)
+                if not ok:
+                    return self._send_failed(row, "the reaction was refused")
+                sent_id = None
+            else:
+                sent_id = gh.create_issue_comment(int(payload["pr"]), payload.get("text") or "")
+        except (GitHubError, ValueError, TypeError) as exc:
+            return self._send_failed(row, f"{type(exc).__name__}: {exc}"[:500])
+        self.db.execute(
+            "UPDATE outbound SET status='sent', discord_id=?, sent_at=?,"
+            " last_attempt_at=?, last_error=NULL WHERE id=?",
+            (str(sent_id) if sent_id else None, now_iso(), now_iso(), row["id"]))
+        log(f"outbound {row['id']} {row['action']} sent to GitHub")
+        return True
+
     def send_one(self, row):
         """Build the CLI call for one outbound row, run it, and record the outcome."""
         try:
@@ -9708,6 +9934,14 @@ class Watcher:
         if not isinstance(payload, dict):
             self._reject(row, "payload_json is not an object")
             return False
+
+        # THE ONE PLACE THIS PIPELINE TALKS TO SOMETHING THAT IS NOT DISCORD. Everything above
+        # -- persist before post, the nonce, the kill switch, dry-run, the approval queue, the
+        # backoff and the send ceilings -- has already happened by the time a row gets here, so
+        # a review's comment is held, counted and retried exactly like a forum reply. What is
+        # different is one HTTPS call.
+        if payload.get("pr") or payload.get("pr_comment"):
+            return self.send_github(row, payload)
 
         if payload.get("dm_to") and not payload.get("channel"):
             # Resolve the DM channel now rather than at compose time, and write it back onto
@@ -11052,6 +11286,235 @@ class Watcher:
     # the catchup worker
     # ======================================================================================
 
+    # -- the #codereview ingress ------------------------------------------------------------
+    # design/github_pr_review_design.txt. A comment on a pull request starts a review run on
+    # that pull request's own branch. The host does every GitHub read and write, exactly as it
+    # does every Discord one, so the container holds no credential that can speak here either.
+
+    @property
+    def github_cursor_path(self):
+        return os.path.join(self.state_dir, "github.cursor.json")
+
+    def read_github_cursor(self):
+        """(since, seen). How far the poller has read, and what it has already acted on.
+
+        TWO THINGS BECAUSE ONE IS NOT ENOUGH. `since` is a timestamp and GitHub's filter is
+        inclusive, so the comment that set it comes back on the next sweep; several comments can
+        also share a second. `seen` is the ids already handled, which is what actually makes this
+        idempotent, and `since` only bounds how much has to be re-read to consult it.
+        """
+        try:
+            with open(self.github_cursor_path, "r", encoding="utf-8") as fh:
+                got = json.load(fh)
+            return (got.get("since") or None), [str(i) for i in (got.get("seen") or [])]
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return None, []
+
+    def write_github_cursor(self, since, seen):
+        # BOUNDED, because this file is rewritten every sweep and a repository accumulates
+        # comments forever. The tail is what a re-read of `since` can possibly show us again.
+        tmp = f"{self.github_cursor_path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"since": since, "seen": [str(i) for i in seen][-500:]}, fh)
+        os.replace(tmp, self.github_cursor_path)
+
+    def github_review_pool(self):
+        """Which agent class a review opens in. Never a name no pool can serve."""
+        named = ((self.cfg.get("github") or {}).get("review_pool") or "").strip()
+        if named in AGENT_CLASSES:
+            return named
+        if named:
+            log(f"WARNING: github.review_pool is {named!r}, which is not an agent class; "
+                f"using {DEFAULT_AGENT_CLASS}")
+        return DEFAULT_AGENT_CLASS
+
+    def poll_github(self):
+        """Read new pull request comments and start a review for each `#codereview` an operator
+        wrote. Returns the turn ids it created.
+
+        EVERY REFUSAL IS DECIDED ONCE. A comment that is acted on, refused, or ignored all end
+        the same way: its id goes in the cursor's `seen` list. The alternative is a sweep that
+        posts the same refusal every fifteen minutes for as long as the comment exists.
+
+        A STRANGER'S TRIGGER IS IGNORED IN SILENCE, and the silence is the point. A refusal
+        posted into a public pull request tells somebody who is not an operator that the trigger
+        exists, that this box has operators, and that they are not one. The host logs it so an
+        operator can see the attempt; GitHub is told nothing. Same rule, and the same reasoning,
+        as take_branch_directive.
+        """
+        gh_cfg = self.cfg.get("github") or {}
+        trigger = (gh_cfg.get("trigger") or "").strip().lower()
+        if not trigger:
+            return []
+        # NOBODY CAN TRIGGER, SO NOTHING IS ASKED. An empty operator table is the shipped
+        # default, and a box that has not filled it in should not be spending a request a sweep
+        # to find that out.
+        if not github_operators(self.cfg):
+            return []
+        agent_class = self.github_review_pool()
+        gh = GitHub(self.cfg, agent_class)
+        if not gh.token or not gh.repo:
+            if gh.token_error:
+                log(f"#codereview: no poll — {gh.token_error}")
+            return []
+        since, seen = self.read_github_cursor()
+        # FROM NOW, NOT FROM THE BEGINNING OF THE REPOSITORY. With no cursor the filter is
+        # absent and GitHub hands back every comment it has, none of which is in `seen` -- so a
+        # box turning this on for the first time would answer every `#codereview` anybody has
+        # ever typed, all at once, on pull requests that were settled months ago. It is the same
+        # surprise watch_attach exists to prevent on a Discord channel, and it takes the same
+        # answer: record the moment and start from it.
+        if since is None:
+            since = now_iso()
+            self.write_github_cursor(since, seen)
+            log(f"#codereview: watching {gh.repo} from now; comments before this moment are "
+                f"history and will not start a review")
+            return []
+        try:
+            comments = gh.list_issue_comments(since=since)
+        except GitHubError as exc:
+            log(f"#codereview: could not read comments: {exc}")
+            return []
+        seen_set = set(seen)
+        newest, created = since, []
+        for comment in comments:
+            comment_id = str(comment.get("id") or "")
+            stamp = comment.get("updated_at") or ""
+            if stamp and (newest is None or stamp > newest):
+                newest = stamp
+            if not comment_id or comment_id in seen_set:
+                continue
+            try:
+                turn_id = self.take_review_trigger(gh, comment, trigger, agent_class)
+            except Exception as exc:                        # noqa: BLE001 - see below
+                # ONE BAD COMMENT MUST NOT STOP THE SWEEP, and must not be retried forever
+                # either. It is marked seen below like every other outcome, because a comment
+                # that raises once raises every time and the loop has other work.
+                log(f"#codereview: comment {comment_id} could not be handled: "
+                    f"{type(exc).__name__}: {exc}")
+                turn_id = None
+            seen_set.add(comment_id)
+            seen.append(comment_id)
+            if turn_id:
+                created.append(turn_id)
+        self.write_github_cursor(newest, seen)
+        return created
+
+    def take_review_trigger(self, gh, comment, trigger, agent_class):
+        """One comment, decided. The turn id when a review started, else None.
+
+        The two checks here are the two adopt_branch cannot make: a pull request has to be open,
+        and its head has to be a branch in this repository. Everything else a review needs to be
+        true of a branch -- that the name is usable, that it is not a protected one, that it is
+        on the remote, that no other conversation has a turn in flight on it -- is adopt_branch's
+        and is asked there, once, in the one place both other ingresses ask it.
+        """
+        body = comment.get("body") or ""
+        if trigger not in body.lower():
+            return None
+        author = comment.get("author") or comment.get("user") or {}
+        author_id = str(author.get("id") or "")
+        if not is_github_operator(self.cfg, author_id):
+            log(f"#codereview: ignoring a trigger from {author.get('login') or '?'} "
+                f"({author_id or 'no id'}), who is not in github.trust.operators")
+            return None
+        number = _issue_number_from_url(comment.get("issue_url"))
+        if number is None:
+            log(f"#codereview: comment {comment.get('id')} names no issue; ignoring")
+            return None
+        pull = gh.pull_request(number)
+        if pull is None:
+            log(f"#codereview: #{number} is not a pull request; ignoring")
+            return None
+        comment_id = str(comment.get("id"))
+        if pull["state"] != "open":
+            return self.refuse_review(gh, number, comment_id,
+                                      f"#{number} is {'merged' if pull['merged'] else 'closed'}, "
+                                      f"so there is nothing to review onto.")
+        # A FORK'S HEAD CANNOT BE PUSHED TO, and that is the smaller half of why this refuses.
+        # The larger half is that an in-repo branch takes push access to create, so requiring one
+        # is what keeps a stranger's code out of an unfenced container.
+        if (pull["head_repo"] or "").lower() != (self.cfg["github"]["repo"] or "").lower():
+            return self.refuse_review(
+                gh, number, comment_id,
+                f"`{pull['head_ref'] or '?'}` lives in "
+                f"{pull['head_repo'] or 'a repository this box cannot see'} rather than in "
+                f"{self.cfg['github']['repo']}. A review commits onto the branch it reviews, so "
+                f"it can only run on a pull request opened from this repository.")
+
+        conv_id = self.upsert_conversation(
+            f"github:pr:{number}", kind=GITHUB_KIND, channel_id=None,
+            title=(pull["title"] or f"pull request #{number}")[:100],
+            root_message_id=comment_id, opener=author_id, is_thread=False,
+            agent_class=agent_class)
+        self.db.execute(
+            "UPDATE conversation SET github_pr=?, github_base=? WHERE id=? AND github_pr IS NULL",
+            (str(pull["url"] or number), pull["base_ref"] or "", conv_id))
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+
+        message_id = self.insert_message(conv_id, {
+            "id": comment_id,
+            "author": {"id": author_id, "username": author.get("login") or "?", "bot": False},
+            # THE COMMENT IS RECORDED AND NEVER READ. It is here so the conversation has the
+            # message its turn is for and so the discord_id UNIQUE index dedupes a replayed
+            # sweep; build_job composes the prompt from the pull request instead, and a test
+            # asserts this text reaches no container.
+            "content": body,
+            "timestamp": comment.get("updated_at") or now_iso(),
+        })
+        if message_id is None:
+            return None                     # the id collided: an earlier sweep already had it
+
+        # ALREADY WORKING. Refused rather than queued, because the person who typed this cannot
+        # see that a run is in flight, and starting a second review when the first ends is not
+        # what they asked for. The GATE is what makes that true: claim_turns would otherwise
+        # pick this message up on the pass after the running turn finishes.
+        if conv["state"] in ("queued", "running"):
+            reason = (f"a review is already running on this pull request (conversation "
+                      f"{conv_id}). Wait for it to finish, then comment again.")
+            self.gate_message(message_id, "codereview_busy", reason)
+            return self.refuse_review(gh, number, comment_id, reason)
+
+        if not self.conversation_branch(conv):
+            ok, why = self.adopt_branch(conv_id, pull["head_ref"], by=author_id)
+            if not ok:
+                self.gate_message(message_id, "codereview_refused", why)
+                return self.refuse_review(gh, number, comment_id, why)
+            conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+
+        turn_id = self.create_turn(conv)
+        if turn_id is None:
+            log(f"#codereview: #{number} produced no turn")
+            return None
+        # THE ACKNOWLEDGEMENT IS NOT SENT FROM HERE. create_turn calls mark_working, which
+        # queues it as an outbound row and sends that row through the same gates everything else
+        # this box says goes through -- so a review's reaction is held by the kill switch and
+        # visible on the page like every other thing it has said.
+        log(f"#codereview: #{number} on {pull['head_ref']} -> conversation {conv_id}, "
+            f"turn {turn_id}")
+        return turn_id
+
+    def gate_message(self, message_id, gate, reason):
+        """Keep a recorded message out of every turn, with the reason beside it.
+
+        The same door take_branch_directive declines through: pending_messages selects
+        `gate IS NULL`, so a gated message is in the record and is never read by a session.
+        """
+        self.db.execute("UPDATE message SET gate=?, gate_reason=? WHERE id=?",
+                        (gate, (reason or "")[:200], message_id))
+
+    def refuse_review(self, gh, number, comment_id, reason):
+        """Say no on the pull request. Always returns None, so callers can `return` it."""
+        text = f"**#codereview** — no. {reason}"
+        if self.dry_run:
+            log(f"#codereview: (dry run) would answer #{number}: {reason}")
+            return None
+        try:
+            gh.create_issue_comment(number, text)
+        except GitHubError as exc:
+            log(f"#codereview: could not answer #{number}: {exc}")
+        return None
+
     def catchup_pass(self):
         """The sweep and the publication reconcile — the two slow things on the catchup tick.
 
@@ -11074,6 +11537,7 @@ class Watcher:
         outage — because everything else is already ingested and deduped by discord_id.
         """
         self.sweep()
+        self.poll_github()
         self.reconcile_publications()
 
     def start_catchup(self):

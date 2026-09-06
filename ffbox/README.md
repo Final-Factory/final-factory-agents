@@ -2131,6 +2131,86 @@ Three more, all offline and all against the real script rather than a stub of it
 failsafe), and `sh ffbox/test_container_credential.sh` (which pool's containers are handed a git
 credential, and that the token's value never reaches argv).
 
+### `#codereview`: a review started from a pull request comment
+
+A comment saying `#codereview` on a Final Factory pull request starts an ffdev run against that
+pull request's own branch. It reviews the diff, applies the fixes it is confident in, commits
+them onto the branch the pull request already points at, and the harness posts a comment saying
+what it did. Nothing merges, and no second pull request is opened: the work lands under the one
+a reviewer is already reading.
+
+```jsonc
+"github": {
+  "trigger": "#codereview",
+  "review_pool": "ffdev",
+  "trust": { "operators": { "lothsahn": 10092359 } }
+}
+```
+
+Most of this is machinery that already existed. The conversation **adopts** the pull request's
+branch through `adopt_branch()`, the same door `!branch` and `ffwatch adopt` use, and from there
+every reader of `conversation.branch` does the rest: the run starts standing on the branch, the
+harvest cannot rename it, `--range-from-start` keeps the identity fence off the author's own
+commits, and `publish()` finds the pull request already recorded and opens nothing. See
+"Branch adoption" above; `#codereview` is one of its consumers rather than a second copy of it.
+
+**Polled, not pushed.** One request per sweep to `/repos/<repo>/issues/comments`, which is
+repo-wide, so watching every open pull request costs what watching one costs. A webhook would
+need this box reachable from the internet and a secret to rotate, to save a latency nobody is
+waiting on: a review takes the better part of an hour.
+
+**Who may start one.** `github.trust.operators`, name to NUMERIC GitHub user id, and a table of
+its own that shares nothing with `discord.trust.operators` — the id spaces are unrelated, and a
+snowflake colliding with a GitHub user id would be a way in. `author_association` is not
+consulted: OWNER and MEMBER are handed out for reasons that have nothing to do with this
+machine, and a review run pushes commits. A comment from anybody else is ignored in silence,
+for the reason a `!branch` line from a stranger is: a refusal tells them the trigger exists and
+that they are not an operator.
+
+**Why a public comment box may start an unfenced container.** Because it contributes no text.
+The prompt is built by the harness out of the pull request number, the branch, the base and the
+diff; the comment selects the run and nothing else, and the message row it is recorded in is
+never read. That is why `demote_for_stranger` has no counterpart here — there is no chain for a
+stranger to get into. What covers the DIFF, which a stranger really could have written, is that
+the head must be a branch in this repository, and creating one takes push access. A fork's pull
+request is refused, and a test asserts the comment body appears nowhere in the built prompt.
+
+**What it runs.** `/code-review-sonnet`, by name and with no level argument, then the driver
+checks each finding against the code and applies the ones that survive. The workflow pins every
+subagent it spawns to sonnet; `/code-review high --fix` reaches the same workflow only when
+workflows are enabled and otherwise falls back to a fan-out on the session model, which is opus.
+Naming the workflow makes the cost a property of the invocation instead of the environment.
+
+Two things that took measuring, both of which fail silently in a container:
+
+- **`Workflow` goes in `--tools` AND `--allowedTools`.** Running a workflow raises a permission
+  request of its own, and a `-p` run has nobody to answer it. With the tool named but not
+  allowed, the turn dies at "Review dynamic workflow before running" having done nothing.
+- **The workflow file is copied into `$CLAUDE_CONFIG_DIR/workflows/`**, which is user scope, so
+  `--setting-sources user` finds it and the deliberate exclusion of `project` scope stays.
+  The copy is taken from `origin/<base>`, never from the checked-out head — otherwise the branch
+  under review supplies the script that reviews it.
+
+**It watches from now.** The first poll on a box records the moment and answers nothing older,
+the same watermark `watch_attach` puts on a Discord channel and for the same reason: without it,
+turning this on would answer every `#codereview` anybody has ever typed, at once, on pull
+requests that were settled months ago.
+
+**Refusals.** Two are this lane's: the pull request must be open, and its head must not be a
+fork's. Everything else is `adopt_branch`'s and is posted verbatim rather than re-derived — a
+protected head, a branch not on the remote, a branch another conversation has a turn in flight
+on. A second `#codereview` while a review is running is refused with a comment rather than
+queued, and the refused comment is **gated** so `claim_turns` cannot turn it into a second
+review when the first one ends.
+
+**Three consequences worth knowing.** Every review is a cold launch, because `pool_claim_for`
+matches a warm container on branch and no spare is ever staged on a pull request branch. A
+repeat `#codereview` reviews the current head, because the mirror sync runs before every turn of
+an adopted conversation. And a branch deleted mid-run — someone merging the pull request while
+the review works — refuses at the publish, by the prefix rule.
+
+Design: `design/github_pr_review_design.txt`.
+
 ### The web UI (`ffweb`)
 
 ```bash

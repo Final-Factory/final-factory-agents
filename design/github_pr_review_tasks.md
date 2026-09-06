@@ -8,18 +8,43 @@ argv builder), and `05-discord-setup.sh` for config seeding.
 
 Effort: **S** under an hour, **M** an afternoon, **L** a day or more.
 
-## Status: UNBLOCKED. A3 done; B through G open.
+## Status: A through E implemented; F partly; G not run.
 
-Branch adoption is implemented and on master (`72843e1`..`2458986`), so the dependency this file
-carried is discharged. Design section 3b lists what it alters here, and the task text below is
-updated for it. **A3 is done and pushed.**
+Branch adoption is on master, so the dependency this file carried is discharged; design section
+3b lists what it altered. **A, B, C, D and E are implemented and pushed.** F1-F4 are covered by the
+seven `#codereview` tests in `test_ffwatch.py` (F3 as a source assertion on
+`setup_review_workflow`, the way the pool tests assert what `launch()` does not contain -- there
+is no way to observe a container's config directory from outside one). **G is the
+live end-to-end run, which has not happened** -- it needs the operator table filled in and
+`GH_PR_TOKEN` given Issues write.
+
+What implementation changed, beyond the design:
+
+- **`conversation.github_base` (schema v17).** The prompt needs a diff range and the honest end
+  of one is the pull request's own base. Re-deriving it later would mean a network call inside
+  `build_job`, which is synchronous and must not depend on GitHub being up, or a guess from
+  `publish_bases` -- and a review that diffs against the wrong base reads somebody else's
+  commits as this branch's work.
+- **The mark is queued from TWO places, not one.** E3 said the acknowledgement was a branch
+  inside `mark_working`. It is, and that was not enough: the turn path has a second site that
+  queues the mark when `always_a_turn` did not fire, and it kept sending a Discord reaction
+  addressed to a channel called `github:pr:41`. Both now build the payload through
+  `ack_payload()`, so there is one copy to get right. Caught by the test, not by reading.
+- **The poller watches from now.** Not in the design and it should have been: with no cursor
+  the `since` filter is absent, GitHub hands back every comment in the repository, and none of
+  them is in `seen` -- so turning the trigger on would answer every `#codereview` anybody had
+  ever typed, at once, on pull requests settled months ago. The first poll records the moment
+  and answers nothing older, which is the watermark `watch_attach` already puts on a Discord
+  channel, for the same reason.
+- **`pull_request()` answers None on a 404** rather than raising. The number comes out of a
+  comment's `issue_url` and can name something deleted, or an issue rather than a pull request.
 
 ## A. Config and credentials
 
-- **A1 (S).** `github.trust.operators` in `DEFAULTS`, seeded empty in `05-discord-setup.sh`, and
+- **A1 (S). DONE.** `github.trust.operators` in `DEFAULTS`, seeded empty in `05-discord-setup.sh`, and
   documented in `config.md`. Name to numeric GitHub user id. Empty means nobody can trigger,
   which is the right default for a box that has not been told who its operators are.
-- **A2 (S).** `github.trigger` (default `"#codereview"`) and `github.review_pool` (default
+- **A2 (S). DONE.** `github.trigger` (default `"#codereview"`) and `github.review_pool` (default
   `"ffdev"`). The pool is named rather than hardcoded, for the same reason `discord.operator_pool`
   is: a box that wants to put this behind the fence should be able to say so and find out that it
   cannot push, rather than have the choice buried in code.
@@ -30,26 +55,26 @@ updated for it. **A3 is done and pushed.**
 
 ## B. The GitHub client
 
-- **B1 (S).** `list_issue_comments(since)` on `GitHub`, paginated, `sort=updated`.
-- **B2 (S).** `pull_request(number)`, returning head ref, head repo full name, base ref and
+- **B1 (S). DONE.** `list_issue_comments(since)` on `GitHub`, paginated, `sort=updated`.
+- **B2 (S). DONE.** `pull_request(number)`, returning head ref, head repo full name, base ref and
   state. The head repo is what answers "is this a fork".
-- **B3 (S).** `create_issue_comment(number, body)` and `react_to_comment(comment_id, content)`.
-- **B4 (S).** No merge method, and a test asserting the string `"merge"` appears in no method
+- **B3 (S). DONE.** `create_issue_comment(number, body)` and `react_to_comment(comment_id, content)`.
+- **B4 (S). DONE.** No merge method, and a test asserting the string `"merge"` appears in no method
   name on the class. The absence is load-bearing and should be pinned where an edit trips it.
 
 ## C. Ingest
 
-- **C1 (M).** `poll_github()`, called from `catchup_pass` beside the Discord sweep. Cursor file in
+- **C1 (M). DONE.** `poll_github()`, called from `catchup_pass` beside the Discord sweep. Cursor file in
   `state_dir`. For each comment since the cursor: match the trigger, look the author id up in
   `github.trust.operators`, and drop everything else without a network call.
-- **C2 (S).** The refusal set, each recording the comment against the cursor so it is decided
+- **C2 (S). DONE.** The refusal set, each recording the comment against the cursor so it is decided
   once. **Two checks only** -- the pull request must be open, and its head must not be a fork's
   -- because `adopt_branch()` already refuses an unusable name, a protected branch or publish
   base, a branch that is not on the remote, a branch another conversation has a turn in flight
   on, a conversation that already owns one, and one that has already published. Post its
   `reason` verbatim: every one is written to be read by whoever asked. The not-an-operator case
   stays silent, because answering a stranger tells them the trigger exists.
-- **C3 (M).** `github_pr` conversation kind. `thread_id` = `github:pr:<number>`,
+- **C3 (M). DONE.** `github_pr` conversation kind. `thread_id` = `github:pr:<number>`,
   `agent_class` from `github.review_pool`, `github_pr` filled in at creation from B2. The branch
   is **adopted, not written**: create the conversation, then `adopt_branch(conv_id, head,
   by=<commenter id>)`, then `create_turn`, in that order -- adoption refuses a conversation that
@@ -57,7 +82,7 @@ updated for it. **A3 is done and pushed.**
   through `take_branch_directive()`: that looks its author up in `discord.trust.operators`, and
   a GitHub id must never be tested against a table of Discord snowflakes (the C6 hazard). It is not a `LOCAL_KIND` -- it has somewhere to post -- and it belongs in
   `GATE_BYPASS_KINDS` and `DIRECT_KINDS`. Schema comment on `conversation.kind` updated.
-- **C4 (M).** The in-flight refusal: `conversation.state IN ('queued','running')` posts a comment
+- **C4 (M). DONE.** The in-flight refusal: `conversation.state IN ('queued','running')` posts a comment
   naming the run and creates no turn. This is where `github_pr` deliberately differs from
   `follow_up()`, which queues.
 
@@ -72,49 +97,49 @@ updated for it. **A3 is done and pushed.**
   scheme an earlier revision proposed, which threw away the `message.discord_id` dedupe to solve
   a problem the gate already solves.
 
-- **C5 (S).** `demote_for_stranger()` must not fire on a `github_pr` conversation. Exempt it the
+- **C5 (S). DONE.** `demote_for_stranger()` must not fire on a `github_pr` conversation. Exempt it the
   way local kinds are exempt, and put the reason in the code: the prompt carries no commenter
   text, so there is no stranger's words to fence.
-- **C6 (S).** `turn_trust()` resolves a `github_pr` turn against `github.trust.operators`, not
+- **C6 (S). DONE.** `turn_trust()` resolves a `github_pr` turn against `github.trust.operators`, not
   `discord.trust.operators`. As written it reads `operators(cfg)`, the Discord table, and a
   GitHub numeric id is never in it -- so every review turn would come back `player` tier and get
   the player-facing prompt framing and policy. Ingest has already proved the author is an
   operator, so the branch can short-circuit the way `is_local_conversation` does.
-- **C7 (S).** `turn_venue()` returns `private` for `github_pr`. It falls through to
+- **C7 (S). DONE.** `turn_venue()` returns `private` for `github_pr`. It falls through to
   `venue_for(cfg, None)` today, which answers `public` for a conversation that has no watch
   entry and never will.
 
 
 ## D. The prompt and the container
 
-- **D1 (M).** The turn prompt, built by the harness from B2 and the diff range. It names the pull
+- **D1 (M). DONE.** The turn prompt, built by the harness from B2 and the diff range. It names the pull
   request, the branch, the base, and instructs: run `/code-review-sonnet`, investigate what it
   returns, apply the findings that survive, commit. No level argument. No commenter text, and a
   test asserting the comment body appears nowhere in the built prompt. It says **nothing about
   branch discipline**: `discord-task.sh:559` already renders the adopted-branch preamble, which
   covers reading the branch first, adding commits on top, and not rebasing, amending, reverting
   or switching.
-- **D2 (S).** `Workflow` added to this lane's capability set in **both** places: the `--tools`
+- **D2 (S). DONE.** `Workflow` added to this lane's capability set in **both** places: the `--tools`
   set and the `--allowedTools` list. Measured 2026-09-06 on claude 2.1.263 -- `--tools` alone
   gets "Review dynamic workflow before running", which a `-p` run has nobody to answer, and the
   turn dies having done nothing. This lane only; the shared `CAPABILITY_TOOLS` and
   `CAPABILITY_ALLOWED` that every lane reads are untouched.
-- **D3 (M).** `discord-task.sh` copies `.claude/workflows/code-review-sonnet.js` into
+- **D3 (M). DONE.** `discord-task.sh` copies `.claude/workflows/code-review-sonnet.js` into
   `$CLAUDE_CONFIG_DIR/workflows/` **from the base ref**, via `git show <base>:<path>`, not from
   the checked-out head. Skip quietly if the file is absent on the base, the way a missing plugin
   directory is skipped.
-- **D4 (S).** The verdict schema gains `fixed`, `left` and `review_summary`, so the comment in E2
+- **D4 (S). DONE.** The verdict schema gains `fixed`, `left` and `review_summary`, so the comment in E2
   is composed from fields rather than prose.
 
 ## E. Saying something back
 
-- **E1 (M).** A `github` destination in `send_pending`, dispatching `post` and `react` to B3.
+- **E1 (M). DONE.** A `github` destination in `send_pending`, dispatching `post` and `react` to B3.
   Same row shape, same nonce, same backoff, same kill switch, same `approve_before_send`.
-- **E2 (M).** `record_reply` composes the pull request comment for a `github_pr` conversation:
+- **E2 (M). DONE.** `record_reply` composes the pull request comment for a `github_pr` conversation:
   what was fixed, what was left and why, the verification result, the run id. `announce_publication`
   stays Discord-only -- there is nothing to announce when the branch was already under the pull
   request the comment is on.
-- **E3 (M).** The acknowledging reaction, queued when the turn is created rather than when it
+- **E3 (M). DONE.** The acknowledging reaction, queued when the turn is created rather than when it
   starts, so a queued run is still visibly seen. This is a branch inside `mark_working()`, not a
   separate call: that method already owns the idempotency `local_id`, the send-now-rather-than-
   queue decision and the kill-switch path, and it currently builds a Discord payload
