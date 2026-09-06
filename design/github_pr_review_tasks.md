@@ -8,7 +8,18 @@ argv builder), and `05-discord-setup.sh` for config seeding.
 
 Effort: **S** under an hour, **M** an afternoon, **L** a day or more.
 
-## Status: NOT STARTED
+## Status: BLOCKED on branch adoption, except A3 which is DONE
+
+**Dependency.** C, D and E cannot be verified end to end until
+`design/branch_adoption_tasks.md` is implemented. A `#codereview` target is a foreign branch
+carrying foreign commits, so the harvest's identity fence refuses to publish on every run
+(`harvest-workspace.sh:148-150`, again at `ffbox:1743`), the changed-file ceiling counts the
+whole pull request, and `push_bundle` gets its first name from outside the `ffbox/` prefix.
+Adoption's `--range-from-start` is the fix, and it does not exist yet. Design section 3a has the
+argument. Adoption does not depend on this feature, so the order is adoption first, then C
+onward.
+
+**A3 is done and pushed** -- it is independent of all of that.
 
 ## A. Config and credentials
 
@@ -19,7 +30,7 @@ Effort: **S** under an hour, **M** an afternoon, **L** a day or more.
   `"ffdev"`). The pool is named rather than hardcoded, for the same reason `discord.operator_pool`
   is: a box that wants to put this behind the fence should be able to say so and find out that it
   cannot push, rather than have the choice buried in code.
-- **A3 (S).** ffdev `agent_secs` 1800 to 7200 in all four places: `DEFAULTS["agent_classes"]`
+- **A3 (S). DONE.** ffdev `agent_secs` 1800 to 7200 in all four places: `DEFAULTS["agent_classes"]`
   in `ffwatch.py`, the `pools.ffdev` block in `05-discord-setup.sh`, `config.md` (the example
   *and* the per-class table row), and the live `~/.config/ffbox/config.json`. Leave ffagent at
   1800. CLAUDE.md requires `config.md` in the same commit.
