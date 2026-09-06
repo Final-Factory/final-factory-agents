@@ -7241,7 +7241,7 @@ def test_allow_list_is_scope_not_a_boundary():
 
 
 def run_harvest(repo, out, *, branch, prefix="", run_id="d1t1-test", base_refs="",
-                base_sha="", protected=None):
+                base_sha="", protected=None, range_from_start=False):
     """Run the REAL harvest-workspace.sh over a real repo. Returns (published_ok, branch, error).
 
     It used to lift a block of shell out of `ffbox` and exec it, on the reasoning that a
@@ -7263,7 +7263,8 @@ def run_harvest(repo, out, *, branch, prefix="", run_id="d1t1-test", base_refs="
            "FFBOX_RUN_ID": run_id,
            "FFBOX_GIT_NAME": "ffbox",
            "FFBOX_GIT_EMAIL": "ffbox@final-factory.invalid",
-           "FFBOX_PROTECTED_BRANCHES": protected or "develop master main"}
+           "FFBOX_PROTECTED_BRANCHES": protected or "develop master main",
+           "FFBOX_RANGE_FROM_START": "1" if range_from_start else "0"}
     if base_sha:
         env["FFBOX_BASE_SHA"] = base_sha
     done = subprocess.run(["bash", os.path.join(HERE, "harvest-workspace.sh")],
@@ -7312,6 +7313,118 @@ def run_branch_derivation(root, *, host_branch, prefix, run_id, ending, protecte
     ok, published, _ = run_harvest(repo, out, branch=host_branch, prefix=prefix, run_id=run_id,
                                    base_sha=base, protected=protected)
     return ok, published, out, repo
+
+
+def seed_somebody_elses_branch(root, *, forged_run_commit=False):
+    """A workspace on a branch a PERSON pushed, with this run's commit on top of theirs.
+
+    Returns (repo, base_sha) where base_sha is where the run started — the tip of their work,
+    which is what restore-workspace.sh records when the clone lands on their branch.
+    """
+    repo = os.path.join(root, "repo")
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(repo)
+
+    def g(*args):
+        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+
+    subprocess.run(["git", "init", "-q", "-b", "master", repo], check=True)
+    g("config", "user.email", "ffbox@final-factory.invalid"); g("config", "user.name", "ffbox")
+    with io.open(os.path.join(repo, "Belt.cs"), "w", encoding="utf-8") as fh:
+        fh.write("code\n")
+    g("add", "-A"); g("commit", "-qm", "base")
+    g("checkout", "-q", "-B", "loth/save-fix")
+    with io.open(os.path.join(repo, "Save.cs"), "w", encoding="utf-8") as fh:
+        fh.write("their work\n")
+    g("add", "-A")
+    g("-c", "user.name=Loth", "-c", "user.email=loth@example.invalid",
+      "commit", "-qm", "save fix, by hand")
+    start = g("rev-parse", "HEAD").stdout.strip()
+    with io.open(os.path.join(repo, "Belt.cs"), "a", encoding="utf-8") as fh:
+        fh.write("the agent's work\n")
+    g("add", "-A")
+    if forged_run_commit:
+        g("-c", "user.name=Loth", "-c", "user.email=loth@example.invalid",
+          "commit", "-qm", "agent work wearing a person's name")
+    else:
+        g("commit", "-qm", "agent work")
+    return repo, start
+
+
+def test_a_run_on_somebody_elses_branch_publishes_only_its_own_commits():
+    """--range-from-start, and why a run on an adopted branch cannot publish without it.
+
+    The identity check is what an agent-authored range is held to: every commit between the base
+    and the tip must carry ffbox's own email, because a commit wearing a person's name on a
+    branch a reviewer reads by author is how agent work would pass as human work. The base comes
+    from the --base-refs scan, so on a branch somebody else pushed the range holds THEIR commits
+    and the check refuses the whole publication -- correctly about the range, and about the
+    wrong question. What it is meant to bound is what THIS RUN did.
+
+    The flag moves the bottom of the range to where the run started and leaves the base NAME
+    alone, so the pull request still targets master.
+    """
+    print("harvest: a run continuing somebody else's branch")
+    # BOTH ENV PATHS, because a cold run gets its variables as -e on `docker create` and a
+    # pooled one reads them out of a file pool-task.sh exports. A flag on one path only is a
+    # flag that works until the box has a warm container.
+    ffbox_src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    check("the flag reaches a cold container and a dispatched one alike",
+          ffbox_src.count("FFBOX_RANGE_FROM_START") == 2
+          and '-e "FFBOX_RANGE_FROM_START=$RANGE_FROM_START"' in ffbox_src
+          and "printf 'FFBOX_RANGE_FROM_START=%s\\n' \"$RANGE_FROM_START\"" in ffbox_src,
+          ffbox_src.count("FFBOX_RANGE_FROM_START"))
+
+    root = os.path.join(TMPROOT, "adoptrange")
+    repo, start = seed_somebody_elses_branch(root)
+    out = os.path.join(root, "out")
+
+    ok, published, error = run_harvest(repo, out, branch="loth/save-fix", base_refs="master",
+                                       base_sha=start)
+    check("without the flag the range reaches back over their commits and is refused",
+          not ok and "identity this run does not own" in error, error)
+
+    shutil.rmtree(out, ignore_errors=True)
+    ok, published, error = run_harvest(repo, out, branch="loth/save-fix", base_refs="master",
+                                       base_sha=start, range_from_start=True)
+    check("with it the run publishes", ok and published == "loth/save-fix", (published, error))
+    read = lambda n: open(os.path.join(out, n), encoding="utf-8").read().strip()
+    check("the range starts at the commit the run began on", read("publish_base_sha.txt")
+          == start, (read("publish_base_sha.txt"), start))
+    check("only this run's own file is in the range",
+          read("changed_files.txt").split() == ["Belt.cs"], read("changed_files.txt"))
+    check("and the base NAME is still master, so the pull request is aimed the same way",
+          read("publish_base.txt") == "master", read("publish_base.txt"))
+
+    # THE FENCE IS NOT WEAKENED: it still covers every commit the run itself made.
+    shutil.rmtree(out, ignore_errors=True)
+    repo, start = seed_somebody_elses_branch(os.path.join(TMPROOT, "adoptforge"),
+                                             forged_run_commit=True)
+    out = os.path.join(TMPROOT, "adoptforge", "out")
+    ok, published, error = run_harvest(repo, out, branch="loth/save-fix", base_refs="master",
+                                       base_sha=start, range_from_start=True)
+    check("a commit THIS RUN made wearing a person's name is still refused",
+          not ok and "identity this run does not own" in error, error)
+
+    # No start commit, or one the work does not descend from, is refused HERE rather than
+    # bundled from the base ref -- which is what produces the identity refusal three steps later
+    # with a message about the wrong thing.
+    repo, start = seed_somebody_elses_branch(os.path.join(TMPROOT, "adoptnostart"))
+    out = os.path.join(TMPROOT, "adoptnostart", "out")
+    ok, published, error = run_harvest(repo, out, branch="loth/save-fix", base_refs="master",
+                                       base_sha="", range_from_start=True)
+    check("the flag with no start commit refuses and says so",
+          not ok and "no start commit was recorded" in error, error)
+    shutil.rmtree(out, ignore_errors=True)
+    stranger = subprocess.run(["git", "-C", repo, "rev-parse", "master"],
+                              capture_output=True, text=True).stdout.strip()
+    subprocess.run(["git", "-C", repo, "checkout", "-q", "-B", "loth/save-fix", "master"],
+                   check=True)
+    ok, published, error = run_harvest(repo, out, branch="loth/save-fix", base_refs="master",
+                                       base_sha=start, range_from_start=True)
+    check("and a start commit the work does not descend from refuses too",
+          not ok and "does not descend from the commit this run started at" in error, error)
+    del stranger
 
 
 def test_the_agent_names_the_branch_it_publishes():
@@ -10556,6 +10669,52 @@ def push_a_stranger_branch(host, name, *, base="develop", files=("Assets/Save.cs
     return head
 
 
+def test_the_scheduler_asks_about_the_ref_the_launch_will_use():
+    """A turn on its own branch takes a cold container, and the ceiling knows it.
+
+    THE MISMATCH THIS FIXES. The pre-check that lets a turn past a full box asked
+    pool_would_serve about "--ref, else the conversation's pinned base sha, else base_ref". From
+    turn 2 that sha is set, `looks_like_sha` is true, and a sha matches ANY warm container of the
+    class -- so the answer was yes while launch() went on to ask pool_claim_for about the
+    conversation's BRANCH, missed, and cold-launched anyway. A run started past a ceiling that
+    had no room for it.
+
+    Adoption makes that routine rather than occasional, because an adopted conversation is on a
+    branch from its first turn. Both sides now go through run_ref.
+    """
+    print("pool: the pre-check and the launch ask the same question")
+    case = bug_case("schedref", venue="private")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pool")
+    conv = case.rows("SELECT * FROM conversation")[0]
+    ok, reason = case.watcher.adopt_branch(conv["id"], "loth/pool", by="op")
+    check("adopted", ok, reason)
+    w = case.watcher
+    for cls in ffwatch.AGENT_CLASSES:
+        w.cfg["agent_classes"][cls]["idle_agents"] = 1
+    os.makedirs(os.path.join(w.pool_dir("p1"), "out"), exist_ok=True)
+    open(os.path.join(w.pool_dir("p1"), "out", "staged"), "w").close()
+    w.pool_containers = lambda: [
+        {"name": "cp", "id": "p1", "branch": "master", "class": "ffagent"}]
+
+    check("a warm container staged on master does not serve a turn on another branch",
+          w.pool_claim_for("loth/pool", "ffagent") is None, None)
+    check("and would_serve agrees",
+          w.pool_would_serve("loth/pool", "ffagent") is False, None)
+
+    # What the pre-check actually asks, with the box full so it is reached at all.
+    asked = []
+    w.pool_would_serve = lambda ref, cls=None: asked.append(ref) or False
+    w.workload_room = lambda: 0
+    queue_follow_up(case, conv, note="carry on")
+    w.schedule()
+    check("the ceiling check asked about the conversation's branch, not its pinned base",
+          asked and asked[0] == "loth/pool", asked)
+    check("and the turn stayed queued rather than starting past a full box",
+          case.rows("SELECT status FROM turn ORDER BY id DESC")[0]["status"] == "queued",
+          case.rows("SELECT status FROM turn ORDER BY id DESC")[0]["status"])
+
+
 def test_a_conversation_can_be_told_which_branch_it_owns():
     """Adoption: a thread works on a branch somebody else pushed, and keeps working on it.
 
@@ -12118,6 +12277,7 @@ def main():
         test_destructive_docker_calls_name_the_container,
         test_stopping_one_container_by_hand,
         test_the_run_is_on_the_filtered_network,
+        test_a_run_on_somebody_elses_branch_publishes_only_its_own_commits,
         test_the_agent_names_the_branch_it_publishes,
         test_a_local_run_publishes_like_a_dev_dm,
         test_a_run_that_changed_nothing_is_not_verified,
@@ -12132,6 +12292,7 @@ def main():
         test_a_second_branch_is_refused_at_the_push,
         test_a_submission_cannot_name_a_branch_the_conversation_does_not_own,
         test_the_mirror_is_only_written_inside_the_pipelines_own_namespace,
+        test_the_scheduler_asks_about_the_ref_the_launch_will_use,
         test_a_conversation_can_be_told_which_branch_it_owns,
         test_adoption_refuses_what_it_cannot_safely_take,
         test_the_harness_never_creates_a_branch_outside_its_prefix,
