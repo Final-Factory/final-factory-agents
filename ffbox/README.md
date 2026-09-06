@@ -1576,7 +1576,15 @@ message the line is ordinary text — not acted on, not refused, and not answere
 reply saying "you may not do that" would tell a stranger that a command exists, that this box
 has operators and that they are not one. The host logs the attempt; the channel hears nothing.
 A message that is ONLY the directive gets no turn at all, and the operator is posted a line
-saying where the work will land, refusals included.
+saying where the work will land, refusals included:
+
+```
+ok — this conversation is now on branch `ffbox/inventory-window-drag-clamp-d44t1-e4c99e4c`.
+Conversation [44](https://discord.com/channels/…) has worked on this branch before.
+```
+
+The second line lists every conversation that owns that branch or has pushed to it, each one a
+link into Discord.
 
 **Before it owns one, and only then.** A conversation keeps its branch for life, so adoption is
 refused once the thread has published; it is also refused for a name git would not take, for

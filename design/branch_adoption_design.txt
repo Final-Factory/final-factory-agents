@@ -9,6 +9,10 @@ and the only outright refusal guards the mirror, not origin. `push_bundle` pushe
 is given. Adoption is the first path that can hand it a name outside the prefix, so 5.6 turns
 the construction argument into a check at the push: outside the prefix, add commits to a
 branch origin already has, never create one. Section 14 and the tests in 16 follow it.
+Revision 5, 2026-09-06: the acknowledgement's wording and the shared-branch line, at Ben's
+request after reading the first one in the channel. "publishes as" became "is now on branch",
+the shared note moved to its own line, and it names every conversation that has touched the
+branch rather than the first one found — with a Discord link each. 6.4 has the shape.
 Revision 4, 2026-09-06: 5.4, the one-conversation-per-branch check, rewritten after it
 refused the first real use. A new thread in #agent-testing named the branch of a bug thread
 that had been finished for four days, and was told "conversation 44 is already working on it".
@@ -261,7 +265,17 @@ idle-close count skips gated messages too (ffwatch.py:4416-4418), so a thread wh
 message is a directive still closes on schedule instead of being held open by it. The operator gets a posted acknowledgement
 through the ordinary outbound queue (`post`, ffwatch.py:1913):
 
-    ok — this thread publishes as `feature/x`. Its next turn starts on that branch.
+    ok — this conversation is now on branch `feature/x`.
+    Conversations [44](https://discord.com/channels/…), [51](…) have worked on this branch
+    before.
+
+The second line appears only when somebody else has: every conversation that OWNS the branch or
+has PUSHED to it, oldest first, each one a link because "conversation 44" is a number a person
+then has to go and find. A conversation with no Discord side — `ffwatch submit` opens one — is
+named by its bare id, since half a link with a blank where the thread goes is worse than an id
+that can be passed to `ffwatch`. Owning and pushing are asked separately because they can
+differ: a conversation that published twice before the one-branch rule existed has a run on a
+branch its column does not name.
 
 or the refusal from section 5, in the same place, in the same sentence shape. A message that
 carries a directive AND a prompt is not gated: it adopts, then becomes a turn like any other
