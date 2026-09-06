@@ -190,6 +190,31 @@ def load_config():
 
     cfg.setdefault("channels", {})
     cfg.setdefault("mentions", {})
+
+    # THE OPERATOR TABLE MOVED OUT OF THIS SECTION, and is folded back into it here so that
+    # every reader below — and the listener, which asks the same question — keeps reading
+    # `trust.operators` exactly as it did. It is a top-level `operators` block now, one entry
+    # per PERSON carrying an id per service, because ffwatch asks the same question about GitHub
+    # and two tables of the same people is two things to keep in step:
+    #
+    #     "operators": { "lothsahn": {"discord": "8000...", "github": 10092359} }
+    #
+    # Only the `discord` id is taken. Sharing the block is not sharing the ids: a GitHub user id
+    # must never be matched against a Discord author, and it cannot be, because it is not copied
+    # here. Digits only, for the reason the table has always dropped non-numeric values.
+    #
+    # A box with no such block keeps whatever `discord.trust.operators` says, which is where
+    # every box before 2026-09-06 has it.
+    shared = read_ffbox_config().get("operators")
+    if isinstance(shared, dict) and shared:
+        ids = {}
+        for name, entry in shared.items():
+            value = entry.get("discord") if isinstance(entry, dict) else None
+            if str(value).isdigit():
+                ids[str(name)] = str(value)
+        trust = dict(cfg.get("trust") or {})
+        trust["operators"] = ids
+        cfg["trust"] = trust
     return cfg
 
 

@@ -137,17 +137,28 @@ for alias in sorted(ffbox.get("watch") or {}):
         missing += out(f"channels.{alias}",
                        f"ffdiscord set channels.{alias} <channel id>")
 
-# WHO MAY COMMAND THIS BOX. The template seeds trust.operators with an example name and an
+# WHO MAY COMMAND THIS BOX. The template seeds the top-level `operators` block with an
+# example name and empty ids, and
 # empty id, so a fresh machine has NOBODY trusted — no operator directive and no operator DM
 # will fire. That is the right default and the wrong thing to discover from a journal line, and
 # MANUAL STEPS is driven entirely by this function, so it has to be listed here or the script
 # says "you are done" about a box that answers nobody.
-operators = ((discord.get("trust") or {}).get("operators") or {})
-if not any(str(v or "").strip().isdigit() for v in operators.values()):
+operators = (ffbox.get("operators") or {})
+_discord_ids = [e.get("discord") for e in operators.values() if isinstance(e, dict)]
+if not any(str(v or "").strip().isdigit() for v in _discord_ids):
     named = ", ".join(sorted(operators)) or "none"
-    missing += out("trust.operators",
-                   f"ffdiscord set trust.operators.<name> <user id>   (present: {named}; "
-                   f"ids only, never usernames)")
+    missing += out("operators.<name>.discord",
+                   f"edit ~/.config/ffbox/config.json   (present: {named}; ids only, never "
+                   f"usernames)")
+
+# THE GITHUB HALF OF THE SAME TABLE, and not counted as missing: a box that never wants
+# #codereview is a box that leaves this empty, and saying "you are not done" about a feature
+# nobody asked for is how MANUAL STEPS stops being read. Listed so it is discoverable.
+_github_ids = [e.get("github") for e in operators.values() if isinstance(e, dict)]
+if not any(str(v or "").strip().isdigit() for v in _github_ids):
+    out("operators.<name>.github",
+        "edit ~/.config/ffbox/config.json   (optional; whose #codereview comment on a pull "
+        "request may start a review run)")
 
 # THE TWO POOL NAMES, checked against the classes that exist. Not counted as missing -- the
 # template seeds both and ffwatch falls back to the same defaults on a bad value -- but a typo
@@ -379,7 +390,7 @@ for key, value in (
       # A conversation picks its class when it is opened -- the dropdown on the web page's new
       # prompt box, `ffwatch submit --agent ffdev`, or, for a Discord conversation, the
       # "user_pool"/"operator_pool" pair in the "discord" section, which picks by whether the
-      # account that opened it is in trust.operators -- and every later turn of it runs in the
+      # account that opened it is in `operators` -- and every later turn of it runs in the
       # same kind of container.
       "ffdev": {
         "base_ref": "master",
@@ -404,7 +415,7 @@ for key, value in (
         # Same keys and the same meanings as ffagent's above, and no inheritance between them.
         #
         # THIS is the pool container_token is for, if any is. Only an account in
-        # discord.trust.operators opens a conversation here, and it already runs unfenced -- a pool
+        # the operators table opens a conversation here, and it already runs unfenced -- a pool
         # trusted with the whole internet is not made meaningfully more dangerous by a scoped git
         # credential. Seeded null anyway: a token inside a container is a decision somebody makes
         # on purpose, and CONTENTS:READ is the answer unless they have decided otherwise and put
@@ -545,7 +556,7 @@ discord.setdefault("server_id", "")
 discord.setdefault("mentions", {})
 
 # WHICH POOL DISCORD TRAFFIC LANDS IN, split by who is speaking. A message whose Discord-
-# authenticated author is in trust.operators opens its conversation in operator_pool; everybody
+# authenticated author is in `operators` opens its conversation in operator_pool; everybody
 # else opens one in user_pool. Real class names, not blanks, because there is a right answer
 # here and a blank would mean "whatever ffwatch's built-in default is" -- the same value, said
 # somewhere nobody can see it. setdefault, so a box that has already pointed these somewhere
@@ -596,10 +607,31 @@ for alias in sorted((ffbox.get("watch") or {})):
 # The same id is what "@name" expands to in a post, so both tables get the row and there is
 # only one place to fill in.
 EXAMPLE_OPERATOR = "example_user"
-trust = discord.setdefault("trust", {})
-operators = trust.setdefault("operators", {})
-if not operators:
-    operators.setdefault(EXAMPLE_OPERATOR, "")
+# ONE BLOCK AT THE TOP LEVEL, one entry per PERSON, one id per service. It was
+# `discord.trust.operators` until 2026-09-06 -- a bare name-to-snowflake table -- and moved out
+# when ffwatch started asking the same question about GitHub: two tables of the same people is
+# two things to keep in step, and the answer to "may this person command the box" is about the
+# person rather than about Discord.
+#
+# THE IDS DO NOT MIX. ffwatch reads the `discord` field for Discord and the `github` field for
+# #codereview, and ffdiscord folds only the `discord` field back into the section its CLI and
+# its listener read, so a GitHub user id is never matched against a Discord author.
+#
+# MIGRATED IN PLACE from the old location, so a box that already had operators keeps them
+# without anybody retyping an id; the old table is then removed, because two copies is the
+# problem this is solving. A fresh box gets the example name and an empty id, which trusts
+# nobody -- the right default, and MANUAL STEPS says so out loud.
+shared = ffbox.setdefault("operators", {})
+legacy = ((discord.get("trust") or {}).get("operators") or {})
+for _name, _id in legacy.items():
+    if str(_id or "").strip().isdigit():
+        shared.setdefault(str(_name), {})["discord"] = str(_id).strip()
+if legacy:
+    discord["trust"].pop("operators", None)
+    if not discord["trust"]:
+        discord.pop("trust", None)
+if not shared:
+    shared[EXAMPLE_OPERATOR] = {"discord": "", "github": ""}
 if not discord["mentions"]:
     discord["mentions"].setdefault(EXAMPLE_OPERATOR, "")
 

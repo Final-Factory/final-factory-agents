@@ -624,6 +624,38 @@ one only when you mean to.
 
 ---
 
+# `operators`
+
+**Whose messages may command this box**, in one block, one entry per PERSON, one id per service.
+
+```jsonc
+"operators": {
+  "lothsahn": { "discord": "193210319093497857", "github": 10092359 },
+  "ben":      { "discord": "226422780445458432" }
+}
+```
+
+It was `discord.trust.operators` until 2026-09-06, a bare name-to-snowflake table. It moved out
+when ffwatch started asking the same question about GitHub for [`#codereview`](#codereview): two
+tables of the same people is two things to keep in step, and whether somebody may command this
+box is a fact about the person rather than about Discord.
+
+**Ids only, never usernames**, per service. A handle is renameable, so a trust key somebody else
+can claim by renaming is not a trust key; a non-numeric value is dropped for that service while
+the person's other ids still count.
+
+**Sharing the block is not sharing the ids.** `ffwatch` reads the `discord` field for Discord
+and the `github` field for `#codereview`, and `ffdiscord` folds only the `discord` field back
+into the section its CLI and its Gateway listener read. A GitHub user id is never matched
+against a Discord author, and a snowflake is never matched against a GitHub one — which matters
+because the two id spaces are unrelated and a collision would otherwise be a way in.
+
+Somebody with no `github` id cannot start a review. Somebody with no `discord` id fires no
+operator directive and no operator DM. Empty means nobody is an operator anywhere, which is what
+a fresh box gets and the right default.
+
+The Discord id is also what `@name` expands to in a post, so `mentions` wants the same row.
+
 # `discord`
 
 What the `ffdiscord` CLI and the Gateway listener read. `ffdiscord set <key> <value>` writes
@@ -677,18 +709,20 @@ unambiguous single matches; an alias that hits two channels stays blank and is r
 
 Name to user id. What `@name` expands to in a post.
 
-## `trust.operators`
+## `trust.operators` — moved
 
-Name to user id. **Whose messages may command this box.**
+It is the top-level [`operators`](#operators) block now. See there.
 
-Ids only, never usernames: a username is renameable, so a trust key somebody else can claim
-by renaming is not a trust key. Blank until you fill it in, which means nobody is an operator
-and every message is treated as a player's. These live in the Discord section rather than the
-ffwatch one because the Gateway listener has to answer the same question and reads no other
-file.
+A box that still has `discord.trust.operators` keeps working: it is read as a fallback when the
+new block is absent, and stage 5 migrates it in place on the next run. The fallback is not a
+merge — a box that has the new block uses it and nothing else, so removing somebody there
+removes them rather than leaving them trusted from a stale copy two sections away.
 
-The same id is what `@name` expands to, so both tables want the row and there is one place to
-fill in.
+**Keep both while the plugin catches up.** `ffdiscord` and the Gateway listener run from the
+plugin cache, not from a checkout, so they only learn about the new block once
+`sh registerAgents.sh` has installed a build that knows it. Until then the listener is still
+reading `discord.trust.operators`, and deleting it stops every operator directive and operator
+DM. Migrate, update the plugin, restart the listener, and delete the old table last.
 
 ## `me`
 
@@ -752,7 +786,6 @@ because a box normally wants one.
 | `github.api_base` | `https://api.github.com` | |
 | `github.trigger` | `"#codereview"` | The word that starts a review run when it appears in a comment on a pull request. Matched case-insensitively against the whole comment; nothing else is parsed out of it. `""` turns the poller off. |
 | `github.review_pool` | `"ffdev"` | Which agent class a review runs in. `"ffagent"` puts it behind the fence, where it will not be able to push. |
-| `github.trust.operators` | `{}` | Name to NUMERIC GitHub user id. Whose comment may start a review. |
 
 The token itself is read from the environment, not from this file, so it is never written to
 disk beside channel ids and never lands in a config a container could see. A token that IS in
@@ -766,17 +799,12 @@ the pull request already points at, and the harness posts a comment. Nothing mer
 new is opened. `design/github_pr_review_design.txt` is the whole of it.
 
 ```jsonc
-"github": {
-  "trigger": "#codereview",
-  "review_pool": "ffdev",
-  "trust": { "operators": { "lothsahn": 10092359 } }
-}
+"operators": { "lothsahn": { "discord": "1932...", "github": 10092359 } },
+"github":    { "trigger": "#codereview", "review_pool": "ffdev" }
 ```
 
-**Ids, not logins**, for the reason `discord.trust.operators` gives: a handle can be renamed.
-The two tables are separate and neither falls back to the other -- the id spaces are unrelated,
-and a Discord snowflake colliding with a GitHub user id would be a way in. Empty means nobody
-can start a review, which is what a box that has not been told its operators should do.
+Who may start one is the top-level [`operators`](#operators) block, not a table of its own.
+Somebody with no `github` id cannot start a review, which is the right answer rather than a gap.
 
 The first poll on a box records the moment it started watching and answers nothing older, the
 same watermark a Discord channel gets. Turning the trigger on does not answer the repository's

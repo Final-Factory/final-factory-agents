@@ -614,6 +614,24 @@ DEFAULTS = {
     # and this bounds it: a conversation nobody has touched in a week has been moved on from by
     # a human, and the harness re-deciding its publication is no longer help.
     "reconcile_secs": 7 * 24 * 3600,
+    # WHO MAY COMMAND THIS BOX, in one place, with one entry per PERSON and one id per service.
+    #
+    #     "operators": { "lothsahn": {"discord": "8000...", "github": 10092359} }
+    #
+    # It used to be `discord.trust.operators`, a bare name-to-snowflake table, and adding a
+    # second service to it would have meant a second table somewhere else and two lists of the
+    # same people to keep in step. A person is one person; what differs per service is the id.
+    #
+    # THE IDS STILL NEVER MIX, and that is the part worth being careful about. Sharing the BLOCK
+    # is not sharing the SET: operators() answers with the discord ids and github_operators()
+    # with the github ones, so a snowflake is only ever tested against Discord's authenticated
+    # author and a GitHub user id only ever against GitHub's. An entry with no `github` simply
+    # cannot start a review, which is the right answer rather than a gap.
+    #
+    # Numeric ids only, per service, dropped otherwise: a handle can be renamed, so a trust key
+    # somebody can claim by renaming is not a trust key.
+    "operators": {},
+
     "github": {
         "api_base": "https://api.github.com",
         "repo": "Final-Factory/FinalFactory",
@@ -645,12 +663,8 @@ DEFAULTS = {
         # to say so and then find out that a fenced container cannot push, rather than have the
         # choice buried in code.
         "review_pool": "ffdev",
-        # WHOSE COMMENT MAY START ONE. Name to NUMERIC GitHub user id, the same shape and the
-        # same argument as discord.trust.operators: a login can be renamed, so a trust key
-        # somebody can claim by renaming is not a trust key. Empty means nobody can trigger a
-        # review, which is the right default for a box that has not been told who its operators
-        # are -- and the poller still costs one request a sweep, so turning it off is `trigger`.
-        "trust": {"operators": {}},
+        # WHOSE COMMENT MAY START ONE is not here: it is the top-level `operators` block, which
+        # names each person once and carries their id for each service. See operator_ids().
     },
 
     # ceilings (design section 8). Three separate clocks; conflating them makes a slow Unity
@@ -1367,18 +1381,44 @@ VENUES = ("public", "private")
 ENGAGEMENTS = ("all", "mention")
 
 
-def operators(cfg):
-    """{name: snowflake} for the configured operator accounts, {} when there are none.
+def operator_ids(cfg, service):
+    """{name: id} for one service, out of the shared `operators` block. {} when there are none.
 
-    Anything whose value is not a digit string is DROPPED rather than kept. Usernames are
-    changeable and a trust key somebody else can claim by renaming is not a trust key, so a
-    `".slims"` in this table would match nobody while looking like it worked.
+    ONE BLOCK, ONE ENTRY PER PERSON, ONE ID PER SERVICE — and this is the only reader, so the
+    two services cannot come to disagree about who is trusted while still never sharing a set of
+    ids. `service` picks the field; nothing here can return a Discord snowflake to a caller
+    asking about GitHub.
+
+    Anything whose value is not a digit string is DROPPED rather than kept, per service. A
+    handle is renameable, so a trust key somebody else can claim by renaming is not a trust key,
+    and a `".slims"` in here would match nobody while looking like it worked.
+
+    THE OLD SHAPE STILL READS, for `discord` only: `discord.trust.operators` was a bare
+    name-to-snowflake table and is where every box before 2026-09-06 keeps its operators. It is
+    a fallback and not a merge — a box that has the new block uses it and nothing else, so
+    removing somebody from it removes them, rather than leaving them trusted from a stale copy
+    two sections away.
     """
+    block = cfg.get("operators")
+    if isinstance(block, dict) and block:
+        out = {}
+        for name, entry in block.items():
+            value = entry.get(service) if isinstance(entry, dict) else None
+            if str(value).isdigit():
+                out[str(name)] = str(value)
+        return out
+    if service != "discord":
+        return {}
     raw = ((cfg.get("_discord") or {}).get("trust") or {})
     ops = raw.get("operators") if isinstance(raw, dict) else None
     if not isinstance(ops, dict):
         return {}
     return {str(k): str(v) for k, v in ops.items() if str(v).isdigit()}
+
+
+def operators(cfg):
+    """{name: snowflake} for the accounts that may command this box from Discord."""
+    return operator_ids(cfg, "discord")
 
 
 def is_operator(cfg, author_id):
@@ -1389,17 +1429,12 @@ def is_operator(cfg, author_id):
 def github_operators(cfg):
     """{name: numeric github user id} for the accounts that may start a review, {} for none.
 
-    THE SIBLING OF operators(), AND DELIBERATELY NOT THE SAME TABLE. Both answer "may this
-    account command the box", and both drop anything that is not a digit string for the same
-    reason -- a renameable handle is not a trust key. What they must never do is share a set:
-    the id spaces are unrelated, and a Discord snowflake that happened to collide with a GitHub
-    user id would be a way in. Two tables, two readers, no fallback from one to the other.
+    THE SIBLING OF operators(), OUT OF THE SAME BLOCK AND NEVER OUT OF THE SAME SET. They read
+    one list of people, which is what stops the two drifting; they read different fields of it,
+    which is what keeps the id spaces apart. A Discord snowflake that happened to collide with a
+    GitHub user id must not be a way in, and it is not: it is never tested here.
     """
-    raw = ((cfg.get("github") or {}).get("trust") or {})
-    ops = raw.get("operators") if isinstance(raw, dict) else None
-    if not isinstance(ops, dict):
-        return {}
-    return {str(k): str(v) for k, v in ops.items() if str(v).isdigit()}
+    return operator_ids(cfg, "github")
 
 
 def _issue_number_from_url(issue_url):
@@ -1428,7 +1463,7 @@ def is_github_operator(cfg, user_id):
 # WHICH POOL DISCORD TRAFFIC LANDS IN, and it is two answers rather than one because the two
 # kinds of author are not the same risk. A stranger in a forum thread gets `user_pool`, which
 # ships as ffagent, whose network is "limited": the egress fence, the allowlist, nothing else.
-# An account in trust.operators gets `operator_pool`, which ships as ffdev, whose network is
+# An account in `operators` gets `operator_pool`, which ships as ffdev, whose network is
 # "full": the whole internet, the same trust a developer's shell on this box has. Configured
 # rather than built in so a box that does not want that split can point both at one pool.
 DISCORD_POOL_DEFAULTS = {"user_pool": "ffagent", "operator_pool": "ffdev"}
@@ -1707,12 +1742,17 @@ def config_warnings(cfg):
             str(cfg["_config_error"]) + ": this process is running on BUILT-IN DEFAULTS and "
             "will launch no containers until the file parses and ffwatch is restarted")
     if not operators(cfg):
-        raw = ((cfg.get("_discord") or {}).get("trust") or {})
-        present = isinstance(raw, dict) and raw.get("operators")
+        # NAMED FOR WHERE IT IS NOW, and it reports on whichever location this box actually
+        # uses: a machine that predates the move has nothing at the top level and everything
+        # under `discord.trust`, and being told to look in the empty one is worse than nothing.
+        block = cfg.get("operators")
+        legacy = ((cfg.get("_discord") or {}).get("trust") or {}).get("operators")
+        where = "operators" if isinstance(block, dict) and block else "discord.trust.operators"
+        present = bool(block) or bool(legacy)
         out.append(
-            "discord.trust.operators in the config is "
-            + ("present but holds no numeric ids (usernames are not trust keys)" if present
-               else "missing")
+            f"{where} in the config is "
+            + ("present but holds no numeric discord ids (usernames are not trust keys)"
+               if present else "missing")
             + ": NOBODY is an operator and every message is treated as a player's")
     if not (cfg.get("watch") or {}):
         out.append(
