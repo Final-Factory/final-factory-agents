@@ -543,10 +543,37 @@ PREAMBLE_BRANCH_NEW = (
 # not on a second branch carrying its own copy of the change with no way to tell from the
 # outside which of the two is current.
 def preamble_branch(job):
-    """The branch half of the preamble: make one, or continue the conversation's."""
-    branch = (job.get("bases") or {}).get("conversation_branch")
+    """The branch half of the preamble: make one, continue the conversation's, or join one.
+
+    THREE SITUATIONS AND NOT TWO. A conversation's branch is normally its own earlier turns'
+    work, and the wording below leans on that: the commits are yours, the tree is your working
+    state, carry on. An ADOPTED branch is the same mechanism and the opposite fact — an operator
+    pointed this conversation at a branch somebody else pushed, so the commits under it are
+    theirs and the first thing to do with them is read them. Telling the agent they were its own
+    earlier turns would invite it to treat a stranger's work as a draft it had left lying about.
+    """
+    bases = job.get("bases") or {}
+    branch = bases.get("conversation_branch")
     if not branch:
         return PREAMBLE_BRANCH_NEW
+    if bases.get("branch_adopted"):
+        return (
+            f" YOU ARE ON `{branch}`, WHICH THIS CONVERSATION DID NOT CREATE. An operator "
+            "pointed this thread at a branch somebody else pushed, and it is checked out at "
+            "their work. Those commits are theirs, they are on origin, and a pull request may "
+            "already be open against them: READ THE BRANCH BEFORE YOU CHANGE IT — `git log` "
+            "and `git diff` against the base — because what you are looking at is somebody's "
+            "considered work and not a draft you left lying about. Add commits on top. DO NOT "
+            "make a branch and do not switch to one: the harness publishes this branch by name "
+            "whatever HEAD ends on, so a branch of your own is a name that gets discarded "
+            "while your commits land here anyway. Do not rebase, revert, amend or otherwise "
+            "rewrite what is already on it — you have no `git rebase`, the harness refuses a "
+            "range that rewrites history below its base, and the branch may be somebody's work "
+            "in progress; if something already on it is wrong, fix it with a new commit and "
+            "say so in your summary. A run that ends on develop, master or main is refused "
+            "outright and every commit it made is discarded, so never switch to one before you "
+            "exit."
+        )
     return (
         f" YOU ARE ALREADY ON THIS CONVERSATION'S BRANCH, `{branch}`, and it is checked out at "
         "the work an earlier turn of this same conversation published. Those commits are on "

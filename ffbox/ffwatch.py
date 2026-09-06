@@ -6538,6 +6538,11 @@ class Watcher:
                       # situation it is already in, so that it commits onto the branch instead
                       # of making a second one and wondering why its name did not survive.
                       "conversation_branch": self.conversation_branch(conv),
+                      # AND WHOSE COMMITS ARE ALREADY ON IT. On a branch this conversation
+                      # built, they are its own earlier turns'; on an adopted one they are
+                      # somebody else's, and the difference decides whether the agent may treat
+                      # what is there as its own working state or has to read it first.
+                      "branch_adopted": self.conversation_adopted(conv),
                       "choices": dict(self.cfg.get("publish_bases") or {})},
             # Verification is on for every run. It costs nothing on a run that changed no files:
             # the container skips the suite when the tree is untouched, so a question does not

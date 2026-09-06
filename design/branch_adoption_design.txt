@@ -9,6 +9,16 @@ and the only outright refusal guards the mirror, not origin. `push_bundle` pushe
 is given. Adoption is the first path that can hand it a name outside the prefix, so 5.6 turns
 the construction argument into a check at the push: outside the prefix, add commits to a
 branch origin already has, never create one. Section 14 and the tests in 16 follow it.
+Revision 3, 2026-09-06: written while implementing, and the corrections are all in the same
+direction -- the prefix is a smaller part of this than revision 1 thought. Section 8 was filed
+under Tier B and belongs to both tiers: mirror_take reads a ref out of the host checkout that
+exists only for a branch this box pushed, so an adopted `ffbox/` name has no mirror copy either
+and the sync keys on ADOPTED rather than on the name. Its second step is a fetch into the
+mirror rather than a push out of the checkout, matching mirror_take. Section 10's assertion in
+launch is dropped: the rule lives in pool_claim_for, and a second check there would mean
+another `docker ps` to re-derive what it just decided -- it is pinned by test instead. push_bundle
+returns (ok, error, existed), which is how 5.6's lookup reaches run.branch_existed. And the
+column list is `ADDED_COLUMNS`, not SCHEMA_ADDITIONS.
 
 
 1. What this is for
@@ -64,8 +74,8 @@ path are drawn around the `ffbox/` prefix and around commit identity.
 
 TIER A -- the branch is already under `branch_prefix` (`ffbox/...`). This is the common case:
 resuming a branch an earlier lane run left behind, after its thread was closed or its turn
-ceiling rotated. Sections 4, 5, 6, 7, 10, 11 and 12 apply. Nothing in the mirror path or the
-harvest changes.
+ceiling rotated. Sections 4, 5, 6, 7, 8, 10, 11 and 12 apply; only section 9 does not.
+(Section 8 was listed as Tier B in revision 1 and is not -- see the correction in it.)
 
 TIER B -- the branch has a foreign name (`feature/x`, `loth/save-fix`, anything a person or a
 non-ffbox agent pushed). Everything in Tier A, plus sections 8 and 9. Section 9 is the one
@@ -274,8 +284,8 @@ conversation that owns nothing (ffwatch.py:7007-7013). Adoption is about a branc
 exists on origin. Two different questions, two different flags.
 
 
-8. The mirror (Tier B)
-----------------------
+8. The mirror (Tier A and B both)
+---------------------------------
 
 A container resolves --ref against the local mirror and nothing else
 (restore-workspace.sh:115-121). `mirror_carries` asks whether a branch is there
@@ -285,11 +295,23 @@ names under `branch_prefix`, and it says why: it must not be able to move a bran
 launch guard at ffwatch.py:7028-7046, which means every turn of the conversation dies with
 BranchUnavailable.
 
+AND SO DOES AN ADOPTED `ffbox/name`, which is the correction implementation made to this
+section: revision 1 put it under Tier B on the reasoning that the fence is drawn around the
+prefix. The fence is not what fails first. mirror_take fills the mirror from
+`refs/ffbox/<branch>` IN THE HOST CHECKOUT, and that ref exists only for a branch this box
+pushed -- an adopted branch was pushed by somebody else, so it is absent whatever the branch is
+called. Adoption keys the sync on ADOPTED, not on the name, and Tier A needs it too.
+
 Add a sibling rather than widening the fence:
 
     mirror_sync_from_origin(branch)
-        git -C <git_dir> fetch --quiet <push_remote>
-        git -C <git_dir> push <mirror> +refs/remotes/<push_remote>/<branch>:refs/heads/<branch>
+        git -C <git_dir> fetch --quiet <push_remote> <branch>
+        git -C <mirror> fetch --quiet <git_dir> \
+            +refs/remotes/<push_remote>/<branch>:refs/heads/<branch>
+
+The second step is a fetch INTO the mirror from the host checkout rather than a push out of it,
+which is the shape mirror_take already has: the credential stays in the checkout, the mirror is
+never given a network, and the objects move over the same local path.
 
 The fence on the new function is different from `mirror_take`'s, and that difference is the
 argument for it. `mirror_take` pushes a ref the RUN produced, so an unprefixed name there
@@ -301,17 +323,20 @@ control is a debugging problem nobody should have to have.
 
 Two call sites:
 
-  * At adoption (section 5), so a branch the mirror cannot be given is reported in the thread.
+  * At adoption (section 5), for every adopted name, so a branch the mirror cannot be given is
+    reported in the thread rather than at the first launch.
   * At EVERY launch of an adopted conversation, not only when `mirror_carries` says no. This
     is the half that makes the workflow usable: it means an operator can push a commit to the
     branch from their own machine between two turns, and the next turn starts on top of it
     rather than on a stale copy. For a `branch_adopted_at IS NULL` conversation nothing
-    changes -- `mirror_take` stays exactly as it is, and its cheap local push stays the repair
+    changes -- `mirror_take` stays exactly as it is, and its cheap local fetch stays the repair
     path for an ffbox branch missing from the mirror.
 
-The post-publish `mirror_take(branch)` at ffwatch.py:8248 routes to whichever of the two suits
-the name, so an adopted branch's new head reaches the mirror the same way an ffbox branch's
-does.
+The post-publish `mirror_take(branch)` at ffwatch.py:8248 routes BY THE NAME rather than by
+adoption, and that is the one place the prefix is the right question. What has just happened is
+a push, so the commits are on origin and under `refs/ffbox/<branch>` in the host checkout both,
+and either route carries them; the prefixed name takes the cheap local one and a name
+mirror_take refuses on principle comes back from origin instead.
 
 
 9. The bundle range and the identity fence (Tier B)
@@ -415,10 +440,13 @@ that is a run started past a ceiling that had no room for it. This predates adop
 adoption makes it routine, so the fix belongs here: give both sides one function, the ladder
 in `run_ref`, and let the pre-check ask about the ref the launch will actually use.
 
-SECOND, a warm container must never be dispatched a turn whose branch it is not staged on,
-even if some future caller asks. Keep that as an assertion in `launch` rather than a comment:
-if `pool_claim_for` returned a container, its branch equals the ref, or the container goes
-back and the turn cold-launches.
+SECOND, the rule has to stay a property of the code rather than of `pool_claim_for`'s current
+implementation. Revision 1 asked for an assertion in `launch` re-checking the claimed
+container's branch; implementation dropped it, because the only way to ask that question again
+is another `docker ps` to re-derive what `pool_claim_for` decided a line earlier, and paying
+that on every pooled launch to check the caller against itself is not worth it. The rule is
+pinned by test instead: a turn on a branch no pool is staged on is offered nothing, and the
+pre-check and the launch are shown to ask about the same ref.
 
 The cost is a cold start per turn, which is what every continuation of every conversation
 already pays today for the same reason. It is not a new expense and it should not be described

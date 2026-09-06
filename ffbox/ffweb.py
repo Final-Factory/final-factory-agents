@@ -2732,15 +2732,31 @@ class App:
         buried three runs down a timeline. It was buried three runs down a timeline, and only in
         the run rows, which is why it is here now.
 
-        The file counts come from the runs because the conversation does not carry them, and
-        they are per-run and cumulative both: each publishing run bundles its whole branch
-        against the base, so the LAST one is the branch's total. Only `pushed` rows are counted.
+        The file counts come from the runs because the conversation does not carry them, and on
+        a branch this conversation MADE they are per-run and cumulative both: each publishing
+        run bundles its whole branch against the base, so the LAST one is the branch's total.
+        On an ADOPTED branch they are not. That run is bundled from where it started rather than
+        from the base, because the range would otherwise carry the commits of whoever made the
+        branch — so the number is what that turn changed, and the line says which of the two it
+        is showing rather than leaving a reader to assume the usual one. Only `pushed` rows are
+        counted either way.
+
         A conversation with no branch renders nothing at all rather than an empty row saying so
         — most conversations are questions, and "no branch" is not news about one.
         """
         branch = _row(conv, "branch")
         if not branch:
             return ""
+        # WHO MADE THIS BRANCH. A conversation normally owns a branch because it pushed one; an
+        # adopted one was pointed at a branch somebody else pushed, and a reviewer looking at a
+        # thread whose branch predates it should not have to infer that from the dates.
+        # Guarded like conversation_branch in ffwatch.py: the columns are v16 and this page can
+        # be reading a row from a database that has not been migrated yet.
+        try:
+            adopted_by = _row(conv, "branch_adopted_by") if _row(conv, "branch_adopted_at") \
+                else None
+        except (IndexError, KeyError):
+            adopted_by = None
         last = self.db.one(
             "SELECT r.changed_files, r.pr_base, r.pr_number, r.pr_url, r.id"
             " FROM run r JOIN turn t ON t.id = r.turn_id"
@@ -2750,10 +2766,13 @@ class App:
             "SELECT COUNT(*) AS n FROM run r JOIN turn t ON t.id = r.turn_id"
             " WHERE t.conversation_id = ? AND r.pushed = 1", (conv["id"],))
         bits = ["<div class=\"note branch\">branch ", str(branch_link(branch))]
+        if adopted_by:
+            bits.append(" · adopted by " + esc(adopted_by))
         if last and _row(last, "pr_base"):
             bits.append(" → " + esc(last["pr_base"]))
         if last and _row(last, "changed_files"):
-            bits.append(" · " + esc(last["changed_files"]) + " file(s)")
+            bits.append(" · " + esc(last["changed_files"])
+                        + (" file(s) this turn" if adopted_by else " file(s)"))
         turns = int((pushes or {"n": 0})["n"] or 0)
         if turns > 1:
             # Said out loud, because it is the difference between "an agent wrote this" and "an

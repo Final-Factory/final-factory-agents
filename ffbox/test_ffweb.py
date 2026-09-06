@@ -3232,6 +3232,36 @@ def test_the_branch_is_shown_as_the_conversations_own():
         srv.stop()
 
 
+def test_an_adopted_branch_says_so_on_the_page():
+    """A branch the conversation did not make reads differently, and the counts mean something
+    different too.
+
+    A reviewer opening a thread whose branch predates it should not have to work that out from
+    the dates. And the file count on an adopted branch is what THAT TURN changed rather than
+    the branch's total, because the range is bundled from where the run started — the branch's
+    total would be counting the work of whoever made it.
+    """
+    srv = serve()
+    try:
+        srv.db("UPDATE conversation SET branch_adopted_at='2026-09-06T00:00:00Z',"
+               " branch_adopted_by='lothsahn' WHERE id=1")
+        code, _h, body = srv.get("/conversation/1")
+        conv = text_of(body)
+        check("the page says who adopted the branch", "adopted by lothsahn" in conv, conv[:600])
+        check("and labels the file count as this turn's, not the branch's total",
+              "3 file(s) this turn" in conv, conv[:600])
+
+        srv.db("UPDATE conversation SET branch_adopted_at=NULL, branch_adopted_by=NULL"
+               " WHERE id=1")
+        code, _h, body = srv.get("/conversation/1")
+        plain = text_of(body)
+        check("a branch the conversation pushed itself is unchanged",
+              "adopted by" not in plain and "3 file(s)" in plain
+              and "file(s) this turn" not in plain, plain[:600])
+    finally:
+        srv.stop()
+
+
 def test_the_ids_are_on_the_conversation_page_and_nowhere_else():
     """Both ids, together, where somebody could act on them.
 
@@ -3328,6 +3358,7 @@ def main():
         test_the_page_shows_how_clustering_decided,
         test_the_branch_is_shown_as_the_conversations_own,
         test_a_run_that_published_nothing_does_not_claim_a_branch,
+        test_an_adopted_branch_says_so_on_the_page,
         test_the_ids_are_on_the_conversation_page_and_nowhere_else,
         test_a_branch_name_cannot_carry_markup_into_the_page,
         test_timeline_reads_as_a_conversation,
