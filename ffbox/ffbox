@@ -228,6 +228,13 @@ MOUNTS=()
 # Both take the id of a directory under POOL_DIR that the caller has created; ffwatch's keeper
 # owns that lifecycle. design/ffbox_idle_agents_design.txt.
 STAGE_POOL=
+# WHICH TIER OF SPARE THIS IS, when --stage-pool is what we are doing. `held` is the pool the
+# class's `idle` number asks for and nothing evicts; `evictable` is a guess staged into slack --
+# a branch a turn used recently -- which the keeper gives back the moment anything else on the box
+# wants the place. It goes on as a label and nothing else reads it: the tier changes when a spare
+# is DESTROYED, never how it is filled, dispatched or harvested.
+# design/ffbox_warm_branches_design.txt section 3.
+POOL_TIER=held
 # WHICH CLAUDE ACCOUNT PAYS FOR THIS RUN, as the secrets.env variable holding its token and
 # never as the token. Empty means the first non-empty slot, which is the only one on a box with
 # one account and is what every run did before ffwatch started choosing. See the token pool
@@ -340,6 +347,9 @@ Options:
   --pool-dir PATH      Where staged containers' spool directories live
                        (default ~/ffbox-state/pool).
   --idle-ttl N         How long a staged container waits before retiring (default 14400).
+  --pool-tier NAME     held (default) or evictable. Which tier of spare --stage-pool creates;
+                       an evictable one is staged into slack and is what the keeper sheds when
+                       the box needs the place back. Label only; a run behaves identically.
   --agent-class NAME   Which kind of agent container this is: ffagent (default) or ffdev. Both
                        run the same image, task and limits; the name goes on as a label so the
                        two pools can be counted and claimed apart. ffwatch passes the class the
@@ -402,6 +412,7 @@ while [ $# -gt 0 ]; do
         --detach)         DETACH=1; shift ;;
         --finish)         FINISH_DIR=${2:?--finish needs a run directory}; shift 2 ;;
         --idle-ttl)       IDLE_TTL=${2:?--idle-ttl needs seconds}; shift 2 ;;
+        --pool-tier)      POOL_TIER=${2:?--pool-tier needs held or evictable}; shift 2 ;;
         --claude-key)     CLAUDE_KEY=${2:?--claude-key needs a variable name}; shift 2 ;;
         --agent-class)    AGENT_CLASS=${2:?--agent-class needs a name}; shift 2 ;;
         --agent-timeout)  AGENT_TIMEOUT=${2:?--agent-timeout needs seconds}; CLOCKS=1; shift 2 ;;
@@ -855,6 +866,14 @@ OUT="${RESULTS}/${RUN_ID}"
 case " $AGENT_CLASSES " in
     *" $AGENT_CLASS "*) ;;
     *)  echo "ffbox: --agent-class $AGENT_CLASS is not one of: $AGENT_CLASSES" >&2; exit 2 ;;
+esac
+
+# THE SAME REFUSAL FOR THE SAME REASON. A tier outside the two is a label the keeper's shed never
+# matches, so the container would be staged, hold a workspace, and be immune both to the reserve
+# and to the `idle` target -- a spare nothing owns and nothing reclaims.
+case "$POOL_TIER" in
+    held|evictable) ;;
+    *)  echo "ffbox: --pool-tier $POOL_TIER is not one of: held evictable" >&2; exit 2 ;;
 esac
 
 # WHAT THIS CLASS'S CONTAINERS ARE CALLED. Both pools stage spares and both run turns, and until
@@ -1351,6 +1370,7 @@ if [ -n "$STAGE_POOL" ]; then
                 --label "$FFBOX_WORKLOAD_LABEL=pool" \
                 --label "ffbox.pool=${REF}" \
                 --label "ffbox.pool.id=${STAGE_POOL}" \
+                --label "ffbox.pool.tier=${POOL_TIER}" \
                 --label "ffbox.slot=${_POOL_SLOT}" \
                 "${RUN_ARGS[@]}" \
                 -v "$POOL_IN:/ffbox/in:ro" \

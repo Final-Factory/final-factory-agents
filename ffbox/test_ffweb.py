@@ -505,15 +505,22 @@ FFSTATUS_DOC = {
     # an age, so a hardcoded date would render "47000h ago" and grow by an hour every hour.
     "update": {"last_applied_epoch": int(time.time()) - 7620,
                "last_applied_sha": "f2c72ecedede9a11", "next_check_secs": 214},
+    # `warm_branches` is the EVICTABLE tier, counted apart from `waiting` so a guess cannot make
+    # an unfilled held pool look full. null is CI, which has no such tier.
     "pools": [
-        {"class": "ffagent", "idle": 2, "waiting": 1, "busy": 0, "max": 10},
-        {"class": "ffdev", "idle": 1, "waiting": 1, "busy": 0, "max": 3},
-        {"class": "ci", "idle": 1, "waiting": 0, "busy": 1, "max": 3},
+        {"class": "ffagent", "idle": 2, "waiting": 1, "busy": 0, "max": 10,
+         "warm_branches": 1},
+        {"class": "ffdev", "idle": 1, "waiting": 1, "busy": 0, "max": 3, "warm_branches": 0},
+        {"class": "ci", "idle": 1, "waiting": 0, "busy": 1, "max": 3, "warm_branches": None},
     ],
     "containers": [
         {"lane": "spare", "class": "ffagent", "name": "ffbox-agent-pool-deadbeef",
          "slot": "3", "state": "warm", "ttl_secs": 13359, "ref": "master",
          "uptime": "18 minutes"},
+        # A spare of the second tier: warm, and shed as soon as the box needs the place.
+        {"lane": "spare", "class": "ffagent", "name": "ffbox-agent-pool-c0ffee",
+         "slot": "4", "state": "warm-evictable", "ttl_secs": 2870, "ref": "loth/fix",
+         "uptime": "9 minutes"},
         {"lane": "agent", "class": "ffdev", "name": "ffbox-dev-t1-99aa", "slot": "5",
          "state": "running*", "ttl_secs": None, "ref": None, "uptime": "2 minutes"},
         # A CI ROW CARRIES A TTL SINCE 2026-09-02, and this fixture said None for as long as the

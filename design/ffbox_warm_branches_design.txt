@@ -1,0 +1,398 @@
+ffbox warm branches: a second tier of spare that gives its place back
+=====================================================================
+
+2026-09-06. Extends design/ffbox_idle_agents_design.txt, which built the pool this stands on.
+
+The pool warms one branch per class. `pool_branch()` answers `pool_ref or base_ref`, the keeper
+stages `idle` copies of that, and `pool_claim_for` hands one to a turn whose ref matches it
+exactly. Every other turn launches cold and pays the forty seconds the pool exists to remove.
+
+Which turns are those. `run_ref()` puts a conversation's OWN branch at the top of the ladder, so
+from the moment a conversation pushes, every later turn of it asks for a branch the pool has never
+heard of. That is not an edge: it is turn 2 onwards of every piece of dev work the box does. A
+follow-up on a thread -- "actually, also do X" -- is exactly the question-shaped turn the idle
+agents design was written for, and it is the one shape that always misses.
+
+So: warm a handful of RECENTLY USED branches as well, out of the slack the box is not using, and
+give those places straight back the moment anything else wants them.
+
+    warm-held         what the pool stages today. `idle` per class, on the class's branch.
+                      Nothing evicts it. That rule stands.
+    warm-evictable    the new tier. Recently-touched branches, staged only into slack, shed
+                      on demand, and worth nothing to anybody when it goes.
+
+The whole design is the second word of the second name.
+
+
+0. Sizing it
+-------------
+
+This buys forty seconds on a repeat turn against a standing cost in RAM that is paid always, so
+how large `warm_branches.count` should be is a measurement rather than a taste. ffwatch.db on the
+build server answers it:
+
+    SELECT COUNT(*) FROM (
+      SELECT LAG(COALESCE(t.started_at, t.queued_at))
+               OVER (PARTITION BY c.branch ORDER BY t.queued_at) AS prev,
+             COALESCE(t.started_at, t.queued_at) AS at
+        FROM turn t JOIN conversation c ON c.id = t.conversation_id
+       WHERE c.branch IS NOT NULL)
+     WHERE prev IS NOT NULL
+       AND julianday(at) - julianday(prev) < 1.0/24;
+
+How many turns arrived on a branch that had one within the hour -- the turns this would have
+served warm. Take it before raising the number.
+
+IT IS NOT A PRECONDITION, and an earlier draft of this document made it one, seeding `count: 0`
+until somebody had run the query. That is a feature nobody sees. The mechanism is the same at any
+size, the reserve makes an over-large pool harmless rather than dangerous, and the honest default
+is the one that does the thing that was asked for. It ships at ONE PER CLASS -- two on a box with
+two classes, which reads "a warm sandbox or two" as the box's number rather than a class's.
+
+
+1. What gets built
+------------------
+
+  1. A second tier of staged container, `warm-evictable`, staged onto branches that a turn used
+     recently rather than onto the class's `base_ref`.
+  2. A box-wide RESERVE: evictable spares may never occupy the last `workload_reserve` places
+     under `max_concurrent_runs`. Anything that wants a place therefore finds one.
+  3. A SHED: when free places fall below the reserve, the keeper destroys one evictable spare per
+     pass, least-recently-used branch first, until the reserve is whole again.
+  4. `warm-held` is unchanged in every respect, including that nothing evicts it.
+  5. `warm_branches.count` is per class and ships at 1. `0` is exactly current behaviour, and
+     is what a box that does not want this sets.
+
+Not a goal: warming a branch nobody has asked about yet. The candidate set is drawn from what the
+box has actually run, never from `git branch -r`. A prediction that is wrong costs 24 GiB.
+
+Not a goal: making the FIRST turn of a conversation faster. That one already hits the held pool,
+because a conversation with no branch asks for `base_ref` or for a pinned sha, and a pinned sha
+matches any warm container of its class (`looks_like_sha` in `pool_claim_for`).
+
+
+2. Why the eviction rule survives
+----------------------------------
+
+The idle agents design settled this on 2026-09-01 and the README states it flatly: NOTHING IS
+EVICTED. A cold launch short of a place waits for one; it does not take a staged container to make
+room for itself. The reasoning was that with two agent classes, eviction is one worker type taking
+another's warm container, and the turn it is taken from then pays the forty seconds it was staged
+to save. That reasoning is correct and this design does not touch it.
+
+What it does is add a tier the reasoning does not cover. A held spare is a PROMISE: the config
+said `idle: 1`, the keeper made one, and a turn of that class is entitled to expect it. An
+evictable spare is a GUESS -- nobody asked for it, no configured number is short while it is
+missing, and the turn it might have served does not exist yet and may never. Destroying a promise
+to serve somebody else is the trade that was rejected. Destroying a guess is not that trade.
+
+The tiers are also not interchangeable in the shed order, and that is the whole safety property:
+the shed walks evictable spares and stops. It never reaches a held one, whatever the pressure. A
+box under sustained load sheds its guesses, keeps its promises, and ends up exactly where it is
+today.
+
+
+3. The tier is a label, and a demotion is not a relabel
+--------------------------------------------------------
+
+`ffbox --stage-pool` gains `--pool-tier held|evictable`, which goes on as
+`--label ffbox.pool.tier=...` beside the three labels already set there (ffbox:1351-1354).
+`pool_containers()` reads it into each container's dict the way it already reads `ffbox.pool` and
+`ffbox.agent.class`. An EMPTY label is `held`, which is the right answer for every container
+staged before this existed: they were staged by the one tier there was.
+
+DOCKER CANNOT RELABEL A RUNNING CONTAINER, so the label says what a container was staged AS and
+can never say what it has become. One thing does need it to change: when a class's `base_ref` or
+`pool_ref` moves, the held spares on the old branch instantly stop being the promise anybody
+made -- the class's pool is now short by one on the NEW branch, and the old container serves
+nothing. Leaving those at the front of the "never shed this" queue would have the box protecting
+containers it has no use for while shedding ones it does.
+
+So the tier a shed decision uses is COMPUTED, not read:
+
+    effective_pool_tier(c) = "evictable" if c["branch"] != pool_branch(c["class"])
+                             else (c.get("tier") or "held")
+
+A held spare whose branch no longer matches its class's pool branch is demoted, once, by
+arithmetic. Nothing is written anywhere. The label stays honest about creation and the demotion
+stays honest about now.
+
+`.get("tier")` AND NOT `c["tier"]`, which is not fussiness. An absent tier already has a correct
+answer -- held, the one tier there was -- so requiring the key would turn a container dict built
+without it into a crash in the keeper, for no gain.
+
+
+4. Which branches
+------------------
+
+The candidate list comes out of the database on each keeper pass, ordered most recent first:
+
+    SELECT c.branch, c.agent_class, MAX(COALESCE(t.started_at, t.queued_at)) AS seen
+      FROM turn t JOIN conversation c ON c.id = t.conversation_id
+     WHERE c.branch IS NOT NULL
+       AND c.state <> 'closed'
+     GROUP BY c.branch, c.agent_class
+    HAVING seen > :cutoff
+     ORDER BY seen DESC
+
+`conversation.branch` is the right column and `run.branch` is not: the conversation's is written
+only after a push succeeds, so it names a branch that exists on origin, while a run's is the name
+it was launched with whether or not anything came of it. `COALESCE(started_at, queued_at)` counts
+a turn that is queued but has not started as an access, because it is one -- that turn is about to
+want this branch, which is the strongest signal in the table.
+
+Three filters on top, all of them mandatory:
+
+  a. NOT the class's own `pool_branch()`. Those are the held tier's job and are counted there.
+  b. `mirror_carries(branch)` (ffwatch.py:7483). The container reaches no network and fills from
+     the local mirror, and a branch gets into the mirror by luck of a CI fetch having run. Staging
+     on a branch the mirror lacks produces a container that dies inside restore-workspace.sh, which
+     the keeper then replaces, which dies -- a staging loop that only `pool_stage_backoff_secs`
+     stops, burning a 22 GiB extraction each time round. This check is not an optimisation.
+  c. Not already staged. One evictable spare per (branch, class); a second is a second guess about
+     the same thing.
+
+`mirror_take()` exists and could push a missing branch into the mirror. It is deliberately NOT
+called here. That is the launch path's business, done for a turn that is waiting; doing it
+speculatively means the box mirrors branches on the strength of a guess.
+
+Per class, because everything else about a spare is: the network, the plugins, the clocks and the
+credential all come from the class block, and `pool_claim_for` matches on class first. A branch
+that both classes touched gets a spare in each or in neither, decided by each class's own numbers.
+
+
+5. The reserve, and why there is no demand signal
+--------------------------------------------------
+
+Nothing on this box can ask for a place. `slot.sh` polls `ffbox_workload_has_room` every
+`pool_poll_seconds` (5) and logs "the box is at its container ceiling; waiting" for as long as it
+takes; a cold `ffbox` run exits 77; `schedule()` breaks out of the queued loop and tries again next
+pass. There is no channel from any of them to the keeper, and adding one would mean a lock, a file
+and a race between the party that writes it and the party that clears it.
+
+The reserve makes the signal unnecessary. State it as one invariant the keeper maintains:
+
+    an evictable spare may exist only while free places would remain >= workload_reserve
+
+Then the sequence takes care of itself:
+
+    free = 2, reserve = 1     the keeper may hold one evictable spare
+    CI's slot.sh wants a place -> it finds one, because the reserve was never spent
+    free = 0                  the invariant is broken
+    next keeper pass          sheds one evictable spare
+    free = 1                  the invariant holds again, and the next waiter finds a place
+
+The pool shrinks by exactly one per demand event, driven by demand, with nobody signalling
+anything. The waiter's latency is one keeper pass plus one `docker stop` -- the stop is floored at
+`LICENCE_STOP_FLOOR` (120s) so PID 1's traps run, but nothing waits on it: `pool_expire()` already
+hands its stops to a thread and the shed uses the same pattern.
+
+`workload_reserve` is box-wide and not per class, because the thing it protects is box-wide. CI
+does not know what an agent class is.
+
+WHY NOT APPLY THE RESERVE TO HELD SPARES TOO. It is tempting: today the keeper stages a held spare
+whenever `workload_room() > 0`, so two held spares can take the last two places on the box and sit
+there for four hours while CI polls. That is a real latent problem and this design does not fix it,
+because fixing it means `idle: 1` sometimes producing zero spares -- a configured promise quietly
+not kept, which is worse than the queueing it would prevent, and a change to the held tier's
+contract that has nothing to do with warm branches. Worth its own decision; noted in section 12.
+
+
+6. Shedding
+------------
+
+In `keep_pool()`, after `pool_expire()` and `pool_reap()` and before any staging:
+
+    if workload_room() < workload_reserve:
+        pick the evictable spare whose branch has the OLDEST `seen`, and among those with no
+        `seen` at all, any; claim it with pool_take(); drop it; return.
+
+Four properties, each of them load-bearing:
+
+  * ONE PER PASS. The invariant is restored by one shed, so a second in the same pass is shedding
+    for demand nobody has expressed. If the demand is real the next pass sees it again.
+  * `pool_take()` FIRST, exactly as `pool_expire()` does. `out/owner` created O_EXCL is the only
+    arbiter of whether a spare is free, and a shed that loses the race has lost to a dispatch
+    already in progress -- which is a container the shed has no business touching.
+  * `out/retiring` written, so ffstatus does not call it `claimed` and send an operator looking
+    for a turn that does not exist. Same reason as the expiry path.
+  * OLDEST FIRST, not newest, and A BRANCH WITH NO ACTIVITY AT ALL SORTS AHEAD OF ALL OF THEM.
+    The list is "branches touched recently"; one that has dropped out of the window entirely is
+    not a tiebreak case, it is the first thing to go. `activity.get(key) or ""` puts it there by
+    construction, since the empty string sorts before any ISO timestamp.
+
+And it returns before staging, so a pass never sheds and stages in the same breath.
+
+ONE MORE ORDERING RULE, ON THE STAGING SIDE. `pool_stage` blocks the daemon's own loop for as long
+as ffbox takes, up to the 180-second ceiling ffwatch kills it at, and the keeper already stages one
+held spare per class per pass. So the evictable tier stages AT MOST ONE PER PASS across all
+classes, and stages nothing at all on a pass that staged a held one. That bounds the loop's
+blocking to what it is today, and it states the priority in the one place it can be enforced: a
+promise is filled before a guess is made.
+
+THE SHED NEVER TOUCHES A CLAIMED CONTAINER, and this is where the 2026-09-01 loss is the warning:
+the `ffbox.pool` label survives the rename at dispatch, so ANY decision made from labels alone will
+one day pick a container that is serving a live turn. The label narrows the candidates; `out/owner`
+decides. `pool_drop()` refuses a claimed spool a second time, and the shed passes no `force`.
+
+
+7. Thrash
+----------
+
+Stage, shed thirty seconds later, stage again: each cycle is a 22 GiB extraction and a chown over
+89,664 files, and a box with CI arriving in bursts could sit in that loop all day. Two guards, both
+cheap:
+
+  * HYSTERESIS. Shed at `free < reserve`, stage at `free >= reserve + 2`. The gap is the dead band;
+     a box oscillating by one place stages nothing and sheds nothing.
+  * A PER-BRANCH COOLDOWN after a shed or a failed staging, `pool_stage_backoff_secs` (300).
+    `_pool_stage_after` is keyed by class today and is RE-KEYED to `(class, branch)` for this:
+    on one key, a branch whose staging failed would also stop that class's HELD pool being topped
+    up, which is a guess blocking a promise. The held path's key is `(class, pool_branch(class))`.
+
+Neither guard needs to be right to be safe. Getting them wrong costs extractions, never a turn.
+
+
+8. Memory is the real ceiling
+------------------------------
+
+`max_concurrent_runs` counts containers; what actually runs out is RAM. A workspace is a tmpfs
+Docker creates, 22 GiB for master, and `POOL_WORKSPACE_BYTES` (24 GiB) is what the keeper reserves
+per place. `pool_has_room()` already asks the right question -- is there memory for this one plus
+every cold launch the ceiling still allows -- and evictable staging goes through it unchanged.
+
+Two evictable spares is ~48 GiB standing. On a box where `pool_has_room()` already declines, this
+feature stages nothing at all and costs nothing but the query. That is the correct failure and it
+needs no code: the existing guard runs first.
+
+What DOES need saying is that the reserve and `pool_has_room()` guard different things and both
+apply. The reserve is about places somebody else can take; `pool_has_room()` is about memory. A box
+with places free and no memory stages nothing; a box with memory free and no places stages nothing.
+
+
+9. Claiming and dispatch: nothing changes
+------------------------------------------
+
+`pool_claim_for()` already matches on class and exact branch, `pool_would_serve()` already asks the
+same question without the side effect, and `schedule()` already exempts a dispatch from both
+ceilings because handing a turn to a running container creates nothing. An evictable spare is
+claimed by exactly that path, and from the moment `out/owner` exists it is a dispatched container
+like any other: it is not evictable any more, because the shed skips anything with an owner, and
+`pool_drop()` would refuse it even if the shed did not.
+
+One consequence worth stating plainly: a turn dispatched into an evictable spare is a NORMAL turn.
+Same task script, same job.json, same harvest, same destruction after one prompt. The tier is a
+fact about how the container was scheduled, never about how the run behaves.
+
+
+10. Clocks
+-----------
+
+An evictable spare gets its own TTL, `warm_branches.ttl_secs`, default 3600 -- matched to the
+window it was chosen by. A branch nobody touched for an hour is not in the candidate list any more,
+and a spare for it should not outlive its own reason by three hours.
+
+Nothing new enforces it. `--idle-ttl` is already passed at stage time and lands in `out/staged` as
+`ttl_secs`, `pool_expire()` already compares against it host-side, and the container already keeps
+its own absolute failsafe at TTL plus fifteen minutes. This is a different NUMBER through the same
+pipe.
+
+
+11. What ffstatus and /status show
+-----------------------------------
+
+`pool_status()` prints one block per class today: "N staged, M wanted, on <branch>". It grows a
+second line per class for the evictable tier, and the per-container rows gain the tier, so a
+reader can tell a promise from a guess:
+
+    pool ffdev: 1 staged, 1 wanted, on master
+      a1b2c3d4  held       master              3h41m left
+    pool ffdev warm branches: 2 of up to 2, window 1h
+      e5f6a7b8  evictable  ffbox/comment-poll  52m left
+      c9d0e1f2  evictable  discord/trust-tier  38m left
+
+`ffstatus.sh` reads the container table from `docker ps` labels directly (ffstatus.sh:511-513) and
+needs `ffbox.pool.tier` added to that format string, or its branch column will show two rows that
+look identical and are not.
+
+A shed should log one line naming the branch and the reason, because from the outside a spare
+vanishing looks the same as a spare crashing:
+
+    pool: shedding evictable ffbox/comment-poll (e5f6a7b8) -- 0 places free, reserve is 1
+
+
+12. Decisions still open
+-------------------------
+
+  a. WHETHER THE RESERVE SHOULD COVER HELD SPARES. Section 5. The latent problem is real and the
+     fix changes what `idle: N` promises. Left alone here on purpose.
+  b. WHETHER A SHED SHOULD PREFER THE OTHER CLASS'S SPARE when the demand is known to be one
+     class's. It usually is not known -- CI and a cold `ffbox` are not a class -- and a rule that
+     only sometimes has an input is a rule with two behaviours. Oldest-first, class-blind, until
+     something measured says otherwise.
+  c. WHETHER `warm_branches.count` SHOULD BE PER CLASS OR BOX-WIDE. Per class here, following
+     every other pool number, at the cost of a box holding `count x classes` guesses -- two at the
+     shipped default. If that turns out to be too many, the box-wide reserve is what actually
+     stops it rather than the count, so the shape can stay either way.
+  d. WHETHER A BRANCH WITH A CACHE ENTRY OF ITS OWN SHOULD BE PREFERRED. `ffbox`'s ladder takes
+     `<branch>@<scope>.tar` when it exists and master's otherwise (ffbox:1140), so a branch CI has
+     built for is meaningfully cheaper to stage. Not modelled; the ordering is recency only. Worth
+     revisiting if staging cost turns out to bite.
+
+
+13. Failure modes
+------------------
+
+  * THE MIRROR LOSES A BRANCH between the candidate query and `docker run`. The container dies in
+    restore, the keeper reaps it, the cooldown holds it off for five minutes, and the next pass
+    finds `mirror_carries()` false and drops it from the list. Costs one extraction.
+  * THE DATABASE IS UNREADABLE on a pass. The candidate list is empty, no evictable spare is
+    staged, existing ones live out their TTL. Degrades to today.
+  * THE SHED CANNOT STOP A CONTAINER. `pool_drop()` logs and the invariant stays broken; the next
+    pass tries the same spare again, and the container's own failsafe fires at TTL plus fifteen.
+    A waiter waits longer, which is what it does today anyway.
+  * A DRAIN ARRIVES. `draining()` already destroys every unclaimed spare of both tiers, by
+    `out/owner` and not by label, and `keep_pool()` already returns early while draining. Nothing
+    tier-specific to add.
+  * `workload_reserve` SET HIGHER THAN `max_concurrent_runs`. Free places can never reach it, so
+    the keeper sheds everything evictable and stages none. Clamp it to `max_concurrent_runs - 1`
+    in `load_config` and say so, the way the other ceilings are clamped.
+
+
+14. What this does not do
+--------------------------
+
+  * It does not make a cold run faster. A branch outside the window still pays forty seconds.
+  * It does not warm a branch before the box has run a turn on it. The first turn of a
+    conversation is cold on its own branch, always, because the branch does not exist yet.
+  * It does not change what a run does, what it publishes, or what it is allowed to touch.
+  * It does not give CI warm containers. CI fills its own workspaces on its own lane; all it gets
+    here is the places back.
+  * It does not add a second reason for a container to exist. Every staged container is still one
+    prompt, one harvest, one destruction.
+
+
+15. Files this touches
+-----------------------
+
+    ffbox/ffwatch.py        pool_containers() reads the tier label; effective_tier(); the
+                            candidate query; pool_shed(); keep_pool() grows the shed and the
+                            evictable staging loop; pool_status(); DEFAULTS and load_config for
+                            warm_branches and workload_reserve, including the clamp
+    ffbox/ffbox             --pool-tier, and the label at the staged `docker run` (1351-1354)
+    ffbox/ffstatus.sh       ffbox.pool.tier in the ps format string (511-513), the state word,
+                            and the two tiers counted apart -- SPARES stays the held count and
+                            LOOSE is the new one, or a guess would show a short pool as full
+    ffbox/ffweb.py          a `branch` column on /status's pools table, from the same split
+    ffbox/05-discord-setup.sh   the seeded warm_branches block, count 0
+    ffbox/config.md         warm_branches under `pools`, workload_reserve at the top level.
+                            REQUIRED IN THE SAME COMMIT -- the config's shape is documented there
+    ffbox/README.md         the pool section's "Nothing is evicted" paragraph, which becomes
+                            "nothing HELD is evicted" and says why the second tier is different
+    ffbox/test_ffwatch.py   the candidate query against a seeded db; effective_pool_tier's
+                            demotion on a moved base_ref; the reserve arithmetic; the shed's
+                            ordering and its refusal to touch a claimed spare. The four existing
+                            keeper tests pin `warm_branches.count = 0`: they stub pool_stage and
+                            assert exact lists of what was staged, and they are about the held
+                            tier
+    design/ffbox_idle_agents_design.txt   a pointer from section 9 to this document

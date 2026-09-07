@@ -298,6 +298,17 @@ def pool_container_name(agent_class, pool_id):
     return f"{CLASS_NAME_PREFIX[agent_class or DEFAULT_AGENT_CLASS]}pool-{pool_id}"
 
 
+# THE TWO TIERS OF SPARE. `held` is what a class's `idle` number asks for: a promise, on that
+# class's own branch, and NOTHING EVICTS IT -- the rule set on 2026-09-01 and unchanged.
+# `evictable` is a guess: a branch some turn used recently, staged only into slack the box is not
+# using, and shed the moment anything else wants the place. Destroying a promise to serve somebody
+# else is the trade that was rejected; destroying a guess is not that trade.
+# design/ffbox_warm_branches_design.txt section 2.
+POOL_TIER_HELD = "held"
+POOL_TIER_EVICTABLE = "evictable"
+POOL_TIERS = (POOL_TIER_HELD, POOL_TIER_EVICTABLE)
+
+
 # HOW LONG ffbox MAY TAKE TO CREATE A CONTAINER, in seconds. Not how long a run may take: the
 # run is bounded by the clock file it is created with (design section 6), and ffbox returns as
 # soon as the container exists. What this catches is ffbox itself wedging -- a `docker run` that
@@ -709,6 +720,21 @@ DEFAULTS = {
     # concurrent runs that window was narrow enough never to have bitten; at six it is not.
     # Per-slot machine ids for this lane are still owed. See ffgithubrunners_design.txt item (e).
     "max_concurrent_runs": 6,
+    # HOW MANY PLACES UNDER max_concurrent_runs A SPECULATIVE SPARE MAY NEVER TAKE. It exists so
+    # that nothing on this box has to ASK for a place: `slot.sh` polls the ceiling every five
+    # seconds and logs "waiting" for as long as it takes, a cold `ffbox` exits 77, and schedule()
+    # leaves a turn queued -- none of them has a channel to the keeper, and adding one would mean
+    # a lock, a file and a race over who clears it.
+    #
+    # With a place always kept free, a waiter simply finds one. Taking it drops the box below the
+    # reserve, the next keeper pass sheds ONE evictable spare, and the reserve is whole again: the
+    # pool shrinks by exactly one per demand event, driven by demand, with nobody signalling
+    # anything. design/ffbox_warm_branches_design.txt section 5.
+    #
+    # IT GUARDS THE EVICTABLE TIER ONLY. Held spares are a configured promise and the keeper still
+    # stages one whenever there is any room at all; making `idle: 1` sometimes produce nothing is a
+    # change to what that number means and is not this. See the design's section 12(a).
+    "workload_reserve": 1,
 
     # --- the pool (design/ffbox_idle_agents_design.txt) ---------------------------------
     # Containers that fill their workspace before a request exists, so one that arrives finds
@@ -796,6 +822,21 @@ DEFAULTS = {
             # reaching. It is also not withheld as a fence -- the fence is the network and the
             # absent credential -- but as scope: a lane that cannot do a thing should not be
             # carrying the instructions for doing it.
+            # WARM BRANCHES -- the evictable tier. design/ffbox_warm_branches_design.txt.
+            # `count` spares per class, on branches a turn of this class used within
+            # `window_secs`, retiring after `ttl_secs` unclaimed. 0 is off and is exactly the
+            # behaviour that predates this.
+            #
+            # ONE PER CLASS AND NOT TWO. With two classes that is two guesses standing on the box,
+            # about 48 GiB, which is "a warm sandbox or two" read as the BOX's number. Raising it
+            # is one key, and the box-wide workload_reserve is what actually stops a pool of
+            # guesses crowding anything out, so the ceiling on this number is comfort rather than
+            # safety.
+            #
+            # `ttl_secs` MATCHES THE WINDOW rather than idle_agent_ttl_secs' four hours: a branch
+            # nobody has touched for an hour is not a candidate any more, and a spare for it should
+            # not outlive its own reason by three hours.
+            "warm_branches": {"count": 1, "window_secs": 3600, "ttl_secs": 3600},
             "plugins": ["ff-discord"],
             # WHICH CREDENTIALS THIS POOL USES, BY NAME. Each value is the KEY in
             # ~/.config/ffbox/secrets.env whose value is the token, never the token: config.json
@@ -828,6 +869,7 @@ DEFAULTS = {
             # NOT ff-speckit, deliberately. discord-dev-agent is scoped to changes small enough
             # for one pass and says outright it is not a substitute for the Spec Kit process;
             # mounting the skills for that process would read as permission to run it.
+            "warm_branches": {"count": 1, "window_secs": 3600, "ttl_secs": 3600},
             "plugins": ["ff-discord", "ff-agents"],
             "github": {"pr_token": None, "container_token": None},
         },
@@ -1228,6 +1270,24 @@ def _class_blocks(ffbox_raw, max_runs, to_int):
         # accidentally pasted in here as a number, a list or an object cannot be read as a key
         # name; a token pasted in as a STRING would be read as a key name, find nothing in the
         # environment, and refuse -- loudly, which is the outcome that gets it removed.
+        # THE WARM-BRANCH NUMBERS, FILLED IN RATHER THAN COPIED, for the same reason as
+        # `github` below: a class that sets only `count` must still come back with all three keys
+        # present and numeric, so the keeper can do arithmetic on them without guarding. The
+        # update() above copied whatever the file holds -- a partial object, a string, a list --
+        # and this replaces it wholesale from THIS class's defaults.
+        #
+        # A negative count is off, not a negative number of containers. A window or a TTL at or
+        # below zero would mean "no branch is ever a candidate" and "no deadline"; neither is a
+        # thing anybody means by typing a number, so both fall back to this class's default.
+        block["warm_branches"] = dict(fallback["warm_branches"])
+        wb = section.get("warm_branches")
+        if isinstance(wb, dict):
+            block["warm_branches"]["count"] = max(
+                0, to_int(wb.get("count"), fallback["warm_branches"]["count"]))
+            for key in ("window_secs", "ttl_secs"):
+                value = to_int(wb.get(key), fallback["warm_branches"][key])
+                block["warm_branches"][key] = (value if value > 0
+                                               else fallback["warm_branches"][key])
         block["github"] = dict(fallback["github"])
         named = section.get("github")
         if isinstance(named, dict):
@@ -1339,6 +1399,13 @@ def load_config():
     cfg["max_concurrent_runs"] = max(1, _int(cfg.get("max_concurrent_runs"),
                                              DEFAULTS["max_concurrent_runs"]))
     cfg["idle_agents"] = max(0, _int(cfg.get("idle_agents"), DEFAULTS["idle_agents"]))
+    # THE RESERVE, CLAMPED SO IT CAN ALWAYS BE SATISFIED. A reserve at or above the ceiling is a
+    # number free places can never reach, so the keeper would shed every evictable spare on every
+    # pass and stage none -- the feature switched off by arithmetic, silently. One below the
+    # ceiling is the most that still leaves a place for the thing being reserved against.
+    cfg["workload_reserve"] = min(
+        max(0, _int(cfg.get("workload_reserve"), DEFAULTS["workload_reserve"])),
+        cfg["max_concurrent_runs"] - 1)
     _max = _int(cfg.get("agent_pool_max"), DEFAULTS["agent_pool_max"])
     cfg["agent_pool_max"] = cfg["max_concurrent_runs"] if _max < 0 else _max
     # THE SAME TWO COERCIONS, ONCE PER CLASS. Each class's block is built from ITS OWN defaults
@@ -3538,8 +3605,12 @@ class Watcher:
         # `docker stop` is still running does not start a second one. Dropped in the thread's
         # finally, which is what lets a later pass retry a stop that did not take.
         self._pool_expiring = set()
-        # PER CLASS TOO, and for the same reason: monotonic deadline before which the keeper
-        # does not try this class again. Set only where a staging attempt actually failed.
+        # KEYED BY (class, branch), and the branch half is not decoration. The evictable tier
+        # needs a per-branch cooldown -- after a failed staging and after a shed -- and on a
+        # per-class key a guess that could not be staged would also stop that class's HELD pool
+        # being topped up, which is a guess blocking a promise. The held path's key is
+        # (class, pool_branch(class)). Monotonic deadline before which the keeper does not try
+        # this pair again; set only where a staging attempt actually failed, or a spare was shed.
         self._pool_stage_after = {}
         self._drain_logged = False
         # THE FAILSAFE'S LAST READING, so the flag file is written and removed on the change
@@ -5707,7 +5778,7 @@ class Watcher:
         dispatch, which is why the label is not what tells idle from busy — `out/owner` is.
         """
         fmt = ('{{.Names}}\t{{.Label "ffbox.pool.id"}}\t{{.Label "ffbox.pool"}}'
-               '\t{{.Label "ffbox.agent.class"}}')
+               '\t{{.Label "ffbox.agent.class"}}\t{{.Label "ffbox.pool.tier"}}')
         try:
             proc = subprocess.run(
                 [self.cfg["docker"], "ps", "--filter", "label=ffbox.pool",
@@ -5719,12 +5790,19 @@ class Watcher:
         out = []
         for line in (proc.stdout or "").splitlines():
             parts = line.rstrip("\n").split("\t")
-            if len(parts) == 4 and parts[1]:
+            if len(parts) >= 4 and parts[1]:
                 # AN EMPTY CLASS LABEL IS ffagent. That is what every container staged before
                 # classes existed carries, and it is the right answer for them: they were staged
                 # by the one pool there was, on the one set of numbers there was.
+                #
+                # AND AN EMPTY TIER LABEL IS `held`, for exactly the same reason: it is what every
+                # container staged before the second tier existed carries, and held is the tier
+                # they were staged into. `>= 4` rather than `== 4` so a container from an older
+                # ffbox, whose docker ps line has no fifth field at all, still parses.
+                tier = (parts[4].strip() if len(parts) > 4 else "") or POOL_TIER_HELD
                 out.append({"name": parts[0], "id": parts[1], "branch": parts[2],
-                            "class": parts[3] or DEFAULT_AGENT_CLASS})
+                            "class": parts[3] or DEFAULT_AGENT_CLASS,
+                            "tier": tier if tier in POOL_TIERS else POOL_TIER_HELD})
         return out
 
     def workload_count(self):
@@ -5885,6 +5963,31 @@ class Watcher:
         """
         ccfg = class_cfg(self.cfg, agent_class)
         return ccfg.get("pool_ref") or ccfg["base_ref"]
+
+    def effective_pool_tier(self, container):
+        """Which tier this spare counts as NOW, which is not always the tier it was staged into.
+
+        DOCKER CANNOT RELABEL A RUNNING CONTAINER, so `ffbox.pool.tier` says what a spare was
+        created as and can never say what it has become. One thing needs it to change: when a
+        class's `base_ref` or `pool_ref` moves, its held spares on the old branch stop being the
+        promise anybody made -- the class's pool is now short by one on the NEW branch, and the old
+        container serves nothing, because pool_claim_for matches the branch exactly. Leaving those
+        at the front of the "never shed this" queue would have the box protecting containers it has
+        no use for while shedding ones it does.
+
+        So the demotion is ARITHMETIC and nothing is written anywhere. The label stays honest about
+        creation; this stays honest about now. It only ever demotes: an evictable spare is never
+        promoted into a promise by happening to sit on the class's branch, because nothing asked
+        for it.
+
+        `.get("tier")` and not `container["tier"]`. An absent tier already has a correct answer --
+        held, the one tier there was -- so requiring the key would turn a container dict built
+        without it into a crash in the keeper, for no gain.
+        """
+        if container.get("branch") != self.pool_branch(container.get("class")):
+            return POOL_TIER_EVICTABLE
+        tier = container.get("tier") or POOL_TIER_HELD
+        return tier if tier in POOL_TIERS else POOL_TIER_HELD
 
     @staticmethod
     def mem_available_bytes():
@@ -6205,8 +6308,14 @@ class Watcher:
         shutil.rmtree(self.pool_dir(pool_id), ignore_errors=True)
         return True
 
-    def pool_stage(self, agent_class=None):
+    def pool_stage(self, agent_class=None, ref=None, tier=POOL_TIER_HELD, ttl_secs=None):
         """Start one staged container of one class. Returns its id, or None.
+
+        `ref`, `tier` and `ttl_secs` all default to today's behaviour: the class's own pool
+        branch, the held tier, and the class's `idle_agent_ttl_secs`. The evictable tier passes
+        all three -- a recently-used branch, the shorter clock that matches the window it was
+        chosen by, and the label the shed looks for.
+        design/ffbox_warm_branches_design.txt.
 
         ONE AT A TIME PER CLASS, by construction: the caller stages at most one per pass for
         each class, because two 22 GiB extractions at once compete for the memory the runs they
@@ -6223,6 +6332,9 @@ class Watcher:
         """
         agent_class = agent_class or DEFAULT_AGENT_CLASS
         ccfg = class_cfg(self.cfg, agent_class)
+        ref = ref or self.pool_branch(agent_class)
+        tier = tier if tier in POOL_TIERS else POOL_TIER_HELD
+        ttl_secs = int(ttl_secs) if ttl_secs else int(ccfg["idle_agent_ttl_secs"])
         pool_id = uuid.uuid4().hex[:8]
         d = self.pool_dir(pool_id)
         for sub in ("in", "out", "claude"):
@@ -6235,10 +6347,11 @@ class Watcher:
         cmd = self.ffbox_cmd() + [
             "--stage-pool", pool_id,
             "--pool-dir", self.pool_dir(),
-            "--ref", self.pool_branch(agent_class),
+            "--ref", ref,
             "--agent-class", agent_class,
+            "--pool-tier", tier,
             "--network", ccfg["docker_network"],
-            "--idle-ttl", str(int(ccfg["idle_agent_ttl_secs"])),
+            "--idle-ttl", str(ttl_secs),
             "--task", self.cfg["pool_task"],
             # The turn task the container will eventually exec. Mounted now because a mount
             # cannot be added later, and it is the same script a cold run gets.
@@ -6289,7 +6402,7 @@ class Watcher:
                 fh.write((_staged_key or "") + "\n")
         except OSError as exc:  # noqa: BLE001 — bookkeeping must not fail a staging
             log(f"pool: could not record {pool_id}'s Claude account: {exc}")
-        log(f"pool: staging {agent_class} {pool_id} on {self.pool_branch(agent_class)}"
+        log(f"pool: staging {tier} {agent_class} {pool_id} on {ref}"
             f"{' billing ' + _staged_key if _staged_key else ''}")
         return pool_id
 
@@ -6305,6 +6418,236 @@ class Watcher:
                 return fh.read().strip() or None
         except OSError:
             return None
+
+    def pool_branch_activity(self, window_secs=None):
+        """{(class, branch): when it was last wanted}, for every branch a conversation owns.
+
+        THE CANDIDATE SET COMES OUT OF WHAT THE BOX HAS ACTUALLY RUN, never out of `git branch -r`.
+        A prediction that is wrong costs 24 GiB of resident workspace, so nothing here guesses at a
+        branch nobody has asked about.
+
+        `conversation.branch` AND NOT `run.branch`. The conversation's is written only after a push
+        succeeds, so it names a branch that exists on origin and that the next turn of that
+        conversation will actually ask for; a run's is the name it was launched with whether or not
+        anything came of it.
+
+        COALESCE(started_at, queued_at) COUNTS A QUEUED TURN AS AN ACCESS, because it is one -- that
+        turn is about to want this branch, which is the strongest signal in the table.
+
+        `window_secs=None` is NO WINDOW, which is what the shed wants: it has to order spares whose
+        branch has dropped out of every candidate list, and a branch missing from this map is one
+        the shed puts first.
+        """
+        sql = ("SELECT c.agent_class AS cls, c.branch AS branch,"
+               " MAX(COALESCE(t.started_at, t.queued_at)) AS seen"
+               " FROM turn t JOIN conversation c ON c.id = t.conversation_id"
+               " WHERE c.branch IS NOT NULL AND c.branch <> '' AND c.state <> 'closed'"
+               " GROUP BY c.agent_class, c.branch")
+        try:
+            rows = self.db.query(sql)
+        except Exception as exc:                                   # noqa: BLE001
+            # A QUERY THAT WILL NOT RUN STAGES NOTHING AND SHEDS NOTHING, which degrades to the
+            # behaviour that predates this tier. The pool is an optimisation; it may never be the
+            # reason the daemon stops.
+            log(f"pool: could not read branch activity: {exc}")
+            return {}
+        # COMPARED ON THE FIRST NINETEEN CHARACTERS, which is `YYYY-MM-DDTHH:MM:SS` and nothing
+        # after it. Every timestamp in this database is UTC and written by now_iso as `...SSZ`, but
+        # a row could have been written by any of the paths that store a datetime, and `Z` and
+        # `+00:00` do not sort against each other -- `+` is 0x2B and `Z` is 0x5A, so two identical
+        # instants would compare unequal in whichever direction the suffixes happened to fall.
+        # The prefix is the same in every shape, so slicing it is what makes this format-blind.
+        cutoff = None
+        if window_secs:
+            cutoff = (datetime.now(timezone.utc)
+                      - timedelta(seconds=int(window_secs))).strftime("%Y-%m-%dT%H:%M:%S")
+        out = {}
+        for row in rows:
+            seen = (row["seen"] or "").strip()
+            if not seen or (cutoff and seen[:19] < cutoff):
+                continue
+            cls = row["cls"] or DEFAULT_AGENT_CLASS
+            if cls not in AGENT_CLASSES:
+                continue
+            out[(cls, row["branch"])] = seen
+        return out
+
+    def pool_branch_candidates(self, agent_class, containers=None):
+        """Branches this class could usefully warm, most recently wanted first.
+
+        Four filters, and the last one is not an optimisation:
+
+          * NOT the class's own pool branch. Those are the held tier's job and are counted there.
+          * NOT one this class already has a spare on, held or evictable. One guess per branch.
+          * NOT one inside its cooldown, so a branch that just failed to stage or just gave its
+            place back is left alone for pool_stage_backoff_secs.
+          * `mirror_carries`. The container reaches no network and fills from the local mirror, and
+            a branch gets into the mirror by luck of a CI fetch having run. Staging on one the
+            mirror lacks produces a container that dies inside restore-workspace.sh, which the
+            keeper replaces, which dies -- a staging loop that only the backoff stops, burning a
+            22 GiB extraction each time round.
+
+        mirror_carries IS ASKED LAST AND LAZILY, because it forks git once per branch and the
+        caller only ever uses the first answer.
+
+        mirror_take() is deliberately NOT called here. Putting a branch into the mirror is the
+        launch path's business, done for a turn that is waiting; doing it speculatively would have
+        the box mirroring branches on the strength of a guess.
+        """
+        ccfg = class_cfg(self.cfg, agent_class)
+        window = int(ccfg["warm_branches"]["window_secs"])
+        activity = self.pool_branch_activity(window)
+        if containers is None:
+            containers = self.pool_containers()
+        taken = {c["branch"] for c in containers if c["class"] == agent_class}
+        held_branch = self.pool_branch(agent_class)
+        now = time.monotonic()
+        wanted = sorted(((seen, branch) for (cls, branch), seen in activity.items()
+                         if cls == agent_class), reverse=True)
+        for _seen, branch in wanted:
+            if branch == held_branch or branch in taken:
+                continue
+            if now < self._pool_stage_after.get((agent_class, branch), 0.0):
+                continue
+            if not self.mirror_carries(branch):
+                continue
+            yield branch
+
+    def pool_shed(self):
+        """Give one place back, when the box is below its reserve. Returns the id shed, or None.
+
+        THE ONLY THING IN THIS DAEMON THAT DESTROYS A SPARE TO SERVE SOMEBODY ELSE, and it is
+        allowed to because of what it destroys. `Nothing is evicted` was settled on 2026-09-01 and
+        still holds for the HELD tier: a held spare is what `idle: N` promised, and taking one is
+        one worker type stealing another's warm container. An evictable spare is a guess -- nobody
+        asked for it, no configured number is short while it is missing, and the turn it might have
+        served does not exist. Destroying a guess is not that trade.
+        design/ffbox_warm_branches_design.txt section 2.
+
+        ONE PER PASS. One shed restores the invariant, so a second in the same pass is shedding for
+        demand nobody has expressed. If the demand is real, the next pass sees it again.
+
+        THE CLAIM COMES FIRST, exactly as pool_expire's does: `out/owner` created O_EXCL is the
+        only arbiter of whether a spare is free, and a shed that loses the race has lost to a
+        dispatch already in progress -- a container it has no business touching. Deciding from the
+        `ffbox.pool` LABEL instead is what cost conversation 30 its turn-5 answer on 2026-09-01;
+        that label survives the rename at dispatch and is on every container this pool ever staged.
+
+        NOTHING BLOCKS THE CALLER. The compare is a stat; the act is a `docker stop` of up to two
+        minutes, and it goes to the same thread pool_expire uses.
+        """
+        reserve = int(self.cfg["workload_reserve"])
+        if reserve <= 0:
+            return None
+        room = self.workload_room()
+        if room >= reserve:
+            return None
+        candidates = []
+        for c in self.pool_containers():
+            if self.effective_pool_tier(c) != POOL_TIER_EVICTABLE:
+                continue                      # a promise; the shed never reaches one
+            if c["id"] in self._pool_expiring:
+                continue                      # already being stopped by a thread of ours
+            if os.path.exists(self.pool_owner_path(c["id"])):
+                continue                      # dispatched, or already retiring
+            # A SPARE STILL EXTRACTING ITS TAR IS AS FREE TO TAKE AS A WARM ONE, which is why
+            # there is no `out/staged` test here and pool_expire has one. The expiry asks "has
+            # this had its life", and something with no workspace yet has no deadline; the shed
+            # asks "is anything lost by destroying it", and the answer for a half-filled guess is
+            # no. pool_unclaimed draws the same line for the same reason.
+            candidates.append(c)
+        if not candidates:
+            return None
+        activity = self.pool_branch_activity()
+        # OLDEST FIRST, AND A BRANCH WITH NO ACTIVITY AT ALL SORTS AHEAD OF ALL OF THEM: it has
+        # dropped out of the window entirely, so it is the guess with the least behind it rather
+        # than a tiebreak case. The empty string sorts before any ISO timestamp, which puts it
+        # there by construction. The id is the final tiebreak so the choice is deterministic.
+        candidates.sort(
+            key=lambda c: ((activity.get((c["class"], c["branch"])) or "")[:19], c["id"]))
+        c = candidates[0]
+        if not self.pool_take(c["id"]):
+            return None                       # lost to a dispatch; not ours to stop
+        self._pool_expiring.add(c["id"])
+        # SO THE PAGE DOES NOT CALL IT `claimed`. out/owner covers a dispatch and a retirement
+        # alike, and a spare being stopped is not one somebody is waiting on.
+        try:
+            with open(os.path.join(self.pool_dir(c["id"]), "out", "retiring"), "w",
+                      encoding="utf-8") as fh:
+                fh.write(datetime.now(timezone.utc).isoformat() + "\n")
+        except OSError:
+            pass                              # cosmetic; the shed itself does not need it
+        # AND THE COOLDOWN, or the next pass with room again restages the branch this one just
+        # gave back, at 22 GiB an extraction.
+        self._pool_stage_after[(c["class"], c["branch"])] = time.monotonic() + float(
+            self.cfg["pool_stage_backoff_secs"])
+        log(f"pool: shedding evictable {c['class']} {c['branch']} ({c['id']}) -- "
+            f"{room} place(s) free, reserve is {reserve}")
+        threading.Thread(target=self._pool_expire_one, args=(c["id"], c["name"]),
+                         name=f"ffwatch-shed-{c['id']}", daemon=True).start()
+        return c["id"]
+
+    def keep_warm_branches(self, containers):
+        """Stage AT MOST ONE evictable spare, on the most recently used branch that lacks one.
+
+        ONE PER PASS ACROSS ALL CLASSES, and none at all on a pass that staged a held spare. The
+        caller enforces the second half. `pool_stage` blocks the daemon's own loop for as long as
+        ffbox takes -- up to the 180-second ceiling ffwatch kills it at -- and the keeper already
+        stages one held spare per class per pass; a third would add half a minute of blocked loop
+        on a bad pass, which is the 2026-09-02 incident with a new cause. It also states the
+        priority in the one place it can be enforced: a promise is filled before a guess is made.
+
+        THE DEAD BAND IS WHAT STOPS THE THRASH. Shedding happens below `workload_reserve` and
+        staging above `reserve + 2`, so a box oscillating by one place stages nothing and sheds
+        nothing. Without it, a CI job arriving and leaving every few minutes would have the keeper
+        extracting and destroying a 22 GiB workspace on that rhythm.
+        """
+        reserve = int(self.cfg["workload_reserve"])
+        room = None
+        for agent_class in AGENT_CLASSES:
+            ccfg = class_cfg(self.cfg, agent_class)
+            want = int(ccfg["warm_branches"]["count"])
+            if want <= 0:
+                continue
+            # READ ONCE, LAZILY, AND NOT PER CLASS -- the opposite of the held loop above, and by
+            # decision rather than by inconsistency. That loop stages one per class, so a place
+            # taken by an earlier class has to be visible to the next; this one stages at most one
+            # in total and returns the moment it does, so nothing between two iterations can change
+            # the count. Lazy, so a box with the tier switched off makes no `docker ps` call at all.
+            if room is None:
+                room = self.workload_room()
+            if room < reserve + 2:
+                return None                   # the dead band; no class may stage into it
+            if self.agent_room(agent_class) <= 0:
+                continue
+            mine = [c for c in containers
+                    if c["class"] == agent_class
+                    and self.effective_pool_tier(c) == POOL_TIER_EVICTABLE
+                    and not os.path.exists(self.pool_owner_path(c["id"]))]
+            if len(mine) >= want:
+                continue
+            if not self.pool_has_room():
+                # NO SQUEEZE LINE HERE. The held loop logs one per class when memory is short and
+                # this runs on the same pass under the same reading, so saying it again would put
+                # two lines in the journal about one condition.
+                continue
+            branch = next(self.pool_branch_candidates(agent_class, containers), None)
+            if not branch:
+                continue
+            wb = ccfg["warm_branches"]
+            pool_id = self.pool_stage(agent_class, ref=branch, tier=POOL_TIER_EVICTABLE,
+                                      ttl_secs=wb["ttl_secs"])
+            if not pool_id:
+                # PER BRANCH, not per class: a branch that cannot be staged must not stop this
+                # class's HELD pool being topped up, which is a guess blocking a promise.
+                self._pool_stage_after[(agent_class, branch)] = time.monotonic() + float(
+                    self.cfg["pool_stage_backoff_secs"])
+                continue
+            containers.append({"name": pool_container_name(agent_class, pool_id),
+                               "id": pool_id, "branch": branch, "class": agent_class,
+                               "tier": POOL_TIER_EVICTABLE})
+            return pool_id
+        return None
 
     def keep_pool(self):
         """Top EACH class's pool up to its own `idle_agents`. Returns the ids staged, [] for none.
@@ -6328,6 +6671,13 @@ class Watcher:
 
         RETURNS A LIST, where it used to return one id or None: a pass can now stage one of each
         class, and a caller that wanted "did anything happen" gets a truthy list either way.
+
+        SINCE 2026-09-06 THERE IS A SECOND TIER UNDER ALL OF THIS. Held spares are what `idle`
+        promised and are what everything above describes; evictable ones are guesses staged onto
+        recently-used branches out of slack the box is not using, and they are shed the moment
+        anything else wants the place. They are kept strictly after the held tier, at most one per
+        pass, and never on a pass that staged a held one.
+        design/ffbox_warm_branches_design.txt.
         """
         # EXPIRE FIRST, THEN REAP, THEN TOP UP, and the order is the point: a container retired
         # this pass frees a place the same pass wants to fill. Both are cheap here -- the expiry
@@ -6338,6 +6688,12 @@ class Watcher:
         # spare staged before the config broke still has a clock, and letting it run out is the
         # box shedding containers rather than accumulating them. What stops is the topping up.
         if self.config_failsafe() or self.killed() or self.draining():
+            return []
+        # THE RESERVE, BEFORE ANY STAGING. Giving a place back is more urgent than taking one, and
+        # a pass that shed something has already changed the numbers every decision below reads --
+        # so it returns rather than staging against a count it has just invalidated. A pass never
+        # sheds and stages in the same breath.
+        if self.pool_shed():
             return []
         staged = []
         containers = self.pool_containers()
@@ -6350,15 +6706,21 @@ class Watcher:
             # attempt that cannot succeed is not merely a wasted call -- it is a pass in which
             # nothing else the daemon does happens at all. Nothing is lost by waiting: a warm
             # container is an optimisation, and a turn that finds no pool runs cold.
-            if time.monotonic() < self._pool_stage_after.get(agent_class, 0.0):
+            if time.monotonic() < self._pool_stage_after.get(
+                    (agent_class, self.pool_branch(agent_class)), 0.0):
                 continue
             # COUNTS "WILL BE WARM", not "is warm", and the difference is deliberate: a container
             # still extracting its tar has no owner file and belongs in this count, or a pass
             # every two seconds would stage another twenty of them while the first one filled.
             # pool_warm() is the stricter one, and it is stricter because a claim needs a
             # workspace that is actually there.
+            # THE HELD TIER COUNTS ONLY HELD SPARES. An evictable one sits on another branch,
+            # so pool_claim_for will never hand it to the turn `idle` was raised for; counting it
+            # here would let a pool of guesses report the promise as kept and leave the class's own
+            # branch cold.
             warm = [c for c in containers
                     if c["class"] == agent_class
+                    and self.effective_pool_tier(c) == POOL_TIER_HELD
                     and not os.path.exists(self.pool_owner_path(c["id"]))]
             if len(warm) >= want:
                 continue
@@ -6382,8 +6744,8 @@ class Watcher:
                 # pool_stage has already said what went wrong. This is how long the keeper
                 # believes it, and it is the difference between one stuck staging and a daemon
                 # that spends every pass inside one.
-                self._pool_stage_after[agent_class] = time.monotonic() + float(
-                    self.cfg["pool_stage_backoff_secs"])
+                self._pool_stage_after[(agent_class, self.pool_branch(agent_class))] = (
+                    time.monotonic() + float(self.cfg["pool_stage_backoff_secs"]))
             if pool_id:
                 staged.append(pool_id)
                 # So the next class in the loop counts the one just started. It is not in
@@ -6391,7 +6753,16 @@ class Watcher:
                 containers.append({"name": pool_container_name(agent_class, pool_id),
                                    "id": pool_id,
                                    "branch": self.pool_branch(agent_class),
-                                   "class": agent_class})
+                                   "class": agent_class,
+                                   "tier": POOL_TIER_HELD})
+        # AND THE EVICTABLE TIER LAST, on a pass that filled no promise. Held first is not a
+        # preference: `pool_stage` blocks this loop for as long as ffbox takes, and a pass that has
+        # already spent one staging must not spend a second on a guess.
+        # design/ffbox_warm_branches_design.txt sections 5 and 6.
+        if not staged:
+            warm = self.keep_warm_branches(containers)
+            if warm:
+                staged.append(warm)
         return staged
 
     def stage_session_into(self, container_claude, conv_id, session):
@@ -6564,8 +6935,18 @@ class Watcher:
                 # A class that is switched off and holds nothing has nothing to report. One that
                 # is off but still holds a container does, because that container is real.
                 continue
-            lines.append(f"pool {agent_class}: {len(mine)} staged, {want} wanted, on "
+            # HELD AND EVICTABLE COUNTED APART, because they answer different questions. "1 of
+            # 1 wanted" about a pool that is actually holding one guess and no promise is a line
+            # that sends nobody to look at anything.
+            held = [c for c in mine if self.effective_pool_tier(c) == POOL_TIER_HELD]
+            loose = [c for c in mine if self.effective_pool_tier(c) == POOL_TIER_EVICTABLE]
+            lines.append(f"pool {agent_class}: {len(held)} staged, {want} wanted, on "
                          f"{self.pool_branch(agent_class)}")
+            wb = class_cfg(self.cfg, agent_class)["warm_branches"]
+            if loose or int(wb["count"]) > 0:
+                lines.append(f"pool {agent_class} warm branches: {len(loose)} staged, "
+                             f"{wb['count']} wanted, touched within "
+                             f"{human_gap(int(wb['window_secs']))}")
             for c in sorted(mine, key=lambda x: x["id"]):
                 d = self.pool_dir(c["id"])
                 staged = _read_text(os.path.join(d, "out", "staged")) or ""
@@ -6577,7 +6958,10 @@ class Watcher:
                 if os.path.exists(self.pool_owner_path(c["id"])):
                     state = "in use"
                 elif commit:
-                    state = "warm"
+                    # THE TIER IS THE STATE WORD, since a reader's next question about a warm
+                    # container is whether it is about to be taken away.
+                    state = ("warm-evictable"
+                             if self.effective_pool_tier(c) == POOL_TIER_EVICTABLE else "warm")
                 age = ""
                 try:
                     secs = (now - datetime.fromtimestamp(

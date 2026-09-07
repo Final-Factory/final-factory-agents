@@ -429,6 +429,17 @@ ceiling, which is the case worth writing the check for. Two rules keep it honest
     must never be the reason a real turn cannot start; it exists to make turns faster, and a turn
     that fails to launch is infinitely slower than one that launches cold.
 
+AMENDED 2026-09-01: the second rule is GONE and nothing is evicted. With two agent classes it is
+one worker type taking another's warm container, and the turn it is taken from then pays the forty
+seconds it was staged to save. A cold launch that cannot get a place queues and is retried; what
+bounds containers is max_concurrent_runs, which every class and CI count against.
+
+AMENDED 2026-09-06: that rule is about a PROMISE, and there is now a second tier of spare that is
+not one -- `warm_branches`, staged onto recently-used branches out of slack, which the keeper does
+shed when the box needs the place back. The rule above is unchanged for held spares and the shed
+never reaches one. design/ffbox_warm_branches_design.txt, which also carries the reserve that makes
+the shedding demand-driven without anything having to signal for a place.
+
 
 10. The clocks
 --------------
