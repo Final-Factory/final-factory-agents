@@ -8,6 +8,23 @@ staged `docker run` (1323-1371), `ffstatus.sh`'s `gather`, and the pool tests al
 
 Effort: **S** under an hour, **M** an afternoon, **L** a day or more.
 
+## Fixed after the first deploy, 2026-09-06
+
+Two defects found by watching the live box, both now in this branch:
+
+1. **A finished run left no spare on its branch.** The candidate query dated a branch by
+   `COALESCE(started_at, queued_at)` — when the turn BEGAN. A dev turn can run for hours
+   (`agent_secs` is 7200 for ffdev, with warm-up and verification either side), so a long turn's
+   branch was already outside the one-hour window the instant the run ended, which is the moment
+   the follow-up arrives. Now `COALESCE(ended_at, started_at, queued_at)`: the latest thing that
+   happened to the turn. Covered by "a long run's branch is dated by when it ENDED".
+2. **`ffstatus` showed no ref for a running container.** The agent rows blanked it — for a cold
+   run there was no label to read, and for a dispatched one the `ffbox.pool` label was right there
+   and thrown away. `ffbox` now sets `ffbox.ref` on BOTH routes and `ffstatus` reads it, falling
+   back to `ffbox.pool` for a container staged before the label existed. The label means "where
+   the clone started"; a sha-pinned turn dispatched into a spare keeps the staged branch's name,
+   because a label is creation-time.
+
 ## Status, 2026-09-06
 
 **All phases implemented and green**, offline: `test_ffwatch.py` and `test_ffweb.py` both pass,

@@ -6576,15 +6576,25 @@ class Watcher:
         conversation will actually ask for; a run's is the name it was launched with whether or not
         anything came of it.
 
-        COALESCE(started_at, queued_at) COUNTS A QUEUED TURN AS AN ACCESS, because it is one -- that
-        turn is about to want this branch, which is the strongest signal in the table.
+        COALESCE(ended_at, started_at, queued_at) IS THE LATEST THING THAT HAPPENED TO THE TURN,
+        and taking the START instead was a bug for exactly the case this tier exists to serve.
+        A turn's three timestamps only ever increase, so the coalesce picks the most recent one:
+        when it finished, else when it began, else when it was queued -- and a queued turn counts
+        as an access because it is one, since that turn is about to want this branch.
+
+        WHY THE START WAS WRONG. ffdev's `agent_secs` is two hours, and warm-up and verification
+        sit either side of it. A long dev turn that started three hours ago and finished a minute
+        ago would be dated three hours ago, so its branch fell outside a one-hour window at the
+        very moment the run ended -- the moment the follow-up message is most likely to arrive,
+        and the whole reason the branch was worth warming. Measured against the shipped default it
+        meant the tier served short turns and silently skipped every long one.
 
         `window_secs=None` is NO WINDOW, which is what the shed wants: it has to order spares whose
         branch has dropped out of every candidate list, and a branch missing from this map is one
         the shed puts first.
         """
         sql = ("SELECT c.agent_class AS cls, c.branch AS branch,"
-               " MAX(COALESCE(t.started_at, t.queued_at)) AS seen"
+               " MAX(COALESCE(t.ended_at, t.started_at, t.queued_at)) AS seen"
                " FROM turn t JOIN conversation c ON c.id = t.conversation_id"
                " WHERE c.branch IS NOT NULL AND c.branch <> '' AND c.state <> 'closed'"
                " GROUP BY c.agent_class, c.branch")

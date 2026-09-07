@@ -13713,16 +13713,20 @@ def test_a_box_with_one_account_is_left_exactly_as_it_was():
 # and gives the places straight back.
 
 
-def _seed_branch_turn(w, conv_id, branch, agent_class, when, state="idle"):
-    """One conversation owning `branch`, with one turn that wanted it at `when`."""
+def _seed_branch_turn(w, conv_id, branch, agent_class, when, state="idle", started=None):
+    """One conversation owning `branch`, with one turn that wanted it at `when`.
+
+    `when` is when the turn ENDED, which is what dates the branch. `started` defaults to it and
+    is set apart only by the test that cares about a long run.
+    """
     w.db.execute(
         "INSERT INTO conversation (id, thread_id, kind, state, branch, agent_class)"
         " VALUES (?,?,?,?,?,?)",
         (conv_id, f"t{conv_id}", "ask", state, branch, agent_class))
     w.db.execute(
-        "INSERT INTO turn (conversation_id, seq, status, queued_at, started_at)"
-        " VALUES (?,?,?,?,?)",
-        (conv_id, 1, "done", when, when))
+        "INSERT INTO turn (conversation_id, seq, status, queued_at, started_at, ended_at)"
+        " VALUES (?,?,?,?,?,?)",
+        (conv_id, 1, "done", started or when, started or when, when))
 
 
 def _ago(secs):
@@ -13804,6 +13808,7 @@ def test_which_branches_are_worth_warming():
     # local mirror; staging on a branch the mirror lacks produces one that dies in restore, is
     # replaced, and dies again -- a loop that burns a 22 GiB extraction each time round.
     check("nor one the mirror does not carry", "loth/unmirrored" not in got, got)
+
     check("and the other class gets its own", list(w.pool_branch_candidates("ffdev", [])) ==
           ["ffdev/one"], None)
 
@@ -13817,6 +13822,18 @@ def test_which_branches_are_worth_warming():
     w._pool_stage_after[("ffagent", "loth/recent")] = time.monotonic() + 300
     check("nor is one inside its cooldown",
           list(w.pool_branch_candidates("ffagent", []))[:1] == ["loth/older"], None)
+
+    # A LONG RUN IS DATED BY WHEN IT FINISHED, not by when it began. ffdev's agent clock is two
+    # hours and warm-up and verification sit either side, so a turn that started three hours ago
+    # and ended a minute ago is exactly the case this tier exists for -- the follow-up message
+    # arrives right after it ends. Dating it by `started_at` put its branch outside a one-hour
+    # window at the very moment the run finished, which is when the follow-up is most likely and
+    # the whole reason the branch was worth warming. Last in this test because it is the newest
+    # branch and would reorder every assertion above it.
+    carried.add("loth/long")
+    _seed_branch_turn(w, 8, "loth/long", "ffagent", _ago(30), started=_ago(10800))
+    check("a long run's branch is dated by when it ENDED",
+          list(w.pool_branch_candidates("ffagent", []))[:1] == ["loth/long"], None)
 
 
 def test_a_guess_is_never_staged_into_the_reserve():

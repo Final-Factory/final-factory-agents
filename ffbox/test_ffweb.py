@@ -521,8 +521,10 @@ FFSTATUS_DOC = {
         {"lane": "spare", "class": "ffagent", "name": "ffbox-agent-pool-c0ffee",
          "slot": "4", "state": "warm-evictable", "ttl_secs": 2870, "ref": "loth/fix",
          "uptime": "9 minutes"},
+        # An agent row NAMES ITS BRANCH since 2026-09-06 -- ffbox.ref is set on both routes, so
+        # the row doing the work is no longer the one row that could not say what it was on.
         {"lane": "agent", "class": "ffdev", "name": "ffbox-dev-t1-99aa", "slot": "5",
-         "state": "running*", "ttl_secs": None, "ref": None, "uptime": "2 minutes"},
+         "state": "running*", "ttl_secs": None, "ref": "loth/fix", "uptime": "2 minutes"},
         # A CI ROW CARRIES A TTL SINCE 2026-09-02, and this fixture said None for as long as the
         # column was blank for every CI row -- which encoded the bug as expected output. A busy
         # runner counts down the watchdog from when its JOB started; a waiting one counts down to
