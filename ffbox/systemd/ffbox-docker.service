@@ -13,7 +13,27 @@
 # NOT PartOf ffbox.target. A stop of the pipeline should not un-gate it, and Type=oneshot with
 # RemainAfterExit means the wait is paid once per boot rather than on every dependent start.
 Description=ffbox: wait for the rootless Docker daemon
-After=network.target
+
+# WHAT THIS ACTUALLY RACES, and it is not sysinit. The gate already orders after sysinit.target,
+# so it starts only once systemd-tmpfiles-setup and the rest of early boot are done. On
+# 2026-09-07 tmpfiles ran for 68 minutes, sysinit was reached at 16:21:06, and this started at
+# 16:21:20 — properly after it, and still doomed: @DOCKERUSERUNIT@ did not start until 16:23:08,
+# 108s later, and the wait gave up at 90.
+#
+# So the thing to order against is the USER MANAGER, and that IS orderable. The old comment here
+# said After= cannot cross the system/user boundary; that is true of docker.service INSIDE the
+# instance, and false of the instance itself — user@<uid>.service is an ordinary system unit.
+#
+# WANTS=, NOT JUST AFTER=. Ordering binds two jobs that are both pending; it does nothing for a
+# job queued after this one already started. logind starts a lingering user manager from its own
+# StartUnit call, which landed 2 minutes after boot reached basic.target — by then a bare After=
+# would have had nothing to wait for. Wants= puts the instance in the same boot transaction, and
+# only then does the ordering mean anything.
+#
+# THE POLL STAYS. user@<uid>.service going active means the manager is up, not that the docker
+# unit inside it is answering, so the script still asks the daemon a question.
+After=network.target @DOCKERUSERUNIT@
+Wants=@DOCKERUSERUNIT@
 
 StartLimitIntervalSec=300
 StartLimitBurst=5
@@ -24,10 +44,14 @@ RemainAfterExit=yes
 User=@USER@
 Group=@GROUP@
 Environment=HOME=@HOME@
-ExecStart=/bin/sh @WAITDOCKER@ @DOCKERSOCK@ 90
-# Comfortably past the wait's own deadline, so the script gets to print its diagnosis rather
-# than being killed a second before it explains itself.
-TimeoutStartSec=120
+ExecStart=/bin/sh @WAITDOCKER@ @DOCKERSOCK@ 900
+# 900, NOT 90. The daemon is in user@<uid>.service on the far side of a boundary this unit
+# cannot order against, so the deadline is a guess at how late that instance can be — and on
+# 2026-09-07 it was 15s later than 90 allowed. systemd-tmpfiles-setup had run for 68 minutes
+# and dragged every start time with it; the gate failed, ffwatch Requires= it, and the whole
+# pipeline stayed down until someone noticed. A gate that waits costs a slow boot some time.
+# A gate that gives up early costs an outage nobody is paged for.
+TimeoutStartSec=960
 
 [Install]
 WantedBy=multi-user.target

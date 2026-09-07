@@ -181,6 +181,28 @@ render_units() {
         say "         Rendering units for the shared daemon anyway; run 02-daemon.sh to bring it up,"
         say "         or set FFBOX_DOCKER_SOCK to pin this machine to the old one."
     fi
+    # WHICH USER MANAGER HOSTS THAT DAEMON. The gate orders against user@<uid>.service, so it
+    # needs the uid of the account the SOCKET belongs to -- ffbox-container on a migrated box,
+    # which is NOT $RUN_USER. Three ways to learn it, cheapest first: the path says so when it is
+    # the old per-user one, the socket's owner says so when it exists, and the account name is
+    # the last resort on a box being built before the daemon has ever run.
+    _sockuid=""
+    case "$_dockersock" in
+        /run/user/*/docker.sock)
+            _sockuid=${_dockersock#/run/user/}
+            _sockuid=${_sockuid%%/*} ;;
+    esac
+    if [ -z "$_sockuid" ] && [ -S "$_dockersock" ]; then
+        _sockuid=$(stat -c %u "$_dockersock" 2>/dev/null || echo "")
+    fi
+    if [ -z "$_sockuid" ]; then
+        _sockuid=$(id -u ffbox-container 2>/dev/null || echo "")
+    fi
+    # NEVER EMPTY. An empty render would leave a bare `After=`, and that is not a no-op -- systemd
+    # reads an empty assignment as "forget every ordering listed so far", which would silently
+    # un-order the gate from the rest of boot. Fall back to the owner's own uid instead.
+    [ -n "$_sockuid" ] || _sockuid=$_uid
+    _dockeruserunit="user@${_sockuid}.service"
     mkdir -p "$_dest"
     for u in $DOCKER_UNITS $UNIT_NAMES $UPDATE_UNITS $EGRESS_UNITS; do
         sed -e "s|@FFWATCH@|$HERE/ffwatch.py|g" \
@@ -196,6 +218,7 @@ render_units() {
             -e "s|@WEBPORT@|$_webport|g" \
             -e "s|@DOCKERSOCK@|$_dockersock|g" \
             -e "s|@WAITDOCKER@|$HERE/wait-for-docker.sh|g" \
+            -e "s|@DOCKERUSERUNIT@|$_dockeruserunit|g" \
             "$HERE/systemd/$u" > "$_dest/$u"
     done
 }

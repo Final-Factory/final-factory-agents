@@ -7,7 +7,14 @@
 # fix it, and a shared oneshot gives the failure one name in `systemctl status` instead of burying
 # it inside whichever slot happened to start first.
 Description=ffgithubrunners: wait for ffbox-container's rootless Docker
-After=network.target
+
+# ORDER AGAINST THE USER MANAGER, and Wants= it so the ordering has something to bind to. The
+# instance is an ordinary system unit even though the docker unit inside it is not, and logind
+# starts a lingering one from its own StartUnit call — late enough that a bare After= would find
+# no pending job to wait for. Same reasoning, and the same 2026-09-07 outage, as
+# ffbox-docker.service; the note there is the long version.
+After=network.target @DOCKERUSERUNIT@
+Wants=@DOCKERUSERUNIT@
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
@@ -17,10 +24,14 @@ RemainAfterExit=yes
 User=@USER@
 Group=@GROUP@
 Environment=HOME=@HOME@
-ExecStart=/bin/sh @WAITDOCKER@ @DOCKERSOCK@ 90 @CUSER@
+ExecStart=/bin/sh @WAITDOCKER@ @DOCKERSOCK@ 900 @CUSER@
+# 900 matches ffbox-docker.service, and for the same reason: this gate waits on an instance it
+# cannot order against, so the number is a guess at how late a slow boot can make that instance.
+# See the note there. A permission failure still exits at once — the waiter does not spend the
+# deadline on a daemon that is up and refusing it — so the longer number costs nothing there.
 # Past the wait's own deadline, so the script gets to print its diagnosis rather than being killed
 # a second before it explains itself.
-TimeoutStartSec=120
+TimeoutStartSec=960
 
 [Install]
 WantedBy=multi-user.target

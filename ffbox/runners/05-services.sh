@@ -79,6 +79,15 @@ OWNER_GROUP=$(id -gn "$OWNER")
 
 HOME=$OWNER_HOME . "$HERE/lib/config.sh"
 
+# The user manager that hosts the container account's rootless daemon. The gate orders against it,
+# and Wants= it so that ordering binds -- see ffgithubrunners-dockerd-wait.service. Resolved here
+# rather than in the template because only this script knows the account's uid, and named rather
+# than left to id's own error, which under set -eu would abort with no hint at which script makes
+# the account.
+_cuid=$(id -u "$CONTAINER_USER" 2>/dev/null) \
+  || die "no account '$CONTAINER_USER' on this box -- run: sh ffbox/runners/01-hostSetup.sh"
+CONTAINER_USER_UNIT="user@${_cuid}.service"
+
 UNITS="ffgithubrunners@.service ffgithubrunners.target ffgithubrunners-dockerd-wait.service ffghr-egress.service ffgithubrunners-reap.service ffgithubrunners-reap.timer ffgithubrunners-image.service ffgithubrunners-image.timer"
 TIMERS="ffgithubrunners-reap.timer ffgithubrunners-image.timer"
 
@@ -95,6 +104,7 @@ for u in $UNITS; do
       -e "s|@SLOTSH@|$HERE/slot.sh|g" \
       -e "s|@IMAGESH@|$HERE/03-image.sh|g" \
       -e "s|@WAITDOCKER@|$HERE/wait-for-docker.sh|g" \
+      -e "s|@DOCKERUSERUNIT@|$CONTAINER_USER_UNIT|g" \
       -e "s|@REAPSH@|$HERE/reap.sh|g" \
       -e "s|@IMAGEUPDATESH@|$HERE/image-update.sh|g" \
       -e "s|@DOCKERSOCK@|$DOCKER_SOCK|g" \
