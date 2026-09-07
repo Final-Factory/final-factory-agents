@@ -347,13 +347,23 @@ read_update() {
     fi
 
     command -v systemctl >/dev/null 2>&1 || return 0
-    # MONOTONIC FIRST, because this timer is OnBootSec/OnUnitActiveSec and a monotonic timer has
-    # no realtime elapse to show -- the property is there and empty. A calendar timer is the
-    # other way round, so both are tried and neither being answerable leaves the column blank.
+    # A monotonic elapse first, when there is one. This timer is OnCalendar= and answers in the
+    # realtime property below; it was OnBootSec/OnUnitActiveSec until 2026-09-07, a monotonic
+    # timer has no realtime elapse to show, and either form may be in place on a box whose units
+    # have not been reinstalled yet -- so both are tried and neither being answerable leaves the
+    # column blank.
+    #
+    # POSITIVE, NOT MERELY PRESENT, and that word is the whole bug fix. A calendar timer does not
+    # leave NextElapseUSecMonotonic empty: it answers 0, which is a bare integer, which
+    # systemd_timespan_secs reads as a microsecond count and returns as a perfectly good "0".
+    # `-n` therefore passed, this branch won, and the countdown became 0 - uptime -- a growing
+    # negative that ffstatus and ffweb both render as "next check due now", forever, on a timer
+    # that was firing every five minutes exactly as it should. Zero here means "this timer does
+    # not schedule that way", so fall through and ask the clock instead.
     local mono now_up rt next
     mono=$(systemd_timespan_secs "$(systemctl show "$UPDATE_TIMER" \
         -p NextElapseUSecMonotonic --value 2>/dev/null)")
-    if [ -n "$mono" ] && [ -r /proc/uptime ]; then
+    if [ -n "$mono" ] && [ "$mono" -gt 0 ] && [ -r /proc/uptime ]; then
         read -r now_up _ < /proc/uptime
         UPDATE_NEXT_SECS=$(( mono - ${now_up%.*} ))
         return 0
