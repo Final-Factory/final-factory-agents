@@ -333,6 +333,31 @@ vanishing looks the same as a spare crashing:
 
     pool: shedding evictable ffbox/comment-poll (e5f6a7b8) -- 0 places free, reserve is 1
 
+AND SO SHOULD EVERY DECLINE, which the first version of this did not do and which cost the first
+hour it was live. Six conditions stop a warm-branch staging -- the dead band, a class ceiling, a
+memory squeeze, a satisfied tier, a failed staging, and no candidate -- and all six were silent, so
+"no spare appeared" had no diagnosis at all behind it. Whether the box was short of places, short
+of memory, or simply had no branch worth warming looked identical, and those want completely
+different responses.
+
+    pool: not staging warm branches: 2 place(s) free, and one is only staged with 3
+          (6 on the box, reserve 1, plus a place of hysteresis ...)
+    pool: no warm-branch candidate for ffdev: 3 branch(es) wanted in the last 1.0 hours --
+          1 on the pool branch already, 2 not in the mirror
+    pool: not staging a warm branch for ffdev: it is at its own pool.max of 3
+
+ONE LINE PER TRANSITION. The keeper runs every `poll_secs`, so an unconditional line is wallpaper
+within minutes and wallpaper is how a real warning gets missed -- the same argument `_unreapable`
+and `_held_logged` were written for, and `_pool_squeeze_logged` is the precedent on the held tier.
+The latch is on the reason KEY and never on the message, because the message carries counts that
+move between passes; "2 places free" becoming "3" is not news. The one exception is the
+no-candidate key, which carries WHICH filters rejected everything -- "nothing has been touched" and
+"everything there is was rejected by the mirror" are the same silence and different situations, and
+one key for both would report the first and swallow the second.
+
+The mirror one is worth calling out because it catches people: a branch missing from the mirror is
+a CI fetch that has not happened, not anything about this pool.
+
 
 12. Decisions still open
 -------------------------

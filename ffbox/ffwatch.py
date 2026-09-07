@@ -3757,6 +3757,16 @@ class Watcher:
         # (class, pool_branch(class)). Monotonic deadline before which the keeper does not try
         # this pair again; set only where a staging attempt actually failed, or a spare was shed.
         self._pool_stage_after = {}
+        # WHY THE EVICTABLE TIER LAST DECLINED, per class (and "*" for the box-wide dead band),
+        # so the journal gets ONE line per transition rather than one every poll. Six conditions
+        # can decline a warm-branch staging and until 2026-09-06 every one of them was silent, so
+        # "no spare appeared and I cannot tell why" was the only diagnosis available -- which is
+        # exactly the state an operator was left in the first hour this shipped.
+        #
+        # LATCHED ON THE REASON KEY AND NOT THE MESSAGE. The message carries counts that move
+        # between passes ("2 places free" then "3"), and latching on those would put the same
+        # sentence in the journal all day. The key is the condition; the numbers are detail.
+        self._warm_declined = {}
         self._drain_logged = False
         # THE FAILSAFE'S LAST READING, so the flag file is written and removed on the change
         # rather than on every pass, and the journal gets one line per transition instead of one
@@ -6627,7 +6637,7 @@ class Watcher:
             out[(cls, row["branch"])] = seen
         return out
 
-    def pool_branch_candidates(self, agent_class, containers=None):
+    def pool_branch_candidates(self, agent_class, containers=None, tally=None):
         """Branches this class could usefully warm, most recently wanted first.
 
         Four filters, and the last one is not an optimisation:
@@ -6648,6 +6658,11 @@ class Watcher:
         mirror_take() is deliberately NOT called here. Putting a branch into the mirror is the
         launch path's business, done for a turn that is waiting; doing it speculatively would have
         the box mirroring branches on the strength of a guess.
+
+        `tally` IS AN OUT-PARAMETER, and it is here because this generator is the one place that
+        knows why a class has nothing to warm. The caller reads it only after the walk yields
+        nothing, at which point every branch has been counted -- so the laziness that keeps
+        mirror_carries down to one fork costs the tally nothing.
         """
         ccfg = class_cfg(self.cfg, agent_class)
         window = int(ccfg["warm_branches"]["window_secs"])
@@ -6659,12 +6674,28 @@ class Watcher:
         now = time.monotonic()
         wanted = sorted(((seen, branch) for (cls, branch), seen in activity.items()
                          if cls == agent_class), reverse=True)
+        if tally is not None:
+            tally.update(active=len(wanted), pool_branch=0, staged=0, cooldown=0, unmirrored=0)
+
+        def drop(reason):
+            if tally is not None:
+                tally[reason] = tally.get(reason, 0) + 1
+
         for _seen, branch in wanted:
-            if branch == held_branch or branch in taken:
+            # SPLIT FROM ONE CONDITION INTO TWO so the tally can tell them apart. "every active
+            # branch is the one the held pool already warms" and "every active branch already has
+            # a spare" are the same silence and completely different situations.
+            if branch == held_branch:
+                drop("pool_branch")
+                continue
+            if branch in taken:
+                drop("staged")
                 continue
             if now < self._pool_stage_after.get((agent_class, branch), 0.0):
+                drop("cooldown")
                 continue
             if not self.mirror_carries(branch):
+                drop("unmirrored")
                 continue
             yield branch
 
@@ -6742,6 +6773,24 @@ class Watcher:
                          name=f"ffwatch-shed-{c['id']}", daemon=True).start()
         return c["id"]
 
+    def warm_branch_note(self, who, key, message=None):
+        """Say ONCE why the evictable tier is not staging for `who`, and once when that changes.
+
+        `key` is the condition -- `deadband`, `ceiling`, `memory`, `nothing`. `message` is the
+        line, with whatever numbers make it actionable. `key=None` clears the latch without
+        saying anything, which is what a pass that actually staged something does: the staging
+        itself is logged, and the next decline after it deserves a line of its own.
+
+        The same shape as `_pool_squeeze_logged`, which is the precedent for this on the held
+        tier and exists for the same reason: a keeper that runs every five seconds turns any
+        unconditional line into wallpaper, and wallpaper is how a real warning gets missed.
+        """
+        if self._warm_declined.get(who) == key:
+            return
+        self._warm_declined[who] = key
+        if key and message:
+            log(f"pool: {message}")
+
     def keep_warm_branches(self, containers):
         """Stage AT MOST ONE evictable spare, on the most recently used branch that lacks one.
 
@@ -6763,6 +6812,9 @@ class Watcher:
             ccfg = class_cfg(self.cfg, agent_class)
             want = int(ccfg["warm_branches"]["count"])
             if want <= 0:
+                # OFF IS NOT A DECLINE. Clear the latch so that turning the tier back on gets a
+                # fresh line about whatever stops it then.
+                self.warm_branch_note(agent_class, None)
                 continue
             # READ ONCE, LAZILY, AND NOT PER CLASS -- the opposite of the held loop above, and by
             # decision rather than by inconsistency. That loop stages one per class, so a place
@@ -6772,22 +6824,81 @@ class Watcher:
             if room is None:
                 room = self.workload_room()
             if room < reserve + 2:
-                return None                   # the dead band; no class may stage into it
+                # THE ONE BOX-WIDE REASON, so it is latched against "*" rather than a class: it
+                # stops every class at once and saying it twice would be one condition reported
+                # as two. It is also the condition most likely to be the answer on a busy box --
+                # three of six places free is a real bar -- so the line names both numbers.
+                self.warm_branch_note(
+                    "*", "deadband",
+                    f"not staging warm branches: {room} place(s) free, and one is only staged "
+                    f"with {reserve + 2} ({self.cfg['max_concurrent_runs']} on the box, reserve "
+                    f"{reserve}, plus a place of hysteresis so a job arriving and leaving does "
+                    f"not stage and shed a workspace on that rhythm)")
+                return None
+            self.warm_branch_note("*", None)
             if self.agent_room(agent_class) <= 0:
+                self.warm_branch_note(
+                    agent_class, "ceiling",
+                    f"not staging a warm branch for {agent_class}: it is at its own pool.max "
+                    f"of {class_cfg(self.cfg, agent_class)['agent_pool_max']}")
                 continue
             mine = [c for c in containers
                     if c["class"] == agent_class
                     and self.effective_pool_tier(c) == POOL_TIER_EVICTABLE
                     and not os.path.exists(self.pool_owner_path(c["id"]))]
             if len(mine) >= want:
+                # SATISFIED IS NOT A DECLINE EITHER, and this is the healthy steady state. Clear,
+                # so the next real reason gets said.
+                self.warm_branch_note(agent_class, None)
                 continue
             if not self.pool_has_room():
-                # NO SQUEEZE LINE HERE. The held loop logs one per class when memory is short and
-                # this runs on the same pass under the same reading, so saying it again would put
-                # two lines in the journal about one condition.
+                # SAID HERE TOO, even though the held loop has its own squeeze line. That loop
+                # `continue`s on a satisfied pool BEFORE it ever asks about memory, so on a box
+                # whose held pools are full its line is never reached and this condition would
+                # otherwise be silent -- which is the whole failure this logging exists to end.
+                avail = self.mem_available_bytes()
+                self.warm_branch_note(
+                    agent_class, "memory",
+                    f"not staging a warm branch for {agent_class}: "
+                    f"{'unknown' if avail is None else avail // (1024 ** 3)} GiB available, "
+                    f"which is not enough to hold another workspace and still start the runs "
+                    f"the ceiling allows")
                 continue
-            branch = next(self.pool_branch_candidates(agent_class, containers), None)
+            tally = {}
+            branch = next(self.pool_branch_candidates(agent_class, containers, tally), None)
             if not branch:
+                # THE MOST IMPORTANT LINE HERE, because "nothing to warm" has five causes that
+                # look identical from outside and want completely different responses: no branch
+                # has been touched at all, they are all the branch the held pool already covers,
+                # they all have spares, they are all in cooldown, or -- the one that catches
+                # people -- the mirror does not carry them, which is a CI fetch that has not
+                # happened rather than anything about this pool.
+                window = int(ccfg["warm_branches"]["window_secs"])
+                dropped = ", ".join(
+                    f"{tally[k]} {why}" for k, why in
+                    (("pool_branch", "on the pool branch already"),
+                     ("staged", "already staged"),
+                     ("cooldown", "in cooldown"),
+                     ("unmirrored", "not in the mirror"))
+                    if tally.get(k))
+                active = tally.get("active", 0)
+                # THE KEY CARRIES WHICH REASONS APPLY, not how many branches each caught. "no
+                # branch has been touched at all" and "every branch there is was rejected by the
+                # mirror" are the same silence and completely different situations, and one key
+                # for both would report the first and swallow the second when it replaced it.
+                # Counts still stay out of the key, so a tally moving from one branch to two says
+                # nothing new -- which is the whole point of latching.
+                seen_keys = "+".join(sorted(k for k in
+                                            ("pool_branch", "staged", "cooldown", "unmirrored")
+                                            if tally.get(k))) or "none"
+                self.warm_branch_note(
+                    agent_class, f"nothing:{seen_keys}",
+                    f"no warm-branch candidate for {agent_class}: "
+                    + (f"{active} branch(es) wanted in the last {human_gap(window)}"
+                       + (f" -- {dropped}" if dropped else "")
+                       if active else
+                       f"no conversation of this class has owned a branch in the last "
+                       f"{human_gap(window)}"))
                 continue
             wb = ccfg["warm_branches"]
             pool_id = self.pool_stage(agent_class, ref=branch, tier=POOL_TIER_EVICTABLE,
@@ -6797,10 +6908,14 @@ class Watcher:
                 # class's HELD pool being topped up, which is a guess blocking a promise.
                 self._pool_stage_after[(agent_class, branch)] = time.monotonic() + float(
                     self.cfg["pool_stage_backoff_secs"])
+                # pool_stage has already said what went wrong, so there is no note to add -- but
+                # the latch is cleared, because the next pass is a different attempt.
+                self.warm_branch_note(agent_class, None)
                 continue
             containers.append({"name": pool_container_name(agent_class, pool_id),
                                "id": pool_id, "branch": branch, "class": agent_class,
                                "tier": POOL_TIER_EVICTABLE})
+            self.warm_branch_note(agent_class, None)
             return pool_id
         return None
 
