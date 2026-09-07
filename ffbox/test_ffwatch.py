@@ -27,6 +27,7 @@ path gets exercised without a model call.
 from __future__ import annotations
 
 import ast
+import atexit
 import contextlib
 import copy
 import importlib
@@ -65,6 +66,21 @@ os.environ["FFDISCORD_HOME"] = os.path.join(TMPROOT, "ffdiscord-home")
 os.makedirs(os.environ["FFDISCORD_HOME"], exist_ok=True)
 os.environ["FFBOX_CONFIG_DIR"] = os.path.join(TMPROOT, "ffbox-config")
 os.makedirs(os.environ["FFBOX_CONFIG_DIR"], exist_ok=True)
+
+# THE SCRATCH TREE GOES AWAY WITH THE PROCESS. It is the suite's only write into the system
+# temp dir, and a green run ends with ~70MB of seeded git repos in it, so leaving it behind
+# meant every run this suite has ever had was still sitting in /tmp. Set FFBOX_KEEP_TEST_TMP=1
+# to keep it when a failure needs its fixtures inspected; the path is printed on the way out
+# so it can be found.
+def _drop_scratch():
+    if os.environ.get("FFBOX_KEEP_TEST_TMP"):
+        print(f"kept scratch tree: {TMPROOT}")
+        return
+    shutil.rmtree(TMPROOT, ignore_errors=True)
+
+
+atexit.register(_drop_scratch)
+
 
 # NO CLAUDE TOKEN REACHES THIS SUITE, whatever the machine running it exports. The pool is read
 # out of the environment first (see claude_keys.claude_token_pool), so a developer whose shell

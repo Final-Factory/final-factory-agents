@@ -2175,6 +2175,11 @@ Three more, all offline and all against the real script rather than a stub of it
 failsafe), and `sh ffbox/test_container_credential.sh` (which pool's containers are handed a git
 credential, and that the token's value never reaches argv).
 
+Both Python suites build their fixtures in a scratch tree under the system temp dir and
+delete it when the process exits — `test_ffwatch.py` leaves about 70MB of seeded git
+repos in it, which used to accumulate one tree per run. `FFBOX_KEEP_TEST_TMP=1` keeps
+the tree instead, and the run prints where it is.
+
 ### `#codereview`: a review started from a pull request comment
 
 A comment saying `#codereview` on a Final Factory pull request starts an ffdev run against that
