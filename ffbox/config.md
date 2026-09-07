@@ -101,6 +101,7 @@ already there:
     "cache_sync": "standard"
   },
   "max_concurrent_runs": 6,
+  "workload_reserve": 1,
   "max_send_attempts": 5,
   "pools": {
     "ffagent": {
@@ -112,6 +113,7 @@ already there:
       "pool": { "idle": 1, "max": -1 },
       "idle_agent_ttl_secs": 14400,
       "pool_ref": null,
+      "warm_branches": { "count": 1, "window_secs": 3600, "ttl_secs": 3600 },
       "network": "limited",
       "github": { "pr_token": null, "container_token": null },
       "plugins": ["ff-discord"]
@@ -125,6 +127,7 @@ already there:
       "pool": { "idle": 1, "max": 3 },
       "idle_agent_ttl_secs": 14400,
       "pool_ref": null,
+      "warm_branches": { "count": 1, "window_secs": 3600, "ttl_secs": 3600 },
       "network": "full",
       "github": { "pr_token": null, "container_token": null },
       "plugins": ["ff-discord", "ff-agents"]
@@ -224,6 +227,24 @@ daemon, each holds a workspace of tens of GiB, and RAM is what runs out.
 Default 6. `pools.<class>.pool.max` and `githubrunner.pool.max` cap each lane underneath it;
 both have to hold before anything starts. `ffbox/lib-workloads.sh` is the shell half and is
 what actually refuses.
+
+## `workload_reserve`
+
+**How many of those places a speculative spare may never take.** Default `1`, clamped to
+`max_concurrent_runs - 1` — a reserve that free places can never reach would shed every
+evictable spare on every pass and stage none, which is the feature switched off by arithmetic.
+
+It exists because **nothing on this box can ask for a place.** A CI runner polls the ceiling
+every five seconds and logs "waiting"; a cold `ffbox` run exits 77; a queued turn is simply
+retried on the next pass. None of them has a channel to ffwatch's pool keeper. So the keeper
+keeps a place free instead of waiting to be told: a waiter finds it, taking it drops the box
+below the reserve, and the next keeper pass sheds one evictable spare to restore it. The pool
+shrinks by exactly one per demand event, and nobody signals anything.
+
+**It guards the evictable tier only** — see [`warm_branches`](#warm_branches). Held spares are
+what `pool.idle` promised and the keeper still stages one whenever there is any room at all.
+`0` turns the reserve off, which means an evictable spare may take the last place on the box
+and hold it until its TTL runs out.
 
 ## `rate_limits`
 
@@ -412,6 +433,9 @@ Each class is staged into a pool of its own and neither can take the other's war
 | `pool.max` | `-1` | `3` | This class's own ceiling on containers, runs and staged ones together. |
 | `idle_agent_ttl_secs` | `14400` | `14400` | How long a staged container waits before retiring. |
 | `pool_ref` | `null` | `null` | Which branch the pool stages. `null` follows `base_ref`. |
+| `warm_branches.count` | `1` | `1` | Evictable spares this class keeps on recently-used branches. `0` is off. See below. |
+| `warm_branches.window_secs` | `3600` | `3600` | How recently a turn must have wanted a branch for it to be a candidate. |
+| `warm_branches.ttl_secs` | `3600` | `3600` | How long an evictable spare waits before retiring. |
 | `network` | `"limited"` | `"full"` | The fence. See below. |
 | `github.pr_token` | `null` | `null` | The key in `secrets.env` holding the token this pool opens pull requests with. `null` uses the box-wide `GH_PR_TOKEN`. See below. |
 | `github.container_token` | `null` | `null` | The key in `secrets.env` holding a git credential put INSIDE this pool's containers. `null` means none, which is what ffagent must stay. See below. |
@@ -447,6 +471,39 @@ stops the pools together overcommitting it. `-1` means no ceiling of its own and
 `max_concurrent_runs`, so the default is to use the whole box while CI is quiet. A negative
 `idle` is read as `0`, off. Zero is left alone on both, and means no places, which is a thing
 somebody may actually want to say.
+
+### `warm_branches`
+
+**The second tier of spare, and the one the box gives back.** `pool.idle` warms ONE branch per
+class — `pool_ref`, or `base_ref`. Every turn asking for anything else launches cold, and from
+the moment a conversation pushes, every later turn of it asks for **its own** branch. That is
+turn 2 onwards of every piece of dev work the box does, and it is the one shape that always
+missed.
+
+`warm_branches` warms `count` of those as well, chosen from what the box has actually run: the
+branches a non-closed conversation of this class owns and a turn wanted within `window_secs`,
+most recent first. Never from `git branch -r` — a prediction that is wrong costs 24 GiB.
+
+A branch the local git mirror does not carry is skipped. A container reaches no network and
+fills from the mirror, so staging on a branch that is not in it produces a container that dies
+in `restore-workspace.sh` and is restaged and dies again.
+
+**These spares are evictable and that is the whole point.** A held spare is what `pool.idle`
+promised and nothing takes it away — the rule set on 2026-09-01, unchanged. An evictable one is
+a guess: nobody asked for it, no configured number is short while it is missing, and the turn it
+might have served may never exist. It is staged only while free places stay above
+[`workload_reserve`](#workload_reserve) `+ 2`, and shed one per pass, least-recently-used branch
+first, whenever free places fall below the reserve. The shed never reaches a held spare whatever
+the pressure, and never touches one a turn has been dispatched into.
+
+`count` is **per class**, so `1` here and `1` in the other block is two spares on the box.
+`ttl_secs` matches `window_secs` rather than `idle_agent_ttl_secs`' four hours: a branch nobody
+has touched for an hour is not a candidate any more, and a spare for it should not outlive its
+own reason by three hours. `0` is off and is exactly the behaviour that predates the tier.
+
+`ffstatus` calls these `warm-evictable` where a held spare is `warm`, so a container that may
+disappear does not read like one that will not. Design:
+`design/ffbox_warm_branches_design.txt`.
 
 **`network`** is `"limited"` or `"full"`, and the word says the policy rather than a docker
 network name.

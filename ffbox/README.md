@@ -1833,18 +1833,48 @@ keeper backs a class off for `pool_stage_backoff_secs` after a staging attempt f
 staging that cannot succeed can never again become a daemon that does nothing else.
 
 The keeper checks `MemAvailable` before staging and keeps back enough for the cold launches the
-ceiling still allows. **Nothing is evicted.** A cold launch that cannot get a place waits for one:
-`schedule()` leaves the turn queued and tries again next pass, and it starts when a run finishes
-and gives its place back. Until 2026-09-01 a launch that was short of memory destroyed a staged
-container to make room for itself, which was a trade inside one lane while there was only one
-pool; with two agent classes it is one worker type taking another's warm container, and the turn
-it is taken from then pays the forty seconds it was staged to save. What bounds containers is
+ceiling still allows. **Nothing HELD is evicted.** A cold launch that cannot get a place waits for
+one: `schedule()` leaves the turn queued and tries again next pass, and it starts when a run
+finishes and gives its place back. Until 2026-09-01 a launch that was short of memory destroyed a
+staged container to make room for itself, which was a trade inside one lane while there was only
+one pool; with two agent classes it is one worker type taking another's warm container, and the
+turn it is taken from then pays the forty seconds it was staged to save.
+
+That rule is about a **promise**, and since 2026-09-06 there is a second tier under it that is not
+one. A held spare is what `pool.idle` asked for, on the class's own branch. An evictable spare —
+`warm_branches`, below — is a guess: staged onto a branch some turn used recently, out of slack the
+box is not using, and nobody asked for it, so no configured number is short while it is missing and
+the turn it might have served may never exist. Destroying a promise to serve somebody else is the
+trade that was rejected; destroying a guess is not that trade. The shed walks evictable spares and
+stops — it never reaches a held one, whatever the pressure. What bounds containers is
 `max_concurrent_runs`, which every class and CI count against. On top of that every
 container now runs under a cgroup: `container.memory` and `container.pids_limit`, the same
 numbers CI has had all along and the agent lane had none of until 2026-09-01. Note
 that the workspace tmpfs is one Docker creates, so it is NOT charged to `/dev/shm` — with a
 run in flight `df` reported 2.1M used of 378G while that run held 24G. `/proc/meminfo` is the
 number that means anything here.
+
+**A second tier warms the branches that keep missing.** `pool_claim_for` matches a turn to a
+spare by class AND exact branch, and the held pool stages one branch per class. But `run_ref` puts
+a conversation's OWN branch at the top of its ladder, so from the moment a conversation pushes,
+every later turn of it asks for a branch the pool has never heard of — turn 2 onwards of every
+piece of dev work the box does. `warm_branches` warms a few of those as well, chosen from what the
+box has actually run: branches a non-closed conversation of that class owns and a turn wanted
+within `window_secs`, most recent first, skipping any the local git mirror does not carry (a
+container fills from the mirror and would die in `restore-workspace.sh` otherwise).
+
+**And it gives the places back with no signal from anybody.** Nothing on this box can ask for a
+place: `slot.sh` polls the ceiling every five seconds and logs "waiting", a cold `ffbox` exits 77,
+a queued turn is retried next pass. So `workload_reserve` keeps places free instead — an evictable
+spare is staged only while free places stay above `reserve + 2` and shed one per pass, oldest
+branch first, whenever they fall below the reserve. A waiter finds the reserved place, taking it
+breaks the invariant, the next keeper pass restores it. The pool shrinks by exactly one per demand
+event. The dead band is what stops a box oscillating by one place from extracting and destroying a
+22 GiB workspace on that rhythm.
+
+Held first, always: the keeper stages an evictable spare only on a pass that filled no held one,
+and at most one per pass, because `pool_stage` blocks the daemon's own loop. `ffstatus` calls these
+`warm-evictable` where a held spare is `warm`. `design/ffbox_warm_branches_design.txt`.
 
 **The keeper retires it, and it can retire itself.** After `idle_agent_ttl_secs` unclaimed, the
 keeper stops the container and stages a fresher one. That covers the workspace drifting from head,
@@ -2298,7 +2328,7 @@ somebody is looking at it.
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
 | `/claude` | **the subscriptions**: every Claude account in the `secrets.env` pool, which one is actually spent, which plan its slot declares, and how much of each account's five-hour and weekly windows is gone, with the per-model weekly cap beside them where the token's scope allows it. Read from Anthropic over the network and cached for 15 minutes; no token appears on it |
-| `/status` | **the box**, and one of two pages here that read no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back. A `running` state is a link to `/stop?name=…`, which confirms and then stops that container |
+| `/status` | **the box**, and one of two pages here that read no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch, tier (`warm` or `warm-evictable`) and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back. A `running` state is a link to `/stop?name=…`, which confirms and then stops that container |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 

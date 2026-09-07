@@ -2485,14 +2485,20 @@ class App:
         prows = []
         for pool in doc.get("pools") or []:
             waiting, want = pool.get("waiting"), pool.get("idle")
+            # THE EVICTABLE TIER IN A COLUMN OF ITS OWN, never folded into `waiting`. Those spares
+            # sit on branches somebody used recently rather than on the class's own, so no turn
+            # that `idle` was raised for can claim one -- adding them here would show a pool as
+            # full while the promise it made is unkept. None is CI, which has no such tier.
+            loose = pool.get("warm_branches")
             cell = str(waiting)
             if isinstance(waiting, int) and isinstance(want, int) and waiting < want:
                 cell = Raw(esc(str(waiting)) +
                            " <span class=\"pill filling\">below target</span>")
-            prows.append([pool.get("class") or "—", want, cell, pool.get("busy"),
-                          pool.get("max")])
+            prows.append([pool.get("class") or "—", want, cell,
+                          "—" if loose is None else loose,
+                          pool.get("busy"), pool.get("max")])
         body += ["<h2>pools</h2>",
-                 table(["class", "idle", "waiting", "busy", "max"], prows)]
+                 table(["class", "idle", "waiting", "branch", "busy", "max"], prows)]
 
         infra = doc.get("infrastructure") or []
         if infra:

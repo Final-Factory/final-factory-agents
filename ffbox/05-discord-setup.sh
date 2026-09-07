@@ -274,6 +274,12 @@ for key, value in (
     # alone: agent runs, staged pool containers and ffgithubrunners' CI jobs all count against it.
     # See ffbox/lib-workloads.sh, which is what actually refuses.
     ("max_concurrent_runs", 6),
+    # HOW MANY OF THOSE PLACES A SPECULATIVE SPARE MAY NEVER TAKE. Nothing on this box can ask
+    # for a place -- CI polls the ceiling and waits, a cold ffbox exits 77, a queued turn is
+    # retried next pass -- so the keeper keeps one free instead of waiting to be told. A waiter
+    # finds it, that drops the box below the reserve, and the next keeper pass sheds one
+    # evictable spare to restore it. Held spares are not touched; see "warm_branches" below.
+    ("workload_reserve", 1),
     ("catchup_secs", 900),
     # --- the pools --------------------------------------------------------------------------
     # ONE SECTION HOLDING ONE BLOCK PER AGENT CLASS, since 2026-09-02. Everything that governs a
@@ -342,6 +348,18 @@ for key, value in (
         # Which branch the pool stages. null follows base_ref, and there is deliberately no
         # second answer to configure: a pool staged on a branch no turn asks for serves nothing.
         "pool_ref": None,
+        # THE EVICTABLE TIER: spares on branches somebody actually used recently, staged out
+        # of the slack this box is not using and given straight back when anything else wants
+        # the place. What it buys is the turn the held pool always misses -- from the moment a
+        # conversation pushes, every later turn of it asks for ITS OWN branch, which is never
+        # the branch "pool" above stages.
+        #
+        # count is per class, so 1 here and 1 in ffdev is two spares on the box. 0 is off.
+        # window_secs is how recently a turn must have wanted a branch for it to be a
+        # candidate; ttl_secs matches it, because a spare for a branch that is no longer a
+        # candidate should not outlive its own reason.
+        "warm_branches": {"count": 1, "window_secs": 3600, "ttl_secs": 3600},
+
         # THE FENCE, and the word says the policy rather than a docker network name -- ffwatch
         # is the one place that knows "limited" means ffbox-net, a Docker --internal bridge with
         # no default route whose only other occupant is the egress proxy. A run on it reaches
@@ -401,6 +419,8 @@ for key, value in (
         "pool": {"idle": 1, "max": 3},
         "idle_agent_ttl_secs": 14400,
         "pool_ref": None,
+        # Same keys and the same meanings as ffagent's, and no inheritance between them.
+        "warm_branches": {"count": 1, "window_secs": 3600, "ttl_secs": 3600},
         # NO FENCE, DELIBERATELY. "full" is the ordinary NATted docker bridge: the whole
         # internet, no allowlist, no SNI filter. A dev turn has to be able to read documentation,
         # search the web and fetch a package, and an allowlist that must be edited every time it

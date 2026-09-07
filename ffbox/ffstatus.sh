@@ -498,19 +498,26 @@ ci_supervisor_alive() {
 # rather than as "3h47m", because a number is what a renderer can decide how to say -- the
 # terminal wants the short form and a JSON consumer wants the number.
 declare -a ROWS=() INFRA=()
-declare -A SPARES=() RUNS=()
+# SPARES IS THE HELD TIER ONLY, and LOOSE the evictable one. Counting a guess as though it kept
+# the promise is what would hide an unfilled held pool behind a warm-branch spare that no turn of
+# that class's own branch can ever claim -- the same reason ffwatch's keeper counts them apart.
+declare -A SPARES=() LOOSE=() RUNS=()
 CI_BUSY=0 CI_WAITING=0 WORKLOADS=0 WIDEST=4 GATHER_ERR=
 
 gather() {
     read_machine
     read_maintenance
     read_update
-    ROWS=(); INFRA=(); SPARES=(); RUNS=()
+    ROWS=(); INFRA=(); SPARES=(); LOOSE=(); RUNS=()
     CI_BUSY=0; CI_WAITING=0; WORKLOADS=0; WIDEST=4; GATHER_ERR=
 
     local fmt="{{.Names}}${SEP}{{.Label \"ffbox.workload\"}}${SEP}{{.Label \"ffbox.agent.class\"}}"
     fmt+="${SEP}{{.Label \"ffbox.pool\"}}${SEP}{{.Label \"ffbox.pool.id\"}}"
     fmt+="${SEP}{{.Label \"ffbox.slot\"}}${SEP}{{.RunningFor}}${SEP}{{.Status}}"
+    # THE TIER, LAST, so a container from an older ffbox -- which carries no such label -- still
+    # reads correctly: the field arrives empty and `warm` is the right word for it, because held
+    # was the one tier there was. design/ffbox_warm_branches_design.txt.
+    fmt+="${SEP}{{.Label \"ffbox.pool.tier\"}}"
 
     local ps
     if ! ps=$("$DOCKER" ps --format "$fmt" 2>/dev/null); then
@@ -518,8 +525,8 @@ gather() {
         return 1
     fi
 
-    local name workload class ref poolid slot age status
-    while IFS="$SEP" read -r name workload class ref poolid slot age status; do
+    local name workload class ref poolid slot age status tier
+    while IFS="$SEP" read -r name workload class ref poolid slot age status tier; do
         [ -n "$name" ] || continue
         age=${age% ago}
         if [ -z "$workload" ]; then
@@ -561,10 +568,23 @@ gather() {
                         # written once the workspace is filled, `owner` once the host has claimed
                         # it (or the container has decided to retire).
                         lane=spare
-                        SPARES[$class]=$(( ${SPARES[$class]:-0} + 1 ))
+                        if [ "$tier" = evictable ]; then
+                            LOOSE[$class]=$(( ${LOOSE[$class]:-0} + 1 ))
+                        else
+                            SPARES[$class]=$(( ${SPARES[$class]:-0} + 1 ))
+                        fi
                         local out="$POOL_DIR/$poolid/out"
                         if [ -e "$out/staged" ]; then
-                            state=warm
+                            # WHICH KIND OF WARM. A held spare is what this class's `idle` number
+                            # asked for and nothing takes it away; an evictable one is a guess
+                            # staged onto a recently-used branch out of slack, and the keeper sheds
+                            # it as soon as anything else on the box wants the place. A reader
+                            # looking at a warm container wants to know which.
+                            if [ "$tier" = evictable ]; then
+                                state=warm-evictable
+                            else
+                                state=warm
+                            fi
                             ttl=$(ffbox_clock_left "$out/staged" 2>/dev/null) || ttl=''
                         else
                             state=filling
@@ -695,19 +715,22 @@ render_text() {
     # an agent `spare` and an idle CI runner are both a container waiting for work, and both were
     # printed as RUNNING here until 2026-09-02 -- which made a CI pool that was doing exactly what
     # it was configured to do look like it had lost its idle runner.
-    printf '  %s%-10s %-6s %-9s %-6s %s%s\n' "$DIM" CLASS IDLE WAITING BUSY MAX "$N"
+    # BRANCH is the evictable tier: spares on branches somebody used recently, staged out of
+    # slack and shed when the box needs the place. They are not part of IDLE/WAITING because they
+    # are not what that number promised, and a column of their own is what keeps both readable.
+    printf '  %s%-10s %-6s %-9s %-8s %-6s %s%s\n' "$DIM" CLASS IDLE WAITING BRANCH BUSY MAX "$N"
     local cls
     for cls in ffagent ffdev; do
         local want=${CFG[${cls}_idle]} have=${SPARES[$cls]:-0} busy=${RUNS[$cls]:-0}
         local mark=$GRN
         [ "$have" -lt "$want" ] && mark=$YEL
-        printf '  %-10s %-6s %s%-9s%s %-6s %s\n' \
-            "$cls" "$want" "$mark" "$have" "$N" "$busy" "${CFG[${cls}_max]}"
+        printf '  %-10s %-6s %s%-9s%s %-8s %-6s %s\n' \
+            "$cls" "$want" "$mark" "$have" "$N" "${LOOSE[$cls]:-0}" "$busy" "${CFG[${cls}_max]}"
     done
     local ci_mark=$GRN
     [ "$CI_WAITING" -lt "${CFG[ci_idle]}" ] && ci_mark=$YEL
-    printf '  %-10s %-6s %s%-9s%s %-6s %s\n' \
-        ci "${CFG[ci_idle]}" "$ci_mark" "$CI_WAITING" "$N" "$CI_BUSY" "${CFG[ci_max]}"
+    printf '  %-10s %-6s %s%-9s%s %-8s %-6s %s\n' \
+        ci "${CFG[ci_idle]}" "$ci_mark" "$CI_WAITING" "$N" "-" "$CI_BUSY" "${CFG[ci_max]}"
 
     if [ ${#INFRA[@]} -gt 0 ]; then
         printf '\n%sINFRASTRUCTURE%s %s(holds no workspace, counts against nothing)%s\n\n' \
@@ -736,13 +759,16 @@ render_json() {
             "$SEP" "$MEM_TOTAL_KB" "$SEP" "$MEM_USED_KB" "$SEP" "$SHMEM_KB"
         local cls
         for cls in ffagent ffdev; do
-            printf 'P%s%s%s%s%s%s%s%s%s%s\n' "$SEP" "$cls" \
+            printf 'P%s%s%s%s%s%s%s%s%s%s%s%s\n' "$SEP" "$cls" \
                 "$SEP" "${CFG[${cls}_idle]}" "$SEP" "${SPARES[$cls]:-0}" \
-                "$SEP" "${RUNS[$cls]:-0}" "$SEP" "${CFG[${cls}_max]}"
+                "$SEP" "${RUNS[$cls]:-0}" "$SEP" "${CFG[${cls}_max]}" \
+                "$SEP" "${LOOSE[$cls]:-0}"
         done
-        printf 'P%s%s%s%s%s%s%s%s%s%s\n' "$SEP" ci \
+        # CI has no such tier, and an empty field is how this record says so -- num() reads it as
+        # null, which a page can tell apart from a zero.
+        printf 'P%s%s%s%s%s%s%s%s%s%s%s%s\n' "$SEP" ci \
             "$SEP" "${CFG[ci_idle]}" "$SEP" "$CI_WAITING" \
-            "$SEP" "$CI_BUSY" "$SEP" "${CFG[ci_max]}"
+            "$SEP" "$CI_BUSY" "$SEP" "${CFG[ci_max]}" "$SEP" ""
         [ ${#ROWS[@]} -gt 0 ] && printf "C$SEP%s\n" "${ROWS[@]}"
         [ ${#INFRA[@]} -gt 0 ] && printf "I$SEP%s\n" "${INFRA[@]}"
     # THE PROGRAM COMES IN AS AN ARGUMENT, NOT ON STDIN. `python3 - <<PY` puts the heredoc on
@@ -794,7 +820,8 @@ for line in sys.stdin.read().splitlines():
                           "mem_used_kb": num(f[5]), "shmem_kb": num(f[6])}
     elif tag == "P":
         doc["pools"].append({"class": f[0], "idle": num(f[1]), "waiting": num(f[2]),
-                             "busy": num(f[3]), "max": num(f[4])})
+                             "busy": num(f[3]), "max": num(f[4]),
+                             "warm_branches": num(f[5]) if len(f) > 5 else None})
     elif tag == "C":
         doc["containers"].append({
             "lane": f[0], "class": f[1] or None, "name": f[2], "slot": f[3] or None,

@@ -8241,21 +8241,28 @@ def test_the_keeper_backs_off_a_class_whose_staging_failed():
     w.cfg["agent_classes"]["ffagent"].update({"idle_agents": 1, "agent_pool_max": 4})
     w.cfg["agent_classes"]["ffdev"].update({"idle_agents": 1, "agent_pool_max": 4})
     w.cfg["max_concurrent_runs"] = 4
+    # THE HELD TIER ONLY. keep_pool also keeps a second, evictable tier on recently-used branches
+    # (design/ffbox_warm_branches_design.txt), and this test asserts the exact list of what was
+    # staged -- so the other tier is switched off rather than left to make the assertions
+    # depend on what happens to be in the fixture's conversation table.
+    for _cls in ffwatch.AGENT_CLASSES:
+        w.cfg["agent_classes"][_cls]["warm_branches"]["count"] = 0
     w.pool_has_room = lambda for_containers=1: True
     w.pool_reap = lambda: 0
     w.pool_containers = lambda: []
 
     tried = []
-    w.pool_stage = lambda cls=None: (tried.append(cls) or None)
+    w.pool_stage = lambda cls=None, **kw: (tried.append(cls) or None)
     check("the first pass tries both classes", w.keep_pool() == [] and tried == ["ffagent",
                                                                                  "ffdev"], tried)
     tried.clear()
     check("and the next one leaves them alone", w.keep_pool() == [] and tried == [], tried)
 
-    # PER CLASS, and only for as long as configured: a box whose staging failed because CI was
-    # briefly full has to come back to it by itself.
-    w._pool_stage_after["ffdev"] = 0.0
-    w.pool_stage = lambda cls=None: (tried.append(cls) or f"p{len(tried)}")
+    # PER CLASS AND PER BRANCH, and only for as long as configured: a box whose staging failed
+    # because CI was briefly full has to come back to it by itself. The branch half of the key is
+    # what keeps a failed warm-branch guess from also stopping that class's held pool.
+    w._pool_stage_after[("ffdev", w.pool_branch("ffdev"))] = 0.0
+    w.pool_stage = lambda cls=None, **kw: (tried.append(cls) or f"p{len(tried)}")
     check("the class whose backoff expired is tried again, and the other is not",
           w.keep_pool() == ["p1"] and tried == ["ffdev"], tried)
 
@@ -9315,7 +9322,11 @@ def test_the_pool_only_stages_what_it_has_room_for():
     w.cfg["agent_classes"]["ffdev"].update({"idle_agents": 0, "agent_pool_max": 3})
 
     staged = []
-    w.pool_stage = lambda cls=None: (staged.append(cls) or f"p{len(staged)}")
+    w.pool_stage = lambda cls=None, **kw: (staged.append(cls) or f"p{len(staged)}")
+    # The held tier only; the evictable one has its own tests. See the note in
+    # test_a_failed_staging_is_not_retried_every_pass.
+    for _cls in ffwatch.AGENT_CLASSES:
+        w.cfg["agent_classes"][_cls]["warm_branches"]["count"] = 0
     w.pool_has_room = lambda for_containers=1: True
     w.pool_reap = lambda: 0
 
@@ -13317,6 +13328,345 @@ def test_a_box_with_one_account_is_left_exactly_as_it_was():
               case.watcher.claude_status())
 
 
+
+# --- the evictable tier (design/ffbox_warm_branches_design.txt) --------------------------------
+#
+# The held pool warms ONE branch per class, and pool_claim_for matches the branch exactly -- so
+# from the moment a conversation pushes, every later turn of it asks for a branch the pool has
+# never heard of and launches cold. The second tier warms a few of those as well, out of slack,
+# and gives the places straight back.
+
+
+def _seed_branch_turn(w, conv_id, branch, agent_class, when, state="idle"):
+    """One conversation owning `branch`, with one turn that wanted it at `when`."""
+    w.db.execute(
+        "INSERT INTO conversation (id, thread_id, kind, state, branch, agent_class)"
+        " VALUES (?,?,?,?,?,?)",
+        (conv_id, f"t{conv_id}", "ask", state, branch, agent_class))
+    w.db.execute(
+        "INSERT INTO turn (conversation_id, seq, status, queued_at, started_at)"
+        " VALUES (?,?,?,?,?)",
+        (conv_id, 1, "done", when, when))
+
+
+def _ago(secs):
+    """`secs` ago, in now_iso's shape -- which is what every row in this database holds."""
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc)
+            - timedelta(seconds=secs)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_a_spare_says_which_tier_it_is():
+    """The label, and the one case where the label is not the answer.
+
+    Docker cannot relabel a running container, so `ffbox.pool.tier` says what a spare was created
+    as and can never say what it has become. When a class's base_ref moves, its held spares on the
+    old branch stop being the promise anybody made -- pool_claim_for matches the branch exactly, so
+    they now serve nothing -- and leaving them at the front of the "never shed this" queue would
+    have the box protecting containers it has no use for while shedding ones it does.
+    """
+    print("pool: which tier a spare is")
+    case = Case("pooltier", base_fixture())
+    w = case.watcher
+
+    held = {"name": "c1", "id": "h1", "branch": "master", "class": "ffagent",
+            "tier": ffwatch.POOL_TIER_HELD}
+    loose = {"name": "c2", "id": "e1", "branch": "loth/fix", "class": "ffagent",
+             "tier": ffwatch.POOL_TIER_EVICTABLE}
+    check("a held spare on its class's branch is held",
+          w.effective_pool_tier(held) == ffwatch.POOL_TIER_HELD, None)
+    check("and an evictable one is evictable",
+          w.effective_pool_tier(loose) == ffwatch.POOL_TIER_EVICTABLE, None)
+
+    # A container staged before this tier existed carries no label at all, and held is the right
+    # answer for it: it was staged by the one tier there was.
+    check("an unlabelled spare on the pool branch reads as held",
+          w.effective_pool_tier({"name": "c3", "id": "o1", "branch": "master",
+                                 "class": "ffagent"}) == ffwatch.POOL_TIER_HELD, None)
+
+    # THE DEMOTION. base_ref moves and the master spare is now a container nothing can claim.
+    w.cfg["agent_classes"]["ffagent"]["base_ref"] = "develop"
+    check("a held spare left behind by a base_ref move is demoted",
+          w.effective_pool_tier(held) == ffwatch.POOL_TIER_EVICTABLE, None)
+    # And it only ever demotes: sitting on the class's branch does not turn a guess into a promise,
+    # because nothing asked for it.
+    w.cfg["agent_classes"]["ffagent"]["base_ref"] = "loth/fix"
+    check("but an evictable spare is never promoted by where it sits",
+          w.effective_pool_tier(loose) == ffwatch.POOL_TIER_EVICTABLE, None)
+
+
+def test_which_branches_are_worth_warming():
+    """The candidate set comes out of what the box has RUN, never out of `git branch -r`.
+
+    A prediction that is wrong costs 24 GiB of resident workspace, so every filter here is either
+    "somebody actually wanted this" or "a container staged on it would die".
+    """
+    print("pool: which branches are candidates")
+    case = Case("poolcand", base_fixture())
+    w = case.watcher
+    w.cfg["agent_classes"]["ffagent"]["warm_branches"].update(
+        {"count": 2, "window_secs": 3600})
+    carried = {"loth/recent", "loth/older", "loth/stale", "loth/closed", "master", "ffdev/one"}
+    w.mirror_carries = lambda branch: branch in carried
+
+    _seed_branch_turn(w, 1, "loth/recent", "ffagent", _ago(60))
+    _seed_branch_turn(w, 2, "loth/older", "ffagent", _ago(600))
+    _seed_branch_turn(w, 3, "loth/stale", "ffagent", _ago(7200))
+    _seed_branch_turn(w, 4, "loth/closed", "ffagent", _ago(60), state="closed")
+    _seed_branch_turn(w, 5, "master", "ffagent", _ago(60))
+    _seed_branch_turn(w, 6, "ffdev/one", "ffdev", _ago(60))
+    _seed_branch_turn(w, 7, "loth/unmirrored", "ffagent", _ago(30))
+
+    got = list(w.pool_branch_candidates("ffagent", []))
+    check("the most recently wanted branch comes first", got[:1] == ["loth/recent"], got)
+    check("and the next one after it", got[:2] == ["loth/recent", "loth/older"], got)
+    check("a branch outside the window is not a candidate", "loth/stale" not in got, got)
+    check("nor is a closed conversation's", "loth/closed" not in got, got)
+    check("nor the class's own pool branch", "master" not in got, got)
+    check("nor another class's", "ffdev/one" not in got, got)
+    # THE MIRROR CHECK IS NOT AN OPTIMISATION. A container reaches no network and fills from the
+    # local mirror; staging on a branch the mirror lacks produces one that dies in restore, is
+    # replaced, and dies again -- a loop that burns a 22 GiB extraction each time round.
+    check("nor one the mirror does not carry", "loth/unmirrored" not in got, got)
+    check("and the other class gets its own", list(w.pool_branch_candidates("ffdev", [])) ==
+          ["ffdev/one"], None)
+
+    # Already staged is not a candidate: one guess per branch.
+    staged = [{"name": "c", "id": "e1", "branch": "loth/recent", "class": "ffagent",
+               "tier": ffwatch.POOL_TIER_EVICTABLE}]
+    check("a branch that already has a spare is skipped",
+          list(w.pool_branch_candidates("ffagent", staged))[:1] == ["loth/older"], None)
+
+    # And the cooldown, which is what stops a branch just shed being restaged next pass.
+    w._pool_stage_after[("ffagent", "loth/recent")] = time.monotonic() + 300
+    check("nor is one inside its cooldown",
+          list(w.pool_branch_candidates("ffagent", []))[:1] == ["loth/older"], None)
+
+
+def test_a_guess_is_never_staged_into_the_reserve():
+    """The whole safety property, and the reason no demand signal exists.
+
+    Nothing on this box can ASK for a place: CI polls the ceiling and waits, a cold ffbox exits 77,
+    a queued turn is retried next pass. So the keeper keeps places free instead of waiting to be
+    told, and the dead band above the reserve is what stops a box oscillating by one place from
+    extracting and destroying a 22 GiB workspace on that rhythm.
+    """
+    print("pool: the reserve, and the dead band")
+    case = Case("poolreserve", base_fixture())
+    w = case.watcher
+    w.cfg["workload_reserve"] = 1
+    for cls in ffwatch.AGENT_CLASSES:
+        w.cfg["agent_classes"][cls].update({"idle_agents": 0, "agent_pool_max": 6})
+        w.cfg["agent_classes"][cls]["warm_branches"].update({"count": 1, "window_secs": 3600})
+    w.mirror_carries = lambda branch: True
+    w.pool_has_room = lambda for_containers=1: True
+    w.pool_reap = lambda: 0
+    w.pool_expire = lambda: 0
+    w.pool_containers = lambda: []
+    _seed_branch_turn(w, 1, "loth/recent", "ffagent", _ago(60))
+
+    staged = []
+    w.pool_stage = lambda cls=None, ref=None, **kw: (staged.append((cls, ref, kw.get("tier")))
+                                                     or f"p{len(staged)}")
+
+    # Below reserve + 2 the tier stages nothing, whatever else is true.
+    w.workload_room = lambda: 2
+    check("no guess is staged inside the dead band", w.keep_pool() == [] and staged == [], staged)
+
+    w.workload_room = lambda: 3
+    check("and one is staged above it", w.keep_pool() == ["p1"], staged)
+    check("on the branch a turn actually wanted, in the evictable tier",
+          staged == [("ffagent", "loth/recent", ffwatch.POOL_TIER_EVICTABLE)], staged)
+
+    # The class ceiling still applies to a guess exactly as it does to a promise.
+    staged.clear()
+    w.cfg["agent_classes"]["ffagent"]["agent_pool_max"] = 0
+    w.agent_room = lambda cls=None: 0
+    check("and a class at its own ceiling stages none", w.keep_pool() == [], staged)
+
+
+def test_a_promise_is_filled_before_a_guess_is_made():
+    """Held first, and at most one guess per pass.
+
+    pool_stage blocks the daemon's own loop for as long as ffbox takes -- up to the 180-second
+    ceiling ffwatch kills it at -- and the keeper already stages one held spare per class per pass.
+    A third would add half a minute of blocked loop on a bad pass, which is the 2026-09-02 incident
+    with a new cause. It is also the priority stated in the one place it can be enforced.
+    """
+    print("pool: held before evictable")
+    case = Case("poolorder", base_fixture())
+    w = case.watcher
+    w.cfg["workload_reserve"] = 1
+    w.cfg["agent_classes"]["ffagent"].update({"idle_agents": 1, "agent_pool_max": 6})
+    w.cfg["agent_classes"]["ffdev"].update({"idle_agents": 0, "agent_pool_max": 6})
+    for cls in ffwatch.AGENT_CLASSES:
+        w.cfg["agent_classes"][cls]["warm_branches"].update({"count": 1, "window_secs": 3600})
+    w.mirror_carries = lambda branch: True
+    w.pool_has_room = lambda for_containers=1: True
+    w.pool_reap = lambda: 0
+    w.pool_expire = lambda: 0
+    w.workload_room = lambda: 6
+    _seed_branch_turn(w, 1, "loth/recent", "ffagent", _ago(60))
+
+    containers = []
+    w.pool_containers = lambda: list(containers)
+    staged = []
+
+    def stage(cls=None, ref=None, tier=ffwatch.POOL_TIER_HELD, **kw):
+        staged.append((cls, ref, tier))
+        return f"p{len(staged)}"
+    w.pool_stage = stage
+
+    check("the pass that fills the held pool stages nothing else",
+          w.keep_pool() == ["p1"], staged)
+    check("and what it staged was the promise",
+          staged == [("ffagent", None, ffwatch.POOL_TIER_HELD)], staged)
+
+    # Now the promise is kept, so the next pass may make a guess.
+    containers.append({"name": "c1", "id": "h1", "branch": "master", "class": "ffagent",
+                       "tier": ffwatch.POOL_TIER_HELD})
+    check("the next pass makes one guess", w.keep_pool() == ["p2"], staged)
+    check("and only one", staged[-1][2] == ffwatch.POOL_TIER_EVICTABLE and len(staged) == 2,
+          staged)
+
+    # A held spare that is present but on the WRONG branch does not keep the promise: it is
+    # demoted, so the class is short again and the promise is refilled before any further guess.
+    containers.append({"name": "c2", "id": "e1", "branch": "loth/recent", "class": "ffagent",
+                       "tier": ffwatch.POOL_TIER_EVICTABLE})
+    w.cfg["agent_classes"]["ffagent"]["base_ref"] = "develop"
+    check("a demoted spare leaves the held pool short", w.keep_pool() == ["p3"], staged)
+    check("and it is the promise that gets refilled",
+          staged[-1] == ("ffagent", None, ffwatch.POOL_TIER_HELD), staged)
+
+
+def test_the_shed_gives_one_place_back_and_never_takes_a_promise():
+    """The only thing in this daemon that destroys a spare to serve somebody else.
+
+    It is allowed to because of WHAT it destroys. `Nothing is evicted` was settled on 2026-09-01
+    and still holds for the held tier: a held spare is what `idle: N` promised, and taking one is
+    one worker type stealing another's warm container. An evictable spare is a guess -- nobody
+    asked for it and the turn it might have served does not exist.
+
+    And it decides from `out/owner`, never from the label. The `ffbox.pool` label survives the
+    rename at dispatch and is on every container this pool ever staged; deciding by it is what cost
+    conversation 30 its turn-5 answer.
+    """
+    print("pool: the shed")
+    case = Case("poolshed", base_fixture())
+    w = case.watcher
+    w.cfg["workload_reserve"] = 1
+    stopped = []
+    w._pool_expire_one = lambda pool_id, name: stopped.append((pool_id, name))
+
+    # The stop goes to a thread -- nobody waits on a retirement -- so run it on this one instead,
+    # or every assertion below races it. Same stub the idle-life test uses.
+    real_thread = ffwatch.threading.Thread
+
+    class Inline(real_thread):
+        def start(self):
+            self.run()
+    ffwatch.threading.Thread = Inline
+
+    _seed_branch_turn(w, 1, "loth/new", "ffagent", _ago(60))
+    _seed_branch_turn(w, 2, "loth/old", "ffagent", _ago(1800))
+
+    containers = [
+        {"name": "cH", "id": "h1", "branch": "master", "class": "ffagent",
+         "tier": ffwatch.POOL_TIER_HELD},
+        {"name": "cN", "id": "n1", "branch": "loth/new", "class": "ffagent",
+         "tier": ffwatch.POOL_TIER_EVICTABLE},
+        {"name": "cO", "id": "o1", "branch": "loth/old", "class": "ffagent",
+         "tier": ffwatch.POOL_TIER_EVICTABLE},
+    ]
+    w.pool_containers = lambda: list(containers)
+    for pid in ("h1", "n1", "o1"):
+        os.makedirs(os.path.join(w.pool_dir(pid), "out"), exist_ok=True)
+
+    # Above the reserve nothing is shed, however many guesses are standing.
+    w.workload_room = lambda: 1
+    check("at the reserve nothing is shed", w.pool_shed() is None and stopped == [], stopped)
+
+    # Below it, one goes -- and it is the one whose branch was wanted longest ago.
+    w.workload_room = lambda: 0
+    shed = w.pool_shed()
+    check("below the reserve one is shed", shed == "o1", shed)
+    check("and it is the oldest branch, not the newest", stopped == [("o1", "cO")], stopped)
+    check("the claim was taken first, so no dispatch can race it",
+          os.path.exists(w.pool_owner_path("o1")), None)
+    check("and it is marked retiring rather than claimed, so the page does not lie",
+          os.path.exists(os.path.join(w.pool_dir("o1"), "out", "retiring")), None)
+    check("its branch goes into cooldown so the next pass does not restage it",
+          w._pool_stage_after.get(("ffagent", "loth/old"), 0) > time.monotonic(), None)
+
+    # ONE PER PASS. The next call sheds the remaining guess, not both at once.
+    containers[:] = [c for c in containers if c["id"] != "o1"]
+    w._pool_expiring.clear()
+    stopped.clear()
+    check("the next pass sheds the next one", w.pool_shed() == "n1", stopped)
+
+    # AND IT STOPS AT THE PROMISE. With only the held spare left there is nothing to shed, however
+    # far below the reserve the box is.
+    containers[:] = [c for c in containers if c["id"] == "h1"]
+    w._pool_expiring.clear()
+    stopped.clear()
+    check("a held spare is never shed", w.pool_shed() is None and stopped == [], stopped)
+
+    # A CLAIMED GUESS IS NOT A GUESS ANY MORE. out/owner means a turn has been dispatched into it,
+    # and everything that run produces is read out of that spool after the container exits.
+    containers[:] = [{"name": "cC", "id": "c1", "branch": "loth/new", "class": "ffagent",
+                      "tier": ffwatch.POOL_TIER_EVICTABLE}]
+    os.makedirs(os.path.join(w.pool_dir("c1"), "out"), exist_ok=True)
+    open(w.pool_owner_path("c1"), "w").close()
+    check("nor is one a turn is using", w.pool_shed() is None and stopped == [], stopped)
+    ffwatch.threading.Thread = real_thread
+
+
+def test_the_keeper_sheds_before_it_stages():
+    """Giving a place back is more urgent than taking one, and a pass that shed something has
+    already changed every number the staging decisions below it read."""
+    print("pool: shed first, stage never in the same pass")
+    case = Case("poolshedfirst", base_fixture())
+    w = case.watcher
+    w.cfg["workload_reserve"] = 1
+    w.cfg["agent_classes"]["ffagent"].update({"idle_agents": 1, "agent_pool_max": 6})
+    w.pool_reap = lambda: 0
+    w.pool_expire = lambda: 0
+    w.pool_has_room = lambda for_containers=1: True
+    w.workload_room = lambda: 0
+    staged = []
+    w.pool_stage = lambda cls=None, **kw: (staged.append(cls) or "p1")
+    shed = []
+    w.pool_shed = lambda: (shed.append(1) or "e1")
+    check("a pass that sheds stages nothing", w.keep_pool() == [] and staged == [], staged)
+    check("and it did shed", shed == [1], shed)
+
+
+def test_a_reserve_that_can_never_be_met_is_clamped():
+    """A reserve at or above the ceiling is a number free places can never reach, so the keeper
+    would shed every guess on every pass and stage none -- the feature switched off by arithmetic,
+    silently."""
+    print("pool: the reserve is clamped")
+    saved = os.environ.get("FFWATCH_MAX_RUNS")
+    try:
+        os.environ["FFWATCH_MAX_RUNS"] = "4"
+        cfg = ffwatch.load_config()
+        check("the default reserve survives an ordinary ceiling",
+              cfg["workload_reserve"] == 1, cfg["workload_reserve"])
+        # A ONE-CONTAINER BOX. The default reserve is already at the ceiling there, so without the
+        # clamp the keeper would shed every guess on every pass and stage none -- the feature
+        # switched off by arithmetic, silently. One below the ceiling is the most that still
+        # leaves a place for the thing being reserved against, and here that is zero: no reserve,
+        # which is the honest answer for a box with one place.
+        os.environ["FFWATCH_MAX_RUNS"] = "1"
+        cfg = ffwatch.load_config()
+        check("and a reserve it could never meet is clamped below it",
+              cfg["workload_reserve"] == 0, cfg["workload_reserve"])
+    finally:
+        if saved is None:
+            os.environ.pop("FFWATCH_MAX_RUNS", None)
+        else:
+            os.environ["FFWATCH_MAX_RUNS"] = saved
+
 def main():
     tests = [
         test_the_account_about_to_refill_is_the_one_worth_spending,
@@ -13554,6 +13904,13 @@ def main():
         test_which_pool_a_discord_author_gets_is_read_from_the_trust_table,
         test_where_a_conversation_goes_when_a_stranger_speaks_in_it,
         test_a_discord_conversation_opens_in_the_pool_its_opener_earns,
+        test_a_spare_says_which_tier_it_is,
+        test_which_branches_are_worth_warming,
+        test_a_guess_is_never_staged_into_the_reserve,
+        test_a_promise_is_filled_before_a_guess_is_made,
+        test_the_shed_gives_one_place_back_and_never_takes_a_promise,
+        test_the_keeper_sheds_before_it_stages,
+        test_a_reserve_that_can_never_be_met_is_clamped,
     ]
     for fn in tests:
         try:
