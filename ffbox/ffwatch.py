@@ -686,8 +686,19 @@ DEFAULTS = {
         # internet) or routing through a CI runner (a host socket reachable by PR-authored
         # workflow code). Polling this cheaply is the better trade, and this is the knob.
         "poll_secs": 60,
+        # AND IT IS SHARED WITH THE MERGE POLLER. One worker, one clock, two conditional
+        # requests to the same host: a second interval would be two numbers to keep in step for
+        # no gain anybody can measure. Do not add `merge_poll_secs`.
+        #
         # WHOSE COMMENT MAY START ONE is not here: it is the top-level `operators` block, which
         # names each person once and carries their id for each service. See operator_ids().
+        #
+        # A MERGED PULL REQUEST TELLS THE THREAD WHICH BUILD CARRIES THE FIX
+        # (design/pr_merged_notice_design.txt). Nobody triggers this and no operator table gates
+        # it: GitHub triggers it by merging, and who pressed the button is not a permission
+        # question. False turns the poller off entirely, which is what a box that is not the
+        # Discord harness wants.
+        "announce_merges": True,
     },
 
     # ceilings (design section 8). Three separate clocks; conflating them makes a slow Unity
@@ -2256,6 +2267,16 @@ DM_AUTOREPLY_TEXT = ("Please @mention me in a public channel on discord. I want 
 DM_AUTOREPLY_COOLDOWN_SECS = 3600
 
 
+def merge_notice_local_id(number, conv_id):
+    """The outbound `local_id` a merge notice wears: pr-merged:<pull request>:<conversation>.
+
+    THE DURABLE HALF OF SAYING IT ONCE. The poller's cursor stops the work and this stops the
+    message, and it outlives the cursor: a state directory that is wiped, or a database carried
+    to another box, leaves `seen` empty and this row still standing.
+    """
+    return f"pr-merged:{number}:{conv_id}"
+
+
 def dm_autoreply_local_id(author_id, message_id):
     """The outbound `local_id` a player's auto-reply wears: dm-autoreply:<author>:<message>.
 
@@ -3205,6 +3226,67 @@ def should_engage_for(cfg, conv_kind, text, gate=False, key=None):
 # ------------------------------------------------------------------------------------------
 
 
+# THE GAME'S OWN VERSION, and where the release process keeps it
+# (design/pr_merged_notice_design.txt section 5). Assets/Editor/BuildCommand2.cs:709
+# (`UpdateMinorVersion`) rewrites the FFVersion.cs line with rc + 1 BEFORE it builds, writes
+# PlayerSettings.bundleVersion out of the result, and the bump is committed with the version as
+# the whole commit message -- `50a12f687 "0.21.0.22"`, 2026-08-24.
+#
+# So the number standing in the repository is the version of the LAST build, and the next build
+# is that number with one added to the RC. "Plus 0.0.0.1" is not an approximation of the release
+# process; it is the release process, read off the file the release process edits.
+GAME_VERSION_FILE = "Assets/Scripts/FFCore/Version/FFVersion.cs"
+GAME_SETTINGS_FILE = "ProjectSettings/ProjectSettings.asset"
+
+# BOTH SPELLINGS THE REPOSITORY HAS USED, because a regex that only knows today's is one commit
+# away from silently answering None: `new(0, 21, 0,22)` is current and `new FFVersion(0,16,0, 0)`
+# is what the line looked like in the 0.16 line. The RC is optional for the same reason -- the
+# constructor defaults it to 0 -- and a three-argument line means the next build is x.y.z.1.
+FF_VERSION_RE = re.compile(
+    r"FinalFactoryVersion\s*=\s*new(?:\s+FFVersion)?\s*\(\s*"
+    r"(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)")
+BUNDLE_VERSION_RE = re.compile(
+    r"^\s*bundleVersion:\s*(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?\s*$", re.M)
+
+
+def parse_ff_version(text):
+    """(major, minor, patch, rc) out of FFVersion.cs, or None.
+
+    COMMENTS ARE STRIPPED FIRST. BuildCommand.cs carries the same line in a doc comment as an
+    example of what it is looking for, and a file that ever grew a commented-out old version
+    would otherwise be able to answer with it -- re.search takes the first match and would not
+    say which line it came from.
+    """
+    live = "\n".join(line for line in (text or "").splitlines()
+                      if not line.lstrip().startswith(("//", "*", "///")))
+    got = FF_VERSION_RE.search(live)
+    if not got:
+        return None
+    return tuple(int(part or 0) for part in got.groups())
+
+
+def parse_bundle_version(text):
+    """(major, minor, patch, rc) out of ProjectSettings.asset's bundleVersion, or None."""
+    got = BUNDLE_VERSION_RE.search(text or "")
+    if not got:
+        return None
+    return tuple(int(part or 0) for part in got.groups())
+
+
+def next_version(version):
+    """The version the next build will be: the RC plus one, and nothing else touched.
+
+    A MINOR BUMP BY HAND IS WHY EVERY SENTENCE THAT USES THIS SAYS "AND LATER". 0.21.0.22
+    becoming 0.22.0.0 means 0.21.0.23 never exists, and the promise is kept by "and later"
+    rather than by the number. Section 5b of the design; section 12 is the watcher that would
+    let the box notice and correct itself.
+    """
+    if not version:
+        return ""
+    major, minor, patch, rc = (list(version) + [0, 0, 0, 0])[:4]
+    return f"{major}.{minor}.{patch}.{rc + 1}"
+
+
 def session_id_for(thread_id, generation=1):
     """Deterministic, and reconstructible without a lookup. Generation 1 is the plain form so
     an existing session is never orphaned by the retirement mechanism arriving later."""
@@ -3295,6 +3377,35 @@ class GitHubError(RuntimeError):
         self.status = status
         self.body = body
         super().__init__(f"GitHub HTTP {status}: {str(body)[:300]}")
+
+
+def pull_facts(got):
+    """One pull request, as this file talks about pull requests.
+
+    ONE SHAPER FOR BOTH READS. `GET /pulls/{n}` and an item out of `GET /pulls` are the same
+    object with a different amount of it filled in, and the merge poller reads a list item where
+    the review ingress reads a single fetch -- so a field that is shaped in two places would
+    drift the day one of the two readers wanted something new. Everything absent comes back
+    empty or falsy rather than missing, which is what lets a caller test a field it may not have
+    been given.
+    """
+    head = got.get("head") or {}
+    base = got.get("base") or {}
+    return {
+        "number": got.get("number"),
+        "url": got.get("html_url"),
+        "title": got.get("title") or "",
+        "state": got.get("state") or "closed",
+        "merged": bool(got.get("merged_at") or got.get("merged")),
+        "merged_at": got.get("merged_at") or "",
+        "merge_commit_sha": got.get("merge_commit_sha") or "",
+        "updated_at": got.get("updated_at") or "",
+        "draft": bool(got.get("draft")),
+        "head_ref": head.get("ref") or "",
+        "head_sha": head.get("sha") or "",
+        "head_repo": ((head.get("repo") or {}) or {}).get("full_name") or "",
+        "base_ref": base.get("ref") or "",
+    }
 
 
 class GitHub:
@@ -3449,6 +3560,53 @@ class GitHub:
         # Oldest first for the caller, which walks them in the order they were written.
         return list(reversed(out)), new_etag
 
+    def list_closed_pulls(self, since=None, per_page=50, max_pages=10, etag=None):
+        """Closed pull requests, most recently updated first, back as far as `since`.
+
+        THE SIBLING OF list_issue_comments AND DELIBERATELY A SECOND COPY OF IT. Same
+        `sort=updated&direction=desc`, same conditional GET on page one, same "one request for
+        the whole repository" argument: a merge always changes page one, so a 304 there is a
+        sound answer about the query and costs no rate limit at all.
+
+        THE ONE DIFFERENCE IS `since`, AND IT MATTERS TO THE CALLER. /issues/comments takes it
+        as a server-side filter; /pulls does not take it at all, so here it is a STOP-WALKING
+        watermark applied to `updated_at` on our side. The caller must therefore not advance it
+        past a pull request it has not finished with -- the next walk would stop before reaching
+        it. See poll_github_merges.
+
+        `state=closed` rather than `state=all` because an open pull request has nothing to say
+        to this poller and a repository has far more of them than the page size.
+
+        Returns (pull requests oldest-first, etag), or (NOT_MODIFIED, etag).
+        """
+        def url(page):
+            return (f"/repos/{self.repo}/pulls?state=closed&sort=updated&direction=desc"
+                    f"&per_page={per_page}&page={page}")
+
+        first, new_etag = self._request("GET", url(1), etag=etag, conditional=True)
+        if first is NOT_MODIFIED:
+            return NOT_MODIFIED, etag
+        got = list(first) if isinstance(first, list) else []
+        out, page, reached = [], 1, False
+        while True:
+            for item in got:
+                stamp = item.get("updated_at") or ""
+                if since and stamp and stamp <= since:
+                    reached = True
+                    break
+                out.append(pull_facts(item))
+            # A SHORT PAGE IS THE END OF THE ANSWER, and the ceiling is the other end: a walk
+            # that would need more than `max_pages` is a backlog nobody is waiting on, and
+            # leaving the cursor alone means the rest arrives next poll instead of holding the
+            # worker.
+            if reached or len(got) < per_page or page >= max_pages:
+                break
+            page += 1
+            got = self._request("GET", url(page))
+            if not isinstance(got, list) or not got:
+                break
+        return list(reversed(out)), new_etag
+
     def pull_request(self, number):
         """The facts a review run needs before it opens anything, or None.
 
@@ -3470,20 +3628,7 @@ class GitHub:
             raise
         if not isinstance(got, dict) or not got.get("number"):
             return None
-        head = got.get("head") or {}
-        base = got.get("base") or {}
-        return {
-            "number": got.get("number"),
-            "url": got.get("html_url"),
-            "title": got.get("title") or "",
-            "state": got.get("state") or "closed",
-            "merged": bool(got.get("merged_at") or got.get("merged")),
-            "draft": bool(got.get("draft")),
-            "head_ref": head.get("ref") or "",
-            "head_sha": head.get("sha") or "",
-            "head_repo": ((head.get("repo") or {}) or {}).get("full_name") or "",
-            "base_ref": base.get("ref") or "",
-        }
+        return pull_facts(got)
 
     def create_issue_comment(self, number, body):
         """Say something on a pull request's conversation. Returns the new comment's id.
@@ -12221,6 +12366,319 @@ class Watcher:
             log(f"#codereview: could not answer #{number}: {exc}")
         return None
 
+    # -- the merged-pull-request notice ------------------------------------------------------
+    # design/pr_merged_notice_design.txt. A merge is the one moment the person who reported a
+    # bug has been waiting for, and until this existed nothing told them: the thread heard
+    # "there is a pull request, pending dev review" from publish_footer and then silence,
+    # however the pull request ended.
+    #
+    # THE SECOND READER ON THE GITHUB WORKER, beside the #codereview poller and never inside
+    # it. Nobody triggers a merge notice, so the operator table does not gate it -- and
+    # poll_github returns early on an empty operator table, which would have silently taken
+    # this with it.
+
+    @property
+    def merge_cursor_path(self):
+        return os.path.join(self.state_dir, "github.merges.json")
+
+    def read_merge_cursor(self):
+        """(since, seen, etag, watching_since). The comment cursor's shape plus one field.
+
+        A SECOND COPY OF THE THREE METHODS RATHER THAN A FILENAME ARGUMENT ON THE FIRST. They
+        agree today and there is no reason they must: `seen` here holds pull request numbers
+        rather than comment ids, and `since` means something different (see
+        list_closed_pulls). Two readers of one generalised pair would have to be kept honest
+        about both differences forever; two small pairs are read once each.
+
+        THE EXTRA FIELD IS THE WATERMARK ITSELF, and it is separate from `since` because the
+        two answer different questions. `since` says how far the walk has read and MOVES; this
+        says when the box started watching and never does. Without it, an edit or a comment on a
+        pull request that merged in July bumps its `updated_at`, brings it back into the walk,
+        and gets its thread told about a merge from months ago -- the exact surprise the
+        first-poll watermark exists to prevent, arriving by the back door.
+        """
+        try:
+            with open(self.merge_cursor_path, "r", encoding="utf-8") as fh:
+                got = json.load(fh)
+            return ((got.get("since") or None), [str(i) for i in (got.get("seen") or [])],
+                    got.get("etag") or None, got.get("watching_since") or None)
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return None, [], None, None
+
+    def write_merge_cursor(self, since, seen, etag=None, watching=None):
+        tmp = f"{self.merge_cursor_path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"since": since, "seen": [str(i) for i in seen][-500:], "etag": etag,
+                       "watching_since": watching}, fh)
+        os.replace(tmp, self.merge_cursor_path)
+
+    def poll_github_merges(self):
+        """Tell every conversation behind a freshly merged pull request which build has the fix.
+
+        Returns the outbound rows it queued.
+
+        THE CURSOR IS ALL-OR-NOTHING WHEN ANYTHING IS DEFERRED, and that is the one thing here
+        that is not a copy of poll_github. `since` bounds the WALK rather than the request --
+        /pulls has no `since` filter -- so advancing it past a pull request this poll could not
+        finish would stop the next walk before reaching it, and the retry would never happen.
+        The ETag goes with it: keeping a fresh one would answer 304 next minute and skip the
+        re-read entirely. Everything that WAS finished is in `seen` and is skipped on the way
+        back through, so the cost of standing still is one extra page read.
+        """
+        gh_cfg = self.cfg.get("github") or {}
+        if not gh_cfg.get("announce_merges", True):
+            return []
+        # THE BOX'S ORDINARY CREDENTIAL, not a pool's. This only ever reads, and it reads the
+        # whole repository rather than anything a lane owns, so there is nothing here for the
+        # per-pool split to be about.
+        gh = GitHub(self.cfg)
+        if not gh.token or not gh.repo:
+            if gh.token_error:
+                log(f"merge notice: no poll — {gh.token_error}")
+            return []
+        since, seen, etag, watching = self.read_merge_cursor()
+        # FROM NOW, NOT FROM THE BEGINNING OF THE REPOSITORY, the watermark watch_attach puts on
+        # a Discord channel and the comment poller puts on this one. Without it, turning this on
+        # would walk back through every pull request this repository has ever merged and tell
+        # forty bug threads about work that shipped in July.
+        if since is None:
+            since = watching = now_iso()
+            self.write_merge_cursor(since, seen, None, watching)
+            log(f"merge notice: watching {gh.repo} from now; pull requests merged before this "
+                f"moment are history and will not be announced")
+            return []
+        try:
+            pulls, etag = gh.list_closed_pulls(since=since, etag=etag)
+        except GitHubError as exc:
+            log(f"merge notice: could not read closed pull requests: {exc}")
+            return []
+        if pulls is NOT_MODIFIED:
+            return []
+        seen_set = set(seen)
+        newest, queued, deferred = since, [], False
+        for pull in pulls:
+            key = str(pull.get("number") or "")
+            stamp = pull.get("updated_at") or ""
+            if not key:
+                continue
+            if key in seen_set:
+                if stamp and stamp > newest:
+                    newest = stamp
+                continue
+            # CLOSED WITHOUT MERGING SAYS NOTHING, ever. Somebody closed it for a reason this
+            # harness does not have, and "we closed this" posted into a bug thread with no
+            # reason attached is worse than silence.
+            #
+            # AND NEITHER DOES A MERGE THAT PREDATES THE WATCH. `updated_at` moves when somebody
+            # comments on a long-closed pull request, which walks it back into view; `merged_at`
+            # does not move at all, so it is what decides whether this is news.
+            if not pull.get("merged") or (watching and (pull.get("merged_at") or "") < watching):
+                seen_set.add(key)
+                seen.append(key)
+                if stamp and stamp > newest:
+                    newest = stamp
+                continue
+            try:
+                said = self.take_merge(gh, pull)
+            except Exception as exc:                        # noqa: BLE001 - one pull request
+                # ONE BAD PULL REQUEST MUST NOT STOP THE POLL, and must not be retried forever
+                # either: one that raises once raises every time. Marked seen below with every
+                # other decided outcome.
+                log(f"merge notice: #{key} could not be handled: {type(exc).__name__}: {exc}")
+                said = []
+            if said is None:
+                deferred = True
+                continue
+            seen_set.add(key)
+            seen.append(key)
+            if stamp and stamp > newest:
+                newest = stamp
+            queued.extend(said)
+        if deferred:
+            self.write_merge_cursor(since, seen, None, watching)
+        else:
+            self.write_merge_cursor(newest, seen, etag, watching)
+        return queued
+
+    def take_merge(self, gh, pull):
+        """One merged pull request, decided. The nonces it queued, or None to try again later.
+
+        None is an OUTAGE and nothing else: the version could not be read because origin could
+        not be reached. Every other unhappy answer -- no conversation, no version, a base
+        nothing ships from -- is a decision, is made once, and comes back as a list.
+        """
+        number = pull.get("number")
+        convs = self.conversations_for_pull_request(number, pull.get("url"),
+                                                    pull.get("head_ref"))
+        if not convs:
+            return []
+        # A LIST ITEM THAT DID NOT CARRY THE MERGE COMMIT, filled in with the one fetch this
+        # whole poller can spend, and only ever for a pull request that already matched a
+        # conversation. pull_facts shapes both reads, so the merge is the same dict either way.
+        if not pull.get("merge_commit_sha") and number:
+            full = gh.pull_request(number)
+            if full:
+                pull = {**pull, **{k: v for k, v in full.items() if v}}
+        version, outage = self.game_version_at(pull.get("merge_commit_sha"),
+                                               pull.get("base_ref"))
+        if outage:
+            log(f"merge notice: #{number} deferred — the version could not be read from "
+                f"{self.cfg['push_remote']}; the next poll will try again")
+            return None
+        queued = []
+        for conv in convs:
+            nonce = self.announce_merge(conv, pull, version)
+            if nonce:
+                queued.append(nonce)
+        return queued
+
+    def conversations_for_pull_request(self, number, url, head_ref):
+        """Every Discord conversation a merged pull request is news for, oldest first.
+
+        TWO LOOKUPS BECAUSE ONE MISSES A REAL CASE. `conversation.github_pr` is the ordinary
+        path -- publish() and reconcile_publication() write it the moment the pull request is
+        opened or found -- and it is empty for a branch a conversation ADOPTED whose pull
+        request a person opened by hand. conversations_on_branch answers that half, and it is
+        the same query adopt_branch uses to name every thread that has touched a branch.
+
+        TWO CONVERSATIONS ON ONE BRANCH BOTH GET THE LINE. They are two threads with two people
+        in them and the merge is equally true for both.
+
+        The #codereview conversation is dropped here rather than at the composer: its "thread"
+        IS the pull request, and telling a merged pull request it was merged is a comment on the
+        one surface where everybody watching already knows.
+        """
+        rows, found = [], set()
+
+        def take(conv_id):
+            if conv_id in found:
+                return
+            conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+            if conv is None or conv["kind"] == GITHUB_KIND or is_local_conversation(conv):
+                found.add(conv_id)
+                return
+            found.add(conv_id)
+            rows.append(conv)
+
+        for row in self.db.query(
+                "SELECT id FROM conversation WHERE github_pr IS NOT NULL AND github_pr<>''"
+                "   AND github_pr IN (?,?) ORDER BY id",
+                (str(url or ""), str(number or ""))):
+            take(row["id"])
+        if head_ref:
+            for row in self.conversations_on_branch(head_ref):
+                take(row["id"])
+        return rows
+
+    def game_version_at(self, sha, base):
+        """(the version standing at this merge, whether asking failed). Both can be None/False.
+
+        THE VERSION THE BUILD WILL INCREMENT, read out of the merge commit's own tree and not
+        off the branch tip. The two differ for the minutes or days between the merge and this
+        poll, and the difference is the case that matters: if a build's bump commit lands in
+        between, the tip has already moved and the honest answer is still the number that stood
+        at the merge. Reading the tip would be wrong by one, in the direction that tells
+        somebody their fix is not in a build that has it.
+
+        A BASE NOTHING SHIPS FROM HAS NO VERSION TO NAME. A pull request merged into somebody's
+        feature branch goes out in nothing, and a version sentence about it would be a lie with
+        a number in it. publish_bases is the list of branches this box believes are shipped
+        from, so it is the list this asks.
+
+        NOT AN OUTAGE: a sha the fetch did not bring, a file that is not there, a line that does
+        not parse. Those are answers -- the notice goes out without a number -- and retrying
+        them costs a fetch a minute forever. The fetch itself failing IS an outage and is the
+        one thing that comes back True.
+        """
+        if not sha or not base or base not in (self.cfg.get("publish_bases") or {}):
+            return None, False
+        remote = self.cfg["push_remote"]
+        if self.git_here("cat-file", "-e", f"{sha}^{{commit}}").returncode != 0:
+            # THE MERGE COMMIT IS ON THE BASE BY CONSTRUCTION, so fetching the base is enough to
+            # reach it and no ref is created for it. This writes one remote-tracking ref in the
+            # host checkout and nothing else; the mirror is not touched.
+            fetched = self.git_here("fetch", "--quiet", remote,
+                                    f"+refs/heads/{base}:refs/remotes/{remote}/{base}")
+            if fetched.returncode != 0:
+                log(f"merge notice: could not fetch {base} from {remote}: "
+                    f"{(fetched.stderr or '').strip()[:200]}")
+                return None, True
+            if self.git_here("cat-file", "-e", f"{sha}^{{commit}}").returncode != 0:
+                log(f"merge notice: {sha[:12]} is not on {remote}/{base} even after a fetch; "
+                    f"saying the merge without a version")
+                return None, False
+        got = self.git_here("show", f"{sha}:{GAME_VERSION_FILE}")
+        version = parse_ff_version(got.stdout) if got.returncode == 0 else None
+        if version is None:
+            # THE SAME NUMBER, WRITTEN BY THE SAME BUILD STEP. UpdateMinorVersion increments
+            # FFVersion.cs and then writes PlayerSettings.bundleVersion out of the result, so
+            # this is a second copy rather than a second opinion. It is here because the primary
+            # is a C# literal in a file game code is free to reorganise, and the fallback is a
+            # Unity-owned line whose format is fixed.
+            got = self.git_here("show", f"{sha}:{GAME_SETTINGS_FILE}")
+            if got.returncode == 0:
+                version = parse_bundle_version(got.stdout)
+        if version is None:
+            log(f"merge notice: no version could be read at {sha[:12]}; saying the merge "
+                f"without a number")
+        return version, False
+
+    def announce_merge(self, conv, pull, version):
+        """Queue one conversation's merge notice. The nonce, or None when there is nothing to do.
+
+        SAID ONCE, and the guard is the outbound row's own local_id rather than a column on the
+        conversation. The outbound table is never pruned, so it answers "have we said this" for
+        the life of the box -- including after the cursor file is deleted, which is the one
+        failure the cursor's `seen` list cannot survive.
+
+        THE REPORTER IS MENTIONED, and this is where the notice departs from
+        announce_publication, which deliberately addresses the thread and nobody in it. The
+        argument there is that nothing was asked. Here something was asked, possibly weeks ago,
+        by somebody who has stopped looking at the thread -- and `mention` pings even under
+        `silent`, which is exactly the shape this wants. A DM is not mentioned into, for the
+        reason reply_mention gives: it already notifies.
+
+        "Fix merged", never "your bug is fixed". What this box knows is that a pull request
+        merged. Whether it cured what the reporter saw is a claim only somebody who read the
+        diff can make, and this sentence must not make it for them.
+        """
+        number = pull.get("number")
+        local_id = merge_notice_local_id(number, conv["id"])
+        if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=?", (local_id,), 0):
+            return None
+        shipped = next_version(version) if version else ""
+        private = self.conversation_venue(conv) == "private"
+        if private:
+            # NOT MAX, and none of max-voice applies: a dev channel and an operator DM are
+            # plain developer prose, and they get the pull request the way announce_publication
+            # gives it to them.
+            text = f"Fix merged into {pull.get('base_ref') or '?'}."
+            text += f" Ships in {shipped} and later." if shipped else " Ships in the next build."
+            if pull.get("url"):
+                text += f" · PR #{number} {pull['url']}"
+        else:
+            # MAX IS TALKING: plugins/ff-discord/skills/max-voice/SKILL.md binds every character
+            # of this. No em dashes, no house phrases, one line.
+            text = "Fix merged. It goes out in "
+            text += f"{shipped} and later." if shipped else "the next build."
+        payload = {"channel": reply_channel(conv), "text": text, "silent": True,
+                   "local_id": local_id}
+        opener = str(conv["opener_discord_id"] or "").strip()
+        if opener.isdigit() and conv["kind"] != "operator_dm":
+            payload["mention"] = opener
+        if not conv["is_thread"] and conv["root_message_id"]:
+            payload["reply_to"] = str(conv["root_message_id"])
+        # THE RUN THAT MADE THE BRANCH, so the web page hangs this off the work it is about.
+        # NULL where there is none, which record_outbound already takes: a conversation can own
+        # a branch it adopted without ever having pushed one.
+        run_row_id = self.db.scalar(
+            "SELECT r.id FROM run r JOIN turn t ON t.id=r.turn_id"
+            " WHERE t.conversation_id=? AND r.pushed=1 ORDER BY r.id DESC LIMIT 1",
+            (conv["id"],))
+        log(f"merge notice: #{number} -> conversation {conv['id']}"
+            + (f" ({shipped} and later)" if shipped else " (no version)"))
+        return self.record_outbound(run_row_id, conv["id"], "post", payload)
+
     def catchup_pass(self):
         """The sweep and the publication reconcile — the two slow things on the catchup tick.
 
@@ -12251,7 +12709,7 @@ class Watcher:
         self.reconcile_publications()
 
     def start_github_poll(self):
-        """Kick off a GitHub comment poll if one is not already running. True if it started.
+        """Kick off the GitHub polls if one is not already running. True if they started.
 
         THE SHAPE start_catchup ALREADY HAS, and deliberately a second copy of it rather than a
         parameter on the first: what the two share is "run this on a worker, one at a time, and
@@ -12267,10 +12725,21 @@ class Watcher:
             return False
 
         def guarded():
+            # TWO READS, TWO ERROR BOUNDARIES, ONE WORKER AND ONE CLOCK. They share the thread
+            # because they are two conditional GETs to the same host and a second interval would
+            # be a second number to keep in step. They do NOT share a try/except: the whole
+            # argument for taking this off the catchup tick was that one poll's failure must not
+            # silently stop another's, and putting them under one would rebuild that inside this
+            # thread. The merge poll runs SECOND because a review starting is what somebody is
+            # watching for; a merge notice is not waited on to the minute.
             try:
                 self.poll_github()
             except Exception as exc:  # noqa: BLE001 — a worker must never take the daemon down
                 log(f"ERROR in the #codereview poll: {type(exc).__name__}: {exc}")
+            try:
+                self.poll_github_merges()
+            except Exception as exc:  # noqa: BLE001 — a worker must never take the daemon down
+                log(f"ERROR in the merge notice poll: {type(exc).__name__}: {exc}")
 
         self._github_poll = threading.Thread(target=guarded, name="ffwatch-github",
                                              daemon=True)

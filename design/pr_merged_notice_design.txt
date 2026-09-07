@@ -1,0 +1,366 @@
+A merged pull request tells the thread which build carries the fix
+==================================================================
+Revision 1, 2026-09-06.
+
+When a pull request is merged, every Discord conversation that produced it is told so, and told
+which build the fix will be in: the version standing on the branch it merged into, plus one on
+the last component. Merged into master while master reads 0.21.0.22, and the bug thread hears
+"fixed in 0.21.0.23 and later".
+
+The person who reported the bug is the one waiting for this sentence, and today nobody says it.
+They get "there is a pull request, pending dev review" from `publish_footer` and then silence
+forever, however the pull request ends.
+
+
+1. What gets built
+------------------
+
+  1. A merged-pull-request poller on the GitHub worker that already exists, with a cursor and an
+     ETag of its own, reading closed pull requests instead of issue comments.
+  2. A lookup from a merged pull request to the conversations that own it, by recorded pull
+     request and by branch.
+  3. A version reader: the game's own version, out of the merge commit's tree, on the host, with
+     git and no network.
+  4. One composed line per conversation, queued through `record_outbound` like every other thing
+     this box says.
+  5. `github.announce_merges`, on by default, and its row in `config.md`.
+
+Not a goal: merging anything. Nothing here can. The token may open a pull request and comment,
+and that has not changed.
+
+Not a goal: telling anybody a pull request was CLOSED without merging. Section 9.
+
+Not a goal: a release announcement. This says which build will carry the fix, not that the build
+exists. Section 5b is the argument for why that is the more useful sentence anyway, and section
+12 is the alternative feature that would say the other thing.
+
+
+2. The trigger, and why it is polled from the pulls list
+--------------------------------------------------------
+
+Every `github.poll_secs` the GitHub worker asks for
+
+    GET /repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=50
+
+and walks the answer until it reaches a pull request whose `updated_at` is at or below the
+cursor. One request for the whole repository, `direction=desc` so a new merge always changes
+page one, and `If-None-Match` so the quiet minute costs a round trip and no rate limit at all.
+That is `list_issue_comments`' shape line for line, and it is a sibling of it deliberately: the
+two pollers share a worker, a clock and an error boundary, and differ only in the endpoint and
+the cursor file.
+
+`state=closed` and not `state=all`, because an open pull request has nothing to say here and a
+repository has far more of them than the page size.
+
+The list item carries everything the common case needs -- `number`, `merged_at`,
+`merge_commit_sha`, `head.ref`, `base.ref` -- so a poll that matches nothing spends nothing
+beyond the one GET. A field missing off a list item is fetched with a single
+`GET /pulls/{number}` through the existing `pull_request()`, and that only ever happens for a
+pull request that already matched a conversation.
+
+REJECTED: polling each pull request this box knows about. It is simpler to write and it is a
+request per open pull request per minute, forever, for pull requests that may never merge -- a
+conversation whose branch sits in review for a month would be asked about it forty thousand
+times. It also cannot see the case section 4 exists for: a branch a conversation adopted, whose
+pull request a human opened and the database never recorded.
+
+REJECTED: asking git instead of GitHub. "Is this branch's head an ancestor of origin/master" is
+free and the daemon already has a checkout, and it is wrong under a squash merge, which produces
+a commit the branch head is not an ancestor of. `merged_at` is the authoritative answer and the
+API is the only place it exists.
+
+REJECTED: a webhook. The same argument `design/github_pr_review_design.txt` section 2 makes.
+This box is not reachable from the internet and should not become so for a sentence nobody is
+waiting on to the minute.
+
+THE FIRST POLL RECORDS THE MOMENT AND ANSWERS NOTHING OLDER, exactly as the comment poller and
+`watch_attach` do. Turning this on must not walk the repository's back catalogue and tell forty
+bug threads about pull requests that merged in July.
+
+
+3. The cursor
+-------------
+
+`state_dir/github.merges.json`, holding `{"since", "seen", "etag", "watching_since"}`, written
+the way `github.cursor.json` is: `since` bounds the re-read, the bounded `seen` list of pull
+request numbers is what actually makes it idempotent, and the ETag makes the quiet case free.
+
+THE FOURTH FIELD IS THE ONE THE COMMENT CURSOR DOES NOT HAVE, and section 2's watermark is only
+half true without it. `since` moves; `watching_since` is written once, on the first poll, and
+never again. A pull request that merged in July is out of the walk until somebody COMMENTS on
+it, at which point `updated_at` moves, it comes back into view, and its thread would be told
+about a merge from months ago -- the exact surprise the watermark exists to prevent, arriving by
+the back door. `merged_at` does not move at all, so it is what the watermark is compared
+against, and a merge older than the moment this box started watching is history whatever
+happens to the pull request afterwards.
+
+A pull request number goes in `seen` whatever the outcome -- announced, matched nothing, refused
+for an unreadable version. Every outcome is decided once, or the sweep posts the same line every
+minute for as long as the pull request exists.
+
+
+4. Which conversations get told
+-------------------------------
+
+Two lookups, unioned, both of which already have a reader in this file:
+
+  * `conversation.github_pr` matching the pull request's html url or its number as a string.
+    That column is written by `publish()` and by `reconcile_publication()` at the moment the
+    pull request is opened or found, so it is the ordinary path.
+  * `conversations_on_branch(head.ref)`, which is the same query `adopt_branch` uses to name
+    every thread that has touched a branch. It covers the conversation that pushed a branch
+    under an older rule and never recorded the number, and every thread that adopted a branch
+    before adoption learned to go and ask.
+
+    ADOPTION LEARNED TO ASK ON 2026-09-06, in `a6d3458`, an hour before this was written:
+    `adopt_branch` now looks the pull request up and records it, and the reconcile sweep covers
+    the threads that adopted earlier. That makes the first lookup answer most of what this
+    second one was written for. It stays anyway, and not out of caution: a conversation whose
+    branch acquires a pull request AFTER the sweep last looked at it is exactly the case
+    reconcile drops after `reconcile_secs`, and one query against a column this poller already
+    has in hand is not worth trading for a narrower rule about who is allowed to be told.
+
+Nothing else. A merged pull request that matches neither is the common case on this repository
+-- it is Lothsahn's own work -- and it is marked seen and dropped.
+
+TWO CONVERSATIONS ON ONE BRANCH BOTH GET THE LINE, and they should: they are two threads with
+two reporters in them, and the fix is equally true for both.
+
+A conversation with no Discord side gets nothing. `record_outbound` already refuses one, and the
+`github_pr` conversation kind -- the `#codereview` lane, whose "thread" is the pull request
+itself -- is skipped before that: telling a merged pull request it was merged is a comment
+nobody needs, on the one surface where everybody watching already knows.
+
+
+5. The version, and the arithmetic
+----------------------------------
+
+`Assets/Scripts/FFCore/Version/FFVersion.cs` holds one line:
+
+    public static FFVersion FinalFactoryVersion = new(0, 21, 0,22);
+
+and it is Major, Minor, Patch, RC. THE BUILD INCREMENTS THE RC ITSELF.
+`Assets/Editor/BuildCommand2.cs:709` (`UpdateMinorVersion`) rewrites that line with `rc + 1`
+before it builds, writes `PlayerSettings.bundleVersion` from the result, and the bump is
+committed with the version as the whole commit message -- `50a12f687 "0.21.0.22"`, 2026-08-24.
+
+So the number standing in the repository is the version of the LAST build, and the next build is
+that number with one added to the RC. A change merged after the bump commit is in that next
+build. "Plus 0.0.0.1" is not an approximation of the release process; it is the release process,
+read off the file the release process edits.
+
+Verified on this box, 2026-09-06: master is 0.21.0.22 and develop is 0.50.0.9. The two lines
+move independently, which is why the version is read from the pull request's OWN base and never
+from a box-wide default.
+
+5a. Read at the merge commit, not at the branch tip
+
+The version is read out of `merge_commit_sha`'s tree, not out of `origin/<base>` as it stands
+when the poller looks. The two differ for the minutes or days between the merge and the poll,
+and the difference is exactly the case that matters: if a build's bump commit lands in between,
+the tip says 0.21.0.23 and the honest answer is still 0.21.0.23, because that build was cut from
+a commit that already contains the merge. Reading the tip would say 0.21.0.24 and be wrong by
+one, in the direction that tells a player their fix is not in a build that has it.
+
+The merge commit is on the base branch by construction, so `git fetch origin <base>` puts it in
+the host checkout and `git show <sha>:<path>` reads it. `git_here()` is the runner, so this is a
+subprocess in `git_dir` that never raises. No mirror write, no ref created, nothing pushed.
+
+5b. Why "and later" is load-bearing
+
+Two ways the exact number can be wrong, both of which "and later" survives:
+
+  * A build cut between the bump and the merge. Then the fix is in 0.21.0.23 as promised. A
+    build cut between the merge and the bump commit reaching origin puts the fix in the very
+    build being cut, which is 0.21.0.23 too. Both land on the same sentence.
+  * Lothsahn bumps the minor by hand: 0.21.0.22 becomes 0.22.0.0 and 0.21.0.23 never exists.
+    Then the named version is a build nobody will ever run, and "and later" is what keeps the
+    sentence true rather than merely vague. This is rare and it is the reason the wording is
+    "0.21.0.23 and later" rather than "the next build is 0.21.0.23".
+
+5c. When there is no version to name
+
+Three cases, one behaviour: say the merge, say no number.
+
+  * The file is missing, or the line does not parse. The regex allows both spellings the
+    repository has used (`new(0, 21, 0,22)` and `new FFVersion(0,16,0, 0)`) and a three
+    argument form, where the absent RC is 0 and the next build is `x.y.z.1`. Anything else is a
+    game repository this design does not understand, and inventing a number from it would be
+    worse than not having one. `ProjectSettings/ProjectSettings.asset`'s `bundleVersion` is
+    read as a fallback -- it is the same number, written by the same build step -- and only both
+    failing gives up.
+  * The base is not one of `publish_bases`. A pull request merged into someone's feature branch
+    ships in nothing, and a version sentence about it would be a lie with a number in it.
+  * `git fetch` cannot reach origin. The pull request is NOT marked seen in this one case, and
+    the next poll tries again: unlike every other refusal here, this one is an outage and it
+    fixes itself. THE CURSOR STAYS PUT TOO, and it has to. `since` bounds the WALK here rather
+    than the request -- the pulls endpoint has no `since` filter, which is the one place this
+    poller differs from the comment poller's cursor -- so a poll that advanced past a pull
+    request it deliberately did not finish would stop the next walk before reaching it, and the
+    retry this paragraph promises would never happen. A poll that defers anything leaves the
+    cursor exactly where it was; everything it did finish is in `seen` and is skipped on the
+    way back through.
+
+
+6. Saying it once
+-----------------
+
+`local_id` on the outbound row, `pr-merged:<number>:<conversation id>`, checked before the row
+is composed -- the mechanism `dm_autoreply_local_id` already uses, and the reason it is enough
+is that the `outbound` table is never pruned. The cursor's `seen` list stops the work; the
+`local_id` stops the message, including after a cursor file is deleted or a database is moved
+onto a box whose cursor is empty.
+
+NO NEW COLUMN. A `conversation.merge_announced_at` would say the same thing a queued outbound row
+already says, and every column added to that table is one more thing the schema migration has to
+be right about.
+
+The row carries the conversation's last pushed run in `run_id` where there is one, so the web
+page hangs the message off the run that made the branch, and NULL where there is not.
+
+
+7. What it says
+---------------
+
+Composed on the host, like everything this box says. The venue split is `announce_publication`'s
+and for the same reason: a public thread and a dev channel learn one vocabulary, not two.
+
+PUBLIC (a bug_reports thread, a mention in a channel), and this is Max talking, so
+`plugins/ff-discord/skills/max-voice/SKILL.md` binds it -- no em dashes, no house phrases, one
+line:
+
+    <@193210319093497857> Fix merged. It goes out in 0.21.0.23 and later.
+
+With no version to name:
+
+    <@193210319093497857> Fix merged. It goes out in the next build.
+
+PRIVATE (dev channels, an operator DM), the pull request appended, the way
+`announce_publication` appends it:
+
+    Fix merged into master. Ships in 0.21.0.23 and later. · PR #41 https://github.com/...
+
+THE REPORTER IS MENTIONED, and this is the one place this design departs from
+`announce_publication`, which deliberately mentions nobody. The argument there is that nothing
+was asked, so the line addresses the thread. Here something was asked, weeks ago, by a person
+who has stopped looking at the thread -- `payload["mention"]` pings even under `silent: True`,
+which is exactly the shape this wants. The id is `conversation.opener_discord_id`; a
+conversation with no opener recorded gets the line with no mention rather than no line.
+
+"Fix merged", not "your bug is fixed". The harness knows a pull request merged. Whether it cured
+what the reporter saw is a claim only a person who read the diff can make, and one this sentence
+must not make for them.
+
+A conversation that is not a thread threads the line onto its root message with `reply_to`, the
+way `announce_publication` does.
+
+
+8. Config
+---------
+
+    "github": { "announce_merges": true, "poll_secs": 60 }
+
+One new key. `false` turns the poller off entirely and is what a box that is not the Discord
+harness wants. `github.poll_secs` is shared with the comment poller on purpose -- it is one
+worker and one clock, and a second interval would be two numbers to keep in step for two
+requests that go to the same host.
+
+The trigger's `operators` table does NOT gate this. Nobody triggers a merge notice; GitHub does,
+by merging, and who pressed the button is not a permission question. That also means this works
+on a box with an empty operator table, where `poll_github` returns early today -- so the merge
+poll is its own function with its own gate, called beside the comment poll rather than inside
+it.
+
+`ffbox/config.md` changes in the same commit. CLAUDE.md requires it, and the shape of the
+`github` block is exactly what that rule is about.
+
+
+9. What this does not say
+-------------------------
+
+A pull request CLOSED WITHOUT MERGING gets nothing. It is a decision a person made for a reason
+the harness does not have, and "we closed this" posted into a bug thread with no reason attached
+is worse than silence. If it should ever be said, it should be said by whoever closed it.
+
+A DRAFT that gets merged is merged, and is treated as one. There is no draft state after a
+merge.
+
+A FORK'S pull request is fine here, unlike `#codereview`. That refusal is about pushing to a
+head this box cannot write; nothing here writes anything.
+
+REVERTS are not tracked. A fix merged and then reverted leaves the thread holding a sentence
+that has stopped being true. Watching for that is a feature about release management, not about
+this poll, and section 12 is where it belongs.
+
+
+10. Failure modes
+-----------------
+
+  * GitHub is down: the poll logs and returns, the cursor does not move, the next minute tries
+    again. Same as the comment poller.
+  * Discord is down: the outbound row is already persisted, `send_pending` retries it with
+    backoff. The message cannot be lost by an outage, which is the whole point of the queue.
+  * The kill switch, `approve_before_send`, the per-conversation hourly ceiling and `--dry-run`
+    all apply, because this goes through `record_outbound` and nothing else.
+  * A version that cannot be read: section 5c. The line still goes out.
+  * A pull request that raises anything unexpected: caught per pull request, logged, marked
+    seen. One bad row must not stop the poll, and must not be retried forever.
+
+
+11. Tests
+---------
+
+Offline, against a fake GitHub client, in `test_ffwatch.py` beside the seven `#codereview` ones:
+
+  * a merged pull request whose number is on a conversation queues exactly one outbound row,
+    with the mention, the version and the venue's shape;
+  * the same poll run twice queues one row, once through `seen` and once with the cursor file
+    deleted, through `local_id`;
+  * a merged pull request matching a branch but not a recorded number is found by
+    `conversations_on_branch`;
+  * a merged pull request matching nothing queues nothing and still advances the cursor;
+  * a closed-unmerged pull request queues nothing;
+  * the first poll on an empty cursor announces nothing and records the moment;
+  * a `github_pr` conversation is skipped, and a local one is skipped;
+  * `NOT_MODIFIED` leaves the cursor untouched;
+  * `announce_merges: false` makes no request at all.
+
+Version arithmetic gets its own unit tests against a seeded git repository, using the shell
+fixtures `run_harvest` already builds: `new(0, 21, 0,22)` gives 0.21.0.23, `new FFVersion(0,16,0,
+0)` gives 0.16.0.1, a three argument form gives `x.y.z.1`, a garbled line gives None and the
+`bundleVersion` fallback covers it, and a base outside `publish_bases` gives None.
+
+Live: merge a throwaway pull request on a branch a test conversation owns and watch the line
+arrive in #agent-testing.
+
+
+12. What this is not, and what would be
+---------------------------------------
+
+This announces the version a fix WILL be in. The other half -- announcing that the build exists
+and telling the thread it is out -- is a different watcher with a different clock: look for a
+commit on master whose message is a version number, or for a Steam depot change, and post "this
+is live in 0.21.0.23" into every thread that was promised it. It would be strictly more useful
+and it is strictly more machinery: a second cursor, a table of promises to keep, and a
+dependency on the release actually being pushed to a branch this box can see. Worth doing after
+this one has been right for a few weeks.
+
+The version claim would also become checkable at that point: a promise of 0.21.0.23 that is
+followed by a build stamped 0.22.0.0 is a promise the box could correct itself, which is the
+honest answer to 5b's second failure case.
+
+
+13. Files touched
+-----------------
+
+    ffbox/ffwatch.py       DEFAULTS["github"], GitHub.pull_facts, GitHub.list_closed_pulls,
+                           the merge cursor,
+                           poll_github_merges, take_merge, conversations_for_pull_request,
+                           game_version_at, next_version, announce_merge, and the call beside
+                           poll_github in start_github_poll
+    ffbox/config.md        github.announce_merges, and a "merged" subsection beside #codereview
+    ffbox/README.md        the operator-facing half of the same, beside #codereview
+    ffbox/test_ffwatch.py  section 11
+
+No container, no task script and no plugin changes. Nothing in this feature runs anywhere but on
+the host, and no prompt is built from it.

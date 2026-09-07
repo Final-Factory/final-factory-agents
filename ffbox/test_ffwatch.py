@@ -4102,6 +4102,34 @@ class MockGitHub(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        # THE MERGE POLLER'S READ: the whole repository's closed pull requests, newest activity
+        # first, with an ETag over it. Keyed off `head=` being absent, which is what tells this
+        # apart from pull_request_for's lookup — that one names a branch and this one does not.
+        if path == "/repos/Final-Factory/FinalFactory/pulls" and "head=" not in raw_query:
+            query = urllib.parse.parse_qs(raw_query)
+            want = (query.get("state") or ["open"])[0]
+            rows = [p for p in GH_STATE["pulls"] if want in ("all", p["state"])]
+            tag = '"%s"' % hash(tuple(sorted(
+                (p.get("number"), p.get("updated_at") or "") for p in rows)))
+            if self.headers.get("If-None-Match") == tag:
+                GH_STATE["not_modified"] += 1
+                self.send_response(304)
+                self.send_header("ETag", tag)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            rows.sort(key=lambda p: p.get("updated_at") or "",
+                      reverse=(query.get("direction") or ["asc"])[0] == "desc")
+            page = int((query.get("page") or ["1"])[0])
+            per = int((query.get("per_page") or ["30"])[0])
+            body = json.dumps(rows[(page - 1) * per:page * per]).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("ETag", tag)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if re.match(r"^/repos/Final-Factory/FinalFactory/pulls/\d+$", path):
             number = int(path.rsplit("/", 1)[1])
             found = next((p for p in GH_STATE["pulls"] if p["number"] == number), None)
@@ -11440,12 +11468,14 @@ def review_cfg(case, *, operators=None, trigger="#codereview"):
 
 
 def a_pull_request(number, head, *, state="open", repo="Final-Factory/FinalFactory",
-                   base="develop", merged=False):
+                   base="develop", merged=False, merge_sha="", updated="2026-09-06T12:00:00Z"):
     GH_STATE["pulls"].append({
         "number": number, "html_url": "https://github.com/Final-Factory/FinalFactory/pull/%d"
                                       % number,
-        "title": "a change", "state": state, "merged_at": "x" if merged else None,
-        "draft": False, "_head": head,
+        "title": "a change", "state": state,
+        "merged_at": (updated if merged else None),
+        "draft": False, "_head": head, "updated_at": updated,
+        "merge_commit_sha": merge_sha,
         "head": {"ref": head, "sha": "0" * 40, "repo": {"full_name": repo}},
         "base": {"ref": base}})
 
@@ -11892,6 +11922,352 @@ def test_the_sweep_backfills_a_thread_that_adopted_before_the_pull_request_exist
     check("a branch this box pushed itself is left alone",
           len([r for r in GH_STATE["requests"] if "pulls?head=" in r[1]]) == asked
           and case.rows("SELECT * FROM conversation")[0]["github_pr"] is None, None)
+# -- the merged-pull-request notice ---------------------------------------------------------
+# design/pr_merged_notice_design.txt. A merge is the sentence the person who reported the bug
+# has been waiting for, and the version arithmetic is the release process read off the file the
+# release process edits, not a guess about it.
+
+FF_VERSION_LINE = "    public static FFVersion FinalFactoryVersion = new(0, 21, 0,22);"
+
+
+def merge_cfg(case, *, announce=True):
+    """Point this case's watcher at the mock GitHub and get it past the watermark pass."""
+    case.watcher.cfg["github"] = dict(case.watcher.cfg.get("github") or {}, **{
+        "api_base": github_base(), "repo": "Final-Factory/FinalFactory", "base": "develop",
+        "token": "gh-test-token", "announce_merges": announce})
+    GH_STATE["pulls"], GH_STATE["posted"], GH_STATE["reactions"] = [], [], []
+    GH_STATE["requests"], GH_STATE["not_modified"] = [], 0
+    try:
+        os.remove(case.watcher.merge_cursor_path)
+    except OSError:
+        pass
+    # THE WATERMARK PASS, the same one review_cfg has to get past: with no cursor the first poll
+    # records the moment and announces nothing. Tested on its own below.
+    case.watcher.poll_github_merges()
+    case.watcher.write_merge_cursor("2000-01-01T00:00:00Z", [], None, "2000-01-01T00:00:00Z")
+
+
+def a_version_commit(case, base, line=FF_VERSION_LINE, message="0.21.0.22", settings=None,
+                     bare=False):
+    """Put a version on `base` on the origin git_origin built. Returns the commit sha.
+
+    IN A CLONE OF ITS OWN, never in the host checkout: publish() must find that checkout exactly
+    as it left it, and a test that moved its HEAD to write a file would be testing the next test
+    as well as this one.
+    """
+    work = os.path.join(case.root, "versionwork")
+    if not os.path.isdir(work):
+        git_run("clone", "-q", os.path.join(case.root, "origin.git"), work)
+        git_run("-C", work, "config", "user.email", "t@t.invalid")
+        git_run("-C", work, "config", "user.name", "test")
+    git_run("-C", work, "fetch", "-q", "origin")
+    git_run("-C", work, "checkout", "-q", "-B", base, "origin/%s" % base)
+    where = os.path.join(work, "Assets", "Scripts", "FFCore", "Version")
+    os.makedirs(where, exist_ok=True)
+    # A TREE THAT CARRIES NEITHER FILE, which takes deleting them: both are committed by the
+    # commits above and a later commit that merely stops writing one still has it.
+    if bare:
+        for gone in (os.path.join(where, "FFVersion.cs"),
+                     os.path.join(work, "ProjectSettings", "ProjectSettings.asset")):
+            try:
+                os.remove(gone)
+            except OSError:
+                pass
+    if line is not None:
+        with open(os.path.join(where, "FFVersion.cs"), "w", encoding="utf-8") as fh:
+            fh.write("namespace FFCore.Version\n{\n%s\n}\n" % line)
+    if settings is not None:
+        os.makedirs(os.path.join(work, "ProjectSettings"), exist_ok=True)
+        with open(os.path.join(work, "ProjectSettings", "ProjectSettings.asset"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("PlayerSettings:\n  bundleVersion: %s\n" % settings)
+    git_run("-C", work, "add", "-A")
+    git_run("-C", work, "commit", "-qm", message)
+    git_run("-C", work, "push", "-q", "origin", "HEAD:refs/heads/%s" % base)
+    return git_run("-C", work, "rev-parse", "HEAD").stdout.strip()
+
+
+def a_reported_bug(case, *, thread="70001", opener="800000000000000009", github_pr=None,
+                   branch=None, kind="bug_report", alias="bug_reports"):
+    """A bug thread with a pull request behind it, seeded rather than run.
+
+    A turn would launch the container stub and leave its threads behind for whatever runs next,
+    and none of what this poller reads is produced by running one: the columns it needs are
+    written by publish() and by adopt_branch, and both of those are tested where they live.
+    """
+    case.watcher.db.execute(
+        "INSERT INTO conversation(thread_id, channel_id, kind, state, is_thread, session_id,"
+        " watch_alias, opener_discord_id, github_pr, branch, guild_id, created_at,"
+        " last_activity_at) VALUES(?,?,?,'idle',1,?,?,?,?,?,'5308',?,?)",
+        (thread, thread, kind, ffwatch.session_id_for(thread), alias, opener, github_pr,
+         branch, ffwatch.now_iso(), ffwatch.now_iso()))
+    return case.watcher.db.one("SELECT id FROM conversation WHERE thread_id=?",
+                               (thread,))["id"]
+
+
+PR_41 = "https://github.com/Final-Factory/FinalFactory/pull/41"
+
+
+def test_a_merged_pull_request_tells_the_thread_which_build_carries_the_fix():
+    print("merge notice: the happy path")
+    case = Case("mergenotice")
+    origin, host = git_origin(case)
+    merge_cfg(case)
+    sha = a_version_commit(case, "master")
+    conv = a_reported_bug(case, github_pr=PR_41)
+    a_pull_request(41, "ffbox/belt-fix", state="closed", merged=True, base="master",
+                   merge_sha=sha)
+
+    queued = case.watcher.poll_github_merges()
+    rows = case.rows("SELECT * FROM outbound WHERE conversation_id=?", (conv,))
+    check("the merge queues exactly one thing to say",
+          len(queued) == 1 and len(rows) == 1, rows)
+    payload = json.loads(rows[0]["payload_json"])
+    # THE ARITHMETIC IS THE RELEASE PROCESS. 0.21.0.22 is standing at the merge commit, the
+    # build increments the RC before it builds, so the next build is 0.21.0.23.
+    check("it names the build the fix goes out in, and everything after it",
+          payload["text"] == "Fix merged. It goes out in 0.21.0.23 and later.", payload)
+    check("it mentions the person who reported the bug",
+          payload.get("mention") == "800000000000000009", payload)
+    check("silently, like every other thing this box posts",
+          payload.get("silent") is True, payload)
+    check("into the thread the report is in", payload.get("channel") == "70001", payload)
+    # WHAT THIS BOX KNOWS IS THAT A PULL REQUEST MERGED. Whether it cured what the reporter saw
+    # is a claim only somebody who read the diff can make.
+    check("and it never claims the bug itself is fixed",
+          "fixed" not in payload["text"].lower(), payload)
+    check("the row wears a local_id that names the pull request and the thread",
+          rows[0]["local_id"] == "pr-merged:41:%d" % conv, dict(rows[0]))
+
+    check("a second poll of the same merge says nothing more",
+          case.watcher.poll_github_merges() == []
+          and len(case.rows("SELECT * FROM outbound")) == 1,
+          case.rows("SELECT * FROM outbound"))
+    # THE CURSOR IS NOT THE DURABLE HALF. A wiped state directory leaves `seen` empty and the
+    # outbound row still standing, which is what local_id is for.
+    case.watcher.write_merge_cursor("2000-01-01T00:00:00Z", [], None, "2000-01-01T00:00:00Z")
+    check("and neither does one whose cursor has been wiped",
+          case.watcher.poll_github_merges() == []
+          and len(case.rows("SELECT * FROM outbound")) == 1,
+          case.rows("SELECT * FROM outbound"))
+
+
+def test_a_merge_notice_reaches_a_thread_that_only_owns_the_branch():
+    """The adopted-branch case: a pull request a person opened, that no publish recorded."""
+    print("merge notice: found by branch")
+    case = Case("mergenoticebranch", venue="private")
+    origin, host = git_origin(case)
+    merge_cfg(case)
+    sha = a_version_commit(case, "master")
+    conv = a_reported_bug(case, thread="70002", branch="loth/pr-branch", github_pr=None)
+    a_pull_request(42, "loth/pr-branch", state="closed", merged=True, base="master",
+                   merge_sha=sha)
+
+    check("the merge finds the thread by its branch",
+          len(case.watcher.poll_github_merges()) == 1, case.rows("SELECT * FROM outbound"))
+    payload = json.loads(case.rows("SELECT * FROM outbound")[0]["payload_json"])
+    # A PRIVATE VENUE IS NOT MAX and gets what the harness knows, the split
+    # announce_publication already makes.
+    check("a private venue is told which branch it landed on and where the PR is",
+          payload["text"] == ("Fix merged into master. Ships in 0.21.0.23 and later. "
+                              "· PR #42 https://github.com/Final-Factory/FinalFactory/pull/42"),
+          payload)
+    check("and the conversation is still the one that owns the branch",
+          case.rows("SELECT * FROM outbound")[0]["conversation_id"] == conv, None)
+
+
+def test_a_merge_that_is_nobodys_news_says_nothing():
+    print("merge notice: the silences")
+    case = Case("mergenoticequiet")
+    origin, host = git_origin(case)
+    merge_cfg(case)
+    sha = a_version_commit(case, "master")
+
+    # A PULL REQUEST CLOSED WITHOUT MERGING. Somebody closed it for a reason this harness does
+    # not have, and "we closed this" in a bug thread with no reason attached is worse than
+    # silence.
+    a_reported_bug(case, thread="70003", github_pr=PR_41)
+    a_pull_request(41, "ffbox/belt-fix", state="closed", merged=False, base="master",
+                   merge_sha=sha)
+    check("a pull request closed without merging says nothing",
+          case.watcher.poll_github_merges() == [], case.rows("SELECT * FROM outbound"))
+
+    # THE COMMON CASE ON THIS REPOSITORY: a merge that belongs to nobody's thread.
+    a_pull_request(50, "loth/unrelated", state="closed", merged=True, base="master",
+                   merge_sha=sha, updated="2026-09-06T13:00:00Z")
+    check("and so does a merge no conversation is behind",
+          case.watcher.poll_github_merges() == [], case.rows("SELECT * FROM outbound"))
+    seen = case.watcher.read_merge_cursor()[1]
+    check("both are decided once and never looked at again",
+          sorted(seen) == ["41", "50"], seen)
+
+    # THE #codereview CONVERSATION'S "thread" IS THE PULL REQUEST. Telling a merged pull request
+    # it was merged is a comment on the one surface where everybody watching already knows.
+    a_reported_bug(case, thread="github:pr:51", github_pr="51", kind=ffwatch.GITHUB_KIND,
+                   alias=None)
+    a_reported_bug(case, thread="70004", github_pr="52", kind=ffwatch.LOCAL_KINDS[0],
+                   alias=None)
+    a_pull_request(51, "ffbox/reviewed", state="closed", merged=True, base="master",
+                   merge_sha=sha, updated="2026-09-06T14:00:00Z")
+    a_pull_request(52, "ffbox/shelled", state="closed", merged=True, base="master",
+                   merge_sha=sha, updated="2026-09-06T15:00:00Z")
+    check("a review conversation is not told, and neither is one with no Discord side",
+          case.watcher.poll_github_merges() == [], case.rows("SELECT * FROM outbound"))
+    check("and nothing was posted to GitHub either", GH_STATE["posted"] == [], GH_STATE)
+
+
+def test_the_first_merge_poll_announces_nothing_that_predates_it():
+    """Turning this on does not walk the repository's back catalogue."""
+    print("merge notice: watching from now")
+    case = Case("mergenoticewatermark")
+    origin, host = git_origin(case)
+    merge_cfg(case)
+    sha = a_version_commit(case, "master")
+    a_reported_bug(case, github_pr=PR_41)
+    a_pull_request(41, "ffbox/belt-fix", state="closed", merged=True, base="master",
+                   merge_sha=sha, updated="2026-01-01T00:00:00Z")
+    try:
+        os.remove(case.watcher.merge_cursor_path)
+    except OSError:
+        pass
+
+    check("the first poll announces nothing", case.watcher.poll_github_merges() == [], None)
+    since, _, _, watching = case.watcher.read_merge_cursor()
+    check("but it records the moment it started watching", bool(since) and watching == since,
+          (since, watching))
+    check("and a merge older than that stays history",
+          case.watcher.poll_github_merges() == [], case.rows("SELECT * FROM outbound"))
+
+    # AN OLD MERGE THAT SOMEBODY COMMENTS ON walks back into view: `updated_at` moves and
+    # `merged_at` does not, which is why the watermark is compared against the one that stands
+    # still. Without that, a comment on a pull request from July would tell its thread about a
+    # merge from July.
+    GH_STATE["pulls"][0]["updated_at"] = "2099-01-01T00:00:00Z"
+    check("a comment bumping an old merge back into view still announces nothing",
+          case.watcher.poll_github_merges() == [], case.rows("SELECT * FROM outbound"))
+
+    a_pull_request(43, "ffbox/later-fix", state="closed", merged=True, base="master",
+                   merge_sha=sha, updated="2099-01-02T00:00:00Z")
+    case.watcher.db.execute("UPDATE conversation SET github_pr=? WHERE thread_id='70001'",
+                            ("https://github.com/Final-Factory/FinalFactory/pull/43",))
+    check("while one that merges afterwards is announced",
+          len(case.watcher.poll_github_merges()) == 1, case.rows("SELECT * FROM outbound"))
+
+
+def test_a_quiet_merge_poll_costs_nothing_and_a_deferred_one_stands_still():
+    print("merge notice: the cursor")
+    case = Case("mergenoticecursor")
+    origin, host = git_origin(case)
+    merge_cfg(case)
+    sha = a_version_commit(case, "master")
+    a_reported_bug(case, github_pr=PR_41)
+    a_pull_request(41, "ffbox/belt-fix", state="closed", merged=True, base="master",
+                   merge_sha=sha)
+    case.watcher.poll_github_merges()
+    before = case.watcher.read_merge_cursor()
+    check("a poll that changed nothing answers 304", before[2] is not None, before)
+    was = GH_STATE["not_modified"]
+    check("and the next one costs no rate limit at all",
+          case.watcher.poll_github_merges() == [] and GH_STATE["not_modified"] == was + 1,
+          GH_STATE["not_modified"])
+    check("and leaves the cursor exactly as it was",
+          case.watcher.read_merge_cursor() == before, (before,
+                                                       case.watcher.read_merge_cursor()))
+
+    # A DEFERRAL IS AN OUTAGE, and the cursor may not walk past it: `since` bounds the WALK
+    # here rather than the request, so advancing it would put the deferred pull request out of
+    # reach of the retry it is waiting for. The ETag goes with it, or the next poll answers 304
+    # and never re-reads at all.
+    case.watcher.cfg["push_remote"] = "nowhere"
+    a_reported_bug(case, thread="70009", github_pr="44")
+    a_pull_request(44, "ffbox/other-fix", state="closed", merged=True, base="master",
+                   merge_sha="0" * 40, updated="2026-09-07T00:00:00Z")
+    check("a version this box cannot fetch defers the pull request",
+          case.watcher.poll_github_merges() == [], case.rows("SELECT * FROM outbound"))
+    since, seen, etag, _ = case.watcher.read_merge_cursor()
+    check("it is not marked seen", "44" not in seen, seen)
+    check("the cursor did not advance past it", since == before[0], (since, before[0]))
+    check("and the ETag was dropped, so the retry actually re-reads", etag is None, etag)
+
+    case.watcher.cfg["push_remote"] = "origin"
+    check("and once the fetch works again, the retry says it",
+          len(case.watcher.poll_github_merges()) == 1, case.rows("SELECT * FROM outbound"))
+
+
+def test_the_merge_poller_is_not_the_review_pollers_passenger():
+    """Two reads, two error boundaries, one worker and one clock."""
+    print("merge notice: its own gate")
+    starter = inspect.getsource(ffwatch.Watcher.start_github_poll)
+    check("both polls run on the one GitHub worker",
+          "self.poll_github()" in starter and "self.poll_github_merges()" in starter, starter)
+    check("each inside its own try, so one failing cannot stop the other",
+          starter.count("except Exception") == 2, starter)
+    # NOBODY TRIGGERS A MERGE NOTICE, so the operator table cannot gate it -- and poll_github
+    # returns early on an empty one, which would have taken this with it.
+    poll = inspect.getsource(ffwatch.Watcher.poll_github_merges)
+    check("and the merge poll does not ask who the operators are",
+          "operators" not in poll, poll)
+
+    case = Case("mergenoticeoff")
+    origin, host = git_origin(case)
+    merge_cfg(case, announce=False)
+    GH_STATE["requests"] = []
+    check("announce_merges false makes no request at all",
+          case.watcher.poll_github_merges() == [] and GH_STATE["requests"] == [],
+          GH_STATE["requests"])
+
+
+def test_the_version_is_read_off_the_file_the_build_increments():
+    print("merge notice: the version")
+    check("the current spelling parses",
+          ffwatch.parse_ff_version("public static FFVersion FinalFactoryVersion ="
+                                   " new(0, 21, 0,22);") == (0, 21, 0, 22), None)
+    check("so does the one the 0.16 line used",
+          ffwatch.parse_ff_version("public static FFVersion FinalFactoryVersion ="
+                                   " new FFVersion(0,16,0, 0);") == (0, 16, 0, 0), None)
+    check("a three argument line means the RC is 0",
+          ffwatch.parse_ff_version("FinalFactoryVersion = new(1, 2, 3);") == (1, 2, 3, 0), None)
+    # BuildCommand.cs carries the same line inside a doc comment as an example of what it looks
+    # for, so a commented-out version must not be able to answer.
+    check("a commented-out version answers nothing",
+          ffwatch.parse_ff_version("// FinalFactoryVersion = new(9, 9, 9, 9);") is None, None)
+    check("the RC is what the next build increments",
+          (ffwatch.next_version((0, 21, 0, 22)), ffwatch.next_version((1, 2, 3, 0)))
+          == ("0.21.0.23", "1.2.3.1"), None)
+    check("and bundleVersion says the same thing",
+          ffwatch.parse_bundle_version("  bundleVersion: 0.21.0.22") == (0, 21, 0, 22), None)
+
+    case = Case("mergenoticeversion")
+    origin, host = git_origin(case)
+    merge_cfg(case)
+    sha = a_version_commit(case, "master")
+    version, outage = case.watcher.game_version_at(sha, "master")
+    check("the version is read out of the merge commit's own tree",
+          (version, outage) == ((0, 21, 0, 22), False), (version, outage))
+    check("a base nothing ships from has no version to name",
+          case.watcher.game_version_at(sha, "loth/some-branch") == (None, False), None)
+
+    # THE FALLBACK IS THE SAME NUMBER, written by the same build step out of the same file.
+    other = a_version_commit(case, "develop", line=None, settings="0.50.0.9",
+                             message="0.50.0.9")
+    check("a tree with no FFVersion.cs falls back to bundleVersion",
+          case.watcher.game_version_at(other, "develop") == ((0, 50, 0, 9), False),
+          case.watcher.game_version_at(other, "develop"))
+
+    # NEITHER READABLE IS A DECISION, not an outage: the notice goes out with no number in it.
+    bare = a_version_commit(case, "develop", line=None, bare=True, message="no version")
+    version, outage = case.watcher.game_version_at(bare, "develop")
+    check("and a tree with neither says the merge without a number",
+          (version, outage) == (None, False), (version, outage))
+
+    conv = a_reported_bug(case, thread="70010", github_pr=PR_41)
+    a_pull_request(41, "ffbox/belt-fix", state="closed", merged=True, base="develop",
+                   merge_sha=bare)
+    case.watcher.poll_github_merges()
+    payload = json.loads(case.rows("SELECT * FROM outbound WHERE conversation_id=?",
+                                   (conv,))[0]["payload_json"])
+    check("which is a sentence with no version in it",
+          payload["text"] == "Fix merged. It goes out in the next build.", payload)
 
 
 def test_adoption_refuses_what_it_cannot_safely_take():
@@ -13911,6 +14287,13 @@ def main():
         test_the_shed_gives_one_place_back_and_never_takes_a_promise,
         test_the_keeper_sheds_before_it_stages,
         test_a_reserve_that_can_never_be_met_is_clamped,
+        test_a_merged_pull_request_tells_the_thread_which_build_carries_the_fix,
+        test_a_merge_notice_reaches_a_thread_that_only_owns_the_branch,
+        test_a_merge_that_is_nobodys_news_says_nothing,
+        test_the_first_merge_poll_announces_nothing_that_predates_it,
+        test_a_quiet_merge_poll_costs_nothing_and_a_deferred_one_stands_still,
+        test_the_merge_poller_is_not_the_review_pollers_passenger,
+        test_the_version_is_read_off_the_file_the_build_increments,
     ]
     for fn in tests:
         try:

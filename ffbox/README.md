@@ -2253,6 +2253,40 @@ the review works — refuses at the publish, by the prefix rule.
 
 Design: `design/github_pr_review_design.txt`.
 
+### A merged pull request tells the thread which build has the fix
+
+When a pull request merges, every Discord conversation behind it hears so, and hears which build
+the fix will be in:
+
+> **Max** Fix merged. It goes out in 0.21.0.23 and later.
+
+The version is the one standing on the branch it merged into, plus one on the last component,
+and that is the release process rather than a guess about it: `UpdateMinorVersion` in
+`Assets/Editor/BuildCommand2.cs` increments the RC in `FFVersion.cs` before it builds and writes
+`bundleVersion` out of the result, so the number in the repository is the LAST build's and the
+next one is that number plus one. It is read out of the merge commit's own tree with git, on the
+host, so a bump that lands between the merge and the poll cannot move the answer.
+
+**"And later" is load-bearing.** A hand-bumped minor (0.21.0.22 to 0.22.0.0) means 0.21.0.23
+never exists, and that is what keeps the sentence true.
+
+**Which threads.** The pull request recorded on the conversation, and every conversation that
+owns the branch — the second is what reaches a thread whose branch was adopted and whose pull
+request a person opened by hand. Two threads on one branch both get the line. The `#codereview`
+conversation does not: its thread IS the pull request.
+
+**What it does not say.** A pull request closed WITHOUT merging says nothing, in any thread. It
+is a decision somebody made for a reason the harness does not have. Nor does it claim the bug is
+fixed: what this box knows is that a pull request merged.
+
+**Nobody triggers it,** so no operator table gates it — it is a separate poller from
+`#codereview` for that reason, sharing that one's worker and `github.poll_secs`. Turn it off with
+`"github": { "announce_merges": false }`. Like every poller here it watches from now: turning it
+on announces nothing that merged before, and a later comment on an old pull request does not
+change that — the watermark is compared against when it merged, not when it was last touched.
+
+Design: `design/pr_merged_notice_design.txt`.
+
 ### The web UI (`ffweb`)
 
 ```bash
