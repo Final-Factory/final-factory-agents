@@ -1803,6 +1803,13 @@ def test_the_claude_page_reports_every_key_in_the_pool():
               and ffweb.fmt_reset((datetime.now(timezone.utc) - timedelta(minutes=5))
                                   .isoformat()) == "resetting now",
               ffweb.fmt_reset(FIVE_RESET))
+        # A WEEKLY WINDOW IS DAYS OUT, and "131h26m" makes the reader divide by 24 to find out
+        # how many. Days lead once there is at least one; below a day nothing changes shape.
+        check("a countdown past a day counts the days",
+              ffweb.fmt_ttl(131 * 3600 + 26 * 60) == "5d11h26m"
+              and ffweb.fmt_ttl(86400) == "1d0h00m"
+              and ffweb.fmt_ttl(86399) == "23h59m",
+              ffweb.fmt_ttl(131 * 3600 + 26 * 60))
         # THE OPUS ROW IS THE ONE THAT BITES on a box doing real work, and it is only in the
         # `limits` array -- there is no seven_day_opus object beside the other two.
         check("the per-model weekly cap is on the page too",
