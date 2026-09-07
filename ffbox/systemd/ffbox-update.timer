@@ -8,15 +8,39 @@ Wants=network-online.target
 
 [Timer]
 Unit=ffbox-update.service
-# Not at boot exactly: docker, the network and ffbox itself want the machine first.
-OnBootSec=5min
-OnUnitActiveSec=5min
+# ONCALENDAR, NOT OnBootSec + OnUnitActiveSec, AND THE DIFFERENCE IS RECOVERY.
+#
+# OnUnitActiveSec counts from the service's LAST ACTIVATION. A service that has never activated
+# gives it nothing to count from, and systemd then computes a next elapse of infinity: the timer
+# sits in `active (elapsed)` looking healthy and never fires again. OnBootSec does not save it —
+# that one is spent as soon as it elapses.
+#
+# 2026-09-07 is the worked example. The boot trigger came due while ffbox-docker.service was the
+# gate that had just failed, ffbox-update.service never ran, and self-update was off for the rest
+# of the boot with nothing in any log to say so. `systemctl restart ffbox-update.timer` does NOT
+# clear it, which is the trap: OnBootSec is already in the past and OnUnitActiveSec still has no
+# anchor, so the restart returns cleanly and changes nothing.
+#
+# A calendar schedule cannot wedge that way. Its next elapse comes from the clock rather than from
+# anything the service did or failed to do, so a failed run costs one interval and the next one
+# fires regardless. That matters most for exactly the case this timer exists to fix: it is the
+# recovery story for a bad commit, so it must outlive the breakage it is meant to repair.
+#
+# NO BOOT DELAY HERE ANY MORE. The old OnBootSec=5min guessed at "docker, the network and ffbox
+# itself want the machine first". The service says so properly, in
+# `After=network-online.target ffbox-docker.service` — ordering the machine enforces, rather than
+# a number that is too long on a fast boot and far too short on a slow one.
+OnCalendar=*:0/5
 # Nothing here is synchronised across machines, but a spread keeps two build servers from
 # hitting GitHub in the same second, and costs nothing. Kept well under the interval: jitter as
 # wide as the period turns a five-minute cadence into anything between five and ten.
 RandomizedDelaySec=1min
 # A machine that was off through a scheduled run catches up once, rather than waiting a full
 # interval to discover it is a week behind.
+#
+# THIS LINE ONLY DOES ANYTHING ABOVE. systemd honours Persistent= on OnCalendar= timers and
+# ignores it everywhere else, so under the old OnBootSec pair it was decoration and the catch-up
+# it promises never happened.
 Persistent=true
 
 [Install]

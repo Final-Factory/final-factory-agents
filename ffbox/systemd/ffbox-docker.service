@@ -45,12 +45,13 @@ User=@USER@
 Group=@GROUP@
 Environment=HOME=@HOME@
 ExecStart=/bin/sh @WAITDOCKER@ @DOCKERSOCK@ 900
-# 900, NOT 90. The daemon is in user@<uid>.service on the far side of a boundary this unit
-# cannot order against, so the deadline is a guess at how late that instance can be — and on
-# 2026-09-07 it was 15s later than 90 allowed. systemd-tmpfiles-setup had run for 68 minutes
-# and dragged every start time with it; the gate failed, ffwatch Requires= it, and the whole
-# pipeline stayed down until someone noticed. A gate that waits costs a slow boot some time.
-# A gate that gives up early costs an outage nobody is paged for.
+# 900, NOT 90, AND IT IS NOT THE SAME JOB AS THE ORDERING ABOVE. That closes the race against the
+# user manager; this covers the part ordering cannot reach — the manager going active means the
+# instance is up, not that the docker unit inside it is answering yet, and the length of that
+# inner gap is a guess. On 2026-09-07 the wait needed 15 seconds more than 90 gave it, so the
+# number was already wrong on its own terms before the missing ordering made it fatal. A gate
+# that waits costs a slow boot some time. A gate that gives up early costs an outage nobody is
+# paged for.
 TimeoutStartSec=960
 
 [Install]
