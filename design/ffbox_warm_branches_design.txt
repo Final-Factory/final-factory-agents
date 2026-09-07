@@ -127,7 +127,8 @@ without it into a crash in the keeper, for no gain.
 
 The candidate list comes out of the database on each keeper pass, ordered most recent first:
 
-    SELECT c.branch, c.agent_class, MAX(COALESCE(t.started_at, t.queued_at)) AS seen
+    SELECT c.branch, c.agent_class,
+           MAX(COALESCE(t.ended_at, t.started_at, t.queued_at)) AS seen
       FROM turn t JOIN conversation c ON c.id = t.conversation_id
      WHERE c.branch IS NOT NULL
        AND c.state <> 'closed'
@@ -137,9 +138,21 @@ The candidate list comes out of the database on each keeper pass, ordered most r
 
 `conversation.branch` is the right column and `run.branch` is not: the conversation's is written
 only after a push succeeds, so it names a branch that exists on origin, while a run's is the name
-it was launched with whether or not anything came of it. `COALESCE(started_at, queued_at)` counts
-a turn that is queued but has not started as an access, because it is one -- that turn is about to
-want this branch, which is the strongest signal in the table.
+it was launched with whether or not anything came of it.
+
+`COALESCE(ended_at, started_at, queued_at)` IS THE LATEST THING THAT HAPPENED TO THE TURN. The
+three timestamps only ever increase, so the coalesce picks the most recent of them: when it
+finished, else when it began, else when it was queued. A queued turn counts as an access because
+it is one -- that turn is about to want this branch, which is the strongest signal in the table.
+
+CORRECTED 2026-09-06, hours after this shipped. It read `COALESCE(started_at, queued_at)` and was
+wrong for exactly the case the tier exists to serve. ffdev's `agent_secs` is two hours with warm-up
+and verification either side, so a long dev turn that started three hours ago and ended a minute
+ago was dated three hours ago: its branch fell outside the one-hour window at the very moment the
+run finished, which is when a follow-up is most likely and the whole reason that branch was worth
+warming. The tier served short turns and silently skipped every long one -- the opposite of the
+selection it was written for, and invisible, because a branch that is not a candidate produces no
+log line.
 
 Three filters on top, all of them mandatory:
 

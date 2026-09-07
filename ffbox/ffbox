@@ -1369,6 +1369,7 @@ if [ -n "$STAGE_POOL" ]; then
                 --name "$POOL_NAME" \
                 --label "$FFBOX_WORKLOAD_LABEL=pool" \
                 --label "ffbox.pool=${REF}" \
+                --label "ffbox.ref=${REF}" \
                 --label "ffbox.pool.id=${STAGE_POOL}" \
                 --label "ffbox.pool.tier=${POOL_TIER}" \
                 --label "ffbox.slot=${_POOL_SLOT}" \
@@ -1537,6 +1538,17 @@ else
         --label "$FFBOX_WORKLOAD_LABEL=agent"
         --label "ffbox.slot=${RUN_SLOT}"
         --label "ffbox.run.id=${RUN_ID}"
+        # WHICH BRANCH THIS RUN'S WORKSPACE STARTED FROM. A staged container has carried it as
+        # `ffbox.pool` since the pool existed, and a cold one carried nothing -- so `ffstatus`
+        # could say what a spare was warm for and had no answer at all for a run, which is the
+        # row somebody reading the box actually wants named. Same label on both routes now, so
+        # one read answers for every workspace-holding agent container.
+        #
+        # WHAT IT MEANS IS "WHERE THE CLONE STARTED", not "where the work is now". A turn pinned
+        # to a sha may be dispatched into a spare staged on any branch (pool_claim_for's
+        # looks_like_sha), and the label still names the branch the tar came from, because a
+        # label is creation-time and there is nowhere to write the later answer.
+        --label "ffbox.ref=${REF}"
         "${RUN_ARGS[@]}"
         -v "$OUT:/ffbox/out"
         -e "FFBOX_MACHINE_ID=$RUN_MACHINE_ID"

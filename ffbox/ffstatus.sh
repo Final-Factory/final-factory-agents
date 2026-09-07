@@ -518,6 +518,9 @@ gather() {
     # reads correctly: the field arrives empty and `warm` is the right word for it, because held
     # was the one tier there was. design/ffbox_warm_branches_design.txt.
     fmt+="${SEP}{{.Label \"ffbox.pool.tier\"}}"
+    # AND THE REF A RUNNING CONTAINER IS ON. `ffbox.pool` answers only for a spare; this one is
+    # set on both routes, so an agent row can name its branch instead of showing a blank.
+    fmt+="${SEP}{{.Label \"ffbox.ref\"}}"
 
     local ps
     if ! ps=$("$DOCKER" ps --format "$fmt" 2>/dev/null); then
@@ -525,8 +528,8 @@ gather() {
         return 1
     fi
 
-    local name workload class ref poolid slot age status tier
-    while IFS="$SEP" read -r name workload class ref poolid slot age status tier; do
+    local name workload class ref poolid slot age status tier runref
+    while IFS="$SEP" read -r name workload class ref poolid slot age status tier runref; do
         [ -n "$name" ] || continue
         age=${age% ago}
         if [ -z "$workload" ]; then
@@ -597,11 +600,19 @@ gather() {
                         [ -e "$out/retiring" ] && { state=retiring; ttl=''; } ;;
                     *)
                         # Renamed by dispatch: a turn that started from a warm workspace.
-                        lane=agent; state='running*'; ref=''
+                        #
+                        # ITS BRANCH IS SHOWN, where until 2026-09-06 this blanked it. The label
+                        # was right there -- a dispatched container keeps every label it was
+                        # staged with -- and the row that most needs naming a branch is the one
+                        # doing the work. `runref` rather than `ref` so a container staged before
+                        # ffbox.ref existed still answers, from the ffbox.pool label it has.
+                        lane=agent; state='running*'; ref=${runref:-$ref}
                         RUNS[$class]=$(( ${RUNS[$class]:-0} + 1 )) ;;
                 esac ;;
             agent)
-                lane=agent; state=running; ref=''
+                # A COLD RUN, and it now carries ffbox.ref too. Empty for a container started by
+                # an ffbox that predates the label, which reads as the blank this always showed.
+                lane=agent; state=running; ref=$runref
                 RUNS[$class]=$(( ${RUNS[$class]:-0} + 1 )) ;;
             *)
                 lane=$workload; state=running; ref='' ;;
