@@ -25,6 +25,17 @@ Two defects found by watching the live box, both now in this branch:
    the clone started"; a sha-pinned turn dispatched into a spare keeps the staged branch's name,
    because a label is creation-time.
 
+## Added after the first deploy, 2026-09-06
+
+**Every decline reason is logged**, one line per transition. The tier shipped with all six of its
+decline paths silent, so the first real report against it — "the run finished and no spare
+appeared" — had nothing behind it to diagnose, and the first answer I reached for was wrong
+because there was no evidence to check it against. `warm_branch_note` latches on the reason key
+(`deadband`, `ceiling`, `memory`, `nothing:<which filters>`), the same shape as
+`_pool_squeeze_logged` on the held tier, so a keeper running every five seconds cannot turn a
+useful line into wallpaper. Covered by
+`test_the_warm_branch_tier_says_why_it_is_not_staging`.
+
 ## Status, 2026-09-06
 
 **All phases implemented and green**, offline: `test_ffwatch.py` and `test_ffweb.py` both pass,

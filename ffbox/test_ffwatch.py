@@ -14060,6 +14060,100 @@ def test_a_reserve_that_can_never_be_met_is_clamped():
         else:
             os.environ["FFWATCH_MAX_RUNS"] = saved
 
+
+def test_the_warm_branch_tier_says_why_it_is_not_staging():
+    """Six conditions decline a warm-branch staging, and until 2026-09-06 every one was silent.
+
+    That is not a cosmetic gap. A spare that never appears looks identical whether the box was
+    short of places, short of memory, at a class ceiling, or simply had no branch worth warming --
+    and the four want completely different responses. The first hour this tier was live, "no spare
+    appeared and there is no way to tell why" was the whole of the available diagnosis.
+
+    ONE LINE PER TRANSITION, not one per pass. The keeper runs every `poll_secs`, so an
+    unconditional line is wallpaper within minutes, and wallpaper is how a real warning is missed.
+    The latch is on the reason KEY and not the message, because the message carries counts that
+    move between passes.
+    """
+    print("pool: the tier says why it declined")
+    case = Case("poolwhy", base_fixture())
+    w = case.watcher
+    w.cfg["workload_reserve"] = 1
+    for cls in ffwatch.AGENT_CLASSES:
+        w.cfg["agent_classes"][cls].update({"idle_agents": 0, "agent_pool_max": 6})
+        w.cfg["agent_classes"][cls]["warm_branches"].update({"count": 1, "window_secs": 3600})
+    w.pool_has_room = lambda for_containers=1: True
+    w.mirror_carries = lambda branch: True
+    w.pool_stage = lambda cls=None, **kw: None
+
+    def journal(fn):
+        out = io.StringIO()
+        saved = ffwatch._JOURNAL
+        ffwatch._JOURNAL = out
+        try:
+            fn()
+        finally:
+            ffwatch._JOURNAL = saved
+        return out.getvalue()
+
+    # THE DEAD BAND, which is the condition most likely to be the answer on a busy box: three of
+    # six places free is a real bar, and nothing else on the box announces it.
+    w.workload_room = lambda: 2
+    said = journal(lambda: w.keep_warm_branches([]))
+    check("the dead band says so, with both numbers",
+          "2 place(s) free" in said and "reserve 1" in said, said)
+    check("and names the ceiling it is measured against", "6 on the box" in said, said)
+
+    # ONE LINE, not one every pass.
+    again = journal(lambda: w.keep_warm_branches([]))
+    check("and does not say it again on the next pass", again == "", again)
+
+    # NOTHING TO WARM, and the five causes of it are not the same thing. With no conversation
+    # owning a branch at all, the line has to say that rather than imply a filter rejected
+    # something.
+    w.workload_room = lambda: 6
+    said = journal(lambda: w.keep_warm_branches([]))
+    check("an empty candidate set says nothing has owned a branch",
+          "no conversation of this class has owned a branch" in said, said)
+    check("and it says it once per class",
+          said.count("no warm-branch candidate") == len(ffwatch.AGENT_CLASSES), said)
+
+    # A BRANCH THE MIRROR DOES NOT CARRY is the cause that catches people: it is a CI fetch that
+    # has not happened rather than anything about this pool, and the line has to name it.
+    _seed_branch_turn(w, 1, "loth/fix", "ffagent", _ago(60))
+    w.mirror_carries = lambda branch: False
+    said = journal(lambda: w.keep_warm_branches([]))
+    check("a branch missing from the mirror is named as such",
+          "1 not in the mirror" in said, said)
+    check("and the line says how many were active at all",
+          "1 branch(es) wanted in the last" in said, said)
+
+    # THE CLASS CEILING.
+    w.mirror_carries = lambda branch: True
+    w.agent_room = lambda cls=None: 0
+    said = journal(lambda: w.keep_warm_branches([]))
+    check("a class at its own ceiling says so", "at its own pool.max" in said, said)
+
+    # MEMORY, and this one MUST be said here. The held loop has its own squeeze line but reaches
+    # it only when that pool is short -- on a box whose held pools are full the condition would
+    # otherwise be completely silent.
+    w.agent_room = lambda cls=None: 6
+    w.pool_has_room = lambda for_containers=1: False
+    said = journal(lambda: w.keep_warm_branches([]))
+    check("a memory squeeze is said on this tier too",
+          "not enough to hold another workspace" in said, said)
+
+    # AND A SATISFIED TIER SAYS NOTHING, but clears the latch -- so the next real reason is said
+    # rather than swallowed by a stale key.
+    w.pool_has_room = lambda for_containers=1: True
+    warm = [{"name": "c", "id": "e1", "branch": "loth/fix", "class": cls,
+             "tier": ffwatch.POOL_TIER_EVICTABLE} for cls in ffwatch.AGENT_CLASSES]
+    said = journal(lambda: w.keep_warm_branches(warm))
+    check("a satisfied tier is quiet", said == "", said)
+    w.pool_has_room = lambda for_containers=1: False
+    said = journal(lambda: w.keep_warm_branches([]))
+    check("and the latch it cleared lets the next reason through",
+          "not enough to hold another workspace" in said, said)
+
 def main():
     tests = [
         test_the_account_about_to_refill_is_the_one_worth_spending,

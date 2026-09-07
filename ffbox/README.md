@@ -1876,6 +1876,20 @@ Held first, always: the keeper stages an evictable spare only on a pass that fil
 and at most one per pass, because `pool_stage` blocks the daemon's own loop. `ffstatus` calls these
 `warm-evictable` where a held spare is `warm`. `design/ffbox_warm_branches_design.txt`.
 
+**And it says why when it does not stage one.** Six conditions decline a warm-branch staging and
+they look identical from outside — the box short of places, short of memory, a class at its
+ceiling, or simply no branch worth warming — so each writes a line naming itself and its numbers:
+
+```
+journalctl -u ffwatch --since -30min | grep 'pool: '
+```
+
+One line per transition, latched on the reason rather than the message, so a keeper running every
+five seconds cannot turn it into wallpaper. The one that catches people is `not in the mirror`: a
+branch reaches the mirror by luck of a CI fetch having run, and a container fills from the mirror
+and nothing else, so a branch missing from it is a CI job that has not happened rather than
+anything about this pool.
+
 **The keeper retires it, and it can retire itself.** After `idle_agent_ttl_secs` unclaimed, the
 keeper stops the container and stages a fresher one. That covers the workspace drifting from head,
 a newer CI cache entry and a rebuilt image all at once, and the cost when it bites is a longer
