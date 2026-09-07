@@ -850,7 +850,8 @@ because a box normally wants one.
 | `github.api_base` | `https://api.github.com` | |
 | `github.trigger` | `"#codereview"` | The word that starts a review run when it appears in a comment on a pull request. Matched case-insensitively against the whole comment; nothing else is parsed out of it. `""` turns the poller off. |
 | `github.review_pool` | `"ffdev"` | Which agent class a review runs in. `"ffagent"` puts it behind the fence, where it will not be able to push. |
-| `github.poll_secs` | `60` | How often the comment poller looks. Its own clock and its own worker, not `catchup_secs`. |
+| `github.poll_secs` | `60` | How often the comment poller looks, and the merge poller with it. Its own clock and its own worker, not `catchup_secs`. |
+| `github.announce_merges` | `true` | Whether a merged pull request tells the Discord threads behind it which build carries the fix. `false` turns that poller off. |
 
 The token itself is read from the environment, not from this file, so it is never written to
 disk beside channel ids and never lands in a config a container could see. A token that IS in
@@ -896,6 +897,44 @@ and that they are not one.
 The comment selects the run and nothing else: the prompt is built by the harness out of the
 pull request number, the branch, the base and the diff, and carries no text anybody wrote. That
 is what keeps an unfenced container out of reach of a public comment box.
+
+### A merged pull request
+
+When a pull request merges, every Discord conversation behind it is told so, and told which
+build the fix will be in: the version standing on the branch it merged into, plus one on the
+last component. Merged into master while master reads 0.21.0.22, and the bug thread hears "Fix
+merged. It goes out in 0.21.0.23 and later." `design/pr_merged_notice_design.txt` is the whole
+of it.
+
+```jsonc
+"github": { "announce_merges": true }
+```
+
+**Nobody triggers this and no operator table gates it.** GitHub triggers it by merging, and who
+pressed the button is not a permission question. That is why it is a separate poller rather than
+a branch of the `#codereview` one, which returns early on a box with no operators.
+
+**It shares the `#codereview` worker and `github.poll_secs`,** because it is a second
+conditional GET to the same host. There is deliberately no second interval.
+
+**The arithmetic is the release process, not a guess about it.** `UpdateMinorVersion` in
+`Assets/Editor/BuildCommand2.cs` increments the RC in `FFVersion.cs` before it builds and writes
+`bundleVersion` out of the result, so the number standing in the repository is the last build's
+and the next build is that number plus one. The version is read out of the merge commit's own
+tree with git, on the host, so a bump that lands between the merge and the poll cannot push the
+answer out by one. A pull request merged into a branch that is not in `publish_bases` ships in
+nothing and gets no number.
+
+**"And later" is load-bearing.** A hand-bumped minor (0.21.0.22 to 0.22.0.0) means 0.21.0.23
+never exists, and that is what keeps the sentence true.
+
+**A pull request closed WITHOUT merging says nothing.** It is a decision somebody made for a
+reason the harness does not have.
+
+The first poll on a box records the moment it started watching and announces nothing older, the
+same watermark the comment poller and every watched Discord channel get. It is kept in the
+cursor as `watching_since` and never moves, so a comment on a pull request that merged months
+ago walks it back into the poll's view without walking it back into anybody's thread.
 
 ## Conversation clustering
 
