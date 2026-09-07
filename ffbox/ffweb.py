@@ -735,12 +735,16 @@ def fmt_ttl(secs):
     """A staged container's remaining idle life, in the shape ffstatus.sh prints it.
 
     Not fmt_secs: these are hours, and "222.0m" is a number a reader has to do arithmetic on.
+    Past a day the same argument applies again — a weekly window's "131h26m" is a division the
+    reader has to do to learn it is five and a half days out — so days lead once there are any.
     """
     if secs is None:
         return "—"
     secs = int(secs)
     if secs < 0:
         return "expired"
+    if secs >= 86400:
+        return f"{secs // 86400}d{(secs % 86400) // 3600}h{(secs % 3600) // 60:02d}m"
     if secs >= 3600:
         return f"{secs // 3600}h{(secs % 3600) // 60:02d}m"
     if secs >= 60:
