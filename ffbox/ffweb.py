@@ -200,16 +200,34 @@ LOCAL_KINDS = ("shell", "web")
 # runners, which is exactly what the paragraph below refuses. The distinction was never about the
 # word; it was about which lane owns the container.
 #
-# NOT THE POOL AND NOT CI. A staged spare is retired with `ffwatch pool drop`, which also deals
-# with its spool directory, and a CI runner belongs to a keeper that would mint a replacement the
-# moment this took one away. Offering a button that stops a container something else immediately
-# puts back is worse than offering nothing.
+# WHAT IS REFUSED IS A CONTAINER WITH NO WORK IN IT, and that is the whole rule. A staged spare
+# and a warm CI runner are both provisioned and idle; stop either and the keeper that owns it mints
+# a replacement within a pass, so the button would look inert while costing a container recreate
+# and, for CI, a GitHub registration. A staged spare is retired with `ffwatch pool drop`, which
+# also deals with its spool directory.
+#
+# CI WAS REFUSED ENTIRELY UNTIL 2026-09-08, and the reasoning was inherited rather than examined.
+# It said a CI runner "belongs to its slot supervisor, which would mint a replacement the moment
+# this took one away" -- true of an idle runner and false of one with a job, because what you take
+# away there is the JOB, and what comes back is an empty runner. That is exactly the agent case,
+# which this page has always offered. The conflation was between a runner and the work inside it.
+#
+# It also left a real gap: a wedged Unity job holds a slot, a 40 GiB ramdrive and a place under the
+# box ceiling until the watchdog fires at 120 minutes, and the page an operator would reach for
+# showed the row and refused. `ffwatch stop` accepted CI containers the whole time -- its
+# membership test is workload_containers(), which is every container carrying `ffbox.workload` --
+# so this was never a capability question, only which door it was behind.
 STOPPABLE_STATES = ("running", "running*")
-STOPPABLE_LANES = ("agent",)
+STOPPABLE_LANES = ("agent", "ci")
 
 
 def is_stoppable(row):
-    """Does this box-page row name a container this page may stop?"""
+    """Does this box-page row name a container this page may stop?
+
+    THE LANE AND THE STATE, NOT EITHER ALONE. Both lanes say `running` for work in progress since
+    2026-09-08, so the state alone would sweep in warm spares' lane-mates; the lane alone would
+    sweep in warm runners. What is stoppable is a container that has work in it.
+    """
     return (row.get("state") in STOPPABLE_STATES
             and row.get("lane") in STOPPABLE_LANES
             and bool(row.get("name")))
@@ -2623,9 +2641,10 @@ class App:
             return page("Stop", head + [
                 "<p class=\"note\">" + esc(name) + " is " +
                 esc(str(row.get("state") or "in some other state")) +
-                ", not running a turn. A staged spare is retired with "
-                "<code>ffwatch pool drop</code> and a CI runner belongs to its slot supervisor, "
-                "which would mint a replacement straight away.</p>", back])
+                ", so there is no work in it to stop. A staged spare is retired with "
+                "<code>ffwatch pool drop</code>, which also clears its spool directory; a warm CI "
+                "runner is replaced by the keeper within seconds of being taken away, so stopping "
+                "one costs a registration and changes nothing.</p>", back])
 
         body = [table(["lane", "class", "name", "slot", "state", "ttl", "ref", "up"],
                       [[row.get("lane") or "—", row.get("class") or "—", row.get("name"),
@@ -2637,6 +2656,30 @@ class App:
         # out of the tmpfs and the Unity seat goes back, and everything the agent had already
         # committed is published exactly as it would have been. What is lost is the rest of the
         # turn.
+        if row.get("lane") == "ci":
+            # A CI JOB LOSES DIFFERENT THINGS, and an operator deciding needs the differences
+            # rather than the agent lane's paragraph with a word swapped. What survives is what
+            # the host already did for it -- a mirror fetch, an artifact already uploaded. What
+            # does not is the run on GitHub, which ends as a failure somebody will see on a pull
+            # request rather than in a Discord thread.
+            body.append(
+                "<p class=\"alert\">This ends the GitHub Actions job " + esc(name) + " is "
+                "running. The job fails on the pull request that started it and whoever opened "
+                "that will see a red check, not a cancellation — GitHub is told the runner went "
+                "away, not that a person stopped it. Anything the host had already done for the "
+                "job stands: a mirror fetch it answered, test results already uploaded. Anything "
+                "the job had not finished is lost, and re-running it from GitHub is the way "
+                "back.</p>")
+            body.append(
+                "<p class=\"note\">The runner itself is not the loss. The keeper mints a "
+                "replacement within a pass, so the pool is back to strength before the page "
+                "refreshes; what you are ending is the work, not the capacity.</p>")
+            body.append(
+                "<form class=\"stop\" method=\"post\" action=\"/actions/stop\">"
+                "<input type=\"hidden\" name=\"name\" value=" + attr(row.get("name")) + ">"
+                "<button type=\"submit\">stop " + esc(short(name, 120)) + "</button></form>")
+            body.append("<p class=\"note\"><a href=\"/status\">leave it running</a></p>")
+            return page("Stop", head + body)
         body.append(
             "<p class=\"alert\">This ends the turn " + esc(name) + " is serving. The stop is a "
             "soft one — the container is signalled and given a couple of minutes, which is long "

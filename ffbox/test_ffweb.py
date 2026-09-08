@@ -3672,17 +3672,26 @@ def test_only_agent_runs_are_stoppable():
     stoppable = [
         {"lane": "agent", "state": "running", "name": "a"},
         {"lane": "agent", "state": "running*", "name": "b"},
+        # A CI RUNNER WITH A JOB, since 2026-09-08. The refusal before that was inherited from
+        # the slot.sh era and conflated a runner with the work inside it: stop one with a job and
+        # what you took away is the JOB, and what the keeper puts back is an empty runner. That is
+        # exactly the agent case this page has always offered.
+        {"lane": "ci", "state": "running", "name": "c"},
     ]
     for row in stoppable:
-        check(f"an agent row that is {row['state']} can be stopped", ffweb.is_stoppable(row))
+        check(f"a{'n' if row['lane'][0] in 'aeiou' else ''} {row['lane']} row that is {row['state']} can be stopped",
+              ffweb.is_stoppable(row))
 
     refused = [
-        ({"lane": "ci", "state": "running", "name": "c"},
-         "a CI runner doing work is NOT stoppable, though it says running"),
-        ({"lane": "ci", "state": "warm", "name": "d"}, "nor a warm CI runner"),
+        # WHAT IS REFUSED IS A CONTAINER WITH NO WORK IN IT. Stop either of these and the keeper
+        # that owns it mints a replacement within a pass, so the button looks inert while costing
+        # a container recreate and, for CI, a GitHub registration.
+        ({"lane": "ci", "state": "warm", "name": "d"}, "but not a warm CI runner"),
         ({"lane": "spare", "state": "warm", "name": "e"}, "nor a warm agent spare"),
         ({"lane": "spare", "state": "running", "name": "f"},
          "nor anything in the spare lane, whatever it says"),
+        ({"lane": "ci", "state": "orphan", "name": "h"},
+         "nor an orphaned CI runner, which reap.sh owns"),
         ({"lane": "agent", "state": "warm", "name": "g"},
          "nor an agent row that is not running a turn"),
         ({"lane": "agent", "state": "running", "name": ""},
