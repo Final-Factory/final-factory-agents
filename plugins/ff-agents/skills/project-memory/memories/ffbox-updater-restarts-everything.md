@@ -4,10 +4,12 @@ Learned on 2026-08-31, after pushing the Discord conversation-clustering work an
 Ben the updater "could not" restart the Discord listener. It could. It already had, about a
 minute after I said so.
 
-**The rule. After pushing anything ffbox runs, WAIT AND LOOK. Do not restart services and do
-not install plugins by hand.** `ffbox-update.timer` fires roughly every five minutes; a push is
-live on the next tick, not immediately. Watching one tick go by costs less than any manual
-intervention, and manual intervention on a running build server is not free.
+**The rule. After pushing anything ffbox runs, OR editing `~/.config/ffbox/config.json` or
+`secrets.env`, WAIT AND LOOK. Do not restart services and do not install plugins by hand.**
+`ffbox-update.timer` fires roughly every five minutes; the change is live on the next tick, not
+immediately. Watching one tick go by costs less than any manual intervention, and manual
+intervention on a running build server is not free. **A config edit is not a special case that
+escapes this rule — it is the second trigger, described below.**
 
 **What the updater actually does**, from `ffbox/update_ffbox.sh`:
 
@@ -85,14 +87,32 @@ two commands — `systemctl stop ffbox.target` and `systemctl start ffbox.target
 updater may restart the target and nothing may restart a single unit by name. My shell failing
 said nothing about the updater, and I never checked before reporting.
 
+**IT HAPPENED AGAIN ON 2026-09-08, off the config trigger this time**, which is why the rule at
+the top now names config edits in its first sentence. The task was attaching `#ask-assistant` to
+the watch block: one edit to `config.json`, nothing in git, nothing to publish.
+`sudo systemctl restart ffdiscord-listener ffwatch` came back "a password is required", and I
+handed Ben the command to run himself. The updater had already drained and restarted on it —
+`config.json changed in /home/FinalFactoryTester/.config/ffbox since the services started` at
+03:36:03, listener `READY ... watching ... ask_assistant(1531433612464099521) ...` at 03:40:40,
+about five minutes after the edit landed. **The failed `sudo` is the tell that I am about to
+repeat this.** It is not information about the box; it is the sudoers rule working as designed,
+and it means the updater owns the restart. The next move after that error is the journal and
+the config stamp, never a command handed to Ben.
+
 **Check the journal, not the process list, and check it twice.** A `pgrep` in the window
 between a push and the next tick shows old code and proves nothing. What settles it:
 
 ```sh
-journalctl -u ffbox-update --since -20min | grep -iE "5/7|starting ffbox.target"
+journalctl -u ffbox-update --since -20min | grep -iE "5/7|starting ffbox.target|changed in"
 journalctl -u ffdiscord-listener --since -20min | grep -iE "starting|READY"
 systemctl list-timers | grep ffbox-update      # when the next tick lands
+# after a CONFIG edit, this one sentence settles it: the stamp holds the hashes the RUNNING
+# services started on, so a match means they are already on the file you just edited.
+grep config.json ~/.config/ffbox/update.config-sha; sha256sum ~/.config/ffbox/config.json
 ```
+
+The listener also prints its whole watch list on every connect, so a `READY as ... watching ...`
+line newer than your edit, with the alias in it, is the end of the question.
 
 **The one thing it genuinely cannot do is install systemd UNIT FILES.** That needs root writing
 `/etc/systemd/system`, which the updater deliberately does not hold; it says so in its own
