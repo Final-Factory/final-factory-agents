@@ -281,7 +281,7 @@ between them.
 | --- | --- | --- |
 | `spread` | `true` | Off spends the first non-empty slot for everything, which is what this box did before 2026-09-04. |
 | `five_hour_cap` | `0.6` | The share of the **five-hour session** past which an account stops being offered work. |
-| `refresh_secs` | `900` | How often every account's windows are re-read. |
+| `refresh_secs` | `900` | How often every account's windows are re-read when nobody asks for a fresh one. |
 | `timeout_secs` | `10` | How long one account's reading may take before it is written off for that refresh. |
 | `review_hold_pct` | `0.75` | Above this, a `#codereview` trigger waits for the window to refill instead of starting. |
 | `new_conversation_hold_pct` | `0.9` | Above this, a brand-new conversation waits for its first turn. |
@@ -318,7 +318,29 @@ that draws ffweb's `/claude` page, so the page and the chooser cannot disagree. 
 `claude setup-token` has no `user:profile` scope and so cannot read its own usage document; such
 a key is asked one token of Haiku instead and its windows are read off the reply's rate-limit
 headers. That is why `refresh_secs` is a quarter of an hour and not a minute: the refresh is not
-free, and the windows it measures are five hours and seven days long.
+free, and the windows it measures are five hours and seven days long. The page's own interval
+is separate and is now an hour; see below.
+
+**A spawn decision asks Anthropic; everything else takes the cached answer.** Whether a new
+conversation or a `#codereview` trigger starts now or waits for the window is the one decision
+on this box that a stale reading gets wrong in a way nothing later corrects: a conversation held
+on a window that has since refilled sits there until something else wakes it, and one started on
+a window that has since filled up runs into a mid-flight cutoff. So both of those force a
+reading before deciding. Choosing *which* account pays does not, and should not — the next turn
+re-chooses, and a round trip there would land on every launch, every staging and every gate
+call. A forced reading is floored at 30 seconds rather than unlimited, so one `claim_turns` pass
+over ten new conversations still makes one round of requests.
+
+**One store, two processes.** `ffwatch` and `ffweb` used to keep their readings in their own
+memory, so each paid its own way to Anthropic and the page could say 40% while the daemon was
+holding work at 91%. Both now read and write `<state-dir>/claude-usage.json` (mode `0600` — a
+record carries the account email), newest reading wins, merged rather than overwritten so
+neither deletes the other's keys. Since the daemon reads far more often than the page does, it
+is the page that gains: `CLAUDE_USAGE_TTL_SECS` is an hour, and it is the floor under a
+genuinely idle box rather than how often the numbers move. The file is a cache and nothing more
+— anything unreadable, malformed or from a version this build does not know is treated as
+absent, because the fallback is one HTTP call and a cache that can break a start-up is worse
+than no cache.
 
 **The reading is asked for when it is needed, and a stale one is fine.** `ClaudeKeys` caches per
 account for `refresh_secs`, so a launch, a gate call and a staging inside the same quarter-hour

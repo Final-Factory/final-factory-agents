@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import socket
 import sqlite3
 import ssl
@@ -1865,7 +1866,7 @@ def test_the_claude_page_reports_every_key_in_the_pool():
               'class="pill unreachable"' in blocks[2] and "Max 20x" in blocks[2],
               blocks[2][:400])
         check("the note says how often Anthropic is actually asked",
-              "once every 15m" in text, text[text.find("<p class=\"note\">"):][:400])
+              "once every 1h" in text, text[text.find("<p class=\"note\">"):][:400])
         check("the per-row essay about the missing scope is gone",
               "usage document is closed to us" not in text, blocks[3][-500:])
         check("and the sentence about which key is spent is gone from it",
@@ -2060,11 +2061,103 @@ def test_a_usage_reading_is_cached_rather_than_fetched_per_reload():
     check("a refused key is not asked a second question",
           len([c for c in calls if c[1] == CLAUDE_POOL[2][1]]) == 1,
           [c[0] for c in calls if c[1] == CLAUDE_POOL[2][1]])
-    check("the reading is held for a quarter of an hour, not for one minute",
-          ffweb.CLAUDE_USAGE_TTL_SECS == 900, ffweb.CLAUDE_USAGE_TTL_SECS)
+    # AN HOUR, and it used to be a quarter of one. It is no longer the only thing keeping the
+    # numbers current: ffwatch forces a reading before every spawn decision and leaves it in the
+    # shared store this page reads, so this is the floor under a genuinely idle box rather than
+    # how often the numbers move.
+    check("an idle page holds its reading for an hour, not for a minute",
+          ffweb.CLAUDE_USAGE_TTL_SECS == 3600, ffweb.CLAUDE_USAGE_TTL_SECS)
+    # A FORCED READING IGNORES THAT and asks again, which is what the daemon's spawn decisions
+    # do. Floored rather than unlimited, so a burst still makes one round of requests.
+    n_before = len(calls)
+    keys.read(force=True, now=time.time() + ffweb.CLAUDE_USAGE_TTL_SECS - 60)
+    check("a forced read goes out inside the TTL", len(calls) > n_before, len(calls))
+    n_forced = len(calls)
+    keys.read(force=True)
+    check("but two in the same breath still only make one round",
+          len(calls) == n_forced, calls[n_forced:])
     aged = keys.read(now=time.time() + ffweb.CLAUDE_USAGE_TTL_SECS + 1)
     check("and past the TTL it goes out again", len(calls) > n_first, len(calls))
     check("still with an answer for every key", len(aged) == len(CLAUDE_POOL), len(aged))
+
+
+def test_two_processes_share_one_reading_through_the_state_directory():
+    """ffwatch and ffweb are separate processes, and they used to disagree about the box.
+
+    Each kept its readings in its own memory, so each paid its own way to Anthropic and the
+    page could say 40% while the daemon was holding work at 91%. ffwatch now reads far more
+    often than the page does -- once before every spawn decision -- so the page reading the
+    daemon's answers is both cheaper and fresher than asking again.
+    """
+    print("one shared store, two processes")
+    root = tempfile.mkdtemp(prefix="ffweb-store-")
+    path = os.path.join(root, ffweb.CLAUDE_USAGE_STORE)
+    daemon_calls, page_calls = [], []
+
+    def counting(into):
+        def fetch(url, token):
+            into.append((url, token))
+            return claude_fetch(url, token)
+        return fetch
+
+    daemon = claude_keys_stub(fetch=counting(daemon_calls), store=path)
+    page = claude_keys_stub(fetch=counting(page_calls), store=path)
+
+    written = daemon.read()
+    check("the daemon's reading goes out", daemon_calls, len(daemon_calls))
+    check("and lands on disk", os.path.exists(path), path)
+    # 0600, FOR THE REASON ffweb-sessions.json BESIDE IT IS: a record carries the email address
+    # the key belongs to.
+    check("readable only by the user who owns the box",
+          stat.S_IMODE(os.stat(path).st_mode) == 0o600,
+          oct(stat.S_IMODE(os.stat(path).st_mode)))
+
+    got = page.read()
+    check("the page spends nothing at all", page_calls == [], page_calls)
+    check("and shows the very numbers the daemon read",
+          [r["windows"] for r in got] == [r["windows"] for r in written], None)
+    check("with an age, so nobody reads a stale page as a live one",
+          all(r["age"] >= 0 for r in got), [r["age"] for r in got])
+
+    # THE FRESHER OF THE TWO WINS, not "disk only on a memory miss". The page has its own entry
+    # now; the daemon reading again a minute later must still be what the page shows.
+    later = time.time() + 120
+    daemon.read(force=True, now=later)
+    fresh = page.read(now=later + 1)
+    check("a newer reading on disk overtakes the page's own memory",
+          all(r["age"] <= 2 for r in fresh), [r["age"] for r in fresh])
+    check("and the page still spent nothing", page_calls == [], page_calls)
+
+    # MERGED, NOT OVERWRITTEN. The two processes do not hold the same pool -- one reads its
+    # unit's environment and the other its own -- so a plain overwrite would have each deleting
+    # the other's keys on every read.
+    other = claude_keys_stub(pool=[("CLAUDE_CODE_OAUTH_TOKEN9", CLAUDE_POOL[0][1], 1, "")],
+                             fetch=counting([]), store=path)
+    other.read(force=True, now=later + 200)
+    with open(path, encoding="utf-8") as fh:
+        held = json.load(fh)
+    check("every key the box has ever read is still in the file",
+          len(held["keys"]) == len({ffweb.token_fingerprint(t) for _, t, *_ in CLAUDE_POOL}),
+          sorted(held["keys"]))
+
+    # A CACHE AND NOTHING MORE. Everything in it is one HTTP call away from being re-derived,
+    # so a file that cannot be read is a miss rather than a crash.
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("{ this is not json")
+    blind = claude_keys_stub(fetch=counting(page_calls), store=path)
+    check("a corrupt store reads as an empty one", len(blind.read()) == len(CLAUDE_POOL), None)
+    check("having asked Anthropic instead", page_calls, len(page_calls))
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"version": 99, "keys": {"deadbeef": {"at": 0, "rec": {}}}}, fh)
+    check("and so does one from a version this build does not know",
+          claude_keys_stub(fetch=counting([]), store=path)._store_read() == {}, None)
+
+    # AND A PROCESS WITH NO STATE DIRECTORY KEEPS ITS READINGS TO ITSELF, which is every
+    # offline test in this file and any caller that was handed no path.
+    alone = claude_keys_stub(fetch=counting([]))
+    alone.read()
+    check("no store, no file, no error", alone._store_read() == {}, None)
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def test_a_key_that_cannot_read_its_usage_is_asked_the_other_way_once():
@@ -3521,6 +3614,7 @@ def main():
         test_the_plan_beside_a_token_is_declared_because_the_token_cannot_say,
         test_a_key_can_be_given_a_name_and_the_page_prints_it_instead_of_the_slot,
         test_a_usage_reading_is_cached_rather_than_fetched_per_reload,
+        test_two_processes_share_one_reading_through_the_state_directory,
         test_a_key_that_cannot_read_its_usage_is_asked_the_other_way_once,
         test_a_key_that_has_run_out_still_says_when_it_comes_back,
         test_actions_are_off_by_default,

@@ -90,12 +90,36 @@ CLAUDE_DEFAULT_RATE = 1
 # The multipliers that have a name people actually use. Anything else renders as "<n>x", so a
 # plan that does not exist yet still reports as itself rather than as a blank.
 CLAUDE_PLAN_NAMES = {1: "Pro", 5: "Max 5x", 20: "Max 20x"}
-# How long a usage reading stays good. FIFTEEN MINUTES, not a minute: these windows are five
-# hours and seven days long, so a reading a quarter-hour old is the same answer as a fresh one
-# for every decision this page supports, and the page ticks at a minute regardless. It is also
-# what keeps the fallback below honest — that path costs a (tiny) inference call per key per
-# refresh, and at this interval that is four calls an hour rather than sixty.
-CLAUDE_USAGE_TTL_SECS = 900
+# How long a usage reading stays good with nobody asking for a fresh one. AN HOUR, and it used
+# to be a quarter of one. The windows being measured are five hours and seven days long, so
+# even an hour-old reading is the same answer as a fresh one for every decision a page
+# supports — and this is no longer the only thing keeping the numbers current. ffwatch forces a
+# reading before every spawn decision and writes it to the shared store below, so in practice
+# the page shows something minutes old and this is the floor under a genuinely idle box. It is
+# also what keeps the fallback below honest: that path costs a (tiny) inference call per key
+# per refresh, and at this interval that is one an hour rather than four.
+CLAUDE_USAGE_TTL_SECS = 3600
+
+# THE FLOOR UNDER A FORCED READING. `read(force=True)` is how a caller says "this decision is
+# worth a round trip" — ffwatch asks for one before deciding whether a new conversation or a
+# code review starts now or waits for the window. It is a SHORTER TTL rather than no TTL at
+# all, because one claim_turns pass can walk ten new conversations and a poll can carry several
+# held triggers, and ten rounds of requests inside one second answer the question exactly as
+# well as the first one did. The windows being measured are five hours and seven days long.
+CLAUDE_FORCE_FLOOR_SECS = 30
+
+# WHERE THE READINGS ARE SHARED. ffwatch and ffweb are separate processes with separate memory,
+# and until this file existed they each paid their own way to Anthropic and each believed a
+# different thing about how full the box was. ffwatch now reads far more often than the page
+# does — once per spawn decision — so the page reading the daemon's answers is both cheaper and
+# fresher than asking again. Lives in the state directory beside ffweb-sessions.json and is
+# written 0600 for the same reason: it carries the account email each key belongs to.
+#
+# A CACHE AND NOTHING MORE. Anything unreadable, malformed or from a future version is treated
+# as absent, because the fallback is one HTTP call and a cache that can break a start-up is
+# worse than no cache. Nothing is ever read from it that is not also re-derivable.
+CLAUDE_USAGE_STORE = "claude-usage.json"
+CLAUDE_STORE_VERSION = 1
 
 # The family of response headers every /v1/messages reply carries, and the fallback reading's
 # whole vocabulary. Named once because six strings are built from it.
@@ -296,7 +320,7 @@ class ClaudeKeys:
     TIGHT_PCT = 80.0
 
     def __init__(self, tokens=None, ttl=CLAUDE_USAGE_TTL_SECS, timeout=10, fetch=None,
-                 probe=None):
+                 probe=None, store=None):
         # A callable rather than a list, because the pool is read out of the environment and a
         # value captured at construction would be a snapshot of the moment the server started.
         self._tokens = tokens if callable(tokens) else (
@@ -333,7 +357,72 @@ class ClaudeKeys:
         # time in the past. Not persisted, for the same reason `_no_scope` is not — one reading
         # relearns it.
         self._resets = {}
+        # THE SHARED STORE'S PATH, or None for a process that keeps its readings to itself —
+        # which is every offline test and any caller that has not been given a state directory.
+        # See CLAUDE_USAGE_STORE.
+        self.store = store
         self._lock = threading.Lock()
+
+    # -- the shared store --------------------------------------------------------------------
+
+    def _store_read(self):
+        """{fingerprint: (at, record)} off disk. {} for anything at all that is not that.
+
+        EVERY FAILURE IS AN EMPTY CACHE. A missing file, a half-written one, a version this
+        build does not know, a permission problem: all of them mean "ask Anthropic", which is
+        what this process would have done anyway. There is nothing here that is not also
+        re-derivable from one HTTP call, so there is no failure worth raising over.
+        """
+        if not self.store:
+            return {}
+        try:
+            with open(self.store, "r", encoding="utf-8") as fh:
+                got = json.load(fh)
+            if int(got.get("version") or 0) != CLAUDE_STORE_VERSION:
+                return {}
+            out = {}
+            for fingerprint, entry in (got.get("keys") or {}).items():
+                rec = entry.get("rec")
+                at = entry.get("at")
+                if isinstance(rec, dict) and isinstance(at, (int, float)):
+                    out[str(fingerprint)] = (float(at), rec)
+            return out
+        except (OSError, ValueError, AttributeError, TypeError):
+            return {}
+
+    def _store_write(self, fresh):
+        """Merge {fingerprint: (at, record)} into the file. Silent on every failure.
+
+        MERGED RATHER THAN OVERWRITTEN, because two processes write here and they do not hold
+        the same pool: ffweb reads whatever is in its environment and ffwatch reads whatever is
+        in its unit, and a plain overwrite would have each one deleting the other's keys on
+        every read.
+
+        The last writer of a given key wins, and a simultaneous write can lose one entry. That
+        costs a later refetch of one key and nothing else, which is a smaller price than a lock
+        file that can be left behind by a killed process — this is a cache, and the honest
+        failure mode for a cache is a miss.
+        """
+        if not self.store or not fresh:
+            return
+        merged = self._store_read()
+        merged.update(fresh)
+        payload = {"version": CLAUDE_STORE_VERSION,
+                   "keys": {f: {"at": at, "rec": rec} for f, (at, rec) in merged.items()}}
+        tmp = f"{self.store}.{os.getpid()}.tmp"
+        try:
+            os.makedirs(os.path.dirname(self.store) or ".", exist_ok=True)
+            # 0600 BEFORE ANY CONTENT IS IN IT. A record carries the email address the key
+            # belongs to, which is the same reason ffweb-sessions.json beside it is 0600.
+            handle = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(handle, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh)
+            os.replace(tmp, self.store)
+        except (OSError, ValueError, TypeError):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
     # -- the wire -------------------------------------------------------------------------
 
@@ -614,31 +703,54 @@ class ClaudeKeys:
 
     # -- the page's entry point --------------------------------------------------------------
 
-    def read(self, now=None):
-        """([record], stale_seconds) — one record per key in the pool, freshest first fetched.
+    def read(self, now=None, force=False):
+        """[record] — one per key in the pool.
 
         The keys are fetched IN PARALLEL. Serially, a pool of four with one dead key would make
         the page wait out that key's timeout before starting the next one, and the wait is the
         whole difference between a page an operator refreshes and one they stop opening.
+
+        `force` says this caller's decision is worth a round trip — ffwatch asks before deciding
+        whether a new conversation or a code review starts now or waits for the window to
+        refill. It shortens the TTL to CLAUDE_FORCE_FLOOR_SECS rather than removing it; see
+        there for why a floor and not zero.
+
+        THREE PLACES A READING CAN COME FROM, newest wins: this process's memory, the store on
+        disk that the other process also writes, and Anthropic. The disk hop is what stops
+        ffweb and ffwatch each paying their own way and each believing something different
+        about how full the box is — and since ffwatch reads far more often than the page does,
+        it is usually the page that benefits.
         """
         now = time.time() if now is None else now
+        ttl = min(self.ttl, CLAUDE_FORCE_FLOOR_SECS) if force else self.ttl
         pool = self._tokens()
+        shared = self._store_read()
         records = [None] * len(pool)
+        minted = {}
         threads = []
 
         def work(slot, name, token, rate, label):
             key = token_fingerprint(token)
             with self._lock:
                 hit = self._cache.get(key)
-            if hit and now - hit[0] < self.ttl:
+            # THE FRESHER OF THE TWO, not "disk only on a memory miss". The other process may
+            # have read a minute ago while this one's own entry is an hour old, and preferring
+            # our own would be preferring the staler answer for no reason.
+            on_disk = shared.get(key)
+            if on_disk and (hit is None or on_disk[0] > hit[0]):
+                hit = on_disk
+                with self._lock:
+                    self._cache[key] = hit
+            if hit and now - hit[0] < ttl:
                 # The declared rate and name are taken from the POOL and not from the cached
                 # record: they come out of secrets.env, so an edit there is meant to show up on
-                # the next reload rather than a quarter of an hour later with the usage numbers.
+                # the next reload rather than an hour later with the usage numbers.
                 records[slot] = dict(hit[1], age=int(now - hit[0]), rate=rate, label=label)
                 return
             rec = self._load(name, token, rate, label)
             with self._lock:
                 self._cache[key] = (now, rec)
+                minted[key] = (now, rec)
             records[slot] = dict(rec, age=0)
 
         for slot, (name, token, rate, label) in enumerate(pool):
@@ -664,6 +776,11 @@ class ClaudeKeys:
             # because it is a fact about the pool's order, not about the key.
             rec["active"] = slot == 0
             out.append(rec)
+        # AFTER THE JOIN AND ONCE, not per key inside the worker: the file is a read-modify-
+        # write, and doing it per thread would have the pool's own keys racing each other for
+        # it. Only what this call actually fetched is written; a record that came off the disk
+        # is already there.
+        self._store_write(minted)
         return out
 
 
