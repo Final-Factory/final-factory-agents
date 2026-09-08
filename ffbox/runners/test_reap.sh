@@ -15,11 +15,11 @@
 # here and the exit status is deliberately ignored. That is a real limit and it is the reason the
 # staging-path rule is tested in test_pool.sh, where it IS a sourceable function.
 #
-# THE DECISION UNDER TEST. A container says who owns it, and which liveness question to ask
-# depends on the answer: a slot.sh has one supervisor per container whose pid is exact, and an
-# ffwatch has one daemon for all of them which restarts while they keep running. Asking the pid
-# question of an ffwatch container would mark every adopted container an orphan and delete live
-# jobs. design/ffbox_ci_in_ffwatch_design.txt section 4b.
+# THE DECISION UNDER TEST. A container says who owns it, and the question to ask about an
+# `ffwatch` owner is whether a daemon is running at all -- never whether some pid is alive. One
+# daemon owns every container and restarts while they keep running, so a pid test would mark every
+# adopted container an orphan and delete live jobs. A container with NO owner label is left alone.
+# design/ffbox_ci_in_ffwatch_design.txt section 4b.
 
 set -eu
 

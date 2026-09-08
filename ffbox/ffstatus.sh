@@ -40,13 +40,13 @@ export DOCKER_HOST
 DOCKER=${FFBOX_DOCKER:-docker}
 CONFIG=${FFBOX_CONFIG_JSON:-${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/config.json}
 POOL_DIR=${FFBOX_POOL_DIR:-$HOME/ffbox-state/pool}
-# WHERE THE CI LANE SAYS A RUNNER IS BUSY. ffgithubrunners keeps $SLOTS supervisors up but
-# only mints a CONTAINER when the pool needs one -- $IDLE_POOL runners registered and
-# waiting, plus one per job in flight -- so an idle CI runner is a running container in
-# exactly the way an agent spare is, and `docker ps` alone cannot tell the two apart. The
-# marker is what does: written by the supervisor that owns the container when its runner
-# takes a job. Trusted only for a container that is still running, which is automatic here
-# because the names come from `docker ps` -- a leftover marker names nothing we listed.
+# WHERE THE CI LANE SAYS A RUNNER IS BUSY. ffwatch mints a CI container only when the pool
+# needs one -- pool.idle runners registered and waiting, plus one per job in flight -- so an
+# idle CI runner is a running container in exactly the way an agent spare is, and `docker ps`
+# alone cannot tell the two apart. The marker is what does: written by the daemon's CI pass
+# when a container's runner takes a job. Trusted only for a container that is still running,
+# which is automatic here because the names come from `docker ps` -- a leftover marker names
+# nothing we listed.
 CONFIG_HOME=${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}
 FFGHR_STATE=${FFGITHUBRUNNERS_CONFIG_DIR:-$CONFIG_HOME/githubrunners}/state
 # THE CI LANE'S DRAIN FLAG, hardcoded relative to the config dir the way update_ffbox.sh
@@ -491,24 +491,20 @@ read_maintenance() {
 # container lives. A container with no label predates the label and is left alone, exactly as
 # reap.sh leaves it alone.
 ci_supervisor_alive() {
-    local pid owner
-    # WHICH QUESTION TO ASK DEPENDS ON WHAT OWNS IT, and reap.sh's owner_state is the definition;
-    # this is the same rule, kept in step by hand because ffstatus.sh reads no runner library.
-    # An `ffwatch` owner has no per-container pid to check -- the daemon restarts and its
-    # containers do not -- so the question is whether a daemon is running at all.
+    local owner
+    # ONE OWNER SINCE 2026-09-08, and reap.sh's owner_state is the definition; this is the same
+    # rule, kept in step by hand because ffstatus.sh reads no runner library. An `ffwatch` owner
+    # has no per-container pid to check -- the daemon restarts and its containers do not -- so the
+    # question is whether a daemon is running at all. The `ffghr.supervisor.pid` branch went with
+    # slot.sh; nothing writes that label now.
+    #
+    # A container with NO owner label is left ALONE rather than called an orphan, exactly as
+    # reap.sh leaves it alone: something else made it, and what cannot be explained is sometimes a
+    # running job.
     owner=$("$DOCKER" inspect -f '{{index .Config.Labels "ffghr.owner"}}' "${1:?}" 2>/dev/null) || owner=''
-    if [ "$owner" = ffwatch ]; then
-        pgrep -f ffwatch.py >/dev/null 2>&1 && return 0
-        return 1
-    fi
-    pid=$("$DOCKER" inspect -f '{{index .Config.Labels "ffghr.supervisor.pid"}}' "$1" 2>/dev/null) || pid=''
-    case "${pid:-}" in ''|*[!0-9]*) return 0 ;; esac
-    # /proc AND THE COMMAND LINE, character for character what reap.sh:53-57 does, and not
-    # `kill -0`: that answers EPERM for a process owned by another account, and it cannot tell a
-    # recycled pid from the supervisor that had it. Two readings of "is the enforcer there" that
-    # disagree would be worse than the blank column this replaces.
-    [ -r "/proc/$pid/cmdline" ] || return 1
-    tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q 'slot\.sh'
+    [ -n "$owner" ] || return 0
+    [ "$owner" = ffwatch ] || return 0
+    pgrep -f ffwatch.py >/dev/null 2>&1
 }
 
 # --- gather -------------------------------------------------------------------------------------

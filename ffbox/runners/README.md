@@ -122,8 +122,8 @@ against GitHub's API is raised to a floor of 5.
 **Do not lower `idle_minutes` below `watchdog_minutes` casually.** While they are equal, a missed
 busy flip costs nothing: the container lands on the deadline it would have had anyway. Lower it
 and the `Runner.Worker` inference becomes load-bearing for whether a job survives, because a job
-the supervisor did not notice would be stopped at a deadline it never had. `slot.sh` takes one
-more look immediately before an idle stop for exactly this reason.
+the daemon did not notice would be stopped at a deadline it never had. `ci_lane.py`'s serving pass
+takes one more look immediately before an idle stop for exactly this reason.
 
 Both deadlines are written to `state/<container>.{busy,idle}` rather than held in the
 supervisor's memory, so `ffstatus` can show them and a restart recovers them. A container whose
@@ -134,20 +134,22 @@ A supervisor starts a runner when **both** are true: the pool is below `pool.max
 both: the BOX must be under `max_concurrent_runs`, counting the agent lane's containers too. That
 check is taken under a shared lock at the point the container is created, because a count is only
 good for as long as nothing else can create one — see `ffbox/lib-workloads.sh`. So a quiet machine carries one registration. The moment
-that runner takes a job it stops being idle, the next slot notices within about five seconds and
-brings a replacement up, and a burst of queued jobs walks the pool up to six that way. As each job
+that runner takes a job it stops being idle, ffwatch notices on its next pass a few seconds later
+and mints a replacement, and a burst of queued jobs walks the pool up to six that way. As each job
 finishes its container is destroyed, its registration is deleted, and the pool settles back to one.
 
 Idle is decided locally and for free: a runner that has taken a job has a `Runner.Worker` process,
-which the supervisor watching that container can see with `docker top`. It writes
-`~/.config/ffbox/githubrunners/state/<container>.busy`, and that file is what the other slots
-count. Nothing polls GitHub to make this decision.
+which the serving pass sees with `docker top`. It writes
+`~/.config/ffbox/githubrunners/state/<container>.busy`, and that file is what the admission count
+reads. Nothing polls GitHub to make this decision.
 
-`ffgithubrunners idle N` changes the standing cost with no privilege and no restart — waiting
-slots re-read it each time round their loop. Raising it starts runners within seconds. **Lowering
-it does not stop any**: killing an idle runner races GitHub handing it a job. The extra ones retire
-by taking one job each, or `systemctl restart ffgithubrunners.target` clears them at once, at the
-cost of that same race.
+`ffgithubrunners idle N` changes the standing cost with no privilege and no restart — ffwatch
+re-reads it on every pass. Raising it starts runners within seconds. **Lowering it does not stop
+any**: killing an idle runner races GitHub handing it a job. The extra ones retire by taking one
+job each, or `ffgithubrunners drain` clears the idle ones at once — ffwatch destroys them and
+deletes their registrations, leaving what is running alone — at the cost of that same race.
+Restarting `ffgithubrunners.target` does nothing to the pool: it carries the reaper and the image
+timer, not the runners.
 
 `ffgithubrunners slots N` changes the ceiling with the same properties: no privilege, no restart,
 live within a pass. **Lowering it stops no job** — admission stops granting places and the extra
@@ -194,25 +196,30 @@ fi
 `main.yml` no longer runs that action — it sources `unity-license.sh` directly — so nothing was
 doing it any more. `entrypoint-ci.sh` does it now, from a value the supervisor passes in.
 
-**Derived from the slot, not random.** An activation registers a machine with Unity and only
-`-returnlicense` gives it back, so a job that is SIGKILLed leaks one. A fresh random id per
-container makes every leak permanent, because that machine never comes back; an id derived from
-the slot means the licence sees at most `slots` machines ever, and the next job on that slot
-presents the same id and reuses its entitlement — which is why sequential jobs work today on the
-pinned id in spite of leaks.
+**One constant, and it is ours.** The default is `46696e616c466163746f72792d666662` — ASCII
+`FinalFactory-ffb` — and both lanes present it. That is what makes the OFFLINE licence work: a
+`.ulf` binds to exactly one `/etc/machine-id`, the one the activating process presented, and
+`ffbox/unity-offline-license.sh` mints ours against this value rather than against a number game-ci
+owns. `/opt/ffcache/unity/Unity_lic.ulf` is then mounted read-only into every container. Nothing is
+checked out and nothing is returned, so no job can leak a seat.
 
 ```
-machine_id  per-slot   the default: sha256 of the host name and the slot, first 32 hex
-            image      leave the image's constant alone (what ffbox's agent lane does)
-            <32 hex>   that exact id
+machine_id  <32 hex>   the default, our own constant. Keep it in lockstep with
+                       FFBOX_MACHINE_ID_CONST in ffbox/unity-offline-license.sh and
+                       ffbox/lib-workloads.sh.
+            image      leave the image's baked-in constant alone — only correct if the licence
+                       was minted against the image's id too
+            per-slot   sha256 of the host name and the slot. The OLD default, from when each
+                       container activated itself; it now matches no entitlement and finds none
 ```
+
+`per-slot` existed because two containers activating a SERIAL for themselves at the same moment hit
+exit 198, the endpoint refusing a second concurrent registration. There is one activator now and it
+is not concurrent with itself, so varying the id per slot would break the licence rather than
+protect it.
 
 **This lands only on an image rebuild** — `ffgithubrunners image update`, or the weekly timer —
 because `entrypoint-ci.sh` is baked in.
-
-What this does NOT change is the licence's own ceiling on how many machines may hold a seat at
-once. A Personal licence is a small number; if the sixth concurrent Unity job reports no free
-entitlements while the first five are running, that is the licence talking, not this.
 
 ## Where things are
 
@@ -224,9 +231,12 @@ entitlements while the first five are running, that is the licence talking, not 
                        folds an old one in and deletes it.
   github-app.pem       the private key, 0600, at a fixed path nothing records
   secrets.env          empty on an App install; only a PAT goes here
-  drain               the flag file behind drain/resume, read by ffwatch's CI keeper
-  .pool.lock           held across one admission decision and the mint that follows it
-  state/               one <container>.busy per container that has taken a job
+  drain                the flag file behind drain/resume, read by ffwatch's CI keeper
+  .admission.lock      the BOX-WIDE lock, shared with the agent lane, held across one
+                       max_concurrent_runs check and the container creation that follows it
+                       (ffbox/lib-workloads.sh). The CI-only pool lock went with slot.sh:
+                       admission is one process's decision now.
+  state/               one <container>.busy or .idle per container, carrying its deadline
 
 /var/log/ffgithubrunners/slot-N.log    the runner's own lifecycle lines, rotated daily
 /opt/ffbox_container_docker            the daemon's store, its own dataset, 64G quota
@@ -240,7 +250,7 @@ reaches ffbox's containers.
 
 ## The current state of this machine
 
-The slots carry `Linux`, `X64` and `ffgithubrunners` and **not** `self-hosted`. That is permanent:
+The runners carry `Linux`, `X64` and `ffgithubrunners` and **not** `self-hosted`. That is permanent:
 `ffgithubrunners` is carried only by these runners, so nothing else can land on them by accident.
 
 **The cutover is done.** `main.yml` runs on `ffgithubrunners` as of 2026-09-01. Its two halves could
@@ -283,17 +293,18 @@ So most of this system deploys itself: **push, and within five minutes**
   `Dockerfile`, `entrypoint-ci.sh` or `unity-license.sh` is live),
 - the egress fence and the git mirror are brought back into line with the allowlist and images in
   git — and left alone when nothing they depend on changed, so a job mid-fetch is not cut off,
-- a slot that is WAITING notices `slot.sh` or `lib/config.sh` changed under it and exits, and
-  systemd starts it again on the new code within seconds. A slot with a container keeps the old
-  code until its job ends, which is the same window it always had.
+- a change to `ci_lane.py` or `lib/config.sh` reaches the lane when ffwatch restarts, which the
+  updater does on any code change. It drains first, so BUSY CI containers are left running and only
+  the idle ones are destroyed, and the survivors are adopted by the daemon that comes back. The
+  window is six seconds typically and 247s at worst, measured over 227 real updates, which is why
+  a job's own waits are budgeted at 600s.
 
 Two things it will not do, both because it holds no root:
 
-- **install or change a unit.** A commit that edits `systemd/`, or a rise in
-  `max_concurrent_runs` that wants more instances enabled, is merged and then owed:
+- **install or change a unit.** A commit that edits `systemd/` is merged and then owed:
   `sudo sh ffbox/runners/05-services.sh --install`. The journal says so every time until somebody
-  runs it, and `05-services.sh --check` exits 1 while it is owed. A change to `pool.max` is NOT in
-  this list any more.
+  runs it, and `05-services.sh --check` exits 1 while it is owed. Neither `pool.max` nor
+  `max_concurrent_runs` is in this list any more — there are no unit instances to size.
 - **provision the host or the daemon** (stages 1 and 2). Same shape, same message.
 
 `ffgithubrunners image update` is a different thing from the rebuild above: it asks GitHub for the
@@ -342,19 +353,19 @@ Three failures worth recognising on sight.
 the daemon was started without `--group 0` and its socket landed on a mapped subgid no account is
 in. `02-daemon.sh --check` tells the two apart.
 
-**A slot in `failed`.** It should not be possible: the unit sets `StartLimitIntervalSec=0` precisely
-so a fast-failing condition cannot exhaust systemd's restart budget and leave the slot needing a
-manual `reset-failed`. If you see one, the reason is in the journal and is worth reporting.
+**Nothing is being minted.** There are no per-runner units to go `failed` any more, so the reason
+is in the daemon: `journalctl -u ffwatch -f | grep ' ci:'` is the keeper's own view and it says
+which gate it stopped at.
 
-**Every slot idle and no jobs taken.** Check `ffgithubrunners status` for `DRAINED` first. An
+**Runners registered and no jobs taken.** Check `ffgithubrunners status` for `DRAINED` first. An
 `image update` that was killed between draining and its cleanup trap leaves the flag set, and the
 flag records the pid and time that set it.
 
-**Slots with no container.** Normal, and what `status` calls "waiting for a place in the pool" —
-see the pool section above. What is NOT normal is every slot waiting while none is idle: that means
-the pool believes runners are busy that are not. `ls ~/.config/ffbox/githubrunners/state/` and
-compare it with `docker ps`; a marker whose container is gone is ignored by the count and swept by
-the next `ffgithubrunners reap`.
+**Fewer containers than `pool.max`.** Normal — `status` prints "N of M slots in use", and a slot
+with no container holds no registration and costs nothing. What is NOT normal is the pool sitting at
+its ceiling with none idle while no job is running: that means the count believes runners are busy
+that are not. `ls ~/.config/ffbox/githubrunners/state/` and compare it with `docker ps`; a marker
+whose container is gone is ignored by the count and swept by the next `ffgithubrunners reap`.
 
 Offline tests: `sh ffbox/runners/test_pool.sh` (the admission arithmetic and the machine id) and
 `sh ffbox/runners/test_pin.sh` (the weekly version bump, against a scratch checkout). Both stub or

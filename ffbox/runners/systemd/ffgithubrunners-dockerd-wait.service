@@ -1,11 +1,12 @@
 [Unit]
 # The gate. ffgithubrunners' units are SYSTEM units running as the supervisor's account, while the
 # daemon lives in ffbox-container's own systemd instance. After= and Wants= do not cross the
-# system/user boundary, so at boot a slot would start before the socket it needs exists.
+# system/user boundary, so at boot the fence, the reaper and the image build would all start before
+# the socket they need exists.
 #
 # WHY A UNIT AND NOT AN ExecStartPre ON EACH. Several copies of the same wait is several places to
 # fix it, and a shared oneshot gives the failure one name in `systemctl status` instead of burying
-# it inside whichever slot happened to start first.
+# it inside whichever unit happened to start first.
 Description=ffgithubrunners: wait for ffbox-container's rootless Docker
 
 # ORDER AGAINST THE USER MANAGER, and Wants= it so the ordering has something to bind to. The

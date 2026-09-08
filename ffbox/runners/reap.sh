@@ -1,9 +1,12 @@
 #!/bin/sh
 # reap.sh — clean up after a supervisor that did not get to finish.
 #
-# slot.sh tears down on every exit path it can see. What it cannot see is a reboot or a SIGKILL,
+# ffwatch tears down on every exit path it can see. What it cannot see is a reboot or a SIGKILL,
 # and either leaves a registration on the org and possibly a container on the daemon. This sweeps
 # both, every 15 minutes.
+#
+# IT STAYS OUTSIDE THE DAEMON ON PURPOSE. This is the cleanup for "the supervisor is broken", and
+# it must not live inside the thing that broke. Hence its own timer and its own unit.
 #
 # THE DAEMON IS SHARED WITH FFBOX, so everything here is name-scoped to ffghr-*. There is no
 # `docker system prune` and no sweep of dangling anything: an image or a container this does not
@@ -141,9 +144,9 @@ done
 
 # --- pool markers ---------------------------------------------------------------------------------
 #
-# A busy marker says "this container has taken a job", and slot.sh removes its own on every exit
-# path it gets to run. A supervisor that was SIGKILLed does not, and the admission count would
-# then be reading a marker for a container that no longer exists.
+# A busy marker says "this container has taken a job", and the daemon clears it in teardown. A
+# daemon that was SIGKILLed does not, and the admission count would then be reading a marker for a
+# container that no longer exists.
 #
 # HARMLESS UNTIL THE NAME COMES BACK, which it cannot: the container name carries a random nonce.
 # So this is tidiness rather than a fix, and it is cheap. The counting itself already ignores a
@@ -157,7 +160,7 @@ done
 # match only when there is exactly ONE of them: the first name has no space after it, the last none
 # before it, and a middle one neither. With two or more runners up, every marker read as "gone" and
 # was deleted -- for containers that were RUNNING JOBS. That is not the benign direction the note
-# above describes: `ffghr_pool_counts` then counts a busy container as idle, `ffghr_pool_admit` sees
+# above describes: `ffghr_pool_counts` then counts a busy container as idle, admission sees
 # a pool that is already satisfied, and the lane stops minting runners while it sits under its
 # ceiling with no idle registration for GitHub to hand a queued job to. lib-workloads.sh:321 and
 # 05-services.sh:136 both flatten the same way; this is the site that forgot.
@@ -224,10 +227,10 @@ done
 # a perfectly good archive, and promoting it would be a small win. It is still the wrong thing for
 # a reaper to do: this file's rule is that it collects garbage and never creates state, and
 # promoting on behalf of a job whose teardown never ran is creating state from something nobody
-# watched finish. slot.sh promotes; reap.sh sweeps.
+# watched finish. The daemon promotes; reap.sh sweeps.
 #
-# What it does do is bound the cache when slots stop exiting cleanly, which is the failure the
-# fifteen-minute timer exists for.
+# What it does do is bound the cache when teardowns stop completing cleanly, which is the failure
+# the fifteen-minute timer exists for.
 
 # A STAGING DIRECTORY IS NAMED AFTER ITS CONTAINER SINCE 2026-09-08, so the question "is this one
 # still in use" is answered by the daemon rather than by the process table.

@@ -316,8 +316,8 @@ Eight things worth knowing:
   A line the stamp has never carried — a fresh machine, a deleted stamp, a file newly added to
   the watched set — is recorded rather than treated as a change, so nobody pays a restart for a
   file nobody touched. The runners' own `~/.config/ffbox/githubrunners/secrets.env` is
-  deliberately *not* watched: it is sourced per invocation, and its slots are in
-  `ffgithubrunners.target`, which this does not restart.
+  deliberately *not* watched: it is sourced per container launch by the CI pass rather than held,
+  so a change to it reaches the next runner minted without anything restarting.
 - **It refuses a dirty working tree** and says so, rather than stashing or resetting. On a
   machine where you are editing, updates stop until you commit — a config edit will not get
   through either, and the journal says why.
@@ -1754,8 +1754,9 @@ What changed is only when the filling happens.
 
 **A container gets a spool directory, and a slot number it holds no longer than it lives.** The
 directory is named for the container and deleted with it; nothing here outlives a container, so
-there is nothing to number for its own sake — ffgithubrunners numbers its slots because a systemd
-template unit needs a stable instance, and that reason does not apply.
+there is nothing to number for its own sake. ffgithubrunners still numbers its slots — for the
+container name, the log file and, historically, the Unity machine id — but since 2026-09-08 that
+number names nothing: there is no unit instance behind it and admission does not read it.
 
 What DOES need a number is the Unity machine id (see the licensing section above), and it has to
 be chosen when the container STARTS, which for a staged one is hours before it has a turn. So a
@@ -2645,7 +2646,7 @@ rather than a preference: the policy here admits scripts by sha256 hash and noth
 `onsubmit` attribute would be dropped silently by the browser and the button would stop a
 container with no dialog at all — a failure invisible until the day somebody used it. Only the
 `running` and `running*` states are offered it. A warm spare belongs to `ffwatch pool drop`,
-which deals with its spool directory as well, and a CI runner belongs to its slot supervisor,
+which deals with its spool directory as well, and a CI runner belongs to ffwatch's CI keeper,
 which would mint a replacement the moment this took one away; a button that something else
 immediately undoes is worse than no button. The POST re-reads the box before it acts, so a click
 on a row whose turn has since finished gets a sentence instead of a stop, and a mismatched

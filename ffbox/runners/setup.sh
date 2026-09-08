@@ -9,7 +9,7 @@
 #   2  02-daemon.sh      that account's rootless Docker on its stable socket      (needs root)
 #   3  03-image.sh       the runner image, and the egress fence it runs behind
 #   4  04-github.sh      the GitHub credential, verified by minting a real JIT config
-#   5  05-services.sh    the systemd units, the slots, the timers                 (needs root)
+#   5  05-services.sh    the systemd units and the timers                         (needs root)
 #
 # WHICH STAGES NEED ROOT AND WHY THEY SKIP RATHER THAN TRY. 1, 2 and 5 change the system:
 # accounts, another user's systemd instance, /etc/systemd/system. Unprivileged they reach for
@@ -146,7 +146,7 @@ else
 fi
 
 if [ "$DO_SERVICES" -eq 1 ] && needs_root; then
-  stage "5/5  systemd units, slots and timers"
+  stage "5/5  systemd units and timers"
   as_root "$ROOT/05-services.sh" --install
 elif [ "$DO_SERVICES" -eq 1 ]; then
   stage "5/5  services — deferred (needs root)"
@@ -168,7 +168,13 @@ stage "setup complete"
 cat <<EOF
   $ROOT/ffgithubrunners status
 
-The slots come up WITHOUT the self-hosted label, so nothing routes to them and the existing
-runners keep serving main.yml. That is section 13 step 1 of the design and it is the correct
-resting state until the new path has been proven side by side.
+There are no per-runner services to start. ffwatch keeps the CI pool, and the two numbers that
+size it live in config.json, which it re-reads live:
+
+  $ROOT/ffgithubrunners slots N     the ceiling on jobs in flight
+  $ROOT/ffgithubrunners idle N      how many runners wait registered while nothing is happening
+
+Both take effect within seconds, need no root and restart nothing. The runners carry the
+\`ffgithubrunners\` label and NOT \`self-hosted\`, permanently: main.yml routes to them with
+\`runs-on: ffgithubrunners\`, so nothing else in the org can land here.
 EOF

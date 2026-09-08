@@ -3,7 +3,9 @@
 #
 # NOT PartOf ffgithubrunners.target, deliberately: stopping the runners must not take the fence
 # down, because a container that starts while the fence is missing is a container with no filter
-# at all. slot.sh refuses to start in that case, and this unit is what makes the case rare.
+# at all. docker refuses a missing NETWORK outright, so that half fails loudly; what it will not
+# catch is the network present with the proxy container down, which is a container whose --dns
+# resolves nothing. Nothing in the launch path checks for that, so this unit is what keeps it rare.
 Description=ffgithubrunners: the egress fence for ffghr-net
 After=ffgithubrunners-dockerd-wait.service
 Requires=ffgithubrunners-dockerd-wait.service

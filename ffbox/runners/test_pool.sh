@@ -150,9 +150,10 @@ WATCHDOG_MINUTES=120
 IDLE_MINUTES=120
 CNAME=ffghr-h-1-clock
 
-# slot.sh's own two functions, copied rather than sourced: slot.sh takes a slot number, mints a
-# JIT config and talks to a daemon before it defines them. If either changes there, change it here
-# — the point of this file is the arithmetic, and a copy that has drifted fails loudly.
+# THE DEADLINE ARITHMETIC, COPIED RATHER THAN SOURCED. It lives in ci_lane.deadline() now, in
+# python, so this file cannot source it; what it can do is assert that the SHELL's view of the same
+# marker files agrees. If ci_lane's rule changes, change it here — the point of this file is the
+# arithmetic, and a copy that has drifted fails loudly.
 container_started_at() { printf '%s\n' "${STUB_STARTED_AT:-}"; }
 work_deadline() {
     _at=$(ffbox_clock_start "$(ffghr_busy_marker "$CNAME")" 2>/dev/null || :)

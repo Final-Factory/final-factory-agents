@@ -1,5 +1,5 @@
 #!/bin/sh
-# 05-services.sh — install the systemd units and bring the slots up.
+# 05-services.sh — install the systemd units and bring the target up.
 #
 #   sudo sh ffbox/runners/05-services.sh --install
 #   sh ffbox/runners/05-services.sh --check      exit 1 if installing would change anything
@@ -33,14 +33,15 @@ Renders ffbox/runners/systemd/*.service into ${UNIT_DIR}: the target, the daemon
 fence and the two timers. Idempotent — re-run any time.
 
 There are no per-runner units. ffwatch keeps the CI pool, and how many jobs run at once is
-\`pool.max\` in config.json, which it re-reads live — \`ffgithubrunners max N\` sets it with no root
-and nothing restarting. Re-run this only after moving the checkout or changing the owner.
+\`githubrunner.pool.max\` in config.json, which it re-reads live — \`ffgithubrunners slots N\` sets
+it with no root and nothing restarting. Re-run this only after moving the checkout or changing the
+owner.
 
 Options (alphabetical):
   --check       Exit 1 if installing would change anything. Needs no root.
   --force       Install even when the units were installed from a different checkout.
   --help        Show this message.
-  --install     Write the units, enable the slots, start the target. Needs root.
+  --install     Write the units, enable the timers, start the target. Needs root.
   --no-enable   Install the units but do not enable or start anything.
   --owner USER  Account the units run as (default: FFGITHUBRUNNERS_RUN_USER, then SUDO_USER,
                 then the checkout owner).
@@ -139,9 +140,10 @@ if [ "$INSTALL" -eq 0 ]; then
   printf 'recorded:     %s\n' "${recorded:-<none>}"
   printf 'run user:     %s (%s), home %s\n' "$OWNER" "$OWNER_GROUP" "$OWNER_HOME"
   # pool.max IS NOT THIS SCRIPT'S BUSINESS and is shown only so the two are never confused: it is
-  # the live ceiling on jobs, ffwatch re-reads it, and `ffgithubrunners max N` sets it with no root.
+  # the live ceiling on jobs, ffwatch re-reads it, and `ffgithubrunners slots N` sets it with no
+  # root.
   printf 'CI lane:      ffwatch (no per-runner supervisors)\n'
-  printf 'pool.max:     %s (live; `ffgithubrunners max N`, no root, no restart)\n' "$SLOTS"
+  printf 'pool.max:     %s (live; `ffgithubrunners slots N`, no root, no restart)\n' "$SLOTS"
   printf 'units stale:  %s\n' "${changed:- none}"
   for u in $UNITS; do
     printf '  %-42s %s\n' "$u" "$([ -r "$UNIT_DIR/$u" ] && echo installed || echo MISSING)"

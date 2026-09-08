@@ -1,11 +1,15 @@
 [Unit]
-# Everything ffgithubrunners runs, in one handle. `systemctl stop ffgithubrunners.target` is the
-# rollback in section 13 of the design: it stops every slot and leaves the old runners serving
-# main.yml, with nothing else on the machine touched.
+# Everything ffgithubrunners runs OUTSIDE the daemon, in one handle: the reaper and the weekly
+# image rebuild. Since 2026-09-08 the runners themselves are ffwatch's -- there are no per-runner
+# units under here -- so stopping this target stops the housekeeping and NOT the CI lane. To stop
+# the lane, `ffgithubrunners drain` (finish what is running, start nothing new).
+#
+# THE TARGET STILL EARNS ITS KEEP with no runners under it: the reaper matters MORE under one
+# daemon rather than less, because it is the cleanup for "the daemon is broken".
 #
 # The daemon gate and the egress fence are deliberately NOT PartOf this target. Stopping the
-# runners should not take the fence down, and the daemon is shared with ffbox.
-Description=ffgithubrunners: single-use GitHub Actions runners
+# housekeeping should not take the fence down, and the daemon is shared with ffbox.
+Description=ffgithubrunners: the CI lane's housekeeping (reaper, weekly image rebuild)
 Wants=ffgithubrunners-dockerd-wait.service ffghr-egress.service
 After=ffgithubrunners-dockerd-wait.service ffghr-egress.service
 
