@@ -101,7 +101,18 @@ done
 # marker with no live container, which is what keeps the failure benign in the meantime.
 # BOTH SUFFIXES, ONE LOOP. `.idle` joined `.busy` on 2026-09-02 when the CI lane got two clocks,
 # and a per-container file that nothing deletes is a directory that grows for the life of the box.
-LIVE=$(docker ps --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null || true)
+#
+# THE `tr` IS LOAD-BEARING AND IS THE WHOLE REASON THIS LOOP IS SAFE. `docker ps` answers one name
+# per LINE, and the membership test below is `case " $LIVE " in *" $cname "*`, which asks for a name
+# with a SPACE on each side. A quoted expansion does no word splitting, so newline-separated names
+# match only when there is exactly ONE of them: the first name has no space after it, the last none
+# before it, and a middle one neither. With two or more runners up, every marker read as "gone" and
+# was deleted -- for containers that were RUNNING JOBS. That is not the benign direction the note
+# above describes: `ffghr_pool_counts` then counts a busy container as idle, `ffghr_pool_admit` sees
+# a pool that is already satisfied, and the lane stops minting runners while it sits under its
+# ceiling with no idle registration for GitHub to hand a queued job to. lib-workloads.sh:321 and
+# 05-services.sh:136 both flatten the same way; this is the site that forgot.
+LIVE=$(docker ps --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null | tr '\n' ' ' || true)
 if [ -d "$FFGHR_STATE_DIR" ]; then
     for m in "$FFGHR_STATE_DIR"/*.busy "$FFGHR_STATE_DIR"/*.idle; do
         [ -e "$m" ] || continue
