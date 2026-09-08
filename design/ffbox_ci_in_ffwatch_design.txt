@@ -19,9 +19,10 @@ nothing that anybody could see. Fixing it cost two in-flight jobs, because that 
 `systemctl restart ffgithubrunners.target`.
 
 This is Option A from that conversation. Option B -- enable a fixed generous set of slot units
-once and let `pool.max` do the limiting at runtime -- is a smaller change that removes the same
-operational sharp edge, and it is the recommended first step in section 12. This document is
-what to build if the duplication is worth removing as well.
+once and let `pool.max` do the limiting at runtime -- was the smaller change that removed the same
+operational sharp edge, and it LANDED the same evening as phase A (section 12). This document is
+what to build if the duplication is worth removing as well; nothing here is owed on account of the
+sharp edge, which is gone.
 
 
 0. What this must do
@@ -38,7 +39,7 @@ seen from four sides, and they are the reason this document is long.
      the updater never restarts the lane it lives in. That property has to survive the merge, on
      purpose rather than by accident of process boundaries.
 
-  3. AN UPDATE MUST NOT WAIT FOR A RUNNING JOB. `settling()` (ffwatch.py:14019) is what the
+  3. AN UPDATE MUST NOT WAIT FOR A RUNNING JOB. `settling()` (ffwatch.py:14140) is what the
      updater waits on, and a job with a 120-minute watchdog cannot be in it. An update that
      blocked on CI would be an update that never ran on a busy afternoon.
 
@@ -50,7 +51,7 @@ seen from four sides, and they are the reason this document is long.
      conversation: the job writes `fetch.request` and waits until the host writes `fetch.done`
      or its own budget runs out (lib/mirror.sh:114-142, whose failure branch exists "so it stops
      waiting... rather than burning its wait budget"), and it writes `artifact.request` and
-     holds itself open until `artifact.done` (slot.sh:645-651). While the daemon is down nobody
+     holds itself open until `artifact.done` (slot.sh:648-654). While the daemon is down nobody
      answers. Since 2026-08-31 there is no
      fallback: github.com, api.github.com and github-cloud were removed from the CI allowlist
      (runners/egress/allowlist.txt:28), so a job that gives up waiting for the mirror has
@@ -76,32 +77,32 @@ amended to say so rather than left to read as a refusal of this document.
 Read before estimating. Most of this design is wiring; the invention is in sections 5 and 6.
 
   a. THE IMAGE IS ALREADY ONE IMAGE WITH A MODE SWITCH. `FFBOX_MODE` is set to `ci` by slot.sh
-     (slot.sh:404) and read by entrypoint.sh (entrypoint.sh:33), which defaults to `agent`. A CI
+     (slot.sh:407) and read by entrypoint.sh (entrypoint.sh:33), which defaults to `agent`. A CI
      container is already just a container with a different mode, different mounts and a
      different network.
 
-  b. FFWATCH ALREADY COUNTS CI CONTAINERS. `workload_count()` (ffwatch.py:6355) reads the
+  b. FFWATCH ALREADY COUNTS CI CONTAINERS. `workload_count()` (ffwatch.py:6414) reads the
      `ffbox.workload` label and treats `ci` as one of the three kinds; `workload_room()`
-     (ffwatch.py:6381) subtracts it from `max_concurrent_runs`. The cross-process lock in
+     (ffwatch.py:6440) subtracts it from `max_concurrent_runs`. The cross-process lock in
      lib-workloads.sh exists only because the counting and the acting are in two processes.
 
   c. THE TWO POOL RULES ARE THE SAME RULE, WRITTEN TWICE. `ffghr_pool_admit`
      (runners/lib/config.sh:746) is "room under the ceiling, and short of idle".
-     `keep_pool` (ffwatch.py:7314) is "fewer warm than asked for, and room under both ceilings".
+     `keep_pool` (ffwatch.py:7373) is "fewer warm than asked for, and room under both ceilings".
      Each has its own coercion for what a negative or zero means, in a different language.
 
-  d. FFWATCH ALREADY ADOPTS CONTAINERS ACROSS ITS OWN RESTART. `recover()` (ffwatch.py:13005)
+  d. FFWATCH ALREADY ADOPTS CONTAINERS ACROSS ITS OWN RESTART. `recover()` (ffwatch.py:13126)
      walks non-terminal run rows at startup; if the container is live it calls `adopt_run`
-     (ffwatch.py:12845), whose docstring is the thesis of this document: "There is nothing to DO
+     (ffwatch.py:12966), whose docstring is the thesis of this document: "There is nothing to DO
      here... The container is running, the clock is a file, the output is on a bind mount."
 
   e. FFWATCH ALREADY DISTINGUISHES WHAT A STOP LOSES FROM WHAT SURVIVES IT. `settling()`
-     (ffwatch.py:14019) counts four things and `HOST_TAIL` names the two an update actually has
+     (ffwatch.py:14140) counts four things and `HOST_TAIL` names the two an update actually has
      to wait for. Containers are explicitly not among them.
 
   f. THE CI SUPERVISOR IS NOT A WATCHER. Its loop serves the live job: it decides the cache
-     archive from `branch.info` and answers with `cache.request` (slot.sh:468-495), serves the
-     mirror fetch (slot.sh:625-630), and uploads the artifact (slot.sh:645-651) -- which MUST
+     archive from `branch.info` and answers with `cache.request` (slot.sh:471-498), serves the
+     mirror fetch (slot.sh:628-633), and uploads the artifact (slot.sh:648-654) -- which MUST
      happen while the job is live, because the Actions service answers
      `permission_denied: job is completed` otherwise. The job holds itself open waiting for
      these. That is the requirement 5 problem in one paragraph.
@@ -109,13 +110,13 @@ Read before estimating. Most of this design is wiring; the invention is in secti
   g. EVERY CLOCK IS ALREADY A FILE. `ffghr_mark_busy` / `ffghr_mark_idle`
      (runners/lib/config.sh:696, 701) write the two deadlines into
      `~/.config/ffbox/githubrunners/state/<container>.{busy,idle}` in lib-workloads.sh's clock
-     format, and `work_deadline()` (slot.sh:511) derives the deadline from the marker rather
+     format, and `work_deadline()` (slot.sh:514) derives the deadline from the marker rather
      than remembering it, "so a supervisor restarted mid-job lands on the same one its
      predecessor had". The restart-tolerance this design needs was already built once, for a
      restart that today only systemd performs.
 
   h. THE CONTAINER ALREADY CARRIES ITS OWN IDENTITY. `ffbox.workload=ci`, `ffghr.slot`,
-     `ffghr.runner.id` and `ffghr.supervisor.pid` are set at `docker run` (slot.sh:390-395).
+     `ffghr.runner.id` and `ffghr.supervisor.pid` are set at `docker run` (slot.sh:393-398).
      Three of those four survive a supervisor change; the fourth is the one this design has to
      replace.
 
@@ -176,9 +177,9 @@ Read before estimating. Most of this design is wiring; the invention is in secti
 --------------------
 
   runners/systemd/ffgithubrunners@.service      the template and every enabled instance
-  runners/slot.sh                               ~680 lines, becoming a python worker
-  the pool half of runners/lib/config.sh        admission, counts, markers, the two coercions
-  the `slots` subcommand's sudo tail            ffgithubrunners:215
+  runners/slot.sh                               686 lines, becoming a python worker
+  the pool half of runners/lib/config.sh        admission, counts, markers, the two coercions,
+                                                and ffghr_slot_units with the units it sized
   lib-workloads.sh's cross-process ceiling lock for the CI side; the agent side still needs it
                                                 until ffbox's own runs move too, which is not
                                                 in this scope
@@ -205,18 +206,18 @@ One new pass in the daemon loop and one new worker, both modelled on what is alr
                           enforce the two deadlines, and hand a container whose job has ended to
                           the teardown path.
 
-Both go in the main loop (ffwatch.py:13944-13996) beside `keep_pool()` and `enforce_clocks()`,
+Both go in the main loop (ffwatch.py:14065-14118) beside `keep_pool()` and `enforce_clocks()`,
 in that order: expire and reap first, then serve what is live, then top up.
 
 BLOCKING WORK GOES TO A THREAD, KEYED BY CONTAINER. The mirror fetch is measured at about 4.6s,
 the artifact upload takes the transfer, and `docker stop` takes the grace. None of that may sit
 on the daemon's own thread, for the reason keep_pool() already gives about pool_stage: a pass in
 which the daemon does nothing else is a pass in which the Discord pipeline stops. The existing
-pattern is `_pool_expire_one` (ffwatch.py:6633) -- a thread per unit of work -- plus a guard so
+pattern is `_pool_expire_one` (ffwatch.py:6692) -- a thread per unit of work -- plus a guard so
 no two threads serve the same container.
 
 THE POLL RATE MUST NOT DROP. slot.sh polls every 5 seconds while a runner is idle and every 15
-once it has a job (slot.sh:655-663), and the fast one is deliberate: it is the latency between
+once it has a job (slot.sh:658-666), and the fast one is deliberate: it is the latency between
 "a job arrived" and "a replacement runner is registered", which is CI queue time. ffwatch's loop
 is `poll_secs` (5 by default) with a doorbell, so this lands in the same place. If the CI serving
 pass ever needs to be slower than the daemon loop, it gets its own clock inside the pass; it must
@@ -258,7 +259,7 @@ TWO CHANGES ARE NEEDED TO MAKE THAT COMPLETE.
      no slot number worth keeping, and adoption should need nothing but the container's own
      name. New path: `/opt/ffcache/staging/<container name>`, which carries the nonce and is
      therefore unique for the life of the box. slot.sh's rule that staging is created fresh
-     before the run and never merely cleaned up after it (slot.sh:303-312) stays; with a nonce
+     before the run and never merely cleaned up after it (slot.sh:306-315) stays; with a nonce
      in the name it becomes belt and braces.
 
   b. `ffghr.supervisor.pid` IS REPLACED BY `ffghr.owner`, a value that does not change when the
@@ -295,16 +296,19 @@ listed three; the fourth is what reading the workflow's own timeouts turned up.
 
     AN UNASKED       up to about a minute. A container that has just taken a job and has not
     QUESTION         yet reached its mirror-fetch step. Nothing is owed to it yet; in a minute
-                     something will be, with a 120-second fuse and a failed job on the end of it
-                     (section 5c). Bounded by how far into a job that step sits, not by the job.
+                     something will be. Revision 2 made this an obligation the drain had to hold
+                     for, because the fuse on it was 120 seconds and ended in a failed job.
+                     Section 5c removes the fuse rather than the obligation: the question still
+                     gets asked, and the answer is simply late by however long the update takes.
+                     Listed because it is real, not because an update must wait for it.
 
     A TEARDOWN       seconds to a minute. The container has exited and the host still owes it:
                      post the check run, promote the cache entry, prune, delete the registration,
                      remove the staging directory. This is CI's `publishing` -- a host-side tail
                      that a `systemctl stop` genuinely loses, exactly as ffwatch's own
-                     `publishing_count()` (ffwatch.py:14075) describes for an agent turn.
+                     `publishing_count()` (ffwatch.py:14196) describes for an agent turn.
 
-So the CI contribution to `settling()` is the last two of these and nothing else:
+So the CI contribution to `settling()` is the last of these and nothing else:
 
     ci_publishing    CI containers that have exited and whose teardown has not completed.
 
@@ -357,7 +361,7 @@ to at any moment during it.
 KILLING AN IDLE RUNNER RACES GITHUB HANDING IT A JOB, and that race is not new either -- it is
 why lowering `ffgithubrunners idle N` leaves the runners already registered alone and lets them
 retire by taking one job each. The mitigation exists and must be carried over: `idle_stop_ok`
-(slot.sh:563) re-checks `Runner.Worker` in the moment before the stop and abandons it if a job
+(slot.sh:566) re-checks `Runner.Worker` in the moment before the stop and abandons it if a job
 has appeared. Under the merge, a runner that wins that race is simply detached with the others.
 
 STOP_RUNNING IS UNCHANGED AND STAYS THE ONLY WAY TO END A LIVE JOB (fact m). Under it the CI
@@ -454,9 +458,10 @@ comfortably more than it", which it plainly is. Still worth measuring, no longer
 
 5d. WHAT HAPPENS IF THE DAEMON DOES NOT COME BACK
 
-A bad commit that stops ffwatch starting leaves live CI containers with nobody serving them.
-Jobs blocked on a request fail, which is correct and visible. What must not happen is a leak, and
-this is requirement 6:
+A bad commit that stops ffwatch starting leaves live CI containers with nobody serving them. A
+job blocked on a request waits out its allowance -- ten minutes after section 5c rather than two --
+and then fails, which is correct and visible: nobody is coming. What must not happen is a leak,
+and this is requirement 6:
 
     reap.sh STAYS A SEPARATE TIMER-DRIVEN PROCESS. It sources lib/config.sh, talks to docker and
     the GitHub App directly, and knows nothing about ffwatch. It removes containers whose owner
@@ -496,9 +501,10 @@ triggers is now a restart that detaches CI jobs and opens the window of section 
 ceiling by one must not cost a job the risk of an unattended five minutes.
 
 So the two CI pool numbers are RE-READ IN THE KEEPER, not held from startup, exactly as
-`ffghr_reload_limits` (runners/lib/config.sh:818) re-reads them today for a waiting slot. The
-keeper stats config.json and re-parses only when the mtime moved, which also removes the
-python3-per-poll cost measured in fact j.
+`ffghr_reload_limits` (runners/lib/config.sh:899) re-reads them today for a waiting slot. The
+keeper stats config.json and re-parses only when it has moved -- the same guard, and note what
+that guard's stamp had to become in phase A: inode, nanosecond mtime and size, because `max 5` to
+`max 6` writes the same number of bytes and a whole-second mtime missed it.
 
 Two consequences worth stating:
 
@@ -515,7 +521,7 @@ Two consequences worth stating:
 --------------
 
 The one genuinely new dependency. ffwatch's `GitHub` class is a bearer-token client: one token
-from `pr_token_for`, sent as `Authorization: Bearer` (ffwatch.py:3615). CI authenticates as a
+from `pr_token_for`, sent as `Authorization: Bearer` (ffwatch.py:3674). CI authenticates as a
 GitHub App: an RS256 JWT signed with the .pem, exchanged for an installation token cached for its
 hour (runners/lib/gh.sh:46-73, done with `openssl dgst`).
 
@@ -538,11 +544,12 @@ Named explicitly because the instinct once there is one daemon is to move everyt
   reap.sh              stays. Section 5d. It is the cleanup for "the daemon is broken".
   the drain flag file  stays a file. The updater sets it BEFORE stopping the daemon and lifts it
                        after starting it, so it cannot be daemon state.
-  ffgithubrunners CLI  stays, and gets simpler: `slots N` and `idle N` become plain config writes
-                       with no sudo, `status` reads containers instead of units, `drain` and
-                       `slot stop|start` keep writing flag files. `slot stop N` loses its meaning
-                       and is replaced by nothing; the operator control that replaces it is
-                       `max`.
+  ffgithubrunners CLI  stays. Most of the simplification already happened in phase A: `slots N`
+                       and `idle N` are plain config writes with no sudo, and `status` reads the
+                       enabled units rather than counting to `pool.max`. What is left for this
+                       work is that `status` reads containers rather than units at all, and that
+                       `slot stop N` loses its meaning -- the operator control that replaces it is
+                       `max`. `drain`, `resume` and the flag files are unchanged.
   ffstatus.sh          unchanged. Section 5e.
   lib/config.sh        keeps the credential, image, network, cache and licence configuration.
                        Loses the pool section.
@@ -566,7 +573,7 @@ Named explicitly because the instinct once there is one daemon is to move everyt
      the check run is our own annotation -- so late is a cosmetic cost, not a lost result.
 
   d. TWO DAEMONS. ffwatch already refuses this with a lock file and degrades to "follows along"
-     (ffwatch.py:13932). The CI keeper must be inside `owns_lock`, or two daemons would both
+     (ffwatch.py:14053). The CI keeper must be inside `owns_lock`, or two daemons would both
      mint runners.
 
   e. THE STAGING PROTOCOL CHANGES ACROSS AN UPDATE. A job started under commit A is served by a
@@ -583,7 +590,7 @@ Named explicitly because the instinct once there is one daemon is to move everyt
 
   g. A CI JOB AND AN AGENT RUN RACE FOR THE LAST PLACE. Today that is arbitrated by a file lock
      between two processes; afterwards it is one process making both decisions in one pass, which
-     is strictly better and removes the lock-ordering rule in slot.sh:228-236.
+     is strictly better and removes the lock-ordering rule in slot.sh:231-239.
 
 
 10. Risk this concentrates
@@ -592,7 +599,7 @@ Named explicitly because the instinct once there is one daemon is to move everyt
 Stated plainly because it is the strongest argument against doing this at all.
 
 Today an ffwatch crash takes out the Discord pipeline and leaves CI running. Afterwards it takes
-out both. ffwatch is 15,151 lines and gains perhaps 400 more. The mitigations are real but
+out both. ffwatch is 15,272 lines and gains perhaps 400 more. The mitigations are real but
 partial: the containers survive (section 4), reap.sh is independent (section 5d), and the systemd
 unit restarts the daemon in seconds. What is genuinely lost is the property that a bad commit
 touching the Discord code cannot affect CI, and no amount of care inside one process restores
@@ -616,7 +623,8 @@ number requires root and kills jobs.
   ffbox/runners/05-services.sh        stops rendering slot instances; keeps the timers and egress
   ffbox/runners/systemd/*@.service    deleted, and 05-services.sh must DISABLE the instances it
                                         previously enabled, or they linger and fail
-  ffbox/runners/ffgithubrunners       slots/idle become config writes; status reads containers
+  ffbox/runners/ffgithubrunners       status reads containers rather than units; `slot stop N`
+                                        goes (slots/idle already landed in phase A)
   ffbox/update_ffbox.sh               step 4 gains the CI drain; the config trigger learns that a
                                         pool-only edit is not a restart
   ffbox/lib-workloads.sh              the CI caller of the ceiling lock goes away
@@ -692,8 +700,10 @@ number requires root and kills jobs.
   b. HOW LONG IS THE STOP-TO-START WINDOW, MEASURED? Fact i is assembled from a comment and a
      sequence, not from a stopwatch. Revision 2 made this the gate; revision 3 demotes it to a
      sanity check, because the question stopped being "does it fit under 120 seconds" (it does
-     not) and became "is 600 comfortably more than it" (it plainly is). Still worth a stopwatch
-     before phase E, and it would want revisiting if the update ever grew a cold image build.
+     not) and became "is 600 comfortably more than it" (it plainly is). Still worth a stopwatch,
+     taken at the START of phase E and before slot.sh is deleted, since after that the
+     before-number cannot be obtained. It would want revisiting if the update ever grew a cold
+     image build.
 
   c. SHOULD THE CI KEEPER RUN WHEN THE AGENT LANE IS IN FAILSAFE? `keep_pool` returns early on
      `config_failsafe()`, `killed()` or `draining()`. Two of those three clearly apply to CI as
