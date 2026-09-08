@@ -412,6 +412,56 @@ _ffghr_set MIRROR_SLUG      mirror_slug      FinalFactory
 _ffghr_set MIRROR_LFS_DIR   mirror_lfs_dir   /opt/ffcache/mirror/FinalFactory.git/lfs/objects
 _ffghr_set MIRROR_LFS_URL   mirror_lfs_url   http://10.81.0.250:8080/FinalFactory.git/info/lfs
 
+# --- HOW LONG A JOB WAITS ON THE HOST -----------------------------------------------------------
+#
+# TWO HANDSHAKES, AND THIS IS THE HOST'S HALF OF BOTH. A CI job is not a container the host merely
+# watches: twice in its life it writes a request into its staging directory and BLOCKS until the
+# host writes the answer back. It asks the host to fetch a commit into the mirror, because
+# github.com came off this lane's allowlist on 2026-08-31 and the mirror is the only source left;
+# and it asks the host to upload its test-results artifact, because the blob storage came off the
+# same list and the Actions API refuses to attach a file to a job that has already finished.
+#
+# THE NUMBERS LIVE HERE RATHER THAN IN THE WORKFLOW because the host is what decides how long an
+# answer can take. The container's own defaults are 120s for the fetch (main.yml's wait loop) and
+# 180s for the artifact (FFGHR_ARTIFACT_WAIT in the hand-off action); each reads the value below
+# when the host passes it and falls back to its own otherwise, so an old container and a new host
+# still agree.
+#
+# WHY 600 AND NOT 120. Today nothing needs it: slot.sh is the answering process, it is not in
+# ffbox.target, and it never goes away. It is being raised for what comes next -- moving the
+# supervisor into ffwatch, which restarts on every code update and every config edit and is gone
+# for minutes while the box merges and rebuilds. A job that reaches its fetch step during that
+# window would burn a 120-second budget and then fail its checkout, intermittently and for a
+# reason nobody would connect to a deploy two minutes earlier.
+#
+# RAISING IT COSTS ALMOST NOTHING, and that is the argument rather than the size of the number.
+# The budget does not bound a SLOW answer: ffghr_mirror_serve_request writes fetch.done on both
+# paths, `ok` and `failed`, so a genuine mirror failure stops the job at once. What the budget
+# catches is NOBODY ANSWERING, which used to mean a host broken badly enough that the job was
+# doomed anyway. The price of a longer one is that a genuinely dead host holds a runner for ten
+# minutes instead of two before the job fails, and the watchdog still bounds that.
+#
+# THE AGENT LANE SETTLED THIS QUESTION LONG AGO AND ANSWERED IT MUCH HIGHER. A staged agent
+# container polls for a host-written `dispatch` file exactly the way these two poll for their
+# answers, and pool-task.sh gives it FFBOX_IDLE_TTL_SECS, default 14400 -- four hours. 600 is
+# conservative beside it.
+#
+# design/ffbox_ci_in_ffwatch_design.txt section 5c, phase A2.
+_ffghr_set MIRROR_WAIT_SECS   mirror_wait_secs   600
+_ffghr_set ARTIFACT_WAIT_SECS artifact_wait_secs 600
+
+# Both are seconds and both must be a positive number: they are handed to a `sleep` loop inside
+# somebody else's container, where a non-numeric value is a job that waits zero seconds or hangs,
+# and neither failure names this file. Non-numeric or non-positive falls back to the default.
+for _wv in MIRROR_WAIT_SECS ARTIFACT_WAIT_SECS; do
+    eval "_wval=\${$_wv}"
+    case "$_wval" in
+        ''|*[!0-9]*) eval "$_wv=600" ;;
+        *) [ "$_wval" -ge 1 ] 2>/dev/null || eval "$_wv=600" ;;
+    esac
+done
+unset _wv _wval
+
 _ffghr_set EGRESS_NET       egress_net       ffghr-net
 _ffghr_set EGRESS_UPLINK    egress_uplink    ffghr-egress-net
 _ffghr_set EGRESS_BRIDGE    egress_bridge    ffghr0

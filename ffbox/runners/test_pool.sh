@@ -306,5 +306,59 @@ is "$_FFGHR_CFG_STAMP" "$_stamp_before" "an unchanged config is not re-read"
 write_units_config 12 6
 is "$SLOTS" 6 "a same-second, same-size edit is still picked up"
 
+printf '\nhow long a job waits on the host\n'
+
+# THE TWO HANDSHAKES A CI JOB BLOCKS ON, and the host's half of both. The job asks for a commit
+# and waits for `fetch.done`; it asks for an artifact upload and holds itself open for
+# `artifact.done`. Its own defaults are 120s and 180s. They are raised here because the answering
+# process is about to become ffwatch, which restarts on every update and is gone for minutes --
+# and a job that reaches its fetch step in that window would fail its checkout.
+# design/ffbox_ci_in_ffwatch_design.txt section 5c.
+write_waits() {   # <mirror_wait_secs JSON literal> <artifact_wait_secs JSON literal>
+    printf '{ "max_concurrent_runs": 6, "githubrunner": { "pool": { "max": 6, "idle": 1 },
+              "mirror_wait_secs": %s, "artifact_wait_secs": %s } }\n' "$1" "$2" \
+        > "$FFBOX_CONFIG_DIR/config.json"
+}
+
+write_config 6 1
+. "$HERE/lib/config.sh"
+is "$MIRROR_WAIT_SECS" 600 "the mirror wait defaults to 600s, not the workflow's 120"
+is "$ARTIFACT_WAIT_SECS" 600 "the artifact wait defaults to 600s, not the action's 180"
+
+write_waits 900 300
+. "$HERE/lib/config.sh"
+is "$MIRROR_WAIT_SECS" 900 "config.json sets the mirror wait"
+is "$ARTIFACT_WAIT_SECS" 300 "config.json sets the artifact wait"
+
+# BOTH REACH A `sleep` LOOP INSIDE SOMEBODY ELSE'S CONTAINER, where a non-numeric value is a job
+# that waits zero seconds or hangs, and neither failure names this file. So they are coerced here.
+write_waits '"ten minutes"' 0
+. "$HERE/lib/config.sh"
+is "$MIRROR_WAIT_SECS" 600 "a wait that is not a number falls back to the default"
+is "$ARTIFACT_WAIT_SECS" 600 "and so does zero, which would be a job that never waits at all"
+
+write_config 6 1
+. "$HERE/lib/config.sh"
+
+# A STATIC CHECK, DELIBERATELY, and it is worth saying why rather than leaving it to look lazy.
+# Rendering slot.sh's real `docker run` needs a JIT config minted against GitHub and a daemon to
+# refuse it, which is not something an offline test can have. What can go wrong without a daemon
+# is the cheap half and the likely half: somebody renames the variable, or drops the `-e` while
+# editing the long argument list, and the container silently falls back to 120s -- which is
+# invisible until an update lands on a job in its first minute. So: assert the flags are on the
+# run and that they carry the variables this file just proved.
+# -F, not a regex: the pattern ends in `"` and contains `$`, and as a basic regex the trailing
+# `$` anchored to end-of-line and matched nothing. It passed as a FAIL, which is the right way
+# round for a test to be wrong, but it is worth the flag rather than the escaping.
+check_passes() {   # <env name> <variable it must carry>
+    if grep -qF -- "-e $1=\"\$$2\"" "$HERE/slot.sh"; then
+        ok "slot.sh passes $1=\$$2 into the container"
+    else
+        bad "slot.sh must pass $1=\$$2, or the job silently keeps its own default"
+    fi
+}
+check_passes FFGHR_MIRROR_WAIT   MIRROR_WAIT_SECS
+check_passes FFGHR_ARTIFACT_WAIT ARTIFACT_WAIT_SECS
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

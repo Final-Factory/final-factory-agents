@@ -55,28 +55,32 @@ supervisor**: a job with a ten-minute allowance behaves identically to one with 
 long as somebody answers, and today somebody always does. So this lands first and is simply
 correct later.
 
-- [ ] **A2.1 — the host sets the artifact wait.** `S`
+- [x] **A2.1 — the host sets the artifact wait.** `S` — DONE
   `_ffghr_set ARTIFACT_WAIT_SECS artifact_wait_secs 600` in `runners/lib/config.sh`, and
   `-e FFGHR_ARTIFACT_WAIT="$ARTIFACT_WAIT_SECS"` on the `docker run` in `slot.sh`. The action
   already reads that variable (`ffghr-artifact-handoff/index.js:28`, `|| 180`) and nothing sets it
   today, so **no game-repo change is needed for this half**.
   Config shape moves, so `ffbox/config.md` is edited in the same commit — CLAUDE.md's rule.
 
-- [ ] **A2.2 — the host sets the mirror wait.** `S` (this repo) + `S` (game repo)
+- [~] **A2.2 — the host sets the mirror wait.** `S` (this repo, DONE) + `S` (game repo, OWED)
   `_ffghr_set MIRROR_WAIT_SECS mirror_wait_secs 600` and
   `-e FFGHR_MIRROR_WAIT="$MIRROR_WAIT_SECS"` beside it. Then in the game repo, main.yml's
   "Wait for the host git mirror" step stops hardcoding `40` and computes its loop bound from
   `FFGHR_MIRROR_WAIT` (seconds) over its 3-second poll, falling back to today's 120 when the
   variable is absent, so an old host and a new workflow still agree.
-  **Two commits in two repositories.** Land the host half first: a workflow reading a variable
-  nothing sets gets the fallback, which is today's behaviour.
+  **Two commits in two repositories.** The host half landed first, deliberately: a workflow that
+  does not yet read `FFGHR_MIRROR_WAIT` simply ignores it and keeps its 120, which is today's
+  behaviour, so the host change is inert until the game repo catches up.
+  **STILL OWED:** main.yml's `n -lt 40` becomes a bound computed from `FFGHR_MIRROR_WAIT` over its
+  3-second poll, falling back to 40 when the variable is absent. Until that lands, phase D must
+  not ship — the 120-second fuse is still live and it is the merge's only hard-failure mode.
 
-- [ ] **A2.3 — a test that the two variables reach the container.** `S`
+- [x] **A2.3 — a test that the two variables reach the container.** `S` — DONE
   In `runners/test_pool.sh` or a new `test_slot_env.sh`: render the `docker run` argument list
   without a daemon and assert both `-e` flags are present with the configured values. Cheap, and
   it is the only thing standing between a rename and a silent return to 120 seconds.
 
-- [ ] **A2.4 — fix the stale comment in `lib/mirror.sh`.** `S`
+- [x] **A2.4 — fix the stale comment in `lib/mirror.sh`.** `S` — DONE
   The failure branch says it writes `fetch.done: failed` so the job "stops waiting and goes to
   GitHub". github.com left the CI allowlist on 2026-08-31 (`runners/egress/allowlist.txt:28`);
   there is nowhere to go. The behaviour is right and the sentence is wrong. Design open question
