@@ -3862,6 +3862,30 @@ def test_a_private_reply_never_composes_to_nothing():
     check("a detail is appended rather than replacing the state",
           "the run failed: container exited 3" in text, text)
 
+    # 2026-09-08, pull request 505. The CLI stopped 11 minutes in on a session limit and wrote
+    # an envelope that flags is_error, names the reason, carries the 429 — and leaves `subtype`
+    # at its default "success". Reading subtype first told the pull request "the run failed:
+    # success", and the same reading put `success` in the turn's error column.
+    limit = {"is_error": True, "terminal_reason": "api_error", "api_error_status": 429,
+             "subtype": "success",
+             "result": "You've hit your session limit · resets 2:50am (UTC)"}
+    text = ffwatch.compose_head(None, turn, "failed", limit, {}, None, job)
+    check("a run the API stopped is named by its status",
+          "the run failed: the API returned 429" in text, text)
+    check("and never by a subtype of success", "success" not in text, text)
+    check("an api_error with no status still reads as a sentence",
+          ffwatch.compose_head(None, turn, "failed",
+                               {"is_error": True, "terminal_reason": "api_error",
+                                "subtype": "success"}, {}, None, job)
+          == "the run failed: the API returned an error",
+          ffwatch.compose_head(None, turn, "failed",
+                               {"is_error": True, "terminal_reason": "api_error",
+                                "subtype": "success"}, {}, None, job))
+    check("and a subtype of success on its own adds nothing at all",
+          ffwatch.compose_head(None, turn, "failed", {"subtype": "success"}, {}, None, job)
+          == "the run failed",
+          ffwatch.compose_head(None, turn, "failed", {"subtype": "success"}, {}, None, job))
+
     # The verify clock is the one timeout that leaves the run `done`: the agent had already
     # finished and its answer is worth posting, so this must not read as a failure.
     text = ffwatch.compose_head(None, turn, "done", {}, {"summary": "here is the answer"},
@@ -3875,6 +3899,58 @@ def test_a_private_reply_never_composes_to_nothing():
           ffwatch.compose_head(None, turn, "done", {}, {"summary": ""}, None, job)
           == "the run finished without saying anything",
           ffwatch.compose_head(None, turn, "done", {}, {"summary": ""}, None, job))
+
+
+def test_a_session_limit_is_not_a_failure_called_success():
+    """The turn row's own reading of the same envelope, which is the box page's copy of it.
+
+    finish_run writes the failure into `turn.error`, and it read `subtype` exactly as the reply
+    did — so run d96t1 on pull request 505 was recorded as having failed with `success`, in the
+    one column `ffwatch status` and the run page print. Both readers go through
+    result_failure_detail now, and this asserts the row rather than the sentence: they are
+    composed in different places and drifting apart is the bug arriving again in the half
+    nobody is looking at.
+    """
+    print("a run the session limit stopped")
+    case = Case("sessionlimit", base_fixture())
+    w = case.watcher
+    conv_id = w.upsert_conversation("99301", kind="ask", channel_id=ASK_CHANNEL)
+    cur = w.db.execute(
+        "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, started_at, venue)"
+        " VALUES(?,1,'fix','running',?,?,'private')",
+        (conv_id, ffwatch.now_iso(), ffwatch.now_iso()))
+    turn_id = cur.lastrowid
+    run_dir = os.path.join(w.conv_dir(conv_id), "runs", "d1t1-limit")
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "job.json"), "w", encoding="utf-8") as fh:
+        json.dump({"run_id": "d1t1-limit", "session": {"id": "SESS"}, "messages": []}, fh)
+    # VERBATIM, off the run's own out directory. The fields the CLI actually wrote, in the
+    # combination that made the bug: an error the envelope names twice and a subtype that
+    # contradicts both.
+    with open(os.path.join(run_dir, "result.json"), "w", encoding="utf-8") as fh:
+        json.dump({"type": "result", "is_error": True, "terminal_reason": "api_error",
+                   "api_error_status": 429, "subtype": "success", "num_turns": 28,
+                   "result": "You've hit your session limit · resets 2:50am (UTC)"}, fh)
+    with open(os.path.join(run_dir, ".container-rc"), "w", encoding="utf-8") as fh:
+        fh.write("1\n")
+    cur = w.db.execute(
+        "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, out_dir)"
+        " VALUES(?,?,?,?,?)",
+        (turn_id, "d1t1-limit", "ffbox-agent-d1t1-limit", "SESS", run_dir))
+    run_row_id = cur.lastrowid
+    w.container_live = lambda name, cid=None: False
+
+    check("recovery leaves it to the finish pass", w.recover() == [], None)
+    w.finish_runs()
+    w.join_finishes(timeout=60)
+    run = w.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
+    turn = w.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
+    check("the run is scored off its exit code, as it always was",
+          (run["exit_code"], run["terminal_state"]) == (1, "failed"), dict(run))
+    check("and the failure on the row is the API's status",
+          turn["error"] == "the API returned 429", dict(turn))
+    check("never the subtype, which called it a success",
+          "success" not in (turn["error"] or ""), dict(turn))
 
 
 def test_a_failed_public_run_attaches_nothing_either():
@@ -14915,6 +14991,7 @@ def main():
         test_a_public_reply_is_corrected_when_the_harness_disagrees,
         test_a_reply_that_ends_in_a_branch_says_where_the_fix_is,
         test_a_public_venue_never_publishes_a_failed_runs_output,
+        test_a_session_limit_is_not_a_failure_called_success,
         test_a_failed_public_run_attaches_nothing_either,
         test_a_capped_lane_tells_a_channel_once_not_every_asker,
         # phase 3
