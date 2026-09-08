@@ -39,7 +39,7 @@ seen from four sides, and they are the reason this document is long.
      the updater never restarts the lane it lives in. That property has to survive the merge, on
      purpose rather than by accident of process boundaries.
 
-  3. AN UPDATE MUST NOT WAIT FOR A RUNNING JOB. `settling()` (ffwatch.py:14140) is what the
+  3. AN UPDATE MUST NOT WAIT FOR A RUNNING JOB. `settling()` in `ffwatch.py` is what the
      updater waits on, and a job with a 120-minute watchdog cannot be in it. An update that
      blocked on CI would be an update that never ran on a busy afternoon.
 
@@ -81,23 +81,23 @@ Read before estimating. Most of this design is wiring; the invention is in secti
      container is already just a container with a different mode, different mounts and a
      different network.
 
-  b. FFWATCH ALREADY COUNTS CI CONTAINERS. `workload_count()` (ffwatch.py:6414) reads the
+  b. FFWATCH ALREADY COUNTS CI CONTAINERS. `workload_count()` in `ffwatch.py` reads the
      `ffbox.workload` label and treats `ci` as one of the three kinds; `workload_room()`
-     (ffwatch.py:6440) subtracts it from `max_concurrent_runs`. The cross-process lock in
+     in `ffwatch.py` subtracts it from `max_concurrent_runs`. The cross-process lock in
      lib-workloads.sh exists only because the counting and the acting are in two processes.
 
   c. THE TWO POOL RULES ARE THE SAME RULE, WRITTEN TWICE. `ffghr_pool_admit`
      (runners/lib/config.sh:746) is "room under the ceiling, and short of idle".
-     `keep_pool` (ffwatch.py:7373) is "fewer warm than asked for, and room under both ceilings".
+     `keep_pool()` in `ffwatch.py` is "fewer warm than asked for, and room under both ceilings".
      Each has its own coercion for what a negative or zero means, in a different language.
 
-  d. FFWATCH ALREADY ADOPTS CONTAINERS ACROSS ITS OWN RESTART. `recover()` (ffwatch.py:13126)
-     walks non-terminal run rows at startup; if the container is live it calls `adopt_run`
-     (ffwatch.py:12966), whose docstring is the thesis of this document: "There is nothing to DO
+  d. FFWATCH ALREADY ADOPTS CONTAINERS ACROSS ITS OWN RESTART. `recover()` in `ffwatch.py`
+     walks non-terminal run rows at startup; if the container is live it calls `adopt_run()`
+     in `ffwatch.py`, whose docstring is the thesis of this document: "There is nothing to DO
      here... The container is running, the clock is a file, the output is on a bind mount."
 
   e. FFWATCH ALREADY DISTINGUISHES WHAT A STOP LOSES FROM WHAT SURVIVES IT. `settling()`
-     (ffwatch.py:14140) counts four things and `HOST_TAIL` names the two an update actually has
+     in `ffwatch.py` counts four things and `HOST_TAIL` names the two an update actually has
      to wait for. Containers are explicitly not among them.
 
   f. THE CI SUPERVISOR IS NOT A WATCHER. Its loop serves the live job: it decides the cache
@@ -206,14 +206,14 @@ One new pass in the daemon loop and one new worker, both modelled on what is alr
                           enforce the two deadlines, and hand a container whose job has ended to
                           the teardown path.
 
-Both go in the main loop (ffwatch.py:14065-14118) beside `keep_pool()` and `enforce_clocks()`,
+Both go in the pass body of `ffwatch.py`'s `run()`, beside `keep_pool()` and `enforce_clocks()`,
 in that order: expire and reap first, then serve what is live, then top up.
 
 BLOCKING WORK GOES TO A THREAD, KEYED BY CONTAINER. The mirror fetch is measured at about 4.6s,
 the artifact upload takes the transfer, and `docker stop` takes the grace. None of that may sit
 on the daemon's own thread, for the reason keep_pool() already gives about pool_stage: a pass in
 which the daemon does nothing else is a pass in which the Discord pipeline stops. The existing
-pattern is `_pool_expire_one` (ffwatch.py:6692) -- a thread per unit of work -- plus a guard so
+pattern is `_pool_expire_one()` in `ffwatch.py` -- a thread per unit of work -- plus a guard so
 no two threads serve the same container.
 
 THE POLL RATE MUST NOT DROP. slot.sh polls every 5 seconds while a runner is idle and every 15
@@ -306,7 +306,7 @@ listed three; the fourth is what reading the workflow's own timeouts turned up.
                      post the check run, promote the cache entry, prune, delete the registration,
                      remove the staging directory. This is CI's `publishing` -- a host-side tail
                      that a `systemctl stop` genuinely loses, exactly as ffwatch's own
-                     `publishing_count()` (ffwatch.py:14196) describes for an agent turn.
+                     `publishing_count()` in `ffwatch.py` describes for an agent turn.
 
 So the CI contribution to `settling()` is the last of these and nothing else:
 
@@ -521,8 +521,8 @@ Two consequences worth stating:
 --------------
 
 The one genuinely new dependency. ffwatch's `GitHub` class is a bearer-token client: one token
-from `pr_token_for`, sent as `Authorization: Bearer` (ffwatch.py:3674). CI authenticates as a
-GitHub App: an RS256 JWT signed with the .pem, exchanged for an installation token cached for its
+from `pr_token_for`, sent as `Authorization: Bearer` by `GitHub._request()`. CI authenticates as
+a GitHub App: an RS256 JWT signed with the .pem, exchanged for an installation token cached for its
 hour (runners/lib/gh.sh:46-73, done with `openssl dgst`).
 
 RECOMMENDATION: SHELL OUT TO lib/gh.sh RATHER THAN PORT IT, at least in phase 1. It is working,
@@ -573,8 +573,8 @@ Named explicitly because the instinct once there is one daemon is to move everyt
      the check run is our own annotation -- so late is a cosmetic cost, not a lost result.
 
   d. TWO DAEMONS. ffwatch already refuses this with a lock file and degrades to "follows along"
-     (ffwatch.py:14053). The CI keeper must be inside `owns_lock`, or two daemons would both
-     mint runners.
+     -- the daemon-lock warning in `run()`. The CI keeper must be inside `owns_lock`, or two
+     daemons would both mint runners.
 
   e. THE STAGING PROTOCOL CHANGES ACROSS AN UPDATE. A job started under commit A is served by a
      daemon running commit B, and the files they exchange are a wire format. Today this cannot
