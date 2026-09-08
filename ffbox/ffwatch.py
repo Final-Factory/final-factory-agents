@@ -14810,7 +14810,10 @@ class Watcher:
         try:
             dropped = self._ci.drop_idle()
             if dropped:
-                log(f"draining: destroyed {dropped} idle CI runner(s) and their registrations")
+                # "and their registrations" was a claim this line had no way to check: drop_idle
+                # discarded teardown's report, so a registration that failed to delete was counted
+                # here as a success. The per-runner lines above say what actually happened.
+                log(f"draining: destroyed {dropped} idle CI runner(s)")
         except Exception as exc:                    # noqa: BLE001 — a drain must not fail on this
             log(f"draining: could not drop idle CI runners: {type(exc).__name__}: {exc}")
 
