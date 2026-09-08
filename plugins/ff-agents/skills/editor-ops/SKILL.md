@@ -353,6 +353,17 @@ tests are explicitly requested. After making code changes, run the fast tests an
 pass before considering work complete. Only run slow tests if explicitly asked. **Confirm Burst
 is enabled and idle before starting any run** — see the next subsection.
 
+**Check which `run_tests` implementation the current route exposes before calling a suite
+"fast."** Unity Pipeline's command uses only case-insensitive substring `filter`/
+`filter_type`; it ignores `assembly_names`, and an assembly filter for `FFEditorTests` also
+matches `FFEditorTestsSlow`. For an exact remote fast suite, use project-scoped CLI `eval_file`
+to call public `MCPForUnity.Editor.Tools.RunTests.HandleCommand` with `mode: "EditMode"`,
+`assemblyNames: new JArray("FFEditorTests")`, and a suitable `initTimeout`, await its result,
+then poll `GetTestJob.HandleCommand` by `job_id` with `includeFailedTests: true`. MCPForUnity
+passes that exact array to `Filter.assemblyNames`. The full durable recipe is in
+[feedback_test_command](../project-memory/memories/feedback_test_command.md); do not edit either
+package to work around Pipeline.
+
 - **Editor tests** (fast): `Assets/Tests/` — FFEditorTests
 - **Editor tests** (slow): `Assets/TestsSlow/` — FFEditorTestsSlow
 - **Play mode tests**: `Assets/Scripts/PlayModeTests/` — FFPlayModeTests

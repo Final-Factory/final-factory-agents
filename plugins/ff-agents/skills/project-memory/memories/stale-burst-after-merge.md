@@ -74,6 +74,22 @@ fails with "inaccessible due to its protection level").
 
 ## Symptom A — stale native code: NREs in Burst jobs, managed passes
 
+### A fresh domain reload and current managed IL can still run the old native JIT (feature 069)
+
+Feature 069 had two invalid-schema tests that still mutated five fields even though the loaded
+`FFSystems` MVID was current and the guards preceded every assignment write in the managed IL
+(FinalFactory `specs/069-research-bot-physical-determinism/plan.md:66-112`). For this verified
+counterexample, do not dismiss the forbidden writes as padding or weaken the guard. The repair
+was to preserve the exact isolated editor's
+`Library/BurstCache/JIT` directory aside and restart that editor once; the same code then passed
+the two rejection cases and the 53 focused cases with Burst enabled and its queue drained.
+
+This is evidence of stale native execution, not a substitute for a final Burst-on run. Before
+moving a cache, confirm the exact project-owned editor process is zero; preserve the JIT directory
+instead of deleting it so the evidence remains available. After the restart, re-pin the editor,
+enable Burst if needed, wait for `BurstLoader.BurstProgressId` to be idle, and re-run the exact
+tests. See [feedback_test_command](feedback_test_command.md) for the exact fast-suite route.
+
 After merging a branch that changed ECS job structs (added/removed `ComponentLookup`/closure
 fields → changed native struct layout), the fast EditMode suite showed a cluster of
 `NullReferenceException`s thrown "from a job compiled with Burst" — e.g.
