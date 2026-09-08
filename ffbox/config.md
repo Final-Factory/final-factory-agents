@@ -910,6 +910,13 @@ of it.
 "github": { "announce_merges": true }
 ```
 
+**A public thread is archived once the notice lands in it,** so `announce_merges` also governs
+whether the forum tidies itself. Archived and never locked: a reply reopens the thread and the
+conversation with it, which is how somebody who is still seeing the bug says so. The bot needs
+MANAGE_THREADS in the forum, since those threads belong to the in-game webhook rather than to
+it; without the permission the close fails, retries and ends up rejected in the queue, and the
+notice itself is unaffected.
+
 **Nobody triggers this and no operator table gates it.** GitHub triggers it by merging, and who
 pressed the button is not a permission question. That is why it is a separate poller rather than
 a branch of the `#codereview` one, which returns early on a box with no operators.

@@ -548,6 +548,22 @@ def main():
     check("--json emits the thread object", json.loads(p.stdout)["id"] ==
           "900000000000009999", p.stdout)
 
+    print("close")
+    POSTED.clear()
+    p = run(tmp, "close", "70001")
+    check("PATCHes the thread itself, not a message",
+          POSTED[-1].get("method") == "PATCH" and POSTED[-1]["path"] == "/channels/70001",
+          POSTED[-1])
+    # ARCHIVED IS REVERSIBLE BY ANYBODY WITH A KEYBOARD; locked is not. A reporter who is
+    # still seeing the bug reopens their own thread by replying to it, and that only works
+    # while `locked` stays out of this body.
+    check("archives it", POSTED[-1]["body"] == {"archived": True}, POSTED[-1]["body"])
+    check("and says which thread it filed away", "70001" in p.stdout, p.stdout)
+    n_before = len(POSTED)
+    p = run(tmp, "close", "70001", "--dry-run")
+    check("--dry-run touches nothing", len(POSTED) == n_before and "DRY RUN" in p.stdout,
+          p.stdout)
+
     print("doctor")
     p = run(tmp, "doctor")
     check("passes with correct permissions", "All checks passed" in p.stdout, p.stdout)

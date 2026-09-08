@@ -1,6 +1,6 @@
 A merged pull request tells the thread which build carries the fix
 ==================================================================
-Revision 1, 2026-09-06.
+Revision 2, 2026-09-07. Revision 1, 2026-09-06.
 
 When a pull request is merged, every Discord conversation that produced it is told so, and told
 which build the fix will be in: the version standing on the branch it merged into, plus one on
@@ -362,5 +362,60 @@ honest answer to 5b's second failure case.
     ffbox/README.md        the operator-facing half of the same, beside #codereview
     ffbox/test_ffwatch.py  section 11
 
-No container, no task script and no plugin changes. Nothing in this feature runs anywhere but on
-the host, and no prompt is built from it.
+No container and no task script. Nothing in this feature runs anywhere but on the host, and no
+prompt is built from it. Revision 1 touched no plugin either; revision 2 does, for the one
+command Discord needs that the CLI did not have.
+
+
+14. Revision 2: the thread is filed away
+-----------------------------------------
+
+A bug thread whose fix has merged is answered, and leaving it open leaves a forum where nothing
+is ever finished. The notice is the moment to close it: the harness has just said everything it
+knows about that report.
+
+ARCHIVED, NOT LOCKED. Discord's two ways of ending a thread are not degrees of the same thing.
+`archived` files it away and any reply brings it back; `locked` also stops the replies and only
+a moderator can undo it. This box does not know the reporter's bug is gone -- section 7 is the
+argument for why the sentence says "Fix merged" and not "your bug is fixed" -- so it must not
+end the conversation in a way the reporter cannot undo. A reply un-archives the thread and
+reopen_conversation brings this side back with it, which is the same reopen path a reply to any
+closed conversation already takes. That is what makes this safe to do unattended.
+
+WHICH THREADS. Public ones that got the notice, and only those. A private venue is the dev
+channel or an operator DM, where the notice is developer prose in somebody's working
+conversation rather than an answer to a question; those close when their owner says so. A
+conversation that is a CHANNEL rather than a thread has nothing to archive, and archiving what
+it does have would take every other conversation in that channel with it.
+
+THE ORDER, AND WHY IT IS ENFORCED RATHER THAN ASSUMED. Posting into an archived thread
+un-archives it, so a close that overtakes its notice leaves the thread open, the log saying it
+was archived, and nothing anywhere disagreeing. Both rows are queued together by announce_merge;
+the close carries `after_local_id` naming the notice's `local_id`, and _after_ready holds it in
+the queue until that row reads `sent`. Id order alone is not enough: the two lanes drain
+oldest-first, but a post held by send backoff, by the approval queue or by a rate-limit ceiling
+does not hold back the row behind it, and a close is one HTTPS call that would sail past it. A
+notice that ends up rejected or undeliverable rejects its close too, with the reason naming what
+it was waiting for; a follower left pending forever would be a row every pass re-reads and no
+operator can act on.
+
+SAID ONCE, the way the notice is: the close wears its own local_id, pr-merged-close:<pr>:<conv>,
+and announce_merge does not run at all for a pull request whose notice row already exists. A
+thread that was notified before this revision landed is not archived retroactively.
+
+PERMISSION. Archiving a thread the bot did not open needs MANAGE_THREADS, and the bug_reports
+threads are opened by the in-game webhook. Granted by hand on the server. `ffdiscord doctor`
+does not require it, so a box without it fails the close, retries it under the usual backoff and
+rejects it after max_send_attempts -- visible in the queue, and it never touches the notice.
+
+A PLUGIN CACHE OLDER THAN THE HARNESS. The CLI ships in the ff-discord plugin and live
+sessions read a cached copy that only refreshes on a version bump, so a box can easily run an
+ffwatch that knows `close` against an ffdiscord that does not. close_supported() probes
+`close --help` once and caches it, the way mention_supported and nonce_supported already probe
+their flags; an old copy means the notice goes out alone and a warning names registerAgents.sh.
+Without the probe every merge on such a box would queue a close, fail it max_send_attempts
+times and leave a rejected row behind.
+
+Files: ffdiscord.py grows `close <thread_id>` (PATCH /channels/<id>, {"archived": true}, no lock
+and no tag, idempotent, --dry-run); ffwatch.py grows the `close` action, merge_close_local_id,
+close_supported, _after_ready and the second record_outbound in announce_merge.

@@ -114,8 +114,8 @@ FFDISCORD_STUB = r'''#!/usr/bin/env python3
 """Stub ffdiscord. Serves canned --json payloads out of $FFD_FIXTURE.
 
 Writes are accepted rather than refused, because phase 2 has a real sender: every post, react,
-edit, ask and thread-create is appended to $FFD_CALLS so a test can assert exactly what went
-out and in what order. $FFD_FAIL_SEND makes every write fail, which is how the retry path is
+edit, ask, thread-create and close is appended to $FFD_CALLS so a test can assert exactly what
+went out and in what order. $FFD_FAIL_SEND makes every write fail, which is how the retry path is
 exercised without a network. --nonce is honoured the way Discord's enforce_nonce is: a repeat
 returns the id the first call got, so a double-send is visible as ONE message.
 """
@@ -126,6 +126,11 @@ argv = [a for a in sys.argv[1:] if a != "--json"]
 
 with open(os.environ["FFD_CALLS"], "a", encoding="utf-8") as fh:
     fh.write(json.dumps(sys.argv[1:]) + "\n")
+
+if argv[:1] == ["close"] and os.environ.get("FFD_NO_CLOSE"):
+    # An ffdiscord older than the `close` subcommand: argparse exits 2 on an unknown one.
+    sys.stderr.write("ffdiscord: error: argument cmd: invalid choice: 'close'\n")
+    sys.exit(2)
 
 if "--help" in argv:
     # ffwatch probes `post --help` for --nonce and --mention before it sends anything: the CLI
@@ -206,7 +211,7 @@ elif cmd == "download":
                 fh.write(body)
             saved.append(path)
     print(json.dumps(saved))
-elif cmd in ("post", "react", "edit", "ask", "thread-create"):
+elif cmd in ("post", "react", "edit", "ask", "thread-create", "close"):
     if os.environ.get("FFD_FAIL_SEND"):
         sys.stderr.write("stub ffdiscord: simulated Discord outage\n")
         sys.exit(1)
@@ -229,6 +234,10 @@ elif cmd in ("post", "react", "edit", "ask", "thread-create"):
         gone = "--remove" in argv
         print("%s %s %s %s" % ("removed" if gone else "reacted", argv[3],
                                "from" if gone else "on", argv[2]))
+    elif cmd == "close":
+        # The real CLI prints the CHANNEL object here, whose id is the thread. It is printed
+        # for the same reason: a sender that mistook it for a message id would be caught.
+        print(json.dumps({"id": argv[1], "archived": True}))
     else:
         print(json.dumps({"id": mid, "content": opt("--text", "")}))
 else:
@@ -639,7 +648,8 @@ class Case:
         if verdict is not None:
             self.set_verdict(verdict)
         for key in ("FFBOX_STUB_EVENTS", "FFBOX_STUB_FIXTURE_ADD", "FFBOX_STUB_SHIM_POSTS",
-                    "FFD_FAIL_SEND", "FFBOX_STUB_GIT_ORIGIN", "FFBOX_STUB_CHANGED",
+                    "FFD_FAIL_SEND", "FFD_NO_CLOSE", "FFBOX_STUB_GIT_ORIGIN",
+                    "FFBOX_STUB_CHANGED",
                     "FFBOX_STUB_VERIFY", "FFBOX_STUB_VERDICT", "FFBOX_STUB_AGENT_BRANCH",
                     "FFBOX_STUB_BASE"):
             os.environ.pop(key, None)
@@ -3367,6 +3377,38 @@ def test_sender_failure_is_retryable():
     bad = case.rows("SELECT * FROM outbound ORDER BY id")[-1]
     check("an unknown action is rejected, not retried",
           bad["status"] == "rejected" and "unknown outbound action" in bad["reject_reason"], bad)
+
+
+def test_a_row_that_follows_another_never_overtakes_it():
+    """The generic half of the merge notice's close: `after_local_id`."""
+    print("sender: a row that waits for another")
+    case = Case("sendafter")
+    conv = seed_conversation(case)
+    case.watcher.record_outbound(None, conv, "post",
+                                 {"channel": ASK_CHANNEL, "text": "said first",
+                                  "local_id": "first"})
+    case.watcher.record_outbound(None, conv, "close",
+                                 {"channel": ASK_CHANNEL, "after_local_id": "first"})
+    # A FOLLOWER OF A ROW THAT WILL NEVER GO OUT IS NOT LEFT PENDING FOREVER. Holding it would
+    # leave a row every pass re-reads, no operator can act on, and nothing explains.
+    case.watcher.cfg["max_send_attempts"] = 1
+    os.environ["FFD_FAIL_SEND"] = "1"
+    case.watcher.send_pending()
+    del os.environ["FFD_FAIL_SEND"]
+    rows = case.rows("SELECT * FROM outbound ORDER BY id")
+    check("a rejected predecessor takes its follower with it",
+          [r["status"] for r in rows] == ["rejected", "rejected"], rows)
+    check("and the follower's reason names what it was waiting for",
+          "first" in (rows[1]["reject_reason"] or ""), dict(rows[1]))
+    check("neither of them reached Discord", sent_calls(case, "close") == [], case.calls())
+
+    case.watcher.record_outbound(None, conv, "close",
+                                 {"channel": ASK_CHANNEL, "after_local_id": "never-queued"})
+    case.watcher.send_pending()
+    orphan = case.rows("SELECT * FROM outbound ORDER BY id")[-1]
+    check("a follower of a row that does not exist is rejected too, not held",
+          orphan["status"] == "rejected" and "no such row" in (orphan["reject_reason"] or ""),
+          dict(orphan))
 
 
 def test_sender_approval_holds_the_queue():
@@ -12035,9 +12077,9 @@ def test_a_merged_pull_request_tells_the_thread_which_build_carries_the_fix():
                    merge_sha=sha)
 
     queued = case.watcher.poll_github_merges()
-    rows = case.rows("SELECT * FROM outbound WHERE conversation_id=?", (conv,))
-    check("the merge queues exactly one thing to say",
-          len(queued) == 1 and len(rows) == 1, rows)
+    rows = case.rows("SELECT * FROM outbound WHERE conversation_id=? ORDER BY id", (conv,))
+    check("the merge queues one thing to say and one thread to file away",
+          len(queued) == 1 and [r["action"] for r in rows] == ["post", "close"], rows)
     payload = json.loads(rows[0]["payload_json"])
     # THE ARITHMETIC IS THE RELEASE PROCESS. 0.21.0.22 is standing at the merge commit, the
     # build increments the RC before it builds, so the next build is 0.21.0.23.
@@ -12055,16 +12097,24 @@ def test_a_merged_pull_request_tells_the_thread_which_build_carries_the_fix():
     check("the row wears a local_id that names the pull request and the thread",
           rows[0]["local_id"] == "pr-merged:41:%d" % conv, dict(rows[0]))
 
+    close = json.loads(rows[1]["payload_json"])
+    check("the close is aimed at the same thread the notice went to",
+          close["channel"] == "70001", close)
+    check("and it waits on the notice by name, so it cannot un-archive what it just closed",
+          close["after_local_id"] == rows[0]["local_id"], close)
+    check("the close row wears an id of its own",
+          rows[1]["local_id"] == "pr-merged-close:41:%d" % conv, dict(rows[1]))
+
     check("a second poll of the same merge says nothing more",
           case.watcher.poll_github_merges() == []
-          and len(case.rows("SELECT * FROM outbound")) == 1,
+          and len(case.rows("SELECT * FROM outbound")) == 2,
           case.rows("SELECT * FROM outbound"))
     # THE CURSOR IS NOT THE DURABLE HALF. A wiped state directory leaves `seen` empty and the
     # outbound row still standing, which is what local_id is for.
     case.watcher.write_merge_cursor("2000-01-01T00:00:00Z", [], None, "2000-01-01T00:00:00Z")
     check("and neither does one whose cursor has been wiped",
           case.watcher.poll_github_merges() == []
-          and len(case.rows("SELECT * FROM outbound")) == 1,
+          and len(case.rows("SELECT * FROM outbound")) == 2,
           case.rows("SELECT * FROM outbound"))
 
 
@@ -12090,6 +12140,90 @@ def test_a_merge_notice_reaches_a_thread_that_only_owns_the_branch():
           payload)
     check("and the conversation is still the one that owns the branch",
           case.rows("SELECT * FROM outbound")[0]["conversation_id"] == conv, None)
+    # A DEV CHANNEL OR AN OPERATOR DM IS SOMEBODY'S WORKING CONVERSATION, not a question this
+    # box has just finished answering. Filing it away is theirs to do.
+    check("a private venue keeps its thread open",
+          [r["action"] for r in case.rows("SELECT * FROM outbound")] == ["post"],
+          case.rows("SELECT * FROM outbound"))
+
+
+def test_a_merged_bug_thread_is_filed_away_after_the_notice_lands():
+    """Archived, never before the sentence it is archiving on, and never locked."""
+    print("merge notice: the thread is filed away")
+    case = Case("mergenoticeclose")
+    origin, host = git_origin(case)
+    merge_cfg(case)
+    sha = a_version_commit(case, "master")
+    conv = a_reported_bug(case, github_pr=PR_41)
+    a_pull_request(41, "ffbox/belt-fix", state="closed", merged=True, base="master",
+                   merge_sha=sha)
+    case.watcher.poll_github_merges()
+
+    # DISCORD IS DOWN FOR THE NOTICE. The close is one HTTPS call with nothing slowing it, and
+    # by plain id order it is the very next row the same pass looks at.
+    case.watcher.cfg["send_backoff_secs"] = 3600
+    os.environ["FFD_FAIL_SEND"] = "1"
+    case.watcher.send_pending()
+    del os.environ["FFD_FAIL_SEND"]
+    check("a notice that could not be posted archives nothing",
+          sent_calls(case, "close") == [], case.calls())
+    rows = case.rows("SELECT * FROM outbound ORDER BY id")
+    check("and the close is still pending, with no attempt spent on it",
+          rows[1]["status"] == "pending" and (rows[1]["attempts"] or 0) == 0, rows)
+
+    # THE CASE ID ORDER ALONE DOES NOT COVER: the post is held by its own backoff and the close
+    # is due. Nothing but the dependency keeps them in order here.
+    case.watcher.send_pending()
+    check("nor does it while the notice is only waiting on its backoff",
+          sent_calls(case, "close") == [], case.calls())
+
+    case.watcher.cfg["send_backoff_secs"] = 0
+    case.watcher.send_pending()
+    # Three calls, not two: the first `post` is the attempt the outage above ate.
+    check("once the notice lands the thread is archived, in that order",
+          [c[0] for c in case.calls() if c and "--help" not in c] == ["post", "post", "close"],
+          case.calls())
+    check("the close names the thread and asks for nothing else — no lock, no tag",
+          sent_calls(case, "close")[0] == ["close", "70001"], case.calls())
+    rows = case.rows("SELECT * FROM outbound ORDER BY id")
+    check("both rows are sent", [r["status"] for r in rows] == ["sent", "sent"], rows)
+    # A THREAD ID IS NOT A MESSAGE ID. Recording it as one would park the conversation's
+    # out_watermark above every message in the thread and the next sweep would skip them all.
+    check("the archived thread's id is not recorded as a message id",
+          not rows[1]["discord_id"], dict(rows[1]))
+    check("and the conversation's watermark is still the notice",
+          case.rows("SELECT out_watermark_id FROM conversation WHERE id=?",
+                    (conv,))[0]["out_watermark_id"] == rows[0]["discord_id"],
+          case.rows("SELECT out_watermark_id FROM conversation WHERE id=?", (conv,)))
+
+    # A BOX WHOSE PLUGIN CACHE PREDATES `close` STILL SAYS THE SENTENCE. The alternative is a
+    # rejected row per merged pull request until somebody runs registerAgents.sh.
+    old_cli = Case("mergenoticeoldcli")
+    git_origin(old_cli)
+    merge_cfg(old_cli)
+    old_sha = a_version_commit(old_cli, "master")
+    a_reported_bug(old_cli, github_pr=PR_41)
+    a_pull_request(41, "ffbox/belt-fix", state="closed", merged=True, base="master",
+                   merge_sha=old_sha)
+    os.environ["FFD_NO_CLOSE"] = "1"
+    old_cli.watcher.poll_github_merges()
+    del os.environ["FFD_NO_CLOSE"]
+    check("an ffdiscord with no `close` gets the notice and no close row",
+          [r["action"] for r in old_cli.rows("SELECT * FROM outbound ORDER BY id")] == ["post"],
+          old_cli.rows("SELECT * FROM outbound"))
+
+    # A CHANNEL IS NOT A THREAD. That notice went to the channel, as a reply; there is nothing
+    # to archive that would not take every other conversation in the channel with it.
+    conv2 = a_reported_bug(case, thread="70009", github_pr="43")
+    case.watcher.db.execute("UPDATE conversation SET is_thread=0 WHERE id=?", (conv2,))
+    a_pull_request(43, "ffbox/other-fix", state="closed", merged=True, base="master",
+                   merge_sha=sha, updated="2026-09-06T16:00:00Z")
+    case.watcher.poll_github_merges()
+    check("a conversation that is a channel gets the notice and nothing more",
+          [r["action"] for r in
+           case.rows("SELECT * FROM outbound WHERE conversation_id=? ORDER BY id",
+                     (conv2,))] == ["post"],
+          case.rows("SELECT * FROM outbound WHERE conversation_id=?", (conv2,)))
 
 
 def test_a_merge_that_is_nobodys_news_says_nothing():
@@ -14294,6 +14428,7 @@ def main():
         test_sender_kill_switch,
         test_sender_rate_limit,
         test_sender_failure_is_retryable,
+        test_a_row_that_follows_another_never_overtakes_it,
         test_sender_approval_holds_the_queue,
         test_read_marks_are_rows,
         test_two_senders_cannot_both_post,
@@ -14416,6 +14551,7 @@ def main():
         test_a_reserve_that_can_never_be_met_is_clamped,
         test_a_merged_pull_request_tells_the_thread_which_build_carries_the_fix,
         test_a_merge_notice_reaches_a_thread_that_only_owns_the_branch,
+        test_a_merged_bug_thread_is_filed_away_after_the_notice_lands,
         test_a_merge_that_is_nobodys_news_says_nothing,
         test_the_first_merge_poll_announces_nothing_that_predates_it,
         test_a_quiet_merge_poll_costs_nothing_and_a_deferred_one_stands_still,

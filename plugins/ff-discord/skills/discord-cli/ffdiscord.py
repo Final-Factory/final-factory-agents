@@ -1253,6 +1253,27 @@ def cmd_thread_create(client, args):
     emit(args, thread, f"created thread {thread['id']} ({name})")
 
 
+def cmd_close(client, args):
+    """Archive a thread. The SOFT close, and deliberately the only one offered.
+
+    Discord has two ways to end a thread and they are not variations on each other. `archived`
+    files it away and anybody posting in it brings it straight back; `locked` also stops the
+    replies, and only a moderator can undo that. This command sets the first and never the
+    second, because the callers are agents tidying up after themselves: a thread closed on a
+    wrong conclusion has to be reopenable by the person who reported it, by doing the obvious
+    thing, without a moderator in the loop.
+
+    IDEMPOTENT. Archiving an already-archived thread is the state the caller asked for, so it
+    is a success here rather than an error, and a retry after an ambiguous failure is safe.
+    """
+    thread = resolve_channel(client, args.thread)
+    if args.dry_run:
+        print(f"DRY RUN — would archive thread {thread}")
+        return
+    ch = client.request("PATCH", f"/channels/{thread}", body={"archived": True})
+    emit(args, ch, f"archived thread {thread}")
+
+
 def cmd_download(client, args):
     channel = resolve_channel(client, args.channel)
     msg = client.get(f"/channels/{channel}/messages/{args.message}")
@@ -1533,6 +1554,10 @@ def build_parser():
     sp.add_argument("--name", required=True, help="thread title (trimmed to 100 chars)")
     sp.add_argument("--auto-archive", type=int, default=1440,
                     choices=[60, 1440, 4320, 10080], help="minutes of inactivity")
+
+    sp = add("close", cmd_close, "archive a thread (a reply reopens it; never locks)")
+    sp.add_argument("thread", help="thread id (a forum post is a thread)")
+    sp.add_argument("--dry-run", action="store_true")
 
     sp = add("download", cmd_download, "download a message's attachments (logs, saves)")
     sp.add_argument("channel")
