@@ -125,9 +125,9 @@ Read before estimating. Most of this design is wiring; the invention is in secti
 
   j. AN IDLE SUPERVISOR IS NOT FREE, THOUGH IT IS CHEAP. Measured on this box on 2026-09-08:
      1.7 MB RSS and 4.3 seconds of CPU per 293 seconds elapsed per waiting slot, which is about
-     1.5% of one core. Nearly all of it is `ffghr_reload_limits` forking a python3 to re-parse
-     config.json every 5 seconds, plus a `docker ps`. Five waiting supervisors cost about 7% of
-     a core to hold no containers.
+     1.5% of one core. Profiled: the `ffghr_reload_limits` python3 re-parse of config.json is
+     about 27ms and the `docker ps` in `ffghr_pool_counts` about 24ms, so roughly half each.
+     Five waiting supervisors cost about 7% of a core to hold no containers.
 
   k. THE AGENT LANE ALREADY MADE THIS EXACT TRANSITION, AND THE UPDATER ALREADY REFLECTS IT.
      update_ffbox.sh:473-479 says it in its own words: the drain "used to count busy containers
