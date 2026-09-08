@@ -106,5 +106,11 @@ points at `/opt/final-factory-agents` on this box: the checkout the live service
 the updater fast-forwards. Editing there directly races the updater's fast-forward. Work in
 your own checkout, push, and let the updater deliver it.
 
-Related: [[ffbox-installs-as-one-service]], [[ffbox-two-docker-daemons]],
+**AND DO NOT PUT ANY OF THIS IN A LIST OF STEPS FOR BEN.** Knowing the updater installs the
+plugin and restarts the target is only half of it; the other half is not asking him to do it
+anyway at the end of a report. See [[feedback-no-manual-steps-the-harness-already-does]], which
+exists because I had read this note and still wrote the list.
+
+Related: [[feedback-no-manual-steps-the-harness-already-does]],
+[[ffbox-installs-as-one-service]], [[ffbox-two-docker-daemons]],
 [[feedback-publish-harness-changes-to-ff-agents]], [[feedback-simple-report-language]].
