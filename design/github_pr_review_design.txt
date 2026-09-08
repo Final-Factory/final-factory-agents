@@ -7,6 +7,10 @@ consumer of `design/branch_adoption_design.txt`, which landed the same day, and 
 built before it.
 Revision 3, 2026-09-06: adoption is implemented and on master. 3a records what that changed and
 what it takes off this design's plate; 3b is the four things it alters here.
+Revision 4, 2026-09-08: the first live run reviewed master. Section 3b's three consequences all
+hold, and all three of them have a precondition nothing here stated: the branch has to be on the
+conversation BEFORE the turn is claimed. It was not, because the poller and the scheduler are
+different threads. 3c is what that cost and what closes it.
 
 A comment on a Final Factory pull request saying `#codereview` starts an ffdev run against that
 pull request's branch. The run reviews the diff, applies the fixes it is confident in, commits
@@ -178,6 +182,53 @@ Three consequences worth writing down because none of them is obvious from the c
     with `ls-remote` rather than off a tracking ref. Merging the pull request while the review is
     running is the ordinary way to reach this, and refusing is right -- the work has nowhere to
     go and the run says so.
+
+3c. The thread the ordering argument did not have
+--------------------------------------------------
+
+Section 3b says the sequence is "create the conversation, call `adopt_branch`, and only then
+create the turn". `take_review_trigger` does exactly that, and on 2026-09-08 pull request #510
+was still reviewed against master. Doing things in the right order is not enough when somebody
+else is holding a clock.
+
+`poll_github` runs on its own worker (`start_github_poll`, revision 3's own change, made so a
+Discord outage could not stop a review). `claim_turns` runs on the daemon's main loop, every
+tick. Between `insert_message` and `adopt_branch` returning, the trigger is an unclaimed,
+ungated message on a conversation with no branch -- and `adopt_branch` does a `git fetch`, which
+held that window open for seventeen seconds. The loop reached it in five, built the turn,
+read `conv["branch"]` as NULL in `build_job`, and staged the default base.
+
+What the container got: master's tip, an empty `git diff origin/master...HEAD`, and a prompt
+opening "You are standing on its branch, `?`". It answered, correctly, that there was nothing
+in front of it. The pool matched a master spare, so the cold-launch consequence in 3b did not
+hold either -- it is a consequence of the branch being set, not of the lane.
+
+The fix is that the trigger's message row is **born gated**. `insert_message` takes a gate and
+writes it in the INSERT, because an UPDATE one statement later IS the window; the gate comes
+off in the single line that knows the branch is settled, immediately before `create_turn`.
+`create_turn` refuses a `github_pr` conversation with no branch as a backstop, so the cost of
+ever reopening the window is a turn that does not happen rather than a review of the wrong tree.
+
+The general rule, which is worth more than the fix: **a message row is visible to the scheduler
+the moment it is committed, and every ingress that still has a decision to make after inserting
+one is racing the loop.** The gate is how an ingress says "not yet", and it belongs in the
+INSERT. `!branch` is the other ingress that fits the description, and it is fixed the same way:
+`insert_message` pre-gates anything that parses as a directive and lifts it again at the bottom
+if neither handler claimed it.
+
+Two things the gate costs, both paid rather than accepted:
+
+  * **A gated row is an invisible one.** An ingest that raises half-way used to leave a message
+    the loop would pick up -- badly, which is the bug, but visibly. Now it leaves a row nothing
+    selects, on a comment the cursor has already recorded as handled. `settle_a_staged_trigger`
+    rewrites the gate to say what happened and posts the refusal, because a review that could
+    not be started is a refusal like any other.
+  * **Two threads can still both build a turn**, in the moment between the gate coming off and
+    `create_turn` claiming the messages. The claim is now guarded on `turn_id IS NULL` and the
+    loser withdraws its own turn row and returns the winner's id. Without that, `seq` is
+    `MAX(seq)+1` read twice and there is no unique constraint to stop it -- one trigger, two
+    turns, two containers.
+
 
 4. Who may start one
 --------------------
