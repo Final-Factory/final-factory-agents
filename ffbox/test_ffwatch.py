@@ -11632,7 +11632,7 @@ def test_a_first_poll_answers_nothing_that_predates_it():
 
     check("the first poll starts nothing", case.watcher.poll_github() == [], None)
     check("and says nothing", (GH_STATE["posted"], GH_STATE["reactions"]) == ([], []), GH_STATE)
-    since, _, _ = case.watcher.read_github_cursor()
+    since, _, _, _ = case.watcher.read_github_cursor()
     check("but it records the moment it started watching", bool(since), since)
     check("and a comment older than that stays history",
           case.watcher.poll_github() == [], None)
@@ -13905,6 +13905,216 @@ def test_a_box_with_one_account_is_left_exactly_as_it_was():
 
 
 
+# --- waiting for the window rather than being refused ------------------------------------------
+#
+# Above a configured share of the subscription a #codereview trigger and a brand-new conversation
+# STAND DOWN: they are left exactly where they arrived and the ordinary poll picks them up once
+# the window turns over. The point of every test below is that nothing is dropped and nobody is
+# told no -- a refusal is what this replaced.
+
+
+def hold_case(case, records):
+    """Point this case's watcher at a stubbed reading. Returns the stub."""
+    case.watcher._claude = StubClaudeKeys(records)
+    return case.watcher._claude
+
+
+def test_the_box_is_full_only_once_its_emptiest_account_is():
+    print("holds: how full the box is")
+    # THE FULLEST WINDOW WITHIN AN ACCOUNT. A turn runs out on whichever clock expires first,
+    # so a spent week is as disqualifying as a spent session and the larger number answers.
+    spent_week = key_record("A", five=5.0, seven=92.0)
+    pct, key = claude_keys.fullest_window(spent_week)
+    check("the week answers when the week is the fuller one",
+          (round(pct, 4), key) == (0.92, "seven_day"), (pct, key))
+    pct, key = claude_keys.fullest_window(key_record("A", five=80.0, seven=10.0))
+    check("and the session when it is", (round(pct, 4), key) == (0.8, "five_hour"), (pct, key))
+    # A LOCKED WINDOW IS FULL whatever percentage is printed under it -- the precedence
+    # `state` already uses, and the one case where the number is not the fact.
+    pct, _ = claude_keys.fullest_window(key_record("A", five=0.0, seven=0.0, locked="exceeded"))
+    check("a locked window is full at 0%", pct == 1.0, pct)
+
+    # THE EMPTIEST ACCOUNT ACROSS THE POOL. The gate is asking whether ANY subscription can
+    # take the work, so three accounts at 99% and one at 4% is a box with room.
+    got = claude_keys.emptiest([key_record("A", five=99.0, seven=99.0),
+                                key_record("B", five=4.0, seven=8.0)], now=CLAUDE_NOW)
+    check("the account with the most room speaks for the box",
+          got and round(got[0], 4) == 0.08 and got[3] == "B", got)
+    got = claude_keys.emptiest([key_record("A", five=99.0, seven=20.0),
+                                key_record("B", five=80.0, seven=8.0)], now=CLAUDE_NOW)
+    check("and the box is only at 80% once every account is", got and round(got[0], 4) == 0.8,
+          got)
+    check("it says when that window refills, so the wait can be named",
+          got and got[1] == "five_hour" and 3500 < got[2] <= 3600, got)
+
+    # UNREADABLE IS NOT EMPTY AND NOT FULL. An outage at Anthropic must be able neither to stop
+    # the box nor to uncap it, so such an account is set aside and the callers fail open.
+    check("a key that could not be read contributes nothing",
+          claude_keys.emptiest([key_record("A", state="unreachable")]) is None)
+    check("and neither does an empty pool", claude_keys.emptiest([]) is None)
+
+
+def test_a_new_conversation_waits_for_the_refill_instead_of_being_refused():
+    print("holds: a new conversation stands down at 90%")
+    case, _ = branch_directive_case("hold-new", "hey max, why is my save corrupt?")
+    conv = case.rows("SELECT * FROM conversation")[0]
+
+    # NINETY PER CENT OF THE WEEK, on the only account there is.
+    hold_case(case, [key_record("only", five=10.0, seven=91.0)])
+    check("no turn is made", case.watcher.create_turn(conv) is None,
+          case.rows("SELECT * FROM turn"))
+
+    # AND THE MESSAGE IS LEFT EXACTLY AS IT ARRIVED. Unclaimed, ungated and unmarked is what
+    # brings it back: pending_messages selects on `turn_id IS NULL AND gate IS NULL`, so
+    # gating it -- which is how every OTHER decline in this file records itself -- would be
+    # the one thing that made the wait permanent.
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    check("the message is not claimed", msg["turn_id"] is None, msg["turn_id"])
+    check("and not gated, which is what lets a later pass pick it up",
+          msg["gate"] is None, (msg["gate"], msg["gate_reason"]))
+    check("nothing was said to anybody", case.rows("SELECT * FROM outbound") == [],
+          case.rows("SELECT * FROM outbound"))
+    # NOR IS THE ACKNOWLEDGEMENT SENT. mark_working sits below the hold in create_turn, and an
+    # "I am working on this" put on a message nothing is working on is worse than silence.
+    check("and no reaction was queued either",
+          case.rows("SELECT * FROM outbound WHERE action='react'") == [], None)
+
+    # THE WINDOW TURNS OVER, and the pass after it does the work with no prompting.
+    case.watcher._claude = StubClaudeKeys([key_record("only", five=10.0, seven=12.0)])
+    created = case.watcher.claim_turns()
+    check("the ordinary sweep picks it up once the window refills", len(created) == 1, created)
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    check("on the very message that waited", msg["turn_id"] == created[0], dict(msg))
+
+
+def test_only_a_first_turn_waits_and_never_a_terminal_or_a_review():
+    print("holds: what the new-conversation hold may not touch")
+    case, fixture = branch_directive_case("hold-scope", "hey max, first question")
+    conv = case.rows("SELECT * FROM conversation")[0]
+    hold_case(case, [key_record("only", five=95.0, seven=95.0)])
+    check("the first turn waits", case.watcher.create_turn(conv) is None)
+
+    # A FOLLOW-UP DOES NOT. Somebody already in a conversation has been told the box is
+    # working; going quiet on them mid-exchange is a worse failure than a slow first answer.
+    case.db_exec("INSERT INTO turn(conversation_id, seq, status, queued_at)"
+                 " VALUES(?,1,'done',?)", (conv["id"], ffwatch.now_iso()))
+    check("a conversation that has already run a turn is not held",
+          case.watcher.new_conversation_held(conv) is False)
+
+    # AND A LOCAL PROMPT CANNOT BE. submit() raises when create_turn returns None, so a hold
+    # there is an error at somebody's terminal rather than a wait -- and nothing would ever
+    # come back for it, because no poller offers a shell conversation a second time.
+    case.db_exec("UPDATE conversation SET kind='shell' WHERE id=?", (conv["id"],))
+    case.db_exec("DELETE FROM turn WHERE conversation_id=?", (conv["id"],))
+    local = case.rows("SELECT * FROM conversation")[0]
+    check("a shell prompt runs whatever the window says",
+          case.watcher.new_conversation_held(local) is False)
+
+    # A REVIEW IS NOT HELD HERE EITHER. It has its own, lower hold in poll_github, applied
+    # before the pull request is fetched; by the time one reaches create_turn the branch is
+    # adopted and the comment consumed, and holding it then would strand both.
+    case.db_exec("UPDATE conversation SET kind=? WHERE id=?", (ffwatch.GITHUB_KIND, conv["id"]))
+    review = case.rows("SELECT * FROM conversation")[0]
+    check("nor is a review, which was gated at its own ingress",
+          case.watcher.new_conversation_held(review) is False)
+
+
+def test_a_hold_that_cannot_read_the_windows_runs_the_work():
+    print("holds: fail open")
+    case, _ = branch_directive_case("hold-open", "hey max, another question")
+    conv = case.rows("SELECT * FROM conversation")[0]
+    # AN OUTAGE AT ANTHROPIC MUST NOT BE ABLE TO STOP THE BOX. Every unreadable path -- a key
+    # set aside, an empty pool, a reader that raises -- runs the work.
+    hold_case(case, [key_record("only", state="unreachable")])
+    check("an unreadable account does not hold anything",
+          case.watcher.new_conversation_held(conv) is False)
+
+    class Exploding:
+        def read(self, now=None):
+            raise RuntimeError("no route to Anthropic")
+
+    case.watcher._claude = Exploding()
+    check("and neither does a reader that raises",
+          case.watcher.new_conversation_held(conv) is False)
+
+    # TURNING THE HOLD OFF PUTS THE BOX BACK to never reading the windows at all, which is what
+    # a one-account box did before any of this existed.
+    case.watcher._claude = StubClaudeKeys([key_record("only", five=99.0, seven=99.0)])
+    case.watcher.cfg["claude"] = {"new_conversation_hold_pct": None, "review_hold_pct": None}
+    check("a null threshold is no hold", case.watcher.new_conversation_held(conv) is False)
+    check("and nothing was read to find that out", case.watcher._claude.reads == 0)
+
+
+def test_a_codereview_trigger_waits_in_the_cursor_and_runs_when_the_window_refills():
+    print("#codereview: held at 75%, not refused")
+    case = Case("hold-review")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(5501, 41, "#codereview", stamp="2026-09-06T12:00:00Z")
+
+    # SEVENTY-FIVE PER CENT HOLDS A REVIEW AND NOT A CONVERSATION. This account is over the
+    # review line and well under the other one, which is the whole reason there are two.
+    hold_case(case, [key_record("only", five=10.0, seven=78.0)])
+    check("no review starts", case.watcher.poll_github() == [], None)
+
+    # AND NOTHING IS SAID. A refusal is what this replaced: the operator would have had to
+    # notice it and type the trigger again once the window came back.
+    check("nothing is posted on the pull request", GH_STATE["posted"] == [], GH_STATE["posted"])
+    check("no reaction is queued either", GH_STATE["reactions"] == [], GH_STATE["reactions"])
+    check("no conversation is opened", case.rows("SELECT * FROM conversation") == [], None)
+
+    since, seen, etag, held = case.watcher.read_github_cursor()
+    check("the comment is recorded as held, not as seen",
+          held == ["5501"] and "5501" not in seen, (held, seen))
+    check("and the cursor does not move past it, which is what brings it back",
+          since <= "2026-09-06T12:00:00Z", since)
+    # THE ETAG IS DROPPED WHILE A HOLD IS IN FORCE. A conditional request answers "nothing has
+    # changed" until somebody types, and what has to change here is the SUBSCRIPTION.
+    check("the etag is cleared so the next poll asks unconditionally", etag is None, etag)
+
+    # A SECOND POLL, WITH NOBODY TYPING ANYTHING, still holds rather than 304s past it.
+    GH_STATE["not_modified"] = 0
+    check("still held on the next poll", case.watcher.poll_github() == [], None)
+    check("and GitHub was actually asked, not answered 304",
+          GH_STATE["not_modified"] == 0, GH_STATE["not_modified"])
+
+    # THE WEEK TURNS OVER. Nobody re-types the trigger; the poll that follows starts the review.
+    case.watcher._claude = StubClaudeKeys([key_record("only", five=10.0, seven=12.0)])
+    created = case.watcher.poll_github()
+    check("the review starts on its own once the window refills", len(created) == 1, created)
+    conv = case.rows("SELECT * FROM conversation WHERE kind='github_pr'")
+    check("on the pull request's own branch, exactly as an unheld trigger would",
+          len(conv) == 1 and conv[0]["branch"] == "loth/pr-branch", conv)
+    since, seen, etag, held = case.watcher.read_github_cursor()
+    check("and the comment moves from held to seen",
+          held == [] and "5501" in seen, (held, seen))
+    check("so a third poll does not review it twice",
+          case.watcher.poll_github() == [], None)
+
+
+def test_a_strangers_trigger_is_ignored_rather_than_held():
+    print("#codereview: a hold is not a way in")
+    case = Case("hold-stranger")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(5601, 41, "#codereview", author=999999, login="passerby")
+    hold_case(case, [key_record("only", five=10.0, seven=99.0)])
+
+    check("nothing starts", case.watcher.poll_github() == [], None)
+    _, seen, _, held = case.watcher.read_github_cursor()
+    # DECIDED ONCE AND FOR GOOD. Holding it would put a stranger's comment in a list this box
+    # re-reads unconditionally every minute for as long as the window is spent, and would
+    # answer it the moment the window came back.
+    check("a stranger's trigger is seen and finished with, never held",
+          held == [] and "5601" in seen, (held, seen))
+    check("and GitHub is told nothing, which is the point",
+          GH_STATE["posted"] == [], GH_STATE["posted"])
+
+
 # --- the evictable tier (design/ffbox_warm_branches_design.txt) --------------------------------
 #
 # The held pool warms ONE branch per class, and pool_claim_for matches the branch exactly -- so
@@ -14367,6 +14577,12 @@ def main():
         test_the_chosen_account_reaches_ffbox_as_a_name_and_lands_on_the_run,
         test_a_warm_container_bills_the_account_it_was_staged_with,
         test_a_box_with_one_account_is_left_exactly_as_it_was,
+        test_the_box_is_full_only_once_its_emptiest_account_is,
+        test_a_new_conversation_waits_for_the_refill_instead_of_being_refused,
+        test_only_a_first_turn_waits_and_never_a_terminal_or_a_review,
+        test_a_hold_that_cannot_read_the_windows_runs_the_work,
+        test_a_codereview_trigger_waits_in_the_cursor_and_runs_when_the_window_refills,
+        test_a_strangers_trigger_is_ignored_rather_than_held,
         test_every_agent_container_carries_its_class,
         test_the_transcript_is_shared_before_the_host_first_looks,
         test_the_verification_directory_is_left_deletable,

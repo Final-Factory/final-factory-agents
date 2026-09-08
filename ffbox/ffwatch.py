@@ -1095,6 +1095,36 @@ DEFAULTS = {
         # refresh runs on a thread and never on the launch path, so this bounds a background
         # cost rather than a turn.
         "timeout_secs": 10,
+
+        # -- WHAT WAITS INSTEAD OF RUNNING when the subscriptions are nearly spent -----------
+        #
+        # A DEFERRAL, NOT A REFUSAL, and that is the whole feature. Above these shares the
+        # request is left exactly where it arrived — a #codereview comment stays unread in the
+        # cursor, a new conversation's messages stay unclaimed and ungated — and the ordinary
+        # poll picks it up on the pass after the window turns over. Nobody is told no, nothing
+        # is dropped, and the work happens on the far side of the reset.
+        #
+        # BOTH ROLLING WINDOWS COUNT, whichever is fuller: the five-hour session and the week.
+        # A box three days into a spent week is as unable to do the work as one that has just
+        # burned its session, and the deferral is the same answer to both.
+        #
+        # AND IT IS THE EMPTIEST ACCOUNT THAT DECIDES, not the first: on a box spreading over
+        # three subscriptions the question is whether ANY of them can take this, so the hold
+        # only lands once all of them are over the line. See claude_keys.emptiest.
+        #
+        # TWO NUMBERS, BECAUSE THE TWO REQUESTS ARE NOT WORTH THE SAME. A review is work this
+        # box went looking for and can do just as well in four hours; somebody typing in a
+        # thread is waiting for an answer, and holding that is the last thing to give up. So
+        # reviews stand down first and by a wide margin, and conversations only at the point
+        # where a turn would be started into a window it could not finish in.
+        #
+        # A BOX THAT CANNOT READ ITS WINDOWS RUNS EVERYTHING, and that direction is chosen:
+        # an outage at Anthropic, a revoked scope or a network fault must not be able to
+        # silently stop every review and every new report on the box. null (or 0) on either
+        # key turns that hold off, and turning BOTH off is what restores the pre-2026-09-07
+        # behaviour of never reading the windows on a one-account box.
+        "review_hold_pct": 0.75,
+        "new_conversation_hold_pct": 0.9,
     },
 
     "sweep_limit": 25,
@@ -3781,6 +3811,10 @@ class Watcher:
         # not silence the message for the other -- an operator reading the journal wants to know
         # which pool could not be filled, not that some pool could not be.
         self._pool_squeeze_logged = {}
+        # WHAT IS CURRENTLY WAITING ON A REFILL, subject -> the sentence last logged for it, so
+        # a hold that lasts four hours costs one line going in and one coming out rather than
+        # one per poll. See log_hold.
+        self._holds_said = {}
         # Ids with a retirement thread in flight, so a keeper pass that comes round again while a
         # `docker stop` is still running does not start a second one. Dropped in the thread's
         # finally, which is what lets a later pass retry a stop that did not take.
@@ -5825,7 +5859,44 @@ class Watcher:
             " ORDER BY CAST(discord_id AS INTEGER)",
             (conv_id,))
 
+    def new_conversation_held(self, conv):
+        """Is this a conversation's FIRST turn, arriving with no subscription left to run it?
+
+        THE MESSAGES ARE LEFT EXACTLY AS THEY ARE — unclaimed, ungated, unmarked — so
+        claim_turns offers this conversation again on every pass and the turn is created on
+        the one after the window turns over. Nothing is dropped and nothing is refused; the
+        person who wrote it simply gets their answer later.
+
+        ONLY THE FIRST TURN. A follow-up is somebody already in a conversation this box has
+        acknowledged and told it was working, and going quiet on them mid-exchange is a worse
+        failure than a slow first answer.
+
+        AND ONLY THE ONE THE POLLER WILL ASK ABOUT AGAIN. A local prompt cannot be held:
+        submit() raises when create_turn returns None, so a hold there is an error at somebody's
+        terminal rather than a wait. A review cannot be held here either — it has its own,
+        lower hold in poll_github, applied before the pull request is even fetched, and by the
+        time it reaches this method the branch is adopted and the comment consumed.
+
+        NOTHING ABOVE THIS LINE. The acknowledgement (mark_working) and the engagement gate's
+        model call both sit below it, and both would be work done for a turn that is not
+        going to happen — the second of them on the very subscription this is protecting.
+        """
+        if is_local_conversation(conv) or conv["kind"] == GITHUB_KIND:
+            return False
+        if self.db.scalar("SELECT COUNT(*) FROM turn WHERE conversation_id=?",
+                          (conv["id"],), 0):
+            return False
+        _, why = self.claude_hold("new")
+        self.log_hold(f"conversation {conv['id']}", why)
+        return bool(why)
+
     def create_turn(self, conv):
+        # THE ONLY THING ABOVE THE MARK. A conversation held for want of subscription is left
+        # untouched — no mark, no gate, no classifier call — because claim_turns has to be able
+        # to offer it again unchanged once the window refills.
+        if self.new_conversation_held(conv):
+            return None
+
         # THE MARK GOES ON BEFORE THE SELECTOR, and this is the only thing above resettle().
         #
         # always_a_turn() is the harness's own always-answer list, and for a conversation that
@@ -8587,6 +8658,65 @@ class Watcher:
             return False
         return len(claude_keys.claude_token_pool()) > 1
 
+    def claude_hold_pct(self, what):
+        """The configured share for one hold, or None when that hold is off.
+
+        Anything that is not a number strictly above zero turns the hold off, which is how
+        `null`, `0` and a hand-edited typo all end up meaning the same safe thing: run the
+        work. A value at or above 1.0 is left alone rather than clamped — it is unreachable
+        before the window is spent, which is a legitimate way to say "only when exhausted".
+        """
+        key = {"review": "review_hold_pct", "new": "new_conversation_hold_pct"}[what]
+        try:
+            pct = float(self.claude_cfg().get(key))
+        except (TypeError, ValueError):
+            return None
+        return pct if pct > 0.0 else None
+
+    def claude_holds(self):
+        """Is either hold configured? What decides whether the windows are read at all."""
+        return any(self.claude_hold_pct(w) is not None for w in ("review", "new"))
+
+    def claude_hold(self, what):
+        """(seconds, why) — how long a `what` request should wait, or (0, "") to run now.
+
+        `seconds` is when the offending window refills, so a caller with somewhere to put it
+        can say how long the wait is rather than only that there is one.
+
+        FAIL OPEN AT EVERY STEP. The hold is off, or the windows could not be read, or the
+        emptiest account is under the line: all three run the work. The only path that holds
+        is a reading that came back and said there is no room.
+        """
+        cap = self.claude_hold_pct(what)
+        if cap is None:
+            return 0, ""
+        got = claude_keys.emptiest(self.claude_records())
+        if got is None:
+            return 0, ""
+        pct, key, secs, label = got
+        if pct < cap:
+            return 0, ""
+        window = "five-hour session" if key == "five_hour" else "weekly window"
+        return int(secs), (f"{label} is {pct:.0%} through its {window}, at or over the "
+                           f"{cap:.0%} hold; it refills in {claude_keys._rough(secs)}")
+
+    def log_hold(self, subject, why):
+        """Say a hold ONCE, and say when it lifts.
+
+        Both gates are asked on a poll — every minute for a review, every pass for a
+        conversation — and a window stays spent for hours. Logging per ask is how a real line
+        becomes wallpaper; the reaper's `_held_logged` is here for the same reason and after
+        the same live incident (33,644 identical lines in twenty-one hours, 2026-09-01).
+        """
+        if not why:
+            if self._holds_said.pop(subject, None):
+                log(f"{subject}: the hold has lifted; it goes ahead now")
+            return
+        if self._holds_said.get(subject) == why:
+            return
+        self._holds_said[subject] = why
+        log(f"{subject}: waiting for the subscription rather than running now — {why}")
+
     def claude_records(self):
         """Every account's windows, as ClaudeKeys.read() gives them. [] if none can be read.
 
@@ -8594,8 +8724,14 @@ class Watcher:
         per staging costs one round of requests a quarter-hour and dictionary lookups after
         that. Never raises: a box that cannot reach Anthropic still has to run turns, and the
         callers all read [] as "nothing to choose on".
+
+        READ FOR TWO REASONS NOW, and the second one is why a one-account box can end up
+        asking. Spreading needs the numbers to choose between accounts and a box with one has
+        nothing to choose; the holds need them to answer "is there room at all", which is a
+        question a single subscription has just as much as three do. Turning both holds off
+        puts such a box back to making no outbound request.
         """
-        if not self.claude_spreads():
+        if not (self.claude_spreads() or self.claude_holds()):
             return []
         try:
             return self._claude.read()
@@ -8611,6 +8747,12 @@ class Watcher:
         the same thing. That keeps a one-account box's command line, environment and run rows
         exactly as they were.
         """
+        # ASKED BEFORE THE READING AND NOT AFTER IT. claude_records() answers a box with one
+        # account now, because the holds want the numbers — so "no records" is no longer the
+        # same question as "nothing to choose between", and reading the first as the second
+        # would start naming an account on the command line of a box that never named one.
+        if not self.claude_spreads():
+            return None, ""
         records = self.claude_records() if records is None else records
         if not records:
             return None, ""
@@ -8630,7 +8772,7 @@ class Watcher:
         if not self.claude_spreads():
             return [f"claude accounts: {len(pool)} — not spreading"
                     f"{' (claude.spread is off)' if len(pool) > 1 else ''}; "
-                    f"every turn is billed to {pool[0][0]}"]
+                    f"every turn is billed to {pool[0][0]}"] + self.claude_hold_status()
         records = self.claude_records()
         chosen, why = self.pick_claude_key(records)
         cap = float(self.claude_cfg().get("five_hour_cap"))
@@ -8654,6 +8796,27 @@ class Watcher:
                        + "  ".join(bits)
                        + (f"  [{rec['error']}]" if rec.get("error") else "")
                        + gate)
+        return out + self.claude_hold_status()
+
+    def claude_hold_status(self):
+        """What is waiting on a refill rather than running, for `ffwatch status`.
+
+        Both holds are listed even when neither is biting, because "nothing has started for
+        two hours" is exactly the moment somebody goes looking for this and an absent line
+        answers nothing. [] only when neither hold is configured at all.
+        """
+        wanted = [(what, label) for what, label in (("review", "#codereview"),
+                                                    ("new", "new conversations"))
+                  if self.claude_hold_pct(what) is not None]
+        if not wanted:
+            return []
+        out = ["claude holds: a request over the line waits for the window to refill "
+               "rather than being refused"]
+        for what, label in wanted:
+            cap = self.claude_hold_pct(what)
+            _, why = self.claude_hold(what)
+            out.append(f"  {label:<18} hold at {cap:.0%} — "
+                       + (f"WAITING: {why}" if why else "clear, running now"))
         return out
 
     @staticmethod
@@ -12377,27 +12540,37 @@ class Watcher:
         return os.path.join(self.state_dir, "github.cursor.json")
 
     def read_github_cursor(self):
-        """(since, seen, etag). How far the poller has read, what it acted on, and the ETag.
+        """(since, seen, etag, held). How far the poller has read and what it did with it.
 
         TWO THINGS BECAUSE ONE IS NOT ENOUGH. `since` is a timestamp and GitHub's filter is
         inclusive, so the comment that set it comes back on the next sweep; several comments can
         also share a second. `seen` is the ids already handled, which is what actually makes this
         idempotent, and `since` only bounds how much has to be re-read to consult it.
+
+        `held` IS THE THIRD STATE A COMMENT CAN BE IN, and the reason it needs recording is the
+        ETag. A trigger waiting on a refill is deliberately NOT in `seen` — that is what brings
+        it back — but a conditional request answers 304 until somebody types, and a hold has to
+        lift on its own clock rather than on an unrelated comment. So the poll knows to ask
+        unconditionally while this list is non-empty, and only while it is.
         """
         try:
             with open(self.github_cursor_path, "r", encoding="utf-8") as fh:
                 got = json.load(fh)
             return ((got.get("since") or None), [str(i) for i in (got.get("seen") or [])],
-                    got.get("etag") or None)
+                    got.get("etag") or None, [str(i) for i in (got.get("held") or [])])
         except (OSError, json.JSONDecodeError, AttributeError):
-            return None, [], None
+            return None, [], None, []
 
-    def write_github_cursor(self, since, seen, etag=None):
+    def write_github_cursor(self, since, seen, etag=None, held=None):
         # BOUNDED, because this file is rewritten every poll and a repository accumulates
         # comments forever. The tail is what a re-read of `since` can possibly show us again.
+        # `held` is NOT trimmed: it is what is waiting to be acted on rather than a record of
+        # what already was, it empties itself the moment the window refills, and it is bounded
+        # in practice by how many triggers an operator can type inside one spent window.
         tmp = f"{self.github_cursor_path}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"since": since, "seen": [str(i) for i in seen][-500:], "etag": etag}, fh)
+            json.dump({"since": since, "seen": [str(i) for i in seen][-500:], "etag": etag,
+                       "held": [str(i) for i in (held or [])]}, fh)
         os.replace(tmp, self.github_cursor_path)
 
     def github_review_pool(self):
@@ -12438,7 +12611,7 @@ class Watcher:
             if gh.token_error:
                 log(f"#codereview: no poll — {gh.token_error}")
             return []
-        since, seen, etag = self.read_github_cursor()
+        since, seen, etag, held = self.read_github_cursor()
         # FROM NOW, NOT FROM THE BEGINNING OF THE REPOSITORY. With no cursor the filter is
         # absent and GitHub hands back every comment it has, none of which is in `seen` -- so a
         # box turning this on for the first time would answer every `#codereview` anybody has
@@ -12447,12 +12620,18 @@ class Watcher:
         # answer: record the moment and start from it.
         if since is None:
             since = now_iso()
-            self.write_github_cursor(since, seen, None)
+            self.write_github_cursor(since, seen, None, [])
             log(f"#codereview: watching {gh.repo} from now; comments before this moment are "
                 f"history and will not start a review")
             return []
         try:
-            comments, etag = gh.list_issue_comments(since=since, etag=etag)
+            # UNCONDITIONALLY WHILE SOMETHING IS HELD. A 304 costs no rate limit and is the
+            # whole reason this can poll every minute — but it also means "nothing has changed
+            # since you last asked", and a trigger waiting on a window refilling needs the
+            # opposite question answered: has the SUBSCRIPTION changed. Dropping the ETag for
+            # as long as a hold is in force spends one of an hourly 5000 a minute, and only
+            # while the box has no allowance to run the review with anyway.
+            comments, etag = gh.list_issue_comments(since=since, etag=(None if held else etag))
         except GitHubError as exc:
             log(f"#codereview: could not read comments: {exc}")
             return []
@@ -12462,13 +12641,20 @@ class Watcher:
         if comments is NOT_MODIFIED:
             return []
         seen_set = set(seen)
-        newest, created = since, []
+        newest, created, holding = since, [], []
         for comment in comments:
             comment_id = str(comment.get("id") or "")
             stamp = comment.get("updated_at") or ""
             if stamp and (newest is None or stamp > newest):
                 newest = stamp
             if not comment_id or comment_id in seen_set:
+                continue
+            # THE HOLD IS DECIDED BEFORE ANYTHING IS SPENT ON THIS COMMENT — before the pull
+            # request is fetched, before a branch is adopted, before a conversation exists.
+            # A held comment is left in none of those states, which is what lets the next poll
+            # walk it through the ordinary path from the top as though it had just arrived.
+            if self.review_held(comment, triggers):
+                holding.append((comment_id, stamp))
                 continue
             try:
                 turn_id = self.take_review_trigger(gh, comment, triggers, agent_class)
@@ -12483,8 +12669,46 @@ class Watcher:
             seen.append(comment_id)
             if turn_id:
                 created.append(turn_id)
-        self.write_github_cursor(newest, seen, etag)
+        if holding:
+            # THE CURSOR DOES NOT MOVE PAST SOMETHING IT HAS NOT ACTED ON. `since` is the only
+            # thing that brings a comment back — `seen` can only recognise one that GitHub has
+            # already handed over again — so advancing it past a held trigger would lose that
+            # trigger for good the moment a newer comment arrived. GitHub's filter is
+            # inclusive, so pinning it AT the oldest held stamp is enough to re-read it.
+            stamps = [stamp for _, stamp in holding if stamp]
+            if stamps:
+                newest = min(stamps + ([newest] if newest else []))
+            # AND THE ETAG GOES WITH IT. It belongs to a response taken at a `since` this poll
+            # has just rewound behind, so keeping it would have the next poll answer 304 about
+            # a question it never asked.
+            etag = None
+        for gone in set(held) - {cid for cid, _ in holding}:
+            self.log_hold(f"#codereview comment {gone}", "")
+        self.write_github_cursor(newest, seen, etag, [cid for cid, _ in holding])
         return created
+
+    def review_held(self, comment, triggers):
+        """Should this comment wait for a refill rather than start a review now?
+
+        THE TWO CHECKS THAT COST NOTHING, AND ONLY THOSE: the comment carries a trigger word,
+        and an operator wrote it. Whether the pull request is open, in this repository and on
+        an adoptable branch is take_review_trigger's question and takes a request to answer —
+        asking it here would spend one per comment per poll for as long as the hold lasts, and
+        throw the answer away each time. A trigger on a pull request that turns out closed is
+        refused when the hold lifts, which is the same answer arriving later.
+
+        A STRANGER'S TRIGGER IS NOT HELD, it is ignored, and it has to reach the ignoring code
+        to be ignored in the silence that code is written for.
+        """
+        body = (comment.get("body") or "").lower()
+        if not any(trigger in body for trigger in triggers):
+            return False
+        author = comment.get("author") or comment.get("user") or {}
+        if not is_github_operator(self.cfg, str(author.get("id") or "")):
+            return False
+        _, why = self.claude_hold("review")
+        self.log_hold(f"#codereview comment {comment.get('id')}", why)
+        return bool(why)
 
     def take_review_trigger(self, gh, comment, triggers, agent_class):
         """One comment, decided. The turn id when a review started, else None.
