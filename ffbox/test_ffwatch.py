@@ -13715,6 +13715,25 @@ def test_the_reconcile_re_runs_the_gate_rather_than_waiting_it_out():
     # column went on naming a harness fault that no longer existed, on the conversation list and
     # in the private reply footer both, where it reads as "ffbox is broken" rather than "the
     # agent left you a question".
+    # THE REASON IS THE AGENT'S ONLY WHEN THE AGENT ANSWERED. `confidence_reason` is written in
+    # both directions -- this case's says why it was NOT confident, and conversation 94's said
+    # at length why it WAS -- so a verdict that simply omits `confident` must not have its prose
+    # quoted as the case against itself.
+    quiet = dict(CONFIDENT_VERDICT)
+    quiet.pop("confident", None)
+    quiet["confidence_reason"] = "Both fixes are one-line changes covered by real regression tests"
+    mute = bug_case("reconcilemute", venue="private")
+    git_origin(mute)
+    escalate(mute, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY, verdict=quiet)
+    check("a verdict that never said whether it was confident is not quoted for the case it made",
+          "one-line changes" not in (_latest_run(mute)["no_pr_reason"] or "")
+          and "did not say whether it was confident"
+          in (_latest_run(mute)["no_pr_reason"] or ""),
+          _latest_run(mute)["no_pr_reason"])
+    check("and one that answered no still speaks for itself",
+          "I could not reproduce the report" in (_latest_run(shy)["no_pr_reason"] or ""),
+          _latest_run(shy)["no_pr_reason"])
+
     stale = "the harness could not tell which branch this work is based on: it does not descend"
     shy_run = _latest_run(shy)
     shy.watcher.db.execute("UPDATE run SET no_pr_reason=?, pr_base=NULL WHERE id=?",
