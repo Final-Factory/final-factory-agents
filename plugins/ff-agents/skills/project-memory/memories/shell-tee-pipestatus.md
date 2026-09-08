@@ -15,3 +15,8 @@ what happened. Confirmed as a real anti-pattern in this codebase's own audit too
 **How to apply:** wrap the pipe in `set +e` / `set -e` (or `set -o pipefail` scoped to just that
 line) instead of appending `|| true` to a `| tee` pipeline — capture the real command's exit
 status explicitly (`PIPESTATUS[0]` in bash) before deciding whether to tolerate the failure.
+
+A related trap: `producer | grep -q pattern` can make `grep` exit as soon as it sees a match.
+On a large producer, that closes the pipe and the producer may report `SIGPIPE`, so `pipefail`
+turns a successful search into a failed pipeline. When the producer's completion matters, consume
+all lines (for example, `grep pattern >/dev/null`) instead of using `grep -q`.
