@@ -2678,9 +2678,20 @@ class App:
                 continue
             trows = []
             for w in rec["windows"]:
+                # THE COUNTDOWN SURVIVES THE LOCK. Until 2026-09-07 a locked window printed the
+                # lock INSTEAD of its reset, so the page went quiet about when the allowance
+                # comes back at the one moment anybody is asking — a key that has run out reads
+                # `locked: rejected` and nothing else. Both are facts about the window and both
+                # fit in the cell; the lock is why it cannot be spent and the countdown is when
+                # that stops being true. "(remembered)" marks a time claude_keys carried over
+                # from the last reading that named one, because Anthropic's rejection reply
+                # need not repeat the reset headers.
                 note = fmt_reset(w["resets_at"])
+                if w.get("reset_remembered"):
+                    note += " (remembered)"
                 if w["locked"]:
-                    note = "locked: " + short(str(w["locked"]), 80)
+                    lock = "locked: " + short(str(w["locked"]), 80)
+                    note = note + " · " + lock if w["resets_at"] else lock
                 trows.append([w["label"], usage_bar(w["percent"]), note])
             if trows:
                 body.append(str(table(["window", "used", "resets"], trows)))
