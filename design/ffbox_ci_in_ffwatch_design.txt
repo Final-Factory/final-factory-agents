@@ -1,7 +1,8 @@
 ffbox: the CI lane inside ffwatch
 =================================
 
-Revision 1, 2026-09-08.
+Revision 2, 2026-09-08. Phase A landed; open question (a) is answered, and its answer promotes
+a section 5c mitigation from optional to required.
 
 Scope: delete the per-slot systemd supervisors and make ffwatch keep the CI runner pool the way
 it already keeps the agent pool -- one daemon, one keeper loop, a number in config.json instead
@@ -261,10 +262,11 @@ lets the ordinary serving pass carry them. There is no separate recovery path to
 
 This is the section the design exists for. Requirements 2 through 5.
 
-5a. THE THREE OBLIGATIONS, AND WHICH ONE AN UPDATE MAY WAIT FOR
+5a. THE FOUR OBLIGATIONS, AND WHICH OF THEM AN UPDATE MAY WAIT FOR
 
-A CI runner holds three different kinds of work, and they have wildly different durations. The
-mistake to avoid is treating them as one thing, because one of them is two hours long.
+A CI runner holds four different kinds of work, and they have wildly different durations. The
+mistake to avoid is treating them as one thing, because one of them is two hours long. Revision 1
+listed three; the fourth is what reading the workflow's own timeouts turned up.
 
     THE JOB          minutes to two hours. Owned by GitHub. Survives anything short of the
                      container dying. An update must never wait for this and must never end it.
@@ -274,17 +276,25 @@ mistake to avoid is treating them as one thing, because one of them is two hours
                      of these does not lose the job, but it does leave the job waiting, and
                      section 5c is about how long it can afford to.
 
+    AN UNASKED       up to about a minute. A container that has just taken a job and has not
+    QUESTION         yet reached its mirror-fetch step. Nothing is owed to it yet; in a minute
+                     something will be, with a 120-second fuse and a failed job on the end of it
+                     (section 5c). Bounded by how far into a job that step sits, not by the job.
+
     A TEARDOWN       seconds to a minute. The container has exited and the host still owes it:
                      post the check run, promote the cache entry, prune, delete the registration,
                      remove the staging directory. This is CI's `publishing` -- a host-side tail
                      that a `systemctl stop` genuinely loses, exactly as ffwatch's own
                      `publishing_count()` (ffwatch.py:14075) describes for an agent turn.
 
-So the CI contribution to `settling()` is the third of these and nothing else:
+So the CI contribution to `settling()` is the last two of these and nothing else:
 
     ci_publishing    CI containers that have exited and whose teardown has not completed.
+    ci_unanswered    CI containers whose job is under a minute old and has not been answered about
+                     its mirror fetch. Needed only while mitigation 3 of section 5c is absent;
+                     with a standalone answerer this stops being the update's problem at all.
 
-It joins `HOST_TAIL`. `ci_runners` is NOT counted, for the same reason `runs` is counted in
+Both join `HOST_TAIL`. `ci_runners` is NOT counted, for the same reason `runs` is counted in
 `settling()` but excluded from `HOST_TAIL`: the container survives the stop.
 
 5b. THE UPDATE SEQUENCE, AMENDED
@@ -341,32 +351,70 @@ Between step 5 and the daemon coming back up, a job with a `fetch.request` on di
 an answer nobody is there to give. Measured shape of that window: a cached image build alone is
 about 90 seconds (fact i), and the whole stop-to-start stretch runs to several minutes.
 
-THIS IS THE ONE PLACE WHERE THE MERGE MAKES SOMETHING WORSE, and it must be designed for rather
-than hoped about. Today the window is zero, because slot.sh is not in ffbox.target and never
-stops. Three mitigations, in order of how much they are worth:
+THIS IS THE ONE PLACE WHERE THE MERGE MAKES SOMETHING WORSE. Today the window is zero, because
+slot.sh is not in ffbox.target and never stops.
 
-  1. ANSWER BEFORE STOPPING. The drain in step 4 already has to run to completion. Extend it: any
-     CI container with an unanswered `fetch.request` or `artifact.request` gets served before the
-     daemon reports quiet. These are seconds of work and they are bounded by the number of live
-     jobs, so this costs the update almost nothing and removes most of the exposure. A request
-     the job writes DURING the window is not covered, which is what mitigation 2 is for.
+THE JOB'S TWO BUDGETS, READ FROM THE WORKFLOW rather than assumed. Revision 1 left these open and
+said the answer could invalidate the phasing. They live in the game repo, and this box has a
+mirror of it at /opt/ffcache/mirror/FinalFactory.git, which is where these came from:
 
-  2. BOUND THE WINDOW AND STATE IT. The job's wait budget is the constraint and it lives in the
-     game repo's main.yml, not here. Open question (a). Whatever it is, the design owes an
-     explicit inequality -- the maximum stop-to-start window must be comfortably under it -- and
-     a test that fails when a change to either side breaks it.
+    fetch.done      120 SECONDS. `.github/workflows/main.yml`, the "Wait for the host git mirror"
+                    step: `while [ ! -f "$OUT/fetch.done" ] && [ "$n" -lt 40 ]; do sleep 3; done`.
+                    On expiry it emits `::warning::the host did not answer in 120s; the checkout
+                    will likely fail` and runs actions/checkout anyway. LIKELY, not certainly:
+                    github.com came off the CI allowlist on 2026-08-31, so the checkout fetches
+                    from the mirror and succeeds only if the mirror already holds that commit from
+                    some earlier job's fetch. When it does not, THE JOB FAILS.
 
-  3. A STANDALONE ANSWERER IS THE FALLBACK IF 1 AND 2 ARE NOT ENOUGH. The mirror answer needs a
-     git fetch and a directory; it does not need the daemon. A tiny timer-driven script, in the
-     same family as reap.sh, could serve `fetch.request` for any CI staging directory that has
-     one. Not proposed for phase 1: it is a second implementation of the same protocol and
-     therefore a second thing to keep in step. It is written down here so that "we could not
-     have known" is not available later.
+    artifact.done   180 SECONDS. `.github/actions/ffghr-artifact-handoff/index.js`,
+                    `FFGHR_ARTIFACT_WAIT || 180`. On expiry it logs "no answer from the host
+                    within 180s; giving up and letting the job finish". NEVER FATAL by design: a
+                    missing artifact on a green run rather than a red one.
 
-THE ARTIFACT UPLOAD IS THE HARDER HALF OF THE SAME PROBLEM and mitigation 3 does not help it: it
-needs the Actions credential and the repository allowlist, and it must happen while the job is
-live. Mitigation 1 covers it, since a job that has asked is a job that is blocked and therefore
-still there when the drain looks.
+SO THE BINDING NUMBER IS 120 SECONDS AND THE PENALTY IS A FAILED JOB. The stop-to-start window
+does not fit inside it. This is not a margin to be careful with; it is an inequality that does not
+hold.
+
+WHAT MAKES IT TRACTABLE IS THAT THE WAIT HAPPENS ONCE, EARLY. The fetch step runs immediately
+before actions/checkout, so a job is exposed only during the first minute or so of its life. The
+population at risk on any one update is not "every running job" but "a job that took work in
+roughly the last minute" -- usually none, sometimes one. That is also what would make this nasty
+in practice rather than obvious: most updates would hurt nothing, and every so often a job would
+fail its checkout for a reason nobody would connect to a deploy that happened two minutes earlier.
+
+Three mitigations. Revision 1 ranked them and made the third optional; the numbers above say that
+was wrong.
+
+  1. ANSWER BEFORE STOPPING, AND HOLD FOR THE ONES ABOUT TO ASK. The drain already runs to
+     completion, so extend it: serve every outstanding `fetch.request` and `artifact.request`
+     before reporting quiet. Necessary and NOT sufficient, which revision 1 missed. A container
+     that went busy thirty seconds before the drain has not written its request yet and will write
+     it into the window, so the drain also has to hold for a CI container whose job has started
+     and has not yet been answered. That is the fourth obligation in 5a, and it is bounded by how
+     far into a job the fetch step sits -- about a minute -- rather than by the job.
+
+  2. BOUND THE WINDOW AND STATE IT. Still owed, and now with a number to state it against: the
+     stop-to-start window must be under 120 seconds, and today it is not. Open question (b) is the
+     interesting one now. If the window can honestly be brought under 120s, mitigation 1 becomes
+     the belt to its braces rather than the whole defence.
+
+  3. A STANDALONE ANSWERER, PROMOTED FROM FALLBACK TO REQUIRED. Revision 1 argued against it as "a
+     second implementation of the same protocol". That was wrong on the facts: it reimplements
+     nothing, it CALLS `ffghr_mirror_serve_request` (lib/mirror.sh:114) -- the same function
+     slot.sh calls today -- over any staging directory holding an unanswered `fetch.request`. A
+     timer at 15s sits well inside a 120-second budget and needs no daemon, no credential and no
+     state of its own. Perhaps twenty lines, in the same family as reap.sh and for the same reason
+     (5d): it is the part that has to work when ffwatch is not there.
+
+     It does NOT cover the artifact upload, which needs the Actions credential and the repository
+     allowlist. That one stays mitigation 1's, and it can, because its budget is 180s and its
+     failure is cosmetic.
+
+THE SHAPE THAT FALLS OUT is that the mirror answer stops being the daemon's job at all. Once a
+timer serves it, the daemon's CI half owns minting, the clocks, the cache decision, the artifact
+upload and teardown, and the one interaction that has both a hard deadline and a hard failure is
+handled by something that cannot go down with an update. That is a better design than revision
+1's, and it was the number that produced it rather than any amount of thinking about it.
 
 5d. WHAT HAPPENS IF THE DAEMON DOES NOT COME BACK
 
@@ -544,12 +592,19 @@ number requires root and kills jobs.
 12. Phasing
 -----------
 
-  A. OPTION B FIRST, AND SEPARATELY. Decouple the unit count from `pool.max`: enable a fixed set
-     of instances sized to `max_concurrent_runs`, and let the existing live re-read do the
-     limiting. Removes the root install and the restart that kills jobs, in an afternoon, with
-     no new failure modes. Everything below stays worth doing afterwards; nothing below is
-     blocked by doing this first. Fix the python3-per-poll cost (fact j) here, since this
-     multiplies it.
+  A. DONE, 2026-09-08, in 5d4efbc and cdc2da9. The unit count is decoupled from `pool.max`:
+     instances are sized to `max_concurrent_runs`, `ffgithubrunners slots N` is a config write
+     with no root and no restart, and the python3-per-poll re-read is guarded (fact j). Deployed
+     on Loth2400 the same evening: twelve units, ceiling 5, four jobs running throughout, none
+     interrupted.
+
+     WHAT IT TAUGHT THE REST OF THIS DESIGN. Slot numbers stopped meaning anything the moment the
+     units outnumbered the ceiling -- any supervisor may win the pool lock, so with max 5 the
+     runners land on 2, 3, 5, 8, wherever. The first version of the status view labelled a row
+     "headroom" because its NUMBER was above the ceiling and called slot 8 empty while it held a
+     registered runner. That is section 4a's argument, arriving on its own within ten minutes of
+     deployment: a slot number is not an identity, and the staging directory should not be keyed
+     by one.
 
   B. THE STAGING DIRECTORY MOVES TO THE CONTAINER NAME, and the supervisor label becomes an
      owner label. Both are small, both are prerequisites for adoption, and both can land while
@@ -574,15 +629,23 @@ number requires root and kills jobs.
 13. Open questions
 ------------------
 
-  a. WHAT IS THE JOB'S WAIT BUDGET? How long does the workflow wait on `fetch.done` and on
-     `artifact.done` before it gives up, and what does it do then? It lives in the game repo's
-     main.yml. Section 5c's inequality cannot be written until this number is known, and since
-     github.com left the CI allowlist on 2026-08-31 the "gives up and fetches from GitHub"
-     fallback the mirror code still describes in a comment may no longer exist. This is the one
-     open question that can invalidate the phasing.
+  a. ANSWERED, 2026-09-08, and moved into section 5c. 120 seconds for `fetch.done` and a failed
+     checkout on expiry; 180 seconds for `artifact.done` and a missing artifact on expiry. Read
+     out of the mirror at /opt/ffcache/mirror/FinalFactory.git, so no access to the game repo was
+     needed. It did not invalidate the phasing. It promoted mitigation 3 to required and added a
+     fourth obligation to 5a.
+
+     One thing it leaves behind: lib/mirror.sh's failure branch says it writes `fetch.done:
+     failed` so the job "stops waiting and goes to GitHub". github.com left the CI allowlist on
+     2026-08-31 and there is no longer anywhere to go. The comment is stale and the behaviour is
+     now "fail faster", which is still the right behaviour and the wrong sentence. Worth fixing
+     independently of any of this.
 
   b. HOW LONG IS THE STOP-TO-START WINDOW, MEASURED? Fact i is assembled from a comment and a
-     sequence, not from a stopwatch. It should be instrumented before phase E, not after.
+     sequence, not from a stopwatch. THIS IS NOW THE ONE THAT MATTERS: section 5c needs it under
+     120 seconds and believes it is not. Instrument it before phase D, not before phase E -- if it
+     turns out to be 30 seconds the design gets simpler, and if it is four minutes then mitigation
+     3 is load-bearing and should be built first.
 
   c. SHOULD THE CI KEEPER RUN WHEN THE AGENT LANE IS IN FAILSAFE? `keep_pool` returns early on
      `config_failsafe()`, `killed()` or `draining()`. Two of those three clearly apply to CI as
