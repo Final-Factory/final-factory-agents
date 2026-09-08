@@ -13733,14 +13733,20 @@ CLAUDE_NOW = 1_800_000_000.0
 
 class StubClaudeKeys:
     """Stands in for the reader. ClaudeKeys.read() is the only thing the daemon asks of it, and
-    the only thing it does is talk to Anthropic — which this suite never does."""
+    the only thing it does is talk to Anthropic — which this suite never does.
+
+    `forced` counts the calls that asked for a round trip rather than a cached answer, which is
+    what the spawn decisions are supposed to do and nothing else is.
+    """
 
     def __init__(self, records):
         self.records = records
         self.reads = 0
+        self.forced = 0
 
-    def read(self, now=None):
+    def read(self, now=None, force=False):
         self.reads += 1
+        self.forced += 1 if force else 0
         return list(self.records)
 
 
@@ -14264,6 +14270,71 @@ def test_a_held_conversation_costs_one_gate_call_and_not_one_per_pass():
           len(case.watcher.claim_turns()) == 1, case.rows("SELECT * FROM turn"))
     check("and the conversation is no longer remembered as held",
           conv["id"] not in case.watcher._hold_decided, case.watcher._hold_decided)
+
+
+def test_a_spawn_decision_asks_anthropic_rather_than_the_cache():
+    """The one decision on this box that a stale reading gets wrong and nothing later fixes.
+
+    An hour-old number is fine for choosing which account pays -- the next turn re-chooses --
+    but a conversation held on a window that has since refilled sits there until something else
+    happens to wake it, and one started on a window that has since filled up runs into a
+    mid-flight cutoff. So both spawn decisions ask for a round trip.
+    """
+    print("holds: the decision is worth a round trip")
+    case, _ = held_and_addressed("hold-fresh")
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("the new-conversation decision asks Anthropic",
+          case.watcher.new_conversation_held(conv) and case.watcher._claude.forced == 1,
+          (case.watcher._claude.reads, case.watcher._claude.forced))
+
+    # AND THE REVIEW INGRESS DOES THE SAME, on every poll for as long as a trigger is held:
+    # what has to change there is the subscription, and only a fresh reading can say it has.
+    review = Case("hold-fresh-review")
+    origin, host = git_origin(review)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(review)
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(5701, 41, "#codereview")
+    hold_case(review, [key_record("only", five=10.0, seven=95.0)])
+    check("no review starts", review.watcher.poll_github() == [], None)
+    check("and the trigger was decided on a fresh reading",
+          review.watcher._claude.forced == 1, review.watcher._claude.forced)
+    check("a second poll asks again, because the window is what has to change",
+          review.watcher.poll_github() == [] and review.watcher._claude.forced == 2,
+          review.watcher._claude.forced)
+
+    # EVERYTHING ELSE STILL TAKES THE CACHED ANSWER. Which account pays is re-chosen on the
+    # next turn either way, and a forced read there would put a round trip on every launch,
+    # every staging and every gate call.
+    with claude_pool(CLAUDE_CODE_OAUTH_TOKEN1="sk-ant-oat01-a",
+                     CLAUDE_CODE_OAUTH_TOKEN2="sk-ant-oat01-b"):
+        picker = Case("hold-fresh-pick")
+        picker.watcher._claude = StubClaudeKeys(
+            [key_record("A", five=10.0, seven=10.0), key_record("B", five=20.0, seven=20.0)])
+        picker.watcher.pick_claude_key()
+        check("choosing an account does not force one",
+              picker.watcher._claude.reads == 1 and picker.watcher._claude.forced == 0,
+              (picker.watcher._claude.reads, picker.watcher._claude.forced))
+
+
+def test_the_daemon_leaves_its_readings_where_ffweb_can_find_them():
+    print("holds: the shared store")
+    import inspect
+    src = inspect.getsource(ffwatch.Watcher.__init__)
+    # THE WIRING, asserted at the source rather than by reading a file: constructing a real
+    # ClaudeKeys here would put this suite on the internet, which is the one thing it never is.
+    # What the store DOES is proven end to end in test_ffweb.py.
+    check("the daemon's reader is given the shared store",
+          "claude_keys.CLAUDE_USAGE_STORE" in src and "store=os.path.join(self.state_dir"
+          in src, src[src.find("ClaudeKeys("):][:400])
+    check("which sits in the state directory ffweb also reads",
+          claude_keys.CLAUDE_USAGE_STORE == "claude-usage.json",
+          claude_keys.CLAUDE_USAGE_STORE)
+    # A FORCED READ IS A SHORTER TTL, NOT NO TTL. One claim_turns pass can walk ten new
+    # conversations and one poll can carry several held triggers.
+    check("a forced reading is still floored",
+          0 < claude_keys.CLAUDE_FORCE_FLOOR_SECS < claude_keys.CLAUDE_USAGE_TTL_SECS,
+          (claude_keys.CLAUDE_FORCE_FLOOR_SECS, claude_keys.CLAUDE_USAGE_TTL_SECS))
 
 
 def test_only_a_first_turn_waits_and_never_a_terminal_or_a_review():
@@ -14862,6 +14933,8 @@ def main():
         test_a_held_discord_conversation_is_told_the_answer_is_coming,
         test_the_break_notice_waits_on_the_gate_rather_than_getting_ahead_of_it,
         test_a_held_conversation_costs_one_gate_call_and_not_one_per_pass,
+        test_a_spawn_decision_asks_anthropic_rather_than_the_cache,
+        test_the_daemon_leaves_its_readings_where_ffweb_can_find_them,
         test_only_a_first_turn_waits_and_never_a_terminal_or_a_review,
         test_a_hold_that_cannot_read_the_windows_runs_the_work,
         test_a_codereview_trigger_waits_in_the_cursor_and_runs_when_the_window_refills,

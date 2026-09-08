@@ -1085,11 +1085,21 @@ DEFAULTS = {
         # to use the same account, and it absorbs the age of the reading — which is up to
         # `refresh_secs` old by construction.
         "five_hour_cap": 0.6,
-        # HOW OFTEN THE WINDOWS ARE RE-READ. Fifteen minutes, matching ffweb's own TTL and for
-        # the same reason: the windows being measured are five hours and seven days long, so a
-        # quarter-hour-old reading answers this question exactly as well as a fresh one, and
-        # the reading is not free — a key whose usage document is closed to it (which is every
-        # `claude setup-token` key) is priced at one token of Haiku per refresh.
+        # HOW OFTEN THE WINDOWS ARE RE-READ WHEN NOBODY ASKS FOR A FRESH ONE. A quarter of an
+        # hour: the windows being measured are five hours and seven days long, so a reading
+        # that old answers this question exactly as well as a fresh one, and the reading is not
+        # free — a key whose usage document is closed to it (which is every `claude
+        # setup-token` key) is priced at one token of Haiku per refresh.
+        #
+        # THE SPAWN DECISIONS DO NOT WAIT ON IT. Whether a new conversation or a code review
+        # starts now or waits for the window is the one decision a stale reading gets wrong in
+        # a way nothing later corrects, so those ask for a round trip of their own; see
+        # claude_hold. This is the floor under everything else — the account each turn is
+        # billed to, a staging, the gate's own key — where the next turn re-decides anyway.
+        #
+        # It is no longer ffweb's number too. That page holds its reading for an hour and now
+        # reads this daemon's answers out of the shared store rather than asking Anthropic
+        # itself, which on a working box is far fresher than either interval.
         "refresh_secs": 900,
         # How long one key's reading may take before it is written off for this pass. The
         # refresh runs on a thread and never on the launch path, so this bounds a background
@@ -3891,7 +3901,11 @@ class Watcher:
         _claude_block = self.cfg.get("claude") or {}
         self._claude = claude_keys.ClaudeKeys(
             ttl=int(_claude_block.get("refresh_secs") or claude_keys.CLAUDE_USAGE_TTL_SECS),
-            timeout=int(_claude_block.get("timeout_secs") or 10))
+            timeout=int(_claude_block.get("timeout_secs") or 10),
+            # SHARED WITH ffweb, which reads the same file rather than asking Anthropic again.
+            # This daemon reads far more often than the page does — once before every spawn
+            # decision — so the page is the one that gains.
+            store=os.path.join(self.state_dir, claude_keys.CLAUDE_USAGE_STORE))
 
     # -- setup -----------------------------------------------------------------------------
 
@@ -5924,7 +5938,8 @@ class Watcher:
         if self.db.scalar("SELECT COUNT(*) FROM turn WHERE conversation_id=?",
                           (conv["id"],), 0):
             return False
-        secs, why = self.claude_hold("new")
+        # FRESH, because this is the decision. See claude_hold.
+        secs, why = self.claude_hold("new", fresh=True)
         self.log_hold(f"conversation {conv['id']}", why)
         return secs if why else 0
 
@@ -8781,11 +8796,20 @@ class Watcher:
         """Is either hold configured? What decides whether the windows are read at all."""
         return any(self.claude_hold_pct(w) is not None for w in ("review", "new"))
 
-    def claude_hold(self, what):
+    def claude_hold(self, what, fresh=False):
         """(seconds, why) — how long a `what` request should wait, or (0, "") to run now.
 
         `seconds` is when the offending window refills, so a caller with somewhere to put it
         can say how long the wait is rather than only that there is one.
+
+        `fresh` ASKS ANTHROPIC RATHER THAN THE CACHE, and the two callers that decide whether
+        work starts both pass it. This is the one decision on the box that a stale reading gets
+        WRONG in a way nothing later corrects: an hour-old number is fine for choosing which
+        account pays, because the next turn re-chooses, but a conversation held on a window that
+        has since refilled sits there until something else happens to wake it, and one started
+        on a window that has since filled up runs into a mid-flight cutoff. The reading is two
+        GETs per key, in parallel, floored at CLAUDE_FORCE_FLOOR_SECS so a pass over ten new
+        conversations still makes one round of them.
 
         FAIL OPEN AT EVERY STEP. The hold is off, or the windows could not be read, or the
         emptiest account is under the line: all three run the work. The only path that holds
@@ -8794,7 +8818,7 @@ class Watcher:
         cap = self.claude_hold_pct(what)
         if cap is None:
             return 0, ""
-        got = claude_keys.emptiest(self.claude_records())
+        got = claude_keys.emptiest(self.claude_records(fresh=fresh))
         if got is None:
             return 0, ""
         pct, key, secs, label = got
@@ -8821,7 +8845,7 @@ class Watcher:
         self._holds_said[subject] = why
         log(f"{subject}: waiting for the subscription rather than running now — {why}")
 
-    def claude_records(self):
+    def claude_records(self, fresh=False):
         """Every account's windows, as ClaudeKeys.read() gives them. [] if none can be read.
 
         Cached inside ClaudeKeys for `refresh_secs`, so calling this per launch, per gate and
@@ -8838,7 +8862,7 @@ class Watcher:
         if not (self.claude_spreads() or self.claude_holds()):
             return []
         try:
-            return self._claude.read()
+            return self._claude.read(force=fresh)
         except Exception as exc:  # noqa: BLE001 — a reading must not take down a launch
             log(f"WARNING: could not read the Claude accounts: {type(exc).__name__}: {exc}")
             return []
@@ -12809,7 +12833,7 @@ class Watcher:
         author = comment.get("author") or comment.get("user") or {}
         if not is_github_operator(self.cfg, str(author.get("id") or "")):
             return False
-        _, why = self.claude_hold("review")
+        _, why = self.claude_hold("review", fresh=True)
         self.log_hold(f"#codereview comment {comment.get('id')}", why)
         return bool(why)
 

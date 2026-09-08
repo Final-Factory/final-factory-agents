@@ -223,6 +223,7 @@ from claude_keys import (                                    # noqa: E402  (see 
     CLAUDE_RATE_PREFIX,
     CLAUDE_TOKEN_MAX,
     CLAUDE_TOKEN_PREFIX,
+    CLAUDE_USAGE_STORE,
     CLAUDE_USAGE_TTL_SECS,
     RATELIMIT_PREFIX,
     ClaudeKeys,
@@ -2113,7 +2114,12 @@ class App:
         # has no keys — it reads the environment when asked and opens no socket until somebody
         # actually loads /claude. The parameter exists so the offline tests can hand it a
         # fetcher that answers from a fixture instead of from Anthropic.
-        self.keys = claude_keys if claude_keys is not None else ClaudeKeys()
+        # SHARED WITH ffwatch through a file in the state directory. The daemon forces a
+        # reading before every spawn decision, so what is on disk is usually minutes old and
+        # this page shows it without spending a request of its own; CLAUDE_USAGE_TTL_SECS is
+        # the floor under an idle box rather than how often the numbers move.
+        self.keys = claude_keys if claude_keys is not None else ClaudeKeys(
+            store=os.path.join(os.path.expanduser(state_dir), CLAUDE_USAGE_STORE))
         self.quiet = quiet
         self.self_origins = set(origins)
         # The scheme this process is actually serving. It decides two things and only two:
