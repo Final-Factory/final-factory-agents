@@ -490,6 +490,13 @@ _LAUNCH_KEYS = (
     "PIDS_LIMIT", "MEMORY", "MIRROR_URL", "MIRROR_ORIGIN", "MIRROR_LFS_URL", "LABELS",
     "MIRROR_WAIT_SECS", "ARTIFACT_WAIT_SECS", "FFGHR_CACHE_ENTRIES", "FFGHR_UNITY_ULF",
     "LOG_DIR", "CACHE_DIR",
+    # ARTIFACT_REPO_IDS IS NOT A LAUNCH SETTING AND IS FETCHED HERE ANYWAY, because this is the
+    # one call that reads the shell's view of the config and upload_artifact needs it. Leaving it
+    # out cost the first real job its test results: artifact-upload.py refuses when the allowlist
+    # is empty -- "no allowed repository ids configured", by design, since a host with no list
+    # must not upload wherever it is pointed -- and an empty string is exactly what
+    # `settings.get("ARTIFACT_REPO_IDS", "")` returned. The job went green with nothing attached.
+    "ARTIFACT_REPO_IDS",
 )
 
 
@@ -1096,7 +1103,13 @@ class Lane:
             self.log(f"ci: draining: destroying idle runner {r.name}")
             try:
                 stage = staging_dir(r.name)
-                teardown(r.name, r.runner_id, stage if os.path.isdir(stage or "") else "")
+                # TEARDOWN'S OWN REPORT IS LOGGED, NOT DISCARDED. It was thrown away here, and the
+                # line that matters most in it is "registration N could not be deleted; the reaper
+                # will get it" -- so a drain that leaked a registration said nothing at all, and
+                # the only evidence was an offline runner on the org page fifteen minutes later.
+                for line in teardown(r.name, r.runner_id,
+                                     stage if os.path.isdir(stage or "") else ""):
+                    self.log(f"ci: draining: {r.name}: {line}")
                 gone += 1
             except Exception as exc:            # noqa: BLE001
                 self.log(f"ci: draining: could not remove {r.name}: {exc}")

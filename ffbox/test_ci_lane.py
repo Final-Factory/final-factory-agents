@@ -311,5 +311,25 @@ ok("capabilities are dropped and added back by name") if "--cap-drop=ALL" in arg
 ok("both wait budgets are passed") if "FFGHR_MIRROR_WAIT=600" in argv \
     and "FFGHR_ARTIFACT_WAIT=600" in argv else bad("both wait budgets must be passed")
 
+print("\nthe settings the lane asks the shell for")
+
+# ARTIFACT_REPO_IDS WAS MISSING AND THE FIRST REAL JOB PAID FOR IT. artifact-upload.py refuses when
+# its allowlist is empty -- correctly, since a host with no list must not upload wherever it is
+# pointed -- and `settings.get("ARTIFACT_REPO_IDS", "")` handed it exactly that. The job went green
+# with no test results attached and the only trace was one line in the journal.
+#
+# ASSERTED AGAINST WHAT IS ACTUALLY USED, by finding every settings key the module reads, so a new
+# `settings[...]` that nobody added to the fetch list fails here rather than in production.
+import re as _re                                                  # noqa: E402
+_src = io.open(os.path.join(HERE, "ci_lane.py"), encoding="utf-8").read()
+_used = set(_re.findall(r'settings(?:\.get\(|\[)["\']([A-Z_]+)["\']', _src))
+_missing = sorted(_used - set(ci._LAUNCH_KEYS))
+if _missing:
+    bad(f"read from settings but never fetched: {', '.join(_missing)}")
+else:
+    ok(f"every settings key the lane reads ({len(_used)}) is one it asks for")
+ok("ARTIFACT_REPO_IDS is among them") if "ARTIFACT_REPO_IDS" in ci._LAUNCH_KEYS else \
+    bad("ARTIFACT_REPO_IDS must be fetched, or every artifact upload is refused")
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
