@@ -40,6 +40,7 @@ run "runners/test_pool.sh"  sh  "$HERE/runners/test_pool.sh"
 run "runners/test_reap.sh"  sh  "$HERE/runners/test_reap.sh"
 run "runners/test_pin.sh"   sh  "$HERE/runners/test_pin.sh"
 run "test_ci_lane.py"       python3 "$HERE/test_ci_lane.py"
+run "test_update_drain.sh"  sh  "$HERE/test_update_drain.sh"
 
 printf '\n========\n'
 if [ -n "$FAILED" ]; then

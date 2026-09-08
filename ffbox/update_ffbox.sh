@@ -283,17 +283,51 @@ FFGHR=$REPO/ffbox/runners/ffgithubrunners
 # with six jobs running on the other one.
 FFBOX_DOCKER_SOCK=${FFBOX_DOCKER_SOCK:-/run/ffbox-container/docker.sock}
 docker_() { as_owner env DOCKER_HOST="unix://$FFBOX_DOCKER_SOCK" docker "$@"; }
+# WHOSE DRAIN IS IT, and this file used to have no way to tell.
+#
+# A drain flag is a file. `ffwatch drain`, `ffgithubrunners drain` and this script all create the
+# same file with no mark on it, so "a flag stranded by an updater that crashed" and "a flag an
+# operator set five minutes ago because they are working on the box" were indistinguishable -- and
+# section 1 below cleared BOTH, unconditionally, on every pass. The comment there said that was
+# "safe only because of the flock above", which is not what the flock proves: it guarantees one
+# updater at a time and says nothing about whether an updater made the flag at all.
+#
+# So an operator's drain survived at most until the next five-minute tick, silently. Hit on
+# 2026-09-08 while draining the CI lane by hand for the ffwatch cut-over: the drain was lifted by
+# an update pass that a config edit had triggered, and the only sign was one line in the journal.
+#
+# THIS MARKER IS THE OWNERSHIP RECORD. Written when THIS script drains, removed when it lifts. It
+# survives a crash, which is what makes the stranded case still recoverable: a marker with no
+# updater running means the run that owned those flags is gone, and section 1 may clear them. No
+# marker means the flags are somebody's, and this script leaves them alone -- it still updates,
+# because a drained box should still take code; it simply does not decide the drain is over.
+#
+# THE GAP THAT REMAINS, stated rather than papered over: an operator who drains DURING a pass, in
+# the window after this script drained, has their flag lifted at the end along with ours. Closing
+# that needs the flags themselves to carry an owner, which means changing what three tools write
+# and what `status` reads. Not worth it for a window measured in seconds, but it is the reason
+# this is "whose flag is it" rather than "is anybody draining".
+DRAIN_OWNED=$CONFIG_DIR/update.drain-owned
+
 FLAG_LIFTED=0
 lift_drain() {
     [ "$FLAG_LIFTED" = 1 ] && return 0
     FLAG_LIFTED=1
     [ "$DRY_RUN" = 1 ] && return 0
+    # NOT OURS, NOT OURS TO LIFT. Without the marker these flags predate this run.
+    if [ ! -e "$DRAIN_OWNED" ]; then
+        if [ -e "$DRAIN_SWITCH" ] || [ -e "$CONFIG_DIR/githubrunners/drain" ]; then
+            log "leaving the drain in place: this run did not set it"
+        fi
+        return 0
+    fi
     # By hand rather than through ffwatch: this also has to work when the commit we just
     # installed is the reason ffwatch.py will not run.
     rm -f "$DRAIN_SWITCH" 2>/dev/null || :
     # THE CI LANE TOO, and by hand for the same reason. ffgithubrunners' drain is a flag file
     # under its own config dir; `resume` is the CLI for it and this is what that CLI writes.
     rm -f "$CONFIG_DIR/githubrunners/drain" 2>/dev/null || :
+    rm -f "$DRAIN_OWNED" 2>/dev/null || :
 }
 # SEPARATE FROM lift_drain, AND NOT FOLDED INTO IT, because the two end at different moments.
 # The drain is lifted in section 6, deliberately a line BEFORE `systemctl start ffbox.target`,
@@ -311,15 +345,34 @@ trap 'lift_drain; clear_applying' EXIT HUP INT TERM
 # ------------------------------------------------------------------------------------------
 # 1. lift a flag stranded by a previous run
 # ------------------------------------------------------------------------------------------
-# Unconditional, and safe only because of the flock above.
-if [ -e "$DRAIN_SWITCH" ] && [ "$DRY_RUN" = 0 ]; then
-    log "clearing a drain flag left by an earlier run: $DRAIN_SWITCH"
-    rm -f "$DRAIN_SWITCH"
-fi
-if [ -e "$CONFIG_DIR/githubrunners/drain" ] && [ "$DRY_RUN" = 0 ]; then
-    log "clearing a CI drain flag left by an earlier run"
-    rm -f "$CONFIG_DIR/githubrunners/drain"
-fi
+# ONLY WHAT AN EARLIER RUN OF THIS SCRIPT OWNED. The marker is what says so; see its comment
+# above for why "unconditional, and safe because of the flock" was never true. The flock proves
+# one updater at a time, not that an updater made the flag.
+# A FUNCTION SO IT CAN BE TESTED, and that is the only reason it is not inline. ffbox/test.sh
+# extracts this and lift_drain and drives them against a temporary config dir; a copy of the rule
+# living in a test file would go on passing after somebody deleted the real one.
+clear_stranded_drains() {
+    [ "$DRY_RUN" = 0 ] || return 0
+    if [ -e "$DRAIN_OWNED" ]; then
+        if [ -e "$DRAIN_SWITCH" ]; then
+            log "clearing a drain flag stranded by an earlier run of this script: $DRAIN_SWITCH"
+            rm -f "$DRAIN_SWITCH"
+        fi
+        if [ -e "$CONFIG_DIR/githubrunners/drain" ]; then
+            log "clearing a CI drain flag stranded by an earlier run of this script"
+            rm -f "$CONFIG_DIR/githubrunners/drain"
+        fi
+        rm -f "$DRAIN_OWNED"
+        return 0
+    fi
+    # SOMEBODY ELSE'S, AND IT STAYS. Said once per pass rather than silently, because a box that
+    # is drained and quiet looks identical to a box that is idle, and the difference is the whole
+    # question an operator asks when they come back to it.
+    if [ -e "$DRAIN_SWITCH" ] || [ -e "$CONFIG_DIR/githubrunners/drain" ]; then
+        log "a drain is set and this script did not set it — leaving it, and not lifting it later"
+    fi
+}
+clear_stranded_drains
 # And the flag that claims an update is landing. Only a SIGKILL gets past the EXIT trap, but the
 # whole point of the flag is that a status page believes it, so a stale one has to go the same
 # way the drain flags do -- and it is safe here for the same reason they are: the flock above
@@ -465,6 +518,10 @@ fi
 #     every straggler its full grace to harvest and hand its Unity seat back, then giving the
 #     host a bounded window to publish what those stops just released. Until 2026-09-01 the
 #     update stood down instead and left the box on old code for as long as it stayed busy.
+# CLAIM THE FLAGS BEFORE CREATING THEM, not after: a crash between the two would otherwise leave
+# a drain nothing owns, which is the stranded case this whole mechanism exists to recover.
+[ "$DRY_RUN" = 1 ] || printf '%s pid %s\n' "$(date -Is)" "$$" > "$DRAIN_OWNED" 2>/dev/null || :
+
 if [ -r "$FFWATCH" ]; then
     log "draining the agent lane — no new containers"
     as_owner python3 "$FFWATCH" drain || log "WARNING: could not set the agent drain flag"
