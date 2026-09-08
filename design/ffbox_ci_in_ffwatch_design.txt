@@ -732,15 +732,30 @@ number requires root and kills jobs.
      nothing in this design would notice. That is what the updater's new warning is for: the check
      that stays behind after the measurement is over.
 
-  c. SHOULD THE CI KEEPER RUN WHEN THE AGENT LANE IS IN FAILSAFE? `keep_pool` returns early on
-     `config_failsafe()`, `killed()` or `draining()`. Two of those three clearly apply to CI as
-     well. A config that does not parse is arguable: today a broken config.json does not stop CI
-     at all, because slot.sh reads its own section per invocation and keeps the last good values.
+  c. ANSWERED, 2026-09-08: yes, all three. `killed()` and `draining()` were never in doubt. The
+     arguable one was `config_failsafe()`, and the argument for leaving CI running -- that it
+     reads its own section per invocation and keeps the last good values -- was written when a
+     separate process did the reading. It is one config.json and one daemon now, so a file that
+     will not parse is caught twice: by ffwatch, and by ci_lane's PoolConfig, which keeps its last
+     good numbers and records the error.
 
-  d. DOES THE UNITY SEAT ACCOUNTING CHANGE? Both lanes present the same pinned machine id and
-     share one .ulf, and the stop grace is already the shared floor (`ffbox_stop_grace`). This
-     design does not think it does, and that belief should be checked rather than assumed.
+     PASSING IT ANYWAY IS NOT REDUNDANT. The two readings can differ: ci_lane re-reads every pass,
+     while a daemon that STARTED on a broken file is running on DEFAULTS with no reload path. When
+     they disagree, minting nothing is the answer that cannot be wrong.
 
-  e. WHAT REPLACES `slot stop N`? An operator today can quiesce one slot. The natural
-     replacement is lowering `max`, which does not choose WHICH runner goes. Whether anyone has
-     ever needed to pick one is not known.
+  d. ANSWERED, 2026-09-08, and the answer is that there is no seat accounting on this box to
+     change. `githubrunner.machine_id` is a pinned constant rather than `per-slot`, and
+     `/opt/ffcache/unity/Unity_lic.ulf` is present -- an OFFLINE licence, mounted read-only into
+     every container. pool-task.sh names the distinction in its own log line: an offline container
+     is "licensed for whatever is dispatched here (staged .ulf; no seat to hand back)", against an
+     online one that "holds a Unity seat... until this container exits". Nothing is checked out and
+     nothing is returned, so a change of supervisor cannot leak one.
+
+     WHAT WOULD MAKE THIS LIVE AGAIN is switching the box to online activation, and the thing to
+     look at then is the stop grace -- which already goes through `ffbox_stop_grace` from
+     ci_lane.stop(), the same shared floor both lanes used before.
+
+  e. ANSWERED BY DELETION, 2026-09-08. `slot stop|start` is gone from the CLI along with its flag
+     files. It quiesced ONE supervisor, which meant something when twelve of them were installed
+     and each owned a place; with a keeper minting on demand there is no "one" to stop. `max` is
+     the control that replaced it, and `drain` is the control for "take nothing at all".

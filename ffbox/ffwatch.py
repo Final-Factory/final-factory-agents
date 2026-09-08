@@ -14698,8 +14698,16 @@ class Watcher:
             # so that draining ffbox drains both lanes, which is what the updater assumes when it
             # sets one and then the other.
             self._ci.serve(submit=self._ci_submit)
+            # config_failsafe() JOINS THE OTHER TWO, and the design left this open as question (c).
+            # The answer is that both lanes read ONE config.json, so a file that will not parse is
+            # already caught twice -- here, and by ci_lane's own PoolConfig, which keeps its last
+            # good numbers and refuses to act. Passing it anyway is not belt and braces: the two
+            # readings can differ, because ci_lane re-reads on every pass while a daemon that
+            # started on a broken file is running on DEFAULTS with no reload path. When they
+            # disagree, minting nothing is the answer that cannot be wrong.
             self._ci.keep(box_room=self.workload_room(),
-                          host_drained=self.draining() or self.killed())
+                          host_drained=(self.draining() or self.killed()
+                                        or bool(self.config_failsafe())))
         except Exception as exc:                    # noqa: BLE001 — a daemon must survive anything
             log(f"ERROR in the CI pass: {type(exc).__name__}: {exc}")
 
