@@ -687,17 +687,28 @@ def _start_follower(name, path, mark):
 # a thread and leave the cheap ones inline, and so a failure in one is not a failure in all.
 
 def decide_cache_archive(name, stage, slot):
-    """Answer the job's `branch.info` with a `cache.request`, if one is due."""
+    """Answer the job's `branch.info` with a `cache.request`, if one is due.
+
+    DECIDED ONCE PER CONTAINER, NOT ONCE PER PASS. slot.sh kept a CACHE_DECIDED flag in a shell
+    variable; this had only the presence of `cache.request` to go on, which records a YES and says
+    nothing about a NO. So a job whose archive was not due re-decided every five seconds for its
+    whole life -- taking the cache lock each time and writing the same line into the journal on
+    every pass. Observed on the first real job: "develop@... is fresh or claimed" a hundred times.
+    `cache.decided` is the missing half, and it is a file for the same reason every other bit of
+    this lane's state is: a daemon that restarts mid-job has to find out what it already answered.
+    """
     return _sh(f'STAGE={shlex.quote(stage)}; '
                f'[ -r "$STAGE/branch.info" ] || exit 0; '
-               f'[ -e "$STAGE/cache.request" ] && exit 0; '
+               f'[ -e "$STAGE/cache.decided" ] && exit 0; '
                f'_want=$(head -1 "$STAGE/branch.info" | tr -d " \\r\\n"); '
                f'[ -n "$_want" ] || exit 0; '
                f'case "$_want" in *.tar) ;; *) _want="$_want.tar" ;; esac; '
                f'ffghr_cache_name_ok "$_want" || {{ echo "not a usable entry name: $_want"; exit 0; }}; '
                f'if ffghr_cache_with_lock ffghr_cache_should_archive "$_want" {shlex.quote(str(slot))}; then '
-               f'  : > "$STAGE/cache.request"; echo "asked the job to archive $_want"; '
-               f'else echo "$_want is fresh or claimed; not archiving"; fi', timeout=120)
+               f'  : > "$STAGE/cache.request"; : > "$STAGE/cache.decided"; '
+               f'  echo "asked the job to archive $_want"; '
+               f'else : > "$STAGE/cache.decided"; echo "$_want is fresh or claimed; not archiving"; fi',
+               timeout=120)
 
 
 def serve_mirror(stage):
@@ -873,7 +884,7 @@ class Lane:
             # LEAVE NOTHING BEHIND ON A FAILED START. A registration minted against a container
             # that never ran is an orphan on the org page and a runner an operator can see and
             # cannot explain; a staging directory with no container is 16G nothing will claim.
-            self.log(f"ci: could not start {name}: {exc}")
+            self.log(f"ci: could not start {name}: {type(exc).__name__}: {exc}; cleaning up")
             if runner_id:
                 delete_registration(runner_id)
             _docker(["rm", "-f", name])
@@ -985,7 +996,8 @@ class Lane:
             if kind == "idle" and busy:
                 mark_busy(r.name)
             else:
-                self.log(f"ci: {'WATCHDOG' if kind == 'work' else 'IDLE'}: stopping {r.name}")
+                self.log(f"ci: {'WATCHDOG' if kind == 'work' else 'IDLE'}: stopping {r.name} "
+                         f"(deadline {int(when)}, now {int(time.time())})")
                 self._run(r.name, lambda n=r.name: stop(n), submit)
                 return
 
@@ -1031,6 +1043,11 @@ class Lane:
         self._drop_follower(r.name)
         stage = staging_dir(r.name)
         if not (stage and os.path.isdir(stage)) and not r.runner_id:
+            # SAID OUT LOUD, because it was not. A container disappearing with no line in the
+            # journal is a container nobody can account for: the first day of running this lane
+            # produced a spare replaced every forty seconds and no way to tell which code path
+            # was doing it. Every path that destroys a container names itself now.
+            self.log(f"ci: {r.name} exited with nothing owed (state {r.state!r}); removing it")
             self._run(r.name, lambda n=r.name: _docker(["rm", "-f", n]), submit)
             return
         self.log(f"ci: {r.name} has exited; tearing down")
