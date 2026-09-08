@@ -289,6 +289,23 @@ def slot_sh_running():
 
 # ---- the clocks, which are files -----------------------------------------------------------
 
+def drain_flag():
+    """The file `ffgithubrunners drain` writes, and the updater writes before every update.
+
+    IT IS A FILE AND NOT DAEMON STATE, deliberately and per design section 8: the updater sets it
+    BEFORE stopping ffbox and lifts it after starting it again, so it has to outlive the process
+    it governs. slot.sh read it through ffghr_is_drained; this is the same path.
+    """
+    base = os.environ.get("FFGITHUBRUNNERS_CONFIG_DIR") or os.path.join(
+        os.environ.get("FFBOX_CONFIG_DIR") or os.path.expanduser("~/.config/ffbox"),
+        "githubrunners")
+    return os.path.join(base, "drain")
+
+
+def drained():
+    return os.path.exists(drain_flag())
+
+
 def state_dir():
     base = os.environ.get("FFGITHUBRUNNERS_CONFIG_DIR") or os.path.join(
         os.environ.get("FFBOX_CONFIG_DIR") or os.path.expanduser("~/.config/ffbox"),
@@ -761,16 +778,32 @@ class Lane:
         return live
 
     # -- keep_ci_pool ----------------------------------------------------------------------
-    def keep(self, box_room=None):
+    def keep(self, box_room=None, host_drained=False):
         """Top the pool up by at most one runner. Returns the container name, or None.
 
         ONE PER PASS, like keep_pool(). Minting talks to GitHub and launching talks to the daemon;
         doing several in a pass means a pass in which nothing else the daemon does happens, and the
         pool is short by one far more often than it is short by three.
+
+        A DRAIN STOPS THIS AND NOTHING ELSE, which is the whole shape of a drain and is why the
+        check is here rather than in blocked(). `ffgithubrunners drain` means "running jobs finish,
+        no slot takes new work" -- so minting stops and SERVING MUST NOT, because a job already in
+        a container still needs its mirror fetch answered and its artifact uploaded. Folding this
+        into blocked() would have stopped answering the jobs the drain exists to let finish.
+
+        THIS WAS MISSING AND IT MATTERED. The first version of this lane read neither drain flag,
+        so `ffgithubrunners drain` became a no-op the moment the daemon took over -- and the
+        updater calls exactly that before every update, to stop new runners appearing in the window
+        where nothing can serve them. Found on the box, minutes after the cut-over, by watching it
+        mint a runner into a lane that was drained at the time.
         """
         reason = self.blocked()
         if reason:
             return None
+        if host_drained or drained():
+            self._say("drain", "drained; serving what is running, minting nothing")
+            return None
+        self._announced.pop("drain", None)
         self.cfg.reload()
         live = runners()
         ok, why = may_admit(self.cfg, live, box_room)
