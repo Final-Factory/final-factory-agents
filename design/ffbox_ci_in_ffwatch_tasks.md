@@ -293,21 +293,35 @@ E.6 is last by definition.
   to pick one is not known — find out before deleting the verb, and if the answer is no, delete it
   and say so in the CLI's own help.
 
-- [x] **E.5 — DONE — check the Unity seat accounting did not change.** `S`
-  Design open question (d). Both lanes present the same pinned machine id and share one `.ulf`,
-  and the stop grace already goes through `ffbox_stop_grace`, so this design does not believe
-  anything moves. It is a belief, and the cost of it being wrong is leaked seats, so verify rather
-  than assume: one job through the new path, and confirm the seat comes back.
+- [x] **E.5 — DONE — there is no seat accounting on this box to change.** `S`
+  Design open question (d), and the answer turned out not to need a job. `machine_id` is a pinned
+  constant rather than `per-slot`, and `/opt/ffcache/unity/Unity_lic.ulf` is present — an OFFLINE
+  licence, mounted read-only. Nothing is checked out and nothing is returned, so a change of
+  supervisor cannot leak a seat. pool-task.sh names the distinction in its own log line. If the box
+  ever moves to online activation this becomes live again, and the thing to look at is the stop
+  grace, which ci_lane.stop() already takes from the shared `ffbox_stop_grace`.
 
-- [x] **E.6 — DONE — throw the switch, and watch one real day.** `?`
+- [~] **E.6 — the switch is thrown; the DAY is not watched yet.** `?`
   **NEEDS ROOT AND A PERSON.** Everything else in this phase has shipped; this is the step that
   actually moves the lane, and the first real mint through the daemon's path happens here. Order:
   `ffgithubrunners drain`, wait for `status` to show nothing BUSY, set
   `githubrunner.supervisor` to `ffwatch`, `sudo sh ffbox/runners/05-services.sh --install`,
   `ffgithubrunners resume`.
-  What to watch: the first mint end to end, no orphaned registrations after an update, no job
-  failing its checkout within two minutes of one, and `ffstatus.sh` unchanged throughout
-  (design 5e).
+  **THROWN 2026-09-08 12:08.** The daemon took the lane within one pass and minted end to end.
+  Five bugs surfaced in the first hour and are fixed: the drain going inert, the updater clearing
+  an operator's drain, job logs no longer being written, markers carrying no `ttl_secs` (so no
+  watchdog at all), and a reaper that would have deleted running jobs during the six seconds an
+  update takes.
+
+  **STILL OWED, AND IT IS THE POINT OF THE TASK:** a real day. What to watch, none of which an
+  hour can show — a job that actually RUNS to completion through the daemon (every container so
+  far has been idle), the watchdog and idle clocks firing at 120 minutes, a cache archive promoted
+  through `decide_cache_archive`, an artifact uploaded on a job's behalf, no orphaned registrations
+  after an update, no checkout failing within two minutes of one, and `ffstatus.sh` unchanged
+  throughout (design 5e).
+
+  That list is the honest gap: the paths exercised so far are mint, adopt, serve-idle and tear
+  down. Everything that only happens when a real job runs is still unproven in production.
 
 - [x] **E.7 — DONE — delete `slot.sh` and its scaffolding, once E.6 has held.** `M`
   The unit template, `slot.sh` itself, the admission half of `lib/config.sh`'s pool section,

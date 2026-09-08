@@ -461,7 +461,7 @@ and nothing wider. The mechanism end to end:
    `/etc/machine-id` at entrypoint and gets the one file bind-mounted read-only.
 4. A Personal `.ulf` has a rolling ~24-hour `UpdateDate` and no `StopDate`, so step 1 runs again
    whenever fewer than four hours are left. `unity-offline-license.sh ensure` is called before
-   every container launch, by `ffbox` and by `runners/slot.sh`.
+   every container launch, by `ffbox` for an agent run and by ffwatch's CI keeper for a runner.
 
 ### Why it changed
 
@@ -1951,8 +1951,8 @@ within `window_secs`, most recent first, skipping any the local git mirror does 
 container fills from the mirror and would die in `restore-workspace.sh` otherwise).
 
 **And it gives the places back with no signal from anybody.** Nothing on this box can ask for a
-place: `slot.sh` polls the ceiling every five seconds and logs "waiting", a cold `ffbox` exits 77,
-a queued turn is retried next pass. So `workload_reserve` keeps places free instead — an evictable
+place: the CI keeper checks the ceiling on every pass and says the pool is satisfied, a cold
+`ffbox` exits 77, a queued turn is retried next pass. So `workload_reserve` keeps places free instead — an evictable
 spare is staged only while free places stay above `reserve + 2` and shed one per pass, oldest
 branch first, whenever they fall below the reserve. A waiter finds the reserved place, taking it
 breaks the invariant, the next keeper pass restores it. The pool shrinks by exactly one per demand
