@@ -11,6 +11,13 @@ at `/opt/ffcache/mirror/FinalFactory.git`.
 Effort: **S** under an hour, **M** an afternoon, **L** a day or more, **?** unknown until
 something is measured.
 
+**On citations.** Shell files are cited by line, because they are small and change rarely.
+`ffwatch.py` is cited by SYMBOL, and that is not a style preference. It is 15,272 lines and
+several commits a day land in it: while this pair of documents was being written its line numbers
+moved twice, once by 3 and once by 248, and both times every reference in them broke. Sampled the
+same day, 19 of 20 `ffwatch.py:NNNN` citations across the rest of `design/` already point at
+unrelated code. A function name survives what a line number does not.
+
 Every phase letter matches section 12 of the design. Phases are ordered; tasks inside a phase are
 not, unless one says so.
 
@@ -20,12 +27,12 @@ Worth knowing before estimating, because most of D is porting rather than invent
 
 - **The image is already one image with a mode switch.** `FFBOX_MODE=ci` at `slot.sh:407`,
   read at `entrypoint.sh:33`. Nothing about the container changes in this work.
-- **ffwatch already counts CI containers.** `workload_count()` (`ffwatch.py:6414`) reads
+- **ffwatch already counts CI containers.** `workload_count()` in `ffwatch.py` reads
   `ffbox.workload` and treats `ci` as one of three kinds. The ceiling arithmetic is done.
-- **ffwatch already adopts containers across its own restart.** `recover()` (`ffwatch.py:13126`)
-  and `adopt_run()` (`ffwatch.py:12966`), whose body is deliberately empty of work.
+- **ffwatch already adopts containers across its own restart.** `recover()` in `ffwatch.py`
+  and `adopt_run()` in `ffwatch.py`, whose body is deliberately empty of work.
 - **ffwatch already separates what a stop loses from what survives it.** `settling()`
-  (`ffwatch.py:14140`) and `HOST_TAIL`.
+  in `ffwatch.py` and `HOST_TAIL`.
 - **The updater already applies this design's container rules from outside.** It leaves busy CI
   containers alone and removes idle ones (`update_ffbox.sh:459-468`), and waits only on
   `ffwatch quiet --host-only` (`update_ffbox.sh:517`).
@@ -125,10 +132,10 @@ new path. The keeper and the serving pass are exercised against containers a tes
 
 - [ ] **D.1 — `keep_ci_pool()`.** `M`
   The two conditions of `ffghr_pool_admit` (`runners/lib/config.sh:746`), reading the counters
-  `keep_pool()` already reads, minting at most one runner per pass. Inside `owns_lock`
-  (`ffwatch.py:14053`) or two daemons would both mint (design 9d). Returns early on `killed()` and
-  `draining()`; `config_failsafe()` is design open question (c) and must be decided here, not
-  discovered.
+  `keep_pool()` already reads, minting at most one runner per pass. Inside `owns_lock` (see the
+  daemon-lock warning in `ffwatch.py`'s `run()`), or two daemons would both mint (design 9d).
+  Returns early on `killed()` and `draining()`; `config_failsafe()` is design open question (c)
+  and must be decided here, not discovered.
 
 - [ ] **D.2 — `serve_ci_runners()`.** `L`
   The loop half of `slot.sh`, once per daemon pass: flip idle to busy on `Runner.Worker`, write
@@ -136,7 +143,7 @@ new path. The keeper and the serving pass are exercised against containers a tes
   `artifact.request`, enforce the two deadlines, and hand a container whose job has ended to the
   teardown path.
   **Blocking work goes to a thread keyed by container** — the mirror fetch is ~4.6s, the upload is
-  a transfer, `docker stop` is the grace. `_pool_expire_one` (`ffwatch.py:6692`) is the pattern.
+  a transfer, `docker stop` is the grace. `_pool_expire_one()` in `ffwatch.py` is the pattern.
   A guard so no two threads serve one container.
   **And the poll rate must not drop** (design 3). `slot.sh` polls every 5s while a runner is idle
   because that interval is the latency between "a job arrived" and "a replacement is registered",
