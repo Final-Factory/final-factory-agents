@@ -1172,6 +1172,43 @@ DEFAULTS = {
         "new_conversation_hold_pct": 0.9,
     },
 
+    # -- THE BOX'S OWN NIGHT ----------------------------------------------------------------
+    #
+    # A hold on the WALL CLOCK, and the only one on this box that is not a reading of
+    # something. The subscription holds above ask Anthropic how much is left; this one asks
+    # what time it is, because the thing being protected is not the allowance — it is the
+    # morning. Work started at 4am finishes at 4am, and a run that goes wrong at 4am has
+    # nobody to notice until somebody sits down, by which time it has spent a session window
+    # the day was going to need.
+    #
+    # IT HOLDS EVERYTHING, which is the one way it differs from the subscription holds. Those
+    # let a follow-up through because going quiet on somebody mid-exchange is worse than a
+    # slow first answer; inside these hours there is no exchange to be in the middle of, and
+    # a box that answered follow-ups all night would be awake for exactly the reason this
+    # exists to prevent. A local prompt is the one thing it refuses rather than defers — see
+    # submit(), and the reason is that no poller ever offers a shell conversation again.
+    #
+    # OFF BY DEFAULT, and off is what a missing, empty, half-written or unparseable window
+    # means: this is a hold, and a hold that turns itself on because somebody typed "2am" in
+    # the wrong field is a box that stops answering for reasons nobody can see. Every other
+    # hold here fails open and so does this one.
+    "quiet_hours": {
+        # "HH:MM", both of them, on the 24-hour clock. A window may wrap midnight —
+        # 22:00 to 07:00 is nine hours across two days, not a fifteen-hour day — and start
+        # equal to end is off rather than a 24-hour hold, because a hold nothing can lift is
+        # not a schedule.
+        "start": None,
+        "end": None,
+        # WHICH CLOCK "02:00" IS READ AGAINST. null is the box's own timezone, which is what
+        # somebody means by 2am: they mean 2am where the box is. An IANA name pins it against
+        # a host whose timezone later changes. Either way the arithmetic goes through the real
+        # zone rather than a fixed offset, so on the two nights a year the offset moves under
+        # the window the countdown is the REAL number of seconds until the wall clock reads
+        # `end` -- an hour more or an hour less than the window looks -- rather than the
+        # wall-clock difference, which is wrong by exactly that hour.
+        "timezone": None,
+    },
+
     "sweep_limit": 25,
     "history_messages": 40,       # how much prior conversation goes into job.json
     "attachment_max_bytes": 32 * 1024 * 1024,
@@ -1993,6 +2030,142 @@ def config_warnings(cfg):
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ------------------------------------------------------------------------------------------
+# quiet hours  (see DEFAULTS["quiet_hours"])
+# ------------------------------------------------------------------------------------------
+#
+# THE WHOLE OF THE ARITHMETIC IS HERE AND IT IS PURE, taking the clock as an argument, because
+# the interesting cases are the ones a test cannot reach by waiting: a window that wraps
+# midnight, the minute it opens, the minute it closes, and the two mornings a year when the
+# offset moves inside it. A method on Watcher could be asked none of them.
+
+
+def parse_clock(value):
+    """`"02:00"` -> 120 minutes past midnight. None for anything this cannot read.
+
+    None IS THE ANSWER TO EVERY BAD SPELLING, and the callers all read it as "no window", so a
+    hand-edited `"2pm"`, `"25:00"`, a number, or a missing key all turn the hold off rather
+    than turning it on at some hour nobody chose. A `"2:00"` with no leading zero is accepted:
+    it is unambiguous, and refusing it would be pedantry with a nine-hour silence behind it.
+    """
+    if not isinstance(value, str):
+        return None
+    parts = value.strip().split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        hours, minutes = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if not (0 <= hours <= 23 and 0 <= minutes <= 59):
+        return None
+    return hours * 60 + minutes
+
+
+def quiet_zone(name):
+    """(tzinfo-or-None, label, ok). `None` for the tzinfo means the box's own timezone.
+
+    `ok` IS FALSE ONLY FOR A NAME THAT COULD NOT BE LOADED, and that is a hold turned off
+    rather than a window read against the wrong clock. A config naming `America/Detriot` is a
+    typo somebody will find; a box that silently went quiet on UTC for nine hours is a typo
+    nobody finds.
+    """
+    if not name:
+        # THE LABEL IS THE ABBREVIATION FOR RIGHT NOW -- EDT rather than EST in September --
+        # because it is printed beside a countdown that is also about right now.
+        return None, (time.tzname[time.localtime().tm_isdst > 0] or "local time"), True
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(str(name)), str(name), True
+    except Exception as exc:  # noqa: BLE001 -- a bad zone must not take down a launch
+        log(f"WARNING: quiet_hours.timezone {name!r} is not a timezone this box knows "
+            f"({type(exc).__name__}); the quiet hours are off until it is fixed")
+        return None, str(name), False
+
+
+def quiet_hours_window(cfg):
+    """(start, end, tz, label) in minutes past midnight, or None when there is no window.
+
+    None covers every way of not having one: no block, half a block, an unreadable time, a
+    zone that will not load, and `start == end` -- which is a hold with no lifting time and so
+    cannot be what anybody meant by a schedule.
+    """
+    block = cfg.get("quiet_hours")
+    if not isinstance(block, dict):
+        return None
+    start, end = parse_clock(block.get("start")), parse_clock(block.get("end"))
+    if start is None or end is None or start == end:
+        return None
+    tz, label, ok = quiet_zone(block.get("timezone"))
+    return (start, end, tz, label) if ok else None
+
+
+def _local_minute(ts, tz):
+    """The wall clock in `tz` at unix time `ts`, as minutes past midnight."""
+    if tz is None:
+        lt = time.localtime(ts)
+        return lt.tm_hour * 60 + lt.tm_min
+    local = datetime.fromtimestamp(ts, tz)
+    return local.hour * 60 + local.minute
+
+
+def _next_wall_clock(ts, minute_of_day, tz):
+    """Unix time of the next moment the wall clock in `tz` reads `minute_of_day`.
+
+    THROUGH THE ZONE AND NEVER THROUGH AN OFFSET, which is the whole reason this is six lines
+    rather than one. `now + (end - now_minute)` is right for 363 nights a year and an hour
+    wrong on the other two, and an overnight window contains both transitions by construction:
+    22:00 to 07:00 America/Detroit really is seven hours long the night the clocks go forward
+    and nine the night they go back, and each of those is the true answer to "when do I come
+    back". `mktime` with tm_isdst=-1 asks libc, and `.timestamp()` on a zone-aware datetime
+    asks the zone; both give real elapsed seconds rather than a wall-clock difference.
+    """
+    hours, minutes = divmod(minute_of_day, 60)
+    for day in (0, 1):
+        if tz is None:
+            lt = time.localtime(ts)
+            # mktime NORMALISES an out-of-range day, so tm_mday + 1 needs no month arithmetic.
+            cand = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + day,
+                                hours, minutes, 0, 0, 0, -1))
+        else:
+            cand = (datetime.fromtimestamp(ts, tz) + timedelta(days=day)).replace(
+                hour=hours, minute=minutes, second=0, microsecond=0).timestamp()
+        if cand > ts:
+            return cand
+    return ts
+
+
+def quiet_hours_hold(cfg, now=None):
+    """(seconds, why) -- is the box inside its quiet hours? (0, "") when it is not.
+
+    `seconds` is how long until the window LIFTS, in the same shape claude_hold returns, so
+    the break notice can say when somebody's answer is coming rather than only that it is not
+    coming now.
+
+    THE WINDOW IS HALF-OPEN, `start <= now < end`. The minute it opens is quiet and the minute
+    it closes is not, so a box configured 02:00-11:00 answers at 11:00 sharp; the alternative
+    holds one message per day for one minute for no reason anybody could state.
+    """
+    window = quiet_hours_window(cfg)
+    if window is None:
+        return 0, ""
+    start, end, tz, label = window
+    ts = time.time() if now is None else float(now)
+    minute = _local_minute(ts, tz)
+    inside = (start <= minute < end) if start < end else (minute >= start or minute < end)
+    if not inside:
+        return 0, ""
+    secs = int(round(_next_wall_clock(ts, end, tz) - ts))
+    return secs, (f"the box is in its quiet hours, {_clock(start)}-{_clock(end)} {label}; "
+                  f"they lift in {claude_keys._rough(secs)}")
+
+
+def _clock(minute_of_day):
+    """120 -> `02:00`. The way it is written in the config, so the log line matches the file."""
+    hours, minutes = divmod(int(minute_of_day), 60)
+    return f"{hours:02d}:{minutes:02d}"
 
 
 # THE JOURNAL, HELD AS AN OBJECT RATHER THAN LOOKED UP THROUGH sys.stdout EACH TIME.
@@ -6331,37 +6504,73 @@ class Watcher:
             " ORDER BY CAST(discord_id AS INTEGER)",
             (conv_id,))
 
-    def new_conversation_held(self, conv):
-        """Is this a conversation's FIRST turn, arriving with no subscription left to run it?
+    def conversation_held(self, conv):
+        """Seconds this conversation's next turn should wait for, or 0 to run it now.
 
         THE MESSAGES ARE LEFT EXACTLY AS THEY ARE — unclaimed, ungated, unmarked — so
         claim_turns offers this conversation again on every pass and the turn is created on
-        the one after the window turns over. Nothing is dropped and nothing is refused; the
-        person who wrote it simply gets their answer later.
-
-        ONLY THE FIRST TURN. A follow-up is somebody already in a conversation this box has
-        acknowledged and told it was working, and going quiet on them mid-exchange is a worse
-        failure than a slow first answer.
-
-        AND ONLY THE ONE THE POLLER WILL ASK ABOUT AGAIN. A local prompt cannot be held:
-        submit() raises when create_turn returns None, so a hold there is an error at somebody's
-        terminal rather than a wait. A review cannot be held here either — it has its own,
-        lower hold in poll_github, applied before the pull request is even fetched, and by the
-        time it reaches this method the branch is adopted and the comment consumed.
+        the one after the hold lifts. Nothing is dropped and nothing is refused; the person
+        who wrote it simply gets their answer later.
 
         NOTHING ABOVE THIS LINE. The acknowledgement (mark_working) and the engagement gate's
         model call both sit below it, and both would be work done for a turn that is not
         going to happen — the second of them on the very subscription this is protecting.
+
+        THE SUBSCRIPTION HOLD ONLY. Quiet hours are answered by hold_until_morning, above
+        this and above everything in create_turn that costs a model call — they have to be,
+        because this hold sits BELOW the selector and the engagement gate by design and a
+        clock-based hold that ran two model calls to reach its answer would be spending the
+        box's allowance every night for nine hours to decide not to work.
+
+        IT REACHES A DISCORD CONVERSATION AND NOTHING ELSE. Not a local prompt: there is a
+        person at a terminal, and `claim_turns` never offers a shell conversation with no turn
+        a second time. Not a review: it has its own, lower hold in poll_github, applied before
+        the pull request is even fetched, and by the time one reaches this method the branch is
+        adopted and the comment consumed.
+
+        A FOLLOW-UP IS HELD, since 2026-09-08. It used not to be, on the argument that going
+        quiet on somebody mid-exchange is worse than a slow first answer. That argument is
+        about silence, and it is answered rather than overridden: say_holding tells a held
+        follow-up the same thing it tells a held opener, and tells it again the next time the
+        same conversation is held rather than once for its lifetime.
         """
         if is_local_conversation(conv) or conv["kind"] == GITHUB_KIND:
-            return False
-        if self.db.scalar("SELECT COUNT(*) FROM turn WHERE conversation_id=?",
-                          (conv["id"],), 0):
-            return False
+            return 0
         # FRESH, because this is the decision. See claude_hold.
         secs, why = self.claude_hold("new", fresh=True)
         self.log_hold(f"conversation {conv['id']}", why)
         return secs if why else 0
+
+    def hold_until_morning(self, conv, secs, why):
+        """The quiet-hours refusal, done WITHOUT a model. Always returns None.
+
+        THE WHOLE REASON THIS IS NOT JUST ANOTHER BRANCH OF conversation_held. The subscription
+        hold is asked at the last line before a turn exists, so that the mention-only policy,
+        the selector and the engagement gate have already said yes and "we are going to answer
+        this" is a fact rather than a guess. Two of those three are model calls. A hold that
+        exists precisely so the box runs nothing overnight cannot reach its answer by running
+        the classifier once per candidate message for nine hours — that is the box awake, doing
+        the one kind of work it was told not to do, to decide it is asleep.
+
+        SO THE PROMISE IS MADE FROM always_a_turn INSTEAD, which is the harness's own
+        always-answer list and decides without a model: the bot was addressed, evidence came
+        with the message, or it opens a forum thread. Every one of those is a message that
+        WOULD have got a turn — the gate is never even consulted for them — so the sentence is
+        as honest as the one the subscription hold sends, and it is reached with a snowflake
+        lookup and one COUNT.
+
+        EVERYTHING ELSE GETS SILENCE AND ITS ORDINARY DECISION IN THE MORNING. A message in an
+        `engage: all` channel that nobody addressed may or may not be for the bot; that is
+        exactly the question the gate exists to answer, and guessing "yes" at 4am to be polite
+        would put a break notice under conversations the box would never have answered at all.
+        Nothing is gated, nothing is claimed and nothing is marked, so the pass after 11:00
+        judges it exactly as it would have judged it at 10:59.
+        """
+        self.log_hold(f"conversation {conv['id']}", why)
+        msgs = self.pending_messages(conv["id"])
+        if msgs and self.always_a_turn(conv, msgs):
+            self.say_holding(conv, secs, msgs)
+        return None
 
     def say_holding(self, conv, secs, msgs):
         """Tell a Discord conversation its answer is coming later. Once, ever.
@@ -6378,14 +6587,24 @@ class Watcher:
         to promise an answer from, because there is no earlier point at which an answer is a
         fact rather than a guess.
 
-        ONCE, EVER, and `local_id` is what makes that durable rather than a fact about this
-        process's memory. A held conversation has no turns by construction, so the moment it is
-        answered it stops being holdable and the marker can never wrongly suppress a second
-        notice. A daemon restart mid-hold does not re-announce.
+        ONCE PER HOLD, and `local_id` is what makes that durable rather than a fact about this
+        process's memory: a daemon restarted mid-hold does not re-announce, and neither does a
+        second, third or tenth message typed into the same conversation while it waits.
+
+        ONCE PER HOLD AND NOT ONCE EVER, which is what the turn count in the marker buys. It
+        used to be `hold:<conversation>`, and that was sound while only a FIRST turn could be
+        held: such a conversation has no turns by construction, so the moment it is answered it
+        stops being holdable and one marker could never wrongly suppress a second notice. Quiet
+        hours hold follow-ups too, and under the old key somebody who asked on Monday night,
+        got their answer on Tuesday and asked again on Tuesday night would have been told about
+        the first break and met with silence for the second. The count changes exactly when a
+        turn is answered, so it names the WAIT rather than the conversation.
         """
         if is_local_conversation(conv) or conv["kind"] == GITHUB_KIND or not msgs:
             return None
-        marker = f"hold:{conv['id']}"
+        turns = self.db.scalar("SELECT COUNT(*) FROM turn WHERE conversation_id=?",
+                               (conv["id"],), 0)
+        marker = f"hold:{conv['id']}:{turns}"
         if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=?", (marker,), 0):
             return None
         nonce = self.record_outbound(None, conv["id"], "post", {
@@ -6507,6 +6726,18 @@ class Watcher:
                     f"the default base. Nothing will start until the branch is on the row.")
             return None
         self._branchless_reviews.discard(conv["id"])
+        # THE QUIET HOURS, ABOVE EVERY LINE IN THIS METHOD THAT COSTS ANYTHING. Below this sit
+        # resettle() -- which can run the selector -- and the engagement gate, and both are
+        # model calls billed to the very subscription the box is not supposed to be spending
+        # overnight. The subscription hold can afford to sit under them because it is asking
+        # "is there room", a question worth a gate call to answer well; this one is asking what
+        # time it is, and the answer does not improve for having spent anything on it.
+        #
+        # NOTHING IS GATED, CLAIMED OR MARKED ON THIS PATH, so the messages come back to the
+        # pass after the window lifts and are judged there exactly as they would have been.
+        quiet_secs, quiet_why = quiet_hours_hold(self.cfg)
+        if quiet_why:
+            return self.hold_until_morning(conv, quiet_secs, quiet_why)
         # HOW MUCH SUBSCRIPTION IS LEFT, ASKED ONCE AND CARRIED DOWN. It does not stop the pass
         # here. Everything between this line and the hold below still runs — the selector, the
         # mention-only policy, the engagement gate — because whether this box would ANSWER the
@@ -6516,7 +6747,7 @@ class Watcher:
         #
         # WHAT THE HOLD DOES TAKE AWAY UP HERE is the 👀. That mark means a run is in flight,
         # and none is.
-        held = self.new_conversation_held(conv)
+        held = self.conversation_held(conv)
         if not held:
             self._hold_decided.discard(conv["id"])
         elif conv["id"] in self._hold_decided:
@@ -7743,7 +7974,24 @@ class Watcher:
         # THE EXPIRY AND THE REAP RUN FIRST EVEN IN THE FAILSAFE, and that is deliberate: a
         # spare staged before the config broke still has a clock, and letting it run out is the
         # box shedding containers rather than accumulating them. What stops is the topping up.
-        if self.config_failsafe() or self.killed() or self.draining():
+        #
+        # THE QUIET HOURS STOP THE TOPPING UP FOR THE SAME REASON AND IN THE SAME PLACE, and
+        # this is the third model call a quiet night would otherwise make. Staging chooses the
+        # account the spare will bill, and choosing reads every account's windows — which for a
+        # `claude setup-token` key is not an HTTP lookup at all but a real one-token Haiku
+        # request against /v1/messages, because the usage document is closed to such a key
+        # (claude_keys.ClaudeKeys._probe). Cached for `refresh_secs`, so a nine-hour night at
+        # the default quarter-hour is about thirty-six of them per account, to keep containers
+        # warm for turns that cannot start.
+        #
+        # THE SPARES STILL AGE OUT, because expiry and reaping are above this line: a pool left
+        # warm all night would be reaped at `idle_agent_ttl_secs` and staged again two or three
+        # times over for nothing. The first turn after the hours lift runs cold, which is the
+        # ordinary fallback for a turn that finds no spare, and the pass that starts it tops the
+        # pool up again behind it.
+        _, quiet_why = quiet_hours_hold(self.cfg)
+        self.log_hold("the warm pool", quiet_why)
+        if quiet_why or self.config_failsafe() or self.killed() or self.draining():
             return []
         # THE RESERVE, BEFORE ANY STAGING. Giving a place back is more urgent than taking one, and
         # a pass that shed something has already changed the numbers every decision below reads --
@@ -9745,6 +9993,24 @@ class Watcher:
         return int(secs), (f"{label} is {pct:.0%} through its {window}, at or over the "
                            f"{cap:.0%} hold; it refills in {claude_keys._rough(secs)}")
 
+    def work_hold(self, what, fresh=False):
+        """(seconds, why) -- should a request of this kind wait? THE ONE GATE EVERY CALLER ASKS.
+
+        Two unlike reasons behind one answer, and the callers are better off not knowing which
+        they got: both mean "not now, and here is when", both leave the request exactly where
+        it arrived, and both end in the same sentence to whoever is waiting.
+
+        QUIET HOURS FIRST, AND THAT ORDER IS NOT COSMETIC. `fresh` makes claude_hold ask
+        Anthropic rather than the cache -- two GETs per key, on the launch path -- and asking
+        how full a subscription is in order to decide something the clock has already decided
+        is a billed probe per candidate message for nine hours a night. Short-circuiting here
+        is what keeps a quiet box quiet on the wire as well as in Discord.
+        """
+        secs, why = quiet_hours_hold(self.cfg)
+        if why:
+            return secs, why
+        return self.claude_hold(what, fresh=fresh)
+
     def log_hold(self, subject, why):
         """Say a hold ONCE, and say when it lifts.
 
@@ -9760,7 +10026,11 @@ class Watcher:
         if self._holds_said.get(subject) == why:
             return
         self._holds_said[subject] = why
-        log(f"{subject}: waiting for the subscription rather than running now — {why}")
+        # NEUTRAL ABOUT WHICH HOLD IT IS, because `why` already says: it used to read "waiting
+        # for the subscription", which was the only kind of hold there was until quiet hours,
+        # and reading it under a clock-based one sends whoever is debugging to Anthropic's
+        # status page for a reason that is on this box.
+        log(f"{subject}: waiting rather than running now — {why}")
 
     def claude_records(self, fresh=False):
         """Every account's windows, as ClaudeKeys.read() gives them. [] if none can be read.
@@ -9810,19 +10080,20 @@ class Watcher:
 
     def claude_status(self):
         """The subscription lines for `ffwatch status`."""
+        quiet = self.quiet_hold_status()
         pool = claude_keys.claude_token_pool()
         if not pool:
-            return ["claude accounts: none in this process's environment "
-                    "(secrets.env reaches the daemon through its unit, not a shell)"]
+            return quiet + ["claude accounts: none in this process's environment "
+                            "(secrets.env reaches the daemon through its unit, not a shell)"]
         if not self.claude_spreads():
-            return [f"claude accounts: {len(pool)} — not spreading"
-                    f"{' (claude.spread is off)' if len(pool) > 1 else ''}; "
-                    f"every turn is billed to {pool[0][0]}"] + self.claude_hold_status()
+            return quiet + [f"claude accounts: {len(pool)} — not spreading"
+                            f"{' (claude.spread is off)' if len(pool) > 1 else ''}; "
+                            f"every turn is billed to {pool[0][0]}"] + self.claude_hold_status()
         records = self.claude_records()
         chosen, why = self.pick_claude_key(records)
         cap = float(self.claude_cfg().get("five_hour_cap"))
-        out = [f"claude accounts: {len(pool)}  (cap {cap:.0%} of the five-hour session; "
-               f"next turn goes to {chosen or pool[0][0]})"]
+        out = quiet + [f"claude accounts: {len(pool)}  (cap {cap:.0%} of the five-hour "
+                       f"session; next turn goes to {chosen or pool[0][0]})"]
         if why:
             out.append(f"  because {why}")
         for rec in records:
@@ -9843,15 +10114,35 @@ class Watcher:
                        + gate)
         return out + self.claude_hold_status()
 
-    def claude_hold_status(self):
-        """What is waiting on a refill rather than running, for `ffwatch status`.
+    def quiet_hold_status(self):
+        """The quiet-hours line for `ffwatch status`, or [] when no window is configured.
 
-        Both holds are listed even when neither is biting, because "nothing has started for
-        two hours" is exactly the moment somebody goes looking for this and an absent line
-        answers nothing. [] only when neither hold is configured at all.
+        ITS OWN METHOD, AND PRINTED ABOVE THE SUBSCRIPTIONS ON EVERY PATH, including the one
+        for a box with no token in this process's environment at all. The clock holds work
+        whether or not a subscription can be read, so a report that skipped this line with the
+        accounts is a report that answers "why has nothing started since 2am" with silence.
+        """
+        window = quiet_hours_window(self.cfg)
+        if not window:
+            return []
+        start, end, _, label = window
+        secs, why = quiet_hours_hold(self.cfg)
+        return [f"quiet hours: nothing starts between {_clock(start)} and {_clock(end)} "
+                f"{label} — " + (f"WAITING: they lift in {hold_duration(secs)}"
+                                 if why else "clear, running now")]
+
+    def claude_hold_status(self):
+        """What is waiting rather than running, for `ffwatch status`.
+
+        Every configured hold is listed even when none is biting, because "nothing has started
+        for two hours" is exactly the moment somebody goes looking for this and an absent line
+        answers nothing. [] only when nothing is configured at all.
+
+        The quiet hours are NOT in here; see quiet_hold_status, which is printed above this
+        whether or not a token ever reached this process.
         """
         wanted = [(what, label) for what, label in (("review", "#codereview"),
-                                                    ("new", "new conversations"))
+                                                    ("new", "conversations"))
                   if self.claude_hold_pct(what) is not None]
         if not wanted:
             return []
@@ -10733,6 +11024,9 @@ class Watcher:
         the conversation and every later turn of that conversation reads it back, so the choice
         made here decides which kind of container the whole conversation runs in. follow_up()
         takes no such argument for exactly that reason.
+
+        RAISES INSIDE THE QUIET HOURS, uniquely on this box — every other held request waits
+        where it arrived. The reason is below, at the check itself.
         """
         if kind not in LOCAL_KINDS:
             raise ValueError(f"{kind!r} is not a local ingress; expected one of {LOCAL_KINDS}")
@@ -10746,6 +11040,20 @@ class Watcher:
         prompt = (prompt or "").strip()
         if not prompt:
             raise ValueError("empty prompt")
+        # QUIET HOURS REFUSE THIS ONE RATHER THAN DEFERRING IT, and it is the only request on
+        # the box they refuse. Every other held request is left where it arrived for the next
+        # poll to find; a brand-new local conversation has no poll — claim_turns will not sweep
+        # a local conversation until it has a turn, precisely so a crashed submit cannot cost a
+        # container answering a question already answered — so deferring here would strand the
+        # prompt for good rather than until 11:00.
+        #
+        # BEFORE A SINGLE ROW IS MINTED. The alternative is a conversation and a message
+        # recorded for a turn that will not exist, which is exactly the orphan that guard is
+        # written against. Whoever typed it still has the prompt in their terminal.
+        secs, why = quiet_hours_hold(self.cfg)
+        if why:
+            raise RuntimeError(f"{why}. Nothing was started and nothing was recorded — the "
+                               f"prompt is still yours to send in {hold_duration(secs)}.")
         key = local_message_key()
         first_line = prompt.splitlines()[0][:100]
         conv_id = self.upsert_conversation(
@@ -10864,6 +11172,16 @@ class Watcher:
         if conv["state"] in ("running", "queued"):
             log(f"conversation {conv['id']}: follow-up recorded, waiting for the turn ahead "
                 f"of it to end")
+            return message_id, None
+        # AND QUIET HOURS ARE THE OTHER WAIT, taking the path the run-in-flight case already
+        # built. This one CAN be deferred where submit() could not: the conversation has turns
+        # on it, so claim_turns sweeps it like any other and picks the message up on the pass
+        # after the hold lifts. Said out loud because there is a person at a terminal reading
+        # for a turn id that is not coming.
+        secs, why = quiet_hours_hold(self.cfg)
+        if why:
+            log(f"conversation {conv['id']}: follow-up recorded, waiting on the quiet hours "
+                f"({hold_duration(secs)} of them left) — {why}")
             return message_id, None
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv["id"],))
         turn_id = self.create_turn(conv)
@@ -13895,7 +14213,7 @@ class Watcher:
         author = comment.get("author") or comment.get("user") or {}
         if not is_github_operator(self.cfg, str(author.get("id") or "")):
             return False
-        _, why = self.claude_hold("review", fresh=True)
+        _, why = self.work_hold("review", fresh=True)
         self.log_hold(f"#codereview comment {comment.get('id')}", why)
         return bool(why)
 
