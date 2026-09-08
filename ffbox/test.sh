@@ -1,0 +1,49 @@
+#!/bin/sh
+# test.sh — every offline suite in this tree, in one command, with one exit status.
+#
+#   sh ffbox/test.sh
+#
+# WHY THIS EXISTS. There are four suites now, in two languages, in two directories. Running them
+# as `for t in ...; do sh $t; done` looks like it checks them and does not: the loop's status is
+# the LAST one's, so a failure anywhere but the end is invisible to `&&`. That is not a
+# hypothetical -- on 2026-09-08 a red test_reap.sh went past exactly that shape and was committed
+# and pushed. One entry point with one status is the fix, and it is four lines of the work.
+#
+# OFFLINE ONLY. Nothing here needs the daemon, GitHub, or a container: test_reap.sh and
+# test_ci_lane.py stub what they need and both refuse to run if the stub is not the thing they
+# reached. Suites that need a live box do not belong here, because a suite that is sometimes
+# skipped is a suite nobody believes.
+
+set -u
+
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+FAILED=""
+
+run() {   # <name> <command...>
+    # THE NAME IS CAPTURED BEFORE THE shift, and the first version of this did not do that -- so a
+    # failure was reported as `FAILED: sh`, which is the name of the interpreter rather than of
+    # anything that failed. Caught by deliberately breaking a suite to check this file works,
+    # which is worth doing to a test runner before trusting one.
+    _name=$1
+    printf '\n======== %s\n' "$_name"
+    shift
+    if "$@"; then
+        unset _name
+        return 0
+    fi
+    FAILED="$FAILED $_name"
+    unset _name
+    return 0        # keep going: one broken suite should not hide the state of the others
+}
+
+run "runners/test_pool.sh"  sh  "$HERE/runners/test_pool.sh"
+run "runners/test_reap.sh"  sh  "$HERE/runners/test_reap.sh"
+run "runners/test_pin.sh"   sh  "$HERE/runners/test_pin.sh"
+run "test_ci_lane.py"       python3 "$HERE/test_ci_lane.py"
+
+printf '\n========\n'
+if [ -n "$FAILED" ]; then
+    printf 'FAILED:%s\n' "$FAILED"
+    exit 1
+fi
+printf 'all suites passed\n'
