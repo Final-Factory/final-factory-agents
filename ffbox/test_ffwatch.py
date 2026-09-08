@@ -5118,8 +5118,12 @@ def test_harvest_refuses_a_rewritten_or_forged_range():
     src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read() \
         + open(os.path.join(HERE, "lib-cache.sh"), encoding="utf-8").read()
     harvest = open(os.path.join(HERE, "harvest-workspace.sh"), encoding="utf-8").read()
+    # THE RANGE STARTS AT A COMMIT THE WORK DESCENDS FROM. It is the fork point now rather than
+    # the base's head — a base that moved on mid-run used to fail the scan outright — and a fork
+    # point is an ancestor of HEAD by construction, which is the property this check is about.
     check("the container publishes only a range that descends from a base it knows",
-          'merge-base --is-ancestor "$_sha" HEAD' in harvest
+          '_fork=$(g merge-base "$_sha" HEAD' in harvest
+          and 'PUBLISH_BASE_SHA=$_fork' in harvest
           and '[ -z "$PUBLISH_BASE_SHA" ]; then' in harvest)
     check("and the host checks that again from the bundle, not from what the run said",
           'merge-base --is-ancestor "$_base" "$_tip"' in src
@@ -8402,7 +8406,12 @@ def run_base_resolution(root, *, base_refs, ending):
     git_run("-C", repo, "config", "user.email", "ffbox@final-factory.invalid")
     git_run("-C", repo, "config", "user.name", "ffbox")
     start = {"master": "origin/master", "below": "origin/master~1"}.get(ending, "origin/develop")
-    made = git_run("-C", repo, "checkout", "-q", "-b", "the-agents-branch", start)
+    if ending == "orphan":
+        # NO SHARED HISTORY AT ALL, which is the only thing "descends from no known base" can
+        # still mean now that a base which has merely moved on resolves by its fork point.
+        made = git_run("-C", repo, "checkout", "-q", "--orphan", "the-agents-branch")
+    else:
+        made = git_run("-C", repo, "checkout", "-q", "-b", "the-agents-branch", start)
     if made.returncode != 0:
         raise AssertionError(f"could not branch from {start}: {made.stderr.strip()}")
     with io.open(os.path.join(repo, "Belt.cs"), "a", encoding="utf-8") as fh:
@@ -8427,10 +8436,15 @@ def test_the_agent_picks_the_branch_its_work_is_for():
     """A fix for the released build is based on master; everything else on develop.
 
     The agent decides by deciding what it branches from, and the harness reads that back out of
-    the commit graph rather than out of anything it said. The rule is "the most specific base
-    that is an ancestor of the work": a branch off develop has master behind it too, and develop
-    is the descendant of the two, so develop wins. A branch off master does not have develop
-    behind it at all.
+    the commit graph rather than out of anything it said. The rule is "the base whose fork point
+    with the work is the most specific": a branch off develop leaves develop at a develop-only
+    commit and leaves master further back, so develop is the descendant of the two and wins. A
+    branch off master leaves BOTH at master's head — develop carries it as well — and that tie
+    goes to the base that has run on the least since, which is master.
+
+    Fork points and not head-ancestry, since 2026-09-08. Asking whether `origin/<name>` is an
+    ancestor of the work asks where that head is NOW, so a base that gained a commit while the
+    run was going resolved to nothing at all and the host fell back to its configured default.
     """
     print("harvest: which branch the work is for")
     root = os.path.join(TMPROOT, "publishbase")
@@ -8446,8 +8460,18 @@ def test_the_agent_picks_the_branch_its_work_is_for():
     check("with the two at the same commit, the first-listed wins",
           resolved.split()[0] == "develop", resolved)
 
+    # THE BASE MOVED ON AFTER THE BRANCH STARTED. This is what every continuation looks like
+    # once the box has merged anything: the branch left master a commit or two back, so master
+    # is no longer an ancestor of it. It is still master's work and it still gets master's name.
+    # It used to resolve to NOTHING — the scan asked whether `origin/master` was an ancestor of
+    # HEAD, which is a question about where master's head is now — and the host was then left
+    # with nothing but its configured default to go on.
     resolved = run_base_resolution(root, base_refs="develop master", ending="below")
-    check("work that descends from neither resolves to nothing, and the harvest refuses it",
+    check("work off a base that has since moved on is still that base's work",
+          resolved.split()[0] == "master", resolved)
+
+    resolved = run_base_resolution(root, base_refs="develop master", ending="orphan")
+    check("work sharing no history with any base resolves to nothing, and is refused",
           resolved == "", resolved)
 
     resolved = run_base_resolution(root, base_refs="", ending="develop")
@@ -8459,6 +8483,9 @@ def test_the_agent_picks_the_branch_its_work_is_for():
           'bundle create "$OUT/work.bundle" "${PUBLISH_BASE_SHA}..${BRANCH}"' in harvest)
     check("and the commit the run started at is the fallback when no branch claims the work",
           'PUBLISH_BASE_SHA=$BASE_SHA' in harvest)
+    check("the base is found by where the work LEFT it, not by where its head is now",
+          '_fork=$(g merge-base "$_sha" HEAD' in harvest
+          and 'g merge-base --is-ancestor "$_sha" HEAD' not in harvest, harvest[:0])
     check("the name reaches the host in publish_base.txt",
           '"$OUT/publish_base.txt"' in harvest)
 
