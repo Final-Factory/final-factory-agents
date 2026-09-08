@@ -11372,6 +11372,39 @@ class Watcher:
         log(f"run {run_row_id}: {branch} pushed but no PR — {reason}")
         return {"branch": branch, "no_pr_reason": reason}
 
+    def _still_no_pr(self, run, branch, reason):
+        """The sweep declined too, and the column now says which gate it declined AT.
+
+        publish() walks a ladder — base undecidable, then the verification gate, then the
+        agent's own confidence, then the token, then GitHub itself — and every rung writes the
+        reason it stopped for. The sweep walked the SAME ladder and wrote nothing at three of
+        those rungs, so `no_pr_reason` went on answering whichever question publish() had
+        stopped at, however long ago and whether or not it was still the answer.
+
+        Conversation 94 is what that looks like from outside. publish() stopped at the first
+        rung, base undecidable, because the base had moved under it; once that was fixed the
+        sweep got past it and stopped at confidence instead — the agent had left a real question
+        for a human — but the column still read "the harness could not tell which branch this
+        work is based on". That string is rendered on the conversation list and in the private
+        reply footer, so the page pointed a reader at a harness fault where the truth was an
+        agent waiting on an answer.
+
+        WRITTEN ONLY WHEN IT CHANGES. The reason a conversation is permanently and correctly
+        without a pull request does not change between sweeps, and the gates above this are
+        arranged so that conversation costs no network — a write every fifteen minutes for as
+        long as it stays in the window would undo that.
+
+        NOT ON THE TOKEN RUNG, deliberately. A box with no token at all is every box before its
+        key is installed, and stamping that across every conversation's record would be the
+        column answering a question about the HOST in a place that is read as a fact about the
+        RUN. publish() says it once, at the time, which is where it belongs.
+        """
+        reason = (reason or "")[:200]
+        if reason and reason != (run["no_pr_reason"] or ""):
+            self.db.execute("UPDATE run SET no_pr_reason=? WHERE id=?", (reason, run["id"]))
+            log(f"run {run['id']}: still no PR — {reason}")
+        return {"branch": branch, "no_pr_reason": reason or run["no_pr_reason"]}
+
     # -- the second look --------------------------------------------------------------------
     # publish() runs once, inside the turn that produced the commits, and then nothing is ever
     # scheduled to look at that branch again. Everything below is the look that comes back.
@@ -11524,16 +11557,18 @@ class Watcher:
         # as long as it stays inside the window.
         base = run["pr_base"]
         if base is None:
-            base, _ = self.pr_base(run["id"], run_dir, branch)
+            base, base_reason = self.pr_base(run["id"], run_dir, branch)
             if base is None:
-                return {"branch": branch}
+                return self._still_no_pr(run, branch, base_reason)
             self.db.execute("UPDATE run SET pr_base=? WHERE id=?", (base, run["id"]))
-        gate_ok, _ = self.verification_gate(run["id"])
+        gate_ok, gate_reason = self.verification_gate(run["id"])
         if not gate_ok:
-            return {"branch": branch}
+            return self._still_no_pr(run, branch, gate_reason)
         verdict = self.run_verdict(run)
         if not verdict.get("confident"):
-            return {"branch": branch}
+            return self._still_no_pr(run, branch,
+                                     verdict.get("confidence_reason")
+                                     or "the agent was not confident in the change")
         if branch in self._reconcile_refused:
             return {"branch": branch}
         gh = GitHub(self.cfg, self.conversation_class(conv))
