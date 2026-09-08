@@ -6893,6 +6893,24 @@ def test_a_local_conversation_can_be_continued():
           not case.rows("SELECT * FROM outbound"), case.rows("SELECT * FROM outbound"))
 
 
+def test_two_local_messages_in_one_millisecond_are_still_two_messages():
+    """The key `ffwatch submit` and `ffwatch continue` mint has to be unique, not just sorted.
+
+    Milliseconds plus the pid sort correctly and collide: two follow-ups typed back to back --
+    a script, the web page, or simply a fast caller -- land on the same value inside one
+    millisecond, INSERT OR IGNORE drops the second, and follow_up raises at somebody who typed
+    a perfectly good second line. This suite hit it as an intermittent failure of the test
+    below, roughly one run in three.
+    """
+    print("local conversations: two keys minted in the same instant")
+    minted = [ffwatch.local_message_key() for _ in range(500)]
+    check("no two are the same", len(set(minted)) == 500, len(set(minted)))
+    check("and they still sort as increasing integers, which the ordering casts to",
+          [int(k) for k in minted] == sorted(int(k) for k in minted), minted[:4])
+    check("keeping the millisecond+pid width, so a local id still compares with a snowflake",
+          all(len(k) == len(minted[0]) for k in minted), minted[:4])
+
+
 def test_a_follow_up_typed_mid_run_waits_and_batches():
     """Two follow-ups typed while the container works become ONE turn, after it exits.
 
@@ -14675,6 +14693,7 @@ def main():
         test_the_shell_lane_was_merged_into_dev,
         test_web_is_the_same_ingress_wearing_a_different_label,
         test_a_local_conversation_can_be_continued,
+        test_two_local_messages_in_one_millisecond_are_still_two_messages,
         test_a_follow_up_typed_mid_run_waits_and_batches,
         test_only_a_local_conversation_can_be_continued_from_this_side,
         test_the_cli_can_continue_a_conversation,

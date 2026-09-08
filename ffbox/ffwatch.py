@@ -2200,6 +2200,39 @@ def pull_request_note(pull):
     return f"\nIt is already under pull request {named}."
 
 
+_LOCAL_KEY_LOCK = threading.Lock()
+_LOCAL_KEY_LAST = [0]
+
+
+def local_message_key():
+    """A numeric id for a message this box minted itself. Never the same one twice.
+
+    NUMERIC, because message ordering casts discord_id to an integer everywhere — so a
+    follow-up has to sort after the prompt it follows, and a local id has to be comparable
+    with a Discord snowflake. Milliseconds plus the pid gives both: it sorts by time, and two
+    shells on one machine cannot land on the same value.
+
+    STRICTLY INCREASING, which milliseconds alone are NOT. `ffwatch continue` twice from one
+    script, the web page submitting twice, or simply two calls in the same millisecond mint the
+    same key — INSERT OR IGNORE drops the second, insert_message answers None, and follow_up
+    raises "the follow-up did not record a message" at somebody who typed a perfectly good
+    second line. Seen as an intermittent failure of
+    test_a_follow_up_typed_mid_run_waits_and_batches, which makes two follow-ups back to back
+    and hits it whenever the two land inside one millisecond.
+
+    So a key that is not ahead of the last one this process minted is nudged one past it. That
+    keeps the ordering the callers rely on — the next real millisecond overtakes the nudge —
+    and it is per process rather than per database because that is where the collision is; two
+    processes are already separated by the pid.
+    """
+    minted = int(f"{int(time.time() * 1000)}{os.getpid() % 1000:03d}")
+    with _LOCAL_KEY_LOCK:
+        if minted <= _LOCAL_KEY_LAST[0]:
+            minted = _LOCAL_KEY_LAST[0] + 1
+        _LOCAL_KEY_LAST[0] = minted
+    return str(minted)
+
+
 def is_local_conversation(conv):
     """True when this conversation has nowhere to post. Takes a row, a dict, or a bare kind."""
     if conv is None:
@@ -9699,9 +9732,7 @@ class Watcher:
         prompt = (prompt or "").strip()
         if not prompt:
             raise ValueError("empty prompt")
-        # A numeric key, because message ordering everywhere casts discord_id to an integer.
-        # Milliseconds plus the pid keeps two shells on one machine from colliding.
-        key = f"{int(time.time() * 1000)}{os.getpid() % 1000:03d}"
+        key = local_message_key()
         first_line = prompt.splitlines()[0][:100]
         conv_id = self.upsert_conversation(
             key, kind=kind, channel_id=None, title=first_line,
@@ -9759,10 +9790,9 @@ class Watcher:
         prompt = (prompt or "").strip()
         if not prompt:
             raise ValueError("empty prompt")
-        # The same minted key submit() uses, and for the same reason: message ordering casts
-        # discord_id to an integer everywhere, so a follow-up has to sort after the prompt it
-        # follows. Milliseconds do that on their own.
-        key = f"{int(time.time() * 1000)}{os.getpid() % 1000:03d}"
+        # The same minted key submit() uses, and for the same reason: a follow-up has to sort
+        # after the prompt it follows.
+        key = local_message_key()
         message_id = self.insert_message(conv["id"], {
             "id": key,
             "author": {"id": str(os.getuid()), "username": getpass.getuser(), "bot": False},
