@@ -477,7 +477,7 @@ _ffghr_set DAEMON_QUOTA     daemon_quota     64G
 
 # --- the workspace cache ------------------------------------------------------------------------
 # design/ffcache_design.txt. One tar per branch under $CACHE_DIR/entries, mounted read-only into
-# every job; a job writes a candidate into its own $CACHE_DIR/staging/slot-N and the SUPERVISOR
+# every job; a job writes a candidate into its own $CACHE_DIR/staging/<container> and the SUPERVISOR
 # decides whether that becomes an entry.
 #
 # AN EMPTY cache_dir DISABLES THE WHOLE FEATURE, and that is the point of it being a knob: it
@@ -531,7 +531,25 @@ ffghr_cache_ready() {
     [ -d "$FFGHR_CACHE_ENTRIES" ] && [ -d "$FFGHR_CACHE_STAGING" ]
 }
 
-ffghr_cache_stage_dir() { printf '%s/slot-%s\n' "$FFGHR_CACHE_STAGING" "$1"; }
+# THE DROP BOX FOR ONE RUN, NAMED AFTER THE CONTAINER RATHER THAN THE SLOT since 2026-09-08.
+#
+# IT USED TO BE `slot-N`, AND THAT ONLY WORKED WHILE A SLOT NUMBER MEANT SOMETHING. It stopped
+# meaning something the day the unit instances were sized to the box ceiling instead of to
+# `pool.max`: any waiting supervisor may win the pool lock, so with max 5 and twelve units the
+# runners land on 2, 3, 5, 8 and 11, and the number names a supervisor rather than a place in the
+# pool. It was never an identity for the CONTAINER, which is what this directory belongs to.
+#
+# THE CONTAINER NAME CARRIES A NONCE, so the path is unique for the life of the box, and anything
+# that can see the container can derive it -- `docker ps` and nothing else. That is what lets a
+# process which did not start the container find its drop box, which is the whole requirement
+# behind design/ffbox_ci_in_ffwatch_design.txt section 4: a restarted supervisor must be able to
+# pick up a job it did not launch, and it has only the container to go on.
+#
+# It also retires a real hazard rather than merely a confusing one. slot.sh creates staging fresh
+# before every run precisely because a teardown that never completed would otherwise leave the NEXT
+# job on that slot reading a dead job's drop box and promoting its archive under its name. With a
+# nonce in the path there is no next job on that name, ever.
+ffghr_cache_stage_dir() { printf '%s/%s\n' "$FFGHR_CACHE_STAGING" "${1:?stage dir needs a container name}"; }
 
 # THE ONE REGEX, AND IT IS THE WHOLE PATH-TRAVERSAL DEFENCE. A job proposes a name; this decides
 # whether that string is a name at all. It lives here rather than being written out in slot.sh and

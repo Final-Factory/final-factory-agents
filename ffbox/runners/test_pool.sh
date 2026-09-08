@@ -360,5 +360,41 @@ check_passes() {   # <env name> <variable it must carry>
 check_passes FFGHR_MIRROR_WAIT   MIRROR_WAIT_SECS
 check_passes FFGHR_ARTIFACT_WAIT ARTIFACT_WAIT_SECS
 
+printf '\nidentity that survives a supervisor change\n'
+
+# THE DROP BOX BELONGS TO THE CONTAINER, NOT TO A SLOT NUMBER. Once the unit instances were sized
+# to the box ceiling, which slot a container lands on became arbitrary, so a slot number stopped
+# being able to find anything. A process that did not start the container must still be able to
+# derive its staging path, and `docker ps` is all it has.
+# design/ffbox_ci_in_ffwatch_design.txt section 4a.
+CACHE_DIR=$TMP/cache
+FFGHR_CACHE_STAGING=$CACHE_DIR/staging
+is "$(ffghr_cache_stage_dir ffghr-h-7-abc123)" "$FFGHR_CACHE_STAGING/ffghr-h-7-abc123" \
+   "the staging path is derived from the container name"
+if (ffghr_cache_stage_dir >/dev/null 2>&1); then
+    bad "a stage dir with no container name must not silently return the staging root"
+else
+    ok "and a missing name is refused rather than returning the staging root"
+fi
+
+# Two containers on the SAME slot number -- which happens every time a slot serves a second job --
+# must not share a drop box. This is the property the nonce buys.
+[ "$(ffghr_cache_stage_dir ffghr-h-7-abc123)" != "$(ffghr_cache_stage_dir ffghr-h-7-def456)" ] \
+    && ok "two containers on one slot get different drop boxes" \
+    || bad "two containers on one slot must not share a drop box"
+
+printf '\nwho owns a container\n'
+
+# THE RULE ITSELF LIVES IN reap.sh AND IS TESTED IN test_reap.sh, against the real script with a
+# stub daemon. It was briefly tested here instead, by copying `owner_state` into this file and
+# asserting against the copy -- which would have gone on passing if the real function were
+# deleted. What is left here is the half that belongs here: the label has to actually be written,
+# or every container reads as pre-2026-09-08 forever and the rule never fires.
+
+# And the label is actually on the run, or every container reads as pre-2026-09-08 forever.
+grep -qF -- '--label ffghr.owner=slot.sh' "$HERE/slot.sh" \
+    && ok "slot.sh labels its containers with an owner" \
+    || bad "slot.sh must label its containers ffghr.owner=slot.sh"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

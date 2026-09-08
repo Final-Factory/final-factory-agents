@@ -312,7 +312,10 @@ done
 # nothing here can chown. See 01-hostSetup.sh.
 CACHE_ARGS=""
 if ffghr_cache_ready; then
-    STAGE=$(ffghr_cache_stage_dir "$SLOT")
+    # THE CONTAINER'S NAME, NOT THE SLOT NUMBER. A slot number names this supervisor; the drop box
+    # belongs to the container, and anything holding the container can derive the path from it.
+    # lib/config.sh's ffghr_cache_stage_dir has the reasoning.
+    STAGE=$(ffghr_cache_stage_dir "$CNAME")
     rm -rf "$STAGE" 2>/dev/null || true
     # THE MODE COMES FROM THE UMASK, NOT FROM A chmod, AND THAT IS NOT A STYLE CHOICE.
     #
@@ -391,6 +394,7 @@ docker run -d \
     --name "$CNAME" \
     --hostname "$CNAME" \
     --label "$FFBOX_WORKLOAD_LABEL=ci" \
+    --label ffghr.owner=slot.sh \
     --label ffghr.supervisor.pid="$$" \
     --label ffghr.slot="$SLOT" \
     --label ffghr.runner.id="$RUNNER_ID" \

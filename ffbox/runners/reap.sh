@@ -44,42 +44,87 @@ CONTAINERS=$(docker ps -a --filter "name=^ffghr-" --format '{{.Names}}' 2>/dev/n
 # --- containers ------------------------------------------------------------------------------------
 #
 # A supervisor always removes its own container, so anything ffghr-* still here either belongs to a
-# live supervisor or is an orphan. The container says which: slot.sh labels it with its own pid,
-# and a pid whose cmdline is no longer a slot.sh is a supervisor that died without tearing down.
+# live supervisor or is an orphan. The container says which, and WHICH QUESTION TO ASK depends on
+# what kind of thing owns it -- which is why there is an `ffghr.owner` label as well as a pid.
 #
-# A container with NO label is left alone and reported. It predates this labelling, or something
-# else made it, and either way "I cannot explain this" means "do not delete it" — the thing that
-# cannot be explained is sometimes a running job.
+#   ffghr.owner=slot.sh     one supervisor per container, living exactly as long as it. Its pid is
+#                           an exact answer and `ffghr.supervisor.pid` carries it.
+#   ffghr.owner=ffwatch     one daemon for every container, which RESTARTS on every code update and
+#                           every config edit while its containers keep running. A pid here would
+#                           go stale on every update and make every adopted container read as an
+#                           orphan, which is a reaper deleting live jobs. The question becomes "is
+#                           an ffwatch running on this box", and losing precision is the price of
+#                           an owner that is allowed to come and go.
+#   (no owner label)        a container from before 2026-09-08. Fall back to the pid, which is what
+#                           it carries.
+#
+# A container with NO label of either kind is left alone and reported. It predates both, or
+# something else made it, and either way "I cannot explain this" means "do not delete it" — the
+# thing that cannot be explained is sometimes a running job.
+#
+# design/ffbox_ci_in_ffwatch_design.txt section 4b. The ffwatch branch cannot fire until that work
+# lands; it is here so that a container started by the daemon is never classified by a pid.
 supervisor_alive() {   # $1 = pid
     [ -n "$1" ] || return 1
     [ -r "/proc/$1/cmdline" ] || return 1
     tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'slot\.sh'
 }
 
+# Is ANY ffwatch daemon running as this account? Deliberately not a pid: see above.
+ffwatch_alive() {
+    for _p in /proc/[0-9]*; do
+        [ -r "$_p/cmdline" ] || continue
+        case "$(tr '\0' ' ' < "$_p/cmdline" 2>/dev/null)" in
+            *ffwatch.py*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# "live", "orphan" or "unknown", for one container.
+owner_state() {   # $1 = owner label, $2 = pid label
+    case "${1:-}" in
+        ffwatch)
+            if ffwatch_alive; then echo live; else echo orphan; fi ;;
+        slot.sh|'')
+            # slot.sh, or a container from before the owner label existed: the pid is exact.
+            if [ -z "${2:-}" ]; then echo unknown
+            elif supervisor_alive "$2"; then echo live
+            else echo orphan
+            fi ;;
+        *)
+            # An owner this reaper does not know about. NOT an orphan: a newer slot.sh or daemon
+            # writing a name this version has never heard of is exactly the case where deleting
+            # would be worst, and it happens on every box during an upgrade.
+            echo unknown ;;
+    esac
+}
+
 for c in $CONTAINERS; do
     [ "$c" != "$EGRESS_NAME" ] || continue   # the fence is ffghr-* too, and it is not garbage
 
     pid=$(docker inspect -f '{{index .Config.Labels "ffghr.supervisor.pid"}}' "$c" 2>/dev/null || echo "")
+    owner=$(docker inspect -f '{{index .Config.Labels "ffghr.owner"}}' "$c" 2>/dev/null || echo "")
     rid=$(docker inspect -f '{{index .Config.Labels "ffghr.runner.id"}}' "$c" 2>/dev/null || echo "")
     state=$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo gone)
     [ "$state" != gone ] || continue
 
-    if [ -z "$pid" ]; then
-        act "$c has no supervisor label; leaving it alone (state $state)"
-        continue
-    fi
-    if supervisor_alive "$pid"; then
-        skip "$c belongs to live supervisor $pid; leaving it"
-        continue
-    fi
+    case "$(owner_state "$owner" "$pid")" in
+        unknown)
+            act "$c has no owner this reaper recognises (owner='${owner:-none}'); leaving it alone (state $state)"
+            continue ;;
+        live)
+            skip "$c belongs to a live ${owner:-supervisor}; leaving it"
+            continue ;;
+    esac
 
     if [ "$DRY" = 1 ]; then
-        act "would remove orphaned container $c (state $state, dead supervisor $pid)"
+        act "would remove orphaned container $c (state $state, dead ${owner:-supervisor})"
         [ -z "$rid" ] || act "would delete its registration $rid"
         continue
     fi
     docker rm -f "$c" >/dev/null 2>&1 \
-        && act "removed orphaned container $c (state $state, dead supervisor $pid)" \
+        && act "removed orphaned container $c (state $state, dead ${owner:-supervisor})" \
         || act "WARNING: could not remove $c"
     # Its registration goes with it. Waiting for the pass below would work only once GitHub marks
     # the runner offline, which takes minutes.
@@ -180,16 +225,16 @@ done
 # What it does do is bound the cache when slots stop exiting cleanly, which is the failure the
 # fifteen-minute timer exists for.
 
-# A staging directory belongs to a slot number, and the supervisor for that slot is a `slot.sh N`
-# in the process table. Same shape as supervisor_alive above, matching the slot rather than a pid,
-# because a staging directory carries no label to record one.
-slot_supervisor_alive() {   # $1 = slot number
-    for _p in /proc/[0-9]*; do
-        [ -r "$_p/cmdline" ] || continue
-        case "$(tr '\0' ' ' < "$_p/cmdline" 2>/dev/null)" in
-            *"slot.sh $1 "*) return 0 ;;
-        esac
-    done
+# A STAGING DIRECTORY IS NAMED AFTER ITS CONTAINER SINCE 2026-09-08, so the question "is this one
+# still in use" is answered by the daemon rather than by the process table.
+#
+# THIS USED TO SCAN /proc FOR `slot.sh N`, because the directory was `slot-N` and carried nothing
+# else to go on. That was a weaker test than it looked: it asked whether SOME supervisor held that
+# slot number, not whether the job whose files these are is still running, and the two stopped
+# being the same thing when a slot number stopped meaning a place in the pool. Matching a live
+# container by name is exact, needs no /proc walk, and uses the listing this file already has.
+staging_container_live() {   # $1 = directory basename, which is a container name
+    case " $LIVE " in *" ${1:?} "*) return 0 ;; esac
     return 1
 }
 
@@ -197,21 +242,35 @@ if ! ffghr_cache_ready; then
     skip "workspace cache not provisioned or disabled; nothing to sweep"
 else
     say "workspace cache"
-    for d in "$FFGHR_CACHE_STAGING"/slot-*; do
+    for d in "$FFGHR_CACHE_STAGING"/*; do
         [ -d "$d" ] || continue
-        n=${d##*/slot-}
+        n=${d##*/}
+        # THE OLD SHAPE, SWEPT ONCE AND THEN FORGOTTEN. A `slot-N` directory belongs to no
+        # container under the new rule, so nothing will ever claim it and it would sit there for
+        # the life of the box holding up to 16G. Its owner cannot be identified any more, which is
+        # exactly why it has to go rather than be left alone: the conservative reading -- "I cannot
+        # explain this, so do not delete it" -- would keep it forever.
+        # DELETE THIS BRANCH once every box has been through one upgrade; it can only ever match a
+        # directory made before 2026-09-08.
         case "$n" in
-            ''|*[!0-9]*) act "$d is not a slot staging directory; leaving it alone"; continue ;;
+            slot-*)
+                if [ "$DRY" = 1 ]; then
+                    act "would clear $d, left by the pre-2026-09-08 slot-numbered staging"
+                else
+                    rm -rf "$d" && act "cleared $d, left by the pre-2026-09-08 slot-numbered staging" \
+                                || act "WARNING: could not clear $d"
+                fi
+                continue ;;
         esac
-        if slot_supervisor_alive "$n"; then
-            skip "staging for slot $n belongs to a live supervisor; leaving it"
+        if staging_container_live "$n"; then
+            skip "staging for $n belongs to a running container; leaving it"
             continue
         fi
         if [ "$DRY" = 1 ]; then
-            act "would clear stale staging $d (no live supervisor for slot $n)"
+            act "would clear stale staging $d (no container named $n is running)"
             continue
         fi
-        rm -rf "$d" && act "cleared stale staging for slot $n" \
+        rm -rf "$d" && act "cleared stale staging for $n" \
                     || act "WARNING: could not clear $d"
     done
 
