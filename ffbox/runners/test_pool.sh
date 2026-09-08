@@ -89,35 +89,6 @@ ffghr_mark_busy ffghr-h-9-zz
 is "$(ffghr_pool_counts)" "2 2" "a marker for a container that is gone counts for nothing"
 ffghr_clear_busy ffghr-h-9-zz
 
-printf '\nadmission\n'
-CONTAINERS=""
-ffghr_pool_admit && ok "an empty pool admits" || bad "an empty pool must admit"
-
-CONTAINERS="ffghr-h-1-aa"
-ffghr_pool_admit && bad "one idle runner with idle_pool 1 must NOT admit" || ok "one idle runner satisfies idle_pool 1"
-
-# The whole feature in one case: the idle runner takes a job, so the pool is short one and the
-# next slot brings a replacement up.
-ffghr_mark_busy ffghr-h-1-aa
-ffghr_pool_admit && ok "a busy runner makes room for a replacement" || bad "a busy runner must admit a replacement"
-
-# ... and it keeps admitting as jobs arrive, until the ceiling.
-CONTAINERS="ffghr-h-1-aa ffghr-h-2-bb ffghr-h-3-cc ffghr-h-4-dd ffghr-h-5-ee"
-for c in $CONTAINERS; do ffghr_mark_busy "$c"; done
-ffghr_pool_admit && ok "five busy of six admits the sixth" || bad "five busy of six must admit"
-
-CONTAINERS="ffghr-h-1-aa ffghr-h-2-bb ffghr-h-3-cc ffghr-h-4-dd ffghr-h-5-ee ffghr-h-6-ff"
-ffghr_mark_busy ffghr-h-6-ff
-ffghr_pool_admit && bad "the ceiling must hold at slots=6" || ok "six of six does not admit a seventh"
-
-# A ceiling reached with an idle runner still in it: the ceiling wins, which is the case that
-# makes idle_pool a target rather than a guarantee.
-write_config 2 2
-ffghr_reload_limits
-CONTAINERS="ffghr-h-1-aa ffghr-h-2-bb"
-ffghr_clear_busy ffghr-h-1-aa; ffghr_clear_busy ffghr-h-2-bb
-ffghr_pool_admit && bad "slots=2 with two containers must not admit" || ok "the ceiling beats the idle target"
-
 printf '\nre-reading config.json\n'
 write_config 4 3
 ffghr_reload_limits
@@ -244,50 +215,14 @@ FFGITHUBRUNNERS_IDLE_MINUTES=0 . "$HERE/lib/config.sh" 2>/dev/null
 is "$IDLE_MINUTES" 0 "and 0 is left alone, because never recycling is a thing somebody may mean"
 unset FFGITHUBRUNNERS_IDLE_MINUTES
 
-printf '\nslot units, and the ceiling that is not the unit count\n'
+printf '\nre-reading the config without forking python3 every poll\n'
 
-# THE 2026-09-08 BUG IN ONE SECTION. `pool.max` and the number of enabled unit instances used to
-# be the same number, so raising the ceiling did nothing until somebody re-ran 05-services.sh as
-# root -- and that re-run restarts the target, which ends every job in flight. ffghr_slot_units()
-# breaks the tie by sizing the units to the BOX ceiling, which is the most containers the machine
-# will hold whatever either lane asks for.
-write_units_config() {   # <box ceiling literal, JSON> <pool max>
+# Its own writer, since the section that used to define one went with the slot units.
+write_units_config() {   # <box ceiling> <pool max>
     printf '{ "max_concurrent_runs": %s, "githubrunner": { "pool": { "max": %s, "idle": 1 } } }\n' \
         "$1" "$2" > "$FFBOX_CONFIG_DIR/config.json"
     ffghr_reload_limits
 }
-
-write_units_config 12 5
-is "$SLOTS" 5 "pool.max is still the lane's own ceiling"
-is "$(ffghr_slot_units)" 12 "the units are sized to max_concurrent_runs, not to pool.max"
-
-# NEVER FEWER UNITS THAN THE LANE ASKS FOR. A max above the box ceiling is refused at admission,
-# but rendering fewer units than it would put the old coupling back for exactly the operator who
-# reached too far -- the person this change is for.
-write_units_config 4 9
-is "$(ffghr_slot_units)" 9 "a pool.max above the box ceiling still gets units for it"
-
-# A box that cannot say what its ceiling is gets the OLD behaviour rather than invented headroom.
-printf '{ "githubrunner": { "pool": { "max": 2, "idle": 1 } } }\n' > "$FFBOX_CONFIG_DIR/config.json"
-ffghr_reload_limits
-is "$(ffghr_slot_units)" 2 "no readable box ceiling falls back to pool.max, which is today's rule"
-
-printf '{ "max_concurrent_runs": "twelve", "githubrunner": { "pool": { "max": 3, "idle": 1 } } }\n' \
-    > "$FFBOX_CONFIG_DIR/config.json"
-ffghr_reload_limits
-is "$(ffghr_slot_units)" 3 "a ceiling that is not a number falls back the same way"
-
-# These become sleeping processes, so a typo must not become two hundred of them.
-write_units_config 500 2
-is "$(ffghr_slot_units)" 32 "an absurd ceiling is capped"
-
-# max 0 means the lane takes nothing, and that must not read as "no units" -- the supervisors are
-# what pick the number back up when somebody raises it again.
-write_units_config 8 0
-is "$SLOTS" 0 "max 0 is left alone: no places, so this lane takes nothing"
-is "$(ffghr_slot_units)" 8 "and the units stay, or raising max again would need root"
-
-printf '\nre-reading the config without forking python3 every poll\n'
 
 # THE GUARD THAT MAKES THE HEADROOM AFFORDABLE. A waiting supervisor called ffghr_reload_limits
 # once per POOL_POLL_SECONDS and each call forked a python3 to re-parse a file that changes about
@@ -340,25 +275,9 @@ is "$ARTIFACT_WAIT_SECS" 600 "and so does zero, which would be a job that never 
 write_config 6 1
 . "$HERE/lib/config.sh"
 
-# A STATIC CHECK, DELIBERATELY, and it is worth saying why rather than leaving it to look lazy.
-# Rendering slot.sh's real `docker run` needs a JIT config minted against GitHub and a daemon to
-# refuse it, which is not something an offline test can have. What can go wrong without a daemon
-# is the cheap half and the likely half: somebody renames the variable, or drops the `-e` while
-# editing the long argument list, and the container silently falls back to 120s -- which is
-# invisible until an update lands on a job in its first minute. So: assert the flags are on the
-# run and that they carry the variables this file just proved.
-# -F, not a regex: the pattern ends in `"` and contains `$`, and as a basic regex the trailing
-# `$` anchored to end-of-line and matched nothing. It passed as a FAIL, which is the right way
-# round for a test to be wrong, but it is worth the flag rather than the escaping.
-check_passes() {   # <env name> <variable it must carry>
-    if grep -qF -- "-e $1=\"\$$2\"" "$HERE/slot.sh"; then
-        ok "slot.sh passes $1=\$$2 into the container"
-    else
-        bad "slot.sh must pass $1=\$$2, or the job silently keeps its own default"
-    fi
-}
-check_passes FFGHR_MIRROR_WAIT   MIRROR_WAIT_SECS
-check_passes FFGHR_ARTIFACT_WAIT ARTIFACT_WAIT_SECS
+# THE TWO WAIT BUDGETS REACH THE CONTAINER FROM ci_lane NOW. This used to grep slot.sh's docker
+# run for the two -e flags; slot.sh is gone and test_ci_lane.py renders ci_lane's argument list and
+# asserts on it instead, which is the same check against the code that actually runs.
 
 printf '\nidentity that survives a supervisor change\n'
 
@@ -392,9 +311,9 @@ printf '\nwho owns a container\n'
 # or every container reads as pre-2026-09-08 forever and the rule never fires.
 
 # And the label is actually on the run, or every container reads as pre-2026-09-08 forever.
-grep -qF -- '--label ffghr.owner=slot.sh' "$HERE/slot.sh" \
-    && ok "slot.sh labels its containers with an owner" \
-    || bad "slot.sh must label its containers ffghr.owner=slot.sh"
+# THE LABEL ITSELF IS ci_lane's TO WRITE NOW, and test_ci_lane.py asserts it is on the docker run
+# argument list. What stays here is the reading rule, which lives in reap.sh and is driven by
+# test_reap.sh against the real script.
 
 printf '\nthe staging protocol version\n'
 
@@ -447,52 +366,8 @@ FFGHR_PROTOCOL_ACCEPTS='1 2' FFGHR_PROTOCOL_VERSION=2 ffghr_protocol_ok "$_pdir"
     && ok "a host on v2 still serves a v1 job when it says it accepts v1" \
     || bad "the accepted list must be what decides, not the current version"
 
-grep -qF 'ffghr_protocol_write "$STAGE"' "$HERE/slot.sh" \
-    && ok "slot.sh records the version when it creates a staging directory" \
-    || bad "slot.sh must record the protocol version at staging creation"
-grep -qF 'ffghr_protocol_ok "$STAGE"' "$HERE/slot.sh" \
-    && ok "and checks it before serving anything out of one" \
-    || bad "slot.sh must check the protocol before it serves a request"
-
-printf '\nwhich process supervises this lane\n'
-
-# ONE KEY, ONE EFFECT: whether 05-services.sh renders slot instances. The daemon does not read it
-# -- it asks whether a slot.sh is actually RUNNING, because a stale key would answer that wrongly.
-# What the key buys is a cut-over somebody decides rather than one that falls out of a deploy, and
-# a rollback that is one edit and one command. design section 12, phase E.
-write_sup() {   # <supervisor JSON literal, or "" to omit the key>
-    if [ -z "$1" ]; then
-        printf '{ "max_concurrent_runs": 12, "githubrunner": { "pool": { "max": 5, "idle": 1 } } }\n' \
-            > "$FFBOX_CONFIG_DIR/config.json"
-    else
-        printf '{ "max_concurrent_runs": 12, "githubrunner": { "supervisor": %s,
-                  "pool": { "max": 5, "idle": 1 } } }\n' "$1" > "$FFBOX_CONFIG_DIR/config.json"
-    fi
-    . "$HERE/lib/config.sh" 2>/dev/null
-}
-
-write_sup ''
-is "$SUPERVISOR" slot.sh "with no key at all the lane is slot.sh's, which is today's box"
-is "$(ffghr_slot_units)" 12 "and the units are rendered"
-
-write_sup '"ffwatch"'
-is "$SUPERVISOR" ffwatch "the key hands the lane to the daemon"
-is "$(ffghr_slot_units)" 0 "and NO slot units are rendered, not even one"
-
-# NOT EVEN ONE. A single ffgithubrunners@1 left enabled would go on minting runners beside the
-# daemon against the same ceiling with no lock between them -- the overshoot ci_lane's interlock
-# exists to prevent, arriving from the other side.
-
-write_sup '"slot.sh"'
-is "$(ffghr_slot_units)" 12 "and handing it back brings every supervisor back"
-
-# A TYPO MUST NOT RETIRE CI. The failure direction is "nothing changed, and it said why".
-write_sup '"ffwtach"'
-is "$SUPERVISOR" slot.sh "a value that is not a known supervisor keeps slot.sh"
-is "$(ffghr_slot_units)" 12 "so the units stay"
-
-write_config 6 1
-. "$HERE/lib/config.sh"
+# WRITING AND CHECKING THE PROTOCOL IS ci_lane's, and test_ci_lane.py covers that side. The rules
+# themselves are above and are the real functions, sourced from lib/config.sh.
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

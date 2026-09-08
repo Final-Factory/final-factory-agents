@@ -43,34 +43,18 @@ CONTAINERS=$(docker ps -a --filter "name=^ffghr-" --format '{{.Names}}' 2>/dev/n
 
 # --- containers ------------------------------------------------------------------------------------
 #
-# A supervisor always removes its own container, so anything ffghr-* still here either belongs to a
-# live supervisor or is an orphan. The container says which, and WHICH QUESTION TO ASK depends on
-# what kind of thing owns it -- which is why there is an `ffghr.owner` label as well as a pid.
+# A container is either the daemon's or an orphan, and the label says which. ffwatch restarts on
+# every code update while its containers keep running, so the question is NEVER "is that pid
+# alive" -- a pid would mark every adopted container an orphan and this file would delete live
+# jobs on every deploy. It is "is an ffwatch running on this box at all", and losing that precision
+# is the price of an owner that is allowed to come and go.
 #
-#   ffghr.owner=slot.sh     one supervisor per container, living exactly as long as it. Its pid is
-#                           an exact answer and `ffghr.supervisor.pid` carries it.
-#   ffghr.owner=ffwatch     one daemon for every container, which RESTARTS on every code update and
-#                           every config edit while its containers keep running. A pid here would
-#                           go stale on every update and make every adopted container read as an
-#                           orphan, which is a reaper deleting live jobs. The question becomes "is
-#                           an ffwatch running on this box", and losing precision is the price of
-#                           an owner that is allowed to come and go.
-#   (no owner label)        a container from before 2026-09-08. Fall back to the pid, which is what
-#                           it carries.
+# THE ffghr.supervisor.pid BRANCH WENT ON 2026-09-08 with slot.sh. It was exact while one
+# supervisor lived exactly as long as one container; nothing writes that label now.
 #
-# A container with NO label of either kind is left alone and reported. It predates both, or
-# something else made it, and either way "I cannot explain this" means "do not delete it" — the
-# thing that cannot be explained is sometimes a running job.
-#
-# design/ffbox_ci_in_ffwatch_design.txt section 4b. The ffwatch branch cannot fire until that work
-# lands; it is here so that a container started by the daemon is never classified by a pid.
-supervisor_alive() {   # $1 = pid
-    [ -n "$1" ] || return 1
-    [ -r "/proc/$1/cmdline" ] || return 1
-    tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'slot\.sh'
-}
-
-# Is ANY ffwatch daemon running as this account? Deliberately not a pid: see above.
+# A container with NO owner label is left alone and reported. Something else made it, and "I
+# cannot explain this" means "do not delete it" — the thing that cannot be explained is sometimes
+# a running job.
 ffwatch_alive() {
     for _p in /proc/[0-9]*; do
         [ -r "$_p/cmdline" ] || continue
@@ -81,35 +65,55 @@ ffwatch_alive() {
     return 1
 }
 
+# ONE SIGHTING OF AN ABSENT DAEMON IS NOT AN ORPHAN, AND THIS IS THE WHOLE OF WHY.
+#
+# ffwatch restarts on every code update and every config edit. Measured over 227 real updates, the
+# box is down a median of 6 seconds while that happens -- and its CI containers keep running right
+# through, which is the property the whole daemon design rests on. This sweep runs every 15
+# minutes. Land one inside that six-second window and a bare "is a daemon running" test says NO,
+# every CI container reads as an orphan, and this file deletes running two-hour Unity jobs.
+#
+# It has to be `absent NOW and absent LAST TIME` -- two sightings a reap interval apart. A restart
+# cannot span that; a daemon that genuinely will not start does, and gets cleaned up one interval
+# later than before, which is a trade worth making by a wide margin.
+#
+# THE STAMP IS REMOVED THE MOMENT THE DAEMON IS SEEN, so a daemon that comes back between sweeps
+# clears the suspicion rather than leaving it to age into a deletion.
+FFGHR_NO_DAEMON_STAMP=${FFGHR_NO_DAEMON_STAMP:-$FFGHR_CONFIG_DIR/reap.no-daemon}
+
+daemon_absent_twice() {
+    if ffwatch_alive; then
+        rm -f "$FFGHR_NO_DAEMON_STAMP" 2>/dev/null || :
+        return 1
+    fi
+    if [ -e "$FFGHR_NO_DAEMON_STAMP" ]; then
+        return 0
+    fi
+    printf 'no ffwatch seen at %s\n' "$(date -Is)" > "$FFGHR_NO_DAEMON_STAMP" 2>/dev/null || :
+    skip "no ffwatch is running; noting it and leaving containers alone until the next sweep"
+    return 1
+}
+
 # "live", "orphan" or "unknown", for one container.
-owner_state() {   # $1 = owner label, $2 = pid label
+owner_state() {   # $1 = owner label
     case "${1:-}" in
-        ffwatch)
-            if ffwatch_alive; then echo live; else echo orphan; fi ;;
-        slot.sh|'')
-            # slot.sh, or a container from before the owner label existed: the pid is exact.
-            if [ -z "${2:-}" ]; then echo unknown
-            elif supervisor_alive "$2"; then echo live
-            else echo orphan
-            fi ;;
-        *)
-            # An owner this reaper does not know about. NOT an orphan: a newer slot.sh or daemon
-            # writing a name this version has never heard of is exactly the case where deleting
-            # would be worst, and it happens on every box during an upgrade.
-            echo unknown ;;
+        ffwatch) if daemon_absent_twice; then echo orphan; else echo live; fi ;;
+        # An owner this reaper has never heard of -- including none at all. NOT an orphan: a newer
+        # daemon writing a name this version cannot read is exactly the case where deleting would
+        # be worst, and it happens on every box during an upgrade.
+        *)       echo unknown ;;
     esac
 }
 
 for c in $CONTAINERS; do
     [ "$c" != "$EGRESS_NAME" ] || continue   # the fence is ffghr-* too, and it is not garbage
 
-    pid=$(docker inspect -f '{{index .Config.Labels "ffghr.supervisor.pid"}}' "$c" 2>/dev/null || echo "")
     owner=$(docker inspect -f '{{index .Config.Labels "ffghr.owner"}}' "$c" 2>/dev/null || echo "")
     rid=$(docker inspect -f '{{index .Config.Labels "ffghr.runner.id"}}' "$c" 2>/dev/null || echo "")
     state=$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo gone)
     [ "$state" != gone ] || continue
 
-    case "$(owner_state "$owner" "$pid")" in
+    case "$(owner_state "$owner")" in
         unknown)
             act "$c has no owner this reaper recognises (owner='${owner:-none}'); leaving it alone (state $state)"
             continue ;;
@@ -245,23 +249,6 @@ else
     for d in "$FFGHR_CACHE_STAGING"/*; do
         [ -d "$d" ] || continue
         n=${d##*/}
-        # THE OLD SHAPE, SWEPT ONCE AND THEN FORGOTTEN. A `slot-N` directory belongs to no
-        # container under the new rule, so nothing will ever claim it and it would sit there for
-        # the life of the box holding up to 16G. Its owner cannot be identified any more, which is
-        # exactly why it has to go rather than be left alone: the conservative reading -- "I cannot
-        # explain this, so do not delete it" -- would keep it forever.
-        # DELETE THIS BRANCH once every box has been through one upgrade; it can only ever match a
-        # directory made before 2026-09-08.
-        case "$n" in
-            slot-*)
-                if [ "$DRY" = 1 ]; then
-                    act "would clear $d, left by the pre-2026-09-08 slot-numbered staging"
-                else
-                    rm -rf "$d" && act "cleared $d, left by the pre-2026-09-08 slot-numbered staging" \
-                                || act "WARNING: could not clear $d"
-                fi
-                continue ;;
-        esac
         if staging_container_live "$n"; then
             skip "staging for $n belongs to a running container; leaving it"
             continue
