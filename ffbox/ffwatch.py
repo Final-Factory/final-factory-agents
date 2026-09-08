@@ -8299,23 +8299,55 @@ class Watcher:
         amending, reverting or switching. Saying it twice in different words is how the two come
         to disagree.
 
-        NO LEVEL ARGUMENT. Bare `/code-review-sonnet` runs at the workflow's own default, which
-        is `high`, so this lane and a session where somebody types the same thing cannot drift
-        apart. The workflow pins every subagent it spawns to sonnet, which is why it is named
-        rather than reached through /code-review -- that route falls back to a fan-out on the
-        session model when workflows are off, and the session model is opus.
+        THE RANGE IS A MERGE-BASE RANGE, and getting that wrong was worth a whole review. This
+        used to say "the diff from `origin/<base>` to `HEAD`", which is a two-endpoint diff: it
+        also carries everything the base has gained since the branch started, shown backwards,
+        as though this branch had reverted it. Branches here routinely trail master by several
+        merges, so that is the normal case and not an edge one -- on pull request #502 it was
+        37 files against the 5 the branch actually touched, and the reviewer spent its pass
+        working out that the Obliterator churn from #501 was not its own doing and dropping
+        every finding in it. Three dots is what the pull request page itself shows.
+
+        NO LEVEL ARGUMENT, STILL. The range goes over as the workflow's TARGET, and its argument
+        parser reads a first token that is not a known level as exactly that -- so the level
+        stays at the workflow's own default of `high`, and this lane cannot drift from a session
+        where somebody types the same command. The target is also what stops the workflow's
+        Scope agent from falling back to `git diff @{upstream}...HEAD`, which on a pushed branch
+        is empty, and then to `git diff main...HEAD`, which names a branch this repo does not
+        have.
+
+        THE REVIEW IS FANNED OUT OVER SONNET SUBAGENTS, and the run's own model never does it.
+        That is the whole reason the workflow is named here rather than reached through
+        /code-review: that route falls back to a fan-out on the session model when workflows are
+        off, and the session model is opus. The instruction says so out loud rather than leaving
+        it to be inferred from the command name, because a driver that decides to "just read the
+        diff itself" produces a review that costs opus rates and has no independent verifier
+        behind any of its findings.
         """
         base = review["base"] or self.cfg["github"]["base"]
         parts = [
             f"Review pull request #{review['number']} and fix what is wrong with it.",
             "",
             f"You are standing on its branch, `{review['branch'] or '?'}`, which targets "
-            f"`{base}`. The change under review is the diff from `origin/{base}` to `HEAD`.",
+            f"`{base}`.",
+            "",
+            f"The change under review is what this branch added after it left `origin/{base}` "
+            f"— `git diff origin/{base}...HEAD`, THREE dots. That is the diff the pull request "
+            f"page itself shows. `origin/{base}` has almost certainly gained commits since this "
+            f"branch started, and a two-dot `git diff origin/{base} HEAD` shows every one of "
+            f"them backwards, as if this branch had reverted them. Nothing outside the "
+            f"three-dot diff is under review, and 'fixing' something from it would undo work "
+            f"somebody else already merged.",
             "",
             "Do this:",
             "",
-            "1. Run `/code-review-sonnet`. Pass no arguments: its own default effort is the "
-            "one to use, and it reviews the working tree's diff.",
+            f"1. Run `/code-review-sonnet origin/{base}...HEAD`. The review itself is not yours "
+            f"to do: that workflow fans it out over SONNET subagents — a finder per angle, then "
+            f"an independent verifier for every candidate — and hands you back the findings "
+            f"that survived. Do not read the diff and review it yourself, and do not reach it "
+            f"through `/code-review`, which falls back to a fan-out on this run's own model. "
+            f"The range is the only argument: leave the effort level off, so this lane runs at "
+            f"the workflow's default.",
             "2. Take the findings it returns and check each one against the code yourself. It "
             "reports; you decide. A finding you cannot reproduce by reading the code is one to "
             "drop, and saying so is a result.",

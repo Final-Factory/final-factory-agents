@@ -12259,6 +12259,19 @@ def test_a_codereview_comment_starts_a_review_on_the_pull_requests_own_branch():
           "#41" in prompt and "loth/pr-branch" in prompt, prompt[:300])
     check("it runs the sonnet workflow by name, with no level argument",
           "/code-review-sonnet" in prompt and "code-review high" not in prompt, prompt[:400])
+    # THE RANGE, and the whole reason this check exists: the prompt used to name a two-endpoint
+    # diff, which on a branch that trails its base by a few merges reads their commits as this
+    # branch's reverts. Passed as the workflow's TARGET, which is also what keeps its Scope
+    # agent off `git diff @{upstream}...HEAD` (empty on a pushed branch) and `main` (not a
+    # branch of this repo). A first token that is not a level parses as the target, so the
+    # effort still defaults -- which is what the check above is asserting.
+    check("the review is scoped to the branch's own work, by merge-base",
+          "/code-review-sonnet origin/develop...HEAD" in prompt, prompt[:600])
+    check("and the two-dot form is named as the thing not to do",
+          "git diff origin/develop HEAD" in prompt and "THREE dots" in prompt, prompt[:600])
+    check("the run is told the review is not its own to perform",
+          "fans it out over SONNET subagents" in prompt
+          and "Do not read the diff and review it yourself" in prompt, prompt[:900])
     check("it asks for the findings to be checked and then applied",
           "Fix the ones that survive" in prompt, prompt[:600])
     check("NOTHING THE COMMENTER WROTE IS IN IT",
