@@ -105,6 +105,7 @@ worktrees and apply to ALL branches.
 ## ffbox pipeline & ffweb
 
 - [`Referrer-Policy: no-referrer` nulls your own Origin](memories/referrer-policy-nulls-your-own-origin.md) — a page that sets no-referrer AND checks `Origin` for CSRF refuses its own forms (Fetch serialises the origin as `null` on a non-GET, non-CORS request); use `same-origin`, accept `Sec-Fetch-Site: same-origin`, and note that a suite posting with no Origin header never catches it
+- [A Claude result envelope's `subtype` is not a verdict](memories/claude-result-subtype-is-not-a-verdict.md) — the last `{"type":"result"}` record keeps `subtype: "success"` on a run it also flags `is_error`, and its `result` field carries the error text instead of an answer; read `is_error`, then `terminal_reason`/`api_error_status`, and treat a subtype of `success` as no detail at all. Reading it the obvious way told pull request 505 "the run failed: success" and put `success` in `turn.error`
 
 ## Maintaining this skill
 
