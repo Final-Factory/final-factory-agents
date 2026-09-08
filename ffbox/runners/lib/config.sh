@@ -780,7 +780,8 @@ ffghr_cache_promote() {
 # that acting on the decision then changes. Two supervisors that both saw "no idle runner" a
 # millisecond apart would both mint one, and the pool would overshoot by exactly as many slots as
 # happened to be waiting.
-FFGHR_POOL_LOCK=$FFGHR_CONFIG_DIR/.pool.lock
+# FFGHR_POOL_LOCK went with slot.sh: admission is one process's own decision now, so there is
+# nothing for two supervisors to serialise against.
 FFGHR_STATE_DIR=$FFGHR_CONFIG_DIR/state
 
 # HOW OFTEN A WAITING SUPERVISOR LOOKS, and how often a supervisor with an IDLE container checks
@@ -859,16 +860,10 @@ ffghr_pool_counts() {
     unset _c _total _idle
 }
 
-# May a slot start a runner right now? CALL WITH THE POOL LOCK HELD.
-#
-# The two conditions are the whole feature: room under the ceiling, and a pool that is short of
-# idle runners. A job in flight makes the pool short by one, which is what starts the next runner.
-ffghr_pool_admit() {
-    _counts=$(ffghr_pool_counts)
-    _ptotal=${_counts% *}
-    _pidle=${_counts#* }
-    [ "$_ptotal" -lt "$SLOTS" ] && [ "$_pidle" -lt "$IDLE_POOL" ]
-}
+# ADMISSION LIVES IN ci_lane.may_admit() AND NOWHERE ELSE. It was here as ffghr_pool_admit, in
+# shell, while the agent lane expressed the same rule in python -- the duplication the merge was
+# for. What is left above is the COUNTING, which the CLI still reports and which is a read rather
+# than a decision.
 
 # A number, or the default. Everything here is arithmetic under `set -e`, where a config that says
 # "six" is not a wrong answer but a dead supervisor.
@@ -899,105 +894,11 @@ if v is not None and not isinstance(v, (dict, list)):
 ' "$_bc" "$1" 2>/dev/null
 }
 
-# --- how many supervisors exist, which is NOT this lane's ceiling ---------------------------
-#
-# UNTIL 2026-09-08 THESE WERE THE SAME NUMBER AND THAT WAS THE BUG. `pool.max` is a ceiling, read
-# live: every waiting supervisor calls ffghr_reload_limits once per poll, so raising it takes
-# effect in seconds. The number of SUPERVISORS was decided at install time, because 05-services.sh
-# rendered one unit instance per `pool.max` and only root can enable a unit instance. So a box
-# could hold `max: 5`, report "of 5" in every log line, and run three jobs, with nothing anywhere
-# saying why. It did, on 2026-09-08, and finding out cost an afternoon.
-#
-# They are separated by enabling MORE units than the lane will ever use and letting the ceiling do
-# the limiting at runtime. A supervisor with no place holds nothing -- no container, no
-# registration, nothing on the org page -- and costs a sleeping shell, which the pool section
-# below has always said. So the units are sized to the BOX ceiling: `max_concurrent_runs` is the
-# most containers this machine will hold whatever either lane asks for, so a supervisor beyond
-# that number could never be admitted by ffbox_workload_has_room even if `pool.max` were raised to
-# a thousand.
-#
-# CONSEQUENCE, AND IT IS THE POINT: `ffgithubrunners max N` is now a config write. No sudo, no
-# unit install, and above all no `systemctl restart ffgithubrunners.target`, which is what killed
-# two jobs mid-run on 2026-09-08 while doing nothing but raising a number.
-#
-# THE FALLBACK IS TODAY'S BEHAVIOUR, NOT A GUESS. A box whose config.json cannot be read for
-# max_concurrent_runs gets units == SLOTS, which is exactly the old coupling. Being unable to read
-# the ceiling is not a licence to invent headroom.
-#
-# AND A CAP, because this number becomes sleeping processes. 32 is far above any real box and far
-# below a typo. Measured 2026-09-08: a waiting supervisor is 1.7 MB RSS and about 1.5% of a core,
-# of which ffghr_reload_limits' python3 was roughly half and is now skipped when nothing changed.
-# The other half is the `docker ps` in ffghr_pool_counts, which is the question being asked and
-# does not go away.
-# --- WHICH PROCESS SUPERVISES THIS LANE ---------------------------------------------------------
-#
-# `slot.sh` (the default) or `ffwatch`. It decides ONE thing: whether 05-services.sh renders and
-# enables `ffgithubrunners@N.service` instances. Nothing else reads it -- the daemon does not ask
-# permission from a config key, it asks whether a slot.sh is actually running, because that is the
-# question that matters and a stale key would answer it wrongly.
-#
-# WHY A KEY AT ALL, RATHER THAN JUST DELETING slot.sh WHEN THE DAEMON IS READY.
-#
-#   * IT MAKES THE CUT-OVER DELIBERATE. Without it, retiring the lane would be a side effect of
-#     `05-services.sh --install`, which people run for unrelated reasons -- after moving the
-#     checkout, or because --check said units were stale. Nobody should retire CI by accident
-#     while fixing a path.
-#   * IT MAKES THE ROLLBACK INSTANT AND OBVIOUS. Set it back, re-run --install, and the twelve
-#     supervisors return. That is a better answer than reverting a commit and waiting for a
-#     deploy, on the day when what you know is "CI stopped working ten minutes ago".
-#   * IT SEPARATES THE DEPLOY FROM THE SWITCH. The code for both supervisors ships together and
-#     sits inert; a person decides when. The updater re-runs runners/setup.sh on every pass but
-#     defers its root stage, so landing this changes nothing until somebody with sudo says so.
-#
-# slot.sh IS NOT DELETED IN THE SAME RELEASE THAT STOPS USING IT, and that is the same rule as
-# writing both container labels for a release: the thing you fall back to has to still be there.
-#
-# design/ffbox_ci_in_ffwatch_design.txt section 12, phase E.
-FFGHR_SUPERVISOR_VALUES='slot.sh ffwatch'
-_ffghr_set SUPERVISOR       supervisor       slot.sh
-case " $FFGHR_SUPERVISOR_VALUES " in
-    *" $SUPERVISOR "*) ;;
-    *)  # AN UNKNOWN VALUE KEEPS THE UNITS, deliberately. A typo here must not silently retire the
-        # only thing serving CI; the failure direction is "nothing changed, and it said why".
-        echo "lib/config.sh: supervisor '$SUPERVISOR' is not one of $FFGHR_SUPERVISOR_VALUES;" \
-             "keeping slot.sh" >&2
-        SUPERVISOR=slot.sh ;;
-esac
-
-FFGHR_SLOT_UNITS_CAP=32
-
-ffghr_slot_units() {
-    # NO SUPERVISORS AT ALL once the daemon owns the lane. Not one, not a spare: a single
-    # ffgithubrunners@1 left enabled would go on minting runners beside the daemon, against the
-    # same ceiling, with no lock between them -- which is the exact overshoot ci_lane's interlock
-    # exists to prevent, arriving from the other side.
-    if [ "${SUPERVISOR:-slot.sh}" = ffwatch ]; then
-        printf '0\n'
-        return 0
-    fi
-    _su=$(_ffghr_box_cfg max_concurrent_runs)
-    case "$_su" in ''|*[!0-9]*) _su=$SLOTS ;; esac
-    # NEVER FEWER THAN THE LANE ASKS FOR. A `pool.max` above the box ceiling is already refused at
-    # admission, but rendering fewer units than it would put the old coupling back for exactly the
-    # operator who raised the number too far, which is the person this change is for.
-    [ "$_su" -ge "$SLOTS" ] 2>/dev/null || _su=$SLOTS
-    [ "$_su" -ge 1 ] 2>/dev/null || _su=1
-    [ "$_su" -le "$FFGHR_SLOT_UNITS_CAP" ] 2>/dev/null || _su=$FFGHR_SLOT_UNITS_CAP
-    printf '%s\n' "$_su"
-    unset _su
-}
-
-# The slot instances systemd currently has ENABLED, as a space-separated list of numbers.
-#
-# THE WANTS DIRECTORY IS THE RECORD, not `systemctl list-unit-files`, which lists the TEMPLATE and
-# never its instances -- 05-services.sh:130 has the whole account of why. Readable without root,
-# which is what lets the CLI tell an operator whether a `max` they just set has the supervisors to
-# back it.
-FFGHR_UNIT_WANTS=${FFGHR_UNIT_WANTS:-/etc/systemd/system/ffgithubrunners.target.wants}
-ffghr_enabled_slots() {
-    ls "$FFGHR_UNIT_WANTS" 2>/dev/null \
-        | sed -n 's/^ffgithubrunners@\([0-9]*\)\.service$/\1/p' | sort -n | tr '\n' ' '
-}
+# NO SUPERVISORS TO COUNT. Until 2026-09-08 this section worked out how many
+# ffgithubrunners@N.service instances to render, and the bug it existed to fix was that the number
+# had been the same as `pool.max` -- so a ceiling read live by the supervisors was capped by a set
+# of units only root could change. ffwatch keeps the pool now: `pool.max` is the only number, the
+# daemon re-reads it, and there is nothing to enable. design/ffbox_ci_in_ffwatch_design.txt.
 
 # THE TWO POOL NUMBERS, COERCED THE SAME WAY THE AGENT LANE COERCES ITS OWN, because a box that
 # holds one answer should not need two rules for reading it:
@@ -1079,13 +980,15 @@ ffghr_reload_limits() {
 # The flag files behind `drain` and `slot stop|start`, per section 11. slot.sh checks these
 # before it mints a JIT config; nothing here talks to the system manager, which is why no
 # account needs a sudoers entry.
+# THE DRAIN FLAG, WHICH IS STILL A FILE AND STILL MATTERS. `ffgithubrunners drain` writes it, the
+# updater writes it before every update, and ci_lane.drained() reads it -- a file rather than
+# daemon state precisely because the updater sets it before stopping the daemon and lifts it after
+# starting one again.
+#
+# ffghr_slot_stop_flag AND ffghr_is_drained WENT WITH THE SLOTS. Quiescing one slot meant something
+# when there were twelve supervisors; with a keeper minting on demand there is no "one" to stop,
+# and `ffgithubrunners max N` is the control that replaced it.
 FFGHR_DRAIN_FLAG=$FFGHR_CONFIG_DIR/drain
-ffghr_slot_stop_flag() { printf '%s/slot-%s.stop\n' "$FFGHR_CONFIG_DIR" "$1"; }
-ffghr_is_drained() {
-    [ -e "$FFGHR_DRAIN_FLAG" ] && return 0
-    [ -n "${1:-}" ] && [ -e "$(ffghr_slot_stop_flag "$1")" ] && return 0
-    return 1
-}
 
 # Everything that speaks to docker in this system speaks to ffbox-container's daemon, and none of
 # it should ever pick the caller's default socket up by accident.

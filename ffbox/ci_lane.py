@@ -31,9 +31,8 @@ TWO DELIBERATE DEVIATIONS FROM THAT DESIGN, both stated rather than slipped in.
      mirror. A consequence to keep in mind at phase E: lib/config.sh's pool section can lose its
      ADMISSION half, but its helpers are called from here and do not go anywhere.
 
-NOTHING HERE RUNS UNTIL `githubrunner.pool.max` IS RAISED ON A BOX WHERE slot.sh IS GONE. While
-both exist, two things would mint runners against one ceiling. ffwatch's CI passes therefore
-refuse to do anything at all while a slot.sh is running on this machine; see `slot_sh_running`.
+THIS IS THE ONLY SUPERVISOR NOW. slot.sh and its systemd instances were retired on 2026-09-08 once
+this had served real jobs; the interlock that kept the two apart during the overlap went with them.
 """
 
 from __future__ import annotations
@@ -85,10 +84,28 @@ def _sh(script, timeout=SHELL_TIMEOUT, check=True, env=None):
     startup dict does -- which is the bug this design spends section 6 avoiding.
     """
     full = f'set -eu; . "{RUNNERS}/lib/config.sh"; ' + script
+    # FFGHR_LIB_WORKLOADS IS NOT OPTIONAL HERE, and leaving it out cost the watchdog.
+    #
+    # lib/config.sh finds lib-workloads.sh -- which owns the clock format the markers are written
+    # in -- by looking beside `dirname $0`. That works for every caller it was written for, because
+    # they are SCRIPTS: slot.sh's $0 was runners/slot.sh, so ../lib-workloads.sh resolved. Sourced
+    # from `sh -c`, $0 is `sh`, dirname gives `.`, and neither candidate path exists.
+    #
+    # It then falls back to a stub that writes `staged_at` and NO `ttl_secs`, warns once on stderr,
+    # and carries on -- which is the right call for a broken checkout and is silent poison here.
+    # A marker with no ttl is a clock that never expires: deadline() finds nothing, so an idle
+    # runner is never recycled onto a rebuilt image AND A WEDGED JOB IS NEVER STOPPED. The
+    # watchdog is a safety bound and it was simply absent on every container the daemon minted.
+    #
+    # Found by noticing `ffgithubrunners status` printed "idle" with no time beside it. The
+    # warning had been on stderr the whole time; it was being filtered out of test output as
+    # noise, which is the actual lesson.
+    env_full = {**os.environ, "FFGHR_LIB_WORKLOADS": os.path.join(HERE, "lib-workloads.sh"),
+                **(env or {})}
     proc = subprocess.run(
         ["sh", "-c", full],
         capture_output=True, text=True, timeout=timeout,
-        env={**os.environ, **(env or {})},
+        env=env_full,
     )
     if check and proc.returncode != 0:
         raise ShellError(script.split("\n")[0][:80], proc.returncode,
@@ -263,28 +280,11 @@ def is_busy(name):
     return "Runner.Worker" in out
 
 
-def slot_sh_running():
-    """Is a slot.sh supervising anything on this box?
-
-    THE INTERLOCK, AND IT IS THE WHOLE OF WHY THIS MODULE IS SAFE TO SHIP BEFORE THE CUT-OVER.
-    Two things minting runners against one ceiling would overshoot it by however many happened to
-    be waiting, and the two do not share a lock -- slot.sh takes a file lock this daemon does not.
-    So while any slot.sh lives, the daemon's CI passes do nothing at all. Phase E deletes slot.sh
-    and this predicate goes quiet on its own; nothing has to be remembered on the day.
-    """
-    try:
-        for entry in os.listdir("/proc"):
-            if not entry.isdigit():
-                continue
-            try:
-                with open(f"/proc/{entry}/cmdline", "rb") as fh:
-                    if b"slot.sh" in fh.read():
-                        return True
-            except OSError:
-                continue
-    except OSError:
-        return False
-    return False
+# THE slot.sh INTERLOCK WENT ON 2026-09-08 with slot.sh itself. It walked every /proc cmdline on
+# every pass to answer a question that now has one answer, and it existed for a window that has
+# closed: two minters against one ceiling, sharing no lock, while both supervisors were installed.
+# A `git revert` that brought slot.sh back would bring this back with it, which is the only way
+# the window can reopen.
 
 
 # ---- the clocks, which are files -----------------------------------------------------------
@@ -625,6 +625,61 @@ def prepare_staging(name):
     return out.strip()
 
 
+# ---- the job's own output ------------------------------------------------------------------
+#
+# A CONTAINER'S LOG IS NOT KEPT BY DOCKER ONCE THE CONTAINER IS REMOVED, and teardown removes it.
+# So unless something copies the output out while the container lives, a finished job's log exists
+# only on GitHub -- which is exactly where you cannot read it when GitHub is the confusing part.
+#
+# THIS WAS LOST IN THE CUT-OVER AND NOBODY WOULD HAVE NOTICED FOR A WHILE. slot.sh ran
+# `docker logs -f` into $LOG_DIR/slot-N.log for the life of every container; the first version of
+# this module simply did not, so from the moment ffwatch took the lane the newest file under
+# /var/log/ffgithubrunners was the last job slot.sh ran, and `ffgithubrunners logs N` went on
+# printing it as though it were current. Found by reading a line of 05-services.sh that mentioned
+# the path, not by anything failing.
+#
+# ONE FILE PER SLOT AND APPENDED, which is the shape that already exists and that
+# `ffgithubrunners logs` reads. Appended rather than truncated because logrotate is configured
+# copytruncate, and an O_APPEND fd keeps writing at the end after a truncation rather than leaving
+# a sparse hole. The per-job marker line is what lets `logs` show THE LAST JOB rather than
+# everything since the last rotation.
+#
+# RE-ATTACHED RATHER THAN ASSUMED. The follower is a child of this daemon, so it dies when the
+# daemon restarts while the container carries on -- the exact case this whole design is built
+# around. The serving pass therefore ensures a follower exists for every running container on
+# every pass, which covers a launch, an adoption and a follower that fell over, without any of
+# them being a special case.
+
+def log_file(settings, slot):
+    d = settings.get("LOG_DIR") or "/var/log/ffgithubrunners"
+    return os.path.join(d, f"slot-{slot or 0}.log")
+
+
+def _start_follower(name, path, mark):
+    """`docker logs -f` into `path`, detached. Returns the Popen, or None."""
+    try:
+        fh = open(path, "a", encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if mark:
+        try:
+            fh.write(f"===== ffghr job {name} started {time.strftime('%Y-%m-%dT%H:%M:%S%z')} =====\n")
+            fh.flush()
+        except OSError:
+            pass
+    sock = os.environ.get("FFGHR_DOCKER_SOCK") or "/run/ffbox-container/docker.sock"
+    try:
+        proc = subprocess.Popen(
+            ["docker", "logs", "-f", name], stdout=fh, stderr=subprocess.STDOUT,
+            env={**os.environ, "DOCKER_HOST": f"unix://{sock}"},
+            start_new_session=True)
+    except OSError:
+        fh.close()
+        return None
+    fh.close()                      # the child holds its own dup
+    return proc
+
+
 # ---- serving a live container -------------------------------------------------------------------
 #
 # EACH OF THESE IS ONE STEP slot.sh's loop TAKES, called by the daemon when it decides the moment
@@ -723,26 +778,16 @@ class Lane:
         self.log = log
         self.cfg = cfg or PoolConfig()
         self._working = set()                 # container names a thread is busy with
+        self._followers = {}                  # container name -> the `docker logs -f` child
         self._announced = {}                  # name -> last message, so a poll does not repeat
-        self._interlocked = None
 
     # -- the interlock ---------------------------------------------------------------------
     def blocked(self):
         """Should these passes do nothing at all right now? Returns a reason, or "".
 
-        WHILE ANY slot.sh LIVES, THIS LANE IS NOT THE DAEMON'S. Two minters against one ceiling
-        would overshoot it, and they do not share a lock. Said ONCE per transition rather than on
-        every pass: on a box that has not cut over this is the normal state and a line every five
-        seconds would bury everything else in the journal.
+        A DRAIN IS NOT HERE, deliberately: it stops MINTING and must not stop serving, so keep()
+        checks it and this does not. See keep().
         """
-        running = slot_sh_running()
-        if running != self._interlocked:
-            self._interlocked = running
-            self.log("ci: slot.sh is supervising this lane; the daemon's CI passes stand down"
-                     if running else
-                     "ci: no slot.sh on this box; the daemon has the CI lane")
-        if running:
-            return "slot.sh owns this lane"
         if self.cfg.error:
             return f"config.json is unreadable ({self.cfg.error})"
         return ""
@@ -871,6 +916,38 @@ class Lane:
             else:
                 self._finish(r, submit)
 
+    def _follow(self, r):
+        """Make sure this container's output is being copied to its log file.
+
+        Idempotent and cheap: a live child is left alone, a dead one is replaced. The marker line
+        is written only when starting fresh for a container we have not followed, so a follower
+        replaced after a daemon restart does not claim a second job started.
+        """
+        proc = self._followers.get(r.name)
+        if proc is not None and proc.poll() is None:
+            return
+        first = proc is None
+        try:
+            settings = launch_settings()
+        except (ShellError, subprocess.TimeoutExpired):
+            return
+        path = log_file(settings, r.slot)
+        started = _start_follower(r.name, path, mark=first)
+        if started is None:
+            self._say(f"log:{r.name}", f"could not follow {r.name} into {path}")
+            return
+        self._followers[r.name] = started
+        if not first:
+            self.log(f"ci: re-attached the log follower for {r.name}")
+
+    def _drop_follower(self, name):
+        proc = self._followers.pop(name, None)
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+
     def _run(self, name, fn, submit):
         """Guard so no two threads serve one container, whichever way the work is dispatched."""
         if name in self._working:
@@ -891,6 +968,7 @@ class Lane:
             submit(guarded)
 
     def _serve_one(self, r, submit):
+        self._follow(r)
         busy = is_busy(r.name)
         if busy and not os.path.exists(marker(r.name, "busy")):
             # THE MARKER FIRST, THEN ANYTHING THAT READS IT. The work clock is derived from this
@@ -947,6 +1025,10 @@ class Lane:
 
     def _finish(self, r, submit):
         """A container that has exited. Everything the host still owes it."""
+        # THE FOLLOWER GOES FIRST. `docker logs -f` on an exited container returns on its own, but
+        # teardown is about to `docker rm -f` it, and a follower still attached to a removed
+        # container is a child that never reaps.
+        self._drop_follower(r.name)
         stage = staging_dir(r.name)
         if not (stage and os.path.isdir(stage)) and not r.runner_id:
             self._run(r.name, lambda n=r.name: _docker(["rm", "-f", n]), submit)

@@ -547,17 +547,12 @@ fi
 # sweep by label takes the container serving a turn as well; on 2026-09-01 that deleted a live
 # run's spool directory and the harness reported a verified, finished turn as "the run failed".
 # ffwatch decides by `out/owner` now. Do not add a by-label sweep back in here.
-for _c in $(docker_ ps --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null); do
-    # `docker top | grep Runner.Worker` is the same test slot.sh's own reaper uses, and it reads
-    # the container rather than a marker file a SIGKILLed supervisor may have left behind.
-    if docker_ top "$_c" -o pid,comm 2>/dev/null | grep -q 'Runner\.Worker'; then
-        log "$_c is running a job — leaving it alone"
-    else
-        log "destroying idle runner $_c; it holds a workspace and no job"
-        docker_ rm -f "$_c" >/dev/null 2>&1 || log "WARNING: could not remove $_c"
-    fi
-done
-unset _c
+# THE CI LANE'S IDLE RUNNERS ARE ffwatch's TO DROP, since 2026-09-08. This file used to walk
+# `label=ffghr.slot` itself, leave anything running Runner.Worker alone and `docker rm -f` the
+# rest. `ffwatch drain` above now does exactly that AND deletes the registration, which a bare
+# `docker rm -f` cannot -- which is why an update used to leave offline runners on the org page
+# for the next reap to collect. Two sweeps deciding which runner is idle, on the one pass where
+# being wrong costs a job, is worse than either alone.
 
 # WAIT FOR THE HOST, NOT FOR THE CONTAINERS.
 #

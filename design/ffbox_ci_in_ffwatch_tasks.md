@@ -21,6 +21,23 @@ unrelated code. A function name survives what a line number does not.
 Every phase letter matches section 12 of the design. Phases are ordered; tasks inside a phase are
 not, unless one says so.
 
+## Status, 2026-09-08
+
+**All phases complete and running on Loth2400.** ffwatch keeps the CI pool; slot.sh, its systemd
+template and its twelve instances are gone. Four things were found on the box that no test caught,
+and each has one now:
+
+- the drain became a no-op the moment the daemon took the lane (`ci_lane` read neither flag);
+- an operator's drain was cleared by any update pass, which was true for both lanes all along;
+- job output stopped being written to `/var/log/ffgithubrunners` — nothing ran `docker logs`;
+- **the markers carried no `ttl_secs`**, so neither the idle clock nor the WATCHDOG was enforced on
+  any daemon-minted container. `lib/config.sh` finds the clock library beside `dirname $0`, which
+  resolves for a script and not for `sh -c`; the fallback stub writes a clock that never expires.
+
+And one found by reading rather than by failure: `reap.sh` asking "is a daemon running" would have
+called every CI container an orphan during the six seconds an update takes, and deleted running
+jobs. It takes two sightings a sweep apart now.
+
 ## What already exists
 
 Worth knowing before estimating, because most of D is porting rather than inventing.
@@ -247,7 +264,7 @@ E.6 is last by definition.
   **STILL OWED, after the cut-over is confirmed:** delete `slot.sh`, the unit template, and the
   now-unused half of `lib/config.sh`'s pool section. Tracked as E.7.
 
-- [ ] **E.2 — DEFERRED into E.7, deliberately.** `S`
+- [x] **E.2 — DONE with E.7.** `S`
   It cannot go while `slot.sh` is the fallback: the fallback has to work. Original text follows.
 
   ~~the pool half of `lib/config.sh` goes~~ `S`
@@ -270,19 +287,19 @@ E.6 is last by definition.
   before the cut-over so there is a baseline to compare the after against; `slot.sh`'s deletion
   makes the before-number unobtainable.
 
-- [ ] **E.4 — settle what replaces `slot stop N`.** `S`
+- [x] **E.4 — DONE — settle what replaces `slot stop N`.** `S`
   Design open question (e). An operator can quiesce one slot today; with no slots there is nothing
   to quiesce, and lowering `max` does not choose which runner goes. Whether anyone has ever needed
   to pick one is not known — find out before deleting the verb, and if the answer is no, delete it
   and say so in the CLI's own help.
 
-- [ ] **E.5 — check the Unity seat accounting did not change.** `S`
+- [x] **E.5 — DONE — check the Unity seat accounting did not change.** `S`
   Design open question (d). Both lanes present the same pinned machine id and share one `.ulf`,
   and the stop grace already goes through `ffbox_stop_grace`, so this design does not believe
   anything moves. It is a belief, and the cost of it being wrong is leaked seats, so verify rather
   than assume: one job through the new path, and confirm the seat comes back.
 
-- [ ] **E.6 — throw the switch, and watch one real day.** `?`
+- [x] **E.6 — DONE — throw the switch, and watch one real day.** `?`
   **NEEDS ROOT AND A PERSON.** Everything else in this phase has shipped; this is the step that
   actually moves the lane, and the first real mint through the daemon's path happens here. Order:
   `ffgithubrunners drain`, wait for `status` to show nothing BUSY, set
@@ -292,7 +309,7 @@ E.6 is last by definition.
   failing its checkout within two minutes of one, and `ffstatus.sh` unchanged throughout
   (design 5e).
 
-- [ ] **E.7 — delete `slot.sh` and its scaffolding, once E.6 has held.** `M`
+- [x] **E.7 — DONE — delete `slot.sh` and its scaffolding, once E.6 has held.** `M`
   The unit template, `slot.sh` itself, the admission half of `lib/config.sh`'s pool section,
   `ffghr_slot_units`, `ffghr_enabled_slots`, and the `ffghr.supervisor.pid` branch of `reap.sh`'s
   `owner_state`. Not before: every one of them is part of the rollback.
@@ -308,7 +325,7 @@ Only honestly testable once D and E are real.
   for the next reap (design fact l). Carry over `idle_stop_ok`'s re-check (`slot.sh:566`): a
   runner that takes a job in the moment before the stop is detached, not killed.
 
-- [ ] **F.2 — delete the updater's own `ffghr.slot` loop.** `S`
+- [x] **F.2 — DONE — delete the updater's own `ffghr.slot` loop.** `S`
   `update_ffbox.sh:459-468`, **in the same commit as F.1**. Two things deciding which runner is
   idle, on the one pass where being wrong costs a job, is worse than either alone.
 
@@ -317,7 +334,7 @@ Only honestly testable once D and E are real.
   `githubrunner.pool` is not a restart trigger. Without this, raising a CI ceiling still costs the
   restart that opens the window. Design section 6.
 
-- [ ] **F.4 — `STOP_RUNNING` still stops everything.** `S`
+- [x] **F.4 — DONE — `STOP_RUNNING` still stops everything.** `S`
   Design fact (m): the escape hatch is the only path that may end a live CI job, and it must keep
   working. A test, or at minimum a deliberate exercise on the box.
 
@@ -325,12 +342,12 @@ Only honestly testable once D and E are real.
 
 ## Documentation, in the commits that change the behaviour
 
-- [ ] **DOC.1** — `ffbox/config.md` for any config shape that moves (A2.1, A2.2). Required in the
+- [x] **DOC.1** — `ffbox/config.md` for any config shape that moves (A2.1, A2.2). Required in the
   same commit; CLAUDE.md's rule.
-- [ ] **DOC.2** — `ffbox/runners/README.md`: the CI lane's operational section, substantially, at
+- [x] **DOC.2** — `ffbox/runners/README.md`: the CI lane's operational section, substantially, at
   phase E. Most of it describes a per-slot supervisor that will not exist.
-- [ ] **DOC.3** — `ffbox/README.md`: the lane description, at phase E.
-- [ ] **DOC.4** — `design/ffbox_unified_runners_design.txt` section 5, amended rather than left to
+- [x] **DOC.3** — `ffbox/README.md`: the lane description, at phase E.
+- [x] **DOC.4** — `design/ffbox_unified_runners_design.txt` section 5, amended rather than left to
   read as a refusal of this document. Its argument is against merging **dispatch** and it stands;
   it does not reach supervision. Design section 0.
 

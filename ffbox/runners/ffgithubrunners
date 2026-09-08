@@ -4,7 +4,6 @@
 #   ffgithubrunners status              the pool, containers, registrations, image tag and age
 #   ffgithubrunners slots [N]           show or set the MAX pool size
 #   ffgithubrunners idle [N]            show or set how many runners idle waiting for work
-#   ffgithubrunners slot stop|start N   drain or return one slot
 #   ffgithubrunners drain | resume      let running jobs finish, start no replacements
 #   ffgithubrunners image update        rebuild with a current runner tarball
 #   ffgithubrunners reap                run the sweep now
@@ -25,9 +24,9 @@
 # `systemctl restart ffgithubrunners.target`, so raising a number by one killed the jobs in
 # flight.
 #
-# NOTHING HERE NEEDS PRIVILEGE NOW. drain, resume and slot stop|start write a flag file that
-# slot.sh checks before it mints a JIT config, so a drained slot idles rather than being stopped
-# and nothing has to talk to the system manager. No account gets a sudoers entry.
+# NOTHING HERE NEEDS PRIVILEGE. drain and resume write a flag file that ffwatch's CI keeper reads
+# before it mints, so a drained lane serves what is running and starts nothing new, and nothing has
+# to talk to the system manager. No account gets a sudoers entry.
 
 set -eu
 
@@ -98,58 +97,27 @@ cmd_status() {
     printf '\npool       %s of %s slots in use, %s idle (want %s idle, max %s)\n' \
         "$_total" "$SLOTS" "$_idle" "$IDLE_POOL" "$SLOTS"
     printf '           a slot with no container holds no registration and costs nothing\n'
-    # THE ENABLED UNITS, NOT 1..pool.max, since 2026-09-08. The two stopped being the same number
-    # when the units were sized to the box ceiling instead: a box with `max: 5` and twelve units
-    # would otherwise show five lines and hide the seven supervisors that are running, which is
-    # precisely the kind of gap between what the config says and what the box does that this
-    # change exists to close. A unit above the ceiling is labelled, because "active" on a slot
-    # that can never be admitted looks like a fault until you know it is headroom.
-    _enabled=$(ffghr_enabled_slots)
-    [ -n "$_enabled" ] || _enabled=$(seq 1 "$SLOTS" 2>/dev/null | tr '\n' ' ')
-    # WHICH SLOT NUMBERS ARE IN USE IS ARBITRARY, and saying otherwise was a bug in the first
-    # version of this. The ceiling is on the COUNT of containers, not on the index: any supervisor
-    # may win the pool lock, so with max 5 and twelve units the containers can land on slots
-    # 2, 3, 5, 8 and 11. Labelling a row "above max" because its NUMBER is drew a line the pool
-    # does not draw, and slot 8 was labelled headroom while it was holding a registered runner.
-    _nunits=$(printf '%s' "$_enabled" | wc -w)
-    if [ "$_nunits" -gt "$SLOTS" ] 2>/dev/null; then
-        printf '           %s slot units enabled, any %s of which may hold a runner at once\n' \
-            "$_nunits" "$SLOTS"
-    elif [ "$_nunits" -lt "$SLOTS" ] 2>/dev/null; then
-        printf '           only %s slot units enabled, so max %s cannot be reached — see: %s\n' \
-            "$_nunits" "$SLOTS" "sudo sh $HERE/05-services.sh --install"
-    fi
-    for _i in $_enabled; do
-        _unit=$(systemctl is-active "ffgithubrunners@$_i.service" 2>/dev/null || true)
-        _stop=""
-        [ -e "$(ffghr_slot_stop_flag "$_i")" ] && _stop=" STOPPED"
-        _c=$(docker ps --filter "label=ffghr.slot=$_i" --format '{{.Names}} ({{.Status}})' 2>/dev/null | head -1)
-        _what="waiting for a place in the pool"
-        if [ -n "$_c" ]; then
-            # AND HOW LONG IT HAS, from the clock that actually applies to it. A busy container is
-            # counting down the watchdog from when its JOB started; an idle one is counting down
-            # to being recycled onto whatever image has been built since. Two questions, and
-            # before 2026-09-02 one number answered neither because it lived in a shell variable.
-            _cn=${_c%% *}
-            if [ -e "$(ffghr_busy_marker "$_cn")" ]; then
-                _what="$_c BUSY$(_ffghr_status_left "$(ffghr_busy_marker "$_cn")")"
-            else
-                _what="$_c idle$(_ffghr_status_left "$(ffghr_idle_marker "$_cn")")"
-            fi
-        fi
-        printf '  slot %-3s unit %-10s%s %s\n' "$_i" "${_unit:-unknown}" "$_stop" "$_what"
-    done
-    # A container whose slot is above the configured count is a slot that was disabled while it
-    # was working, or an orphan the reaper has not swept yet. Either way it is in the pool and the
-    # loop above cannot show it.
+    # THE CONTAINERS, NOT A UNIT LIST. There are no per-runner units to enumerate since ffwatch
+    # took the lane on 2026-09-08: a runner exists exactly while its container does, and the slot
+    # number in its name is a label rather than a place -- the keeper takes the lowest free one and
+    # nothing about admission depends on which it was.
+    _any=0
     for _c in $(ffghr_pool_containers); do
-        _cs=$(docker inspect -f '{{index .Config.Labels "ffghr.slot"}}' "$_c" 2>/dev/null || echo "")
-        case "$_cs" in ''|*[!0-9]*) _cs=0 ;; esac
-        case " $_enabled " in
-            *" $_cs "*) ;;
-            *) printf '  slot %-3s (no longer configured) %s\n' "$_cs" "$_c" ;;
-        esac
+        _any=1
+        _cs=$(docker inspect -f '{{index .Config.Labels "ffghr.slot"}}' "$_c" 2>/dev/null || echo "?")
+        _st=$(docker inspect -f '{{.State.Status}}' "$_c" 2>/dev/null || echo "?")
+        # WHICH CLOCK APPLIES IS WHETHER THERE IS A JOB. A busy container counts the watchdog down
+        # from when its JOB started; an idle one counts down to being recycled onto whatever image
+        # has been built since.
+        if [ -e "$(ffghr_busy_marker "$_c")" ]; then
+            _what="BUSY$(_ffghr_status_left "$(ffghr_busy_marker "$_c")")"
+        else
+            _what="idle$(_ffghr_status_left "$(ffghr_idle_marker "$_c")")"
+        fi
+        printf '  slot %-3s %-28s %-8s %s\n' "${_cs:-?}" "$_c" "$_st" "$_what"
     done
+    [ "$_any" = 1 ] || printf '  (no runners right now; the keeper mints one within a poll)\n'
+    unset _any _c _cs _st _what
 
     printf '\nworkspace cache\n'
     if [ -z "$CACHE_DIR" ]; then
@@ -247,18 +215,9 @@ cmd_slots() {
     # and the runners above the new ceiling retire by finishing what they have.
     say "waiting slots pick this up within ${POOL_POLL_SECONDS}s; nothing needs restarting"
 
-    # THE ONE CASE THAT STILL WANTS ROOT, named rather than left to be discovered. Asking for more
-    # jobs than there are supervisors is the failure this whole change is about, so it must not be
-    # able to happen quietly a second time.
-    _units=$(ffghr_enabled_slots | wc -w)
-    if [ "$_units" -gt 0 ] && [ "$_n" -gt "$_units" ]; then
-        say "WARNING: only $_units slot unit(s) are enabled, so at most $_units jobs will run
-    at once whatever this number says. That happens when max_concurrent_runs has gone up
-    since the units were installed. Apply it with:
-        sudo sh $HERE/05-services.sh --install
-    which restarts ffgithubrunners.target and ENDS ANY JOB IN FLIGHT, so pick the moment."
-    fi
-    unset _units
+    # NOTHING HERE WANTS ROOT ANY MORE. The "you asked for more jobs than there are supervisors"
+    # warning went with the supervisors: ffwatch mints on demand up to this number, bounded only by
+    # the box ceiling it already counts against.
 }
 
 # NO sudo, AND NOTHING RESTARTS. Every waiting slot re-reads this number each time round its
@@ -287,18 +246,6 @@ cmd_idle() {
     fi
 }
 
-cmd_slot() {
-    _verb=${1:-}; _n=${2:-}
-    case "$_verb" in stop|start) ;; *) die "usage: ffgithubrunners slot stop|start N" ;; esac
-    case "$_n" in ''|*[!0-9]*) die "usage: ffgithubrunners slot stop|start N" ;; esac
-    _flag=$(ffghr_slot_stop_flag "$_n")
-    if [ "$_verb" = stop ]; then
-        printf 'stopped by %s at %s\n' "$(id -un)" "$(date -Is)" > "$_flag"
-        say "slot $_n will idle after its current job; the unit stays running"
-    else
-        rm -f "$_flag" && say "slot $_n will take work again (within its poll interval)"
-    fi
-}
 
 cmd_drain() {
     if [ -e "$FFGHR_DRAIN_FLAG" ]; then
@@ -467,7 +414,6 @@ case "${1:-status}" in
     status)     shift 2>/dev/null || true; cmd_status ;;
     slots)      shift; cmd_slots "$@" ;;
     idle)       shift; cmd_idle "$@" ;;
-    slot)       shift; cmd_slot "$@" ;;
     drain)      cmd_drain ;;
     resume)     cmd_resume ;;
     reap)       shift; exec sh "$HERE/reap.sh" "$@" ;;

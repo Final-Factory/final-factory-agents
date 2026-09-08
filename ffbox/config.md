@@ -229,11 +229,8 @@ Default 6. `pools.<class>.pool.max` and `githubrunner.pool.max` cap each lane un
 both have to hold before anything starts. `ffbox/lib-workloads.sh` is the shell half and is
 what actually refuses.
 
-It has a second job on the CI lane: it is how many `ffgithubrunners@N.service` instances
-`05-services.sh` enables, because a supervisor beyond this number could never be admitted
-however high `githubrunner.pool.max` went. Raising this one therefore does want a
-`sudo sh ffbox/runners/05-services.sh --install`, and that restarts the CI target and ends any
-job in flight, so pick the moment. Raising the CI lane's own ceiling underneath it does not.
+Both lanes are counted by the daemon, so raising or lowering it needs no install and no restart --
+`ffwatch` re-reads its own config on a restart and the CI keeper re-reads this file every pass.
 
 ## `workload_reserve`
 
@@ -761,106 +758,29 @@ container, no registration, nothing on the org page — and costs a sleeping she
 machine carries `idle` runners rather than `max` of them. `ffgithubrunners slots N` and
 `ffgithubrunners idle N` write them here.
 
-**Both are live, and neither needs root.** Every waiting supervisor re-reads them once per
-`pool_poll_seconds`, so raising `max` starts runners within seconds and nothing restarts.
+**Both are live, and neither needs root.** The daemon's CI keeper re-reads them every pass, so
+raising `max` starts runners within seconds and nothing restarts.
 Lowering either one stops no job: admission stops granting places and the extra runners retire
 by finishing what they have.
 
-This was not true until 2026-09-08. One systemd unit instance was rendered per `pool.max`, so
-the number in this file was a ceiling the supervisors read live while the *supervisors* were
-decided by `sudo sh ffbox/runners/05-services.sh --install` — and a box could sit at `max: 5`,
-say "of 5" in every log line, and run three jobs. The units are sized to
-`max_concurrent_runs` now, which is the most containers the machine will hold whatever either
-lane asks for, so the supervisors for any legal `max` already exist. Re-run `05-services.sh`
-only when **`max_concurrent_runs` itself** goes up; `ffgithubrunners status` says so when the
-units are short. Mind that it restarts `ffgithubrunners.target`, which ends every job in
-flight.
+This was not true until 2026-09-08, when one systemd unit instance was rendered per `pool.max` and
+only root could add one. See "Who runs this lane" below.
 
-```json
-"githubrunner": { "pool": { "idle": 1, "max": 3 }, "watchdog_minutes": 120, "org": "Final-Factory" }
-```
+### Who runs this lane
 
-**The two wait numbers are the host's half of a handshake.** A CI job is not a container the host
-merely watches. Twice in its life it writes a request into its staging directory and blocks until
-the host writes the answer back: once asking for a commit to be fetched into the local mirror, and
-once asking for its test-results artifact to be uploaded. Both exist because the job cannot reach
-GitHub or the artifact storage itself — those came off the CI egress allowlist on 2026-08-31, and
-the need went rather than the reach being narrowed.
+**ffwatch.** The CI pool is kept by the daemon, the same way it keeps the agent pool: it mints a
+runner when the pool is short of idle ones and there is room under both ceilings, serves the job's
+requests while it runs, and tears it down afterwards.
 
-The container carries its own defaults, 120s for the fetch and 180s for the artifact, and uses
-them when the host passes nothing. These keys are what the host passes, as `FFGHR_MIRROR_WAIT` and
-`FFGHR_ARTIFACT_WAIT`, so an old container and a new host still agree.
+There are no per-runner systemd units. Until 2026-09-08 there was one `ffgithubrunners@N.service`
+per runner, and the number of them was decided by a root install while the ceiling they enforced
+was a number in this file — which is how a box came to hold `max: 5`, say "of 5" in every log
+line, and run three jobs. `pool.max` is now the only number, and the daemon re-reads it live.
 
-**Why the default is 600 when nothing today needs it.** The answering process is `slot.sh`, which
-is not in `ffbox.target` and never restarts, so the gap it protects against is currently zero. It
-is set for what comes next: moving the supervisor into ffwatch, which restarts on every code update
-and every config edit and is away for minutes while the box merges and rebuilds. A job reaching its
-fetch step in that window would burn 120 seconds and then fail its checkout, intermittently and for
-a reason nobody would connect to a deploy.
-
-Raising it is close to free, and that is the argument rather than the size of the number. Neither
-budget bounds a *slow* answer — the host writes `fetch.done` on both paths, `ok` and `failed`, so a
-mirror that cannot serve the commit stops the job at once. What a budget catches is nobody
-answering at all. The cost of a longer one is that a genuinely dead host holds a runner for ten
-minutes rather than two before the job fails, and `watchdog_minutes` still bounds that. For scale:
-the agent lane gives its containers `FFBOX_IDLE_TTL_SECS`, default **14400** — four hours — to wait
-on the equivalent file, and it has never been a problem.
-
-Non-numeric or zero falls back to 600: both values end up in a `sleep` loop inside a container, and
-a job that waits zero seconds fails in a way that names neither this file nor that one.
-
-### `supervisor`, and how the lane is handed over
-
-`slot.sh` is one systemd supervisor per runner, which is how this lane has always worked.
-`ffwatch` is the daemon keeping the pool the way it keeps the agent pool. Both sets of code ship
-together; this key decides which one is in charge.
-
-**It controls exactly one thing:** whether `05-services.sh` renders and enables
-`ffgithubrunners@N.service` instances. Set to `ffwatch`, it renders **none** — not one, not a
-spare, because a single supervisor left enabled would go on minting runners beside the daemon
-against the same ceiling with nothing locking between them.
-
-The daemon does **not** read this key. It asks whether a `slot.sh` is actually running, because
-that is the question that matters and a stale key would answer it wrongly. So the two can never
-both think they own the lane, whatever the config says.
-
-**The cut-over**, in the order that does not kill a job:
-
-```sh
-ffgithubrunners drain                      # no root; running jobs finish, no new ones start
-ffgithubrunners status                     # wait until nothing is BUSY
-# set githubrunner.supervisor to "ffwatch" in config.json
-sudo sh ffbox/runners/05-services.sh --install    # disables and stops the now-idle supervisors
-ffgithubrunners resume
-```
-
-`--install` warns before stopping a slot that is still serving a job, but it will not refuse:
-draining first is what makes that warning never fire.
-
-**The rollback is the same thing backwards** — set the key to `slot.sh`, re-run `--install`, and
-the supervisors come back while the daemon's interlock stands it down again. `slot.sh` is
-deliberately still on disk for a release after it stops being used, because the thing you fall
-back to has to still be there.
-
-## Seeded
-
-| Key | Default | What it is |
-|---|---|---|
-| `pool.max` (`slots`) | `1` | The most jobs in flight at once. Read live by every waiting supervisor; no root, no restart. Not the number of supervisors, which comes from `max_concurrent_runs`. |
-| `pool.idle` (`idle_pool`) | `1` | How many runners stay registered and waiting while nothing is happening. |
-| `supervisor` | `slot.sh` | Which process runs this lane: `slot.sh` (one systemd supervisor per runner) or `ffwatch` (the daemon). See below — this is the cut-over switch. |
-| `mirror_wait_secs` | `600` | How long a job waits for the host to answer `fetch.request` before giving up. See below. |
-| `artifact_wait_secs` | `600` | How long a job holds itself open waiting for the host to upload its test-results artifact. See below. |
-| `watchdog_minutes` | `120` | Bounds a **job**, from the moment that job started. 120 because `main.yml`'s own `timeout-minutes` is 90, so a job GitHub still wants is never killed locally. |
-| `image` | `ffbox:latest` | The image both lanes are built from. Pin CI to a different build by overriding this, not by keeping a second tag alive. |
-| `labels` | `["Linux","X64","ffgithubrunners"]` | What `runs-on:` has to name to land here. `self-hosted` is deliberately absent, so the two harnesses stay separable with no label surgery. |
-| `org` | `Final-Factory` | The GitHub org the runners register against. |
-| `runner_group_id` | `1` | Final-Factory is on the free plan, where Default is the only group and its id is 1. |
-| `app_id`, `app_installation_id` | `null` | The GitHub App's two ids. They identify an App, they do not authenticate as one, so they are configuration rather than secrets; the private key is a file at `~/.config/ffbox/githubrunners/github-app.pem`. Null when a PAT is used instead. `04-github.sh` writes them. |
-| `cache_dir` | `/opt/ffcache` | The workspace cache: one tar per branch, mounted read-only into every job. **Empty disables the whole feature** — no bind mounts, nothing a job writes reaching the next job. |
-| `cache_keep` | `10` | Entries retained. |
-| `cache_quota` | `250G` | Ten entries at about 16G, plus three slots staging up to 16G each while they run. |
-| `cache_sync` | `standard` | The ZFS `sync` property on the cache dataset. `standard` rather than `disabled`: the save path issues no fsync at all, so the two do identical IO here and the safer one is free. |
+**Draining still works and is still a file.** `ffgithubrunners drain` stops the keeper minting;
+what is already running finishes, and the daemon keeps answering its requests, because that is what
+"running jobs finish" is made of. `ffgithubrunners resume` lifts it. The updater sets the same flag
+before every update and — since 2026-09-08 — leaves alone any drain it did not set itself.
 
 ## Not seeded, still read
 

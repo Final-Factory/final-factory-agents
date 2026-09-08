@@ -65,22 +65,20 @@ org-level permissions do. Do not use a classic PAT: the classic scope for these 
 ffgithubrunners status              the pool, containers, registrations, image tag and age
 ffgithubrunners slots [N]           show or set the maximum pool size
 ffgithubrunners idle [N]            show or set how many runners wait for work
-ffgithubrunners slot stop|start N   idle one slot, or return it
 ffgithubrunners drain | resume      let running jobs finish, start no replacements
 ffgithubrunners image update        rebuild with a current runner tarball
 ffgithubrunners reap                sweep orphans now
 ffgithubrunners logs [N]            the RUNNER's log for one slot (not the job's output)
 ```
 
-**None of these needs privilege**, and since 2026-09-08 that includes `slots N`. Every one is a
-flag file or one number in the `githubrunner` section of `config.json` that `slot.sh` reads before
-it mints a JIT config, which is why a drained slot stays running and idle rather than being
-stopped, and why no account here has a sudoers entry.
+**None of these needs privilege.** Every one is a flag file or one number in the `githubrunner`
+section of `config.json` that ffwatch's CI keeper re-reads every pass, which is why a drained lane
+keeps serving what is running rather than being stopped, and why no account here has a sudoers
+entry.
 
-`slots N` used to end in `sudo sh 05-services.sh --install`, because one unit instance was
-rendered per configured slot. That install restarts `ffgithubrunners.target`, so raising a number
-by one ended every job in flight; it did, twice, the evening the coupling was found. The units are
-sized to the box ceiling now — see the pool section below.
+`slots N` needed root until 2026-09-08, because one systemd unit instance was rendered per
+configured slot and applying a change ran `05-services.sh`, which restarts the target — so raising
+a number by one ended every job in flight. It did, twice, the evening the coupling was found.
 
 `drain` is what makes an image update or a slot-count change safe while a job is running.
 
@@ -151,21 +149,16 @@ it does not stop any**: killing an idle runner races GitHub handing it a job. Th
 by taking one job each, or `systemctl restart ffgithubrunners.target` clears them at once, at the
 cost of that same race.
 
-`ffgithubrunners slots N` changes the ceiling the same way and with the same properties: no
-privilege, no restart, live within a poll. **Lowering it stops no job** either.
+`ffgithubrunners slots N` changes the ceiling with the same properties: no privilege, no restart,
+live within a pass. **Lowering it stops no job** — admission stops granting places and the extra
+runners retire by finishing what they have.
 
-THE CEILING AND THE NUMBER OF SUPERVISORS ARE DIFFERENT NUMBERS, and until 2026-09-08 they were
-not. `05-services.sh` rendered one `ffgithubrunners@N.service` per `pool.max`, so the ceiling the
-supervisors re-read every five seconds was capped by a set of unit instances only root could
-change — and a box could hold `max: 5`, print "of 5" in every log line, and run three jobs, with
-nothing anywhere saying why. It did.
-
-The units are sized to `max_concurrent_runs` instead: that is the most containers this machine
-will hold whatever either lane asks for, so a supervisor beyond it could never be admitted however
-high `pool.max` went. Enabling that many costs a sleeping shell each, which is what a waiting
-supervisor already was. So the only thing that still wants
-`sudo sh ffbox/runners/05-services.sh --install` is **raising `max_concurrent_runs` itself**, and
-`ffgithubrunners status` says so when the units are short of the ceiling.
+THERE ARE NO PER-RUNNER UNITS. Until 2026-09-08 `05-services.sh` rendered one
+`ffgithubrunners@N.service` per configured slot, so a ceiling the supervisors re-read every five
+seconds was capped by a set of unit instances only root could change — and a box could hold
+`max: 5`, print "of 5" in every log line, and run three jobs. ffwatch keeps the pool now: it mints
+on demand up to `pool.max`, under the box-wide `max_concurrent_runs` it already counts against, and
+`05-services.sh` installs only the target, the daemon gate, the egress fence and the two timers.
 
 One thing to know before raising `slots` much: **the cache quota is sized for three slots staging
 at once.** 250G is ten 16G entries plus three 16G staging directories; six slots on six different
@@ -231,7 +224,7 @@ entitlements while the first five are running, that is the licence talking, not 
                        folds an old one in and deletes it.
   github-app.pem       the private key, 0600, at a fixed path nothing records
   secrets.env          empty on an App install; only a PAT goes here
-  drain, slot-N.stop   the flag files behind drain and slot stop
+  drain               the flag file behind drain/resume, read by ffwatch's CI keeper
   .pool.lock           held across one admission decision and the mint that follows it
   state/               one <container>.busy per container that has taken a job
 
@@ -334,7 +327,7 @@ against a scratch checkout with a real bare origin.
 
 ```sh
 ffgithubrunners status                          almost always says it
-journalctl -u 'ffgithubrunners@*' -f            the supervisor's own view
+journalctl -u ffwatch -f | grep ' ci:'          the keeper's own view
 ffgithubrunners logs 1                          the runner's lifecycle, NOT the job's steps
 sh ffbox/runners/03-image.sh --egress-log     what the fence allowed and refused
 sh ffbox/runners/01-hostSetup.sh --check      the host, as a gate

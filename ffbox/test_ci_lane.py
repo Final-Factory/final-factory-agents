@@ -185,73 +185,73 @@ is_(ci.deadline("c"), (None, None), "no marker is no deadline, never an expired 
 clock(ci.marker("c", "idle"), 99999, 0)
 is_(ci.deadline("c"), (None, None), "a ttl of 0 means no deadline rather than a passed one")
 
-print("\nthe interlock, which is why this is safe to ship before the cut-over")
+print("\nthe markers the shell writes for us actually carry a deadline")
+
+# THE BUG THIS EXISTS FOR, and it was a safety bound going missing rather than a cosmetic gap.
+# lib/config.sh locates lib-workloads.sh -- which owns the clock format -- beside `dirname $0`.
+# Every caller it was written for is a SCRIPT, so that resolved. Sourced from `sh -c`, $0 is `sh`,
+# dirname is `.`, and it falls back to a stub that writes staged_at and no ttl_secs. A marker with
+# no ttl is a clock that never expires: no idle recycling, and NO WATCHDOG on a wedged job.
+#
+# THIS TEST SHELLS OUT FOR REAL. It is the one case in this file that does, because the failure
+# lived entirely in what the subprocess could see -- a mock would have reproduced the belief, not
+# the bug.
+import subprocess as _sub                                        # noqa: E402
+_probe = tempfile.mkdtemp()
+os.makedirs(os.path.join(_probe, "state"), exist_ok=True)
+_saved_dir = os.environ.get("FFGITHUBRUNNERS_CONFIG_DIR")
+os.environ["FFGITHUBRUNNERS_CONFIG_DIR"] = _probe
+# BOTH SIDES MUST AGREE ON THE PATH. An earlier section replaced ci.state_dir() so it could plant
+# markers by hand; here the SHELL writes them and python reads them back, so the stub has to point
+# at the same directory the subprocess is given, or the read looks for a file the write never made.
+_saved_state_dir = ci.state_dir
+ci.state_dir = lambda: os.path.join(_probe, "state")
+try:
+    ci.mark_idle("probe-a")
+    _text = open(ci.marker("probe-a", "idle"), encoding="utf-8").read()
+    ok("an idle marker is written") if "staged_at=" in _text else bad("no marker was written")
+    ok("and it carries a ttl, so the clock can expire") if "ttl_secs=" in _text else \
+        bad("the marker has no ttl_secs: no idle recycling and no watchdog")
+    _when, _kind = ci.deadline("probe-a")
+    is_(_kind, "idle", "and deadline() reads it back")
+
+    ci.mark_busy("probe-a")
+    _wtext = open(ci.marker("probe-a", "busy"), encoding="utf-8").read()
+    ok("a busy marker carries one too — this is the watchdog") if "ttl_secs=" in _wtext else \
+        bad("the busy marker has no ttl_secs: a wedged job would never be stopped")
+    _when2, _kind2 = ci.deadline("probe-a")
+    is_(_kind2, "work", "and the work clock takes precedence once there is a job")
+
+    # THE ROOT CAUSE, ASSERTED DIRECTLY, so a future refactor of _sh cannot quietly reintroduce it.
+    _out = ci._sh("command -v ffbox_clock_write >/dev/null && echo yes || echo no").strip()
+    is_(_out, "yes", "the shell we hand work to can see the clock library at all")
+finally:
+    ci.state_dir = _saved_state_dir
+    if _saved_dir is None:
+        os.environ.pop("FFGITHUBRUNNERS_CONFIG_DIR", None)
+    else:
+        os.environ["FFGITHUBRUNNERS_CONFIG_DIR"] = _saved_dir
+
+print("\nwhat stops the lane entirely, and what only stops it minting")
+
+# blocked() IS FOR "DO NOTHING AT ALL" AND IS DELIBERATELY NARROW. It used to also carry the
+# slot.sh interlock, which went with slot.sh on 2026-09-08; what is left is the one condition under
+# which acting would mean acting on numbers nobody wrote.
 lane = ci.Lane(lambda _m: None, cfg=ci.PoolConfig(cfg_path))
-ci.slot_sh_running = lambda: True
-is_(lane.blocked(), "slot.sh owns this lane", "the daemon stands down while a slot.sh lives")
-is_(lane.keep(), None, "and mints nothing")
-is_(lane.publishing(), 0, "and reports nothing owed, so a drain does not wait on it")
-ci.slot_sh_running = lambda: False
 write_config(cfg_path, max=5, idle=1, box=12)
 lane.cfg.reload()
-is_(lane.blocked(), "", "with no slot.sh the lane is the daemon's")
+is_(lane.blocked(), "", "a readable config and no drain is an open lane")
 
-# A config that will not parse stops it too: minting against numbers nobody wrote is worse than
-# minting nothing.
 lane.cfg.error = "boom"
-ok("an unreadable config blocks the lane") if lane.blocked() else \
-    bad("an unreadable config must block the lane")
+ok("an unreadable config blocks the lane entirely") if lane.blocked() else \
+    bad("acting on numbers nobody wrote is worse than not acting")
 lane.cfg.error = None
 
-print("\na drain stops minting and does NOT stop serving")
+# AND A DRAIN IS NOT IN blocked(), which is the distinction the drain fix turns on: it stops
+# minting and must not stop serving, or the jobs a drain exists to let finish would sit waiting
+# for a mirror answer that never comes.
+is_(lane.blocked(), "", "a drain does not go through blocked() — see the drain section above")
 
-# THE BUG THIS EXISTS FOR. The first version of the lane read neither drain flag, so
-# `ffgithubrunners drain` became a no-op the moment the daemon took the lane -- and the updater
-# calls exactly that before every update, to stop new runners appearing in a window where nothing
-# can answer them. Caught on the box, minutes after the cut-over, by watching it mint into a lane
-# that was drained at the time.
-drain_dir = os.path.join(tmp, "ghr")
-os.makedirs(drain_dir, exist_ok=True)
-os.environ["FFGITHUBRUNNERS_CONFIG_DIR"] = drain_dir
-
-lane2 = ci.Lane(lambda _m: None, cfg=ci.PoolConfig(cfg_path))
-ci.slot_sh_running = lambda: False
-write_config(cfg_path, max=5, idle=1, box=12)
-lane2.cfg.reload()
-
-is_(ci.drained(), False, "no flag file is not drained")
-is_(lane2.blocked(), "", "and the lane is open")
-
-open(ci.drain_flag(), "w").close()
-is_(ci.drained(), True, "the flag the CLI writes is what is read")
-
-# BLOCKED() MUST STAY EMPTY. If a drain went through blocked() it would stop SERVING too, and the
-# jobs the drain exists to let finish would sit waiting for a mirror answer that never came.
-is_(lane2.blocked(), "", "a drain does NOT block the lane wholesale")
-
-minted = []
-ci.may_admit = lambda *a, **k: (True, "would admit")
-ci.runners = lambda include_stopped=False: []
-lane2._free_slot = staticmethod(lambda live: 1)
-
-
-def explode(*a, **k):
-    minted.append(1)
-    raise AssertionError("minted while drained")
-
-
-ci.launch_settings = explode
-is_(lane2.keep(), None, "and keep() mints nothing while the flag is there")
-is_(len(minted), 0, "not even far enough to read the launch settings")
-
-# ffwatch's OWN drain has to reach the CI lane too: the updater sets one and then the other, and
-# assumes draining ffbox drains the box.
-os.remove(ci.drain_flag())
-is_(ci.drained(), False, "the flag is gone")
-is_(lane2.keep(host_drained=True), None, "a host-side drain stops minting as well")
-is_(len(minted), 0, "still nothing minted")
-
-ci.launch_settings = lambda: {}
 print("\nthe launch argument list, rendered rather than run")
 settings = {
     "IMAGE": "ffbox:latest", "EGRESS_NET": "ffghr-net", "EGRESS_IP": "10.81.0.2",

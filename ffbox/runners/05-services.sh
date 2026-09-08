@@ -29,12 +29,12 @@ usage() {
   cat <<EOF
 Usage: sudo sh ffbox/runners/05-services.sh --install [options]
 
-Renders ffbox/runners/systemd/*.service into ${UNIT_DIR} and enables one slot unit per place
-under the BOX ceiling (max_concurrent_runs). Idempotent — re-run any time.
+Renders ffbox/runners/systemd/*.service into ${UNIT_DIR}: the target, the daemon gate, the egress
+fence and the two timers. Idempotent — re-run any time.
 
-You do NOT need this to change how many CI jobs run at once. That is \`pool.max\`, it is read live
-by every waiting supervisor, and \`ffgithubrunners max N\` sets it with no root and no restart.
-Re-run this only when the box ceiling itself moves, or after moving the checkout.
+There are no per-runner units. ffwatch keeps the CI pool, and how many jobs run at once is
+\`pool.max\` in config.json, which it re-reads live — \`ffgithubrunners max N\` sets it with no root
+and nothing restarting. Re-run this only after moving the checkout or changing the owner.
 
 Options (alphabetical):
   --check       Exit 1 if installing would change anything. Needs no root.
@@ -62,18 +62,6 @@ done
 say()  { printf '==> %s\n' "$*"; }
 skip() { printf '    %s\n' "$*"; }
 die()  { printf '05-services.sh: %s\n' "$*" >&2; exit 1; }
-
-# Is the container on this slot serving a job? Only used to WARN before a stop that would kill
-# one. Never fatal and never blocking: a daemon this cannot reach answers "no", because refusing
-# to install units because docker is unreachable would be the wrong failure entirely.
-docker_busy_slot() {
-    _c=$(docker ps --filter "label=ffghr.slot=${1:?}" --format '{{.Names}}' 2>/dev/null | head -1)
-    [ -n "$_c" ] || { unset _c; return 1; }
-    if docker top "$_c" -o pid,comm 2>/dev/null | grep -q 'Runner\.Worker'; then
-        unset _c; return 0
-    fi
-    unset _c; return 1
-}
 
 # WHOSE MACHINE THIS IS. SUDO_USER is only meaningful when we are actually root: it lingers in any
 # shell started under sudo. It is also ABSENT under systemd, which is how an unattended re-install
@@ -104,7 +92,11 @@ _cuid=$(id -u "$CONTAINER_USER" 2>/dev/null) \
   || die "no account '$CONTAINER_USER' on this box -- run: sh ffbox/runners/01-hostSetup.sh"
 CONTAINER_USER_UNIT="user@${_cuid}.service"
 
-UNITS="ffgithubrunners@.service ffgithubrunners.target ffgithubrunners-dockerd-wait.service ffghr-egress.service ffgithubrunners-reap.service ffgithubrunners-reap.timer ffgithubrunners-image.service ffgithubrunners-image.timer"
+# NO ffgithubrunners@.service. The per-runner supervisor was retired on 2026-09-08 when ffwatch
+# took the CI lane; there is no template and nothing to instantiate. What is left is the target,
+# the daemon gate, the egress fence and the two timers -- and the reaper matters MORE under one
+# daemon rather than less, because it is the cleanup for "the daemon is broken".
+UNITS="ffgithubrunners.target ffgithubrunners-dockerd-wait.service ffghr-egress.service ffgithubrunners-reap.service ffgithubrunners-reap.timer ffgithubrunners-image.service ffgithubrunners-image.timer"
 TIMERS="ffgithubrunners-reap.timer ffgithubrunners-image.timer"
 
 # --- render ------------------------------------------------------------------------------------
@@ -117,7 +109,6 @@ for u in $UNITS; do
       -e "s|@GROUP@|$OWNER_GROUP|g" \
       -e "s|@HOME@|$OWNER_HOME|g" \
       -e "s|@CUSER@|$CONTAINER_USER|g" \
-      -e "s|@SLOTSH@|$HERE/slot.sh|g" \
       -e "s|@IMAGESH@|$HERE/03-image.sh|g" \
       -e "s|@WAITDOCKER@|$HERE/wait-for-docker.sh|g" \
       -e "s|@DOCKERUSERUNIT@|$CONTAINER_USER_UNIT|g" \
@@ -139,28 +130,6 @@ for u in $UNITS; do
   cmp -s "$TMP/$u" "$UNIT_DIR/$u" 2>/dev/null || changed="$changed $u"
 done
 
-# Slots that should be enabled, and slots that should not be any more.
-#
-# SIZED TO THE BOX CEILING, NOT TO `pool.max`, since 2026-09-08. These used to be the same number,
-# which meant the CI lane's concurrency was decided by a root install rather than by the config it
-# reports in every log line: a box holding `max: 5` ran three jobs because three instances were
-# enabled, and raising the ceiling did nothing anyone could see until somebody re-ran this script.
-# ffghr_slot_units() in lib/config.sh is the rule and carries the reasoning; the short version is
-# that a supervisor with no place holds nothing, so enabling headroom costs a sleeping shell and
-# buys `ffgithubrunners max N` with no root and no restart.
-want_slots=""
-i=1
-SLOT_UNITS=$(ffghr_slot_units)
-while [ "$i" -le "$SLOT_UNITS" ]; do want_slots="$want_slots $i"; i=$((i + 1)); done
-# ENABLED TEMPLATE INSTANCES ARE SYMLINKS, NOT UNIT FILES. `systemctl list-unit-files
-# 'ffgithubrunners@*.service'` lists the TEMPLATE and never the instances, so it reports nothing
-# however many slots are enabled. Enabling ffgithubrunners@1 creates
-# ffgithubrunners.target.wants/ffgithubrunners@1.service, and that directory is the record.
-# Getting this wrong is not cosmetic: it is also what decides which slots to DISABLE when the
-# slot count goes down, so a wrong answer here means `slots 1` never turns slot 2 off.
-enabled_now=$(ls "$UNIT_DIR/ffgithubrunners.target.wants" 2>/dev/null \
-              | sed -n 's/^ffgithubrunners@\([0-9]*\)\.service$/\1/p' | tr '\n' ' ')
-
 recorded=$(cat "$RECORD" 2>/dev/null || echo "")
 
 # --- --check and the bare report ------------------------------------------------------------------
@@ -169,17 +138,10 @@ if [ "$INSTALL" -eq 0 ]; then
   printf 'checkout:     %s\n' "$HERE"
   printf 'recorded:     %s\n' "${recorded:-<none>}"
   printf 'run user:     %s (%s), home %s\n' "$OWNER" "$OWNER_GROUP" "$OWNER_HOME"
-  # THREE NUMBERS, AND THEY ARE NOT THE SAME QUESTION. `units` is how many supervisors exist and
-  # is the only one this script decides; `pool.max` is the live ceiling on jobs, changed with
-  # `ffgithubrunners max N` and needing nothing from here; `enabled` is what systemd actually has.
-  printf 'supervisor:   %s\n' "$SUPERVISOR"
-  if [ "$SLOT_UNITS" -eq 0 ]; then
-    printf 'slot units:   0 (ffwatch owns this lane; slot.sh units are retired)\n'
-  else
-    printf 'slot units:   %s (from max_concurrent_runs; the box ceiling)\n' "$SLOT_UNITS"
-  fi
-  printf 'pool.max:     %s (the live job ceiling — `ffgithubrunners max N`, no root)\n' "$SLOTS"
-  printf 'slots enabled:%s\n' "${enabled_now:- none}"
+  # pool.max IS NOT THIS SCRIPT'S BUSINESS and is shown only so the two are never confused: it is
+  # the live ceiling on jobs, ffwatch re-reads it, and `ffgithubrunners max N` sets it with no root.
+  printf 'CI lane:      ffwatch (no per-runner supervisors)\n'
+  printf 'pool.max:     %s (live; `ffgithubrunners max N`, no root, no restart)\n' "$SLOTS"
   printf 'units stale:  %s\n' "${changed:- none}"
   for u in $UNITS; do
     printf '  %-42s %s\n' "$u" "$([ -r "$UNIT_DIR/$u" ] && echo installed || echo MISSING)"
@@ -190,16 +152,10 @@ if [ "$INSTALL" -eq 0 ]; then
     printf '  %-42s %s\n' "$tm" "$(systemctl is-active "$tm" 2>/dev/null || true)"
   done
   printf 'target:       %s\n' "$(systemctl is-active ffgithubrunners.target 2>/dev/null || true)"
-  for s in $want_slots; do
-    printf '  slot %-3s %s\n' "$s" "$(systemctl is-active "ffgithubrunners@$s.service" 2>/dev/null || true)"
-  done
   if [ "$CHECK" -eq 1 ]; then
     [ -z "$changed" ] || { printf '\n--check: units differ from this checkout\n'; exit 1; }
-    for s in $want_slots; do
-      case " $enabled_now " in *" $s "*) ;; *) printf '\n--check: slot %s is not enabled\n' "$s"; exit 1 ;; esac
-    done
-    printf '\n--check: installed units match this checkout and config\n'
-  elif [ -z "$changed" ] && [ -n "$enabled_now" ]; then
+    printf '\n--check: installed units match this checkout\n'
+  elif [ -z "$changed" ]; then
     printf '\nInstalled units match this checkout. Nothing owed.\n'
   else
     printf '\nTo apply: sudo sh %s/05-services.sh --install\n' "$HERE"
@@ -242,49 +198,21 @@ for tm in $TIMERS; do
   systemctl enable --now "$tm" >/dev/null 2>&1 && skip "$tm enabled" || skip "could not enable $tm"
 done
 
-# Enable what should run and disable what should not, so lowering the slot count actually lowers it.
-for s in $enabled_now; do
-  case " $want_slots " in
-    *" $s "*) ;;
-    *) # `--now`, WHICH STOPS A RUNNING ONE, AND THE JOB IT MAY BE SERVING WITH IT. That is the
-       # right behaviour for shrinking a pool and the wrong behaviour for retiring the lane, so
-       # retiring says what it is about to cost rather than discovering it afterwards. The
-       # supported order is: `ffgithubrunners drain`, wait for the jobs to end, then run this.
-       if [ "$SLOT_UNITS" -eq 0 ] && [ "$(systemctl is-active "ffgithubrunners@$s.service" 2>/dev/null)" = active ]; then
-         if docker_busy_slot "$s"; then
-           say "WARNING: slot $s is RUNNING A JOB and stopping it now will kill that job."
-           say "         Ctrl-C, then: ffgithubrunners drain; wait for it to finish; re-run this."
-         fi
-       fi
-       say "disabling slot $s (slot units=$SLOT_UNITS)"
-       systemctl disable --now "ffgithubrunners@$s.service" >/dev/null 2>&1 || true ;;
-  esac
-done
-for s in $want_slots; do
-  systemctl enable "ffgithubrunners@$s.service" >/dev/null 2>&1 || true
-done
-
-if [ "$SLOT_UNITS" -eq 0 ]; then
-  # THE TARGET STILL STARTS, and that is not an oversight. It carries the reaper and the image
-  # timer as well as the slots, and both matter more once the daemon owns the lane, not less:
-  # reap.sh is the cleanup for "the daemon is broken", which is the failure a single supervising
-  # process makes possible. What it no longer has is any slot instance to pull up.
-  say "starting ffgithubrunners.target (no slot units — ffwatch owns this lane)"
-  say "slot.sh is still on disk. To hand the lane back: set githubrunner.supervisor to slot.sh"
-  say "and re-run this script; the twelve supervisors come back and the daemon stands down."
-else
-  say "starting ffgithubrunners.target ($SLOT_UNITS slot unit(s), pool.max $SLOTS)"
-fi
+# NOTHING TO ENABLE OR DISABLE PER SLOT any more. Any instance left over from before the
+# 2026-09-08 cut-over was disabled by the run that performed it; the template is gone, so systemd
+# has nothing to instantiate even if a stray symlink survived somewhere.
+#
+# THE TARGET STILL EXISTS AND STILL MATTERS with no slots under it: it carries the reaper and the
+# image timer, and the reaper matters more under one daemon rather than less, because it is the
+# cleanup for "the daemon is broken".
+say "starting ffgithubrunners.target (the CI lane is ffwatch's; no slot units)"
 systemctl enable ffgithubrunners.target >/dev/null 2>&1 || true
 systemctl restart ffgithubrunners.target
 
 printf '\n'
-for s in $want_slots; do
-  skip "slot $s: $(systemctl is-active "ffgithubrunners@$s.service" 2>/dev/null || true)"
-done
 printf '\n'
 for tm in $TIMERS; do
   skip "$tm next: $(systemctl show "$tm" -p NextElapseUSecRealtime --value 2>/dev/null || echo unknown)"
 done
-skip "watch:  journalctl -u 'ffgithubrunners@*' -f"
+skip "watch:  journalctl -u ffwatch -f | grep ' ci:'"
 skip "a job's own log: $LOG_DIR/slot-N.log"
