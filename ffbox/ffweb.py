@@ -2693,10 +2693,14 @@ class App:
                 "1=5, optionally what to call it as " + esc(CLAUDE_NAME_PREFIX) +
                 "1=Loth, and restart ffweb.</p>"], refresh=True)
 
+        # THE TTL IS NOT ADVERTISED HERE ANY MORE. It described a ceiling on how often this page
+        # would ask Anthropic, which was never the interesting number and is now a misleading
+        # one: the daemon's forced readings are what actually keep the store current, they
+        # happen when work arrives rather than on any clock, and each row already carries the
+        # only fact a reader wants from it — "read 4m ago", off the reading itself.
         head.append(
             "<p class=\"note\">" + esc(f"{len(rows)} key{'' if len(rows) == 1 else 's'}") +
-            " in the pool. Usage is read from Anthropic at most once every " +
-            esc(fmt_ttl(self.keys.ttl)) + ".</p>")
+            " in the pool.</p>")
 
         body = []
         for rec in rows:
