@@ -754,10 +754,16 @@ def thread_event(tid, mid=None, kind="thread_message"):
             "channel_id": str(tid), "id": str(mid or tid), "author_id": PLAYER}
 
 
+# The server every fixture thread lives in. Real Discord thread payloads carry one and the
+# conversation row records it, which is what turns a thread id into a link somebody can click —
+# so a fixture without it was quietly testing the one shape (a pre-column row) that has no link.
+GUILD = "530867164866150410"
+
+
 def bug_thread(fixture, tid, title, msgs):
     fixture["threads"][str(tid)] = {
         "thread": {"id": str(tid), "name": title, "parent_id": BUG_FORUM,
-                   "owner_id": PLAYER},
+                   "owner_id": PLAYER, "guild_id": GUILD},
         "messages": msgs,
     }
     return fixture
@@ -4752,6 +4758,15 @@ def test_publish_opens_a_pull_request():
     check("the body carries the harness's verification numbers",
           "compiled=True" in (pull["body"] or "") and "214" in (pull["body"] or ""),
           (pull["body"] or "")[-400:])
+    # THE WAY BACK OUT OF GITHUB. A reviewer's first question is what was asked for, which is in
+    # Discord and in neither the diff nor the summary — so the link is the first line, above the
+    # agent's prose, not buried in the facts block that has only ever named the bare thread id.
+    check("and it opens with a jump link to the thread that asked for it",
+          (pull["body"] or "").startswith(
+              f"From [this Discord thread](https://discord.com/channels/{GUILD}/30000)."),
+          (pull["body"] or "")[:200])
+    check("with the agent's own explanation still under it",
+          CONFIDENT_VERDICT["pr_body"] in (pull["body"] or ""), (pull["body"] or "")[:400])
 
     remote_branches = git_run("-C", host, "ls-remote", "--heads", "origin").stdout
     check("the branch really exists on the remote", expected in remote_branches,
@@ -8050,6 +8065,20 @@ def test_a_local_run_publishes_like_a_dev_dm():
     check("whose body says where the prompt came from, and does not invent a Discord thread",
           "on the build server" in (pull["body"] or "")
           and "from Discord" not in (pull["body"] or ""), (pull["body"] or "")[:400])
+    # A LOOPBACK PAGE IS NOT A LINK. This case's config never widened web_host, and 127.0.0.1 in
+    # a pull request points at the reader's own laptop; the bottom block still names the
+    # conversation, which is all that was ever true.
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("and offers no link to a page only this machine can reach",
+          "https://127.0.0.1" not in (pull["body"] or "")
+          and not (pull["body"] or "").startswith("From ["), (pull["body"] or "")[:200])
+    case.watcher.cfg["web_host"] = "192.168.51.10"
+    body = case.watcher.pr_body(run["id"], conv, {"run_id": run["ffbox_run_id"]},
+                                CONFIDENT_VERDICT)
+    expect = (f"From [ffbox conversation {conv['id']}]"
+              f"(https://192.168.51.10:8787/conversation/{conv['id']}).")
+    check("once the page is reachable, the same first line points at the ffbox conversation",
+          body.startswith(expect), body[:200])
 
     check("nothing was queued for Discord, because there is no thread to answer",
           not case.rows("SELECT * FROM outbound"), case.rows("SELECT * FROM outbound"))

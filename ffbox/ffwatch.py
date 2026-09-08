@@ -47,6 +47,7 @@ import hashlib
 import importlib.util
 import inspect
 import io
+import ipaddress
 import json
 import os
 import re
@@ -2226,6 +2227,64 @@ def conversation_ref(conv):
     """
     link = discord_link(conv)
     return f"[{conv['id']}]({link})" if link else str(conv["id"])
+
+
+# An address that means "the machine you are already on" is not a link anybody else can follow.
+# `web_host` is 127.0.0.1 until somebody widens it, and 0.0.0.0 is the same answer for the
+# opposite reason: the page is reachable from everywhere and the address names nowhere.
+UNROUTABLE_WEB_HOSTS = {"", "localhost", "127.0.0.1", "127.0.1.1", "::1", "0.0.0.0", "::"}
+
+
+def web_link(cfg, path):
+    """`https://host:port/<path>` on this box's own page, or None when nobody else can reach it.
+
+    HTTPS, not HTTP: ffweb serves TLS unless it is given --no-tls, and 06-services.sh renders
+    the unit without it. A link written with the wrong scheme goes to a port that will not talk
+    plaintext, which reads as "the page is down".
+
+    None rather than a loopback link, because the caller is writing for somebody who is NOT on
+    this machine -- a pull request is read on GitHub, from a laptop -- and 127.0.0.1 there points
+    at their own computer. Every caller has something true to say without a link, and says that
+    instead.
+    """
+    host = str((cfg or {}).get("web_host") or "").strip()
+    if host.lower() in UNROUTABLE_WEB_HOSTS:
+        return None
+    try:
+        addr = ipaddress.ip_address(host)
+        if addr.is_loopback or addr.is_unspecified:
+            return None
+        # IPv6 in a URL wears brackets; every other host is itself.
+        host = f"[{host}]" if addr.version == 6 else host
+    except ValueError:
+        pass
+    port = (cfg or {}).get("web_port") or 8787
+    return f"https://{host}:{port}/{str(path).lstrip('/')}"
+
+
+def origin_link_line(cfg, conv):
+    """Where this work was asked for, as one line to put FIRST, or "" when there is nowhere.
+
+    THE FIRST THING IN THE PULL REQUEST, before the agent's own explanation, because of who
+    reads it: somebody deciding whether to merge, days later, whose first question is what was
+    actually asked for. That is a message in Discord, or a prompt typed into this box's page,
+    and it is in neither the diff nor the summary. The facts block at the bottom has named the
+    thread id since it was written, and an id is not something a person can click or that
+    Discord's search will match.
+
+    "" IS A REAL ANSWER twice over: a conversation with no guild id recorded (a row from before
+    that column existed) has no link that would resolve, and a box whose page binds loopback has
+    none that would resolve for the reader. Both fall back to the bottom block, which names the
+    conversation without pretending it is reachable.
+    """
+    if is_local_conversation(conv):
+        link = web_link(cfg, f"conversation/{conv['id']}")
+        return f"From [ffbox conversation {conv['id']}]({link})." if link else ""
+    link = discord_link(conv)
+    if not link:
+        return ""
+    # A thread link opens on the post that started it; a reply chain's link IS that message.
+    return f"From [this Discord {'thread' if conv['is_thread'] else 'message'}]({link})."
 
 
 def pull_request_note(pull):
@@ -11452,7 +11511,14 @@ class Watcher:
         ver = self.db.one("SELECT * FROM verification WHERE run_id=? ORDER BY id DESC LIMIT 1",
                           (run_row_id,))
         run = self.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
-        lines = [(verdict.get("pr_body") or verdict.get("summary") or "").strip(), "", "---", ""]
+        # THE LINK BEFORE THE PROSE. Everything else in this body explains the diff; this one
+        # line is the way back out of GitHub to the conversation that asked for the diff, and it
+        # is the first thing a reviewer wants and the one thing they cannot reconstruct.
+        lines = [line for line in [origin_link_line(self.cfg, conv)] if line]
+        if lines:
+            lines.append("")
+        lines += [(verdict.get("pr_body") or verdict.get("summary") or "").strip(),
+                  "", "---", ""]
         if is_local_conversation(conv):
             # Not a Discord anything. Naming the thread id of a conversation that has none used
             # to be harmless, because a local run never reached this method; now it would put a
