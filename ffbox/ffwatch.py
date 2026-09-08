@@ -9430,8 +9430,10 @@ class Watcher:
             # cannot say who. This is the line on the turn row and on the web page.
             error = "stopped by hand from the box page or `ffwatch stop`"
         elif terminal == "failed":
-            error = (result.get("subtype") or f"ffbox exited {rc}") if result else \
-                f"ffbox exited {rc}"
+            # THE SAME READING THE REPLY MAKES, through the same function. This is the line
+            # on the turn row, which is what `ffwatch status` and the box page print — and two
+            # names for one failure is an operator reconciling the record with the reply.
+            error = result_failure_detail(result) or f"ffbox exited {rc}"
         self.finish_turn(turn["id"], terminal, error=error)
 
         # A triage verdict of AUTOFIX used to enqueue a SEPARATE fix turn here, because the two
@@ -13773,6 +13775,46 @@ PUBLIC_STOPPED = ("A dev stopped this run part way through, so there's no answer
                   "Nothing wrong with the question, so ask again and it'll have another go.")
 
 
+def result_failure_detail(result):
+    """What ended a run, out of the container's result.json — or "" when it does not say.
+
+    `subtype` is the CLI's word for how its OWN loop ended, and it is not a verdict on the run:
+    it is left at "success" even on a run the same envelope flags `is_error`. On 2026-09-08 a
+    #codereview turn on pull request 505 stopped 11 minutes in on a session limit and wrote
+
+        {"is_error": true, "terminal_reason": "api_error", "api_error_status": 429,
+         "subtype": "success", "result": "You've hit your session limit · resets 2:50am (UTC)"}
+
+    and both readers of this field took `subtype` first: the state line told the pull request
+    "the run failed: success", and the turn row recorded the failure as `success` for the box
+    page and `ffwatch status`. The run itself was scored correctly — exit 1, failed, no branch.
+    Only the sentence about it was wrong, which is the worse kind of wrong: it is the half an
+    operator reads.
+
+    So the error fields are read FIRST, and `subtype` only when nothing else claims an error. A
+    subtype of "success" is never a detail — it is the ABSENCE of one, and a caller with nothing
+    to add says the state on its own. Every other subtype still comes through, including the
+    sentences discord-task.sh's trap writes there for a run killed before the agent finished.
+
+    The HTTP status and not the message under it: the message is already the reply's body at a
+    private venue, and repeating "you've hit your session limit" under it is the reply saying
+    the same thing twice in two voices. Which 429 it was — a session limit or a rate limit —
+    is the body's to say, and this must not guess at it.
+    """
+    if not isinstance(result, dict):
+        return ""
+    if str(result.get("terminal_reason") or "") == "api_error":
+        # WITH THE STATUS WHERE THERE IS ONE, and a sentence rather than the bare token where
+        # there is not: `the run failed: api_error` is the harness reading a machine word out
+        # loud at somebody.
+        status = result.get("api_error_status")
+        return f"the API returned {status}" if status else "the API returned an error"
+    subtype = str(result.get("subtype") or "").strip()
+    if subtype and subtype != "success":
+        return subtype
+    return str(result.get("terminal_reason") or result.get("error") or "").strip()
+
+
 def answer_is_publishable(turn, terminal):
     """Does this reply carry the agent's own words at all?
 
@@ -13981,8 +14023,7 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # neither the error line nor the verification line below would fire — and the whole
         # private reply came to nothing at all. An operator has to be told that a run they are
         # waiting on is not coming back.
-        detail = str(result.get("subtype") or result.get("error") or "") \
-            if isinstance(result, dict) else ""
+        detail = result_failure_detail(result)
         # `the run failed` is wrong for the one ending that was a decision. The subtype under it
         # says the same thing in the container's words, and says it for the clock enforcer's
         # stops too; this is the half that knows a person did it.
