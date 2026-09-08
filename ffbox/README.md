@@ -2188,9 +2188,14 @@ them onto the branch the pull request already points at, and the harness posts a
 what it did. Nothing merges, and no second pull request is opened: the work lands under the one
 a reviewer is already reading.
 
+**`!codereview` is the same door.** GitHub's comment box offers to autocomplete a leading `#`
+into an issue number as you type, so the bang spelling is the one that survives being typed
+quickly; either word starts the same run. A box whose config names a single word keeps that
+word alone.
+
 ```jsonc
 "operators": { "lothsahn": { "discord": "1932...", "github": 10092359 } },
-"github":    { "trigger": "#codereview", "review_pool": "ffdev" }
+"github":    { "trigger": ["#codereview", "!codereview"], "review_pool": "ffdev" }
 ```
 
 Most of this is machinery that already existed. The conversation **adopts** the pull request's

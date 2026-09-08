@@ -664,11 +664,17 @@ DEFAULTS = {
         "token_env": "GH_PR_TOKEN",
         "token": None,
         # THE #codereview TRIGGER (design/github_pr_review_design.txt). A comment on a pull
-        # request whose text holds this word starts a review run on that pull request's branch.
-        # A word rather than a regex: it is matched case-insensitively against the comment body
-        # and nothing else is parsed out of it, which is what keeps the prompt free of anything
-        # a person wrote. An empty string turns the poller off.
-        "trigger": "#codereview",
+        # request whose text holds any of these words starts a review run on that pull request's
+        # branch. Words rather than a regex: each is matched case-insensitively against the
+        # comment body and nothing else is parsed out of it, which is what keeps the prompt free
+        # of anything a person wrote. An empty list -- or an empty string, which is still
+        # accepted here and means the same thing -- turns the poller off.
+        #
+        # TWO SPELLINGS OF ONE WORD, because GitHub turns a leading `#` into an issue reference
+        # as you type it: `#codereview` is fine once posted but the composer offers to autocomplete
+        # it into `#1234`, and `!codereview` is the spelling that survives being typed quickly.
+        # They are alternates, not two features; a run started by either is the same run.
+        "trigger": ["#codereview", "!codereview"],
         # WHICH AGENT CLASS A REVIEW RUNS IN. Named rather than hardcoded for the same reason
         # discord.operator_pool is: a box that wants to put this behind the fence should be able
         # to say so and then find out that a fenced container cannot push, rather than have the
@@ -1525,6 +1531,20 @@ def github_operators(cfg):
     GitHub user id must not be a way in, and it is not: it is never tested here.
     """
     return operator_ids(cfg, "github")
+
+
+def github_triggers(cfg):
+    """The lowercased words that start a review, [] when the poller is off.
+
+    ONE VALUE, TWO SHAPES. The shipped default is a list of alternates, but a box whose config
+    says `"trigger": "#codereview"` -- every box that seeded one before the second spelling
+    existed -- must keep working and keep meaning exactly what it did. A string is that one
+    word; a list is each of its words; blanks in either are dropped, so `""` and `[]` both leave
+    the poller off rather than matching every comment ever written.
+    """
+    raw = (cfg.get("github") or {}).get("trigger")
+    words = [raw] if isinstance(raw, str) else list(raw or [])
+    return [w for w in ((str(word) or "").strip().lower() for word in words) if w]
 
 
 def _issue_number_from_url(issue_url):
@@ -12391,8 +12411,8 @@ class Watcher:
         return DEFAULT_AGENT_CLASS
 
     def poll_github(self):
-        """Read new pull request comments and start a review for each `#codereview` an operator
-        wrote. Returns the turn ids it created.
+        """Read new pull request comments and start a review for each `#codereview` (or
+        `!codereview`) an operator wrote. Returns the turn ids it created.
 
         EVERY REFUSAL IS DECIDED ONCE. A comment that is acted on, refused, or ignored all end
         the same way: its id goes in the cursor's `seen` list. The alternative is a sweep that
@@ -12404,9 +12424,8 @@ class Watcher:
         operator can see the attempt; GitHub is told nothing. Same rule, and the same reasoning,
         as take_branch_directive.
         """
-        gh_cfg = self.cfg.get("github") or {}
-        trigger = (gh_cfg.get("trigger") or "").strip().lower()
-        if not trigger:
+        triggers = github_triggers(self.cfg)
+        if not triggers:
             return []
         # NOBODY CAN TRIGGER, SO NOTHING IS ASKED. An empty operator table is the shipped
         # default, and a box that has not filled it in should not be spending a request a sweep
@@ -12452,7 +12471,7 @@ class Watcher:
             if not comment_id or comment_id in seen_set:
                 continue
             try:
-                turn_id = self.take_review_trigger(gh, comment, trigger, agent_class)
+                turn_id = self.take_review_trigger(gh, comment, triggers, agent_class)
             except Exception as exc:                        # noqa: BLE001 - see below
                 # ONE BAD COMMENT MUST NOT STOP THE SWEEP, and must not be retried forever
                 # either. It is marked seen below like every other outcome, because a comment
@@ -12467,7 +12486,7 @@ class Watcher:
         self.write_github_cursor(newest, seen, etag)
         return created
 
-    def take_review_trigger(self, gh, comment, trigger, agent_class):
+    def take_review_trigger(self, gh, comment, triggers, agent_class):
         """One comment, decided. The turn id when a review started, else None.
 
         The two checks here are the two adopt_branch cannot make: a pull request has to be open,
@@ -12476,8 +12495,8 @@ class Watcher:
         on the remote, that no other conversation has a turn in flight on it -- is adopt_branch's
         and is asked there, once, in the one place both other ingresses ask it.
         """
-        body = comment.get("body") or ""
-        if trigger not in body.lower():
+        body = (comment.get("body") or "").lower()
+        if not any(trigger in body for trigger in triggers):
             return None
         author = comment.get("author") or comment.get("user") or {}
         author_id = str(author.get("id") or "")
