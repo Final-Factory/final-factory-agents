@@ -1640,8 +1640,15 @@ def test_a_running_container_can_be_stopped_from_the_box_page():
               'href="/stop?name=ffbox-dev-t1-99aa"><span class="pill running">' in text
               and "<th>stop</th>" not in text,
               text[text.find('class="stop"') - 40:][:220])
+        # A CI RUNNER WITH A JOB IS OFFERED ONE, since 2026-09-08. It was refused for as long as
+        # the CI lane called such a container `busy` rather than `running`, on reasoning that
+        # conflated the runner with the work inside it: stop one and what goes is the JOB, while
+        # what the keeper puts back is an empty runner. That is the agent case exactly.
+        check("a CI runner with a job is offered a stop",
+              "/stop?name=ffghr-testbox-1-abcd" in text, text[:0])
+        # AND WHAT IS STILL REFUSED IS A CONTAINER WITH NO WORK IN IT. Both of these are replaced
+        # by their keeper within a pass, so the button would look inert while costing a recreate.
         for name, why in (("ffbox-agent-pool-deadbeef", "a warm spare"),
-                          ("ffghr-testbox-1-abcd", "a busy CI runner"),
                           ("ffghr-testbox-2-ef01", "an orphaned CI runner"),
                           ("ffbox-egress", "infrastructure")):
             check(f"{why} is not offered a stop", "/stop?name=" + name not in text, name)

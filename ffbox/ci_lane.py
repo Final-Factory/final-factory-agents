@@ -662,18 +662,33 @@ def log_file(settings, slot):
     return os.path.join(d, f"slot-{slot or 0}.log")
 
 
-def _start_follower(name, path, mark):
+def mark_log_start(settings, slot, name):
+    """Write the per-job banner into the slot's log. Called ONCE, at launch.
+
+    WHY NOT WHEN THE FOLLOWER STARTS, which is where it lived and was wrong. A follower is started
+    for every running container on every pass, so an adopted one -- a container this daemon did not
+    launch, because the last one restarted under it -- got a second banner saying the job had just
+    started. Two banners for one job, the second five minutes into it.
+    #
+    That is not cosmetic: `ffgithubrunners logs` shows THE LAST JOB by finding the last banner, so
+    an adopted job's log appeared to begin in the middle and its first minutes were hidden above a
+    line claiming it had only just begun. Observed on the first job to live through an update.
+    """
+    try:
+        with open(log_file(settings, slot), "a", encoding="utf-8", errors="replace") as fh:
+            fh.write(f"===== ffghr job {name} started "
+                     f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} =====\n")
+    except OSError:
+        return False
+    return True
+
+
+def _start_follower(name, path):
     """`docker logs -f` into `path`, detached. Returns the Popen, or None."""
     try:
         fh = open(path, "a", encoding="utf-8", errors="replace")
     except OSError:
         return None
-    if mark:
-        try:
-            fh.write(f"===== ffghr job {name} started {time.strftime('%Y-%m-%dT%H:%M:%S%z')} =====\n")
-            fh.flush()
-        except OSError:
-            pass
     sock = os.environ.get("FFGHR_DOCKER_SOCK") or "/run/ffbox-container/docker.sock"
     try:
         proc = subprocess.Popen(
@@ -797,6 +812,7 @@ class Lane:
         self.cfg = cfg or PoolConfig()
         self._working = set()                 # container names a thread is busy with
         self._followers = {}                  # container name -> the `docker logs -f` child
+        self._adopted_quietly = set()         # names first followed by THIS daemon, not launched
         self._announced = {}                  # name -> last message, so a poll does not repeat
 
     # -- the interlock ---------------------------------------------------------------------
@@ -886,6 +902,9 @@ class Lane:
             runner_id, jit = mint_jitconfig(name)
             self.log(f"ci: registration {runner_id}, labels {settings.get('LABELS', '')}")
             launch(name, slot, runner_id, jit, settings, stage)
+            # THE BANNER BELONGS TO THE LAUNCH. One per container, written by the daemon that
+            # created it, so an adopted container never gets a second one -- see mark_log_start.
+            mark_log_start(settings, slot, name)
             mark_idle(name)
         except (ShellError, subprocess.TimeoutExpired, OSError) as exc:
             # LEAVE NOTHING BEHIND ON A FAILED START. A registration minted against a container
@@ -944,19 +963,28 @@ class Lane:
         proc = self._followers.get(r.name)
         if proc is not None and proc.poll() is None:
             return
-        first = proc is None
+        replacing = proc is not None
         try:
             settings = launch_settings()
         except (ShellError, subprocess.TimeoutExpired):
             return
         path = log_file(settings, r.slot)
-        started = _start_follower(r.name, path, mark=first)
+        started = _start_follower(r.name, path)
         if started is None:
             self._say(f"log:{r.name}", f"could not follow {r.name} into {path}")
             return
         self._followers[r.name] = started
-        if not first:
-            self.log(f"ci: re-attached the log follower for {r.name}")
+        # SAID FOR A REPLACEMENT, NOT FOR A FIRST ATTACH, and the distinction is which of the two
+        # is worth a line. A first attach happens at launch and at adoption and is the ordinary
+        # case; a follower that DIED and had to be replaced is a `docker logs` that fell over
+        # under a running job, which is worth knowing about.
+        #
+        # NO BANNER EITHER WAY. It is written once, by the launch that created the container --
+        # writing it here gave an adopted job a second one claiming it had just started.
+        if replacing:
+            self.log(f"ci: replaced the log follower for {r.name}")
+        elif r.name not in self._adopted_quietly:
+            self._adopted_quietly.add(r.name)
 
     def _drop_follower(self, name):
         proc = self._followers.pop(name, None)

@@ -232,6 +232,37 @@ finally:
     else:
         os.environ["FFGITHUBRUNNERS_CONFIG_DIR"] = _saved_dir
 
+print("\nthe job banner is written once, by the launch that made the container")
+
+# THE BUG THIS EXISTS FOR, found by reading a log after the first job to live through an update.
+# The banner was written wherever a follower was started, and a follower is started for every
+# running container on every pass -- so a container this daemon ADOPTED got a second banner five
+# minutes into its job. `ffgithubrunners logs` shows the last job by finding the last banner, so
+# that job's log appeared to begin in the middle with its first minutes hidden above a line saying
+# it had only just started.
+_logdir = tempfile.mkdtemp()
+_settings = {"LOG_DIR": _logdir}
+is_(ci.log_file(_settings, 3), os.path.join(_logdir, "slot-3.log"),
+    "the log file is named for the slot")
+
+ci.mark_log_start(_settings, 3, "ffghr-h-3-aaa")
+_body = io.open(ci.log_file(_settings, 3), encoding="utf-8").read()
+is_(_body.count("ffghr job ffghr-h-3-aaa started"), 1, "a launch writes exactly one banner")
+
+# A SECOND CONTAINER ON THE SAME SLOT DOES get its own, because it is a different job. The file is
+# appended for exactly this reason.
+ci.mark_log_start(_settings, 3, "ffghr-h-3-bbb")
+_body = io.open(ci.log_file(_settings, 3), encoding="utf-8").read()
+is_(_body.count("started"), 2, "and the next container on that slot writes its own")
+is_(_body.count("ffghr job ffghr-h-3-aaa started"), 1, "without touching the first one's")
+
+# AND FOLLOWING A CONTAINER WRITES NO BANNER AT ALL. This is the assertion that would have caught
+# it: _start_follower takes no `mark` any more, so there is no path by which adoption can claim a
+# job started.
+import inspect as _inspect                                        # noqa: E402
+is_(list(_inspect.signature(ci._start_follower).parameters), ["name", "path"],
+    "starting a follower cannot write a banner: it is not given the option")
+
 print("\nwhat stops the lane entirely, and what only stops it minting")
 
 # blocked() IS FOR "DO NOTHING AT ALL" AND IS DELIBERATELY NARROW. It used to also carry the
