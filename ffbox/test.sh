@@ -41,6 +41,18 @@ run "runners/test_reap.sh"  sh  "$HERE/runners/test_reap.sh"
 run "runners/test_pin.sh"   sh  "$HERE/runners/test_pin.sh"
 run "test_ci_lane.py"       python3 "$HERE/test_ci_lane.py"
 run "test_update_drain.sh"  sh  "$HERE/test_update_drain.sh"
+# THE TWO BIG PYTHON SUITES BELONG HERE TOO, and leaving them out was the same mistake this file
+# was written to stop. I built a single entry point for the shell suites and then went on running
+# test_ffwatch.py and test_ffweb.py by hand -- which meant reading their output rather than their
+# exit status, and on 2026-09-08 that let a ffweb check fail unnoticed for three commits because I
+# looked at the head of the output instead of the end. A runner that covers most of the suites is
+# a runner somebody will still supplement by hand.
+#
+# test_ffwatch.py IS SLOW -- minutes, against a real sqlite database and a stubbed daemon -- and
+# that is not a reason to leave it out. It is a reason to run this before pushing rather than
+# after every edit.
+run "test_ffwatch.py"       python3 "$HERE/test_ffwatch.py"
+run "test_ffweb.py"         python3 "$HERE/test_ffweb.py"
 
 printf '\n========\n'
 if [ -n "$FAILED" ]; then
