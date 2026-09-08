@@ -13,3 +13,10 @@ on failure, enable via execute_code/eval (`BurstCompiler.Options.EnableBurstComp
 true`) and drain to a STABLE zero — two zero readings of
 `UnityEditor.Progress.EnumerateItems()` Burst items, 60s apart, because the queue refills in
 waves after a recompile. A single zero reading has produced two false-ready preflights.
+
+**Process match rule (2026-09-08):** a Unity project process may have trailing arguments such as
+`-logFile`, so process ownership must match the exact `-projectPath <project>` argument followed
+by a space or end-of-command, not only the command end. `scripts/editor-preflight.sh:30-32` and
+`scripts/launch-editor.sh:24-28` use `-projectPath ${PROJECT}( |$)`: preserve that boundary and
+test both the intended project and a sibling path. A false zero result permits a duplicate editor
+launch against one project.
