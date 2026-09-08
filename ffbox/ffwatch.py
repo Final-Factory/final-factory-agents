@@ -11044,16 +11044,21 @@ class Watcher:
         it VERIFIES it, which is a different and much shorter job:
 
           * the name is one of `publish_bases`, so the file cannot name an arbitrary ref, and
-          * `origin/<name>` is an ancestor of what we just pushed, so the pull request is a
-            proposal to fast-forward that branch rather than a diff against a stranger.
+          * what we just pushed left `origin/<name>` and carries nothing that only some OTHER
+            base has, so the pull request proposes this run's work rather than a diff against
+            a stranger or a smuggled copy of somebody else's branch.
 
         Both matter because `run_dir` is bind-mounted into the container: the agent can write
         this file, and ffbox overwriting it at harvest is not something to lean on. What it
-        cannot do is make an unrelated branch an ancestor of its own work.
+        cannot do is put a commit into the graph that it did not actually branch from.
+
+        THE SECOND TEST USED TO BE A FAST-FORWARD TEST — is `origin/<name>` an ancestor of the
+        branch — and that is a question about the base's head rather than about the work, so
+        merging anything into the base falsified it for every run in flight. See the loop below.
 
         A missing or unusable name falls back to the configured default, and only if that
-        default passes the same ancestry check. Nothing else is a safe guess: a pull request
-        into the wrong branch is a proposal to ship unreleased work to players.
+        default passes the same checks. Nothing else is a safe guess: a pull request into the
+        wrong branch is a proposal to ship unreleased work to players.
         """
         allowed = list(self.cfg.get("publish_bases") or {}) or [self.cfg["github"]["base"]]
         claimed = (_read_text(os.path.join(run_dir, "publish_base.txt")) or "").strip()
@@ -11066,13 +11071,63 @@ class Watcher:
                 f"{allowed}")
 
         git_dir, remote = self.cfg["git_dir"], self.cfg["push_remote"]
+        head = f"refs/ffbox/{branch}"
+
+        def git(*args):
+            return subprocess.run(["git", "-C", git_dir, *args], capture_output=True, text=True)
+
+        def ancestor(a, b):
+            return git("merge-base", "--is-ancestor", a, b).returncode == 0
+
+        def fork(a, b):
+            """Where `b` left `a`, or None if the two share no history at all."""
+            done = git("merge-base", a, b)
+            return (done.stdout or "").strip() if done.returncode == 0 else None
+
         for name in candidates:
-            done = subprocess.run(
-                ["git", "-C", git_dir, "merge-base", "--is-ancestor",
-                 f"refs/remotes/{remote}/{name}", f"refs/ffbox/{branch}"],
-                capture_output=True, text=True)
-            if done.returncode == 0:
+            ref = f"refs/remotes/{remote}/{name}"
+            # THE BASE MOVED WHILE THE RUN WAS GOING, which on this box is the ordinary case and
+            # not the exception -- ffbox merges its own pull requests, so every merge falsified
+            # this test for every run then in flight. Conversation 109 was refused by a master
+            # that moved two and a half minutes before it published: pushed, tests green, no
+            # proposal, and nothing scheduled to look again, since the reconcile sweep re-runs
+            # this same method and the answer only gets worse as the base moves further on.
+            #
+            # Eight runs had been refused this way when it was found. Two were stranded outright
+            # (109 and 98); five were turns on an ADOPTED branch that already had a pull request
+            # of its own, so the work did reach review and only the reply was wrong -- it told
+            # the thread nothing was put up for review, on the branch's own no_pr_reason.
+            #
+            # GitHub never needed the fast-forward. It needs shared history, and the branch still
+            # has it. WHAT DOES STILL HAVE TO HOLD is the thing the ancestry test was standing in
+            # for: that a pull request into `name` proposes THIS RUN'S WORK and nobody else's. So
+            # take the point the branch left each allowed base at and require every one of them
+            # to be a commit `name` already carries. A branch off develop claiming master fails
+            # that -- its fork point with develop is a develop-only commit master has never seen
+            # -- which is the refusal worth keeping, because a pull request into the wrong branch
+            # is a proposal to ship unreleased work to players.
+            #
+            # Unchanged by any of this: `claimed` is still only ever one of `publish_bases`, and
+            # the fork points come out of the commit graph rather than out of the run directory
+            # the container can write to.
+            if fork(ref, head) is None:
+                continue                     # no shared history: a stranger, refused as before
+            intruder = None
+            for other in allowed:
+                other_ref = f"refs/remotes/{remote}/{other}"
+                if git("rev-parse", "--verify", "--quiet", f"{other_ref}^{{commit}}").returncode:
+                    continue                 # a base this remote does not carry decides nothing
+                point = fork(other_ref, head)
+                if point and not ancestor(point, ref):
+                    intruder = other
+                    break
+            if intruder is None:
+                if not ancestor(ref, head):
+                    log(f"run {run_row_id}: {name} has moved on since this run started; "
+                        f"proposing the work into it anyway")
                 return name, None
+            log(f"run {run_row_id}: not proposing into {name} -- this work descends from "
+                f"{intruder}, which {name} does not carry")
         return None, ("the harness could not tell which branch this work is based on: it does "
                       f"not descend from {' or '.join(candidates)}")
 
