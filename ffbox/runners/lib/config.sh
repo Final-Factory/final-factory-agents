@@ -805,8 +805,10 @@ if v is not None and not isinstance(v, (dict, list)):
 # the ceiling is not a licence to invent headroom.
 #
 # AND A CAP, because this number becomes sleeping processes. 32 is far above any real box and far
-# below a typo. Measured 2026-09-08: a waiting supervisor is 1.7 MB RSS, and its CPU is almost
-# entirely the config re-read that ffghr_reload_limits now skips when nothing changed.
+# below a typo. Measured 2026-09-08: a waiting supervisor is 1.7 MB RSS and about 1.5% of a core,
+# of which ffghr_reload_limits' python3 was roughly half and is now skipped when nothing changed.
+# The other half is the `docker ps` in ffghr_pool_counts, which is the question being asked and
+# does not go away.
 FFGHR_SLOT_UNITS_CAP=32
 
 ffghr_slot_units() {
@@ -873,11 +875,15 @@ _ffghr_coerce_pool
 #
 # IT COSTS A python3 PER CALL, so it does not make one when the file has not moved. Measured on
 # 2026-09-08 before this guard: a WAITING supervisor -- one holding no container and doing nothing
-# -- burned 4.3 seconds of CPU per 293 seconds elapsed, about 1.5% of a core, almost all of it
-# forking python3 every POOL_POLL_SECONDS to re-parse a file that changes about twice a month.
-# That was tolerable at one supervisor per configured slot; sizing the units to the box ceiling
-# multiplies it by however much headroom the box has, so the guard comes with that change rather
-# than after it.
+# -- burned 4.3 seconds of CPU per 293 seconds elapsed, about 1.5% of a core, forking python3
+# every POOL_POLL_SECONDS to re-parse a file that changes about twice a month.
+#
+# ABOUT HALF THE POLL, NOT ALL OF IT, and the other half is not going anywhere. Profiled the same
+# day: the python3 parse is ~27ms of CPU and the `docker ps` in ffghr_pool_counts is ~24ms, with
+# the stat and flock forks about 2ms between them. So this guard roughly halves a waiting
+# supervisor and the count is what remains. That was tolerable at one supervisor per configured
+# slot; sizing the units to the box ceiling multiplies it by however much headroom the box has, so
+# the guard comes with that change rather than after it.
 #
 # INODE, NANOSECOND mtime AND SIZE, not a hash: this runs on a five-second loop and must not read
 # the file to decide whether to read the file.

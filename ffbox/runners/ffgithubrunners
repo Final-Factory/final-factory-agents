@@ -106,10 +106,15 @@ cmd_status() {
     # that can never be admitted looks like a fault until you know it is headroom.
     _enabled=$(ffghr_enabled_slots)
     [ -n "$_enabled" ] || _enabled=$(seq 1 "$SLOTS" 2>/dev/null | tr '\n' ' ')
+    # WHICH SLOT NUMBERS ARE IN USE IS ARBITRARY, and saying otherwise was a bug in the first
+    # version of this. The ceiling is on the COUNT of containers, not on the index: any supervisor
+    # may win the pool lock, so with max 5 and twelve units the containers can land on slots
+    # 2, 3, 5, 8 and 11. Labelling a row "above max" because its NUMBER is drew a line the pool
+    # does not draw, and slot 8 was labelled headroom while it was holding a registered runner.
     _nunits=$(printf '%s' "$_enabled" | wc -w)
     if [ "$_nunits" -gt "$SLOTS" ] 2>/dev/null; then
-        printf '           %s slot units enabled; the %s above max hold nothing and are headroom\n' \
-            "$_nunits" "$((_nunits - SLOTS))"
+        printf '           %s slot units enabled, any %s of which may hold a runner at once\n' \
+            "$_nunits" "$SLOTS"
     elif [ "$_nunits" -lt "$SLOTS" ] 2>/dev/null; then
         printf '           only %s slot units enabled, so max %s cannot be reached — see: %s\n' \
             "$_nunits" "$SLOTS" "sudo sh $HERE/05-services.sh --install"
@@ -132,9 +137,7 @@ cmd_status() {
                 _what="$_c idle$(_ffghr_status_left "$(ffghr_idle_marker "$_cn")")"
             fi
         fi
-        _over=""
-        [ "$_i" -gt "$SLOTS" ] 2>/dev/null && _over=" (headroom, above max $SLOTS)"
-        printf '  slot %-3s unit %-10s%s %s%s\n' "$_i" "${_unit:-unknown}" "$_stop" "$_what" "$_over"
+        printf '  slot %-3s unit %-10s%s %s\n' "$_i" "${_unit:-unknown}" "$_stop" "$_what"
     done
     # A container whose slot is above the configured count is a slot that was disabled while it
     # was working, or an orphan the reaper has not swept yet. Either way it is in the pool and the

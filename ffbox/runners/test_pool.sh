@@ -292,8 +292,8 @@ printf '\nre-reading the config without forking python3 every poll\n'
 # THE GUARD THAT MAKES THE HEADROOM AFFORDABLE. A waiting supervisor called ffghr_reload_limits
 # once per POOL_POLL_SECONDS and each call forked a python3 to re-parse a file that changes about
 # twice a month: measured 2026-09-08 at 4.3s of CPU per 293s elapsed per waiting slot, about 1.5%
-# of a core. Sizing the units to the box ceiling multiplies that by the headroom, so the guard
-# lands with it.
+# of a core, of which the parse is about half. Sizing the units to the box ceiling multiplies that
+# by the headroom, so the guard lands with it.
 write_units_config 12 5
 _stamp_before=$_FFGHR_CFG_STAMP
 ffghr_reload_limits
