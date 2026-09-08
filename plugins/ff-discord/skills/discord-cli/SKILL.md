@@ -39,6 +39,7 @@ straight out of the file. Only an unambiguous single match is remembered.
 | `post <channel>` | `--text` (or `-` for stdin), `--reply-to <id>`, `--mention <user id>`, `--file`, `--silent`, `--dry-run`. |
 | `edit`, `react` | Amend one of the bot's own messages; add a reaction, or take one back off with `react <channel> <id> 👀 --remove`. Removing one that is already gone is a no-op, not an error. |
 | `thread-create <channel> <message_id>` | Open a thread on an existing message. |
+| `close <thread_id>` | Archive a thread. The soft close: anybody who replies brings it straight back, which is why an agent is allowed to do it unattended. It never locks, so a reporter whose bug is still there reopens their own thread by answering. Archiving an already-archived thread is a no-op, not an error. Needs MANAGE_THREADS wherever the bot did not open the thread itself, which includes the bug_reports forum. |
 | `download <channel> <message_id> --dir <path>` | Pull a message's attachments. Bug reports carry a runtime log and a save zip. |
 | `ask <target>` | Post a question to `ben`, `lothsahn`, or both in `#dev-chat`, attributed to this machine's operator. |
 | `unseen <channel> --key <k>` | New messages or threads since the stored cursor. The entry point for every loop. |

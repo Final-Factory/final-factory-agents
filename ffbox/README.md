@@ -2298,6 +2298,25 @@ conversation does not: its thread IS the pull request.
 is a decision somebody made for a reason the harness does not have. Nor does it claim the bug is
 fixed: what this box knows is that a pull request merged.
 
+**And then the thread is filed away.** A public thread that got the notice is archived right
+after it, so a forum full of fixed reports stops being a forum full of open ones. Archived, not
+locked: anybody who replies brings the thread straight back, and `reopen_conversation` brings
+this side back with it, so a reporter who is still seeing the bug reopens their own report by
+answering it. That is the whole reason a poller is allowed to do this unattended. The bot needs
+MANAGE_THREADS in the forum for it, because the threads there are opened by the in-game webhook
+rather than by the bot.
+
+The order is enforced rather than assumed. Posting into an archived thread un-archives it, so a
+close that overtook its notice would leave the thread open and the log claiming otherwise. The
+close row names the notice row it follows, in the `after_local_id` of its payload, and the
+sender holds it until that row reads `sent` — id order is not enough on its own, because a post
+held by backoff or by the approval queue does not hold back the row behind it. A notice that
+ends up rejected takes its close with it.
+
+Private venues keep their threads. The dev channel and the operator DM are somebody's working
+conversation rather than a question this box has just answered, and a conversation that is a
+channel rather than a thread has nothing to archive.
+
 **Nobody triggers it,** so no operator table gates it — it is a separate poller from
 `#codereview` for that reason, sharing that one's worker and `github.poll_secs`. Turn it off with
 `"github": { "announce_merges": false }`. Like every poller here it watches from now: turning it

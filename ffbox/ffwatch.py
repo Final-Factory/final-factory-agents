@@ -2277,6 +2277,18 @@ def merge_notice_local_id(number, conv_id):
     return f"pr-merged:{number}:{conv_id}"
 
 
+def merge_close_local_id(number, conv_id):
+    """The outbound `local_id` a merge notice's thread close wears: pr-merged-close:<pr>:<conv>.
+
+    ITS OWN ID, NOT THE NOTICE'S, because the two rows are two things that can independently
+    have happened: the sentence is said once and the thread is archived once, and a queue that
+    could not tell them apart would have to guess which of the pair a surviving row was. It is
+    also what the close row NAMES as the row it follows -- see `after_local_id` in _after_ready
+    -- so the dependency survives a restart in the database rather than in a scheduler's head.
+    """
+    return f"pr-merged-close:{number}:{conv_id}"
+
+
 def dm_autoreply_local_id(author_id, message_id):
     """The outbound `local_id` a player's auto-reply wears: dm-autoreply:<author>:<message>.
 
@@ -2293,13 +2305,16 @@ def dm_autoreply_local_id(author_id, message_id):
 
 # What the sender knows how to put on the wire. Every row is composed by the host, but the
 # check stays: an unknown action is rejected rather than guessed at.
-SENDABLE_ACTIONS = ("post", "react", "unreact", "edit", "ask", "thread-create")
+SENDABLE_ACTIONS = ("post", "react", "unreact", "edit", "ask", "thread-create", "close")
 
 # Actions that must never be retried after an ambiguous failure. `post` is protected by
 # nonce + enforce_nonce, `react` (a PUT), `unreact` (a DELETE, and ffdiscord swallows the 404
 # of one already gone) and `edit` (a PATCH to fixed content) are naturally idempotent — these
 # two are neither. A retried thread-create makes a second thread; a retried ask pings a human
 # twice. One attempt, then rejected with the error kept for a human to read.
+#
+# `close` is retryable and belongs with the first group: archiving an archived thread is the
+# state that was asked for, and ffdiscord treats it as one.
 NON_RETRYABLE_ACTIONS = ("ask", "thread-create")
 
 
@@ -10785,6 +10800,8 @@ class Watcher:
             return "skipped"
         if approve and row["status"] != "approved":
             return "held"
+        if not self._after_ready(row):
+            return "skipped"
         if not self._send_due(row):
             return "skipped"
         reason = self._send_limited(row)
@@ -10820,6 +10837,46 @@ class Watcher:
             "UPDATE outbound SET attempts=?, last_attempt_at=? WHERE id=? AND attempts=?",
             (int(row["attempts"] or 0) + 1, now_iso(), row["id"], int(row["attempts"] or 0)))
         return cur.rowcount == 1
+
+    def _after_ready(self, row):
+        """Whether a row that must follow another may go yet. A row that follows nothing may.
+
+        ORDER MATTERS FOR EXACTLY ONE PAIR TODAY, and that pair is why this exists rather than
+        a comment asking callers to queue carefully. POSTING INTO AN ARCHIVED DISCORD THREAD
+        UN-ARCHIVES IT: a close that overtakes the notice it is closing on leaves the thread
+        open, the log saying it was archived, and nothing anywhere disagreeing.
+
+        ID ORDER IS NOT ENOUGH. Both lanes drain oldest-first, so the rows are looked at in the
+        right order -- but a post held by send backoff, an approval queue or a rate-limit
+        ceiling does not hold back the row behind it, and a close is one HTTPS call that would
+        sail straight past it. The dependency is named on the row, in the database, so it also
+        survives the daemon restarting between the two.
+
+        A PREDECESSOR THAT WILL NEVER GO OUT TAKES THIS ROW WITH IT. Rejected, undeliverable,
+        marked dry by a dry run, or simply not there: in each case the message this row was
+        supposed to follow is not coming, and holding the follower pending forever would leave
+        a row that every pass re-reads and no operator can act on. It is rejected once, with
+        the reason naming what it was waiting for.
+        """
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except json.JSONDecodeError:
+            return True  # not this gate's complaint; send_one rejects it a moment later
+        after = ""
+        if isinstance(payload, dict):
+            after = str(payload.get("after_local_id") or "").strip()
+        if not after:
+            return True
+        prior = self.db.one(
+            "SELECT status FROM outbound WHERE local_id=? ORDER BY id DESC LIMIT 1", (after,))
+        status = prior["status"] if prior is not None else None
+        if status == "sent":
+            return True
+        if status in ("pending", "approved"):
+            return False
+        self._reject(row, f"the message it follows ({after}) is not going out"
+                          + (f": it is {status}" if status else ": there is no such row"))
+        return False
 
     def _send_due(self, row):
         """Backoff between attempts, so a Discord outage is not hammered once per poll."""
@@ -10986,6 +11043,14 @@ class Watcher:
                 args.append("--remove")
             return args, False
 
+        if action == "close":
+            # wants_id FALSE, and not because the call is quiet: `ffdiscord close --json` prints
+            # the CHANNEL object, whose `id` is the thread. send_one writes whatever it reads
+            # back as the row's discord_id and then as the conversation's out_watermark_id,
+            # which is a MESSAGE id -- a thread id parked there would read as a message newer
+            # than every message, and the next sweep would skip the thread's replies.
+            return ["close", channel], False
+
         if action == "thread-create":
             name = (payload.get("name") or "").strip()
             if not payload.get("message") or not name:
@@ -11128,6 +11193,32 @@ class Watcher:
             log("WARNING: this ffdiscord has no --mention, so replies will name the asker "
                 "without notifying them. Update the plugin: sh registerAgents.sh")
         self._mention_ok = ok
+        return ok
+
+    def close_supported(self):
+        """Does the ffdiscord on this machine understand `close`?
+
+        The third of these probes, for the third time the same trap has been set: the CLI ships
+        inside the ff-discord plugin, live sessions read a CACHED copy that only refreshes on a
+        version bump, and a box whose ffwatch is newer than its plugin has a sender asking for a
+        command argparse has never heard of. Unprobed, every merge on such a box would queue a
+        close, fail it max_send_attempts times and leave a rejected row behind -- once per
+        merged pull request, for as long as nobody ran registerAgents.sh.
+
+        `close --help` rather than a flag on an existing command, because the whole subcommand
+        is what is missing: argparse exits 2 on an unknown one, and exit 0 is the answer.
+        """
+        cached = getattr(self, "_close_ok", None)
+        if cached is not None:
+            return cached
+        # THROUGH ffdiscord_run, for the reason the other two give: the probe has to describe
+        # the copy that will actually be used.
+        rc, _, _ = ffdiscord_run(self.cfg, ["close", "--help"], timeout=60)
+        ok = rc == 0
+        if not ok:
+            log("WARNING: this ffdiscord has no `close`, so merged bug threads stay open. "
+                "Update the plugin: sh registerAgents.sh")
+        self._close_ok = ok
         return ok
 
     def nonce_supported(self):
@@ -12802,7 +12893,32 @@ class Watcher:
             (conv["id"],))
         log(f"merge notice: #{number} -> conversation {conv['id']}"
             + (f" ({shipped} and later)" if shipped else " (no version)"))
-        return self.record_outbound(run_row_id, conv["id"], "post", payload)
+        nonce = self.record_outbound(run_row_id, conv["id"], "post", payload)
+
+        # AND THEN THE THREAD IS FILED AWAY. A bug thread whose fix has merged is the last
+        # thing in the forum anybody needs to scroll past, and the notice is the natural moment
+        # to say so -- the harness has just told the reporter everything it knows.
+        #
+        # ARCHIVED, NEVER LOCKED, and that is the whole reason this is allowed to be automatic.
+        # This box does not know the reporter's bug is gone; it knows a pull request merged,
+        # which is exactly what the sentence above claims and no more. A reply un-archives the
+        # thread and reopen_conversation brings this side back with it, so somebody who is
+        # still seeing the bug reopens their own report by answering, with no moderator in it.
+        # Locking would turn a merge into a verdict.
+        #
+        # PUBLIC THREADS ONLY. The private venues are the dev channel and the operator DM,
+        # where the notice is developer prose in somebody's working conversation rather than an
+        # answer to a question that has now been answered; those close when their owner says so.
+        # A non-thread conversation has no thread to archive -- the notice went to the channel.
+        if nonce and conv["is_thread"] and not private and self.close_supported():
+            self.record_outbound(run_row_id, conv["id"], "close", {
+                "channel": reply_channel(conv),
+                "local_id": merge_close_local_id(number, conv["id"]),
+                # THE NOTICE FIRST. Archiving and then posting would un-archive it; see
+                # _after_ready, which is what actually holds this row back until the post lands.
+                "after_local_id": local_id,
+            })
+        return nonce
 
     def catchup_pass(self):
         """The sweep and the publication reconcile — the two slow things on the catchup tick.
