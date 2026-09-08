@@ -396,5 +396,63 @@ grep -qF -- '--label ffghr.owner=slot.sh' "$HERE/slot.sh" \
     && ok "slot.sh labels its containers with an owner" \
     || bad "slot.sh must label its containers ffghr.owner=slot.sh"
 
+printf '\nthe staging protocol version\n'
+
+# THE FILES IN A STAGING DIRECTORY ARE A WIRE FORMAT, and today the two halves cannot disagree
+# about it: slot.sh launches the container and serves it, so both are the same commit. That ends
+# when the supervisor becomes a daemon that restarts mid-job. design section 9e.
+_pdir=$TMP/stage-proto
+mkdir -p "$_pdir"
+
+ffghr_protocol_write "$_pdir"
+is "$(cat "$_pdir/protocol")" "$FFGHR_PROTOCOL_VERSION" "the version is written into the directory"
+ffghr_protocol_ok "$_pdir" >/dev/null \
+    && ok "and a host speaking that version serves it" \
+    || bad "a host must serve a directory carrying its own version"
+
+# A DIRECTORY WITH NO protocol FILE IS ACCEPTED, and this is the case that decides whether the
+# upgrade introducing the check fails every job in flight. It means a container launched before
+# the file existed, whose exchange is version 1 by definition.
+_pold=$TMP/stage-old
+mkdir -p "$_pold"
+ffghr_protocol_ok "$_pold" >/dev/null \
+    && ok "a directory from before the file existed is served, not refused" \
+    || bad "refusing an unversioned directory would fail every job across the upgrade"
+
+# The one that has to refuse. A version this host does not know means the files below it may not
+# mean what this host thinks, and acting on them promotes an archive under a name somebody else
+# chose or fetches a commit for a job that wanted a different one.
+printf '99\n' > "$_pdir/protocol"
+if ffghr_protocol_ok "$_pdir" >/dev/null; then
+    bad "a version this host does not speak must be refused"
+else
+    ok "a version this host does not speak is refused"
+fi
+case "$(ffghr_protocol_ok "$_pdir" 2>/dev/null || true)" in
+    *"v99"*) ok "and the refusal names the version, so the journal says which" ;;
+    *)       bad "the refusal must name the version it could not serve" ;;
+esac
+
+# Garbage is refused the same way. It is not a version this host speaks, and guessing is the
+# thing this whole mechanism exists to prevent.
+printf 'banana\n' > "$_pdir/protocol"
+ffghr_protocol_ok "$_pdir" >/dev/null \
+    && bad "a protocol file that is not a version must be refused" \
+    || ok "a protocol file that is not a version is refused too"
+
+# An older version stays servable once somebody adds it to the accepted list -- that is the whole
+# point of the list being separate from the current version.
+printf '1\n' > "$_pdir/protocol"
+FFGHR_PROTOCOL_ACCEPTS='1 2' FFGHR_PROTOCOL_VERSION=2 ffghr_protocol_ok "$_pdir" >/dev/null \
+    && ok "a host on v2 still serves a v1 job when it says it accepts v1" \
+    || bad "the accepted list must be what decides, not the current version"
+
+grep -qF 'ffghr_protocol_write "$STAGE"' "$HERE/slot.sh" \
+    && ok "slot.sh records the version when it creates a staging directory" \
+    || bad "slot.sh must record the protocol version at staging creation"
+grep -qF 'ffghr_protocol_ok "$STAGE"' "$HERE/slot.sh" \
+    && ok "and checks it before serving anything out of one" \
+    || bad "slot.sh must check the protocol before it serves a request"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

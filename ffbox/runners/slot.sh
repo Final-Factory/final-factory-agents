@@ -339,6 +339,13 @@ if ffghr_cache_ready; then
     # The error is captured rather than discarded for the same reason: "could not prepare" on its
     # own says nothing, and the errno says which of the four links broke.
     if _err=$( umask 007; mkdir -p "$STAGE" 2>&1 ); then
+        # WHAT THIS HOST SPEAKS, written before the container can put anything in here. Nothing
+        # reads it today -- slot.sh launches and serves the same container, so the two halves are
+        # always the same commit. It is written now so that when the supervisor becomes a daemon
+        # that restarts mid-job, a host serving a job it did not launch can tell whether it
+        # understands the exchange. lib/config.sh's protocol section is the reasoning.
+        ffghr_protocol_write "$STAGE" \
+            || log "WARNING: could not record the staging protocol version in $STAGE"
         CACHE_ARGS="-v $FFGHR_CACHE_ENTRIES:/ffcache:ro -v $STAGE:/ffghr/out"
         log "cache: $(find "$FFGHR_CACHE_ENTRIES" -maxdepth 1 -type f -name '*@*.tar' 2>/dev/null | wc -l) entries at $FFGHR_CACHE_ENTRIES, staging $STAGE"
     else
@@ -625,6 +632,25 @@ while [ "$(docker inspect -f '{{.State.Running}}' "$CNAME" 2>/dev/null)" = true 
         KILLED=1
         break
     fi
+    # BEFORE ANYTHING IS SERVED, because the two things below read files the container wrote and
+    # act on them: one promotes an archive under a name the job chose, the other fetches a commit
+    # the job named. A host that does not understand the exchange must do neither. Checked in the
+    # loop rather than once at launch so that a supervisor which ADOPTED this container -- which is
+    # what ffwatch will be doing -- asks the question too.
+    if [ -n "${STAGE:-}" ] && ! _pmsg=$(ffghr_protocol_ok "$STAGE"); then
+        if [ "${PROTOCOL_REFUSED:-0}" = 0 ]; then
+            PROTOCOL_REFUSED=1
+            log "REFUSING to serve $CNAME: $_pmsg"
+            log "the job will time out on its requests and fail; this is deliberate"
+            # Tell the job now rather than letting it burn its whole allowance on an answer that
+            # is never coming. lib/mirror.sh answers the same way when a fetch genuinely fails.
+            printf 'failed\n' > "$STAGE/fetch.done" 2>/dev/null || true
+            printf 'done\n'   > "$STAGE/artifact.done" 2>/dev/null || true
+        fi
+        sleep 15
+        continue
+    fi
+
     decide_cache_archive
     # The job asks for the commit it needs before its restore step, which takes about forty
     # seconds, so this poll has slack and the answer is normally waiting by the time the checkout

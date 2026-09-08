@@ -93,7 +93,7 @@ correct later.
 Both land while `slot.sh` is still the supervisor, which is the point: they are testable before
 anything structural moves.
 
-- [ ] **B.1 — the staging directory is keyed by container name.** `M`
+- [x] **B.1 — DONE — the staging directory is keyed by container name.** `M`
   `ffghr_cache_stage_dir` (`runners/lib/config.sh:484`) takes a container name instead of a slot
   number and returns `$FFGHR_CACHE_STAGING/<container name>`. Callers: `slot.sh` (creation,
   teardown, every staging reference) and `reap.sh` (the staging sweep, which currently reasons in
@@ -103,14 +103,14 @@ anything structural moves.
   **Leaves litter on upgrade:** existing `slot-N` directories belong to no container under the new
   rule. `reap.sh` gets a one-release sweep for the old shape, and it is deleted afterwards.
 
-- [ ] **B.2 — `ffghr.owner` replaces `ffghr.supervisor.pid`.** `S`
+- [x] **B.2 — DONE — `ffghr.owner` replaces `ffghr.supervisor.pid`.** `S`
   A constant label that does not change when the daemon restarts. `slot.sh` sets it; `reap.sh`'s
   orphan test becomes "no live owner process on this box" rather than "this pid is not a
   `slot.sh`".
   **Both labels are written for one release** and reap accepts either, or a container started
   before the upgrade reads as an orphan and is removed mid-job. Drop the pid in the release after.
 
-- [ ] **B.3 — tests for both.** `S`
+- [x] **B.3 — DONE — tests for both.** `S`
   Offline, in `test_pool.sh`'s style: the stage path is derived from the name; the orphan test
   says "live" for a container whose owner is running and "orphan" for one whose owner is gone;
   and a container carrying only the old pid label is still recognised during the overlap.
@@ -119,7 +119,7 @@ anything structural moves.
 
 ## Phase C — a versioned staging protocol  (design 9e)
 
-- [ ] **C.1 — the container writes its protocol version; the host refuses one it does not know.**
+- [x] **C.1 — DONE — the container writes its protocol version; the host refuses one it does not know.**
   `S`
   A `protocol` file in the staging directory at container start. A host that does not recognise
   the version answers requests with the failure form (`fetch.done: failed`) and logs loudly,

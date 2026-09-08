@@ -551,6 +551,58 @@ ffghr_cache_ready() {
 # nonce in the path there is no next job on that name, ever.
 ffghr_cache_stage_dir() { printf '%s/%s\n' "$FFGHR_CACHE_STAGING" "${1:?stage dir needs a container name}"; }
 
+# --- the staging protocol's version -------------------------------------------------------------
+#
+# THE FILES IN A STAGING DIRECTORY ARE A WIRE FORMAT between two programs, and until now they could
+# not disagree about it. The container writes branch.info, fetch.request and artifact.request; the
+# host answers with cache.request, fetch.done and artifact.done. Both halves have always been the
+# same commit, because slot.sh is not in ffbox.target and does not restart: whatever launched the
+# container is still there when the container writes.
+#
+# THAT ENDS WHEN THE SUPERVISOR BECOMES ffwatch, which restarts on every code update. A job
+# launched under commit A can be served by a daemon running commit B, and the files they exchange
+# are the only thing between them. A rename, a new field, a changed meaning -- any of it becomes a
+# job that hangs or, worse, one the host answers wrongly.
+#
+# SO THE CONTAINER WRITES DOWN WHAT IT SPEAKS, and a host that does not recognise the answer
+# refuses rather than guesses. Refusing costs one job, loudly, with a line in the journal naming
+# the version. Guessing costs a wrong archive promoted under a branch's name, or a commit fetched
+# for a job that wanted a different one, and neither says anything at all.
+#
+# ONE INTEGER, NOT A SEMVER. The question is only ever "do I know how to talk to this", and every
+# change to the exchange is breaking until somebody does the work to make it otherwise -- at which
+# point they bump this and teach ffghr_protocol_ok about the older one.
+#
+# BUMP THIS when you add, rename, remove or change the meaning of ANY file in the staging
+# directory, and add the old number to the accepted list below if the new host can still serve it.
+FFGHR_PROTOCOL_VERSION=1
+FFGHR_PROTOCOL_ACCEPTS='1'
+
+ffghr_protocol_file() { printf '%s/protocol\n' "${1:?protocol file needs a staging directory}"; }
+
+# Write it into a staging directory, at creation, before the container can put anything there.
+ffghr_protocol_write() {
+    printf '%s\n' "$FFGHR_PROTOCOL_VERSION" > "$(ffghr_protocol_file "${1:?}")" 2>/dev/null
+}
+
+# Can this host serve the job that owns this staging directory?
+#
+# A DIRECTORY WITH NO protocol FILE IS ACCEPTED, and that is not a hole. It means a container
+# launched before this existed, whose exchange is version 1 by definition -- the version this file
+# is describing. Refusing those would fail every job in flight across the upgrade that introduces
+# the check, which is a worse failure than the one being prevented.
+ffghr_protocol_ok() {
+    _pv=$(head -1 "$(ffghr_protocol_file "${1:?}")" 2>/dev/null | tr -d ' \r\n') || _pv=''
+    [ -n "$_pv" ] || { unset _pv; return 0; }
+    for _pa in $FFGHR_PROTOCOL_ACCEPTS; do
+        if [ "$_pv" = "$_pa" ]; then unset _pv _pa; return 0; fi
+    done
+    unset _pa
+    printf 'staging protocol v%s is not one this host speaks (v%s)\n' "$_pv" "$FFGHR_PROTOCOL_ACCEPTS"
+    unset _pv
+    return 1
+}
+
 # THE ONE REGEX, AND IT IS THE WHOLE PATH-TRAVERSAL DEFENCE. A job proposes a name; this decides
 # whether that string is a name at all. It lives here rather than being written out in slot.sh and
 # reap.sh separately, because two copies of a security check is one copy too many.
