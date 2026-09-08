@@ -13709,6 +13709,32 @@ def test_the_reconcile_re_runs_the_gate_rather_than_waiting_it_out():
           shy.watcher.reconcile_publications() == 0 and GH_STATE["requests"][asked:] == [],
           GH_STATE["requests"][asked:])
 
+    # CONVERSATION 94'S SHAPE, 2026-09-08. publish() stopped at the FIRST rung of the ladder --
+    # the base could not be decided, because it had moved under the run -- and recorded that.
+    # Fixing pr_base let the sweep past that rung, and it now stops at confidence instead; the
+    # column went on naming a harness fault that no longer existed, on the conversation list and
+    # in the private reply footer both, where it reads as "ffbox is broken" rather than "the
+    # agent left you a question".
+    stale = "the harness could not tell which branch this work is based on: it does not descend"
+    shy_run = _latest_run(shy)
+    shy.watcher.db.execute("UPDATE run SET no_pr_reason=?, pr_base=NULL WHERE id=?",
+                           (stale, shy_run["id"]))
+    asked = len(GH_STATE["requests"])
+    check("the sweep replaces a reason that has stopped being the reason",
+          shy.watcher.reconcile_publications() == 0
+          and _latest_run(shy)["no_pr_reason"] == "I could not reproduce the report",
+          _latest_run(shy)["no_pr_reason"])
+    check("and still asked GitHub nothing to work that out",
+          GH_STATE["requests"][asked:] == [], GH_STATE["requests"][asked:])
+    check("a second sweep leaves it exactly as it stands",
+          shy.watcher.reconcile_publications() == 0
+          and _latest_run(shy)["no_pr_reason"] == "I could not reproduce the report",
+          _latest_run(shy)["no_pr_reason"])
+    src = io.open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
+    check("the write is guarded on the text having changed, so a settled conversation "
+          "costs one write and not one a sweep",
+          'if reason and reason != (run["no_pr_reason"] or ""):' in src)
+
 
 def test_a_pull_request_github_refuses_on_the_merits_is_not_retried_forever():
     """GitHub saying no is remembered, so the sweep asks once instead of every fifteen minutes.
