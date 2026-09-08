@@ -1623,6 +1623,72 @@ a branch that moved underneath it is a non-fast-forward, and the turn loses its 
 The page says `adopted by <who>` beside the branch, and labels the file count as that turn's,
 because on an adopted branch it is no longer the branch's total.
 
+### Forking a conversation into somewhere quieter
+
+A public thread that has turned into real troubleshooting cannot be moved. Its conversation is
+pinned to a Discord thread id, the session id is derived from that, and every reply goes back to
+where the question came from. Opening a fresh thread in a private channel loses the branch, the
+session and everything the investigation already worked out.
+
+So a conversation can be **forked**. In a watched channel, a line whose whole content is
+
+```
+!conv 85
+```
+
+or `!conversation 85`, opens a NEW conversation where the directive was typed, holding what 85
+held at that moment: its branch, a copy of its session transcript, and its history. From there
+the two run independently. Nothing said in 85 afterwards reaches the fork, and nothing the fork
+says ever reaches 85 — which is the point of the name. It is a copy taken at a point, not a
+window onto the same thing.
+
+The same fork with no Discord side at all, continued from the terminal or the web page:
+
+```bash
+python3 ffbox/ffwatch.py fork --conversation 85 --agent ffdev
+python3 ffbox/ffwatch.py submit --conversation <the new id> "what did we rule out?"
+```
+
+and the conversation page has a **fork this conversation** button that does exactly that.
+
+**Only an operator's `!conv` counts**, by the same rule and for the same reason `!branch` has
+one: it is read off the author id Discord authenticated, and in anybody else's message the line
+is ordinary text — not acted on, not refused, not answered. A message that is only the directive
+gets no turn; a directive with a question under it gets one, and the question titles the new
+conversation. Either way one line is posted back:
+
+```
+ok — this continues conversation [85](https://discord.com/channels/…). This conversation is now
+on branch `loth/save-fix`. It is already under pull request [#412](…). It has the session from
+that conversation, so it starts where the last turn left off. This is an ffdev container.
+```
+
+**A fork is never more public than what it forks.** A private conversation cannot be forked into
+a public channel, and that is checked once, at the fork, because it is the only moment a
+conversation's contents are copied anywhere. Public into private is the case the feature exists
+for. It is also refused while the source has a turn in flight, in one sentence covering two
+reasons: the transcript is being appended to and a copy taken mid-line is a corrupt session, and
+the branch is about to be pushed by a run that would then race the fork's.
+
+**The class is not a fork decision.** The fork opens in whatever class a conversation opened
+there would — `discord.operator_pool` for the operator who typed the directive, the dropdown on
+the page, `--agent` on the CLI. What forking adds is that a fenced thread's messages can end up
+in an unfenced container, which is a promotion `demote_for_stranger` never makes on its own. It
+is allowed because it is a decision by somebody the box trusts and the row records who and when,
+and it is bounded: the inherited history stays behind the untrusted-input fence in the prompt
+whatever container it lands in, and `demote_for_stranger` still applies to the fork from its
+first message.
+
+Two things fall out for free. A fork that inherited the branch means the public thread gets the
+merge notice when the fork's pull request lands, in the player-facing register with no pull
+request link, because `announce_merge` splits on each conversation's own venue. And `!branch`'s
+"conversation 85 has worked on this branch before" line names the fork to anything that later
+adopts the same branch.
+
+If the session transcript cannot be copied, the fork still happens and starts from a written
+summary of the source instead — the same fallback a lost transcript has always taken — and the
+acknowledgement says so.
+
 ### Idle agents: a container that is already warm
 
 A request used to wait about forty seconds before the model read a word of it. Measured on

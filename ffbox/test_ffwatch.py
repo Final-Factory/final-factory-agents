@@ -500,13 +500,16 @@ if claude_dir:
     n = job["turn"]["seq"]
     records = [
         {"type": "user", "uuid": f"u{n}", "parentUuid": None, "isSidechain": False,
+         "sessionId": session,
          "timestamp": "2026-08-21T00:00:00Z", "message": {"role": "user", "content": "why?"}},
         {"type": "assistant", "uuid": f"a{n}", "parentUuid": f"u{n}", "isSidechain": False,
+         "sessionId": session,
          "timestamp": "2026-08-21T00:00:05Z",
          "message": {"content": [{"type": "thinking", "thinking": "consider the merger"},
                                  {"type": "text", "text": "looking"},
                                  {"type": "tool_use", "name": "Task", "input": {"q": 1}}]}},
         {"type": "assistant", "uuid": f"s{n}", "parentUuid": f"a{n}", "isSidechain": True,
+         "sessionId": session,
          "timestamp": "2026-08-21T00:00:09Z",
          "message": {"content": [{"type": "text", "text": "subagent findings"}]}},
     ]
@@ -560,6 +563,8 @@ BUG_FORUM = "700000000000000002"
 RANDOM_CHANNEL = "700000000000000003"
 DEVCHAT = "700000000000000004"
 PLAYER = "800000000000000001"
+# The guild every fixture message belongs to, so anything that builds a Discord jump link can.
+GUILD = "530867164866150410"
 
 def sent_calls(case, cmd="post"):
     """Real write calls the stub CLI saw, ignoring the `post --help` capability probe."""
@@ -3707,6 +3712,18 @@ def test_schema_migrates_an_existing_database():
               {"branch_adopted_at", "branch_adopted_by"} <= conversation
               and conn.execute("SELECT COUNT(*) FROM conversation"
                                " WHERE branch_adopted_at IS NOT NULL").fetchone()[0] == 0,
+              sorted(conversation))
+        # v18. Same shape as v16 and the same reasoning: NULL everywhere is the right answer,
+        # because every conversation that existed before forking was started by somebody rather
+        # than copied from something. fenced_history is the exception and defaults to 0, which
+        # is what "this conversation's words are its own" has always meant.
+        check("and the fork columns, empty, which reads as nobody having forked anything",
+              {"forked_from", "forked_at", "forked_by", "fork_source_watermark",
+               "fork_session", "fenced_history"} <= conversation
+              and conn.execute("SELECT COUNT(*) FROM conversation"
+                               " WHERE forked_from IS NOT NULL").fetchone()[0] == 0
+              and conn.execute("SELECT COUNT(*) FROM conversation"
+                               " WHERE fenced_history <> 0").fetchone()[0] == 0,
               sorted(conversation))
         check("the rows that were already there survive",
               conn.execute("SELECT COUNT(*) FROM outbound").fetchone()[0] == 1
@@ -11626,6 +11643,401 @@ def review_cfg(case, *, operators=None, trigger=None):
     case.watcher.write_github_cursor("2000-01-01T00:00:00Z", [])
 
 
+# ------------------------------------------------------------------------------------------
+# conversation forking  (design/conversation_fork_design.txt)
+# ------------------------------------------------------------------------------------------
+
+
+def fork_case(name, *, source_venue="public", run_it=True):
+    """A public conversation that has answered once, and a private channel to fork it into.
+
+    The source is left holding a session transcript, which is the thing a fork actually takes:
+    `run_it` drives one whole turn through the stub container, and the stub writes the JSONL
+    where CLAUDE_CONFIG_DIR would have put it.
+
+    Returns (case, fixture).
+    """
+    fixture = base_fixture()
+    fixture["channels"]["dev_chat"] = DEVCHAT
+    fixture["messages"][DEVCHAT] = []
+    root = message(5101, "the merger drops items when the belt backs up", author=PLAYER)
+    # A GUILD, so conversation_ref can build a jump link. Every sentence that names another
+    # conversation owes the reader a way to get to it, and without this the suite would only
+    # ever exercise the bare-number half of that.
+    root["guild_id"] = GUILD
+    fixture["messages"][ASK_CHANNEL] = [root]
+    case = Case(name, fixture, venue=source_venue)
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["watch"]["dev_chat"] = {"kind": "ask", "forum": False,
+                                     "venue": "private", "engage": "all"}
+    case.events(ask_event(5101))
+    if run_it:
+        case.watcher.once()
+    else:
+        case.watcher.drain_events()
+    return case, fixture
+
+
+def say_in_devchat(case, fixture, mid, text, *, author=LOTHSAHN):
+    """A message in the private channel, ingested the way the doorbell would deliver it."""
+    fixture["messages"][DEVCHAT].append(
+        message(mid, text, channel=DEVCHAT, author=author, name="lothsahn"))
+    case.write_fixture(fixture)
+    ev = ask_event(mid, channel="dev_chat", channel_id=DEVCHAT)
+    ev["author_id"] = author
+    case.events(ev)
+    case.watcher.drain_events()
+
+
+def _posted(case):
+    return [json.loads(r["payload_json"]).get("text", "")
+            for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+
+
+def test_a_fork_takes_the_branch_the_session_and_the_history():
+    """`!conv 1` in a private channel continues conversation 1 where nobody can read it.
+
+    The whole path, through the ingest and not by calling the handler: the directive is acted on
+    inside insert_message like `!branch` is, and the routing half that gives it a conversation
+    of its own is in ingest_channel_message.
+    """
+    print("forking: the whole path")
+    case, fixture = fork_case("fork-end-to-end")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/merger-fix")
+    ok, why = case.watcher.adopt_branch(1, "loth/merger-fix", by=LOTHSAHN)
+    check("the source owns a branch to start with", ok, why)
+    source = case.rows("SELECT * FROM conversation WHERE id=1")[0]
+    src_transcript = case.watcher.transcript_path(1, source["session_id"])
+    check("and a session transcript, which is the thing worth taking",
+          os.path.exists(src_transcript), src_transcript)
+
+    say_in_devchat(case, fixture, 5201,
+                   "!conv 1\nwhat did we already rule out on the merger?")
+    fork = case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")
+    check("the directive makes one fork", len(fork) == 1, case.rows("SELECT * FROM conversation"))
+    fork = fork[0]
+    check("which says what it came from", fork["forked_from"] == 1, fork)
+    check("and who asked, by the id Discord authenticated",
+          fork["forked_by"] == LOTHSAHN, fork["forked_by"])
+    check("it takes the branch", fork["branch"] == "loth/merger-fix", fork["branch"])
+    check("through adopt_branch, so the record says it was adopted rather than pushed",
+          fork["branch_adopted_at"] is not None, fork)
+    check("it lives in the private channel, not in the source's",
+          fork["channel_id"] == DEVCHAT, fork["channel_id"])
+    check("and it is named after the question, not after the command",
+          fork["title"] == "what did we already rule out on the merger?", fork["title"])
+
+    # THE SESSION. A copy under a new id, never a share: two conversations resuming one session
+    # id fork the transcript irrecoverably.
+    check("the transcript came over", fork["fork_session"] == source["session_id"], fork)
+    dest = case.watcher.transcript_path(fork["id"], fork["session_id"])
+    check("into a file of the fork's own", os.path.exists(dest), dest)
+    check("and the source still has its own", os.path.exists(src_transcript), src_transcript)
+    check("under two different session ids",
+          fork["session_id"] != source["session_id"],
+          (fork["session_id"], source["session_id"]))
+    copied = [json.loads(line) for line in open(dest, encoding="utf-8") if line.strip()]
+    original = [json.loads(line) for line in open(src_transcript, encoding="utf-8")
+                if line.strip()]
+    check("every record was carried", len(copied) == len(original), (len(copied), len(original)))
+    check("with sessionId rewritten on all of them",
+          {r.get("sessionId") for r in copied} == {fork["session_id"]},
+          {r.get("sessionId") for r in copied})
+    check("and the uuids left alone, which is what keeps the DAG intact",
+          [r.get("uuid") for r in copied] == [r.get("uuid") for r in original])
+
+    # THE HISTORY, without a message row being copied anywhere.
+    hist = case.watcher.history_messages_for(
+        case.watcher.db.one("SELECT * FROM conversation WHERE id=?", (fork["id"],)))
+    check("the source's messages are the fork's history",
+          "the merger drops items when the belt backs up" in
+          [(m["content"] or "") for m in hist], [m["content"] for m in hist])
+    check("and nothing was duplicated to achieve it",
+          case.rows("SELECT COUNT(*) c FROM message WHERE content LIKE 'the merger drops%'"
+                    )[0]["c"] == 1)
+
+    posted = _posted(case)
+    check("the operator is answered", posted and posted[-1].startswith("ok — "), posted)
+    check("and told what it continues, with a link", "conversation [1](" in posted[-1], posted[-1])
+    check("which branch it is on", "loth/merger-fix" in posted[-1], posted[-1])
+    check("that the session came with it", "starts where the last turn left off" in posted[-1],
+          posted[-1])
+    check("and which container it is", "container." in posted[-1], posted[-1])
+
+    # THE QUESTION ATTACHED TO THE DIRECTIVE IS STILL A QUESTION.
+    said = case.rows("SELECT * FROM message WHERE discord_id='5201'")[0]
+    check("the message is not gated, because it carries one", said["gate"] is None, said)
+    check("and it counts as addressed, so a mention-only channel could not swallow it",
+          said["addressed"] == 1, said)
+    made = case.watcher.claim_turns()
+    check("so it becomes a turn on the fork", made, case.rows("SELECT * FROM turn"))
+    turn = case.rows("SELECT * FROM turn WHERE conversation_id=? ORDER BY id DESC",
+                     (fork["id"],))[0]
+    check("a private one, from the channel it landed in", turn["venue"] == "private", turn)
+
+    # AND A RE-READ OF THE CHANNEL FORKS NOTHING MORE. The sweep re-reads every watched channel.
+    before = len(_posted(case))
+    case.write_fixture(fixture)
+    case.events(ask_event(5201, channel="dev_chat", channel_id=DEVCHAT))
+    case.watcher.drain_events()
+    check("a second look at the same message forks nothing and says nothing",
+          len(case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")) == 1
+          and len(_posted(case)) == before, _posted(case))
+
+
+def test_a_fork_resumes_on_its_very_first_turn():
+    """The one conversation in the system that resumes at seq 1, and it has to.
+
+    `resume` is "there has been a turn before this one, so there is a session to go back to",
+    and for a fork that is true without a turn: the transcript was copied in when it was made.
+    Without this the graft is written, never read, and the fork silently starts cold — which
+    looks exactly like a first turn, because it is one.
+    """
+    print("forking: a fork resumes at seq 1")
+    case, fixture = fork_case("fork-resume")
+    say_in_devchat(case, fixture, 5301, "!conv 1\nkeep going")
+    case.watcher.claim_turns()
+    fork = case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")[0]
+    turn = case.rows("SELECT * FROM turn WHERE conversation_id=?", (fork["id"],))[0]
+    check("the fork's first turn is seq 1", turn["seq"] == 1, turn)
+    case.watcher.launch(turn["id"])
+    run = case.watcher.db.one("SELECT * FROM run WHERE turn_id=?", (turn["id"],))
+    job = json.load(open(os.path.join(os.path.dirname(run["stream_path"]), "job.json"),
+                         encoding="utf-8"))
+    check("and it resumes anyway", job["session"]["resume"] is True, job["session"])
+    check("the session it resumes is its own, not the source's",
+          job["session"]["id"] == fork["session_id"], job["session"])
+    check("no host-rendered summary was needed", not job.get("resume_summary"),
+          job.get("resume_summary"))
+
+    # AND WITHOUT A TRANSCRIPT it falls back to the summary the daemon already knows how to
+    # render, which is the same path a lost transcript has always taken.
+    case2, fixture2 = fork_case("fork-resume-nofile")
+    say_in_devchat(case2, fixture2, 5302, "!conv 1\nkeep going")
+    fork2 = case2.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")[0]
+    os.unlink(case2.watcher.transcript_path(fork2["id"], fork2["session_id"]))
+    case2.watcher.claim_turns()
+    turn2 = case2.rows("SELECT * FROM turn WHERE conversation_id=?", (fork2["id"],))[0]
+    case2.watcher.launch(turn2["id"])
+    run2 = case2.watcher.db.one("SELECT * FROM run WHERE turn_id=?", (turn2["id"],))
+    job2 = json.load(open(os.path.join(os.path.dirname(run2["stream_path"]), "job.json"),
+                          encoding="utf-8"))
+    check("a fork whose transcript is gone does not resume", job2["session"]["resume"] is False,
+          job2["session"])
+    check("it is handed a summary instead", bool(job2.get("resume_summary")),
+          job2.get("resume_summary"))
+    check("and the summary is of the conversation it forked, not of its own empty self",
+          "the merger drops items" in (job2.get("resume_summary") or ""),
+          job2.get("resume_summary"))
+
+
+def test_the_forks_history_stops_where_the_fork_did():
+    """A fork is a copy taken at a moment, not a window onto the same conversation."""
+    print("forking: the history has an end")
+    case, fixture = fork_case("fork-watermark")
+    say_in_devchat(case, fixture, 5401, "!conv 1")
+    fork_row = case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")[0]
+    check("the watermark is the source's newest message at the time",
+          fork_row["fork_source_watermark"] == "5101", fork_row["fork_source_watermark"])
+
+    # The source keeps going. Nothing it says from here is the fork's business.
+    say_in_channel(case, fixture, 5402, "it also drops them on a full chest", author=PLAYER)
+    conv = case.watcher.db.one("SELECT * FROM conversation WHERE id=?", (fork_row["id"],))
+    contents = [(m["content"] or "") for m in case.watcher.history_messages_for(conv)]
+    check("what the source said before the fork is still the fork's history",
+          any("the belt backs up" in c for c in contents), contents)
+    check("and what it said afterwards is not",
+          not any("full chest" in c for c in contents), contents)
+    summary = case.watcher.render_summary(fork_row["id"])
+    check("the rendered summary stops at the same line", "full chest" not in summary, summary)
+    check("while still carrying what came before", "the belt backs up" in summary, summary)
+
+
+def test_only_an_operator_may_fork_a_conversation():
+    """A player's identical line is prose, and the silence about it is deliberate.
+
+    A refusal would tell a stranger that the command exists, that this box has operators and
+    that they are not one, which is worth more to them than the command would have been.
+    """
+    print("forking: the directive is an operator's")
+    case, fixture = fork_case("fork-player")
+    before = len(_posted(case))
+    say_in_devchat(case, fixture, 5501, "!conv 1", author=PLAYER)
+    check("a player's !conv forks nothing",
+          not case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL"),
+          case.rows("SELECT id, forked_from FROM conversation"))
+    check("and nothing is posted back at them", len(_posted(case)) == before, _posted(case))
+    said = case.rows("SELECT * FROM message WHERE discord_id='5501'")
+    check("their message is an ordinary one, gate and all",
+          said and said[0]["gate"] is None, said)
+
+
+def test_a_fork_directive_on_its_own_asks_for_no_turn():
+    """The whole message is the command, so there is nothing to answer and no container to spend."""
+    print("forking: a directive on its own")
+    case, fixture = fork_case("fork-alone")
+    say_in_devchat(case, fixture, 5601, "!conv 1")
+    fork = case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")[0]
+    said = case.rows("SELECT * FROM message WHERE discord_id='5601'")[0]
+    check("the fork is made", fork["forked_from"] == 1, fork)
+    check("and with no question under the directive it takes the source's name",
+          fork["title"] == case.rows("SELECT title FROM conversation WHERE id=1")[0]["title"],
+          fork["title"])
+    check("its message is gated", said["gate"] == "fork_directive", said)
+    conv = case.watcher.db.one("SELECT * FROM conversation WHERE id=?", (fork["id"],))
+    check("so no turn is made and no container is spent",
+          case.watcher.create_turn(conv) is None, case.rows("SELECT * FROM turn"))
+    check("and the operator is still told it worked",
+          _posted(case) and _posted(case)[-1].startswith("ok — "), _posted(case))
+
+
+def test_a_fork_is_never_more_public_than_what_it_forks():
+    """The one-way venue rule, checked at the only moment it can be broken.
+
+    A fork is the single point where a conversation's contents are copied somewhere else, and
+    therefore the single point that could move private words into a room that reads them. After
+    it the two are separate, which is why nothing re-checks this later.
+    """
+    print("forking: the one-way venue rule")
+    # A PRIVATE SOURCE INTO A PUBLIC CHANNEL. #ask_claude is the public one here.
+    case, fixture = fork_case("fork-venue", source_venue="private")
+    case.cfg["watch"]["ask_claude"]["venue"] = "public"
+    case.db_exec("UPDATE conversation SET watch_alias='dev_chat' WHERE id=1")
+    case.watcher.db.execute("UPDATE turn SET venue='private' WHERE conversation_id=1")
+    say_in_channel(case, fixture, 5701, "!conv 1\ncarry on out here", author=LOTHSAHN)
+    check("it is refused",
+          not case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL"),
+          case.rows("SELECT id, forked_from, kind FROM conversation"))
+    posted = _posted(case)
+    check("and says why, in a sentence", posted and posted[-1].startswith("no — "), posted)
+    check("naming the rule rather than the mechanism",
+          "more public" in posted[-1], posted[-1])
+    said = case.rows("SELECT * FROM message WHERE discord_id='5701'")[0]
+    check("the question attached to it is gated, not answered against the wrong conversation",
+          said["gate"] == "fork_directive", said)
+    check("and the reply says that half went unread",
+          "was not acted on" in posted[-1], posted[-1])
+
+    # PUBLIC INTO PRIVATE is the case the feature exists for, and it is allowed.
+    case2, fixture2 = fork_case("fork-venue-ok")
+    say_in_devchat(case2, fixture2, 5702, "!conv 1")
+    check("a public conversation forks into a private channel",
+          len(case2.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")) == 1,
+          case2.rows("SELECT id, forked_from FROM conversation"))
+
+
+def test_a_fork_waits_for_the_conversation_it_is_copying():
+    """A transcript being appended to is not a transcript to copy, and a branch in flight is a
+    push about to happen. One refusal covers both."""
+    print("forking: not while the source is working")
+    case, fixture = fork_case("fork-busy")
+    case.db_exec("UPDATE conversation SET state='running' WHERE id=1")
+    case.db_exec("INSERT INTO turn(conversation_id, seq, status, queued_at)"
+                 " VALUES (1, 9, 'running', '2026-08-21T00:00:00Z')")
+    say_in_devchat(case, fixture, 5801, "!conv 1")
+    check("it is refused",
+          not case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL"),
+          case.rows("SELECT id, forked_from FROM conversation"))
+    posted = _posted(case)
+    check("and says to come back", posted and "try again when it has finished" in posted[-1],
+          posted)
+    check("naming the conversation, with a link to it", "conversation [1](" in posted[-1],
+          posted[-1])
+
+    # AND ONCE IT IS DONE, the same directive works. Not the same message — that one has been
+    # ingested and answered — which is exactly what an operator would do.
+    case.db_exec("UPDATE turn SET status='done' WHERE conversation_id=1 AND seq=9")
+    case.db_exec("UPDATE conversation SET state='idle' WHERE id=1")
+    say_in_devchat(case, fixture, 5802, "!conv 1")
+    check("the retry lands",
+          len(case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")) == 1,
+          case.rows("SELECT id, forked_from FROM conversation"))
+
+
+def test_a_directive_in_a_channel_never_joins_a_conversation_already_there():
+    """The directive decides which conversation the message continues, so it has to be seen
+    before the thing that would otherwise decide that."""
+    print("forking: the directive anchors its own conversation")
+    case, fixture = fork_case("fork-anchor")
+    # The operator has been talking in the private channel already, so the clustering window is
+    # open and would take the next message.
+    say_in_devchat(case, fixture, 5901, "anything from the crash logs?")
+    talking = case.rows("SELECT * FROM conversation WHERE channel_id=?", (DEVCHAT,))
+    check("that message opened a conversation of its own", len(talking) == 1, talking)
+    say_in_devchat(case, fixture, 5902, "!conv 1")
+    fork = case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")
+    check("the directive opens another rather than joining it", len(fork) == 1,
+          case.rows("SELECT id, channel_id, forked_from FROM conversation"))
+    check("and the earlier conversation is left alone",
+          case.rows("SELECT forked_from FROM conversation WHERE id=?",
+                    (talking[0]["id"],))[0]["forked_from"] is None)
+    check("the directive's message belongs to the fork",
+          case.rows("SELECT conversation_id FROM message WHERE discord_id='5902'"
+                    )[0]["conversation_id"] == fork[0]["id"])
+
+
+def test_a_fork_of_somebody_elses_words_is_never_direct():
+    """A local fork of a player's thread keeps the fence its source had.
+
+    `shell` and `web` are direct kinds: their prompt has no <discord> fence and no
+    untrusted-input framing, because a person with a login here typed the words. A fork's
+    history is somebody else's words, whatever the fork's own kind is.
+    """
+    print("forking: inherited history stays fenced")
+    case, _ = fork_case("fork-fenced")
+    ok, reason, fork_id = case.watcher.open_local_fork(1, by="tester")
+    check("a local fork opens", ok, reason)
+    fork = case.watcher.db.one("SELECT * FROM conversation WHERE id=?", (fork_id,))
+    check("it is a shell conversation, which is normally direct",
+          fork["kind"] == "shell", fork["kind"])
+    check("but it is marked as carrying somebody else's history",
+          fork["fenced_history"] == 1, fork)
+    check("so it is not direct", ffwatch.is_direct_conversation(fork) is False, fork)
+    check("while an ordinary shell conversation still is",
+          ffwatch.is_direct_conversation("shell") is True)
+    check("and it carries the source's branchless history all the same",
+          any("the belt backs up" in (m["content"] or "")
+              for m in case.watcher.history_messages_for(fork)),
+          [m["content"] for m in case.watcher.history_messages_for(fork)])
+
+
+def test_a_refused_local_fork_leaves_nothing_behind():
+    """Nothing outside ffwatch has been told the id yet, so a refusal can take the row back."""
+    print("forking: a refused local fork is rolled back")
+    case, _ = fork_case("fork-rollback")
+    case.db_exec("UPDATE conversation SET state='running' WHERE id=1")
+    before = case.rows("SELECT COUNT(*) c FROM conversation")[0]["c"]
+    ok, reason, fork_id = case.watcher.open_local_fork(1, by="tester")
+    check("it is refused", not ok and fork_id is None, (ok, fork_id))
+    check("with the sentence, not an exception", "try again" in reason, reason)
+    check("and no conversation is left holding the refusal",
+          case.rows("SELECT COUNT(*) c FROM conversation")[0]["c"] == before,
+          case.rows("SELECT id, kind, forked_from FROM conversation"))
+
+
+def test_a_conversation_is_forked_once_and_never_into_itself():
+    print("forking: the cheap refusals")
+    case, _ = fork_case("fork-refusals")
+    ok, reason = case.watcher.fork_conversation(1, 1, by=LOTHSAHN)
+    check("a conversation cannot be forked into itself",
+          not ok and "into itself" in reason, reason)
+    ok, reason = case.watcher.fork_conversation(1, 999, by=LOTHSAHN)
+    check("and there has to be something to fork",
+          not ok and "no conversation 999" in reason, reason)
+    ok, reason, fork_id = case.watcher.open_local_fork(1, by="tester")
+    check("a first fork lands", ok, reason)
+    ok, reason = case.watcher.fork_conversation(fork_id, 1, by=LOTHSAHN)
+    check("a second one on the same conversation is refused",
+          not ok and "already a fork" in reason, reason)
+    check("and it links the one it already is", "[1](https://discord.com/" in reason, reason)
+    # A CONVERSATION THAT HAS ALREADY ANSWERED SOMETHING is not a destination either: it has a
+    # session of its own, and nothing sensible happens when that and the graft are one file.
+    ok, reason = case.watcher.fork_conversation(1, fork_id, by=LOTHSAHN)
+    check("a conversation that has had a turn cannot become a fork",
+          not ok and reason.startswith("this conversation has already had a turn"), reason)
+
+
 def a_pull_request(number, head, *, state="open", repo="Final-Factory/FinalFactory",
                    base="develop", merged=False, merge_sha="", updated="2026-09-06T12:00:00Z"):
     GH_STATE["pulls"].append({
@@ -15182,6 +15594,17 @@ def main():
         test_a_quiet_merge_poll_costs_nothing_and_a_deferred_one_stands_still,
         test_the_merge_poller_is_not_the_review_pollers_passenger,
         test_the_version_is_read_off_the_file_the_build_increments,
+        test_a_fork_takes_the_branch_the_session_and_the_history,
+        test_a_fork_resumes_on_its_very_first_turn,
+        test_the_forks_history_stops_where_the_fork_did,
+        test_only_an_operator_may_fork_a_conversation,
+        test_a_fork_directive_on_its_own_asks_for_no_turn,
+        test_a_fork_is_never_more_public_than_what_it_forks,
+        test_a_fork_waits_for_the_conversation_it_is_copying,
+        test_a_directive_in_a_channel_never_joins_a_conversation_already_there,
+        test_a_fork_of_somebody_elses_words_is_never_direct,
+        test_a_refused_local_fork_leaves_nothing_behind,
+        test_a_conversation_is_forked_once_and_never_into_itself,
     ]
     for fn in tests:
         try:

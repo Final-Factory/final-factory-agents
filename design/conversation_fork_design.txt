@@ -1,0 +1,582 @@
+Conversation forking: continuing one conversation somewhere else
+===============================================================
+Revision 1, 2026-09-07. Written after reading the ingest, scheduling, session and publish paths
+in ffwatch.py, and the branch adoption design, which this deliberately copies the shape of.
+Revision 2, 2026-09-08: written while implementing. Six corrections, and all of them are the
+design meeting a shape the code already had.
+
+  * `fork_conversation` takes the DESTINATION ROW, not a description of where to put one
+    (section 9). Every ingress already makes that row before the directive is seen -- a thread's
+    conversation is upserted before its messages, a channel message that continues nothing opens
+    one, and the local ingress mints one -- so a signature carrying `into`, `kind`, `alias`,
+    `venue` and a class would have been five arguments re-deriving what one row already answers.
+    It also makes a refusal cheap: in a channel it leaves an ordinary conversation holding a
+    gated message, exactly as a refused `!branch` does.
+  * `ffwatch fork` is LOCAL ONLY; `--into` is gone (section 11). A fork into a Discord channel
+    already has a door, and a second one here would have to re-derive that channel's watch alias
+    to get the venue rule right, which is a second place for the one rule that must not be wrong
+    to be wrong.
+  * The fork is TITLED BY THE QUESTION under the directive, and by the source's title when there
+    is none (5.6). `!conv 85` as a conversation name is a command in a list where every other
+    row is a subject.
+  * "In flight" is three signals, not one (5.5c). `conversation.state`, a queued or running turn
+    row, and an unclaimed message. They disagree for a moment during a launch and the answer has
+    to be the pessimistic one.
+  * ffweb showing the link both ways moved from Tier B into Tier A. The page is being touched
+    for the fork control anyway, and the control lands the operator on a page that would
+    otherwise not say what it is a fork of.
+  * Section 11's local fork mints its conversation id the way `submit` does, which walked into a
+    pre-existing collision: milliseconds plus the pid is not unique inside one millisecond, and
+    the second call is dropped by `INSERT OR IGNORE`. It was found and fixed independently
+    upstream while this was being built (b7f55a8, `local_message_key`), and the local fork uses
+    that rather than a second copy of it.
+
+The four decisions in section 15 were taken as the design proposed them: nothing is posted in
+the source thread, a branch gone from origin is a warning rather than a refusal, a public source
+may be forked into another public channel, and the directive is `!conv` with `!conversation`
+accepted for the same rule.
+
+
+1. What this is for
+-------------------
+
+An operator is reading a public bug thread that has turned into real troubleshooting. The next
+twenty messages are stack traces, branch names, half-formed theories and a container run that
+edits code. None of that belongs in a channel players read. The thread cannot be moved either:
+`conversation.thread_id` is UNIQUE and is the identity of the conversation, the session id is
+derived from it (ffwatch.py:3290), and `reply_channel` (ffwatch.py:2398) sends every answer
+back to the same place it came from.
+
+Today the only way to carry on in private is to open a thread in #dev-chat and start again from
+nothing. That conversation has no branch, no session and no memory of the investigation, so the
+first turn re-reads what the old one already knew, and afterwards nothing in the database says
+the two are about the same thing.
+
+This design adds one thing: a conversation may be FORKED into another channel. The fork is a
+new conversation that starts out holding what the original held. Its branch, its session
+transcript and its history come across at the moment of the fork, and from then on the two run
+independently. Nothing said in the original afterwards reaches the fork, and nothing said in the
+fork ever reaches the original.
+
+The name is chosen for the git meaning, and it is accurate. A fork is a copy taken at a point,
+not a window onto the same thing.
+
+
+2. What this is not
+-------------------
+
+It is not a redirect. The original conversation is untouched: it keeps its thread, its session,
+its branch and its ability to answer. A player asking a follow-up in the public thread still
+gets an answer there.
+
+It is not a live mirror. The two sessions diverge at the fork and never re-converge. There is no
+sync, no merge and no back-port, and section 12 says why adding one later is harder than it
+looks.
+
+It is not a way to make a conversation public. Section 7.1 gives the one-way rule.
+
+
+3. What already works, and why the change is small
+--------------------------------------------------
+
+Most of this feature is already built, for other reasons.
+
+  * `!branch <name>` is an operator directive with exactly the shape wanted here: a whole-line
+    regex (ffwatch.py:2065), a handler that reads the author id off the stored row rather than
+    off anything the text claims (`take_branch_directive`, ffwatch.py:4459), one writer shared
+    with a CLI ingress (`adopt_branch`, ffwatch.py:8338), a gate on the message so a bare
+    directive never becomes a turn, and one post back whether it worked or not.
+
+  * The private venue exists and already means what is wanted. `watch.<alias>.venue: private`
+    (config.md:178) reaches `turn.venue` per turn (ffwatch.py:5601), drops Max's persona from
+    the prompt (`role_line`, ffwatch.py:8000), puts the pull request in the publish footer
+    (ffwatch.py:10684) and turns a merge notice into plain developer prose (ffwatch.py:12775).
+
+  * A branch is not exclusive. `conversations_on_branch` (ffwatch.py:8317) is written for
+    several conversations on one branch, `adopt_branch` refuses only a branch with a turn
+    actually in flight, and it names the other threads rather than refusing on their behalf.
+
+  * Merge notices already fan out by branch. `conversations_for_pull_request`
+    (ffwatch.py:12660) matches on `conversation.github_pr` OR on the branch, and `take_merge`
+    queues a notice for every conversation it finds. A fork that inherits the branch therefore
+    makes the public source thread hear about the merge without a line of new code, and it
+    hears it in the player-facing register because `announce_merge` splits on the CONVERSATION's
+    venue, not the fork's.
+
+  * The blob store is content addressed and shared. `download_attachments` writes to
+    `<state>/blobs/<xx>/<sha>` (ffwatch.py:4643) and `stage_attachment` copies from there into
+    the conversation's attachment mount at job time, so a fork can serve the source's save files
+    and logs with nothing copied and nothing re-downloaded from Discord's expired URLs.
+
+  * The session already survives being rebuilt. When a transcript goes missing, build_job bumps
+    the generation and seeds the new session from `render_summary` (ffwatch.py:7590-7605). That
+    is the fallback path this design needs, already written and already exercised.
+
+What is genuinely new: a directive that decides WHICH conversation a message opens, a copy of a
+session transcript under a new id, a history query that reads across two conversations, and one
+link column so the record says where a fork came from.
+
+
+4. The shape
+------------
+
+`!conv 85` posted in a private channel by an operator creates conversation 91, which:
+
+  * lives where the directive was posted, and is a conversation in that channel like any other;
+  * carries `forked_from = 85`;
+  * owns the same branch as 85, claimed through `adopt_branch`;
+  * starts with a copy of 85's session transcript, so its first turn resumes rather than
+    meeting the investigation cold;
+  * reads 85's messages up to the fork point as its own history;
+  * takes its venue and its container class from where it landed, decided by the rules that
+    already decide those for any conversation opened there;
+  * answers in its own channel, and only there.
+
+Conversation 85 is not told, not gated, and not changed.
+
+
+5. The directive
+----------------
+
+5.1 Grammar
+
+    FORK_DIRECTIVE_RE = ^\s*!conv(?:ersation)?\s+(\d+)\s*$    MULTILINE
+
+Anchored to a whole line and to the start of it, for the reason BRANCH_DIRECTIVE_RE is: a
+sentence discussing the directive is prose and stays prose. First match wins. Both spellings the
+same rule, because `!conv` is what gets typed and `!conversation` is what gets typed by somebody
+who has forgotten whether the short form exists.
+
+A Discord link instead of a number is a real convenience and is Tier B (section 14): resolve the
+third segment of a message link against `conversation.thread_id` and `root_message_id`.
+
+5.2 Where the hook goes, and why it is not where !branch's is
+
+`take_branch_directive` runs inside `insert_message`, after the conversation has been chosen.
+That is correct for a directive about a conversation and wrong for a directive that decides
+WHICH conversation the message belongs to. The fork hook has to run earlier:
+
+  * `ingest_channel_message` (ffwatch.py:5282), AFTER the "already ours" check and BEFORE
+    `select_conversation`. Before the clustering window, or it attaches `!conv 85` to whatever
+    the operator was already talking about in that channel and the fork is anchored on somebody
+    else's conversation. After the dedupe, or the 15-minute sweep re-reads the directive and
+    forks again every time it looks: `message.discord_id` UNIQUE is the only thing standing
+    between this feature and one fork per sweep.
+
+  * `ingest_thread` (ffwatch.py:4700), for the thread form. A thread whose first message is the
+    directive becomes the fork itself: same conversation row `upsert_conversation` would have
+    created, with the fork columns filled in and the inheritance done.
+
+A directive in a channel NEVER joins a clustering window. It opens its own conversation,
+anchored on the directive message, exactly as an unrelated new message would.
+
+5.3 Operators only, and silent otherwise
+
+Byte for byte the policy `take_branch_directive` states: the line is acted on only when
+`is_operator(cfg, author_id)` says the Discord-authenticated author is one, and for anybody else
+it is ordinary text. Not acted on, not refused, not mentioned. A refusal would confirm to a
+stranger that the command exists, that this box has operators and that they are not one. The
+host logs the attempt; the channel is told nothing.
+
+5.4 The message that carries it
+
+Same two rules as `!branch`, for the same reasons:
+
+  * a message that is ONLY the directive is gated (`gate='fork_directive'`), so it never becomes
+    a turn. `pending_messages` selects `gate IS NULL` (ffwatch.py:5786), which is the same door
+    the engagement gate declines through.
+
+  * a message that carries the directive AND a question keeps its turn only if the fork
+    happened. A refused fork leaves the question standing in a conversation that does not have
+    the branch or the session it was asked about, and answering it there is answering the wrong
+    thing confidently.
+
+A message carrying an accepted directive counts as ADDRESSED. Without that, a channel declared
+`engage: mention` swallows `!conv 85` plus a question whenever the operator did not also ping the
+bot: `is_addressed` (ffwatch.py:4378) keys on a mention or a reply to one of the bot's messages,
+and `always_a_turn` reduces to that plus "evidence came with it". A directive is a command typed
+at the harness, which is the thing `addressed` is trying to recognise, so the row is written with
+`addressed=1` when the fork lands.
+
+The directive line is left in the message text that reaches the model, as `!branch` is. Stripping
+it would be tidier to read and would mean the prompt no longer matches the message row, which is
+a worse trade in a system whose whole argument is that the record is what happened.
+
+5.5 Refusals
+
+Every one of these is a sentence posted back into the channel, never an exception:
+
+  a. `there is no conversation <id>`
+  b. `a conversation cannot be forked into itself`
+  c. the source has a turn queued or running, or unclaimed messages waiting: refuse and name the
+     source with a link. Two reasons at once. Its transcript is being appended to and a copy
+     taken now can end mid-line, and its branch would be pushed by two runs racing for the same
+     fast-forward. `adopt_branch` already refuses the second half; this refuses both, earlier,
+     with one sentence.
+  d. the source is at a private venue and this channel is public (section 7.1).
+  e. this conversation already has a turn. The directive opens a conversation; it does not
+     convert a live one. In a thread that means: open a new thread. In a channel it cannot
+     happen, because the directive always anchors its own conversation.
+  f. the source's branch is claimed by a conversation with a turn in flight. This is
+     `adopt_branch`'s own refusal, passed through in its own words.
+
+A source whose branch is no longer on origin is NOT a refusal. See 6.1.
+
+5.6 The acknowledgement
+
+One post either way, at the fork, addressed to nobody. At a private venue this is plain
+developer prose and none of max-voice applies. Three facts, because three is what the operator
+needs and there are exactly three:
+
+    ok - this continues conversation [85](link). It is on branch `ffbox/join-desync-d85t2`,
+    already under pull request [#412](url), and it has the session from that thread, so it
+    starts where the last turn left off. This is an ffdev container.
+
+and on the summary fallback (6.2), the third clause becomes `the session transcript could not be
+copied, so it starts from a written summary of that thread instead`.
+
+Nothing is posted in the source thread. Section 15 has the argument.
+
+
+6. What the fork inherits
+-------------------------
+
+6.1 The branch
+
+Through `adopt_branch(fork_id, source_branch, by=author_id)` and never by writing the column
+directly. `adopt_branch` is the one writer for both existing ingresses and this is a third; the
+five checks it performs are all still the right ones, and its `record_branch_pull_request` call
+is what gives the fork the source's pull request without a second lookup.
+
+A source with no branch gives the fork no branch, and the fork behaves like any other new
+conversation: its first run that pushes claims one. The two are then linked by `forked_from`
+alone, which is enough for a person and not enough for the merge-notice fan-out. See 12.2.
+
+A branch that has been deleted from origin makes `adopt_branch` refuse with "is not on origin".
+The fork still happens and the ack says the branch could not be taken and why. The alternative,
+refusing the whole fork, would mean a finished piece of work cannot be forked to talk about, and
+talking about it is a legitimate use. This is the one place the design chooses to adapt rather
+than refuse, and section 15 flags it.
+
+6.2 The session
+
+The point of the whole feature. A conversation's value at turn nine is not its Discord messages,
+which the database can rebuild at any time. It is the model's own trace: what it read, what it
+ruled out, which approach it tried and abandoned. `render_summary` cannot rebuild any of that,
+which is the argument the compaction design already makes at ffwatch.py:7552-7570.
+
+The graft:
+
+  1. Source file: `transcript_path(85, conv85.session_id)`, which is
+     `<state>/conversations/85/claude/projects/<slug>/<sid>.jsonl`. `CONTAINER_PROJECT_SLUG` is a
+     constant, so the two conversations use the same project directory name and only the file
+     name differs.
+  2. Fork session id: `session_id_for(fork_thread_id)`, generation 1. Deterministic, its own, and
+     it cannot collide with the source's because thread ids differ.
+  3. Copy the file to `transcript_path(fork_id, fork_sid)`, rewriting `sessionId` on every
+     record. Measured against a real transcript on the build server (conversation 10, 135
+     records): `sessionId` is present on all 135, including Claude Code's own bookkeeping lines
+     that carry no uuid.
+  4. Leave `uuid`, `parentUuid` and `leafUuid` alone. They are internal to the file, and the two
+     files being identical there costs nothing: `_index_transcript` de-dupes by uuid WITHIN a
+     conversation (ffwatch.py:9257), and these are two conversations.
+  5. `cwd` and `gitBranch` inside the records stay true, because the workspace path is a constant
+     and the branch is inherited.
+  6. Record `fork_session` = the source session id, so the row says where the transcript came
+     from and `fork_session IS NULL` means it was seeded from a summary instead.
+
+One code change follows: `resume` is computed as `int(turn["seq"]) > 1 and os.path.exists(...)`
+(ffwatch.py:7546), and a fork's first turn is seq 1. It becomes
+
+    resume = os.path.exists(transcript) and (int(turn["seq"]) > 1 or conv["fork_session"])
+
+and the branch below it that seeds a new generation from `render_summary` has to cover the same
+case, so a fork whose graft failed or was lost still starts from something.
+
+THIS NEEDS LIVE VERIFICATION before it is relied on, in the style of the /compact verification
+recorded at ffwatch.py:7563: confirm that `claude -p --resume <new id>` accepts a transcript that
+was copied and had its `sessionId` rewritten, and that the reply shows knowledge from the source
+session. If Claude Code refuses it, the fallback is already written: seed generation 1 from
+`render_summary` and say so in the ack. The feature is worth having either way; it is worth much
+more if the graft works.
+
+6.3 The history
+
+Message rows are NOT copied. `message.discord_id` is UNIQUE, so a copy would have to mint fake
+ids, and `ingest_channel_message`'s "already ours" check (ffwatch.py:5321) keys on exactly that
+column. Instead the fork READS the source's messages:
+
+  * `build_job`'s history query (ffwatch.py:7533) selects `conversation_id=?`; for a fork it
+    selects across `(source_id, fork_id)`, bounded by `fork_source_watermark`, still capped by
+    `history_messages`.
+  * `render_summary` (ffwatch.py:7797) walks the same pair, so the summary fallback in 6.2
+    renders the source's turns and not an empty document.
+
+`fork_source_watermark` is the source's newest message id at the moment of the fork. It is what
+makes "further messages in the original do not reach the fork" a fact about a query rather than a
+promise. It also means the two can be read side by side later without one of them growing into
+the other's record.
+
+6.4 Attachments
+
+Nothing to do. Blobs are content addressed under a single shared directory and `stage_attachment`
+copies out of it at job build time. A fork asking for a save file the source was given gets the
+same blob.
+
+6.5 base_sha and the pull request
+
+`base_sha` is copied, so the fork's first run starts from the same tree the source was working
+from when its branch is absent. `github_pr` and `github_base` are not copied by hand:
+`adopt_branch` finds the pull request on the branch and records it, which is both the same code
+path an adopting thread already uses and the reason the ack can name the PR.
+
+6.6 What is not inherited
+
+Turns, runs, verifications, transcript_event rows, the outbound history, `read_through`,
+`compacted_at_seq`, `github_issue`, the ack reaction state, and `in_watermark_id`. The fork is a
+new conversation with a seq that starts at 1. Its web page shows its own runs, and the source's
+page shows the source's.
+
+
+7. What the fork chooses
+------------------------
+
+7.1 Venue, and the one-way rule
+
+The fork's venue comes from where it lands, through the watch entry, like every other
+conversation. `turn_venue` needs no change; it reads `conv["watch_alias"]`, and the fork has its
+own.
+
+The rule that matters is the direction:
+
+    A fork may never be at a more open venue than its source.
+
+Private into public is refused. Public into private is the case this feature exists for. Public
+into public is allowed and is occasionally what you want, for instance moving a bug thread's
+work into #agent-testing. Local (`shell`, `web`) and `github_pr` sources count as private,
+because `turn_venue` already says they are.
+
+The rule is about the SOURCE's venue and not about who is asking, and it is checked at fork time
+only. Nothing re-checks it afterwards, because a fork is a copy: after the moment it is taken,
+the source cannot leak into it and it cannot leak into the source. What the rule prevents is the
+single moment where a private session's contents would be copied into a room that reads it.
+
+7.2 The container class
+
+Nothing here is a fork decision. The destination picks the class the way it already picks it for
+any conversation opened there, and there is no third class and no fork-specific rule:
+
+  * from Discord, `discord_agent_class(cfg, author_id)` (ffwatch.py:1580) on the operator who
+    posted the directive, which resolves through `discord.operator_pool` to `ffdev`;
+  * from ffweb, the agent selector the new-prompt form already has (ffweb.py:1854), which is the
+    same one `ffwatch submit --agent` obeys;
+  * from `ffwatch fork`, `--agent`, defaulting the way `submit` does.
+
+`fork_conversation` takes the class as an argument and writes it. It does not choose it.
+
+One consequence is worth stating rather than leaving to be discovered. A fork carries a
+conversation's history into whatever class it lands in, so a fenced thread's messages can end up
+in an unfenced container. That is not a hole this feature opens in `demote_for_stranger`
+(ffwatch.py:4544), which guards against a stranger's text reaching an unfenced container by
+ACCIDENT: a fork is a named conversation, named by somebody the box trusts, recorded with who and
+when. It is the same judgement an operator makes when they paste a player's log into `ffwatch
+submit`, which has always run in ffdev. Two things keep it honest either way: `demote_for_stranger`
+applies to the fork from its first message like any other conversation, and the inherited history
+stays behind the prompt fence whatever the container is (7.3).
+
+7.3 Kind, and why a fork is never `direct`
+
+The fork's `kind` comes from where it lands, not from the source. Inheriting it would route a
+fork of a `github_pr` conversation's replies to a pull request (`record_reply`,
+ffwatch.py:9402), and would give a fork of an `operator_dm` a kind with no channel.
+
+`kind` also decides the SHAPE OF THE PROMPT through `DIRECT_KINDS` (ffwatch.py:2176): a direct
+conversation's text is handed to the model with no `<discord>` fence and no untrusted-input
+framing, because it was typed by somebody this box trusts. A fork's history was not. So:
+
+    A fork of a conversation that was not direct is never direct, wherever it lands.
+
+Carried by one column, `fenced_history`, set at fork time from `is_direct_conversation(source)`,
+and read by `is_direct_conversation` before it consults the kind. There is exactly one caller
+that passes a row (ffwatch.py:7635) and it is the one that matters.
+
+That guard is what makes the two awkward destinations safe rather than refused: an operator DM,
+and a local fork with no Discord side at all (section 11).
+
+
+8. The columns (schema v18)
+---------------------------
+
+All additive, through `ADDED_COLUMNS` (ffwatch.py:328), which is the only migration shape this
+daemon supports. Every reader guards for their absence the way `conversation_branch` does.
+
+    conversation.forked_from             INTEGER   the conversation this one continues
+    conversation.forked_at               TEXT
+    conversation.forked_by               TEXT      Discord snowflake, or the unix login for the
+                                                   local ingresses, same shape as
+                                                   branch_adopted_by
+    conversation.fork_source_watermark   TEXT      the source's newest message id at the fork;
+                                                   bounds the inherited history
+    conversation.fork_session            TEXT      the source session id the transcript came
+                                                   from; NULL means it was seeded from a summary
+    conversation.fenced_history          INTEGER   1 when the source was not direct (7.3)
+
+No index. The lookups are by primary key in one direction and rare in the other.
+
+No configuration key is added, so `ffbox/config.md` is unchanged.
+
+
+9. The one writer
+-----------------
+
+`fork_conversation(fork_id, source_id, by)` returns `(ok, reason)` and is the only thing that
+writes any of the columns in section 8. All three ingresses call it: the directive, `ffwatch
+fork` and the page's fork control (section 11). This is the property `adopt_branch` has, and the
+reason its rules have not come to differ by which door somebody used.
+
+THE DESTINATION ROW ALREADY EXISTS when it is called, and that is what keeps the signature to
+three arguments. Every ingress makes the row on its own path: ingest_thread upserts a thread's
+conversation before its messages, ingest_channel_message opens one for a message that continues
+nothing, and `open_local_fork` mints one. Class, kind, alias, venue and channel are read off it.
+
+Order matters, because two of the steps can fail:
+
+  1. read both rows, run the refusals in 5.5 cheapest first
+  2. write the fork columns, guarded on `forked_from IS NULL`
+  3. adopt the branch, and keep its sentence for the ack
+  4. graft the transcript, falling back to a summary seed
+  5. return the whole sentence, and let the caller post or print it
+
+A failure at 3 or 4 leaves a usable fork and a sentence saying what it did not get. A refusal at
+1 writes nothing: in Discord the destination stays an ordinary conversation holding a gated
+message, and `open_local_fork` deletes the row it had just made, which it can do because nothing
+outside ffwatch has been told that id.
+
+
+10. What the link buys, today and later
+---------------------------------------
+
+Today, with nothing else built:
+
+  * The merge notice reaches the public source thread when the fork's pull request merges. This
+    already works through the shared branch (section 3), and it is exactly right: the reporter
+    who asked in public hears that the fix shipped, in Max's register, with no pull request link,
+    while the fork hears it as a developer.
+  * `adopt_branch`'s "conversation 85 has worked on this branch before" line names the source
+    when any later thread adopts the same branch.
+
+With `forked_from` recorded, small things become possible and each is a few lines. The first is
+built (revision 2); the rest are not:
+
+  * ffweb shows the link both ways: `forked from …` on the fork's page, `forked into …` on the
+    source's, each one a link, next to the branch the two of them share.
+  * `ffwatch status` says it on the conversation line.
+  * The merge fan-out could walk the fork chain as well as the branch, which matters only for a
+    fork taken before the source had a branch (6.1).
+  * A future `!conv` could refuse to fork a conversation that already has a live fork, or offer
+    the existing one instead of making a second.
+
+Deliberately not built: any flow of information from the fork back to the source. Section 12.
+
+
+11. The other two ingresses
+---------------------------
+
+The directive is one door. `fork_conversation` (section 9) is the only writer, so the other two
+are thin.
+
+    ffwatch fork --conversation 85 [--agent CLASS]
+
+The twin of `ffwatch adopt`, and the same argument for having it: a design where only Discord can
+do a thing cannot be tested or recovered from a terminal.
+
+LOCAL, AND ONLY LOCAL. Revision 1 also had `--into <thread>` for binding a Discord channel from
+the terminal, and it is gone: a fork into a Discord channel already has a door, and a second one
+here would have to re-derive that channel's watch alias to get the venue rule right. That is the
+one rule that must not be wrong, and it should have one implementation. What comes back is a
+conversation with no Discord side, continued with `ffwatch submit --conversation <fork>` or from
+the web page.
+
+ffweb gets a fork control on the conversation page, next to the follow-up box, and it shells out
+to `ffwatch fork` the way every other action on that page shells out to `ffwatch`
+(ffweb.py:1423-1445 is the pattern). Its default is `--local`: a fork made from the page is
+answered on the page, which is the whole point of forking from there. It carries the same agent
+selector the new-prompt form has.
+
+A local fork is safe for the reason 7.3 gives. A local conversation is normally `direct`, and
+`fenced_history` overrides that, so a public thread's untrusted text does not slip into the
+trusted prompt shape by being forked to a terminal or a web page.
+
+12. What is deliberately absent
+-------------------------------
+
+12.1 Any path back. Nothing the fork says or does reaches the source, except the merge notice,
+which is a fact about origin rather than about the fork. A "post this answer back to the public
+thread" flow is a real thing to want and belongs in a design of its own, because it needs a
+composer that decides what is public-safe, and the harness already has one of those in
+`record_private_half` (ffwatch.py:9139) that is worth reusing rather than reinventing.
+
+12.2 Any re-sync. Two sessions that have both run cannot be merged; there is no operation on a
+Claude Code transcript that means "take these two branches of reasoning and produce one". A
+second `!conv 85` in a new thread takes a second fork from wherever 85 is now, which is the honest
+version of a re-sync and costs nothing to allow.
+
+12.3 Any exclusivity. A conversation may be forked twice, and a fork may be forked. The rules
+compose: each fork takes the branch through `adopt_branch`, so only one of them may be running a
+turn on that branch at a time, and that is enforced where it already is.
+
+
+13. Failure modes
+-----------------
+
+  transcript missing at fork time       fork proceeds, seeded from render_summary, ack says so
+  transcript half written               refused before it starts: 5.5c refuses a source with a
+                                        turn in flight, which is when the file is being appended
+  branch gone from origin               fork proceeds without it, ack says so (6.1)
+  branch busy                           refused, adopt_branch's own sentence
+  source is a local conversation        allowed; venue counts as private, fenced_history is 0
+                                        because a local conversation IS direct, and the fork
+                                        into a Discord channel is a demotion, not a promotion
+  fork's channel is unwatched           cannot happen; ingest_event refuses an unwatched channel
+                                        before either hook is reached
+  two operators fork the same source
+  at the same moment                    two forks, both valid, and the second one's adopt_branch
+                                        refuses the branch if the first has already queued a turn
+  ffwatch restarted mid-fork            the conversation row exists or it does not; steps 3 and 4
+                                        are idempotent on re-run and there is no half state that
+                                        a later message can act on
+
+
+14. Tiers
+---------
+
+Tier A, the feature: the columns, `fork_conversation`, the two ingest hooks, the directive and
+its refusals, the branch adoption call, the transcript graft with its fallback, the resume fix,
+the history and summary queries, `fenced_history` in `is_direct_conversation`, the ack,
+`ffwatch fork`, and ffweb's fork control.
+
+Tier B, worth doing soon and not needed for the first use: the Discord-link form of the argument
+(5.1), ffweb showing the link both ways (10), the merge fan-out walking the fork chain (10), and
+`!conv` naming an existing fork instead of making a second.
+
+
+15. Decisions for Ben
+---------------------
+
+  a. Does the source thread get told anything? The design says no, on the grounds that a line
+     saying "continuing this elsewhere" tells a public channel that a private one exists, and
+     that nothing is lost by silence because the source keeps working. The counter-argument is
+     that a reporter watching a thread that goes quiet has no idea anyone is still on it. A
+     third option: say nothing at the fork, and let the existing merge notice be the thing the
+     public thread eventually hears.
+
+  b. A branch deleted from origin: fork anyway with a warning, or refuse? The design chooses to
+     adapt, which is the only place it does.
+
+  c. Should `!conv` in a PUBLIC channel be allowed at all when the source is public? It is
+     legitimate (moving work from a bug thread into #agent-testing) and it is also the shape most
+     likely to be typed by accident. An alternative is to require the destination be private in
+     v1 and lift it later.
+
+  d. Is `!conv` the right name next to `!branch`? `!fork 85` says what it does; `!conv 85` says
+     what it names.

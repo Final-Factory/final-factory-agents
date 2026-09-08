@@ -115,6 +115,23 @@ CREATE TABLE IF NOT EXISTS conversation (
     -- branch — which by definition has pushed nothing — left it empty forever, and five threads
     -- on one branch had one row between them that knew about the review they were all under.
     github_pr           TEXT,
+    -- WHERE THIS CONVERSATION CAME FROM, when it is a fork of another one. A fork is a copy
+    -- taken at a moment: it opens holding the source's branch, its session transcript and its
+    -- history, and the two run independently from there. Nothing said in the source afterwards
+    -- reaches the fork, and nothing the fork says ever reaches the source.
+    --
+    -- `fork_source_watermark` is the source's newest message id at the fork, which is what
+    -- bounds the inherited history to what was actually there. `fork_session` is the session
+    -- the transcript was copied from, or NULL when the graft did not happen and the fork was
+    -- seeded from a host-rendered summary instead. `fenced_history` is 1 when the source was
+    -- not a direct conversation, and it is what stops a fork of a player's thread from taking
+    -- the trusted prompt shape after being forked into a DM or onto the web page.
+    forked_from             INTEGER REFERENCES conversation(id) ON DELETE SET NULL,
+    forked_at               TEXT,
+    forked_by               TEXT,
+    fork_source_watermark   TEXT,
+    fork_session            TEXT,
+    fenced_history          INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT,
     last_activity_at    TEXT
 );
