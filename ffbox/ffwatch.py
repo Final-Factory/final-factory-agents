@@ -6079,12 +6079,24 @@ class Watcher:
         claimed on the pass after the run ends — batched with anything else typed meanwhile,
         exactly as a burst of Discord follow-ups is. A conversation that already has a turn
         cannot be the crashed-submit case, so the guard above still holds.
+
+        A GATED MESSAGE IS NOT AN UNCLAIMED ONE, and leaving that out of this query cost real
+        money. `pending_messages` — what create_turn actually builds a turn from — selects
+        `gate IS NULL`; this did not, so every conversation holding nothing but pre-attach
+        backlog or a refused directive was offered here on every tick, forever. create_turn
+        then went and asked ANTHROPIC how full the subscription was (new_conversation_held,
+        which sits above the pending_messages call by design) before finding out there was
+        nothing to build. Measured on this box 2026-09-08: 76 conversations selected, 0 of them
+        holding an ungated message, 50 reaching the usage read — one billed probe every ~31
+        seconds on a completely idle box, about 2,800 a day, for turns that could never exist.
+        The two queries now ask the same question, which is the only way they cannot disagree.
         """
         created = []
         rows = self.db.query(
             "SELECT DISTINCT m.conversation_id AS cid FROM message m"
             " JOIN conversation c ON c.id = m.conversation_id"
             " WHERE m.turn_id IS NULL AND m.direction='in' AND m.is_bot=0"
+            "   AND m.gate IS NULL"
             f" AND (c.kind NOT IN ({','.join('?' * len(LOCAL_KINDS))})"
             "      OR EXISTS (SELECT 1 FROM turn t WHERE t.conversation_id = c.id))",
             LOCAL_KINDS)

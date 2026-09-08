@@ -11755,6 +11755,43 @@ def test_only_an_operator_may_name_a_branch_from_discord():
           said and said[0]["gate"] is None, said)
 
 
+def test_a_backlog_only_conversation_never_asks_anthropic_anything():
+    """The subscription is read when work arrives, and never on a clock.
+
+    claim_turns used to select on `turn_id IS NULL` alone while pending_messages — the query
+    create_turn actually builds a turn from — also required `gate IS NULL`. So a conversation
+    holding nothing but pre-attach backlog was offered on every tick of the daemon loop, and
+    create_turn asked Anthropic how full the subscription was (new_conversation_held, which
+    sits above the pending_messages call deliberately) before discovering there was nothing to
+    build. On this box that was 76 conversations, none of them holding a claimable message, 50
+    of them reaching the read: one billed probe every thirty seconds on an idle box.
+    """
+    print("claim: a gated backlog asks nobody anything")
+    case, fixture = branch_directive_case("backlog-quiet", "look at the save bug",
+                                          author=LOTHSAHN)
+    # Drain the opener, then gate what is left the way a pre-attach watermark does. What
+    # remains is a conversation with an unclaimed message that can never become a turn.
+    case.watcher.claim_turns()
+    case.watcher.db.execute(
+        "UPDATE message SET turn_id=NULL, gate='none', gate_reason='before the attach'"
+        " WHERE direction='in'")
+    case.watcher.db.execute("UPDATE conversation SET state='idle' WHERE id=1")
+    case.watcher.db.execute("DELETE FROM turn")
+
+    asked = []
+    case.watcher.new_conversation_held = lambda conv: asked.append(conv["id"]) or 0
+    check("the pass builds no turn", case.watcher.claim_turns() == [], None)
+    check("and never reaches the subscription to ask about one", asked == [], asked)
+
+    # AND AN UNGATED MESSAGE STILL DOES. The point is not silence, it is that an action is what
+    # starts the asking.
+    case.watcher.db.execute(
+        "UPDATE message SET gate=NULL, gate_reason=NULL WHERE id="
+        "(SELECT MIN(id) FROM message WHERE direction='in')")
+    case.watcher.claim_turns()
+    check("one real message is all it takes to ask again", asked != [], asked)
+
+
 def test_a_branch_directive_is_not_claimable_while_it_is_being_adopted():
     """The `!branch` flavour of the #codereview race, and the more expensive one.
 
@@ -16116,6 +16153,7 @@ def main():
         test_an_adopted_branch_is_described_as_somebody_elses_work,
         test_a_conversation_can_be_told_which_branch_it_owns,
         test_only_an_operator_may_name_a_branch_from_discord,
+        test_a_backlog_only_conversation_never_asks_anthropic_anything,
         test_a_branch_directive_is_not_claimable_while_it_is_being_adopted,
         test_a_directive_nobody_may_act_on_is_left_an_ordinary_message,
         test_a_directive_only_message_adopts_and_asks_for_no_turn,

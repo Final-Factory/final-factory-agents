@@ -1865,8 +1865,15 @@ def test_the_claude_page_reports_every_key_in_the_pool():
         check("and a key that could not be reached at all still carries its plan",
               'class="pill unreachable"' in blocks[2] and "Max 20x" in blocks[2],
               blocks[2][:400])
-        check("the note says how often Anthropic is actually asked",
-              "once every 1h" in text, text[text.find("<p class=\"note\">"):][:400])
+        # THE TTL SENTENCE IS GONE, and the check is inverted rather than deleted so nothing
+        # puts it back. It advertised a ceiling on how often THIS PAGE would ask, which was
+        # never the number a reader wanted and is now a wrong one: the daemon's readings are
+        # what keep the store current and they happen when work arrives, not on a clock. Each
+        # row's own "read Nm ago" is the honest version of the same fact.
+        check("the note does not advertise a refresh interval",
+              "once every" not in text, text[text.find("<p class=\"note\">"):][:400])
+        check("but it still says how big the pool is",
+              "4 keys in the pool." in text, text[text.find("<p class=\"note\">"):][:200])
         check("the per-row essay about the missing scope is gone",
               "usage document is closed to us" not in text, blocks[3][-500:])
         check("and the sentence about which key is spent is gone from it",

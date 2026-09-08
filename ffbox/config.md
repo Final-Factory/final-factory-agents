@@ -335,13 +335,30 @@ re-chooses, and a round trip there would land on every launch, every staging and
 call. A forced reading is floored at 30 seconds rather than unlimited, so one `claim_turns` pass
 over ten new conversations still makes one round of requests.
 
+**And for six weeks that sentence was wrong, because `claim_turns` asked a different question
+from the one that builds a turn.** `pending_messages` selects `gate IS NULL`; `claim_turns`
+selected on `turn_id IS NULL` alone. So every conversation holding nothing but gated
+messages — pre-attach backlog, a system event, a refused directive — was offered to
+`create_turn` on every tick of the daemon loop, and `new_conversation_held` (which sits above
+the `pending_messages` call deliberately, so no work is done for a turn that will not happen)
+asked Anthropic how full the subscription was before finding out there was nothing to build.
+Measured on the build server 2026-09-08: 76 conversations selected, **none** of them holding a
+claimable message, 50 of them reaching the read — one billed Haiku probe every 31 seconds on a
+box with nothing to do, about 2,800 a day. The two queries now ask the same question. If this
+box ever starts reading Anthropic on a clock again, that is the shape of the bug: something is
+entering `create_turn` for a conversation with no claimable message.
+
 **One store, two processes.** `ffwatch` and `ffweb` used to keep their readings in their own
 memory, so each paid its own way to Anthropic and the page could say 40% while the daemon was
 holding work at 91%. Both now read and write `<state-dir>/claude-usage.json` (mode `0600` — a
 record carries the account email), newest reading wins, merged rather than overwritten so
 neither deletes the other's keys. Since the daemon reads far more often than the page does, it
-is the page that gains: `CLAUDE_USAGE_TTL_SECS` is an hour, and it is the floor under a
-genuinely idle box rather than how often the numbers move. The file is a cache and nothing more
+is the page that gains — on a box with work on it. `CLAUDE_USAGE_TTL_SECS` is an hour, and
+since the gate fix above it is the real interval on an idle box rather than a floor nobody
+reaches: a daemon with nothing to answer now asks Anthropic nothing at all, so `/claude` on a
+quiet box shows its own hourly reading. Each row says `read Nm ago`, which is the only honest
+version of "how current is this" — the page used to print a sentence about its own TTL and no
+longer does, because that number described a ceiling rather than what actually happens. The file is a cache and nothing more
 — anything unreadable, malformed or from a version this build does not know is treated as
 absent, because the fallback is one HTTP call and a cache that can break a start-up is worse
 than no cache.
