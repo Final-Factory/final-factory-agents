@@ -11504,8 +11504,15 @@ def test_a_refused_directive_links_the_thread_holding_it_and_spends_no_turn():
           not ok and f"conversation {local} has a turn in flight" in reason, reason)
 
 
-def review_cfg(case, *, operators=None, trigger="#codereview"):
-    """Point this case's watcher at the mock GitHub and give it an operator table."""
+def review_cfg(case, *, operators=None, trigger=None):
+    """Point this case's watcher at the mock GitHub and give it an operator table.
+
+    `trigger` left out is the SHIPPED default -- both spellings of the word -- taken from
+    DEFAULTS rather than spelled again here, so a change to what boxes ship changes what the
+    suite exercises. Pass one to pin a box to a single spelling.
+    """
+    if trigger is None:
+        trigger = ffwatch.DEFAULTS["github"]["trigger"]
     case.watcher.cfg["github"] = dict(case.watcher.cfg.get("github") or {}, **{
         "api_base": github_base(), "repo": "Final-Factory/FinalFactory", "base": "develop",
         "token": "gh-test-token", "trigger": trigger, "review_pool": "ffdev",
@@ -11741,6 +11748,49 @@ def test_a_codereview_trigger_is_decided_once_and_only_for_an_operator():
     before = len(GH_STATE["requests"])
     check("and an empty trigger turns the poller off outright",
           case.watcher.poll_github() == [] and len(GH_STATE["requests"]) == before, None)
+
+
+def test_either_spelling_of_the_trigger_starts_a_review():
+    """`!codereview` is the same door as `#codereview`, and one word alone still works.
+
+    The two are alternates rather than two features: GitHub's comment box wants to turn a
+    leading `#` into an issue reference, so the bang spelling is the one that survives being
+    typed. A box whose config still names a single word -- every box seeded before the second
+    spelling existed -- keeps that word and only that word.
+    """
+    print("#codereview: both spellings")
+    # A BARE CASE, not bug_case: this lane needs a watcher and a remote, not a Discord
+    # thread that has already run a turn. Building one would launch a container stub
+    # and leave its threads behind for whatever runs next.
+    case = Case("codereviewspelling")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/bang-branch")
+    push_a_stranger_branch(host, "loth/hash-branch")
+    review_cfg(case)
+    check("the shipped default carries both spellings",
+          ffwatch.github_triggers(case.watcher.cfg) == ["#codereview", "!codereview"],
+          ffwatch.github_triggers(case.watcher.cfg))
+
+    a_pull_request(41, "loth/bang-branch")
+    a_comment(7001, 41, "!codereview")
+    check("a bang trigger starts a review", len(case.watcher.poll_github()) == 1, None)
+
+    a_pull_request(42, "loth/hash-branch")
+    a_comment(7002, 42, "#codereview", stamp="2026-09-06T13:00:00Z")
+    check("and the hash spelling still does too",
+          len(case.watcher.poll_github()) == 1, None)
+    check("each on its own pull request's conversation",
+          sorted(c["thread_id"] for c in
+                 case.rows("SELECT * FROM conversation WHERE kind='github_pr'"))
+          == ["github:pr:41", "github:pr:42"], None)
+
+    # A CONFIG THAT NAMES ONE WORD MEANS EXACTLY THAT WORD. The string shape is what every box
+    # seeded before this change holds, and widening it silently would be a second door nobody
+    # asked for.
+    review_cfg(case, trigger="#codereview")
+    a_comment(7003, 41, "!codereview", stamp="2026-09-06T14:00:00Z")
+    check("a box pinned to one spelling ignores the other",
+          case.watcher.poll_github() == [], None)
 
 
 def test_a_review_refuses_what_it_cannot_commit_onto():
@@ -14498,6 +14548,7 @@ def main():
         test_the_review_workflow_is_taken_from_the_base_and_not_from_the_branch,
         test_a_codereview_comment_starts_a_review_on_the_pull_requests_own_branch,
         test_a_codereview_trigger_is_decided_once_and_only_for_an_operator,
+        test_either_spelling_of_the_trigger_starts_a_review,
         test_a_review_refuses_what_it_cannot_commit_onto,
         test_a_second_trigger_while_a_review_runs_is_refused_and_never_resurrected,
         test_a_review_answers_on_the_pull_request_and_never_on_discord,

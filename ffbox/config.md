@@ -848,7 +848,7 @@ because a box normally wants one.
 | `github.base` | `"master"` | The fallback when a run's own base cannot be established. Tracks the first key of `publish_bases`. |
 | `github.token_env` | `"GH_PR_TOKEN"` | Named for the one thing it may do. The credential that can write code is the one git finds in `~/.git-credentials`. See `ffbox/CREDENTIALS.md`. |
 | `github.api_base` | `https://api.github.com` | |
-| `github.trigger` | `"#codereview"` | The word that starts a review run when it appears in a comment on a pull request. Matched case-insensitively against the whole comment; nothing else is parsed out of it. `""` turns the poller off. |
+| `github.trigger` | `["#codereview", "!codereview"]` | The words that start a review run when one of them appears in a comment on a pull request. Each is matched case-insensitively against the whole comment; nothing else is parsed out of it. A bare string is still accepted and means that one word alone. `[]` (or `""`) turns the poller off. |
 | `github.review_pool` | `"ffdev"` | Which agent class a review runs in. `"ffagent"` puts it behind the fence, where it will not be able to push. |
 | `github.poll_secs` | `60` | How often the comment poller looks, and the merge poller with it. Its own clock and its own worker, not `catchup_secs`. |
 | `github.announce_merges` | `true` | Whether a merged pull request tells the Discord threads behind it which build carries the fix. `false` turns that poller off. |
@@ -859,15 +859,22 @@ the file still works, for a machine with no systemd `EnvironmentFile`.
 
 ### `#codereview`
 
-A comment saying `#codereview` on a pull request starts an ffdev run against that pull
-request's branch: it reviews the diff, applies what it is confident in, commits onto the branch
-the pull request already points at, and the harness posts a comment. Nothing merges and nothing
-new is opened. `design/github_pr_review_design.txt` is the whole of it.
+A comment saying `#codereview` -- or `!codereview`, which is the same thing -- on a pull request
+starts an ffdev run against that pull request's branch: it reviews the diff, applies what it is
+confident in, commits onto the branch the pull request already points at, and the harness posts a
+comment. Nothing merges and nothing new is opened. `design/github_pr_review_design.txt` is the
+whole of it.
 
 ```jsonc
 "operators": { "lothsahn": { "discord": "1932...", "github": 10092359 } },
-"github":    { "trigger": "#codereview", "review_pool": "ffdev" }
+"github":    { "trigger": ["#codereview", "!codereview"], "review_pool": "ffdev" }
 ```
+
+**Two spellings, one door.** GitHub's comment box wants to turn a leading `#` into an issue
+reference while you type, so the bang spelling is the one that survives being typed quickly; a
+run started by either is the same run. A config that still names a single word -- `"trigger":
+"#codereview"`, which is what every box seeded before this existed holds -- keeps that word and
+only that word.
 
 Who may start one is the top-level [`operators`](#operators) block, not a table of its own.
 Somebody with no `github` id cannot start a review, which is the right answer rather than a gap.
