@@ -38,6 +38,11 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/docker" <<'EOF'
 #!/bin/sh
 case "$1" in
+  # A SENTINEL NOTHING ELSE ANSWERS. The precondition below needs to know that THIS docker is on
+  # PATH, not that A docker is: the real one is installed on the box that runs this test, it
+  # answers `version` perfectly well, and without this the suite would quietly point reap.sh at
+  # the live daemon and assert against whatever containers happened to be running.
+  ffghr-test-stub) echo stub ;;
   version) exit 0 ;;
   ps)      for c in ${STUB_CONTAINERS:-}; do printf '%s\n' "${c%%|*}"; done ;;
   inspect)
@@ -62,6 +67,7 @@ EOSTUB
 esac
 EOF
 chmod +x "$TMP/bin/docker"
+[ -z "${TEST_BREAK_STUB:-}" ] || rm -f "$TMP/bin/docker"   # for the self-check below
 PATH="$TMP/bin:$PATH"
 export PATH
 
@@ -82,8 +88,22 @@ printf '{ "max_concurrent_runs": 6, "githubrunner": { "cache_dir": "" } }\n' \
 DEAD_PID=4294967295          # above /proc/sys/kernel/pid_max: cannot exist
 RECYCLED_PID=1               # exists, is not a slot.sh
 
+# EVERY ASSERTION BELOW READS reap.sh's STDOUT, so anything that stops it producing any makes
+# them all fail at once and none of them say why. That happened once on 2026-09-08 -- one red run
+# in a batch, five green ones after it, no output kept and no cause found. A test that can fail
+# for a reason it does not name is a test somebody will eventually decide to ignore.
+#
+# So the output is checked for emptiness at the point it is produced, and an empty answer is
+# reported as what it is: the script did not run, rather than nine wrong decisions.
 reap() {   # STUB_CONTAINERS is set by the caller
-    STUB_CONTAINERS="$1" sh "$HERE/reap.sh" --dry-run 2>/dev/null || true
+    _out=$(STUB_CONTAINERS="$1" sh "$HERE/reap.sh" --dry-run 2>"$TMP/reap.err" || true)
+    if [ -z "$_out" ]; then
+        bad "reap.sh produced no output at all -- it did not get as far as the container sweep."
+        printf '       its stderr was: %s\n' "$(head -3 "$TMP/reap.err" | tr '\n' ' ')"
+        printf '       (this is an environment problem, not a decision this test is about)\n'
+    fi
+    printf '%s\n' "$_out"
+    unset _out
 }
 
 says() {   # <output> <substring> <what>
@@ -98,6 +118,18 @@ denies() {
         *)      ok "$3" ;;
     esac
 }
+
+# THE ONE PRECONDITION reap.sh HAS, checked before anything is asserted. It exits 1 the moment it
+# cannot reach a daemon, before the sweep this file tests, so a stub that is not on PATH turns
+# every case below into a failure about ownership when the truth is that nothing ran.
+if [ "$(docker ffghr-test-stub 2>/dev/null)" != stub ]; then
+    printf '  FAIL the stub docker is not first on PATH.\n'
+    printf '       Every case below would run reap.sh against the REAL daemon and assert about\n'
+    printf '       whatever containers happen to be running, which is not what any of them mean.\n'
+    printf '       (--dry-run means nothing would have been destroyed, but nothing would have\n'
+    printf '       been tested either.)\n'
+    exit 1
+fi
 
 printf '\nwho owns a container, and how the reaper asks\n'
 
