@@ -2,7 +2,7 @@
 # ffgithubrunners — the operator's handle on the runners.
 #
 #   ffgithubrunners status              the pool, containers, registrations, image tag and age
-#   ffgithubrunners slots [N]           show or set the MAX pool size (needs root to apply)
+#   ffgithubrunners slots [N]           show or set the MAX pool size
 #   ffgithubrunners idle [N]            show or set how many runners idle waiting for work
 #   ffgithubrunners slot stop|start N   drain or return one slot
 #   ffgithubrunners drain | resume      let running jobs finish, start no replacements
@@ -13,15 +13,21 @@
 #   ffgithubrunners cache seed [REF]    seed it from golden, so the first job is not cold
 #   ffgithubrunners cache clear         delete every entry
 #
-# TWO NUMBERS RUN THE POOL. `slots` is the ceiling on jobs in flight and is one systemd unit
-# instance each, so changing it needs root. `idle` is how many runners sit registered and waiting
-# while nothing is happening; it is one number in config.json that waiting slots re-read, so it
-# takes effect within seconds and needs no privilege at all.
+# TWO NUMBERS RUN THE POOL, AND SINCE 2026-09-08 THEY BEHAVE THE SAME WAY. `slots` is the ceiling
+# on jobs in flight; `idle` is how many runners sit registered and waiting while nothing is
+# happening. Both are one number in config.json that waiting slots re-read each time round their
+# loop, so both take effect within seconds and neither needs privilege.
 #
-# WHAT NEEDS PRIVILEGE AND WHAT DOES NOT. drain, resume and slot stop|start write a flag file that
+# `slots` USED TO NEED ROOT, because one systemd unit instance was rendered per configured slot
+# and only root can enable one. The instances are sized to max_concurrent_runs now
+# (ffghr_slot_units in lib/config.sh), so the supervisors for any legal ceiling already exist. The
+# old behaviour was worse than inconvenient: applying it ran 05-services.sh, which ends in
+# `systemctl restart ffgithubrunners.target`, so raising a number by one killed the jobs in
+# flight.
+#
+# NOTHING HERE NEEDS PRIVILEGE NOW. drain, resume and slot stop|start write a flag file that
 # slot.sh checks before it mints a JIT config, so a drained slot idles rather than being stopped
-# and nothing has to talk to the system manager. Only `slots N` writes to /etc/systemd/system, and
-# it re-invokes through sudo for that one step. No account gets a sudoers entry.
+# and nothing has to talk to the system manager. No account gets a sudoers entry.
 
 set -eu
 
@@ -92,8 +98,23 @@ cmd_status() {
     printf '\npool       %s of %s slots in use, %s idle (want %s idle, max %s)\n' \
         "$_total" "$SLOTS" "$_idle" "$IDLE_POOL" "$SLOTS"
     printf '           a slot with no container holds no registration and costs nothing\n'
-    _i=1
-    while [ "$_i" -le "$SLOTS" ]; do
+    # THE ENABLED UNITS, NOT 1..pool.max, since 2026-09-08. The two stopped being the same number
+    # when the units were sized to the box ceiling instead: a box with `max: 5` and twelve units
+    # would otherwise show five lines and hide the seven supervisors that are running, which is
+    # precisely the kind of gap between what the config says and what the box does that this
+    # change exists to close. A unit above the ceiling is labelled, because "active" on a slot
+    # that can never be admitted looks like a fault until you know it is headroom.
+    _enabled=$(ffghr_enabled_slots)
+    [ -n "$_enabled" ] || _enabled=$(seq 1 "$SLOTS" 2>/dev/null | tr '\n' ' ')
+    _nunits=$(printf '%s' "$_enabled" | wc -w)
+    if [ "$_nunits" -gt "$SLOTS" ] 2>/dev/null; then
+        printf '           %s slot units enabled; the %s above max hold nothing and are headroom\n' \
+            "$_nunits" "$((_nunits - SLOTS))"
+    elif [ "$_nunits" -lt "$SLOTS" ] 2>/dev/null; then
+        printf '           only %s slot units enabled, so max %s cannot be reached — see: %s\n' \
+            "$_nunits" "$SLOTS" "sudo sh $HERE/05-services.sh --install"
+    fi
+    for _i in $_enabled; do
         _unit=$(systemctl is-active "ffgithubrunners@$_i.service" 2>/dev/null || true)
         _stop=""
         [ -e "$(ffghr_slot_stop_flag "$_i")" ] && _stop=" STOPPED"
@@ -111,8 +132,9 @@ cmd_status() {
                 _what="$_c idle$(_ffghr_status_left "$(ffghr_idle_marker "$_cn")")"
             fi
         fi
-        printf '  slot %-3s unit %-10s%s %s\n' "$_i" "${_unit:-unknown}" "$_stop" "$_what"
-        _i=$((_i + 1))
+        _over=""
+        [ "$_i" -gt "$SLOTS" ] 2>/dev/null && _over=" (headroom, above max $SLOTS)"
+        printf '  slot %-3s unit %-10s%s %s%s\n' "$_i" "${_unit:-unknown}" "$_stop" "$_what" "$_over"
     done
     # A container whose slot is above the configured count is a slot that was disabled while it
     # was working, or an orphan the reaper has not swept yet. Either way it is in the pool and the
@@ -120,9 +142,10 @@ cmd_status() {
     for _c in $(ffghr_pool_containers); do
         _cs=$(docker inspect -f '{{index .Config.Labels "ffghr.slot"}}' "$_c" 2>/dev/null || echo "")
         case "$_cs" in ''|*[!0-9]*) _cs=0 ;; esac
-        if [ "$_cs" -gt "$SLOTS" ]; then
-            printf '  slot %-3s (no longer configured) %s\n' "$_cs" "$_c"
-        fi
+        case " $_enabled " in
+            *" $_cs "*) ;;
+            *) printf '  slot %-3s (no longer configured) %s\n' "$_cs" "$_c" ;;
+        esac
     done
 
     printf '\nworkspace cache\n'
@@ -209,10 +232,30 @@ cmd_slots() {
     set_config_int max "$_n"
     say "pool.max = $_n in $FFGHR_CONFIG (the most jobs that can run at once)"
 
-    # This is the ONE thing here that writes /etc/systemd/system, so it is the one thing that asks
-    # for sudo. Enabling and disabling unit instances is not something a flag file can do.
-    say "applying (needs root to enable or disable unit instances)"
-    sudo sh "$HERE/05-services.sh" --install
+    # NO sudo AND NOTHING RESTARTS, since 2026-09-08. This used to end in
+    # `sudo sh 05-services.sh --install`, because one unit instance was rendered per configured
+    # slot and only root can enable one. That install ends in
+    # `systemctl restart ffgithubrunners.target`, so raising a number by one killed every job in
+    # flight -- two of them, the evening this was found. The units are sized to the box ceiling
+    # now (ffghr_slot_units in lib/config.sh), so the supervisors for this number already exist
+    # and every waiting one re-reads it within POOL_POLL_SECONDS.
+    #
+    # LOWERING IT STOPS NO JOB, exactly as with `idle`: admission simply stops granting places,
+    # and the runners above the new ceiling retire by finishing what they have.
+    say "waiting slots pick this up within ${POOL_POLL_SECONDS}s; nothing needs restarting"
+
+    # THE ONE CASE THAT STILL WANTS ROOT, named rather than left to be discovered. Asking for more
+    # jobs than there are supervisors is the failure this whole change is about, so it must not be
+    # able to happen quietly a second time.
+    _units=$(ffghr_enabled_slots | wc -w)
+    if [ "$_units" -gt 0 ] && [ "$_n" -gt "$_units" ]; then
+        say "WARNING: only $_units slot unit(s) are enabled, so at most $_units jobs will run
+    at once whatever this number says. That happens when max_concurrent_runs has gone up
+    since the units were installed. Apply it with:
+        sudo sh $HERE/05-services.sh --install
+    which restarts ffgithubrunners.target and ENDS ANY JOB IN FLIGHT, so pick the moment."
+    fi
+    unset _units
 }
 
 # NO sudo, AND NOTHING RESTARTS. Every waiting slot re-reads this number each time round its

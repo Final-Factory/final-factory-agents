@@ -244,5 +244,67 @@ FFGITHUBRUNNERS_IDLE_MINUTES=0 . "$HERE/lib/config.sh" 2>/dev/null
 is "$IDLE_MINUTES" 0 "and 0 is left alone, because never recycling is a thing somebody may mean"
 unset FFGITHUBRUNNERS_IDLE_MINUTES
 
+printf '\nslot units, and the ceiling that is not the unit count\n'
+
+# THE 2026-09-08 BUG IN ONE SECTION. `pool.max` and the number of enabled unit instances used to
+# be the same number, so raising the ceiling did nothing until somebody re-ran 05-services.sh as
+# root -- and that re-run restarts the target, which ends every job in flight. ffghr_slot_units()
+# breaks the tie by sizing the units to the BOX ceiling, which is the most containers the machine
+# will hold whatever either lane asks for.
+write_units_config() {   # <box ceiling literal, JSON> <pool max>
+    printf '{ "max_concurrent_runs": %s, "githubrunner": { "pool": { "max": %s, "idle": 1 } } }\n' \
+        "$1" "$2" > "$FFBOX_CONFIG_DIR/config.json"
+    ffghr_reload_limits
+}
+
+write_units_config 12 5
+is "$SLOTS" 5 "pool.max is still the lane's own ceiling"
+is "$(ffghr_slot_units)" 12 "the units are sized to max_concurrent_runs, not to pool.max"
+
+# NEVER FEWER UNITS THAN THE LANE ASKS FOR. A max above the box ceiling is refused at admission,
+# but rendering fewer units than it would put the old coupling back for exactly the operator who
+# reached too far -- the person this change is for.
+write_units_config 4 9
+is "$(ffghr_slot_units)" 9 "a pool.max above the box ceiling still gets units for it"
+
+# A box that cannot say what its ceiling is gets the OLD behaviour rather than invented headroom.
+printf '{ "githubrunner": { "pool": { "max": 2, "idle": 1 } } }\n' > "$FFBOX_CONFIG_DIR/config.json"
+ffghr_reload_limits
+is "$(ffghr_slot_units)" 2 "no readable box ceiling falls back to pool.max, which is today's rule"
+
+printf '{ "max_concurrent_runs": "twelve", "githubrunner": { "pool": { "max": 3, "idle": 1 } } }\n' \
+    > "$FFBOX_CONFIG_DIR/config.json"
+ffghr_reload_limits
+is "$(ffghr_slot_units)" 3 "a ceiling that is not a number falls back the same way"
+
+# These become sleeping processes, so a typo must not become two hundred of them.
+write_units_config 500 2
+is "$(ffghr_slot_units)" 32 "an absurd ceiling is capped"
+
+# max 0 means the lane takes nothing, and that must not read as "no units" -- the supervisors are
+# what pick the number back up when somebody raises it again.
+write_units_config 8 0
+is "$SLOTS" 0 "max 0 is left alone: no places, so this lane takes nothing"
+is "$(ffghr_slot_units)" 8 "and the units stay, or raising max again would need root"
+
+printf '\nre-reading the config without forking python3 every poll\n'
+
+# THE GUARD THAT MAKES THE HEADROOM AFFORDABLE. A waiting supervisor called ffghr_reload_limits
+# once per POOL_POLL_SECONDS and each call forked a python3 to re-parse a file that changes about
+# twice a month: measured 2026-09-08 at 4.3s of CPU per 293s elapsed per waiting slot, about 1.5%
+# of a core. Sizing the units to the box ceiling multiplies that by the headroom, so the guard
+# lands with it.
+write_units_config 12 5
+_stamp_before=$_FFGHR_CFG_STAMP
+ffghr_reload_limits
+is "$_FFGHR_CFG_STAMP" "$_stamp_before" "an unchanged config is not re-read"
+
+# AND THE CASE THAT KILLED THE FIRST VERSION OF THE GUARD. It stamped whole-second mtime and size,
+# and `max 5` -> `max 6` is the same number of bytes: two edits inside one second were
+# indistinguishable and the second was silently ignored. The inode is what catches it, since every
+# writer here renames a temporary file into place.
+write_units_config 12 6
+is "$SLOTS" 6 "a same-second, same-size edit is still picked up"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

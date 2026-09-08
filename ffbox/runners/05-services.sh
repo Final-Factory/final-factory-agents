@@ -29,8 +29,12 @@ usage() {
   cat <<EOF
 Usage: sudo sh ffbox/runners/05-services.sh --install [options]
 
-Renders ffbox/runners/systemd/*.service into ${UNIT_DIR} and enables one slot per configured
-slot. Idempotent — re-run any time.
+Renders ffbox/runners/systemd/*.service into ${UNIT_DIR} and enables one slot unit per place
+under the BOX ceiling (max_concurrent_runs). Idempotent — re-run any time.
+
+You do NOT need this to change how many CI jobs run at once. That is \`pool.max\`, it is read live
+by every waiting supervisor, and \`ffgithubrunners max N\` sets it with no root and no restart.
+Re-run this only when the box ceiling itself moves, or after moving the checkout.
 
 Options (alphabetical):
   --check       Exit 1 if installing would change anything. Needs no root.
@@ -124,9 +128,18 @@ for u in $UNITS; do
 done
 
 # Slots that should be enabled, and slots that should not be any more.
+#
+# SIZED TO THE BOX CEILING, NOT TO `pool.max`, since 2026-09-08. These used to be the same number,
+# which meant the CI lane's concurrency was decided by a root install rather than by the config it
+# reports in every log line: a box holding `max: 5` ran three jobs because three instances were
+# enabled, and raising the ceiling did nothing anyone could see until somebody re-ran this script.
+# ffghr_slot_units() in lib/config.sh is the rule and carries the reasoning; the short version is
+# that a supervisor with no place holds nothing, so enabling headroom costs a sleeping shell and
+# buys `ffgithubrunners max N` with no root and no restart.
 want_slots=""
 i=1
-while [ "$i" -le "$SLOTS" ]; do want_slots="$want_slots $i"; i=$((i + 1)); done
+SLOT_UNITS=$(ffghr_slot_units)
+while [ "$i" -le "$SLOT_UNITS" ]; do want_slots="$want_slots $i"; i=$((i + 1)); done
 # ENABLED TEMPLATE INSTANCES ARE SYMLINKS, NOT UNIT FILES. `systemctl list-unit-files
 # 'ffgithubrunners@*.service'` lists the TEMPLATE and never the instances, so it reports nothing
 # however many slots are enabled. Enabling ffgithubrunners@1 creates
@@ -144,7 +157,11 @@ if [ "$INSTALL" -eq 0 ]; then
   printf 'checkout:     %s\n' "$HERE"
   printf 'recorded:     %s\n' "${recorded:-<none>}"
   printf 'run user:     %s (%s), home %s\n' "$OWNER" "$OWNER_GROUP" "$OWNER_HOME"
-  printf 'slots wanted: %s\n' "$SLOTS"
+  # THREE NUMBERS, AND THEY ARE NOT THE SAME QUESTION. `units` is how many supervisors exist and
+  # is the only one this script decides; `pool.max` is the live ceiling on jobs, changed with
+  # `ffgithubrunners max N` and needing nothing from here; `enabled` is what systemd actually has.
+  printf 'slot units:   %s (from max_concurrent_runs; the box ceiling)\n' "$SLOT_UNITS"
+  printf 'pool.max:     %s (the live job ceiling — `ffgithubrunners max N`, no root)\n' "$SLOTS"
   printf 'slots enabled:%s\n' "${enabled_now:- none}"
   printf 'units stale:  %s\n' "${changed:- none}"
   for u in $UNITS; do
@@ -212,7 +229,7 @@ done
 for s in $enabled_now; do
   case " $want_slots " in
     *" $s "*) ;;
-    *) say "disabling slot $s (slots=$SLOTS)"
+    *) say "disabling slot $s (slot units=$SLOT_UNITS)"
        systemctl disable --now "ffgithubrunners@$s.service" >/dev/null 2>&1 || true ;;
   esac
 done
@@ -220,7 +237,7 @@ for s in $want_slots; do
   systemctl enable "ffgithubrunners@$s.service" >/dev/null 2>&1 || true
 done
 
-say "starting ffgithubrunners.target ($SLOTS slot(s))"
+say "starting ffgithubrunners.target ($SLOT_UNITS slot unit(s), pool.max $SLOTS)"
 systemctl enable ffgithubrunners.target >/dev/null 2>&1 || true
 systemctl restart ffgithubrunners.target
 

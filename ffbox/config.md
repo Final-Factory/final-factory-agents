@@ -228,6 +228,12 @@ Default 6. `pools.<class>.pool.max` and `githubrunner.pool.max` cap each lane un
 both have to hold before anything starts. `ffbox/lib-workloads.sh` is the shell half and is
 what actually refuses.
 
+It has a second job on the CI lane: it is how many `ffgithubrunners@N.service` instances
+`05-services.sh` enables, because a supervisor beyond this number could never be admitted
+however high `githubrunner.pool.max` went. Raising this one therefore does want a
+`sudo sh ffbox/runners/05-services.sh --install`, and that restarts the CI target and ends any
+job in flight, so pick the moment. Raising the CI lane's own ceiling underneath it does not.
+
 ## `workload_reserve`
 
 **How many of those places a speculative spare may never take.** Default `1`, clamped to
@@ -754,6 +760,21 @@ container, no registration, nothing on the org page — and costs a sleeping she
 machine carries `idle` runners rather than `max` of them. `ffgithubrunners slots N` and
 `ffgithubrunners idle N` write them here.
 
+**Both are live, and neither needs root.** Every waiting supervisor re-reads them once per
+`pool_poll_seconds`, so raising `max` starts runners within seconds and nothing restarts.
+Lowering either one stops no job: admission stops granting places and the extra runners retire
+by finishing what they have.
+
+This was not true until 2026-09-08. One systemd unit instance was rendered per `pool.max`, so
+the number in this file was a ceiling the supervisors read live while the *supervisors* were
+decided by `sudo sh ffbox/runners/05-services.sh --install` — and a box could sit at `max: 5`,
+say "of 5" in every log line, and run three jobs. The units are sized to
+`max_concurrent_runs` now, which is the most containers the machine will hold whatever either
+lane asks for, so the supervisors for any legal `max` already exist. Re-run `05-services.sh`
+only when **`max_concurrent_runs` itself** goes up; `ffgithubrunners status` says so when the
+units are short. Mind that it restarts `ffgithubrunners.target`, which ends every job in
+flight.
+
 ```json
 "githubrunner": { "pool": { "idle": 1, "max": 3 }, "watchdog_minutes": 120, "org": "Final-Factory" }
 ```
@@ -762,7 +783,7 @@ machine carries `idle` runners rather than `max` of them. `ffgithubrunners slots
 
 | Key | Default | What it is |
 |---|---|---|
-| `pool.max` (`slots`) | `1` | How many supervisors run, so the most jobs in flight at once. |
+| `pool.max` (`slots`) | `1` | The most jobs in flight at once. Read live by every waiting supervisor; no root, no restart. Not the number of supervisors, which comes from `max_concurrent_runs`. |
 | `pool.idle` (`idle_pool`) | `1` | How many runners stay registered and waiting while nothing is happening. |
 | `watchdog_minutes` | `120` | Bounds a **job**, from the moment that job started. 120 because `main.yml`'s own `timeout-minutes` is 90, so a job GitHub still wants is never killed locally. |
 | `image` | `ffbox:latest` | The image both lanes are built from. Pin CI to a different build by overriding this, not by keeping a second tag alive. |

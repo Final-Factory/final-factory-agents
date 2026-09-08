@@ -779,6 +779,61 @@ if v is not None and not isinstance(v, (dict, list)):
 ' "$_bc" "$1" 2>/dev/null
 }
 
+# --- how many supervisors exist, which is NOT this lane's ceiling ---------------------------
+#
+# UNTIL 2026-09-08 THESE WERE THE SAME NUMBER AND THAT WAS THE BUG. `pool.max` is a ceiling, read
+# live: every waiting supervisor calls ffghr_reload_limits once per poll, so raising it takes
+# effect in seconds. The number of SUPERVISORS was decided at install time, because 05-services.sh
+# rendered one unit instance per `pool.max` and only root can enable a unit instance. So a box
+# could hold `max: 5`, report "of 5" in every log line, and run three jobs, with nothing anywhere
+# saying why. It did, on 2026-09-08, and finding out cost an afternoon.
+#
+# They are separated by enabling MORE units than the lane will ever use and letting the ceiling do
+# the limiting at runtime. A supervisor with no place holds nothing -- no container, no
+# registration, nothing on the org page -- and costs a sleeping shell, which the pool section
+# below has always said. So the units are sized to the BOX ceiling: `max_concurrent_runs` is the
+# most containers this machine will hold whatever either lane asks for, so a supervisor beyond
+# that number could never be admitted by ffbox_workload_has_room even if `pool.max` were raised to
+# a thousand.
+#
+# CONSEQUENCE, AND IT IS THE POINT: `ffgithubrunners max N` is now a config write. No sudo, no
+# unit install, and above all no `systemctl restart ffgithubrunners.target`, which is what killed
+# two jobs mid-run on 2026-09-08 while doing nothing but raising a number.
+#
+# THE FALLBACK IS TODAY'S BEHAVIOUR, NOT A GUESS. A box whose config.json cannot be read for
+# max_concurrent_runs gets units == SLOTS, which is exactly the old coupling. Being unable to read
+# the ceiling is not a licence to invent headroom.
+#
+# AND A CAP, because this number becomes sleeping processes. 32 is far above any real box and far
+# below a typo. Measured 2026-09-08: a waiting supervisor is 1.7 MB RSS, and its CPU is almost
+# entirely the config re-read that ffghr_reload_limits now skips when nothing changed.
+FFGHR_SLOT_UNITS_CAP=32
+
+ffghr_slot_units() {
+    _su=$(_ffghr_box_cfg max_concurrent_runs)
+    case "$_su" in ''|*[!0-9]*) _su=$SLOTS ;; esac
+    # NEVER FEWER THAN THE LANE ASKS FOR. A `pool.max` above the box ceiling is already refused at
+    # admission, but rendering fewer units than it would put the old coupling back for exactly the
+    # operator who raised the number too far, which is the person this change is for.
+    [ "$_su" -ge "$SLOTS" ] 2>/dev/null || _su=$SLOTS
+    [ "$_su" -ge 1 ] 2>/dev/null || _su=1
+    [ "$_su" -le "$FFGHR_SLOT_UNITS_CAP" ] 2>/dev/null || _su=$FFGHR_SLOT_UNITS_CAP
+    printf '%s\n' "$_su"
+    unset _su
+}
+
+# The slot instances systemd currently has ENABLED, as a space-separated list of numbers.
+#
+# THE WANTS DIRECTORY IS THE RECORD, not `systemctl list-unit-files`, which lists the TEMPLATE and
+# never its instances -- 05-services.sh:130 has the whole account of why. Readable without root,
+# which is what lets the CLI tell an operator whether a `max` they just set has the supervisors to
+# back it.
+FFGHR_UNIT_WANTS=${FFGHR_UNIT_WANTS:-/etc/systemd/system/ffgithubrunners.target.wants}
+ffghr_enabled_slots() {
+    ls "$FFGHR_UNIT_WANTS" 2>/dev/null \
+        | sed -n 's/^ffgithubrunners@\([0-9]*\)\.service$/\1/p' | sort -n | tr '\n' ' '
+}
+
 # THE TWO POOL NUMBERS, COERCED THE SAME WAY THE AGENT LANE COERCES ITS OWN, because a box that
 # holds one answer should not need two rules for reading it:
 #
@@ -815,7 +870,34 @@ _ffghr_coerce_pool
 # A config.json that has gone unreadable leaves the current values alone rather than killing the
 # supervisor: `ffgithubrunners idle N` writes through a temporary file and renames, so the only
 # way to see a half-written one is to edit it by hand while a slot is waiting.
+#
+# IT COSTS A python3 PER CALL, so it does not make one when the file has not moved. Measured on
+# 2026-09-08 before this guard: a WAITING supervisor -- one holding no container and doing nothing
+# -- burned 4.3 seconds of CPU per 293 seconds elapsed, about 1.5% of a core, almost all of it
+# forking python3 every POOL_POLL_SECONDS to re-parse a file that changes about twice a month.
+# That was tolerable at one supervisor per configured slot; sizing the units to the box ceiling
+# multiplies it by however much headroom the box has, so the guard comes with that change rather
+# than after it.
+#
+# INODE, NANOSECOND mtime AND SIZE, not a hash: this runs on a five-second loop and must not read
+# the file to decide whether to read the file.
+#
+# ALL THREE, AND THE FIRST TWO ARE NOT BELT AND BRACES. The obvious `%Y %s` -- whole seconds and
+# size -- misses a real edit, and the case is not exotic: `ffgithubrunners max 5` to `max 6` writes
+# the same number of bytes, so two changes inside one second are indistinguishable. Caught by the
+# test for this function, which did exactly that and watched the second one vanish. Every writer
+# here goes through a temporary file and rename -- set_config_int does, the updater does -- so the
+# INODE changes on every write whatever the bytes say, and the fraction covers an in-place edit by
+# hand.
+_FFGHR_CFG_STAMP=''
 ffghr_reload_limits() {
+    _rl_stamp=$(stat -c '%i %.9Y %s' "$FFGHR_CONFIG" 2>/dev/null || echo absent)
+    if [ "$_rl_stamp" = "$_FFGHR_CFG_STAMP" ]; then
+        unset _rl_stamp
+        return 0
+    fi
+    _FFGHR_CFG_STAMP=$_rl_stamp
+    unset _rl_stamp
     # A key DELETED from config.json since the last load would otherwise keep its old value:
     # _ffghr_load_json only ever assigns _cfg_*, it never clears one that has gone away.
     unset _cfg_slots _cfg_idle_pool 2>/dev/null || true
