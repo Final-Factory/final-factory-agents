@@ -466,6 +466,20 @@ for key, value in (
     # not "send" is a tier. `operator` is null, which ffwatch reads as no limit.
     ("rate_limits", {"player": 5, "operator": None,
                      "send": {"per_hour": 60, "per_conversation_hour": 12}}),
+    # THE HOURS THE BOX DOES NOT WORK, seeded EMPTY and therefore off. Fill both in as "HH:MM"
+    # and nothing starts between them: not a new conversation, not a follow-up, not a
+    # #codereview trigger, and a prompt typed at the terminal is refused outright rather than
+    # queued. NO MODEL RUNS AT ALL: the hold is asked above the selector, above the engagement
+    # gate and above the account choice that reads each subscription's windows, and the warm
+    # pool stops being topped up. Whoever addressed the bot is still told the same thing a spent
+    # subscription tells them — that the box is taking a break, and how long for — and the
+    # ordinary poll answers them when the window lifts. `timezone` is null for the box's own clock, which is what somebody means by
+    # 2am; an IANA name pins it against a host whose timezone later changes.
+    #
+    # OFF IS THE SEEDED VALUE ON PURPOSE, like the example watch entry above. This is the one
+    # hold with no reading behind it to fail open from, and a box that stopped answering
+    # overnight because a template said so is a fault nobody would think to look for.
+    ("quiet_hours", {"start": None, "end": None, "timezone": None}),
     # ONE KEY OUT OF THE CLUSTERING BLOCK, and deliberately not the other seven. ffwatch
     # deep-merges this section, so a config naming one key inherits the rest of DEFAULTS
     # ["cluster"] rather than replacing it -- which means the shipped file can put the one

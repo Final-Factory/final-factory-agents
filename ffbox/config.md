@@ -400,11 +400,16 @@ turns over. Nobody is told no, nothing is dropped, and nobody has to come back a
   unconditionally: a 304 means "nobody has typed", and what has to change here is the
   subscription. That costs one of an hourly 5000 a minute, only while the box has no allowance
   to run the review with anyway.
-- **`new_conversation_hold_pct`** holds a conversation's **first** turn. Its messages stay
-  unclaimed and — this is the load-bearing part — **ungated**, which is what puts the
-  conversation back in front of `claim_turns` on the next pass. It is checked above both the
-  acknowledgement and the engagement gate, so a held conversation costs no reaction that means
-  nothing and no classifier call on the very subscription being protected.
+- **`new_conversation_hold_pct`** holds a Discord conversation's next turn — its first, or a
+  follow-up on one that has already run. Its messages stay unclaimed and — this is the
+  load-bearing part — **ungated**, which is what puts the conversation back in front of
+  `claim_turns` on the next pass. It is checked above both the acknowledgement and the
+  engagement gate, so a held conversation costs no reaction that means nothing and no
+  classifier call on the very subscription being protected. (It held only a *first* turn until
+  2026-09-08, on the argument that going quiet on somebody mid-exchange is worse than a slow
+  first answer. That argument is about silence, and the break notice below answers it: a held
+  follow-up is told the same thing a held opener is, and told again the next time the same
+  conversation is held rather than once for its lifetime.)
 
 **A held Discord conversation is told so, once.** It gets no 👀 either — the mark means a run
 is in flight and none is — so without a sentence the person who typed it sees nothing at all
@@ -442,11 +447,11 @@ calls re-reading one message to the same answer.
 A `#codereview` hold says nothing at all: a refusal posted into a public pull request tells a
 stranger the trigger exists, which is the same reasoning `take_review_trigger` already follows.
 
-Three things are deliberately never held: a **follow-up** (somebody already in a conversation
-has been told the box is working, and going quiet on them mid-exchange is the worse failure), a
-**local prompt** from `ffwatch submit` or the web page (there is a person at a terminal, and
-nothing offers a shell conversation a second time), and a **review at `create_turn`** (it was
-already gated at its own ingress, before the pull request was even fetched).
+Two things are deliberately never held by *these* holds: a **local prompt** from
+`ffwatch submit` or the web page (there is a person at a terminal, and `claim_turns` never
+offers a shell conversation with no turn a second time), and a **review at `create_turn`** (it
+was already gated at its own ingress, before the pull request was even fetched). `quiet_hours`
+below holds both.
 
 **Both rolling windows count, whichever is fuller** — the five-hour session and the week. A box
 three days into a spent week is as unable to do the work as one that has just burned its
@@ -474,6 +479,104 @@ clear or waiting with the sentence naming the account and the refill time. Both 
 printed even when neither is biting, because "nothing has started for two hours" is exactly the
 moment somebody goes looking for it and an absent line answers nothing. The journal gets one
 line when a hold goes on and one when it lifts, never one per poll.
+
+## `quiet_hours`
+
+**The hours the box does not work.** The holds above ask Anthropic how much subscription is
+left; this one asks what time it is. Not seeded with a window — a fresh box gets the keys and
+no values, which is off.
+
+```json
+"quiet_hours": { "start": "02:00", "end": "11:00", "timezone": null }
+```
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `start` | `null` | `"HH:MM"`, 24-hour. When the box stops starting work. |
+| `end` | `null` | `"HH:MM"`. When it starts again. |
+| `timezone` | `null` | `null` is the box's own clock. An IANA name (`"America/Detroit"`) pins the window against a host whose timezone later changes. |
+
+The window is **half-open**, `start <= now < end`: the minute it opens is quiet and the minute
+it closes is not, so a box configured to `11:00` answers at 11:00 sharp. `start` **after** `end`
+wraps midnight — `22:00` to `07:00` is nine hours across two dates, not a fifteen-hour day.
+
+**It holds everything, which is the one way it differs from the two above.** A new conversation,
+a follow-up, a `#codereview` trigger and a local prompt all wait, where the subscription holds
+let the last two through. There is no exchange to be in the middle of at 4am, and a box that
+answered follow-ups all night would be awake for exactly the reason this exists. What is being
+protected is not the allowance, it is the morning: work started at 4am finishes at 4am, and a
+run that goes wrong then has nobody to notice until somebody sits down, by which time it has
+spent a session window the day was going to need.
+
+**A local prompt is refused rather than deferred, and it is the only request on the box that
+is.** `claim_turns` will not sweep a local conversation until it has a turn — deliberately, so
+a crashed `submit` cannot cost a container answering a question already answered — so deferring
+a brand-new one would strand it for good rather than until 11:00. `ffwatch submit` therefore
+raises before a single row is minted, with a sentence naming the window and the wait, and the
+prompt is still in the operator's terminal. A **follow-up** typed at the terminal has turns
+behind it, so it takes the path `follow_up()` already had for a run in flight: recorded,
+unclaimed, and picked up by the sweep when the hours lift.
+
+**A quiet night runs no model at all**, and that is the whole reason the hold sits where it
+does rather than beside the other two. There are three model calls on an ordinary pass, and the
+subscription holds are *below* all of them:
+
+| Call | Where | Why the quiet hours are above it |
+| --- | --- | --- |
+| the **selector** | `resettle()` → `model_selection` | decides which conversation a message belongs to; the answer keeps until morning |
+| the **engagement gate** | `should_engage_for` | one classifier call per candidate message, all night, to decide not to work |
+| the **window reading** | `pick_claude_key` → `ClaudeKeys.read` | for a `claude setup-token` key the usage document is closed, so this is a real one-token Haiku request against `/v1/messages`, not a lookup |
+
+So `create_turn` asks `quiet_hours_hold` **first**, above `resettle` and above the gate, and
+`keep_pool` stops topping the warm pool up — staging picks the account a spare will bill, which
+reads the windows, which is that third call about thirty-six times a night per account to keep
+containers warm for turns that cannot start. Pool **expiry and reaping still run**, above the
+hold and for the same reason they run in the config failsafe: a pool held warm all night would
+be reaped at `idle_agent_ttl_secs` and re-staged two or three times over. The first turn after
+the hours lift runs cold, which is the ordinary fallback, and the pass that starts it tops the
+pool up behind it.
+
+**Which means the promise is made without a gate call.** Whoever wrote in is told the same
+thing a spent subscription tells them, in the same words and by the same code — the countdown
+is simply to the end of the window rather than to a refill — but *who* gets told is decided by
+`always_a_turn()`, the harness's own always-answer list, which is three facts it can see for
+itself: the bot was addressed, evidence came with the message, or it opens a forum thread. The
+gate is never consulted for any of those even on an ordinary pass, so the sentence is as honest
+as the one the subscription hold sends.
+
+Everything else gets **silence and its ordinary decision in the morning**. A message in an
+`engage: all` channel that nobody addressed may or may not be for the bot, and that is exactly
+what the gate exists to answer; guessing "yes" at 4am to be polite would put a break notice
+under conversations the box would never have answered at all. Nothing is gated, claimed or
+marked on that path, so the pass after 11:00 judges it exactly as 10:59 would have.
+
+The notice is keyed on `hold:<conversation>:<turns so far>` rather than on the conversation,
+which is what makes a second night on the same thread get a second sentence instead of silence.
+The messages are left unclaimed and ungated, `#codereview` says nothing at all into a public
+pull request, and the journal gets one line when a hold goes on and one when it lifts.
+
+**Off is what every unreadable spelling means.** No block, half a block, `"2pm"`, `"25:00"`, a
+number, a `timezone` this host has never heard of, or `start` equal to `end` — all of them turn
+the hold off rather than turning it on at some hour nobody chose. This is the one hold with no
+reading behind it to fail open from, and a box that went quiet for nine hours on a typo is a
+fault nobody would think to look for. A bad `timezone` gets a `WARNING` in the journal.
+
+**The arithmetic goes through the real zone, never through a fixed offset.** `now + (end - now)`
+on the wall clock is right for 363 nights a year and an hour wrong on the two the offset moves,
+and both of those fall inside an overnight window by construction: a `22:00`–`07:00` window is
+seven hours long the night the clocks go forward and nine the night they go back, and both are
+the true answer to "when do I come back".
+
+`ffwatch status` prints a `quiet hours:` line above the subscription block, naming the window
+and either `clear, running now` or the wait until it lifts. It is printed on every path,
+including a box with no Claude token in the daemon's environment at all: the clock holds work
+whether or not a subscription can be read.
+
+**What it does not stop.** Discord and GitHub are still read, messages are still recorded, and
+replies from runs that were already in flight still go out — that is what lets the break notice
+reach the person who wrote in. None of that spends a model: ingest is snowflakes, SQL and the
+`ffdiscord` CLI. A turn already `queued` when the window opens still launches; the hold is at
+turn *creation*, and moving it later would strand work that had already been promised.
 
 ## `web_host`, `web_port`
 

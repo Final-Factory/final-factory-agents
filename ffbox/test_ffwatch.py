@@ -11761,7 +11761,7 @@ def test_a_backlog_only_conversation_never_asks_anthropic_anything():
     claim_turns used to select on `turn_id IS NULL` alone while pending_messages — the query
     create_turn actually builds a turn from — also required `gate IS NULL`. So a conversation
     holding nothing but pre-attach backlog was offered on every tick of the daemon loop, and
-    create_turn asked Anthropic how full the subscription was (new_conversation_held, which
+    create_turn asked Anthropic how full the subscription was (conversation_held, which
     sits above the pending_messages call deliberately) before discovering there was nothing to
     build. On this box that was 76 conversations, none of them holding a claimable message, 50
     of them reaching the read: one billed probe every thirty seconds on an idle box.
@@ -11779,7 +11779,7 @@ def test_a_backlog_only_conversation_never_asks_anthropic_anything():
     case.watcher.db.execute("DELETE FROM turn")
 
     asked = []
-    case.watcher.new_conversation_held = lambda conv: asked.append(conv["id"]) or 0
+    case.watcher.conversation_held = lambda conv: asked.append(conv["id"]) or 0
     check("the pass builds no turn", case.watcher.claim_turns() == [], None)
     check("and never reaches the subscription to ask about one", asked == [], asked)
 
@@ -15213,8 +15213,10 @@ def test_a_held_discord_conversation_is_told_the_answer_is_coming():
     check("a second pass says nothing more", case.watcher.create_turn(conv) is None)
     check("still one post", len(posts(case)) == 1, posts(case))
     marker = case.rows("SELECT local_id FROM outbound WHERE action='post'")[0]["local_id"]
+    # NAMED FOR THE WAIT AND NOT FOR THE CONVERSATION. The turn count is what makes a second
+    # break, months later on the same thread, get a second sentence -- see the follow-up test.
     check("kept off a per-process flag, so a restart cannot repeat it",
-          marker == f"hold:{conv['id']}", marker)
+          marker == f"hold:{conv['id']}:0", marker)
 
     # AND THE WORK STILL HAPPENS. The notice is not a refusal and claims nothing about the
     # message beyond when it will be read.
@@ -15320,7 +15322,7 @@ def test_a_spawn_decision_asks_anthropic_rather_than_the_cache():
     case, _ = held_and_addressed("hold-fresh")
     conv = case.rows("SELECT * FROM conversation")[0]
     check("the new-conversation decision asks Anthropic",
-          case.watcher.new_conversation_held(conv) and case.watcher._claude.forced == 1,
+          case.watcher.conversation_held(conv) and case.watcher._claude.forced == 1,
           (case.watcher._claude.reads, case.watcher._claude.forced))
 
     # AND THE REVIEW INGRESS DOES THE SAME, on every poll for as long as a trigger is held:
@@ -15373,28 +15375,30 @@ def test_the_daemon_leaves_its_readings_where_ffweb_can_find_them():
           (claude_keys.CLAUDE_FORCE_FLOOR_SECS, claude_keys.CLAUDE_USAGE_TTL_SECS))
 
 
-def test_only_a_first_turn_waits_and_never_a_terminal_or_a_review():
-    print("holds: what the new-conversation hold may not touch")
+def test_what_the_subscription_hold_may_not_touch():
+    print("holds: what the subscription hold reaches, and what it does not")
     case, fixture = branch_directive_case("hold-scope", "hey max, first question")
     conv = case.rows("SELECT * FROM conversation")[0]
     hold_case(case, [key_record("only", five=95.0, seven=95.0)])
     check("the first turn waits", case.watcher.create_turn(conv) is None)
 
-    # A FOLLOW-UP DOES NOT. Somebody already in a conversation has been told the box is
-    # working; going quiet on them mid-exchange is a worse failure than a slow first answer.
+    # AND SO DOES A FOLLOW-UP, since 2026-09-08. It used not to: somebody already in a
+    # conversation has been told the box is working, and going quiet on them mid-exchange is a
+    # worse failure than a slow first answer. That argument was about SILENCE, and say_holding
+    # answers it -- a held follow-up is told the same thing a held opener is, and told it again
+    # the next time the same conversation is held rather than once for its lifetime.
     case.db_exec("INSERT INTO turn(conversation_id, seq, status, queued_at)"
                  " VALUES(?,1,'done',?)", (conv["id"], ffwatch.now_iso()))
-    check("a conversation that has already run a turn is not held",
-          case.watcher.new_conversation_held(conv) == 0)
+    check("a conversation that has already run a turn waits too",
+          case.watcher.conversation_held(conv) > 0)
 
-    # AND A LOCAL PROMPT CANNOT BE. submit() raises when create_turn returns None, so a hold
-    # there is an error at somebody's terminal rather than a wait -- and nothing would ever
-    # come back for it, because no poller offers a shell conversation a second time.
+    # A LOCAL PROMPT IS NOT HELD BY THIS ONE. There is a person at a terminal, and nothing would
+    # ever come back for it: no poller offers a shell conversation with no turn a second time.
     case.db_exec("UPDATE conversation SET kind='shell' WHERE id=?", (conv["id"],))
     case.db_exec("DELETE FROM turn WHERE conversation_id=?", (conv["id"],))
     local = case.rows("SELECT * FROM conversation")[0]
     check("a shell prompt runs whatever the window says",
-          case.watcher.new_conversation_held(local) == 0)
+          case.watcher.conversation_held(local) == 0)
 
     # A REVIEW IS NOT HELD HERE EITHER. It has its own, lower hold in poll_github, applied
     # before the pull request is fetched; by the time one reaches create_turn the branch is
@@ -15402,7 +15406,7 @@ def test_only_a_first_turn_waits_and_never_a_terminal_or_a_review():
     case.db_exec("UPDATE conversation SET kind=? WHERE id=?", (ffwatch.GITHUB_KIND, conv["id"]))
     review = case.rows("SELECT * FROM conversation")[0]
     check("nor is a review, which was gated at its own ingress",
-          case.watcher.new_conversation_held(review) == 0)
+          case.watcher.conversation_held(review) == 0)
 
 
 def test_a_hold_that_cannot_read_the_windows_runs_the_work():
@@ -15413,7 +15417,7 @@ def test_a_hold_that_cannot_read_the_windows_runs_the_work():
     # set aside, an empty pool, a reader that raises -- runs the work.
     hold_case(case, [key_record("only", state="unreachable")])
     check("an unreadable account does not hold anything",
-          case.watcher.new_conversation_held(conv) == 0)
+          case.watcher.conversation_held(conv) == 0)
 
     class Exploding:
         def read(self, now=None):
@@ -15421,13 +15425,13 @@ def test_a_hold_that_cannot_read_the_windows_runs_the_work():
 
     case.watcher._claude = Exploding()
     check("and neither does a reader that raises",
-          case.watcher.new_conversation_held(conv) == 0)
+          case.watcher.conversation_held(conv) == 0)
 
     # TURNING THE HOLD OFF PUTS THE BOX BACK to never reading the windows at all, which is what
     # a one-account box did before any of this existed.
     case.watcher._claude = StubClaudeKeys([key_record("only", five=99.0, seven=99.0)])
     case.watcher.cfg["claude"] = {"new_conversation_hold_pct": None, "review_hold_pct": None}
-    check("a null threshold is no hold", case.watcher.new_conversation_held(conv) == 0)
+    check("a null threshold is no hold", case.watcher.conversation_held(conv) == 0)
     check("and nothing was read to find that out", case.watcher._claude.reads == 0)
 
 
@@ -15478,6 +15482,461 @@ def test_a_codereview_trigger_waits_in_the_cursor_and_runs_when_the_window_refil
           held == [] and "5501" in seen, (held, seen))
     check("so a third poll does not review it twice",
           case.watcher.poll_github() == [], None)
+
+
+# --- the quiet hours ---------------------------------------------------------------------------
+#
+# The other hold, and the only one on this box that is a reading of the CLOCK rather than of a
+# subscription. It holds harder than either share does -- a follow-up, a review and a local
+# prompt all wait, where the subscription holds let two of those through -- and it holds for a
+# stretch nobody has to guess at, which is what the break notice can finally say.
+
+
+def quiet_window(case, hours_left=2, timezone=None):
+    """Put this case's box inside a window that lifts `hours_left` from now. Returns it.
+
+    ANCHORED ON THE WALL CLOCK THIS SUITE IS ACTUALLY RUNNING AT, because the whole point of
+    the feature is that it reads that clock: a fixed "02:00"-"11:00" would pass or fail
+    depending on what time the suite was run, which is the one property a test must not have.
+    The arithmetic itself is pinned to fixed instants below, where it belongs.
+    """
+    lt = time.localtime()
+    minute = lt.tm_hour * 60 + lt.tm_min
+    window = {"start": _hhmm((minute - 60) % 1440), "end": _hhmm((minute + hours_left * 60) % 1440),
+              "timezone": timezone}
+    case.watcher.cfg["quiet_hours"] = window
+    return window
+
+
+def _hhmm(minute_of_day):
+    hours, minutes = divmod(minute_of_day, 60)
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def quiet_over(case):
+    """Take the box back out of its quiet hours, leaving everything else as it was."""
+    case.watcher.cfg["quiet_hours"] = {"start": None, "end": None, "timezone": None}
+
+
+def test_the_quiet_hours_are_a_window_on_the_wall_clock():
+    """The arithmetic, at fixed instants -- including the two mornings the offset moves.
+
+    Every case here is one a test could not reach by waiting, which is why the whole of it is a
+    pure function taking the clock as an argument rather than a method on the Watcher.
+    """
+    print("quiet hours: the window")
+    from zoneinfo import ZoneInfo
+    detroit = ZoneInfo("America/Detroit")
+
+    def at(y, m, d, hh, mm):
+        return datetime(y, m, d, hh, mm, tzinfo=detroit).timestamp()
+
+    cfg = {"quiet_hours": {"start": "02:00", "end": "11:00", "timezone": "America/Detroit"}}
+
+    def held(*when):
+        return ffwatch.quiet_hours_hold(cfg, now=at(*when))
+
+    # HALF-OPEN, `start <= now < end`. The minute it opens is quiet and the minute it closes is
+    # not, so a box configured to 11:00 answers at 11:00 sharp rather than at 11:01.
+    check("a minute before it opens, nothing is held", held(2026, 9, 8, 1, 59)[0] == 0)
+    check("the minute it opens, everything is", held(2026, 9, 8, 2, 0)[0] == 32400,
+          held(2026, 9, 8, 2, 0))
+    check("and the countdown is to the minute it lifts",
+          ffwatch.hold_duration(held(2026, 9, 8, 3, 30)[0]) == "7h:30m", held(2026, 9, 8, 3, 30))
+    check("a minute before it lifts it is still a hold", held(2026, 9, 8, 10, 59)[0] == 60)
+    check("the minute it lifts it is not", held(2026, 9, 8, 11, 0)[0] == 0)
+    check("and the rest of the day is clear", held(2026, 9, 8, 23, 0)[0] == 0)
+    check("the reason names the window and the clock it was read against",
+          "02:00-11:00 America/Detroit" in held(2026, 9, 8, 3, 30)[1],
+          held(2026, 9, 8, 3, 30)[1])
+
+    # ACROSS MIDNIGHT. 22:00-07:00 is nine hours over two dates, not a fifteen-hour day, and
+    # `start > end` is the only thing that says so.
+    wrap = {"quiet_hours": {"start": "22:00", "end": "07:00", "timezone": "America/Detroit"}}
+    def wrapped(*when):
+        return ffwatch.quiet_hours_hold(wrap, now=at(*when))
+    check("an evening window opens in the evening", wrapped(2026, 9, 8, 21, 59)[0] == 0
+          and wrapped(2026, 9, 8, 22, 0)[0] == 32400, wrapped(2026, 9, 8, 22, 0))
+    check("and is still in force after midnight, on the other date",
+          ffwatch.hold_duration(wrapped(2026, 9, 9, 0, 30)[0]) == "6h:30m",
+          wrapped(2026, 9, 9, 0, 30))
+    check("lifting in the morning", wrapped(2026, 9, 9, 6, 59)[0] == 60
+          and wrapped(2026, 9, 9, 7, 0)[0] == 0)
+
+    # THE TWO NIGHTS A YEAR THE OFFSET MOVES UNDER THE WINDOW. `now + (end - now_minute)` is
+    # right for 363 of them and an hour wrong for these two, and an hour wrong is the difference
+    # between coming back to a box that is working and coming back to one that is not. Read on
+    # the wrapping window because that is where both transitions fall: 02:00 on the March
+    # morning does not exist at all, which is a window that opens at a time there is not.
+    check("an ordinary night is as long as it looks",
+          ffwatch.hold_duration(wrapped(2026, 9, 8, 23, 0)[0]) == "8h:00m",
+          wrapped(2026, 9, 8, 23, 0))
+    check("the night the clocks go forward is an hour shorter than the wall clock says",
+          ffwatch.hold_duration(wrapped(2026, 3, 7, 23, 0)[0]) == "7h:00m",
+          wrapped(2026, 3, 7, 23, 0))
+    check("and the night they go back, an hour longer",
+          ffwatch.hold_duration(wrapped(2026, 10, 31, 23, 0)[0]) == "9h:00m",
+          wrapped(2026, 10, 31, 23, 0))
+
+    # A HOLD MUST NOT TURN ITSELF ON. Every unreadable spelling is off, not "on at some hour
+    # nobody chose" -- this is the one hold with no reading behind it to fail open from.
+    for broken in ({}, {"start": "02:00"}, {"end": "11:00"}, {"start": "02:00", "end": "2pm"},
+                   {"start": "02:00", "end": "25:00"}, {"start": "02:00", "end": 11},
+                   {"start": "03:00", "end": "03:00"},
+                   {"start": "02:00", "end": "11:00", "timezone": "America/Detriot"}):
+        got = ffwatch.quiet_hours_hold({"quiet_hours": broken}, now=at(2026, 9, 8, 3, 30))
+        check(f"{broken or 'an empty block'} is no window", got == (0, ""), got)
+    check("and neither is no block at all",
+          ffwatch.quiet_hours_hold({}, now=at(2026, 9, 8, 3, 30)) == (0, ""))
+    # START EQUAL TO END IS OFF and not a 24-hour hold: a hold nothing can lift is not a
+    # schedule, and reading it as one would silence the box for good on a typo.
+
+
+def test_inside_the_quiet_hours_nothing_starts_at_all():
+    print("quiet hours: everything waits, not only a first turn")
+    case, _ = branch_directive_case("quiet-all", "hey max, why is my save corrupt?")
+    conv = case.rows("SELECT * FROM conversation")[0]
+    # A BOX WITH ROOM TO SPARE. Nothing here is about the subscription, and leaving it full is
+    # what proves that: the only thing holding this turn is what time it is.
+    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    quiet_window(case)
+
+    check("a new conversation waits", case.watcher.create_turn(conv) is None,
+          case.rows("SELECT * FROM turn"))
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    check("with its message left unclaimed and ungated, exactly as the other hold leaves it",
+          (msg["turn_id"], msg["gate"]) == (None, None), dict(msg))
+
+    # A FOLLOW-UP TOO, which is the whole difference from the subscription hold. There is no
+    # exchange to be in the middle of at 4am.
+    case.db_exec("INSERT INTO turn(conversation_id, seq, status, queued_at)"
+                 " VALUES(?,1,'done',?)", (conv["id"], ffwatch.now_iso()))
+    check("and so does a follow-up on a conversation that has already run",
+          case.watcher.create_turn(case.rows("SELECT * FROM conversation")[0]) is None,
+          case.rows("SELECT id, seq FROM turn"))
+
+    # AND A REVIEW, which the subscription hold deliberately leaves alone at this point. Its
+    # messages are swept by claim_turns like any other conversation's, so deferring it here
+    # strands nothing.
+    case.db_exec("UPDATE conversation SET kind=? WHERE id=?", (ffwatch.GITHUB_KIND, conv["id"]))
+    check("and a review, which the subscription hold leaves to its own ingress",
+          case.watcher.create_turn(case.rows("SELECT * FROM conversation")[0]) is None)
+
+    # NOTHING WAS ASKED OF ANTHROPIC TO FIND ANY OF THAT OUT. `fresh=True` is two GETs per key
+    # on the launch path -- and for a `claude setup-token` key a window reading is not a lookup
+    # at all but a one-token Haiku request -- so spending one per candidate message for nine
+    # hours a night to confirm what the clock had already decided is the cost this avoids.
+    check("and the subscriptions were never read, because the clock had already answered",
+          case.watcher._claude.reads == 0, case.watcher._claude.reads)
+
+    # THE MORNING. Nobody re-sends anything; the ordinary sweep does the work.
+    case.db_exec("DELETE FROM turn WHERE conversation_id=?", (conv["id"],))
+    case.db_exec("UPDATE conversation SET kind='ask' WHERE id=?", (conv["id"],))
+    quiet_over(case)
+    created = case.watcher.claim_turns()
+    check("the ordinary sweep picks it up once they lift", len(created) == 1, created)
+    check("on the very message that waited",
+          case.rows("SELECT * FROM message ORDER BY id")[0]["turn_id"] == created[0])
+
+
+def test_a_quiet_box_says_the_same_thing_a_spent_one_does():
+    print("quiet hours: the break notice")
+    case, mid = held_and_addressed("quiet-note")
+    # THE SAME CASE, WITH THE SUBSCRIPTION PUT BACK. held_and_addressed sets up an account at
+    # 91% of its week; refilling it leaves the clock as the only thing holding anything.
+    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    quiet_window(case, hours_left=2)
+    conv = case.rows("SELECT * FROM conversation")[0]
+
+    check("no turn", case.watcher.create_turn(conv) is None, case.rows("SELECT * FROM turn"))
+    said = posts(case)
+    secs, _ = ffwatch.quiet_hours_hold(case.watcher.cfg)
+    check("it says the thing a spent subscription says, in the same words", len(said) == 1
+          and said[0]["text"] == ffwatch.HOLD_NOTE.format(
+              for_how_long=ffwatch.hold_duration(secs)), said)
+    check("and the wait it names is the one until the hours lift, not until a window refills",
+          ffwatch.hold_duration(secs) in ("2h:00m", "1h:59m"), ffwatch.hold_duration(secs))
+    check("silent, replying to the message that is waiting",
+          said[0]["silent"] is True and said[0]["reply_to"] == mid, said[0])
+    check("and no acknowledgement reaction, because nothing is working",
+          case.rows("SELECT * FROM outbound WHERE action='react'") == [], None)
+    check("said once, however many passes go by", case.watcher.create_turn(conv) is None
+          and len(posts(case)) == 1, posts(case))
+
+
+def test_a_second_night_gets_a_second_sentence():
+    """The marker names the WAIT, not the conversation.
+
+    Under `hold:<conversation>` this was right for as long as only a first turn could be held:
+    such a conversation has no turns, so the moment it is answered it stops being holdable.
+    Quiet hours hold follow-ups, so the same thread comes back night after night -- and
+    somebody told about Monday's break and met with silence for Tuesday's is exactly the
+    failure the notice was written to prevent.
+    """
+    print("quiet hours: told again the next time")
+    case, mid = held_and_addressed("quiet-twice")
+    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    conv = case.rows("SELECT * FROM conversation")[0]
+    quiet_window(case)
+    check("the first night is announced", case.watcher.create_turn(conv) is None
+          and len(posts(case)) == 1, posts(case))
+
+    # THE MORNING, AND THE ANSWER. One turn on the conversation is what moves the marker on.
+    quiet_over(case)
+    created = case.watcher.claim_turns()
+    check("and the answer happens once they lift", len(created) == 1, created)
+    check("with no second notice riding along with it", len(posts(case)) == 1, posts(case))
+
+    # THE NEXT NIGHT, on the same thread. A follow-up, held, and told about it.
+    case.db_exec("UPDATE turn SET status='done' WHERE conversation_id=?", (conv["id"],))
+    case.db_exec("UPDATE conversation SET state='idle' WHERE id=?", (conv["id"],))
+    second = sflake(0, 2)
+    case.watcher.insert_message(conv["id"], {
+        "id": second, "author": {"id": PLAYER, "username": "player", "bot": False},
+        "content": "@max any luck with that?", "timestamp": ffwatch.now_iso(),
+        "mentions": [{"id": BOT}]})
+    quiet_window(case)
+    check("the follow-up waits too", case.watcher.create_turn(
+        case.rows("SELECT * FROM conversation")[0]) is None)
+    said = posts(case)
+    check("and is told so rather than met with the silence the first one was spared",
+          len(said) == 2 and said[1]["reply_to"] == second, said)
+    markers = [r["local_id"] for r in
+               case.rows("SELECT local_id FROM outbound WHERE action='post' ORDER BY id")]
+    check("the two notices are keyed on the wait, not on the conversation",
+          markers == [f"hold:{conv['id']}:0", f"hold:{conv['id']}:1"], markers)
+
+
+def test_a_quiet_night_runs_no_model_at_all():
+    """The point of the hours, and the thing the first cut of them got wrong.
+
+    A hold that exists so the box runs nothing overnight cannot reach its answer by running the
+    classifier once per candidate message: that is the box awake, doing the one kind of work it
+    was told not to do, in order to decide it is asleep. There are three model calls on a pass
+    -- the selector inside resettle(), the engagement gate, and the window reading behind
+    account selection, which for a `claude setup-token` key is a real one-token Haiku request
+    rather than a lookup. This asserts all three are silent.
+    """
+    print("quiet hours: nothing runs, including the classifier")
+    mid = sflake(0, 1)
+    fixture = base_fixture()
+    # NOT ADDRESSED TO THE BOT, no attachment, not a thread: exactly the message whose fate
+    # only the engagement gate can decide, in a channel that asks it about everything.
+    fixture["messages"][ASK_CHANNEL] = [message(mid, "anyone else seeing this on develop?")]
+    case = Case("quiet-nomodel", fixture, verdict={"engage": True, "reason": "a real question"})
+    case.events(ask_event(mid))
+    case.watcher.drain_events()
+    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    quiet_window(case)
+    conv = case.rows("SELECT * FROM conversation")[0]
+
+    # THE ANSWERING STUB WRITES THE PROMPT IT WAS HANDED TO A FILE, so an empty one is proof
+    # the classifier was never invoked -- not merely that its answer went unused.
+    check("nothing was handed to the classifier before this pass", case.gate_prompt() == "")
+    check("no turn", case.watcher.create_turn(conv) is None, case.rows("SELECT * FROM turn"))
+    check("and the gate was never run, though this is a message only the gate could judge",
+          case.gate_prompt() == "", case.gate_prompt()[:200])
+    check("nor was any account's window read",
+          case.watcher._claude.reads == 0, case.watcher._claude.reads)
+
+    # AND NO PROMISE EITHER, which is the price of not running the gate: whether this message
+    # was for the bot at all is precisely what the gate answers, and guessing "yes" at 4am to
+    # be polite would put a break notice under conversations the box would never have answered.
+    check("and nothing is said to somebody the box has not decided to answer",
+          posts(case) == [], posts(case))
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    check("the message is left untouched, so the morning judges it as 10:59 would have",
+          (msg["turn_id"], msg["gate"]) == (None, None), dict(msg))
+
+    # FIVE MORE PASSES, STILL NOTHING. A held conversation is offered again every tick.
+    for _ in range(5):
+        case.watcher.claim_turns()
+    check("and a night of passes spends nothing either",
+          case.gate_prompt() == "" and case.watcher._claude.reads == 0,
+          (case.gate_prompt()[:80], case.watcher._claude.reads))
+
+    # THE MORNING RUNS THE WHOLE PIPELINE PROPERLY, gate and all.
+    quiet_over(case)
+    created = case.watcher.claim_turns()
+    check("the gate runs once they lift", case.gate_prompt() != "")
+    check("and the turn it engages on is made", len(created) == 1, created)
+
+
+def test_a_message_the_box_would_certainly_answer_is_still_told():
+    """The half of always_a_turn that lets the notice survive without a gate call.
+
+    Being addressed, being handed evidence and opening a report are facts the harness can see
+    for itself -- the gate is never consulted for them even on an ordinary pass -- so promising
+    an answer to one costs nothing and claims nothing that was not already true.
+    """
+    print("quiet hours: who still gets told")
+    case, mid = held_and_addressed("quiet-addressed")
+    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    quiet_window(case)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("no turn", case.watcher.create_turn(conv) is None)
+    check("somebody who addressed the bot is told, with no gate call to decide it",
+          len(posts(case)) == 1 and case.gate_prompt() == "", (posts(case), case.gate_prompt()))
+    check("and no window was read to decide it either",
+          case.watcher._claude.reads == 0, case.watcher._claude.reads)
+
+
+def test_the_warm_pool_stops_topping_up_but_still_ages_out():
+    """Staging chooses which account a spare will bill, and choosing reads the windows.
+
+    That reading is the third model call: for a `claude setup-token` key the usage document is
+    closed and ClaudeKeys falls back to a real one-token Haiku request. Left running, a nine
+    hour night at the default quarter-hour refresh is about thirty-six of them per account, to
+    keep containers warm for turns that cannot start -- and `idle_agent_ttl_secs` would reap and
+    re-stage the pool two or three times over while it did.
+    """
+    print("quiet hours: the warm pool")
+    case = Case("quiet-pool")
+    case.watcher.cfg["idle_agents"] = 1
+    # THE STUB ffbox CANNOT STAGE A POOL CONTAINER, so what is counted is the ATTEMPT: whether
+    # keep_pool reached the one call that picks an account and creates a container.
+    tried = []
+    # RETURNS AN ID, because keep_pool reads None as a failed attempt and backs that class off
+    # for a while -- which would make the morning look like the hold rather than like a pool
+    # that had simply given up.
+    case.watcher.pool_stage = lambda *a, **k: tried.append((a, k)) or f"pool-{len(tried)}"
+
+    quiet_over(case)
+    case.watcher.keep_pool()
+    check("outside the hours the pool is topped up as usual", len(tried) > 0, tried)
+
+    quiet_window(case)
+    before = len(tried)
+    for _ in range(5):
+        case.watcher.keep_pool()
+    check("inside them a night of passes stages nothing", len(tried) == before,
+          (before, len(tried)))
+
+    quiet_over(case)
+    case.watcher.keep_pool()
+    check("and the morning tops it up again with nobody asking",
+          len(tried) > before, (before, len(tried)))
+
+    # THE EXPIRY AND THE REAP ARE ABOVE THE HOLD ON PURPOSE, so a pool warmed before 2am sheds
+    # overnight rather than being held and re-staged. Asserted structurally: both run before the
+    # line that returns, which is the same guarantee the failsafe already relies on.
+    src = inspect.getsource(ffwatch.Watcher.keep_pool)
+    body = src.index("quiet_hours_hold")
+    check("expiry and reaping still run first, exactly as they do in the failsafe",
+          src.index("self.pool_expire()") < body and src.index("self.pool_reap()") < body, src[:0])
+
+
+def test_a_local_prompt_is_refused_and_a_local_follow_up_waits():
+    """The one request quiet hours REFUSE, and the reason they cannot defer it.
+
+    claim_turns will not sweep a local conversation until it has a turn -- deliberately, so a
+    crashed submit cannot cost a container answering a question already answered -- so a
+    deferred opening prompt would wait not until 11:00 but for good. A follow-up has turns
+    behind it and takes the path the run-in-flight case already built.
+    """
+    print("quiet hours: the terminal")
+    case = Case("quiet-local")
+    first = case.watcher.submit("what does the merger do when both inputs saturate?",
+                                kind="web")
+    case.watcher.once()
+    conv_id = case.watcher.db.one("SELECT conversation_id FROM turn WHERE id=?",
+                                  (first,))["conversation_id"]
+    quiet_window(case)
+
+    before = len(case.rows("SELECT * FROM conversation"))
+    try:
+        case.watcher.submit("and what about the splitter?", kind="shell")
+        check("a prompt typed inside the quiet hours is refused", False, "no error raised")
+    except RuntimeError as exc:
+        check("a prompt typed inside the quiet hours is refused, in a sentence that says when",
+              "quiet hours" in str(exc) and "still yours to send" in str(exc), str(exc))
+    # NOT A SINGLE ROW, which is the difference between a refusal and an orphan: a conversation
+    # and a message recorded for a turn that will never exist is the very thing claim_turns'
+    # guard is written against.
+    check("and nothing at all is recorded for it",
+          len(case.rows("SELECT * FROM conversation")) == before
+          and [r["content"] for r in case.rows("SELECT content FROM message")]
+          == ["what does the merger do when both inputs saturate?"],
+          case.rows("SELECT id, content FROM message"))
+
+    # A FOLLOW-UP IS DEFERRED INSTEAD. The conversation has a turn, so the sweep knows it.
+    msg_id, turn_id = case.watcher.follow_up(conv_id, "and what about the splitter?")
+    check("a follow-up typed inside them is recorded and left for the morning",
+          turn_id is None and msg_id is not None, (msg_id, turn_id))
+    check("the sweep leaves it alone while they are in force",
+          case.watcher.claim_turns() == [], case.rows("SELECT id, seq FROM turn"))
+
+    quiet_over(case)
+    created = case.watcher.claim_turns()
+    check("and picks it up once they lift", len(created) == 1, created)
+    check("on the message that waited, as a second turn of the same conversation",
+          case.rows("SELECT * FROM message ORDER BY id")[-1]["turn_id"] == created[0]
+          and len(case.rows("SELECT * FROM conversation")) == 1,
+          case.rows("SELECT id, conversation_id, seq FROM turn"))
+
+
+def test_a_quiet_box_holds_a_review_at_the_gate_it_already_had():
+    print("quiet hours: #codereview")
+    case = Case("quiet-review")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(42, "loth/pr-branch")
+    a_comment(5701, 42, "#codereview", stamp="2026-09-06T12:00:00Z")
+    # AGAIN A BOX WITH ROOM. The subscription would run this review; the clock is what does not.
+    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    quiet_window(case)
+
+    check("no review starts", case.watcher.poll_github() == [], None)
+    check("and nothing is posted on the pull request, which is what a hold has always done",
+          GH_STATE["posted"] == [] and GH_STATE["reactions"] == [],
+          (GH_STATE["posted"], GH_STATE["reactions"]))
+    _, seen, etag, held = case.watcher.read_github_cursor()
+    check("the trigger waits in the cursor exactly as a spent window leaves it",
+          held == ["5701"] and "5701" not in seen and etag is None, (held, seen, etag))
+    check("and the subscriptions were not read to decide it",
+          case.watcher._claude.reads == 0, case.watcher._claude.reads)
+
+    quiet_over(case)
+    created = case.watcher.poll_github()
+    check("the review starts on its own once they lift, with nobody re-typing the trigger",
+          len(created) == 1, created)
+
+
+def test_the_status_page_says_which_hold_is_biting():
+    print("quiet hours: ffwatch status")
+    case, _ = branch_directive_case("quiet-status", "hey max")
+    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    quiet_over(case)
+    lines = case.watcher.claude_status()
+    check("with no window configured the report says nothing about one",
+          not any("quiet hours" in ln for ln in lines), lines)
+
+    quiet_window(case, hours_left=3)
+    lines = case.watcher.claude_status()
+    quiet = [ln for ln in lines if ln.startswith("quiet hours:")]
+    # ITS OWN LINE, AND THE FIRST ONE. This is the hold that holds hardest, and reading "clear,
+    # running now" against both subscriptions while the box has answered nobody since 2am is
+    # exactly the report that sends somebody to the journal for an hour.
+    check("a configured window gets a line of its own", len(quiet) == 1, lines)
+    check("naming the window and saying it is biting, with the wait as a clock",
+          "WAITING" in quiet[0] and ffwatch.hold_duration(
+              ffwatch.quiet_hours_hold(case.watcher.cfg)[0]) in quiet[0], quiet[0])
+    # ABOVE THE ACCOUNTS, AND PRINTED WHETHER OR NOT THERE ARE ANY. This suite runs with no
+    # token in its environment at all, which is exactly the path that used to return early and
+    # drop every hold line with it.
+    check("above the subscription lines, and on a box with no accounts at all",
+          lines.index(quiet[0]) == 0 and len(lines) > 1, lines)
+
+    # AND IT IS PRINTED WHEN IT IS NOT BITING TOO. "Nothing has started for two hours" is the
+    # moment somebody goes looking for this, and an absent line answers nothing.
+    lt = time.localtime()
+    case.watcher.cfg["quiet_hours"] = {
+        "start": _hhmm((lt.tm_hour * 60 + lt.tm_min + 120) % 1440),
+        "end": _hhmm((lt.tm_hour * 60 + lt.tm_min + 240) % 1440), "timezone": None}
+    quiet = [ln for ln in case.watcher.claude_status() if ln.startswith("quiet hours:")]
+    check("a window that is not in force still says so", len(quiet) == 1
+          and "clear, running now" in quiet[0], quiet)
 
 
 def test_a_strangers_trigger_is_ignored_rather_than_held():
@@ -15971,10 +16430,20 @@ def main():
         test_a_held_conversation_costs_one_gate_call_and_not_one_per_pass,
         test_a_spawn_decision_asks_anthropic_rather_than_the_cache,
         test_the_daemon_leaves_its_readings_where_ffweb_can_find_them,
-        test_only_a_first_turn_waits_and_never_a_terminal_or_a_review,
+        test_what_the_subscription_hold_may_not_touch,
         test_a_hold_that_cannot_read_the_windows_runs_the_work,
         test_a_codereview_trigger_waits_in_the_cursor_and_runs_when_the_window_refills,
         test_a_strangers_trigger_is_ignored_rather_than_held,
+        test_the_quiet_hours_are_a_window_on_the_wall_clock,
+        test_inside_the_quiet_hours_nothing_starts_at_all,
+        test_a_quiet_box_says_the_same_thing_a_spent_one_does,
+        test_a_second_night_gets_a_second_sentence,
+        test_a_quiet_night_runs_no_model_at_all,
+        test_a_message_the_box_would_certainly_answer_is_still_told,
+        test_the_warm_pool_stops_topping_up_but_still_ages_out,
+        test_a_local_prompt_is_refused_and_a_local_follow_up_waits,
+        test_a_quiet_box_holds_a_review_at_the_gate_it_already_had,
+        test_the_status_page_says_which_hold_is_biting,
         test_every_agent_container_carries_its_class,
         test_the_transcript_is_shared_before_the_host_first_looks,
         test_the_verification_directory_is_left_deletable,
