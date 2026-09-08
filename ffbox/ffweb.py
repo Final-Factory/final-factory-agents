@@ -1213,11 +1213,14 @@ def page(title, body_parts, banner="", refresh=False):
     A tick carries the reader's scroll offset AND the folds they had opened across the reload
     (see the refresh script), so watching a long transcript grow does not keep snapping back to
     the top with everything shut again.
+
+    `title` is the tab's name after the "FFBox - " prefix, so it is passed capitalised — a
+    reader hunting through a wall of browser tabs looks for FFBox first and the page second.
     """
     return (
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        "<title>" + esc(title) + " — ffweb</title><style>" + STYLE + "</style></head><body>"
+        "<title>FFBox - " + esc(title) + "</title><style>" + STYLE + "</style></head><body>"
         "<header><span class=\"brand\">ffweb</span>"
         "<a href=\"/\">conversations</a><a href=\"/lanes\">tiers</a>"
         "<a href=\"/outbound\">outbound</a><a href=\"/status\">box</a>"
@@ -1247,7 +1250,7 @@ def login_page(next_path="/", error=""):
     return (
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        "<title>sign in — ffweb</title><style>" + STYLE + "</style></head>"
+        "<title>FFBox - Sign in</title><style>" + STYLE + "</style></head>"
         "<body class=\"signin\">"
         "<header><span class=\"brand\">ffweb</span></header>"
         "<main class=\"login\"><h1>sign in</h1>" + banner +
@@ -1712,7 +1715,7 @@ class FFWebHandler(BaseHTTPRequestHandler):
                       ", ".join(sorted(self.app.self_origins))
 
     def _error(self, code, message):
-        self._send(code, page(f"{code}", [f"<h1>{esc(code)}</h1><p>{esc(message)}</p>"]))
+        self._send(code, page(f"Error {code}", [f"<h1>{esc(code)}</h1><p>{esc(message)}</p>"]))
 
     def _redirect(self, location):
         self._send(303, b"", extra=[("Location", location)])
@@ -2263,7 +2266,7 @@ class App:
         note = ["<p class=\"note\">" + esc(msg) + "</p>"] if msg else []
         if (query.get("sent") or [""])[0]:
             note.insert(0, "<div class=\"toast\">Message sent</div>")
-        return page("conversations",
+        return page("Conversations",
                     [heading] + note + [self._prompt_box(), "".join(form)] + body
                     + [self._totals_note(), "<script>" + FILTER_SCRIPT + "</script>"],
                     refresh=True)
@@ -2322,7 +2325,7 @@ class App:
                 "killed during warm-up has a warm-up but no agent time, and a launch that never "
                 "reached the container has neither. The count in brackets is how many runs each "
                 "average covers.</p>")
-        return page("tiers", ["<h1>trust tiers</h1>"] + body + [note])
+        return page("Tiers", ["<h1>trust tiers</h1>"] + body + [note])
 
     # -- the box ------------------------------------------------------------------------
 
@@ -2358,7 +2361,7 @@ class App:
         if err:
             # A sentence and a live page, rather than a 500. What breaks the status read is
             # usually docker, which is also when somebody most wants to look at this page.
-            return page("box", head + ["<p class=\"note\">" + esc(err) + "</p>"], refresh=True)
+            return page("Box", head + ["<p class=\"note\">" + esc(err) + "</p>"], refresh=True)
 
         box = doc.get("box") or {}
         used, cap = box.get("used"), box.get("max")
@@ -2521,7 +2524,7 @@ class App:
         # The minute tick, not the ten-second one. A pool refills in tens of seconds and a run
         # lasts minutes, so a faster reload would spend more of this box's docker socket than
         # it would tell anybody.
-        return page("box", head + body, refresh=True)
+        return page("Box", head + body, refresh=True)
 
     # -- stopping one container ---------------------------------------------------------------
 
@@ -2544,21 +2547,21 @@ class App:
         head = ["<h1>stop " + esc(short(name, 120)) + "</h1>"]
         back = "<p class=\"note\"><a href=\"/status\">back to the box</a></p>"
         if err:
-            return page("stop", head + ["<p class=\"note\">" + esc(err) + "</p>", back])
+            return page("Stop", head + ["<p class=\"note\">" + esc(err) + "</p>", back])
 
         row = next((c for c in (doc.get("containers") or []) if c.get("name") == name), None)
         if row is None:
             # The ordinary race, and the harmless one: the turn ended between the page being
             # rendered and the pill being clicked. Not a 404 — the operator asked a reasonable
             # question and the answer is "it is already gone".
-            return page("stop", head + [
+            return page("Stop", head + [
                 "<p class=\"note\">No container by that name is running on this box now. It "
                 "most likely finished between this page being drawn and the click.</p>", back])
         if row.get("state") not in STOPPABLE_STATES:
             # Reachable by a hand-typed URL, and by a click on a page old enough that the row has
             # changed state underneath it. Named states rather than a flat refusal, because the
             # thing to do next depends on which one it is.
-            return page("stop", head + [
+            return page("Stop", head + [
                 "<p class=\"note\">" + esc(name) + " is " +
                 esc(str(row.get("state") or "in some other state")) +
                 ", not running a turn. A staged spare is retired with "
@@ -2600,7 +2603,7 @@ class App:
         # NO REFRESH TICK. A page that reloads under somebody deciding is a page that can move
         # the button out from under them, and there is nothing on it that goes stale in a way the
         # POST does not check again anyway.
-        return page("stop", head + body)
+        return page("Stop", head + body)
 
     # -- the Claude keys ----------------------------------------------------------------------
 
@@ -2633,7 +2636,7 @@ class App:
         rows = self.keys.read()
         head = ["<h1>claude keys</h1>"]
         if not rows:
-            return page("claude", head + [
+            return page("Claude", head + [
                 "<p class=\"note\">No Claude token in this process's environment, and none in "
                 + esc(os.environ.get("FFBOX_SECRETS") or "~/.config/ffbox/secrets.env") +
                 ". Put one key per account in that file as " +
@@ -2705,7 +2708,7 @@ class App:
                 body.append("<p class=\"empty\">Anthropic reported no windows for this "
                             "key.</p>")
             body.append("</div>")
-        return page("claude", head + body, refresh=True)
+        return page("Claude", head + body, refresh=True)
 
     # -- one conversation -------------------------------------------------------------------
 
@@ -2745,7 +2748,7 @@ class App:
             note.append("<p class=\"note\">" + esc(msg) + "</p>")
         items = self._timeline(conv_id)
         body = ["<h2>timeline</h2>"] + items
-        return page(conv["title"] or f"conversation {conv_id}",
+        return page(conv["title"] or f"Conversation {conv_id}",
                     head + note + [self._reply_box(conv, in_flight)] + body,
                     refresh="live" if in_flight else True)
 
@@ -3302,7 +3305,7 @@ class App:
                 self._render_transcript(rows, live=live)]
         # A finished transcript does not move, so it does not reload under its reader. One
         # still being written does, and somebody watching a run is watching for exactly that.
-        return page(f"run {run['ffbox_run_id'] or run_id}", head + body,
+        return page(f"Run {run['ffbox_run_id'] or run_id}", head + body,
                     refresh="live" if live else False)
 
     def _render_transcript(self, rows, live=False):
@@ -3416,7 +3419,7 @@ class App:
             body.append(self._render_outbound(row))
         if not rows:
             body.append("<p class=\"empty\">nothing queued</p>")
-        return page("outbound", head + body, refresh=True)
+        return page("Outbound", head + body, refresh=True)
 
     def _render_outbound(self, row):
         try:
