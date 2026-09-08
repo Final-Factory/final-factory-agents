@@ -461,6 +461,13 @@ address here (`"web_host": "192.168.51.10"`), which is a deliberate edit made in
 place. `ffweb` refuses to combine `--enable-actions` with a non-loopback host unless
 `--allow-remote-actions` is also given.
 
+It decides one thing outside the bind. A pull request opened from a shell or web prompt starts
+with a link back to the conversation page that asked for it, and that link can only be built out
+of `web_host` and `web_port`. A loopback or `0.0.0.0` value means nowhere the reader is, so the
+line is left out rather than written to an address that points at their own laptop; the body
+still names the conversation by id. A Discord conversation is unaffected — its link is a Discord
+one and does not come from here.
+
 ## `state_dir`
 
 Default `~/ffbox-state`. The database, the blobs and the per-conversation run directories.
