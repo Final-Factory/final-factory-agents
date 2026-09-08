@@ -63,6 +63,18 @@ say()  { printf '==> %s\n' "$*"; }
 skip() { printf '    %s\n' "$*"; }
 die()  { printf '05-services.sh: %s\n' "$*" >&2; exit 1; }
 
+# Is the container on this slot serving a job? Only used to WARN before a stop that would kill
+# one. Never fatal and never blocking: a daemon this cannot reach answers "no", because refusing
+# to install units because docker is unreachable would be the wrong failure entirely.
+docker_busy_slot() {
+    _c=$(docker ps --filter "label=ffghr.slot=${1:?}" --format '{{.Names}}' 2>/dev/null | head -1)
+    [ -n "$_c" ] || { unset _c; return 1; }
+    if docker top "$_c" -o pid,comm 2>/dev/null | grep -q 'Runner\.Worker'; then
+        unset _c; return 0
+    fi
+    unset _c; return 1
+}
+
 # WHOSE MACHINE THIS IS. SUDO_USER is only meaningful when we are actually root: it lingers in any
 # shell started under sudo. It is also ABSENT under systemd, which is how an unattended re-install
 # would arrive — that path used to render @USER@=root and @HOME@=/root in ffbox, giving units that
@@ -160,7 +172,12 @@ if [ "$INSTALL" -eq 0 ]; then
   # THREE NUMBERS, AND THEY ARE NOT THE SAME QUESTION. `units` is how many supervisors exist and
   # is the only one this script decides; `pool.max` is the live ceiling on jobs, changed with
   # `ffgithubrunners max N` and needing nothing from here; `enabled` is what systemd actually has.
-  printf 'slot units:   %s (from max_concurrent_runs; the box ceiling)\n' "$SLOT_UNITS"
+  printf 'supervisor:   %s\n' "$SUPERVISOR"
+  if [ "$SLOT_UNITS" -eq 0 ]; then
+    printf 'slot units:   0 (ffwatch owns this lane; slot.sh units are retired)\n'
+  else
+    printf 'slot units:   %s (from max_concurrent_runs; the box ceiling)\n' "$SLOT_UNITS"
+  fi
   printf 'pool.max:     %s (the live job ceiling — `ffgithubrunners max N`, no root)\n' "$SLOTS"
   printf 'slots enabled:%s\n' "${enabled_now:- none}"
   printf 'units stale:  %s\n' "${changed:- none}"
@@ -229,7 +246,17 @@ done
 for s in $enabled_now; do
   case " $want_slots " in
     *" $s "*) ;;
-    *) say "disabling slot $s (slot units=$SLOT_UNITS)"
+    *) # `--now`, WHICH STOPS A RUNNING ONE, AND THE JOB IT MAY BE SERVING WITH IT. That is the
+       # right behaviour for shrinking a pool and the wrong behaviour for retiring the lane, so
+       # retiring says what it is about to cost rather than discovering it afterwards. The
+       # supported order is: `ffgithubrunners drain`, wait for the jobs to end, then run this.
+       if [ "$SLOT_UNITS" -eq 0 ] && [ "$(systemctl is-active "ffgithubrunners@$s.service" 2>/dev/null)" = active ]; then
+         if docker_busy_slot "$s"; then
+           say "WARNING: slot $s is RUNNING A JOB and stopping it now will kill that job."
+           say "         Ctrl-C, then: ffgithubrunners drain; wait for it to finish; re-run this."
+         fi
+       fi
+       say "disabling slot $s (slot units=$SLOT_UNITS)"
        systemctl disable --now "ffgithubrunners@$s.service" >/dev/null 2>&1 || true ;;
   esac
 done
@@ -237,7 +264,17 @@ for s in $want_slots; do
   systemctl enable "ffgithubrunners@$s.service" >/dev/null 2>&1 || true
 done
 
-say "starting ffgithubrunners.target ($SLOT_UNITS slot unit(s), pool.max $SLOTS)"
+if [ "$SLOT_UNITS" -eq 0 ]; then
+  # THE TARGET STILL STARTS, and that is not an oversight. It carries the reaper and the image
+  # timer as well as the slots, and both matter more once the daemon owns the lane, not less:
+  # reap.sh is the cleanup for "the daemon is broken", which is the failure a single supervising
+  # process makes possible. What it no longer has is any slot instance to pull up.
+  say "starting ffgithubrunners.target (no slot units — ffwatch owns this lane)"
+  say "slot.sh is still on disk. To hand the lane back: set githubrunner.supervisor to slot.sh"
+  say "and re-run this script; the twelve supervisors come back and the daemon stands down."
+else
+  say "starting ffgithubrunners.target ($SLOT_UNITS slot unit(s), pool.max $SLOTS)"
+fi
 systemctl enable ffgithubrunners.target >/dev/null 2>&1 || true
 systemctl restart ffgithubrunners.target
 

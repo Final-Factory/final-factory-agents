@@ -14584,6 +14584,28 @@ class Watcher:
         if busy:
             log(f"draining: leaving {busy} staged container(s) alone — a turn is using them")
 
+        # THE CI LANE'S IDLE RUNNERS GO TOO, for the reason the staged ones do and one of their
+        # own. A CI runner holds a 40 GiB tmpfs and no work, costs nothing to recreate, and one
+        # that survives a merge serves its next job through an image and task scripts the merge
+        # replaced. Its own reason: it is REGISTERED with GitHub, so an idle one that lives
+        # through the update is a runner GitHub may hand a job to while the box is down.
+        #
+        # WHAT THIS ADDS OVER THE UPDATER'S OWN SWEEP, which does the same thing from outside
+        # (update_ffbox.sh, the `label=ffghr.slot` loop): the daemon holds the App credential, so
+        # it deletes the REGISTRATION as well. The updater's bare `docker rm -f` cannot, which is
+        # why an update currently leaves offline runners on the org page for the next reap.
+        #
+        # BOTH RUNNING AT ONCE IS HARMLESS AND IS THE POINT while slot.sh still owns the lane:
+        # ci_lane's interlock makes this a no-op today, the updater's loop does the work, and
+        # after the cut-over they swap roles with the loser finding nothing. Neither ordering
+        # breaks, so the two can be retired in either order rather than in one commit.
+        try:
+            dropped = self._ci.drop_idle()
+            if dropped:
+                log(f"draining: destroyed {dropped} idle CI runner(s) and their registrations")
+        except Exception as exc:                    # noqa: BLE001 — a drain must not fail on this
+            log(f"draining: could not drop idle CI runners: {type(exc).__name__}: {exc}")
+
         counts = self.settling()
         log(f"draining: {path} written; {self.settling_phrase(counts)} in flight")
         if not wait:
