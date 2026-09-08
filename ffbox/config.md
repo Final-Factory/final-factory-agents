@@ -366,17 +366,32 @@ for as long as the window is spent, which is indistinguishable from a box that i
 
 Silent, replying to the message that is waiting, and keyed on an outbound `local_id` of
 `hold:<conversation>` so a daemon restarted mid-hold does not re-announce. The wait is written
-`2h:15m`, or just `15m` when there is no hour in it, and never `0m`.
+`3d:04h:15m`, `2h:15m` or `15m` — as many fields as the number needs and no more, never `0m`.
+The day field earns its place on the weekly window, which resets up to seven days out: `144h`
+is a number somebody has to do arithmetic on to answer the question they are actually asking.
 
-It goes out **only where the harness already knows it was going to answer** — the
-`always_a_turn` list: somebody addressed the bot, evidence came with the message, or a report
-thread opened. The engagement gate sits *below* the hold, so a message that gate would have
-declined never got as far as being declined, and promising an answer there would be a promise
-made by skipping the step that decides whether to make it. Idle chatter in an `engage: all`
-channel, and anything unaddressed in a `mention` one, get the silence they would have got
-anyway. A `#codereview` hold says nothing at all: a refusal posted into a public pull request
-tells a stranger the trigger exists, which is the same reasoning `take_review_trigger` already
-follows.
+**It is sent only where the answer is already decided**, and the *ordering* is what guarantees
+that rather than a rule of its own. The hold sits at the last line before the turn row is
+written, so the mention-only policy, the selector and the engagement gate have all already run
+and said yes. Those are small model calls, and the buffer under the cap is exactly what keeps
+them affordable while the box has no room to run a container — whether this box would answer a
+message and whether it can answer it *yet* are two questions, and only the first can decide
+whether to promise anything.
+
+So a message the gate declines gets the silence it would have got on a box with a full week,
+with the decline recorded the same way; a mention-only channel nobody addressed gets nothing;
+and a gate that **could not run** gets nothing either. That last one is the subtle case: a
+fail-open engages on purpose, because a gate that cannot decide must not be able to swallow a
+bug report — but "I could not tell and erred towards answering" is not the claim "I am going to
+answer this", so the turn still waits and still runs after the refill with nothing said about
+it in the meantime.
+
+A held conversation is put through that decision **once**, not once per pass — `claim_turns`
+offers it again every few seconds, and a four-hour hold would otherwise spend thousands of gate
+calls re-reading one message to the same answer.
+
+A `#codereview` hold says nothing at all: a refusal posted into a public pull request tells a
+stranger the trigger exists, which is the same reasoning `take_review_trigger` already follows.
 
 Three things are deliberately never held: a **follow-up** (somebody already in a conversation
 has been told the box is working, and going quiet on them mid-exchange is the worse failure), a

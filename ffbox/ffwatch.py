@@ -3848,6 +3848,11 @@ class Watcher:
         # a hold that lasts four hours costs one line going in and one coming out rather than
         # one per poll. See log_hold.
         self._holds_said = {}
+        # HELD CONVERSATIONS THAT HAVE ALREADY BEEN THROUGH THE GATE, so a hold that lasts
+        # hours costs one engagement decision rather than one per pass. Dropped the moment the
+        # hold lifts; not persisted, because a restart costs exactly one extra gate call and
+        # the notice itself is kept off an outbound row instead. See create_turn.
+        self._hold_decided = set()
         # Ids with a retirement thread in flight, so a keeper pass that comes round again while a
         # `docker stop` is still running does not start a second one. Dropped in the thread's
         # finally, which is what lets a later pass retry a stop that did not take.
@@ -5923,7 +5928,7 @@ class Watcher:
         self.log_hold(f"conversation {conv['id']}", why)
         return secs if why else 0
 
-    def say_holding(self, conv, secs):
+    def say_holding(self, conv, secs, msgs):
         """Tell a Discord conversation its answer is coming later. Once, ever.
 
         SILENCE IS THE THING THIS FIXES. A held conversation gets no 👀 either — the mark means
@@ -5931,23 +5936,19 @@ class Watcher:
         at all for as long as the window is spent, which is indistinguishable from a box that is
         down or that decided to ignore them.
 
-        ONLY WHERE THE HARNESS KNOWS IT WAS GOING TO ANSWER. always_a_turn is that list, and it
-        is asked here for the reason it exists: being addressed, being handed evidence, or
-        opening a report are facts the harness can see for itself. The engagement gate sits
-        BELOW the hold and is what would have decided the rest, so promising an answer to a
-        message that gate would have declined -- idle chatter in an engage:all channel, a
-        message nobody addressed in a mention-only one -- would be a promise made by skipping
-        the step that says whether to make it. Those get the silence they would have got anyway.
+        ONLY WHERE THE ANSWER IS ALREADY DECIDED, and the call site is what guarantees that
+        rather than a check in here. create_turn holds at the LAST line before the turn row is
+        written, so everything that could still have said no — the mention-only policy, the
+        engagement gate, the selector — has already run and said yes. There is no cheaper place
+        to promise an answer from, because there is no earlier point at which an answer is a
+        fact rather than a guess.
 
         ONCE, EVER, and `local_id` is what makes that durable rather than a fact about this
         process's memory. A held conversation has no turns by construction, so the moment it is
         answered it stops being holdable and the marker can never wrongly suppress a second
         notice. A daemon restart mid-hold does not re-announce.
         """
-        if is_local_conversation(conv) or conv["kind"] == GITHUB_KIND:
-            return None
-        msgs = self.pending_messages(conv["id"])
-        if not msgs or not self.always_a_turn(conv, msgs):
+        if is_local_conversation(conv) or conv["kind"] == GITHUB_KIND or not msgs:
             return None
         marker = f"hold:{conv['id']}"
         if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=?", (marker,), 0):
@@ -5965,13 +5966,23 @@ class Watcher:
         return nonce
 
     def create_turn(self, conv):
-        # THE ONLY THING ABOVE THE MARK. A conversation held for want of subscription is left
-        # untouched — no mark, no gate, no classifier call — because claim_turns has to be able
-        # to offer it again unchanged once the window refills. The one thing it does get is a
-        # sentence saying so; see say_holding.
+        # HOW MUCH SUBSCRIPTION IS LEFT, ASKED ONCE AND CARRIED DOWN. It does not stop the pass
+        # here. Everything between this line and the hold below still runs — the selector, the
+        # mention-only policy, the engagement gate — because whether this box would ANSWER the
+        # message and whether it can answer it YET are two questions, and only the first can
+        # decide whether to promise an answer. The buffer under the cap is there precisely so
+        # the small calls that ask the first question still go through.
+        #
+        # WHAT THE HOLD DOES TAKE AWAY UP HERE is the 👀. That mark means a run is in flight,
+        # and none is.
         held = self.new_conversation_held(conv)
-        if held:
-            self.say_holding(conv, held)
+        if not held:
+            self._hold_decided.discard(conv["id"])
+        elif conv["id"] in self._hold_decided:
+            # ONE PASS PER HELD CONVERSATION, NOT ONE PER TICK. claim_turns offers this again
+            # every few seconds for as long as the window is spent, and the gate below is a
+            # model call; deciding once and remembering is what keeps a four-hour hold from
+            # spending thousands of them re-reading the same message to the same answer.
             return None
 
         # THE MARK GOES ON BEFORE THE SELECTOR, and this is the only thing above resettle().
@@ -5988,7 +5999,7 @@ class Watcher:
         # Where it files is a separate question, and the only one resettle is asking.
         early = self.pending_messages(conv["id"])
         if (early and not conv["is_thread"] and not is_local_conversation(conv)
-                and self.always_a_turn(conv, early)):
+                and not held and self.always_a_turn(conv, early)):
             self.mark_working(conv, early[-1])
 
         # THE LAST MOMENT ANYTHING MAY MOVE. After this a turn exists, the messages are claimed,
@@ -6036,6 +6047,22 @@ class Watcher:
         if fc:
             log(f"conversation {conv['id']}: the gate failed open — "
                 f"{classification.get('reason')}")
+
+        # THE HOLD, AT THE LAST LINE BEFORE A TURN EXISTS. Everything that could have said no
+        # has said yes, so this is the first moment "we are going to answer this" is a fact,
+        # and the only honest moment to say it out loud.
+        #
+        # EXCEPT WHEN THE GATE COULD NOT DECIDE. A fail-open engages, deliberately, because a
+        # gate that cannot run must not be able to swallow a bug report — but "I could not tell
+        # and erred towards answering" is not the same claim as "I am going to answer this",
+        # and only the second is worth putting in front of somebody. So the turn still waits
+        # and still runs after the refill; nothing is said about it in the meantime.
+        if held:
+            self._hold_decided.add(conv["id"])
+            if not fc:
+                self.say_holding(conv, held, msgs)
+            return None
+
         lane = "dev"
         tier, actor, why = self.turn_trust(conv, msgs)
         venue = self.turn_venue(conv, alias)
@@ -13776,15 +13803,23 @@ HOLD_NOTE = ("I'm a little tired right now and am taking a break for the next {f
 
 
 def hold_duration(secs):
-    """`2h:15m`, or `15m` when there is no hour in it. Never `0m`.
+    """`3d:04h:15m`, `2h:15m`, or `15m`. As many fields as the number needs and no more.
 
-    The shape was asked for in exactly this form. Minutes are padded only when an hour is
-    printed beside them, because `2h:5m` reads as a typo and `05m` on its own reads as a clock.
-    Anything under half a minute still rounds up to `1m`: "0m" would be a promise this cannot
-    keep, and the number is a reset time known to the quarter-hour anyway.
+    THE DAY FIELD IS NOT DECORATION. The weekly window is the one that holds hardest and it
+    resets up to seven days out, so hours alone print `144h:00m` -- a number somebody has to do
+    arithmetic on to find out whether to wait or come back tomorrow, which is the whole
+    question they are asking.
+
+    A field is padded only when something is printed to its left, because `2h:5m` reads as a
+    typo and `05m` on its own reads as a clock. Anything under half a minute still rounds up to
+    `1m`: `0m` would be a promise this cannot keep, and the reset behind it is known to the
+    quarter-hour anyway.
     """
     minutes = max(1, int(round(max(0.0, float(secs)) / 60.0)))
     hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days:
+        return f"{days}d:{hours:02d}h:{minutes:02d}m"
     return f"{hours}h:{minutes:02d}m" if hours else f"{minutes}m"
 
 

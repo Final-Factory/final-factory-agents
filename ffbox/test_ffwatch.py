@@ -13990,10 +13990,10 @@ def test_a_new_conversation_waits_for_the_refill_instead_of_being_refused():
     check("the message is not claimed", msg["turn_id"] is None, msg["turn_id"])
     check("and not gated, which is what lets a later pass pick it up",
           msg["gate"] is None, (msg["gate"], msg["gate_reason"]))
-    # NOT EVEN THE BREAK NOTICE. Nobody addressed the bot and nothing came with the message,
-    # so always_a_turn says nothing and the engagement gate -- which sits BELOW the hold and is
-    # what would have decided this one -- never ran. Promising an answer here would be a
-    # promise made by skipping the step that says whether to make it.
+    # NOT EVEN THE BREAK NOTICE. This case has no classifier stub, so the gate fails open --
+    # it engages, deliberately, but it could not tell. "I could not decide and erred towards
+    # answering" is not the claim "I am going to answer this", and only the second is worth
+    # putting in front of somebody. The turn still runs after the refill, below.
     check("nothing was said to anybody", case.rows("SELECT * FROM outbound") == [],
           case.rows("SELECT * FROM outbound"))
     # NOR IS THE ACKNOWLEDGEMENT SENT. mark_working sits below the hold in create_turn, and an
@@ -14023,8 +14023,18 @@ def test_a_wait_is_named_as_a_clock():
           ffwatch.hold_duration(3540))
     check("exactly an hour is an hour", ffwatch.hold_duration(3600) == "1h:00m",
           ffwatch.hold_duration(3600))
-    check("days are still hours, because that is the shape asked for",
-          ffwatch.hold_duration(30 * 3600) == "30h:00m", ffwatch.hold_duration(108000))
+    # PAST A DAY THE DAY IS ITS OWN FIELD. The weekly window resets up to seven days out, and
+    # `144h:00m` is a number somebody has to do arithmetic on to answer the question they are
+    # actually asking, which is whether to wait or come back tomorrow.
+    check("over a day reads as days", ffwatch.hold_duration(30 * 3600) == "1d:06h:00m",
+          ffwatch.hold_duration(108000))
+    check("a nearly-full week says so plainly",
+          ffwatch.hold_duration(6 * 86400 + 3600) == "6d:01h:00m",
+          ffwatch.hold_duration(6 * 86400 + 3600))
+    check("exactly a day tips over", ffwatch.hold_duration(86400) == "1d:00h:00m",
+          ffwatch.hold_duration(86400))
+    check("and just under it does not", ffwatch.hold_duration(86340) == "23h:59m",
+          ffwatch.hold_duration(86340))
     # NEVER `0m`, which would be a promise this cannot keep. The reset behind it is known to
     # the quarter-hour anyway.
     check("a few seconds still rounds up to a minute",
@@ -14075,6 +14085,10 @@ def test_a_held_discord_conversation_is_told_the_answer_is_coming():
     # sentence has to exist is that the mark cannot be used to say "heard you".
     check("no acknowledgement reaction is queued, because nothing is working",
           case.rows("SELECT * FROM outbound WHERE action='react'") == [], None)
+    # AND THE MESSAGE IS STILL UNTOUCHED. The notice is the only thing the hold leaves behind.
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    check("the message is neither claimed nor gated",
+          (msg["turn_id"], msg["gate"]) == (None, None), dict(msg))
 
     # ONCE, EVER, and durably: the marker is an outbound row, not this process's memory, so a
     # daemon restarted mid-hold does not re-announce.
@@ -14092,34 +14106,88 @@ def test_a_held_discord_conversation_is_told_the_answer_is_coming():
     check("and no second notice goes out with it", len(posts(case)) == 1, posts(case))
 
 
-def test_the_break_notice_only_goes_where_an_answer_was_certain():
-    print("holds: what is not promised an answer")
-    # THE GATE SITS BELOW THE HOLD, so a message the gate would have declined never got as far
-    # as being declined. Telling that person to expect an answer would be a promise made by
-    # skipping the step that decides whether to make it -- and in a mention-only channel it
-    # would answer somebody the channel is configured never to answer.
-    quiet = sflake(0, 1)
-    fixture = base_fixture()
-    fixture["messages"][ASK_CHANNEL] = [message(quiet, "anyone else seeing this on develop?")]
-    case = Case("hold-note-quiet", fixture)
-    case.cfg["watch"]["ask_claude"]["engage"] = "mention"
-    case.events(ask_event(quiet))
-    case.watcher.drain_events()
-    hold_case(case, [key_record("only", five=10.0, seven=95.0)])
-    conv = case.rows("SELECT * FROM conversation")[0]
-    check("no turn", case.watcher.create_turn(conv) is None)
-    check("and no promise either", posts(case) == [], posts(case))
+def test_the_break_notice_waits_on_the_gate_rather_than_getting_ahead_of_it():
+    """Only a message this box was going to answer is promised an answer.
 
-    # A GITHUB CONVERSATION HAS NO DISCORD SIDE TO POST INTO, and its own hold at the ingress
-    # is deliberately silent: a refusal in a public pull request tells a stranger the trigger
-    # exists. say_holding refuses it a second time rather than relying on that.
-    case.db_exec("UPDATE conversation SET kind=? WHERE id=?", (ffwatch.GITHUB_KIND, conv["id"]))
-    check("a review is never told to wait",
-          case.watcher.say_holding(case.rows("SELECT * FROM conversation")[0], 900) is None)
-    case.db_exec("UPDATE conversation SET kind='shell' WHERE id=?", (conv["id"],))
-    check("and neither is a terminal, which has ffwatch status instead",
-          case.watcher.say_holding(case.rows("SELECT * FROM conversation")[0], 900) is None)
-    check("nothing was queued by either", posts(case) == [], posts(case))
+    The hold sits at the LAST line before a turn exists, so the mention-only policy and the
+    engagement gate have both already run. That ordering is the whole guarantee: there is no
+    earlier point at which "we are going to answer this" is a fact rather than a guess, and the
+    buffer under the cap exists so those small calls still go through while the box is held.
+    """
+    print("holds: the gate decides, the hold only delays")
+
+    def one_asking(name, verdict):
+        mid = sflake(0, 1)
+        fixture = base_fixture()
+        fixture["messages"][ASK_CHANNEL] = [message(mid, "anyone else seeing this on develop?")]
+        case = Case(name, fixture, verdict=verdict)
+        case.events(ask_event(mid))
+        case.watcher.drain_events()
+        hold_case(case, [key_record("only", five=10.0, seven=95.0, now=time.time())])
+        return case
+
+    # THE GATE SAYS YES. Held, and told so -- the classifier ran while the box had no room to
+    # run a container, which is what the 40% left under the cap is for.
+    yes = one_asking("hold-gate-yes", {"engage": True, "reason": "a real question"})
+    conv = yes.rows("SELECT * FROM conversation")[0]
+    check("no turn", yes.watcher.create_turn(conv) is None, yes.rows("SELECT * FROM turn"))
+    check("but the gate ran and the answer was promised", len(posts(yes)) == 1, posts(yes))
+
+    # THE GATE SAYS NO. Nothing is promised, and the decline is recorded exactly as it would
+    # have been on a box with a full week -- the hold delays answers, it does not create them.
+    no = one_asking("hold-gate-no", {"engage": False, "reason": "no ask in it"})
+    conv = no.rows("SELECT * FROM conversation")[0]
+    check("still no turn", no.watcher.create_turn(conv) is None)
+    check("and nothing is promised to somebody who was not getting an answer",
+          posts(no) == [], posts(no))
+    msg = no.rows("SELECT * FROM message ORDER BY id")[0]
+    check("the decline is on the record, the same as on an unheld box",
+          msg["gate"] == "none", dict(msg))
+
+    # THE GATE COULD NOT RUN. It fails open on purpose -- a gate that cannot decide must not be
+    # able to swallow a bug report -- so the turn still happens after the refill. But "I could
+    # not tell and erred towards answering" is not the claim "I am going to answer this", and
+    # only the second is worth putting in front of somebody.
+    blind = one_asking("hold-gate-blind", None)      # no verdict: the stub classifier exits 1
+    conv = blind.rows("SELECT * FROM conversation")[0]
+    check("no turn", blind.watcher.create_turn(conv) is None)
+    check("and no promise on a guess", posts(blind) == [], posts(blind))
+    blind.watcher._claude = StubClaudeKeys([key_record("only", five=10.0, seven=12.0)])
+    check("the fail-open still engages once the window refills",
+          len(blind.watcher.claim_turns()) == 1, blind.rows("SELECT * FROM turn"))
+
+    # A MENTION-ONLY CHANNEL NOBODY ADDRESSED is refused above the gate, and above the hold
+    # with it -- the same silence it would have got with a full week.
+    quiet = one_asking("hold-gate-quiet", {"engage": True, "reason": "would have engaged"})
+    quiet.watcher.cfg["watch"]["ask_claude"]["engage"] = "mention"
+    conv = quiet.rows("SELECT * FROM conversation")[0]
+    check("no turn", quiet.watcher.create_turn(conv) is None)
+    check("and no promise in a channel that answers only when addressed",
+          posts(quiet) == [], posts(quiet))
+
+
+def test_a_held_conversation_costs_one_gate_call_and_not_one_per_pass():
+    print("holds: decided once, not every tick")
+    case, _ = held_and_addressed("hold-once")
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("held", case.watcher.create_turn(conv) is None)
+    # claim_turns offers a held conversation again every few seconds for as long as the window
+    # is spent. Without the memo each of those passes would run the selector and the engagement
+    # gate -- both model calls -- to reach the answer already on the record.
+    before = len(case.calls())
+    for _ in range(5):
+        case.watcher.claim_turns()
+    check("five more passes spend nothing at all", len(case.calls()) == before,
+          (before, len(case.calls())))
+    check("and say nothing more", len(posts(case)) == 1, posts(case))
+
+    # THE MEMO IS DROPPED THE MOMENT THE HOLD LIFTS, so the pass after the refill runs the
+    # whole pipeline properly rather than skipping it as already decided.
+    case.watcher._claude = StubClaudeKeys([key_record("only", five=10.0, seven=12.0)])
+    check("the turn runs once the window refills",
+          len(case.watcher.claim_turns()) == 1, case.rows("SELECT * FROM turn"))
+    check("and the conversation is no longer remembered as held",
+          conv["id"] not in case.watcher._hold_decided, case.watcher._hold_decided)
 
 
 def test_only_a_first_turn_waits_and_never_a_terminal_or_a_review():
@@ -14716,7 +14784,8 @@ def main():
         test_a_new_conversation_waits_for_the_refill_instead_of_being_refused,
         test_a_wait_is_named_as_a_clock,
         test_a_held_discord_conversation_is_told_the_answer_is_coming,
-        test_the_break_notice_only_goes_where_an_answer_was_certain,
+        test_the_break_notice_waits_on_the_gate_rather_than_getting_ahead_of_it,
+        test_a_held_conversation_costs_one_gate_call_and_not_one_per_pass,
         test_only_a_first_turn_waits_and_never_a_terminal_or_a_review,
         test_a_hold_that_cannot_read_the_windows_runs_the_work,
         test_a_codereview_trigger_waits_in_the_cursor_and_runs_when_the_window_refills,
