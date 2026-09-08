@@ -135,7 +135,16 @@ ffghr_mirror_serve_request() {
     if ffghr_mirror_fetch "$_want"; then
         printf 'ok\n' > "$_stage/fetch.done" 2>/dev/null || true
     else
-        # Tell the job so it stops waiting and goes to GitHub, rather than burning its wait budget.
+        # ANSWER ON THE FAILURE PATH TOO, so the job stops waiting rather than burning its budget.
+        #
+        # THIS USED TO SAY "and goes to GitHub" AND THAT IS NO LONGER TRUE. github.com,
+        # api.github.com and github-cloud came off this lane's allowlist on 2026-08-31
+        # (egress/allowlist.txt) -- the NEED went rather than the reach being narrowed -- so the
+        # mirror is the only source a job has and there is nowhere to fall back to. What this line
+        # buys now is failing FAST instead of slowly: the checkout fails either way, and it fails
+        # in a step whose error names the ref it wanted, which is the more useful message of the
+        # two. It also matters more than it reads, because the budget it saves is now 600s
+        # (FFGHR_MIRROR_WAIT, lib/config.sh) rather than 120.
         printf 'failed\n' > "$_stage/fetch.done" 2>/dev/null || true
     fi
     return 0

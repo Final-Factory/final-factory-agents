@@ -780,12 +780,43 @@ flight.
 "githubrunner": { "pool": { "idle": 1, "max": 3 }, "watchdog_minutes": 120, "org": "Final-Factory" }
 ```
 
+**The two wait numbers are the host's half of a handshake.** A CI job is not a container the host
+merely watches. Twice in its life it writes a request into its staging directory and blocks until
+the host writes the answer back: once asking for a commit to be fetched into the local mirror, and
+once asking for its test-results artifact to be uploaded. Both exist because the job cannot reach
+GitHub or the artifact storage itself — those came off the CI egress allowlist on 2026-08-31, and
+the need went rather than the reach being narrowed.
+
+The container carries its own defaults, 120s for the fetch and 180s for the artifact, and uses
+them when the host passes nothing. These keys are what the host passes, as `FFGHR_MIRROR_WAIT` and
+`FFGHR_ARTIFACT_WAIT`, so an old container and a new host still agree.
+
+**Why the default is 600 when nothing today needs it.** The answering process is `slot.sh`, which
+is not in `ffbox.target` and never restarts, so the gap it protects against is currently zero. It
+is set for what comes next: moving the supervisor into ffwatch, which restarts on every code update
+and every config edit and is away for minutes while the box merges and rebuilds. A job reaching its
+fetch step in that window would burn 120 seconds and then fail its checkout, intermittently and for
+a reason nobody would connect to a deploy.
+
+Raising it is close to free, and that is the argument rather than the size of the number. Neither
+budget bounds a *slow* answer — the host writes `fetch.done` on both paths, `ok` and `failed`, so a
+mirror that cannot serve the commit stops the job at once. What a budget catches is nobody
+answering at all. The cost of a longer one is that a genuinely dead host holds a runner for ten
+minutes rather than two before the job fails, and `watchdog_minutes` still bounds that. For scale:
+the agent lane gives its containers `FFBOX_IDLE_TTL_SECS`, default **14400** — four hours — to wait
+on the equivalent file, and it has never been a problem.
+
+Non-numeric or zero falls back to 600: both values end up in a `sleep` loop inside a container, and
+a job that waits zero seconds fails in a way that names neither this file nor that one.
+
 ## Seeded
 
 | Key | Default | What it is |
 |---|---|---|
 | `pool.max` (`slots`) | `1` | The most jobs in flight at once. Read live by every waiting supervisor; no root, no restart. Not the number of supervisors, which comes from `max_concurrent_runs`. |
 | `pool.idle` (`idle_pool`) | `1` | How many runners stay registered and waiting while nothing is happening. |
+| `mirror_wait_secs` | `600` | How long a job waits for the host to answer `fetch.request` before giving up. See below. |
+| `artifact_wait_secs` | `600` | How long a job holds itself open waiting for the host to upload its test-results artifact. See below. |
 | `watchdog_minutes` | `120` | Bounds a **job**, from the moment that job started. 120 because `main.yml`'s own `timeout-minutes` is 90, so a job GitHub still wants is never killed locally. |
 | `image` | `ffbox:latest` | The image both lanes are built from. Pin CI to a different build by overriding this, not by keeping a second tag alive. |
 | `labels` | `["Linux","X64","ffgithubrunners"]` | What `runs-on:` has to name to land here. `self-hosted` is deliberately absent, so the two harnesses stay separable with no label surgery. |

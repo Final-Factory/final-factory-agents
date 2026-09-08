@@ -405,6 +405,8 @@ docker run -d \
     --pids-limit "$PIDS_LIMIT" \
     --memory "$MEMORY" \
     -e FFBOX_MODE=ci \
+    -e FFGHR_MIRROR_WAIT="$MIRROR_WAIT_SECS" \
+    -e FFGHR_ARTIFACT_WAIT="$ARTIFACT_WAIT_SECS" \
     -e FFGHR_GIT_MIRROR="$MIRROR_URL" \
     -e FFGHR_GIT_ORIGIN="$MIRROR_ORIGIN" \
     -e FFGHR_LFS_URL="$MIRROR_LFS_URL" \
@@ -622,8 +624,14 @@ while [ "$(docker inspect -f '{{.State.Running}}' "$CNAME" 2>/dev/null)" = true 
     decide_cache_archive
     # The job asks for the commit it needs before its restore step, which takes about forty
     # seconds, so this poll has slack and the answer is normally waiting by the time the checkout
-    # runs. Never fatal: while github.com is still allowlisted a job that gets no answer just
-    # fetches from GitHub as before.
+    # runs.
+    #
+    # HOW LONG THE JOB WILL WAIT FOR THIS IS THE HOST'S DECISION, passed in as FFGHR_MIRROR_WAIT
+    # above. It is 600s rather than the workflow's own 120 because the answering process is about
+    # to become one that restarts on every update; lib/config.sh's wait section is the argument.
+    # Never fatal in the sense that matters: ffghr_mirror_serve_request answers on BOTH paths, `ok`
+    # and `failed`, so a mirror that cannot serve the commit stops the job waiting immediately
+    # rather than burning the budget.
     if [ -n "${STAGE:-}" ]; then
         ffghr_mirror_serve_request "$STAGE" 2>&1 \
             | while IFS= read -r _line; do log "mirror: $_line"; done || true
