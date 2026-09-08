@@ -1448,6 +1448,22 @@ class FfwatchActions:
         """
         return self._run(["submit", "--source", "web", "--agent", agent_class, "--", prompt])
 
+    def fork(self, conversation_id, agent_class=DEFAULT_AGENT_CLASS):
+        """Carry on from an existing conversation in a new one, here on the box.
+
+        The same route and the same argv-not-a-shell rule as everything else on this class, and
+        the same reason for it: ffwatch owns the database. What comes back is a LOCAL
+        conversation holding the source's branch, a copy of its session transcript and its
+        history up to this moment, with no Discord side of its own -- so the answer arrives on
+        this page and not in the channel the source came from, which is the whole point of
+        forking a public thread from here.
+
+        --agent is obeyed, exactly as it is on submit(): the fork is a new conversation, its
+        class is settled when it opens, and forking decides nothing about which class that is.
+        """
+        return self._run(["fork", "--conversation", str(int(conversation_id)),
+                          "--agent", agent_class])
+
     def follow_up(self, conversation_id, prompt):
         """Continue an existing conversation instead of opening another one.
 
@@ -1886,6 +1902,37 @@ class FFWebHandler(BaseHTTPRequestHandler):
             note = "closed" if ok else ("failed: " + short(out, 300))
             return self._redirect(f"/conversation/{conv['id']}?msg="
                                   + urllib.parse.quote(note))
+
+        if path == "/actions/fork":
+            # Behind the same session and Origin checks as the prompt box, and it is the same
+            # grant: it opens a conversation that runs work in a container. What it adds is a
+            # source, and the venue rule that goes with one -- which ffwatch checks, because
+            # ffwatch is the writer. A local fork is private, so nothing this page can ask for
+            # can be refused by that rule; the check still lives there and not here.
+            raw_id = (form.get("conversation") or [""])[0].strip()
+            if not raw_id.isdigit():
+                return self._error(400, "a fork needs a conversation to fork")
+            conv = app.db.one("SELECT id FROM conversation WHERE id = ?", (int(raw_id),))
+            if conv is None:
+                return self._error(404, "no such conversation")
+            agent_class = (form.get("agent") or [""])[0].strip() or DEFAULT_AGENT_CLASS
+            if agent_class not in AGENT_CLASSES:
+                return self._error(400, f"{agent_class!r} is not an agent class; expected one "
+                                        f"of {', '.join(AGENT_CLASSES)}")
+            ok, out = app.actions.fork(conv["id"], agent_class)
+            if not ok:
+                return self._redirect(f"/conversation/{conv['id']}?msg="
+                                      + urllib.parse.quote("failed: " + short(out, 300)))
+            # ASKED OF THE DATABASE rather than parsed out of ffwatch's stdout, which carries
+            # its config warnings and its log lines as well as the answer. The row is the fact;
+            # the newest fork of this source is the one that call just made.
+            made = app.db.one("SELECT id FROM conversation WHERE forked_from = ?"
+                              " ORDER BY id DESC LIMIT 1", (conv["id"],))
+            if made is None:
+                return self._redirect(f"/conversation/{conv['id']}?msg="
+                                      + urllib.parse.quote(short(out, 300)))
+            return self._redirect(f"/conversation/{made['id']}?msg="
+                                  + urllib.parse.quote(short(out, 300)))
 
         if path == "/actions/reply":
             # Continuing a conversation, which is the same grant as starting one and behind the
@@ -2735,8 +2782,10 @@ class App:
               (conv["base_sha"] or "—")[:12], conv["github_issue"] or "—",
               pr_link(conv["github_pr"])]]))
         head.append(self._branch_note(conv))
+        head.append(self._fork_note(conv))
         head.append(self._identity_note(conv))
         head.append(self._close_button(conv))
+        head.append(self._fork_button(conv))
         head.append(table(AGG_HEADERS, [agg_cells(agg)]))
 
         in_flight = self._in_flight(conv_id)
@@ -2871,6 +2920,64 @@ class App:
                         + ", last seam at turn " + esc(seam) + "</span>")
         bits.append("</div>")
         return "".join(bits)
+
+    def _fork_note(self, conv):
+        """WHERE THIS CONVERSATION CAME FROM, and where it has been carried on, both ways.
+
+        A fork is a copy taken at a moment: it opened holding the source's branch, session and
+        history, and the two have run independently since. Neither half of that is visible from
+        the timeline -- the fork's first turn simply appears to know things -- so it is said
+        here, next to the branch the two of them share.
+
+        BOTH DIRECTIONS, because the question is asked from both ends. Reading the fork: what is
+        this a continuation of. Reading the source: did anybody carry this on somewhere I am not
+        looking, which is the question a public thread that went quiet actually poses.
+
+        Guarded like _branch_note: the columns are v18 and this page can be reading a database
+        ffwatch has not migrated yet, since the two are restarted separately.
+        """
+        source = _row(conv, "forked_from")
+        bits = []
+        if source:
+            src = self.db.one("SELECT id, title FROM conversation WHERE id = ?", (source,))
+            name = short((src["title"] if src else None) or f"conversation {source}", 60)
+            bits.append("forked from <a href=\"/conversation/" + esc(source) + "\">"
+                        + esc(name) + "</a>")
+        try:
+            kids = self.db.query("SELECT id, title FROM conversation WHERE forked_from = ?"
+                                 " ORDER BY id", (conv["id"],))
+        except sqlite3.Error:
+            # The column itself is missing, which _row cannot answer for -- it guards a row that
+            # was read, and this is a query that names the column. Same window, same reason.
+            kids = []
+        if kids:
+            links = ["<a href=\"/conversation/" + esc(k["id"]) + "\">"
+                     + esc(short(k["title"] or f"conversation {k['id']}", 40)) + "</a>"
+                     for k in kids]
+            bits.append("forked into " + ", ".join(links))
+        if not bits:
+            return ""
+        return "<div class=\"note fork\">" + " · ".join(bits) + "</div>"
+
+    def _fork_button(self, conv):
+        """Carry this conversation on in a new one, answered here instead of in Discord.
+
+        Offered on every conversation, including a Discord one -- which is the case it exists
+        for. A public thread that has turned into real troubleshooting cannot be moved, because
+        its conversation is pinned to a thread id and every reply goes back there; forking it
+        onto this box is how the next twenty messages stop being public.
+
+        NOT WHILE THE SOURCE IS WORKING. ffwatch refuses that too and its refusal is the one
+        that counts, but a button that is going to be refused is better not drawn: the fork
+        would be copying a transcript that a container is still appending to.
+        """
+        if conv["state"] in ("running", "queued"):
+            return ""
+        return ("<form class=\"filters\" method=\"post\" action=\"/actions/fork\">"
+                "<input type=\"hidden\" name=\"conversation\" value="
+                + attr(conv["id"]) + ">"
+                + select("agent", DEFAULT_AGENT_CLASS, AGENT_CLASSES, blank=None) +
+                "<button type=\"submit\">fork this conversation</button></form>")
 
     def _close_button(self, conv):
         """End a conversation by hand, for what a person can see and the rules cannot.

@@ -81,7 +81,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # THE ONE MODULE THIS DAEMON IMPORTS FROM BESIDE IT, and it is deliberately not ffweb: the
 # Claude subscription pool moved into claude_keys.py on 2026-09-04 precisely so that the
@@ -472,6 +472,29 @@ ADDED_COLUMNS = [
     # up -- or a guess from publish_bases, and a review that diffs against the wrong base reads
     # somebody else's commits as this branch's work.
     ("conversation", "github_base", "TEXT"),
+    # -- v18, conversation forking ------------------------------------------------------------
+    # WHERE THIS CONVERSATION CAME FROM. A fork is a copy taken at a moment: it starts holding
+    # the source's branch, session transcript and history, and from then on the two run
+    # independently. Nothing said in the source afterwards reaches the fork, and nothing the
+    # fork says ever reaches the source. NULL is every conversation somebody actually started.
+    ("conversation", "forked_from", "INTEGER"),
+    ("conversation", "forked_at", "TEXT"),
+    # The Discord snowflake for the `!conv` ingress, the unix login for the local ones. Same
+    # shape and the same reason as branch_adopted_by: when somebody later asks why two
+    # conversations are pushing to one branch, the record answers without anyone reading a log.
+    ("conversation", "forked_by", "TEXT"),
+    # THE SOURCE'S NEWEST MESSAGE AT THE MOMENT OF THE FORK, which is what bounds the inherited
+    # history. Without it "the original's later messages do not reach the fork" would be a
+    # promise; with it, it is a WHERE clause. See history_conversations.
+    ("conversation", "fork_source_watermark", "TEXT"),
+    # THE SESSION THE TRANSCRIPT WAS COPIED FROM, or NULL when the graft did not happen and the
+    # fork was seeded from a host-rendered summary instead. Doubles as the flag build_job reads
+    # to resume on turn 1, which no other conversation ever does.
+    ("conversation", "fork_session", "TEXT"),
+    # 1 WHEN THE INHERITED HISTORY IS SOMEBODY ELSE'S WORDS. A fork of a conversation that was
+    # not `direct` is never direct, wherever it lands -- including in an operator's DM or on the
+    # web page, both of which are direct kinds. See is_direct_conversation.
+    ("conversation", "fenced_history", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -2137,6 +2160,28 @@ def is_only_branch_directive(content):
     return len(lines) == 1 and BRANCH_DIRECTIVE_RE.fullmatch(lines[0].strip()) is not None
 
 
+# THE OPERATOR DIRECTIVE THAT NAMES ANOTHER CONVERSATION. `!conv 85`, or `!conversation 85`,
+# on a line of its own. Both spellings are one rule: `!conv` is what gets typed and
+# `!conversation` is what gets typed by somebody who has forgotten that the short form exists.
+#
+# Anchored like BRANCH_DIRECTIVE_RE and for the same reason -- a sentence about the directive is
+# prose and stays prose -- and recognised from the Discord-authenticated author id on the stored
+# row, never from anything the text claims about who wrote it.
+FORK_DIRECTIVE_RE = re.compile(r"^\s*!conv(?:ersation)?\s+(\d+)\s*$", re.MULTILINE)
+
+
+def fork_directive(content):
+    """The conversation id a `!conv` line names, or None. First one wins."""
+    found = FORK_DIRECTIVE_RE.search(content or "")
+    return int(found.group(1)) if found else None
+
+
+def is_only_fork_directive(content):
+    """True when the message is the directive and nothing else -- no question to answer."""
+    lines = [ln for ln in (content or "").splitlines() if ln.strip()]
+    return len(lines) == 1 and FORK_DIRECTIVE_RE.fullmatch(lines[0].strip()) is not None
+
+
 def discord_link(conv):
     """A jump link to where this conversation lives, or None when it has no Discord side.
 
@@ -2270,9 +2315,26 @@ DIRECT_KINDS = LOCAL_KINDS + ("operator_dm", GITHUB_KIND)
 
 
 def is_direct_conversation(conv):
-    """True when this conversation's text was typed AT the agent by somebody trusted."""
+    """True when this conversation's text was typed AT the agent by somebody trusted.
+
+    A FORK OF A CONVERSATION THAT WAS NOT DIRECT IS NEVER DIRECT, whatever kind it lands as.
+    Its history is somebody else's words, and the trusted prompt shape has no <discord> fence
+    and no untrusted-input framing to put around them. That matters for exactly the two
+    destinations a fork can reach that are otherwise direct: an operator's DM, and a local fork
+    continued from the terminal or the web page. `fenced_history` is written at the fork and
+    read here, so neither of those can quietly upgrade a player's text.
+
+    Guarded for the column being absent like every other v18 reader: a row read before the
+    migration answers 0, which is what every conversation that predates forking actually is.
+    """
     if conv is None:
         return False
+    if not isinstance(conv, str):
+        try:
+            if conv["fenced_history"]:
+                return False
+        except (IndexError, KeyError):
+            pass
     kind = conv if isinstance(conv, str) else conv["kind"]
     return kind in DIRECT_KINDS
 
@@ -4567,6 +4629,11 @@ class Watcher:
         # decided per new message about WHO IS SPEAKING, and on the same "actually new" path so
         # a re-read of a thread cannot adopt twice or post its answer twice.
         self.take_branch_directive(conv_id, message_id, author, msg.get("content") or "")
+        # AND AN OPERATOR MAY POINT THIS CONVERSATION AT ANOTHER ONE. Beside the branch
+        # directive because it is decided per new message about who is speaking, and on the same
+        # "actually new" path so a sweep's re-read of a thread cannot fork twice or post its
+        # answer twice. The routing half of it lives in ingest_channel_message; see there.
+        self.take_fork_directive(conv_id, message_id, author, msg.get("content") or "")
         # THE BACKLOG'S ATTACHMENTS COME DOWN TOO, and that is a deliberate one-time cost —
         # attaching a busy forum pulls every log and save zip in its visible history. Discord's
         # attachment URLs are signed and expire, and nothing re-visits a message once it is
@@ -4661,6 +4728,66 @@ class Watcher:
             "local_id": f"adopt:{conv_id}:{message_id}",
             "reply_to": last["discord_id"] if last else None})
         return branch if ok else None
+
+    def take_fork_directive(self, conv_id, message_id, author, content):
+        """Act on a `!conv <id>` line, if an operator wrote one. Returns the source id or None.
+
+        OPERATORS ONLY, AND SILENTLY OTHERWISE, byte for byte the policy take_branch_directive
+        states and for the same reason: a refusal is worth more to a stranger than the command
+        is, because it confirms that the command exists, that this box has operators, and that
+        they are not one. The host logs the attempt; the channel is told nothing.
+
+        THIS IS THE SECOND HALF OF THE INGRESS. The first half is in ingest_channel_message,
+        which anchors an operator's directive on its own conversation instead of letting the
+        clustering window choose one. By the time this runs the destination row exists either
+        way -- ingest_thread upserts a thread's conversation before its messages, and the
+        channel hook has just made one -- so this is only ever the decision and the ack.
+
+        A MESSAGE THAT IS ONLY THE DIRECTIVE IS GATED, and so is one whose fork was refused.
+        Both are the rule take_branch_directive settled: a directive on its own has no question
+        in it, and a refused directive has one that must not be answered, because the answer
+        would be written against a conversation that did not get the session or the branch it
+        was asked about.
+        """
+        # THE CHEAP TEST FIRST. This runs for every message the box ingests, and almost none of
+        # them carry a directive; reading the conversation row before the regex would put a
+        # query on the hot path of every sweep to answer a question the text settles.
+        source_id = fork_directive(content)
+        if not source_id:
+            return None
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+        if conv is None or is_local_conversation(conv):
+            return None
+        author_id = str((author or {}).get("id") or "")
+        if not is_operator(self.cfg, author_id):
+            log(f"conversation {conv_id}: ignoring a !conv line from {author_id or '?'}, who "
+                f"is not in discord.trust.operators")
+            return None
+        ok, reason = self.fork_conversation(conv_id, source_id, by=author_id)
+        alone = is_only_fork_directive(content)
+        if alone or not ok:
+            self.db.execute("UPDATE message SET gate='fork_directive', gate_reason=?"
+                            " WHERE id=?", (reason[:200], message_id))
+        else:
+            # ADDRESSED, because it is. `!conv` is a command typed at the harness, which is the
+            # thing `addressed` recognises, and without this a channel declared engage=mention
+            # swallows the question attached to the directive whenever the operator did not also
+            # ping the bot -- is_addressed keys on a mention or a reply to one of the bot's own
+            # messages, and neither is how anybody types a directive.
+            self.db.execute("UPDATE message SET addressed=1 WHERE id=?", (message_id,))
+        # ONE POST EITHER WAY, for the reason the adoption ack gives: an operator who typed a
+        # conversation id into a channel and heard nothing back would reasonably assume it
+        # worked, and a refusal is as much an answer as a confirmation.
+        text = ("ok — " if ok else "no — ") + reason
+        if not ok and not alone:
+            text += (" The rest of that message was not acted on: it asks for work on a "
+                     "conversation this one did not become. Send it again once this is sorted.")
+        last = self.db.one("SELECT * FROM message WHERE id=?", (message_id,))
+        self.record_outbound(None, conv_id, "post", {
+            "channel": reply_channel(conv), "text": text, "silent": True,
+            "local_id": f"fork:{source_id}:{message_id}",
+            "reply_to": last["discord_id"] if last else None})
+        return source_id if ok else None
 
     def demote_for_stranger(self, conv_id, author):
         """Move a conversation out of the unfenced class the moment a stranger speaks in it.
@@ -5443,6 +5570,46 @@ class Watcher:
                             (message_id,))
         if known:
             return known["conversation_id"]
+
+        # AN OPERATOR'S `!conv` OPENS ITS OWN CONVERSATION and never joins a clustering window.
+        # The directive decides which conversation this message continues, so it has to be seen
+        # before the thing that would otherwise decide that: a window in this channel would take
+        # the message, and the fork would be anchored on whatever the operator happened to be
+        # talking about a minute earlier.
+        #
+        # AFTER THE DEDUPE ABOVE, and that placement is the whole of the idempotence. The sweep
+        # re-reads every watched channel every catchup_secs, and message.discord_id UNIQUE is
+        # the only thing standing between this directive and one fork per sweep.
+        #
+        # The fork itself is not done here. insert_message runs take_fork_directive like any
+        # other message's, so the refusals, the gate and the ack are written once and are the
+        # same wherever the directive was typed.
+        author_id = str((msg.get("author") or {}).get("id") or "")
+        if fork_directive(msg.get("content") or "") and is_operator(self.cfg, author_id):
+            # TITLED BY THE QUESTION, NOT BY THE COMMAND. `!conv 85` is the whole first line
+            # and it makes a useless name in a list; the line under it, when there is one, is
+            # what the operator actually came to ask. With nothing under it the title is left
+            # empty here and fork_conversation fills in the source's, so a bare directive names
+            # the conversation it continues.
+            title = [ln for ln in (msg.get("content") or "").strip().splitlines()
+                     if ln.strip() and not FORK_DIRECTIVE_RE.fullmatch(ln.strip())]
+            conv_id = self.upsert_conversation(
+                message_id,
+                kind=conv_kind,
+                channel_id=channel_id,
+                guild_id=msg.get("guild_id"),
+                title=(title[0][:100] if title else None),
+                root_message_id=message_id,
+                opener=author_id,
+                is_thread=False,
+                alias=alias,
+                # The destination picks its class the way any conversation opened here picks it.
+                # Forking decides nothing about it; see the design's section 7.2.
+                agent_class=discord_agent_class(self.cfg, author_id))
+            msg.setdefault("channel_id", channel_id)
+            self.insert_message(conv_id, msg, routed_by="fork",
+                                routed_reason="a !conv directive opens its own conversation")
+            return conv_id
 
         # Does this continue something already here? S1-S3, deterministic, no model.
         existing, routed_by, reason = self.select_conversation(msg, channel_id, alias=alias)
@@ -7755,10 +7922,11 @@ class Watcher:
         msgs = self.db.query(
             "SELECT * FROM message WHERE turn_id=? ORDER BY CAST(discord_id AS INTEGER)",
             (turn["id"],))
-        history = self.db.query(
-            "SELECT * FROM message WHERE conversation_id=? AND (turn_id IS NULL OR turn_id<>?)"
-            " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT ?",
-            (conv["id"], turn["id"], int(self.cfg["history_messages"])))
+        # ACROSS THE FORK PAIR. For an ordinary conversation this is the query it always was.
+        # For a fork it also reads the source's messages, up to the watermark the fork was taken
+        # at, because a fork opens holding that history and has none of its own -- its first turn
+        # would otherwise be handed one message, the directive that made it.
+        history = self.history_messages_for(conv, exclude_turn=turn["id"])
 
         # Where this run's clone starts, resolved once because the job reports it twice: as the
         # ref itself, and as the base it belongs to. THE SAME CALL launch() gives ffbox as
@@ -7768,7 +7936,13 @@ class Watcher:
         session_id = conv["session_id"] or session_id_for(conv["thread_id"])
         generation = int(conv["session_generation"] or 1)
         transcript = self.transcript_path(conv["id"], session_id)
-        resume = int(turn["seq"]) > 1 and os.path.exists(transcript)
+        # A FORK RESUMES ON TURN 1, which no other conversation ever does. The seq test is what
+        # says "there has been a turn before this one, so there is a session to go back to", and
+        # for a fork that sentence is true without a turn: the transcript was copied in when the
+        # fork was made. Without this the graft is written, never read, and the fork silently
+        # starts cold -- which looks exactly like a first turn, because it is one.
+        grafted = bool(self.conversation_fork(conv) and self._fork_session(conv))
+        resume = os.path.exists(transcript) and (int(turn["seq"]) > 1 or grafted)
         summary = None
 
         # COMPACT THE SESSION, NOT THE CONVERSATION — and not the transcript either. A
@@ -7812,7 +7986,7 @@ class Watcher:
             self.db.execute("UPDATE conversation SET compacted_at_seq=? WHERE id=?",
                             (int(turn["seq"]), conv["id"]))
 
-        if int(turn["seq"]) > 1 and not resume:
+        if (int(turn["seq"]) > 1 or grafted) and not resume:
             # The session file carries the investigation forward; the database is the system of
             # record and can always rebuild a conversation from nothing. That is what makes a
             # lost transcript survivable rather than fatal.
@@ -8020,17 +8194,35 @@ class Watcher:
         return name
 
     def render_summary(self, conv_id):
-        """The conversation, rebuilt from the database alone (design sections 6 and 15)."""
+        """The conversation, rebuilt from the database alone (design sections 6 and 15).
+
+        ACROSS THE FORK PAIR, and that is what makes the fallback worth having. A fork whose
+        transcript could not be copied has no turns of its own on its first pass, so rendering
+        only its own rows would hand the container a heading and nothing under it -- the one
+        case this function exists to prevent.
+        """
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
         lines = [f"# Conversation so far — {conv['title'] or conv['thread_id']}",
                  f"kind: {conv['kind']}  thread: {conv['thread_id']}", ""]
-        for t in self.db.query("SELECT * FROM turn WHERE conversation_id=? ORDER BY seq",
-                               (conv_id,)):
-            lines.append(f"## turn {t['seq']} — lane {t['lane']}, {t['status']}")
-            for m in self.db.query("SELECT * FROM message WHERE turn_id=?"
-                                   " ORDER BY CAST(discord_id AS INTEGER)", (t["id"],)):
-                lines.append(f"- {m['author_name']}: {(m['content'] or '').strip()[:800]}")
-            lines.append("")
+        for cid, mark in self.history_conversations(conv):
+            if cid != conv_id:
+                other = self.db.one("SELECT * FROM conversation WHERE id=?", (cid,))
+                lines += [f"## forked from conversation {cid} — "
+                          f"{(other['title'] if other else None) or cid}", ""]
+            for t in self.db.query("SELECT * FROM turn WHERE conversation_id=? ORDER BY seq",
+                                   (cid,)):
+                rows = self.db.query("SELECT * FROM message WHERE turn_id=?"
+                                     " ORDER BY CAST(discord_id AS INTEGER)", (t["id"],))
+                if mark:
+                    rows = [m for m in rows
+                            if str(m["discord_id"]).isdigit()
+                            and int(m["discord_id"]) <= int(mark)]
+                    if not rows:
+                        continue
+                lines.append(f"## turn {t['seq']} — lane {t['lane']}, {t['status']}")
+                for m in rows:
+                    lines.append(f"- {m['author_name']}: {(m['content'] or '').strip()[:800]}")
+                lines.append("")
         return "\n".join(lines)
 
     def render_review_prompt(self, job, review):
@@ -8284,6 +8476,72 @@ class Watcher:
             return (conv["branch"] or None) if conv is not None else None
         except (IndexError, KeyError):
             return None
+
+    @staticmethod
+    def conversation_fork(conv):
+        """The conversation this one was forked from, or None.
+
+        Guarded for a missing column like conversation_branch above: the columns are v18 and a
+        caller can be holding a row read before the migration ran. Absent means "not a fork",
+        which is what every conversation that predates forking is.
+        """
+        try:
+            return (conv["forked_from"] or None) if conv is not None else None
+        except (IndexError, KeyError):
+            return None
+
+    @staticmethod
+    def _fork_session(conv):
+        """The session id a fork's transcript was copied from, or None. Guarded like the rest."""
+        try:
+            return (conv["fork_session"] or None) if conv is not None else None
+        except (IndexError, KeyError):
+            return None
+
+    def history_conversations(self, conv):
+        """The conversations whose messages count as this one's history, oldest source first.
+
+        One id for an ordinary conversation. TWO for a fork, because a fork opens holding the
+        source's history and has none of its own: the id pair is what lets one query read both
+        without any message row being copied. Copying them is not an option -- message.discord_id
+        is UNIQUE, and the "already ours" check in ingest_channel_message keys on that column, so
+        a copied row would either collide or make the sweep re-route the original.
+
+        BOUNDED BY fork_source_watermark on the source's side, which is the whole difference
+        between a fork and a window onto the same conversation. Messages the source gained after
+        the fork are not this conversation's history and never become it.
+
+        Returns [(conversation_id, watermark or None)].
+        """
+        source = self.conversation_fork(conv)
+        if not source:
+            return [(conv["id"], None)]
+        try:
+            mark = conv["fork_source_watermark"]
+        except (IndexError, KeyError):
+            mark = None
+        return [(int(source), mark), (conv["id"], None)]
+
+    def history_messages_for(self, conv, exclude_turn=None, limit=None):
+        """The prior messages of this conversation, newest first, across the fork pair."""
+        limit = int(self.cfg["history_messages"] if limit is None else limit)
+        rows = []
+        for cid, mark in self.history_conversations(conv):
+            sql = ("SELECT * FROM message WHERE conversation_id=?"
+                   " AND (? IS NULL OR turn_id IS NULL OR turn_id<>?)")
+            args = [cid, exclude_turn, exclude_turn]
+            if mark:
+                sql += " AND CAST(discord_id AS INTEGER) <= CAST(? AS INTEGER)"
+                args.append(mark)
+            sql += " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT ?"
+            args.append(limit)
+            rows.extend(self.db.query(sql, tuple(args)))
+        # Newest first across both, then capped once. Sorting here rather than in SQL keeps the
+        # per-conversation bound above, so a source with a thousand messages cannot push the
+        # fork's own out of the window before the cap is applied.
+        rows.sort(key=lambda m: int(m["discord_id"]) if str(m["discord_id"]).isdigit() else 0,
+                  reverse=True)
+        return rows[:limit]
 
     @staticmethod
     def conversation_adopted(conv):
@@ -8560,6 +8818,51 @@ class Watcher:
             " ORDER BY c.id",
             (exclude if exclude is not None else -1, branch, branch))
 
+    def branch_in_flight(self, branch, exclude=None):
+        """The conversation with a turn in flight on `branch`, or None. Whole row, not an id.
+
+        THE WHOLE ROW because every caller of this refuses on its strength and so owes the
+        reader a link to the other thread, which discord_link needs the channel columns for.
+
+        An unclaimed message counts as in flight: it becomes a turn on the next pass, and the
+        conversation is still `idle` until it does. Deliberately NOT `state <> 'closed'` -- see
+        the comment in adopt_branch, which is where this rule was written and why it was
+        narrowed to a race rather than to history.
+        """
+        return self.db.one(
+            "SELECT c.id AS id, c.kind AS kind, c.guild_id AS guild_id,"
+            "       c.channel_id AS channel_id, c.thread_id AS thread_id,"
+            "       c.is_thread AS is_thread"
+            "  FROM conversation c WHERE c.branch=? AND c.id<>?"
+            "   AND (c.state IN ('queued','running')"
+            "        OR EXISTS (SELECT 1 FROM message m WHERE m.conversation_id=c.id"
+            "                    AND m.turn_id IS NULL AND m.direction='in' AND m.is_bot=0"
+            "                    AND m.gate IS NULL))"
+            " LIMIT 1", (branch, exclude if exclude is not None else -1))
+
+    def conversation_in_flight(self, conv_id):
+        """True when this conversation has a turn running, queued, or one message away from one.
+
+        The same "in flight" the branch rule means, asked of one conversation rather than of a
+        branch: a fork takes a copy of a session transcript and of a branch, and both of those
+        are being written by a run that has not finished.
+
+        ALL THREE SIGNALS, because they can disagree for a moment and the answer has to be the
+        pessimistic one. `conversation.state` is what the scheduler reads and what a launch sets
+        before the turn row moves; a turn row says the same thing from the other side; and an
+        unclaimed message is a turn on the next pass, with the conversation still `idle` until
+        it becomes one.
+        """
+        if self.db.scalar("SELECT COUNT(*) FROM conversation WHERE id=?"
+                          " AND state IN ('queued','running')", (conv_id,), 0):
+            return True
+        if self.db.scalar("SELECT COUNT(*) FROM turn WHERE conversation_id=?"
+                          " AND status IN ('queued','running')", (conv_id,), 0):
+            return True
+        return bool(self.db.scalar(
+            "SELECT COUNT(*) FROM message WHERE conversation_id=? AND turn_id IS NULL"
+            " AND direction='in' AND is_bot=0 AND gate IS NULL", (conv_id,), 0))
+
     def adopt_branch(self, conv_id, branch, by):
         """Tell a conversation which branch it owns. Returns (ok, reason).
 
@@ -8615,16 +8918,7 @@ class Watcher:
         #
         # THE WHOLE ROW, not just the id: this refusal names the other conversation and so owes
         # the reader a link to it, which discord_link needs the channel columns for.
-        busy = self.db.one(
-            "SELECT c.id AS id, c.kind AS kind, c.guild_id AS guild_id,"
-            "       c.channel_id AS channel_id, c.thread_id AS thread_id,"
-            "       c.is_thread AS is_thread"
-            "  FROM conversation c WHERE c.branch=? AND c.id<>?"
-            "   AND (c.state IN ('queued','running')"
-            "        OR EXISTS (SELECT 1 FROM message m WHERE m.conversation_id=c.id"
-            "                    AND m.turn_id IS NULL AND m.direction='in' AND m.is_bot=0"
-            "                    AND m.gate IS NULL))"
-            " LIMIT 1", (branch, conv_id))
+        busy = self.branch_in_flight(branch, exclude=conv_id)
         if busy is not None:
             return False, (f"conversation {conversation_ref(busy)} has a turn in flight on "
                            f"`{branch}`. Two turns pushing to one branch race each other for a "
@@ -8686,6 +8980,203 @@ class Watcher:
         # without it the post read "...on branch `ffbox/inventory-window-drag-clamp-d44t1-
         # e4c99e4c Conversation 44 has worked on this branch before".
         return True, f"this conversation is now on branch `{branch}`." + note + shared
+
+    def fork_conversation(self, fork_id, source_id, by):
+        """Make conversation `fork_id` a fork of `source_id`. Returns (ok, reason).
+
+        THE ONE WRITER of every v18 column, for all three ingresses -- the `!conv` directive,
+        `ffwatch fork` and the web page's fork control -- so the rules below cannot come to
+        differ by which door somebody used. This is the shape adopt_branch has, deliberately.
+
+        THE DESTINATION ROW ALREADY EXISTS when this is called, and that is not an accident of
+        convenience. A directive posted in a thread arrives after ingest_thread has already
+        upserted that thread's conversation; one posted in a channel is a message that opens a
+        conversation, which is what ingest does with any message that continues nothing. Having
+        the caller make the row means this function never has to know whether the destination is
+        a thread, a channel, a DM or the terminal -- it reads the row for all of that -- and a
+        REFUSAL leaves an ordinary new conversation there rather than a hole, exactly as a
+        refused `!branch` leaves the conversation it was typed in.
+
+        IT REFUSES RATHER THAN ADAPTS, and never raises for an ordinary refusal: the reason is a
+        sentence that gets posted into a Discord channel or printed at a terminal. The one place
+        it adapts is a branch that is simply gone from origin, and it says so in the same
+        sentence -- see below.
+        """
+        fork = self.db.one("SELECT * FROM conversation WHERE id=?", (fork_id,))
+        if fork is None:
+            return False, f"there is no conversation {fork_id}"
+        if int(source_id) == int(fork_id):
+            return False, "a conversation cannot be forked into itself"
+        source = self.db.one("SELECT * FROM conversation WHERE id=?", (int(source_id),))
+        if source is None:
+            return False, f"there is no conversation {source_id}"
+        already = self.conversation_fork(fork)
+        if already:
+            other = self.db.one("SELECT * FROM conversation WHERE id=?", (already,))
+            return False, (f"this conversation is already a fork of "
+                           f"{conversation_ref(other) if other else already}. A fork is a copy "
+                           f"taken once; open a new thread to take another.")
+        # A CONVERSATION THAT HAS ALREADY ANSWERED SOMETHING IS NOT A DESTINATION. The fork
+        # takes a session transcript, and this one has its own; nothing sensible happens when
+        # the two are the same file. Reachable only in a thread -- a directive in a channel
+        # always anchors its own conversation -- so the advice is the one that fits a thread.
+        if self.db.scalar("SELECT COUNT(*) FROM turn WHERE conversation_id=?", (fork_id,), 0):
+            return False, ("this conversation has already had a turn, so it cannot become a "
+                           "fork of another one. Open a new thread and put the directive there.")
+        # THE SOURCE MUST BE STANDING STILL. Two reasons at once, and either would be enough:
+        # its transcript is being appended to by a container right now and a copy taken mid-line
+        # is a corrupt session, and its branch would then be pushed by two runs racing for the
+        # same fast-forward.
+        if self.conversation_in_flight(source["id"]):
+            return False, (f"conversation {conversation_ref(source)} has a turn in flight. Its "
+                           f"session transcript is being written and its branch is about to be "
+                           f"pushed, so a copy taken now would be half a session -- try again "
+                           f"when it has finished.")
+        # THE ONE-WAY VENUE RULE. A fork is the single moment a conversation's contents are
+        # copied somewhere else, so it is the single moment that can move private words into a
+        # room that reads them. After it the two are separate: nothing the source says reaches
+        # the fork and nothing the fork says reaches the source, which is why this is checked
+        # here and never again.
+        source_venue = self.conversation_venue(source)
+        fork_venue = self.turn_venue(fork, fork["watch_alias"])
+        if source_venue == "private" and fork_venue != "private":
+            return False, (f"conversation {conversation_ref(source)} is at a private venue and "
+                           f"this one is not. A fork may never be more public than what it "
+                           f"forks.")
+        branch = self.conversation_branch(source)
+        # THE BRANCH RACE, CHECKED BEFORE ANYTHING IS WRITTEN. adopt_branch refuses this too,
+        # but by then the fork exists and its ack would have to explain that it got the session
+        # and not the branch. A race is worth waiting out; the operator can type it again.
+        if branch:
+            busy = self.branch_in_flight(branch, exclude=fork_id)
+            if busy is not None:
+                return False, (f"conversation {conversation_ref(busy)} has a turn in flight on "
+                               f"`{branch}`, which is the branch this fork would take. Two turns "
+                               f"pushing to one branch race each other for a fast-forward and "
+                               f"the loser loses its work -- try again when it has finished.")
+        # WHERE THE INHERITED HISTORY STOPS. The source's newest message, read now, so a message
+        # posted in the source a minute later is not this fork's history and never becomes it.
+        watermark = self.db.scalar(
+            "SELECT MAX(CAST(discord_id AS INTEGER)) FROM message WHERE conversation_id=?",
+            (source["id"],))
+        # GUARDED ON forked_from IS NULL, so two ingresses racing cannot both claim, the way
+        # adopt_branch's own claim is guarded. A rowcount of zero means somebody got here first.
+        done = self.db.execute(
+            "UPDATE conversation SET forked_from=?, forked_at=?, forked_by=?,"
+            " fork_source_watermark=?, fenced_history=?,"
+            " base_sha=COALESCE(base_sha, ?), title=COALESCE(title, ?)"
+            " WHERE id=? AND forked_from IS NULL",
+            (source["id"], now_iso(), str(by or "?"),
+             str(watermark) if watermark is not None else None,
+             0 if is_direct_conversation(source) else 1,
+             source["base_sha"], source["title"], fork_id))
+        if not done.rowcount:
+            return False, "something else forked this conversation first"
+        log(f"conversation {fork_id}: forked from {source['id']} (by {by}), "
+            f"branch={branch or '-'} class={fork['agent_class']} venue={fork_venue}")
+        reason = f"this continues conversation {conversation_ref(source)}."
+        # THE BRANCH, THROUGH adopt_branch AND NOT BY WRITING THE COLUMN. Its five checks are
+        # still the right ones and its prose is the prose every other branch ack uses, so the
+        # sentence a fork posts about a branch cannot drift from the one `!branch` posts.
+        if branch:
+            ok, why = self.adopt_branch(fork_id, branch, by=by)
+            # ADAPTS HERE, and only here. A branch deleted from origin is the one refusal that
+            # is about the world rather than about this fork, and refusing the whole thing would
+            # mean finished work cannot be forked to talk about. The fork happens, and the ack
+            # says plainly that it did not get the branch.
+            # CAPITALISED, because adopt_branch's sentence is written to START a post and this
+            # one lands in the middle of another: "…conversation [85](…). this conversation is
+            # now on branch `x`." reads as a typo rather than as two sentences.
+            reason += " " + (why[:1].upper() + why[1:] if ok
+                             else f"The branch could not be taken: {why}")
+        fork = self.db.one("SELECT * FROM conversation WHERE id=?", (fork_id,))
+        grafted = self.graft_transcript(source, fork)
+        reason += (" It has the session from that conversation, so it starts where the last "
+                   "turn left off." if grafted else
+                   " The session transcript could not be copied, so it starts from a written "
+                   "summary of that conversation instead.")
+        # WHICH CONTAINER, said out loud. It is not a fork decision -- the destination picks its
+        # class the way it picks it for any conversation opened there -- but it is the fact an
+        # operator most wants confirmed, because the reason for forking a fenced thread is
+        # usually to get a dev container onto its branch.
+        reason += f" This is an {fork['agent_class']} container."
+        return True, reason
+
+    def graft_transcript(self, source, fork):
+        """Copy the source's session transcript into the fork. Returns the source session id.
+
+        None when there was nothing to copy, which is not a failure: build_job already knows how
+        to seed a session from render_summary, because a lost transcript has always been
+        survivable. What the graft buys over that is the expensive half -- what the model read,
+        what it ruled out, which approach it tried and abandoned -- which the database cannot
+        rebuild from Discord messages however carefully it renders them.
+
+        A COPY UNDER A NEW ID, never a share. Two conversations resuming one session id fork the
+        transcript irrecoverably, which is the hazard follow_up() refuses a second live turn
+        over. Copying is what makes this a fork in the git sense: the two diverge from here and
+        neither can corrupt the other.
+
+        `sessionId` is rewritten on every record. Measured against a real transcript on the build
+        server (conversation 10, 135 records): every record carries it, including Claude Code's
+        own bookkeeping lines that have no uuid. `uuid`, `parentUuid` and `leafUuid` are left
+        alone -- they are internal to the file, and the two copies sharing them costs nothing
+        because _index_transcript de-dupes by uuid WITHIN one conversation, and these are two.
+
+        THE SOURCE MUST NOT BE RUNNING. fork_conversation refuses that before it gets here; the
+        check matters because this is the function that would otherwise copy a half-written last
+        line, and a caller that grows a way past that refusal should fail here rather than
+        silently produce a corrupt session.
+        """
+        if self.conversation_in_flight(source["id"]):
+            log(f"conversation {fork['id']}: not grafting a transcript from {source['id']}, "
+                f"which has a turn in flight")
+            return None
+        src_session = source["session_id"] or session_id_for(source["thread_id"])
+        src = self.transcript_path(source["id"], src_session)
+        if not os.path.exists(src):
+            return None
+        dest = self.transcript_path(fork["id"], fork["session_id"]
+                                    or session_id_for(fork["thread_id"]))
+        tmp = f"{dest}.{os.getpid()}.tmp"
+        written = 0
+        try:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(src, "r", encoding="utf-8", errors="replace") as fh, \
+                    open(tmp, "w", encoding="utf-8") as out:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        # A half-written last line, or something Claude Code wrote that is not
+                        # JSON. Skipped rather than fatal, which is what _index_transcript does
+                        # with the same file for the same reason.
+                        continue
+                    if rec.get("sessionId"):
+                        rec["sessionId"] = os.path.basename(dest)[:-len(".jsonl")]
+                    out.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    written += 1
+            if not written:
+                os.unlink(tmp)
+                return None
+            os.replace(tmp, dest)
+        except OSError as exc:
+            log(f"WARNING: could not graft conversation {source['id']}'s transcript onto "
+                f"{fork['id']}: {exc}")
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            return None
+        # The container runs as another uid and the transcript is the file it must be able to
+        # read AND write. share_with_container is what makes that true; a graft without it
+        # produces exactly the failure that broke session resume on 2026-08-26.
+        self.share_with_container(os.path.join(self.conv_dir(fork["id"]), "claude"))
+        self.db.execute("UPDATE conversation SET fork_session=? WHERE id=?",
+                        (src_session, fork["id"]))
+        log(f"conversation {fork['id']}: grafted {written} record(s) from conversation "
+            f"{source['id']}'s session {src_session}")
+        return src_session
 
     def record_branch_pull_request(self, conv, branch, gh=None):
         """Find the pull request GitHub already has for `branch` and record it. Returns it.
@@ -9849,6 +10340,52 @@ class Watcher:
                         (json.dumps({"ref": ref, "branch": branch}),
                          turn_id))
         return turn_id
+
+    def open_local_fork(self, source_id, *, by, agent_class=DEFAULT_AGENT_CLASS, kind="shell"):
+        """Fork a conversation onto this box, with no Discord side. (ok, reason, fork_id).
+
+        The local ingress, and the one the web page's fork control uses. It opens an empty local
+        conversation and hands it to fork_conversation, which is the only writer either way;
+        what happens next is `ffwatch submit --conversation <fork>`, or the reply box on the
+        page, both of which already know how to continue a local conversation.
+
+        NO PROMPT AND NO TURN, deliberately. A fork is a place to carry on from, and the
+        question that carries on is a separate act -- often typed after reading what came over.
+        claim_turns refuses a local conversation that has no turn, so an empty one sits still
+        until somebody submits into it.
+
+        ROLLED BACK ON A REFUSAL, which the Discord path cannot do and does not need to: nothing
+        outside ffwatch has been told this id, there is no message in it and no reply has gone
+        out, so deleting it leaves no trace of a fork that did not happen. In a channel the same
+        refusal leaves an ordinary new conversation holding a gated message, which is what a
+        refused `!branch` leaves too.
+
+        A LOCAL FORK IS NOT DIRECT when the source was not. `shell` is a direct kind and its
+        prompt has no fence around it; the source's words are somebody else's. fenced_history is
+        what keeps them fenced here -- see is_direct_conversation.
+        """
+        if kind not in LOCAL_KINDS:
+            raise ValueError(f"{kind!r} is not a local ingress; expected one of {LOCAL_KINDS}")
+        if agent_class not in AGENT_CLASSES:
+            raise ValueError(f"{agent_class!r} is not an agent class; expected one of "
+                             f"{', '.join(AGENT_CLASSES)}")
+        # THE SOURCE IS CHECKED BEFORE ANY ROW IS MINTED. fork_conversation would refuse a
+        # missing one anyway, but by then this has made a conversation that takes the next id --
+        # so `ffwatch fork --conversation 1` on an empty box made conversation 1 and then
+        # refused it for being a fork of itself, which is a true sentence about the wrong thing.
+        if self.db.one("SELECT id FROM conversation WHERE id=?", (int(source_id),)) is None:
+            return False, f"there is no conversation {source_id}", None
+        # The same minted key submit() uses: a local conversation still needs a thread_id, and
+        # thread_id is UNIQUE.
+        key = local_message_key()
+        fork_id = self.upsert_conversation(
+            key, kind=kind, channel_id=None, title=None, root_message_id=key,
+            opener=getpass.getuser(), is_thread=False, agent_class=agent_class)
+        ok, reason = self.fork_conversation(fork_id, source_id, by=by)
+        if not ok:
+            self.db.execute("DELETE FROM conversation WHERE id=?", (fork_id,))
+            return False, reason, None
+        return True, reason, fork_id
 
     def follow_up(self, conversation_id, prompt):
         """Continue a LOCAL conversation: one more message on the end of it, and a turn for it.
@@ -14354,6 +14891,21 @@ def build_parser():
                          "the harness may add commits to the branch but will never create it, "
                          "so a branch deleted from the remote stops being publishable.")
     sp.add_argument("--json", action="store_true", help="print the result as JSON")
+
+    sp = sub.add_parser("fork", help="continue another conversation here, on this box")
+    sp.add_argument("--conversation", type=int, required=True, metavar="ID",
+                    help="the conversation to fork. The new one opens holding its branch, a "
+                         "copy of its session transcript and its history up to this moment, "
+                         "and the two run independently from there: nothing said in the "
+                         "original afterwards reaches the fork, and nothing the fork says ever "
+                         "reaches the original. Refused while the source has a turn in flight.")
+    sp.add_argument("--agent", choices=list(AGENT_CLASSES), default=DEFAULT_AGENT_CLASS,
+                    metavar="CLASS",
+                    help="which kind of agent container the fork runs in: %s (default %s). "
+                         "Forking decides nothing about this; it is the same choice `submit` "
+                         "offers, made for a new conversation that happens to start full."
+                         % ("/".join(AGENT_CLASSES), DEFAULT_AGENT_CLASS))
+    sp.add_argument("--json", action="store_true", help="print the result as JSON")
     return p
 
 
@@ -14491,6 +15043,26 @@ def main(argv=None):
                               "branch": args.branch if ok else None, "reason": reason}))
         else:
             print(reason if ok else f"refused: {reason}", file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
+    if args.cmd == "fork":
+        # LOCAL, and the only form this ingress has. A fork into a Discord channel already has
+        # a door -- an operator types `!conv <id>` in it -- and a second one here would have to
+        # re-derive that channel's watch alias to get the venue rule right, which is a second
+        # place for the one rule that must not be wrong to be wrong.
+        try:
+            ok, reason, fork_id = watcher.open_local_fork(
+                args.conversation, by=getpass.getuser(), agent_class=args.agent)
+        except ValueError as exc:
+            print(f"ffwatch: {exc}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps({"ok": ok, "conversation": fork_id,
+                              "forked_from": args.conversation, "reason": reason}))
+        elif ok:
+            print(f"conversation {fork_id}: {reason}")
+            print(f"continue it with: ffwatch submit --conversation {fork_id} \"...\"")
+        else:
+            print(f"refused: {reason}", file=sys.stderr)
         return 0 if ok else 1
     if args.cmd in ("read", "unread"):
         done = (watcher.mark_read if args.cmd == "read" else watcher.mark_unread)(args.id)

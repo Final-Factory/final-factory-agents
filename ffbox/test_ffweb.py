@@ -3496,6 +3496,66 @@ def test_an_adopted_branch_says_so_on_the_page():
         srv.stop()
 
 
+def test_a_fork_is_visible_from_both_ends_and_can_be_made_from_the_page():
+    """Where this conversation came from, where it was carried on, and the button that does it.
+
+    Neither half of a fork shows in a timeline: the fork's first turn simply appears to know
+    things, and the source goes quiet without saying why. So the page says both, and it says
+    them next to the branch the two of them share.
+    """
+    srv = serve(enable_actions=True)
+    try:
+        srv.db("UPDATE conversation SET forked_from=1 WHERE id=2")
+        conv = text_of(srv.get("/conversation/2")[2])
+        check("the fork says what it continues", "forked from" in conv, conv[:800])
+        check("with a link to it", 'href="/conversation/1"' in conv, conv[:800])
+        source = text_of(srv.get("/conversation/1")[2])
+        check("and the source says where it was carried on", "forked into" in source,
+              source[:800])
+        check("with a link back", 'href="/conversation/2"' in source, source[:800])
+
+        plain = text_of(srv.get("/conversation/3")[2])
+        check("a conversation that is neither says nothing about forks",
+              "forked from" not in plain and "forked into" not in plain, plain[:800])
+
+        # THE BUTTON. Offered on a Discord conversation, which is the case it exists for: a
+        # public thread cannot be moved, and forking it onto the box is how the next twenty
+        # messages stop being public.
+        check("the page offers a fork", 'action="/actions/fork"' in source, source[:800])
+        form = source.split('action="/actions/fork"', 1)[-1].split("</form>", 1)[0]
+        check("with the class dropdown, the same choice a new prompt gets",
+              'name="agent"' in form and 'value="ffdev"' in form, form[:300])
+
+        # NOT WHILE THE SOURCE IS WORKING. ffwatch refuses that too, and its refusal is the one
+        # that counts; a button that is going to be refused is better not drawn.
+        srv.db("UPDATE conversation SET state='running' WHERE id=1")
+        busy = text_of(srv.get("/conversation/1")[2])
+        check("a conversation with work in flight is not offered one",
+              'action="/actions/fork"' not in busy, busy[:800])
+        srv.db("UPDATE conversation SET state='idle' WHERE id=1")
+
+        open(CALLS, "w").close()
+        srv.post("/actions/fork", {"conversation": "1", "agent": "ffdev"})
+        calls = [json.loads(line) for line in open(CALLS, encoding="utf-8") if line.strip()]
+        check("pressing it reaches ffwatch as a fork of that conversation",
+              calls and calls[0][:2] == ["--state-dir", STATE]
+              and "fork" in calls[0] and "--conversation" in calls[0]
+              and calls[0][calls[0].index("--conversation") + 1] == "1", calls)
+        check("carrying the class it was asked for",
+              calls and calls[0][calls[0].index("--agent") + 1] == "ffdev", calls)
+
+        open(CALLS, "w").close()
+        code, _h, _b = srv.post("/actions/fork", {"conversation": "1", "agent": "nosuch"})
+        check("an unknown class is refused", code == 400, code)
+        code, _h, _b = srv.post("/actions/fork", {"conversation": "9999"})
+        check("and so is a conversation that does not exist", code == 404, code)
+        check("neither of which ran anything",
+              not [ln for ln in open(CALLS, encoding="utf-8") if ln.strip()], None)
+    finally:
+        srv.db("UPDATE conversation SET forked_from=NULL WHERE id=2")
+        srv.stop()
+
+
 def test_the_ids_are_on_the_conversation_page_and_nowhere_else():
     """Both ids, together, where somebody could act on them.
 
@@ -3594,6 +3654,7 @@ def main():
         test_a_run_that_published_nothing_does_not_claim_a_branch,
         test_an_adopted_branch_says_so_on_the_page,
         test_the_ids_are_on_the_conversation_page_and_nowhere_else,
+        test_a_fork_is_visible_from_both_ends_and_can_be_made_from_the_page,
         test_a_branch_name_cannot_carry_markup_into_the_page,
         test_timeline_reads_as_a_conversation,
         test_filters_actually_filter,
