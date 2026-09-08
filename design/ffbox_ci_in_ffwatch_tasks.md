@@ -226,7 +226,15 @@ E.6 is last by definition.
   stays is the credential, image, network, cache and licence configuration, which `reap.sh` and
   the CLI still source. `ffghr_slot_units` and `ffghr_enabled_slots` go with the units.
 
-- [ ] **E.3 — measure the stop-to-start window. FIRST, before E.1.** `S`
+- [x] **E.3 — measure the stop-to-start window. DONE 2026-09-08, before E.1.** `S`
+  **Median 6s, p90 77s, max 247s** over 227 real stop-to-start pairs in the journal. The tail is
+  `setup.sh` stage 3 rebuilding the container image with ffbox down; passes with nothing to build
+  are the six-second median. The old 120s fuse did NOT clear the worst pass, so the patience fix
+  was load-bearing rather than precautionary; 600s clears it by 2.4x.
+  `update_ffbox.sh` now measures itself and warns when a window reaches the job's budget, so this
+  stays checked rather than having been checked once. Original task text follows.
+
+  ~~measure the stop-to-start window~~
   Design open question (b). No longer a gate — the question is "is 600 comfortably more than it",
   not "does it fit under 120" — but it should be a number in the journal rather than an
   impression, and it would want revisiting if the update ever grew a cold image build. Taken

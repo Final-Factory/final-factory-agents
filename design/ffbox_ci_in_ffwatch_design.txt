@@ -1,7 +1,9 @@
 ffbox: the CI lane inside ffwatch
 =================================
 
-Revision 3, 2026-09-08. Phase A landed. Open question (a) is answered. Section 5c is rewritten:
+Revision 4, 2026-09-08. Open question (b) is answered from 227 real updates and has moved into
+fact (i); the window is 6s typical and 247s at worst, which is what makes 5c load-bearing rather
+than precautionary. Phase A landed. Open question (a) is answered. Section 5c is rewritten:
 revision 2 proposed building something to close the gap, and the answer is to stop the job caring
 about the gap, which is what the agent lane has always done.
 
@@ -120,11 +122,35 @@ Read before estimating. Most of this design is wiring; the invention is in secti
      Three of those four survive a supervisor change; the fourth is the one this design has to
      replace.
 
-  i. THE UPDATE WINDOW IS MINUTES, NOT SECONDS. Between `systemctl stop ffbox.target` and
-     `systemctl start` the updater merges, re-runs ffbox/setup.sh, builds the image (a cached
-     build was measured at about a minute and a half with ffbox stopped) and re-runs
-     runners/setup.sh (update_ffbox.sh section 6, steps 5-9). The drain before it has a 300s
-     default ceiling (`FFBOX_DRAIN_TIMEOUT`, update_ffbox.sh:84).
+  i. THE UPDATE WINDOW IS USUALLY SECONDS AND OCCASIONALLY MINUTES. MEASURED 2026-09-08, from
+     227 real stop-to-start pairs in this box's journal:
+
+         median   6s
+         p90     77s
+         max    247s   (2026-08-25)
+
+     Revision 1 said "minutes, not seconds" from a comment and a sequence rather than a stopwatch,
+     and had it backwards: the typical pass is six seconds. What it was right about is the tail,
+     and the tail is the whole of the problem, because the tail is where a job dies.
+
+     THE LONG ONES ARE ALL THE SAME THING. Between the stop and the start the updater merges and
+     re-runs ffbox/setup.sh, whose stage 3 rebuilds the container image -- with ffbox down. Passes
+     with nothing to build are the six-second median; passes that rebuild are the minutes. The
+     window is therefore not a property of the update but of whether the commit touched the image,
+     which nobody can predict from outside.
+
+     WHAT THIS SETTLES. The job's old fuse was 120s and the observed max is 247s, so the merge
+     would have failed jobs -- on this box's history roughly twice a month, invisibly, on
+     whichever job happened to be in its first minute. Section 5c's patience fix was not a
+     precaution. The 600s it sets clears the worst pass ever recorded here by about 2.4x.
+
+     The drain BEFORE the stop is separate and has a 300s default ceiling
+     (`FFBOX_DRAIN_TIMEOUT`, update_ffbox.sh:84); it does not add to this window, which is
+     measured from the stop.
+
+     THE UPDATER NOW MEASURES ITSELF rather than leaving this to log archaeology: it records the
+     window at the stop, prints it at the start, and warns when a pass was slow enough that a CI
+     job could have outlasted it.
 
   j. AN IDLE SUPERVISOR IS NOT FREE, THOUGH IT IS CHEAP. Measured on this box on 2026-09-08:
      1.7 MB RSS and 4.3 seconds of CPU per 293 seconds elapsed per waiting slot, which is about
@@ -371,8 +397,8 @@ it already does.
 5c. THE UNATTENDED WINDOW, WHICH IS THE REAL COST
 
 Between step 5 and the daemon coming back up, a job with a `fetch.request` on disk is waiting for
-an answer nobody is there to give. Measured shape of that window: a cached image build alone is
-about 90 seconds (fact i), and the whole stop-to-start stretch runs to several minutes.
+an answer nobody is there to give. Measured, over 227 real updates: 6s typical, 77s at p90, 247s
+at its worst, the tail being an image rebuild that happens while ffbox is down (fact i).
 
 THIS IS THE ONE PLACE WHERE THE MERGE MAKES SOMETHING WORSE. Today the window is zero, because
 slot.sh is not in ffbox.target and never stops.
@@ -697,13 +723,14 @@ number requires root and kills jobs.
      now "fail faster", which is still the right behaviour and the wrong sentence. Worth fixing
      independently of any of this.
 
-  b. HOW LONG IS THE STOP-TO-START WINDOW, MEASURED? Fact i is assembled from a comment and a
-     sequence, not from a stopwatch. Revision 2 made this the gate; revision 3 demotes it to a
-     sanity check, because the question stopped being "does it fit under 120 seconds" (it does
-     not) and became "is 600 comfortably more than it" (it plainly is). Still worth a stopwatch,
-     taken at the START of phase E and before slot.sh is deleted, since after that the
-     before-number cannot be obtained. It would want revisiting if the update ever grew a cold
-     image build.
+  b. ANSWERED, 2026-09-08, and moved into fact (i). Median 6s, p90 77s, max 247s over 227 real
+     updates, the tail being setup.sh rebuilding the image while ffbox is down. 600s clears the
+     worst observed pass by 2.4x; the old 120s did not clear it at all.
+
+     WHAT IT LEAVES. The number is bounded by an image build, so it is only as good as the builds
+     seen so far -- a cold pull, a base-image change or a slower disk could exceed 247s and
+     nothing in this design would notice. That is what the updater's new warning is for: the check
+     that stays behind after the measurement is over.
 
   c. SHOULD THE CI KEEPER RUN WHEN THE AGENT LANE IS IN FAILSAFE? `keep_pool` returns early on
      `config_failsafe()`, `killed()` or `draining()`. Two of those three clearly apply to CI as
