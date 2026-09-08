@@ -580,6 +580,18 @@ for _c in $(docker_ ps --filter label=ffbox.workload --format '{{.Names}}' 2>/de
 done
 unset _c _started _age _epoch
 
+# THE WINDOW STARTS HERE, and it is measured because it is a number somebody has to be able to
+# check rather than remember. Everything between this line and the start below runs with ffbox
+# stopped, and once the CI lane moves into ffwatch that is also the time in which nothing answers
+# a CI job's fetch.request. A job that reaches its mirror-fetch step inside the window waits, and
+# if the window outlasts what the job will wait it fails its checkout -- so this is the number the
+# job's budget has to be larger than.
+#
+# MEASURED FROM THE JOURNAL BEFORE THIS EXISTED, over 227 real updates: median 6s, p90 77s, max
+# 247s. The long ones are all the same thing -- setup.sh's stage 3 rebuilding the container image
+# while ffbox is down. The median is short because most passes have nothing to build.
+# design/ffbox_ci_in_ffwatch_design.txt section 5c and open question (b).
+WINDOW_OPENED=$(date +%s)
 log "stopping ffbox.target"
 sudo_systemctl stop ffbox.target || log "WARNING: stop reported a failure; continuing"
 
@@ -695,6 +707,33 @@ if [ "$CODE_UPDATE" = 1 ]; then
 fi
 log "starting ffbox.target"
 sudo_systemctl start ffbox.target || log "WARNING: start reported a failure"
+
+# HOW LONG THE BOX WAS DOWN, AND WHETHER A CI JOB COULD HAVE OUTLASTED IT.
+#
+# The budget compared against is the one the HOST hands the container, `mirror_wait_secs`, which
+# is what a job will wait for an answer to fetch.request before giving up and failing its
+# checkout. Read through the runners' own config so the two numbers cannot drift: an operator who
+# lowers one should see this line change rather than find out from a red build.
+#
+# NOT FATAL, EVER. This is the last thing between a restart and a working box, and an arithmetic
+# problem here must not be what keeps ffbox stopped.
+if [ -n "${WINDOW_OPENED:-}" ]; then
+    _win=$(( $(date +%s) - WINDOW_OPENED ))
+    _budget=$(sh -c '. "'"$REPO"'/ffbox/runners/lib/config.sh" 2>/dev/null; printf "%s" "${MIRROR_WAIT_SECS:-}"' 2>/dev/null || true)
+    case "${_budget:-}" in ''|*[!0-9]*) _budget='' ;; esac
+    if [ -z "$_budget" ]; then
+        log "ffbox was down for ${_win}s"
+    elif [ "$_win" -ge "$_budget" ]; then
+        # THE CONDITION THE PATIENCE FIX EXISTS FOR. Once the CI lane is the daemon's, a window
+        # this long means any job that hit its mirror-fetch step during it has already given up.
+        log "WARNING: ffbox was down for ${_win}s, at or past the ${_budget}s a CI job will wait."
+        log "WARNING: raise githubrunner.mirror_wait_secs, or find out what made this pass slow"
+        log "WARNING: (the usual answer is setup.sh rebuilding the container image while down)"
+    else
+        log "ffbox was down for ${_win}s (a CI job would wait ${_budget}s)"
+    fi
+    unset _win _budget
+fi
 
 # What is ACTUALLY running, not what we asked for: `start` exits 0 for a Wants= member that
 # died, and the listener is expected to fail on a machine with no bot token.
