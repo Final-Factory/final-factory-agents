@@ -62,7 +62,10 @@ correct later.
   today, so **no game-repo change is needed for this half**.
   Config shape moves, so `ffbox/config.md` is edited in the same commit — CLAUDE.md's rule.
 
-- [~] **A2.2 — the host sets the mirror wait.** `S` (this repo, DONE) + `S` (game repo, OWED)
+- [x] **A2.2 — the host sets the mirror wait. DONE both halves.** `S` (this repo) + `S` (game repo)
+  Game repo: `71a9bcb66` on master, 2026-09-08. The loop bound is computed from
+  `FFGHR_MIRROR_WAIT` over its 3-second poll, falling back to 120 when the variable is absent.
+  **The phase D/E gate is cleared.**
   `_ffghr_set MIRROR_WAIT_SECS mirror_wait_secs 600` and
   `-e FFGHR_MIRROR_WAIT="$MIRROR_WAIT_SECS"` beside it. Then in the game repo, main.yml's
   "Wait for the host git mirror" step stops hardcoding `40` and computes its loop bound from
@@ -71,9 +74,18 @@ correct later.
   **Two commits in two repositories.** The host half landed first, deliberately: a workflow that
   does not yet read `FFGHR_MIRROR_WAIT` simply ignores it and keeps its 120, which is today's
   behaviour, so the host change is inert until the game repo catches up.
-  **STILL OWED:** main.yml's `n -lt 40` becomes a bound computed from `FFGHR_MIRROR_WAIT` over its
-  3-second poll, falling back to 40 when the variable is absent. Until that lands, phase D must
-  not ship — the 120-second fuse is still live and it is the merge's only hard-failure mode.
+  **LANDED** as `71a9bcb66`. Two notes carried forward rather than dropped.
+
+  The two messages below the loop still say `$((n * 3))` rather than `$((n * POLL))`. Identical
+  today because POLL is 3; a latent drift if anyone changes the poll, and the kind that reports a
+  wrong number rather than failing. Worth folding into whatever touches that step next.
+
+  **A budget arrives with a branch, not with the box.** `main.yml` runs `on: [push, pull_request]`.
+  A pull_request run uses the workflow from the merge of base and head, so it picks this up as
+  soon as master has it; a plain push to a branch that predates the commit runs that branch's copy
+  and keeps 120s. So for as long as stale branches are still being pushed, some jobs still carry
+  the old fuse — which is an argument for doing the phase E cut-over when the box is quiet rather
+  than assuming every job in flight has the new budget.
 
 - [x] **A2.3 — a test that the two variables reach the container.** `S` — DONE
   In `runners/test_pool.sh` or a new `test_slot_env.sh`: render the `docker run` argument list
