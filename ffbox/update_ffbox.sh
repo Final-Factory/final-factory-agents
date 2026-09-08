@@ -200,16 +200,50 @@ sudo_systemctl() {
 # compared for inequality, and an empty answer would differ from every stored value forever —
 # a machine with no config.json restarting itself every five minutes. The hashes stay out of the
 # log: secrets.env's is a fingerprint of a secret, and a journal is not where that goes.
+# THE CI LANE'S OWN NUMBERS, HASHED APART FROM THE REST, so that changing one is not a restart.
+#
+# `githubrunner.pool.max` and `.idle` are re-read LIVE -- by every waiting slot.sh today, and by
+# the daemon'"'"'s CI keeper after the cut-over -- so a process start is not how they take effect.
+# Hashing the whole file makes raising a CI ceiling by one cost a full drain and restart of ffbox:
+# a restart nobody needed, and one that, once the CI lane is the daemon'"'"'s, is also the unattended
+# window this design spends section 5c keeping away from a running job.
+#
+# SO config.json'"'"'s LINE BECOMES THE HASH OF THE DOCUMENT WITHOUT THAT POOL OBJECT, with a second
+# line carrying the pool on its own. A pool-only edit changes the second and not the first, and the
+# restart decision reads only the first. The second is still recorded rather than dropped, because
+# a fingerprint that silently stops watching a setting is how somebody later concludes it never was.
+#
+# A FILE python3 CANNOT PARSE FALLS BACK TO THE WHOLE-FILE HASH, which is the old behaviour and
+# errs towards restarting. Being unable to read the config is not a reason to decide nothing changed.
+config_pool_split() {   # $1 = path; prints "<hash of the rest> <hash of the pool>"
+    python3 -c '
+import hashlib, json, sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    doc = json.load(fh)
+gh = doc.get("githubrunner")
+pool = gh.pop("pool", None) if isinstance(gh, dict) else None
+rest = hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()[:64]
+poolh = hashlib.sha256(json.dumps(pool, sort_keys=True).encode()).hexdigest()[:64]
+print(rest, poolh)
+' "$1" 2>/dev/null
+}
+
 config_fingerprint() {
     for _f in $WATCHED_FILES; do
-        if [ -r "$CONFIG_DIR/$_f" ]; then
-            _h=$(sha256sum "$CONFIG_DIR/$_f" 2>/dev/null | cut -c1-64)
-            printf '%s %s\n' "$_f" "${_h:-unhashable}"
-        else
+        if [ ! -r "$CONFIG_DIR/$_f" ]; then
             printf '%s %s\n' "$_f" "absent"
+            continue
         fi
+        if [ "$_f" = config.json ] && _split=$(config_pool_split "$CONFIG_DIR/$_f") \
+                && [ -n "$_split" ]; then
+            printf '%s %s\n' "$_f" "${_split%% *}"
+            printf 'githubrunner.pool %s\n' "${_split##* }"
+            continue
+        fi
+        _h=$(sha256sum "$CONFIG_DIR/$_f" 2>/dev/null | cut -c1-64)
+        printf '%s %s\n' "$_f" "${_h:-unhashable}"
     done
-    unset _f _h
+    unset _f _h _split
 }
 
 # One file's hash out of a fingerprint, or "" when that fingerprint has no line for it.

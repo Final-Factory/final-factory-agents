@@ -809,12 +809,46 @@ on the equivalent file, and it has never been a problem.
 Non-numeric or zero falls back to 600: both values end up in a `sleep` loop inside a container, and
 a job that waits zero seconds fails in a way that names neither this file nor that one.
 
+### `supervisor`, and how the lane is handed over
+
+`slot.sh` is one systemd supervisor per runner, which is how this lane has always worked.
+`ffwatch` is the daemon keeping the pool the way it keeps the agent pool. Both sets of code ship
+together; this key decides which one is in charge.
+
+**It controls exactly one thing:** whether `05-services.sh` renders and enables
+`ffgithubrunners@N.service` instances. Set to `ffwatch`, it renders **none** — not one, not a
+spare, because a single supervisor left enabled would go on minting runners beside the daemon
+against the same ceiling with nothing locking between them.
+
+The daemon does **not** read this key. It asks whether a `slot.sh` is actually running, because
+that is the question that matters and a stale key would answer it wrongly. So the two can never
+both think they own the lane, whatever the config says.
+
+**The cut-over**, in the order that does not kill a job:
+
+```sh
+ffgithubrunners drain                      # no root; running jobs finish, no new ones start
+ffgithubrunners status                     # wait until nothing is BUSY
+# set githubrunner.supervisor to "ffwatch" in config.json
+sudo sh ffbox/runners/05-services.sh --install    # disables and stops the now-idle supervisors
+ffgithubrunners resume
+```
+
+`--install` warns before stopping a slot that is still serving a job, but it will not refuse:
+draining first is what makes that warning never fire.
+
+**The rollback is the same thing backwards** — set the key to `slot.sh`, re-run `--install`, and
+the supervisors come back while the daemon's interlock stands it down again. `slot.sh` is
+deliberately still on disk for a release after it stops being used, because the thing you fall
+back to has to still be there.
+
 ## Seeded
 
 | Key | Default | What it is |
 |---|---|---|
 | `pool.max` (`slots`) | `1` | The most jobs in flight at once. Read live by every waiting supervisor; no root, no restart. Not the number of supervisors, which comes from `max_concurrent_runs`. |
 | `pool.idle` (`idle_pool`) | `1` | How many runners stay registered and waiting while nothing is happening. |
+| `supervisor` | `slot.sh` | Which process runs this lane: `slot.sh` (one systemd supervisor per runner) or `ffwatch` (the daemon). See below — this is the cut-over switch. |
 | `mirror_wait_secs` | `600` | How long a job waits for the host to answer `fetch.request` before giving up. See below. |
 | `artifact_wait_secs` | `600` | How long a job holds itself open waiting for the host to upload its test-results artifact. See below. |
 | `watchdog_minutes` | `120` | Bounds a **job**, from the moment that job started. 120 because `main.yml`'s own `timeout-minutes` is 90, so a job GitHub still wants is never killed locally. |

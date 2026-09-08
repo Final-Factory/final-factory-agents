@@ -454,5 +454,45 @@ grep -qF 'ffghr_protocol_ok "$STAGE"' "$HERE/slot.sh" \
     && ok "and checks it before serving anything out of one" \
     || bad "slot.sh must check the protocol before it serves a request"
 
+printf '\nwhich process supervises this lane\n'
+
+# ONE KEY, ONE EFFECT: whether 05-services.sh renders slot instances. The daemon does not read it
+# -- it asks whether a slot.sh is actually RUNNING, because a stale key would answer that wrongly.
+# What the key buys is a cut-over somebody decides rather than one that falls out of a deploy, and
+# a rollback that is one edit and one command. design section 12, phase E.
+write_sup() {   # <supervisor JSON literal, or "" to omit the key>
+    if [ -z "$1" ]; then
+        printf '{ "max_concurrent_runs": 12, "githubrunner": { "pool": { "max": 5, "idle": 1 } } }\n' \
+            > "$FFBOX_CONFIG_DIR/config.json"
+    else
+        printf '{ "max_concurrent_runs": 12, "githubrunner": { "supervisor": %s,
+                  "pool": { "max": 5, "idle": 1 } } }\n' "$1" > "$FFBOX_CONFIG_DIR/config.json"
+    fi
+    . "$HERE/lib/config.sh" 2>/dev/null
+}
+
+write_sup ''
+is "$SUPERVISOR" slot.sh "with no key at all the lane is slot.sh's, which is today's box"
+is "$(ffghr_slot_units)" 12 "and the units are rendered"
+
+write_sup '"ffwatch"'
+is "$SUPERVISOR" ffwatch "the key hands the lane to the daemon"
+is "$(ffghr_slot_units)" 0 "and NO slot units are rendered, not even one"
+
+# NOT EVEN ONE. A single ffgithubrunners@1 left enabled would go on minting runners beside the
+# daemon against the same ceiling with no lock between them -- the overshoot ci_lane's interlock
+# exists to prevent, arriving from the other side.
+
+write_sup '"slot.sh"'
+is "$(ffghr_slot_units)" 12 "and handing it back brings every supervisor back"
+
+# A TYPO MUST NOT RETIRE CI. The failure direction is "nothing changed, and it said why".
+write_sup '"ffwtach"'
+is "$SUPERVISOR" slot.sh "a value that is not a known supervisor keeps slot.sh"
+is "$(ffghr_slot_units)" 12 "so the units stay"
+
+write_config 6 1
+. "$HERE/lib/config.sh"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

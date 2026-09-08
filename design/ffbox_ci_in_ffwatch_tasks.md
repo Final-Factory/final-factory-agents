@@ -228,12 +228,29 @@ tested by rendering it without running it, because its likely failure is a missi
 before the cut-over, and once `slot.sh` is deleted the before-number cannot be taken any more.
 E.6 is last by definition.
 
-- [ ] **E.1 — delete `slot.sh` and the unit template.** `M`
-  `05-services.sh` stops rendering slot instances and **must disable the instances it previously
-  enabled**, or twelve units linger and fail on a missing script. Keep the timers and the egress
-  units. `runners/systemd/ffgithubrunners@.service` goes.
+- [x] **E.1 — retire the slot instances behind a switch. DONE 2026-09-08, and NOT as written.** `M`
+  The task said delete `slot.sh` and the unit template. Doing both in one commit is a one-way
+  door with a nasty middle: land it while the units are enabled and twelve of them restart every
+  five seconds against a missing `ExecStart`, with `StartLimitIntervalSec=0` meaning they never
+  give up. The end state would be right and the road there is CI flapping.
 
-- [ ] **E.2 — the pool half of `lib/config.sh` goes.** `S`
+  What shipped instead is `githubrunner.supervisor` — `slot.sh` (default) or `ffwatch`. It
+  controls exactly one thing: whether `05-services.sh` renders slot instances. `slot.sh` STAYS ON
+  DISK for a release, so the rollback is one config edit and one command rather than a revert and
+  a deploy — which is what you want on the day when all you know is that CI stopped ten minutes
+  ago. Three reasons in `lib/config.sh`'s own comment; the short one is that a cut-over should be
+  a decision somebody makes, not a side effect of running `--install` to fix a path.
+
+  `--install` warns before stopping a slot that is serving a job, and the documented order
+  (`drain`, wait, switch, `--install`) is what makes that warning never fire.
+
+  **STILL OWED, after the cut-over is confirmed:** delete `slot.sh`, the unit template, and the
+  now-unused half of `lib/config.sh`'s pool section. Tracked as E.7.
+
+- [ ] **E.2 — DEFERRED into E.7, deliberately.** `S`
+  It cannot go while `slot.sh` is the fallback: the fallback has to work. Original text follows.
+
+  ~~the pool half of `lib/config.sh` goes~~ `S`
   Admission, the counts, the markers' writers and the two coercions move into the daemon. What
   stays is the credential, image, network, cache and licence configuration, which `reap.sh` and
   the CLI still source. `ffghr_slot_units` and `ffghr_enabled_slots` go with the units.
@@ -265,9 +282,20 @@ E.6 is last by definition.
   anything moves. It is a belief, and the cost of it being wrong is leaked seats, so verify rather
   than assume: one job through the new path, and confirm the seat comes back.
 
-- [ ] **E.6 — restore `pool.max` and watch one real day.** `?`
-  What to watch: no orphaned registrations after an update, no job failing its checkout within
-  two minutes of one, and `ffstatus.sh` unchanged throughout (design 5e).
+- [ ] **E.6 — throw the switch, and watch one real day.** `?`
+  **NEEDS ROOT AND A PERSON.** Everything else in this phase has shipped; this is the step that
+  actually moves the lane, and the first real mint through the daemon's path happens here. Order:
+  `ffgithubrunners drain`, wait for `status` to show nothing BUSY, set
+  `githubrunner.supervisor` to `ffwatch`, `sudo sh ffbox/runners/05-services.sh --install`,
+  `ffgithubrunners resume`.
+  What to watch: the first mint end to end, no orphaned registrations after an update, no job
+  failing its checkout within two minutes of one, and `ffstatus.sh` unchanged throughout
+  (design 5e).
+
+- [ ] **E.7 — delete `slot.sh` and its scaffolding, once E.6 has held.** `M`
+  The unit template, `slot.sh` itself, the admission half of `lib/config.sh`'s pool section,
+  `ffghr_slot_units`, `ffghr_enabled_slots`, and the `ffghr.supervisor.pid` branch of `reap.sh`'s
+  `owner_state`. Not before: every one of them is part of the rollback.
 
 ---
 
@@ -275,7 +303,7 @@ E.6 is last by definition.
 
 Only honestly testable once D and E are real.
 
-- [ ] **F.1 — `ffwatch drain` destroys idle CI runners and deletes their registrations.** `M`
+- [x] **F.1 — DONE — `ffwatch drain` destroys idle CI runners and deletes their registrations.** `M`
   The daemon holds the credential, so it closes the leak the updater's bare `docker rm -f` leaves
   for the next reap (design fact l). Carry over `idle_stop_ok`'s re-check (`slot.sh:566`): a
   runner that takes a job in the moment before the stop is detached, not killed.
@@ -284,7 +312,7 @@ Only honestly testable once D and E are real.
   `update_ffbox.sh:459-468`, **in the same commit as F.1**. Two things deciding which runner is
   idle, on the one pass where being wrong costs a job, is worse than either alone.
 
-- [ ] **F.3 — a pool-only config edit stops triggering a restart.** `M`
+- [x] **F.3 — DONE — a pool-only config edit stops triggering a restart.** `M`
   The updater compares a parsed document rather than a file hash, so a change confined to
   `githubrunner.pool` is not a restart trigger. Without this, raising a CI ceiling still costs the
   restart that opens the window. Design section 6.

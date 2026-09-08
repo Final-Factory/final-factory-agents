@@ -929,9 +929,52 @@ if v is not None and not isinstance(v, (dict, list)):
 # of which ffghr_reload_limits' python3 was roughly half and is now skipped when nothing changed.
 # The other half is the `docker ps` in ffghr_pool_counts, which is the question being asked and
 # does not go away.
+# --- WHICH PROCESS SUPERVISES THIS LANE ---------------------------------------------------------
+#
+# `slot.sh` (the default) or `ffwatch`. It decides ONE thing: whether 05-services.sh renders and
+# enables `ffgithubrunners@N.service` instances. Nothing else reads it -- the daemon does not ask
+# permission from a config key, it asks whether a slot.sh is actually running, because that is the
+# question that matters and a stale key would answer it wrongly.
+#
+# WHY A KEY AT ALL, RATHER THAN JUST DELETING slot.sh WHEN THE DAEMON IS READY.
+#
+#   * IT MAKES THE CUT-OVER DELIBERATE. Without it, retiring the lane would be a side effect of
+#     `05-services.sh --install`, which people run for unrelated reasons -- after moving the
+#     checkout, or because --check said units were stale. Nobody should retire CI by accident
+#     while fixing a path.
+#   * IT MAKES THE ROLLBACK INSTANT AND OBVIOUS. Set it back, re-run --install, and the twelve
+#     supervisors return. That is a better answer than reverting a commit and waiting for a
+#     deploy, on the day when what you know is "CI stopped working ten minutes ago".
+#   * IT SEPARATES THE DEPLOY FROM THE SWITCH. The code for both supervisors ships together and
+#     sits inert; a person decides when. The updater re-runs runners/setup.sh on every pass but
+#     defers its root stage, so landing this changes nothing until somebody with sudo says so.
+#
+# slot.sh IS NOT DELETED IN THE SAME RELEASE THAT STOPS USING IT, and that is the same rule as
+# writing both container labels for a release: the thing you fall back to has to still be there.
+#
+# design/ffbox_ci_in_ffwatch_design.txt section 12, phase E.
+FFGHR_SUPERVISOR_VALUES='slot.sh ffwatch'
+_ffghr_set SUPERVISOR       supervisor       slot.sh
+case " $FFGHR_SUPERVISOR_VALUES " in
+    *" $SUPERVISOR "*) ;;
+    *)  # AN UNKNOWN VALUE KEEPS THE UNITS, deliberately. A typo here must not silently retire the
+        # only thing serving CI; the failure direction is "nothing changed, and it said why".
+        echo "lib/config.sh: supervisor '$SUPERVISOR' is not one of $FFGHR_SUPERVISOR_VALUES;" \
+             "keeping slot.sh" >&2
+        SUPERVISOR=slot.sh ;;
+esac
+
 FFGHR_SLOT_UNITS_CAP=32
 
 ffghr_slot_units() {
+    # NO SUPERVISORS AT ALL once the daemon owns the lane. Not one, not a spare: a single
+    # ffgithubrunners@1 left enabled would go on minting runners beside the daemon, against the
+    # same ceiling, with no lock between them -- which is the exact overshoot ci_lane's interlock
+    # exists to prevent, arriving from the other side.
+    if [ "${SUPERVISOR:-slot.sh}" = ffwatch ]; then
+        printf '0\n'
+        return 0
+    fi
     _su=$(_ffghr_box_cfg max_concurrent_runs)
     case "$_su" in ''|*[!0-9]*) _su=$SLOTS ;; esac
     # NEVER FEWER THAN THE LANE ASKS FOR. A `pool.max` above the box ceiling is already refused at
