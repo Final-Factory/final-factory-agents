@@ -1,8 +1,9 @@
 ffbox: the CI lane inside ffwatch
 =================================
 
-Revision 2, 2026-09-08. Phase A landed; open question (a) is answered, and its answer promotes
-a section 5c mitigation from optional to required.
+Revision 3, 2026-09-08. Phase A landed. Open question (a) is answered. Section 5c is rewritten:
+revision 2 proposed building something to close the gap, and the answer is to stop the job caring
+about the gap, which is what the agent lane has always done.
 
 Scope: delete the per-slot systemd supervisors and make ffwatch keep the CI runner pool the way
 it already keeps the agent pool -- one daemon, one keeper loop, a number in config.json instead
@@ -129,6 +130,22 @@ Read before estimating. Most of this design is wiring; the invention is in secti
      1.5% of one core. Profiled: the `ffghr_reload_limits` python3 re-parse of config.json is
      about 27ms and the `docker ps` in `ffghr_pool_counts` about 24ms, so roughly half each.
      Five waiting supervisors cost about 7% of a core to hold no containers.
+
+  n. THE AGENT LANE ALREADY DOES THIS WAITING, AND THE ONLY DIFFERENCE IS PATIENCE. This is the
+     fact the first two revisions of this document were missing, and without it section 5c
+     designed a whole new component for a problem the other lane solved with a constant.
+
+     A staged agent container is not passive either. pool-task.sh:147 is
+     `while [ ! -e "$FFBOX_IN/dispatch" ]; do ... sleep "$POLL"; done` -- it sits polling for a
+     file the HOST writes, which is the same shape as `fetch.request` / `fetch.done` exactly. A
+     restart of ffwatch leaves it polling. Nothing is lost, and nobody has ever had to think about
+     it, because of pool-task.sh:41:
+
+         TTL=${FFBOX_IDLE_TTL_SECS:-14400}
+
+     FOUR HOURS. The agent container will wait four hours for the host to answer. A two-minute
+     restart is beneath its notice. The CI job waits 120 seconds. Same architecture, same
+     handshake, one number apart -- and the number is the whole of the difference.
 
   k. THE AGENT LANE ALREADY MADE THIS EXACT TRANSITION, AND THE UPDATER ALREADY REFLECTS IT.
      update_ffbox.sh:473-479 says it in its own words: the drain "used to count busy containers
@@ -290,11 +307,13 @@ listed three; the fourth is what reading the workflow's own timeouts turned up.
 So the CI contribution to `settling()` is the last two of these and nothing else:
 
     ci_publishing    CI containers that have exited and whose teardown has not completed.
-    ci_unanswered    CI containers whose job is under a minute old and has not been answered about
-                     its mirror fetch. Needed only while mitigation 3 of section 5c is absent;
-                     with a standalone answerer this stops being the update's problem at all.
 
-Both join `HOST_TAIL`. `ci_runners` is NOT counted, for the same reason `runs` is counted in
+Revision 2 added a second entry here, for a container about to ask a question nobody would be
+there to answer. Section 5c retires it: once the job's patience exceeds the window, an unasked
+question is not something a stop can lose. The obligation stays real in 5a and stops being the
+update's business.
+
+It joins `HOST_TAIL`. `ci_runners` is NOT counted, for the same reason `runs` is counted in
 `settling()` but excluded from `HOST_TAIL`: the container survives the stop.
 
 5b. THE UPDATE SEQUENCE, AMENDED
@@ -382,39 +401,56 @@ roughly the last minute" -- usually none, sometimes one. That is also what would
 in practice rather than obvious: most updates would hurt nothing, and every so often a job would
 fail its checkout for a reason nobody would connect to a deploy that happened two minutes earlier.
 
-Three mitigations. Revision 1 ranked them and made the third optional; the numbers above say that
-was wrong.
+THE FIX IS THE NUMBER, NOT A NEW COMPONENT. Revisions 1 and 2 both tried to close the gap: answer
+before stopping, shorten the window, or build a standalone answerer that keeps running while
+ffwatch is down. All three take the job's 120 seconds as given and work around it. Fact n says it
+is not given. The agent lane holds the same handshake open for four hours and has never needed any
+of this, and the CI job's 120 is not a considered figure -- it was written when the answering
+process could not go away, so any value large enough to catch a broken host was correct.
 
-  1. ANSWER BEFORE STOPPING, AND HOLD FOR THE ONES ABOUT TO ASK. The drain already runs to
-     completion, so extend it: serve every outstanding `fetch.request` and `artifact.request`
-     before reporting quiet. Necessary and NOT sufficient, which revision 1 missed. A container
-     that went busy thirty seconds before the drain has not written its request yet and will write
-     it into the window, so the drain also has to hold for a CI container whose job has started
-     and has not yet been answered. That is the fourth obligation in 5a, and it is bounded by how
-     far into a job the fetch step sits -- about a minute -- rather than by the job.
+MAKE THE JOB AS PATIENT AS THE AGENT CONTAINER ALREADY IS, and the window stops being a hazard by
+itself, using machinery that exists and is proven rather than machinery this design would add.
 
-  2. BOUND THE WINDOW AND STATE IT. Still owed, and now with a number to state it against: the
-     stop-to-start window must be under 120 seconds, and today it is not. Open question (b) is the
-     interesting one now. If the window can honestly be brought under 120s, mitigation 1 becomes
-     the belt to its braces rather than the whole defence.
+WHY LENGTHENING IT IS ALMOST FREE, and this is the part that makes it obviously right rather than
+merely cheaper. The timeout does not bound a SLOW answer. `ffghr_mirror_serve_request`
+(lib/mirror.sh:114) writes `fetch.done` on both paths: `ok` when the fetch worked and `failed` when
+it did not, immediately, so a genuine mirror failure stops the job waiting at once. The 120 seconds
+therefore protects against exactly one thing -- NOBODY IS ANSWERING -- which before this design was
+a host so broken that the job was doomed regardless. Under the merge it becomes "the box is
+updating", which lasts minutes and ends by itself. Raising the ceiling costs nothing in any normal
+failure because no normal failure reaches it.
 
-  3. A STANDALONE ANSWERER, PROMOTED FROM FALLBACK TO REQUIRED. Revision 1 argued against it as "a
-     second implementation of the same protocol". That was wrong on the facts: it reimplements
-     nothing, it CALLS `ffghr_mirror_serve_request` (lib/mirror.sh:114) -- the same function
-     slot.sh calls today -- over any staging directory holding an unanswered `fetch.request`. A
-     timer at 15s sits well inside a 120-second budget and needs no daemon, no credential and no
-     state of its own. Perhaps twenty lines, in the same family as reap.sh and for the same reason
-     (5d): it is the part that has to work when ffwatch is not there.
+THE TWO NUMBERS, AND ONE OF THEM DOES NOT TOUCH THE GAME REPO.
 
-     It does NOT cover the artifact upload, which needs the Actions credential and the repository
-     allowlist. That one stays mitigation 1's, and it can, because its budget is 180s and its
-     failure is cosmetic.
+    artifact.done   The action already reads `FFGHR_ARTIFACT_WAIT || 180` from the environment
+                    (.github/actions/ffghr-artifact-handoff/index.js:28) and NOTHING SETS IT
+                    today -- there is no `-e FFGHR_ARTIFACT_WAIT` anywhere in ffbox/. So the host
+                    raises it by passing one environment variable at `docker run`. Entirely in
+                    this repo, and it can land today.
 
-THE SHAPE THAT FALLS OUT is that the mirror answer stops being the daemon's job at all. Once a
-timer serves it, the daemon's CI half owns minting, the clocks, the cache decision, the artifact
-upload and teardown, and the one interaction that has both a hard deadline and a hard failure is
-handled by something that cannot go down with an update. That is a better design than revision
-1's, and it was the number that produced it rather than any amount of thinking about it.
+    fetch.done      The `40` is hardcoded in main.yml's wait loop. A one-line change in the game
+                    repo, and it should be made to read an environment variable the same way, so
+                    that BOTH numbers are set by the host beside the code that decides how long a
+                    restart takes. Two numbers that have to agree should not live in two
+                    repositories with no way to check each other.
+
+600 seconds for both is the suggestion: comfortably over any plausible stop-to-start window,
+comfortably under main.yml's own 90-minute job timeout and the local 120-minute watchdog.
+
+WHAT IT COSTS, stated rather than buried. When the host is genuinely broken rather than merely
+updating, a job now hangs for ten minutes instead of two before failing. It fails either way; the
+watchdog still bounds it; and the price is ten minutes of one runner slot on a rare fault, against
+intermittent PR failures that nobody would attribute to a deploy. Take the trade.
+
+WHAT SURVIVES FROM THE OLD MITIGATIONS. Answering outstanding requests during the drain (revision
+2's mitigation 1) is still worth doing, but it drops from load-bearing to tidy: it turns a job's
+ten-minute allowance into a wait it never actually takes. The fourth obligation in 5a therefore
+does NOT need to hold the drain, and `ci_unanswered` comes back out of `settling()`. The
+standalone answerer is withdrawn.
+
+AND IT CHANGES WHAT OPEN QUESTION (b) IS FOR. Measuring the stop-to-start window stops being a
+gate -- "does it fit under 120 seconds", which it does not -- and becomes a sanity check: "is 600
+comfortably more than it", which it plainly is. Still worth measuring, no longer blocking.
 
 5d. WHAT HAPPENS IF THE DAEMON DOES NOT COME BACK
 
@@ -606,6 +642,18 @@ number requires root and kills jobs.
      deployment: a slot number is not an identity, and the staging directory should not be keyed
      by one.
 
+  A2. MAKE THE JOB PATIENT (section 5c), AND DO IT EARLY. Two numbers, no structural change, and
+     both are testable under the supervisor that exists today -- a job with a ten-minute allowance
+     behaves identically to one with two minutes as long as somebody answers, which today somebody
+     always does. So this can land now and simply be correct later.
+
+       * `-e FFGHR_ARTIFACT_WAIT=600` at `docker run`. This repo only, one line.
+       * main.yml's wait loop reads an environment variable instead of a literal 40, and the host
+         passes 600. One line in the game repo plus the same `-e` here.
+
+     Landing it before D is what removes the merge's only hard-failure mode, so it is a
+     prerequisite rather than a nicety. Landing it before B and C costs nothing either way.
+
   B. THE STAGING DIRECTORY MOVES TO THE CONTAINER NAME, and the supervisor label becomes an
      owner label. Both are small, both are prerequisites for adoption, and both can land while
      slot.sh is still the supervisor -- which is the point: they are testable before anything
@@ -642,10 +690,10 @@ number requires root and kills jobs.
      independently of any of this.
 
   b. HOW LONG IS THE STOP-TO-START WINDOW, MEASURED? Fact i is assembled from a comment and a
-     sequence, not from a stopwatch. THIS IS NOW THE ONE THAT MATTERS: section 5c needs it under
-     120 seconds and believes it is not. Instrument it before phase D, not before phase E -- if it
-     turns out to be 30 seconds the design gets simpler, and if it is four minutes then mitigation
-     3 is load-bearing and should be built first.
+     sequence, not from a stopwatch. Revision 2 made this the gate; revision 3 demotes it to a
+     sanity check, because the question stopped being "does it fit under 120 seconds" (it does
+     not) and became "is 600 comfortably more than it" (it plainly is). Still worth a stopwatch
+     before phase E, and it would want revisiting if the update ever grew a cold image build.
 
   c. SHOULD THE CI KEEPER RUN WHEN THE AGENT LANE IS IN FAILSAFE? `keep_pool` returns early on
      `config_failsafe()`, `killed()` or `draining()`. Two of those three clearly apply to CI as
