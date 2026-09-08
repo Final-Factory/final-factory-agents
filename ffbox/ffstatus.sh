@@ -566,20 +566,31 @@ gather() {
                 # owns the container: `.busy` when its runner takes a job, `.idle` at mint. Before
                 # 2026-09-02 neither existed as a deadline -- the number lived in a shell variable
                 # inside slot.sh -- which is the whole reason this column was blank for CI rows.
+                # THE SAME WORDS THE AGENT LANE USES, since 2026-09-08. This column said `busy`
+                # and `waiting` while the agent lane said `running` and `warm` for containers in
+                # exactly the same two conditions -- doing work, and provisioned but not yet given
+                # any. Two vocabularies for one question is a table an operator has to translate
+                # while reading it, and there was never a reason for it beyond the two lanes
+                # having been written years apart.
+                #
+                # `running` IS THE ONE THAT MATTERS. It is what the agent lane calls a container
+                # serving a turn, and a CI container with a job is the same thing: work in
+                # progress that something is waiting on. `warm` is what a provisioned, unclaimed
+                # agent spare says, and an idle registered runner is precisely that -- a container
+                # holding a workspace, waiting for work to arrive.
                 lane=ci; class=''; ref=''
                 if [ -e "$FFGHR_STATE/$name.busy" ]; then
-                    state=busy; CI_BUSY=$((CI_BUSY + 1))
+                    state=running; CI_BUSY=$((CI_BUSY + 1))
                     ttl=$(ffbox_clock_left "$FFGHR_STATE/$name.busy" 2>/dev/null) || ttl=''
                 else
-                    state=waiting; CI_WAITING=$((CI_WAITING + 1))
+                    state=warm; CI_WAITING=$((CI_WAITING + 1))
                     ttl=$(ffbox_clock_left "$FFGHR_STATE/$name.idle" 2>/dev/null) || ttl=''
                 fi
-                # A DEADLINE NOBODY IS ENFORCING IS NOT A DEADLINE. The CI clocks are held by the
-                # slot supervisor, not by the container, so a supervisor killed with SIGKILL leaves
-                # a container whose file still counts down and whose enforcer is gone; it runs
-                # until reap.sh notices the pid on its label is dead. Counting down to nothing is
-                # worse than saying nothing, so the row says `orphan` instead. Same test reap.sh
-                # makes, and the label it reads is the supervisor's pid rather than the slot.
+                # A DEADLINE NOBODY IS ENFORCING IS NOT A DEADLINE. The CI clocks are files the
+                # daemon writes and the daemon enforces, so a box with no ffwatch has containers
+                # whose files still count down and whose enforcer is gone. Counting down to
+                # nothing is worse than saying nothing, so the row says `orphan` instead. Same
+                # question reap.sh asks, by the same owner label.
                 if [ -n "$ttl" ] && ! ci_supervisor_alive "$name"; then
                     ttl=''; state=orphan
                 fi ;;

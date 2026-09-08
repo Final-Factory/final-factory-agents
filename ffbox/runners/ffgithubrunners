@@ -68,7 +68,8 @@ cmd_status() {
     # that somebody drained this on purpose and forgot.
     printf '\n'
     if [ -e "$FFGHR_DRAIN_FLAG" ]; then
-        printf 'DRAINED    all slots idle: %s\n' "$(cat "$FFGHR_DRAIN_FLAG" 2>/dev/null)"
+        printf 'DRAINED    no new runners; what is running finishes: %s\n' \
+            "$(cat "$FFGHR_DRAIN_FLAG" 2>/dev/null)"
         printf '           lift with: ffgithubrunners resume\n'
     else
         printf 'drain      off\n'
@@ -105,19 +106,25 @@ cmd_status() {
     for _c in $(ffghr_pool_containers); do
         _any=1
         _cs=$(docker inspect -f '{{index .Config.Labels "ffghr.slot"}}' "$_c" 2>/dev/null || echo "?")
-        _st=$(docker inspect -f '{{.State.Status}}' "$_c" 2>/dev/null || echo "?")
         # WHICH CLOCK APPLIES IS WHETHER THERE IS A JOB. A busy container counts the watchdog down
         # from when its JOB started; an idle one counts down to being recycled onto whatever image
         # has been built since.
+        # THE SAME TWO WORDS ffstatus.sh USES, and the same two the agent lane has always used:
+        # `running` for a container doing work, `warm` for one provisioned and waiting for some.
+        # This said BUSY and idle, which meant an operator reading the box view and then this one
+        # had to translate between them for no reason beyond the two having been written apart.
         if [ -e "$(ffghr_busy_marker "$_c")" ]; then
-            _what="BUSY$(_ffghr_status_left "$(ffghr_busy_marker "$_c")")"
+            _what="running$(_ffghr_status_left "$(ffghr_busy_marker "$_c")")"
         else
-            _what="idle$(_ffghr_status_left "$(ffghr_idle_marker "$_c")")"
+            _what="warm$(_ffghr_status_left "$(ffghr_idle_marker "$_c")")"
         fi
-        printf '  slot %-3s %-28s %-8s %s\n' "${_cs:-?}" "$_c" "$_st" "$_what"
+        # NO DOCKER STATE COLUMN. ffghr_pool_containers lists RUNNING containers, so it printed
+        # the word "running" beside a lane state that is also sometimes "running" -- two columns
+        # that looked like they disagreed and never could.
+        printf '  slot %-3s %-30s %s\n' "${_cs:-?}" "$_c" "$_what"
     done
     [ "$_any" = 1 ] || printf '  (no runners right now; the keeper mints one within a poll)\n'
-    unset _any _c _cs _st _what
+    unset _any _c _cs _what
 
     printf '\nworkspace cache\n'
     if [ -z "$CACHE_DIR" ]; then

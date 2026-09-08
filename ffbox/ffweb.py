@@ -189,19 +189,30 @@ DEFAULT_AGENT_CLASS = "ffagent"
 # useless id rather than breaking anything.
 LOCAL_KINDS = ("shell", "web")
 
-# Which state words on the box page name a container this page offers to stop. Both are the
-# agent lane serving a live turn -- ffstatus.sh writes `running` for one launched cold and
-# `running*` for one dispatched out of the warm pool, and the star is the only difference
-# between them.
+# Which rows on the box page this page offers to stop: the AGENT lane serving a live turn.
+# ffstatus.sh writes `running` for one launched cold and `running*` for one dispatched out of the
+# warm pool, and the star is the only difference between them.
 #
-# DELIBERATELY NOT THE POOL OR CI STATES. A staged spare is retired with `ffwatch pool drop`,
-# which also deals with its spool directory, and a CI runner belongs to its slot supervisor,
-# which would mint a replacement the moment this took one away. Offering a button that stops a
-# container something else immediately puts back is worse than offering nothing.
+# THE LANE IS PART OF THE TEST, AND IT HAS TO BE. This was a state-word test alone, which worked
+# only because the CI lane happened to call a container with a job `busy` rather than `running`.
+# On 2026-09-08 the two lanes were given one vocabulary -- both say `running` for work in progress
+# -- and a check on the word alone would have silently started offering a stop button for CI
+# runners, which is exactly what the paragraph below refuses. The distinction was never about the
+# word; it was about which lane owns the container.
 #
-# A word that drifted out of step with ffstatus.sh costs a pill that is not a link — the page
-# goes on rendering, and the terminal still has `ffwatch stop`.
+# NOT THE POOL AND NOT CI. A staged spare is retired with `ffwatch pool drop`, which also deals
+# with its spool directory, and a CI runner belongs to a keeper that would mint a replacement the
+# moment this took one away. Offering a button that stops a container something else immediately
+# puts back is worse than offering nothing.
 STOPPABLE_STATES = ("running", "running*")
+STOPPABLE_LANES = ("agent",)
+
+
+def is_stoppable(row):
+    """Does this box-page row name a container this page may stop?"""
+    return (row.get("state") in STOPPABLE_STATES
+            and row.get("lane") in STOPPABLE_LANES
+            and bool(row.get("name")))
 
 # ---- the Claude token pool -------------------------------------------------------------
 # MOVED OUT ON 2026-09-04, and the comment that used to sit here argued against exactly this.
@@ -2010,8 +2021,9 @@ class FFWebHandler(BaseHTTPRequestHandler):
             if row is None:
                 return self._redirect("/status?msg=" + urllib.parse.quote(
                     name + " is no longer running; nothing was stopped"))
-            if row.get("state") not in STOPPABLE_STATES:
-                return self._error(409, f"{name} is {row.get('state')}, not running a turn")
+            if not is_stoppable(row):
+                return self._error(409, f"{name} is {row.get('state')} in the "
+                                        f"{row.get('lane')} lane, not an agent run this page stops")
             ok, out = app.actions.stop(name)
             # THE ACKNOWLEDGEMENT IS COMPOSED HERE, not lifted out of `out`. The same rule the
             # prompt box follows: ffwatch's output on a good run is its startup chatter — the
@@ -2517,7 +2529,7 @@ class App:
             # link is a GET to a confirmation page and changes nothing; the stop itself is the
             # POST on that page.
             cell = pill(c.get("state"))
-            if c.get("state") in STOPPABLE_STATES and c.get("name"):
+            if is_stoppable(c):
                 stoppable += 1
                 cell = Raw("<a class=\"stop\" title=\"stop this container\" href="
                            + attr("/stop?name=" + urllib.parse.quote(c["name"]))
@@ -2604,7 +2616,7 @@ class App:
             return page("Stop", head + [
                 "<p class=\"note\">No container by that name is running on this box now. It "
                 "most likely finished between this page being drawn and the click.</p>", back])
-        if row.get("state") not in STOPPABLE_STATES:
+        if not is_stoppable(row):
             # Reachable by a hand-typed URL, and by a click on a page old enough that the row has
             # changed state underneath it. Named states rather than a flat refusal, because the
             # thing to do next depends on which one it is.
