@@ -46,6 +46,14 @@ sized in WALL-CLOCK seconds and calibrated against a fast machine will never fir
 though the simulation is converged. Fix: size dwell/ceiling windows (`PostConnectDelayHeartbeats`
 and siblings) in heartbeats, with wall-clock only as a loud-warning ceiling, not the primary gate.
 
+`LocalMultiplayerAutomationBootstrap.WaitForDwellOrSessionEndAsync`
+(`LocalMultiplayerAutomationBootstrap.cs:1160-1191`) makes `PostConnectDelayMs` the dwell's
+internal wall-clock CEILING when `PostConnectDelayHeartbeats > 0`; it is independent of the
+outer process timeout. Size both bounds for the actual fixture: an initial 180000 ms internal dwell ceiling
+reached only 144 heartbeats in the cross-old-save arm, while a longer bounded ceiling reached 320
+heartbeats and produced the natural `0/0` result. Do not interpret an outer timeout as a substitute
+for the dwell ceiling.
+
 ## Comparison queries must carry the SAME EntityQueryOptions as their producers (R34, `fe6fa6bf0`)
 
 `DeterminismStateFingerprintJobs.MoverRailQueryDesc()`/`C3VisionQueryDesc()` had no `Options` set,
