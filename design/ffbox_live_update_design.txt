@@ -263,12 +263,23 @@ way something with a stable number could be tracked across a restart?
 THE PREMISE NEEDS CORRECTING FIRST, because it is inverted. CI runners are not the lane without
 slot ids; they are the lane that has always had them, and in a stronger form than the agent
 lane. A CI slot is a systemd unit instance -- ffgithubrunners@<slot>.service -- so the number is
-argv to slot.sh, fixed for the life of the machine, and it appears in the container name
+argv to slot.sh, fixed for the life of the supervisor, and it appears in the container name
 (`ffghr-$HOST-$SLOT-$NONCE`, slot.sh:261), in the `ffghr.slot` label, in the log file name and in
 the per-slot Unity machine id (lib/config.sh's ffghr_machine_id). The AGENT lane is the one that
 had no numbers at all until 2026-09-01, and it had to invent them without a unit instance to
 inherit from: ffbox_agent_slot_claim in lib-workloads.sh walks claim files under
 ~/.config/ffbox/slots and takes the lowest free one.
+
+FOOTNOTE, 2026-09-08: the CI half of this paragraph is weaker than it reads. Every literal claim
+still holds, but the CONCLUSION -- that a CI slot number is a strong identity -- stopped being
+useful when the unit instances were sized to the box ceiling rather than to `pool.max`. Once the
+instances outnumber the ceiling, any waiting supervisor may win the pool lock, so WHICH number a
+container lands on is arbitrary: with max 5 and twelve units the runners sit on 2, 3, 5, 8 and 11.
+The number still names a supervisor, a log file and a staging directory, and it is still stable for
+that container's life; it no longer tells you anything about the pool, and it is not something a
+second process can use to find a container. design/ffbox_ci_in_ffwatch_design.txt section 4a draws
+the consequence and keys the staging directory by container name instead. None of this changes the
+answer this section gives, which is still no.
 
 WHAT A SLOT IS FOR, IN BOTH LANES, IS UNITY IDENTITY AND RESOURCE ACCOUNTING. It is not a run
 identity and never was. It also already survives everything this design cares about: the claim
