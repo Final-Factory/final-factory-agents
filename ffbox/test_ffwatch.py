@@ -8337,6 +8337,42 @@ def test_the_pull_request_targets_the_branch_the_work_is_based_on():
     finally:
         os.environ.pop("FFBOX_STUB_BASE", None)
 
+    # THE BASE MOVED WHILE THE RUN WAS GOING. This box merges its own pull requests, so this is
+    # the ordinary case: master gains a commit between the container starting and the harvest
+    # publishing, and the fast-forward test that used to decide this then said the work "does
+    # not descend from master" and proposed nothing. Conversation 109 was refused by a merge two
+    # and a half minutes ahead of it; eight runs had been refused that way when it was found.
+    git_run("-C", host, "checkout", "-q", "--detach", "origin/master")
+    with open(os.path.join(host, "Assets", "Other.cs"), "w", encoding="utf-8") as fh:
+        fh.write("// somebody else's pull request, merged mid-run\n")
+    git_run("-C", host, "add", "-A")
+    git_run("-C", host, "commit", "-qm", "another PR lands on master")
+    git_run("-C", host, "push", "-q", "origin", "HEAD:refs/heads/master")
+    git_run("-C", host, "fetch", "-q", "origin")
+    moved, reason = case.watcher.pr_base(run["id"], os.path.dirname(run["stream_path"]),
+                                         run["branch"])
+    check("a base that moved after the run started still gets the pull request",
+          moved == "master", (moved, reason))
+
+    # AND THE REFUSAL THAT MATTERS SURVIVES IT. The work really is on develop and the run
+    # directory — which the container can write — claims master. Answering master would carry
+    # every develop-only commit into a pull request against the released build.
+    case3 = bug_case("prbasesmuggled")
+    git_origin(case3)
+    os.environ["FFBOX_STUB_BASE"] = "develop"
+    try:
+        escalate(case3, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+        run3 = case3.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                          " ORDER BY r.id DESC")[0]
+        dir3 = os.path.dirname(run3["stream_path"])
+        with io.open(os.path.join(dir3, "publish_base.txt"), "w", encoding="utf-8") as fh:
+            fh.write("master\n")
+        base3, _ = case3.watcher.pr_base(run3["id"], dir3, run3["branch"])
+        check("develop-based work claiming master is still refused master",
+              base3 == "develop", base3)
+    finally:
+        os.environ.pop("FFBOX_STUB_BASE", None)
+
     check("and the allow list is the config's, not a literal in the code",
           sorted(ffwatch.DEFAULTS["publish_bases"]) == ["develop", "master"],
           sorted(ffwatch.DEFAULTS["publish_bases"]))
