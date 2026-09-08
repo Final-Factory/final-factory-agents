@@ -491,8 +491,17 @@ read_maintenance() {
 # container lives. A container with no label predates the label and is left alone, exactly as
 # reap.sh leaves it alone.
 ci_supervisor_alive() {
-    local pid
-    pid=$("$DOCKER" inspect -f '{{index .Config.Labels "ffghr.supervisor.pid"}}' "${1:?}" 2>/dev/null) || pid=''
+    local pid owner
+    # WHICH QUESTION TO ASK DEPENDS ON WHAT OWNS IT, and reap.sh's owner_state is the definition;
+    # this is the same rule, kept in step by hand because ffstatus.sh reads no runner library.
+    # An `ffwatch` owner has no per-container pid to check -- the daemon restarts and its
+    # containers do not -- so the question is whether a daemon is running at all.
+    owner=$("$DOCKER" inspect -f '{{index .Config.Labels "ffghr.owner"}}' "${1:?}" 2>/dev/null) || owner=''
+    if [ "$owner" = ffwatch ]; then
+        pgrep -f ffwatch.py >/dev/null 2>&1 && return 0
+        return 1
+    fi
+    pid=$("$DOCKER" inspect -f '{{index .Config.Labels "ffghr.supervisor.pid"}}' "$1" 2>/dev/null) || pid=''
     case "${pid:-}" in ''|*[!0-9]*) return 0 ;; esac
     # /proc AND THE COMMAND LINE, character for character what reap.sh:53-57 does, and not
     # `kill -0`: that answers EPERM for a process owned by another account, and it cannot tell a
