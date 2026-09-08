@@ -90,24 +90,55 @@ if [ -z "$BRANCH" ]; then
 fi
 
 # WHICH BRANCH THIS WORK IS FOR, read off HEAD before anything moves a ref.
-PUBLISH_BASE= PUBLISH_BASE_SHA=
+#
+# THE FORK POINT, NOT THE BASE'S HEAD. This used to require `origin/<name>` itself to be an
+# ancestor of HEAD, which asks whether the branch is still a fast-forward of the base as the
+# container sees it. A first turn is; a turn continuing a branch that has fallen behind is not,
+# and every candidate then failed and the work was published with NO name at all — which the
+# host could only paper over with its configured default. Branches fall behind here as a matter
+# of course, because the box merges its own pull requests, so this was the ordinary state of a
+# continuation rather than an edge of one.
+#
+# `git merge-base` answers the question that was actually being asked — where did this work
+# leave that branch — and it has an answer whenever the two share any history at all, which a
+# clone of the same repo always does. It also agrees with the host: ffwatch's pr_base() verifies
+# the name against fork points too, and the answer the agent is given has to be the answer the
+# pull request ends up targeting.
+PUBLISH_BASE= PUBLISH_BASE_SHA= PUBLISH_BASE_DIST=
 for _name in $BASE_REFS; do
     _sha=$(g rev-parse --verify --quiet "origin/${_name}^{commit}" 2>/dev/null) \
       || _sha=$(g rev-parse --verify --quiet "${_name}^{commit}" 2>/dev/null) || continue
-    g merge-base --is-ancestor "$_sha" HEAD 2>/dev/null || continue
+    _fork=$(g merge-base "$_sha" HEAD 2>/dev/null) || continue
+    [ -n "$_fork" ] || continue
+    # HOW FAR THAT BASE HAS RUN ON since the work left it. Nothing but a tie-break, and it
+    # matters because with fork points the ties are the COMMON case rather than the rare one:
+    # work off master has the same fork point with develop as it has with master, since develop
+    # carries master's head too. The old head-ancestry scan got that difference for free by
+    # skipping develop outright, and reading "first listed wins" onto it would have answered
+    # develop for every master-based branch on the box.
+    _dist=$(g rev-list --count "${_fork}..${_sha}" 2>/dev/null) || _dist=0
+    [ -n "$_dist" ] || _dist=0
     # THE MOST SPECIFIC BASE THE WORK DESCENDS FROM, and on a tie the FIRST one listed. A
-    # branch off develop has master behind it as well, so develop is the descendant of the two
-    # and the more specific answer; a branch off master does not have develop behind it at all.
+    # branch off develop has master behind it as well, so develop's fork point is the descendant
+    # of the two and the more specific answer; a branch off master forks both at the same commit
+    # and is settled by the distance above.
     #
     # STRICTLY a descendant, which is the half that was wrong. `is-ancestor X X` is true, so an
     # equality test let every later candidate replace the one before it and the LAST listed won
     # — the exact opposite of the documented rule, on the one occasion it matters: the moment
     # after a release merge, when master and develop are the same commit and publish_bases
     # leads with master to say which of them a tie should mean.
-    if [ -z "$PUBLISH_BASE_SHA" ] \
-       || { [ "$_sha" != "$PUBLISH_BASE_SHA" ] \
-            && g merge-base --is-ancestor "$PUBLISH_BASE_SHA" "$_sha" 2>/dev/null; }; then
-        PUBLISH_BASE=$_name; PUBLISH_BASE_SHA=$_sha
+    _better=0
+    if [ -z "$PUBLISH_BASE_SHA" ]; then
+        _better=1
+    elif [ "$_fork" != "$PUBLISH_BASE_SHA" ] \
+         && g merge-base --is-ancestor "$PUBLISH_BASE_SHA" "$_fork" 2>/dev/null; then
+        _better=1
+    elif [ "$_fork" = "$PUBLISH_BASE_SHA" ] && [ "$_dist" -lt "$PUBLISH_BASE_DIST" ]; then
+        _better=1
+    fi
+    if [ "$_better" = 1 ]; then
+        PUBLISH_BASE=$_name; PUBLISH_BASE_SHA=$_fork; PUBLISH_BASE_DIST=$_dist
     fi
 done
 if [ -z "$PUBLISH_BASE_SHA" ] && [ -n "$BASE_SHA" ] \
