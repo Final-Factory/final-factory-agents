@@ -2366,6 +2366,15 @@ headers, which need only the `user:inference` scope every one of these tokens ha
 says `via rate-limit headers` and carries two windows instead of three. A key that answers 403
 once is remembered, so the closed document is not asked again.
 
+**A key that has run out still says when it comes back.** Anthropic answers the probe from an
+exhausted account with `status: rejected` and, on that reply, without the per-window reset
+headers — so the reading that most needs a countdown is the one that arrives without one. The
+last reset each window named is kept per key and filled back in, marked `(remembered)` on the
+page, and dropped once it passes, since a window that has rolled resets somewhere nobody here
+was told about. Before that, a locked row printed `locked: rejected` in the column headed
+*resets* and said nothing about when the lock lifts, and the chooser scored the key as though
+its allowance were a whole fresh window away.
+
 **Which plan a key is on is declared, not discovered.** That fact lives in the same closed
 profile document, so `CLAUDE_CODE_RATE_TOKEN<n>` in `secrets.env` says it instead — `1` for Pro,
 `5` for Max 5x, `20` for Max 20x, numbered to match the token beside it, and `1` when nothing

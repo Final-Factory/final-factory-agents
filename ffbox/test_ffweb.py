@@ -83,6 +83,7 @@ for _name in list(os.environ):
 
 
 sys.path.insert(0, HERE)
+import claude_keys  # noqa: E402
 import ffwatch   # noqa: E402
 import ffweb     # noqa: E402
 
@@ -665,10 +666,29 @@ CLAUDE_HEADERS = {
     "anthropic-ratelimit-unified-status": "allowed",
     "anthropic-ratelimit-unified-5h-status": "allowed",
     "anthropic-ratelimit-unified-5h-utilization": "0.14",
-    "anthropic-ratelimit-unified-5h-reset": "1788516000",
+    # GENERATED, FOR THE REASON FIVE_RESET IS. The captured values were 1788516000 and
+    # 1788692400 -- 2026-09-04 and 2026-09-06 -- and by the time anything read this fixture
+    # again they were in the past, so the fallback row on the page rendered "resetting now" and
+    # every check about a countdown off the headers was passing against a window that had
+    # already rolled. The SHAPE is what matters here: unix seconds, as a string, which is what
+    # the header carries and what _epoch_iso has to convert.
+    "anthropic-ratelimit-unified-5h-reset": str(int(datetime.fromisoformat(FIVE_RESET)
+                                                    .timestamp())),
     "anthropic-ratelimit-unified-7d-status": "allowed",
     "anthropic-ratelimit-unified-7d-utilization": "0.26",
-    "anthropic-ratelimit-unified-7d-reset": "1788692400",
+    "anthropic-ratelimit-unified-7d-reset": str(int(datetime.fromisoformat(WEEK_RESET)
+                                                    .timestamp())),
+}
+
+# WHAT A KEY THAT HAS ACTUALLY RUN OUT ANSWERS. The probe comes back 429, the unified status
+# says `rejected`, and -- the part this fixture exists for -- the per-window reset headers are
+# NOT repeated on that reply. Only the utilisations are, which is how a page that trusted this
+# one reply for everything ended up saying "locked: rejected" and nothing about when the lock
+# lifts.
+CLAUDE_HEADERS_REJECTED = {
+    "anthropic-ratelimit-unified-status": "rejected",
+    "anthropic-ratelimit-unified-5h-utilization": "1.0",
+    "anthropic-ratelimit-unified-7d-utilization": "0.42",
 }
 
 
@@ -2113,6 +2133,74 @@ def test_a_key_that_cannot_read_its_usage_is_asked_the_other_way_once():
           and len(probes) == before, (rec["error"], probes[before:]))
 
 
+def test_a_key_that_has_run_out_still_says_when_it_comes_back():
+    """A locked window keeps the reset time the last readable answer gave it.
+
+    THE FAILURE THIS PINS. A key that runs out answers the probe with `rejected` and, on that
+    reply, without the per-window reset headers -- so the fresh reading knows the window is shut
+    and nothing about when it opens. The page then printed `locked: rejected` in the column
+    headed "resets", which is the one question an operator staring at a stopped box is asking,
+    and `seconds_to_reset` fell back to a whole fresh period, which ranks the key as though its
+    allowance were five hours away when the real answer was already known.
+
+    So the reset is REMEMBERED per key and per window, and only while it is still in the future:
+    once it passes, the window has rolled and the next reset is a time nobody here was told.
+    """
+    print("a key that has run out still says when it comes back")
+    headers = dict(CLAUDE_HEADERS)
+
+    def probe(token):
+        return dict(headers), ""
+
+    keys = claude_keys_stub(pool=[CLAUDE_POOL[3]], probe=probe)
+    first = keys.read()[0]
+    five = claude_keys.window_of(first, "five_hour")
+    was = five["resets_at"]
+    check("the readable answer carries a reset of its own",
+          was and not five.get("reset_remembered"), five)
+
+    headers.clear()
+    headers.update(CLAUDE_HEADERS_REJECTED)
+    later = keys.read(now=time.time() + ffweb.CLAUDE_USAGE_TTL_SECS + 1)[0]
+    five = claude_keys.window_of(later, "five_hour")
+    check("the rejection is still read as a locked key",
+          later["state"] == "locked" and five["locked"] == "rejected", later)
+    check("but the reset it was told before survives it",
+          five["resets_at"] == was and five["reset_remembered"], five)
+    left = claude_keys.seconds_to_reset(five, "five_hour")
+    check("and the chooser scores it on that time rather than on a whole fresh window",
+          left < claude_keys.WINDOW_PERIOD_SECS["five_hour"], left)
+
+    # THE PAGE, which is where this was reported from: both facts in the cell, not one instead
+    # of the other. The record is already cached, so this renders the reading above.
+    srv = serve(claude_keys=keys)
+    try:
+        _c, _h, body = srv.get("/claude")
+        block = text_of(body).split('<div class="item key">')[1]
+    finally:
+        srv.stop()
+    check("the page says the window is locked", "locked: rejected" in block, block[:800])
+    check("and still counts down to when it is not",
+          "resets in" in block and "(remembered)" in block, block[:800])
+
+    # A REMEMBERED RESET THAT HAS PASSED IS NOT A FACT ANY MORE. The window rolled; where the
+    # next one lands is not in anything this process was handed.
+    stale = dict(CLAUDE_HEADERS)
+    stale["anthropic-ratelimit-unified-5h-reset"] = str(int(time.time()) - 60)
+
+    def stale_probe(token):
+        return dict(stale), ""
+
+    forgetful = claude_keys_stub(pool=[CLAUDE_POOL[3]], probe=stale_probe)
+    forgetful.read()
+    stale.clear()
+    stale.update(CLAUDE_HEADERS_REJECTED)
+    gone = forgetful.read(now=time.time() + ffweb.CLAUDE_USAGE_TTL_SECS + 1)[0]
+    five = claude_keys.window_of(gone, "five_hour")
+    check("a reset that has already passed is dropped rather than counted down to",
+          five["resets_at"] is None and not five.get("reset_remembered"), five)
+
+
 def test_actions_are_off_by_default():
     srv = serve(enable_actions=False)
     try:
@@ -3434,6 +3522,7 @@ def main():
         test_a_key_can_be_given_a_name_and_the_page_prints_it_instead_of_the_slot,
         test_a_usage_reading_is_cached_rather_than_fetched_per_reload,
         test_a_key_that_cannot_read_its_usage_is_asked_the_other_way_once,
+        test_a_key_that_has_run_out_still_says_when_it_comes_back,
         test_actions_are_off_by_default,
         test_actions_call_ffwatch_not_the_database,
         test_the_agent_class_is_chosen_only_when_a_conversation_opens,

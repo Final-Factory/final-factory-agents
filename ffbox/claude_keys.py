@@ -318,6 +318,21 @@ class ClaudeKeys:
         # the probe. Deliberately NOT persisted: it costs one call to relearn after a restart,
         # and a token that is later reissued with the scope should get a clean hearing.
         self._no_scope = set()
+        # WHEN EACH WINDOW LAST SAID IT WOULD ROLL OVER, per key. A reading that carries a reset
+        # time writes it here; a reading that does not carry one takes it back out. That case is
+        # not exotic — it is precisely the key that has RUN OUT. Anthropic answers the probe with
+        # `status: rejected` and, on that reply, need not repeat the per-window reset headers, so
+        # the row that most needs a countdown is the one that arrives without one. Dropping the
+        # instant we already knew would make the page say "locked" and nothing about when the
+        # lock lifts, and would make the chooser below score the key as a whole fresh period from
+        # now — the pessimistic guess — at the exact moment the real answer is known.
+        #
+        # ONLY WHILE IT IS STILL IN THE FUTURE. A remembered reset that has passed is not a fact
+        # about the current window any more: the window rolled and the next one resets somewhere
+        # this process was not told about, so the memory is dropped rather than counted down to a
+        # time in the past. Not persisted, for the same reason `_no_scope` is not — one reading
+        # relearns it.
+        self._resets = {}
         self._lock = threading.Lock()
 
     # -- the wire -------------------------------------------------------------------------
@@ -430,6 +445,7 @@ class ClaudeKeys:
                 kind = str(org.get("organization_type") or "")
                 rec["plan"] = " ".join(p for p in (kind, "(" + tier + ")" if tier else "") if p)
             rec["windows"] = self.windows(usage)
+            self._remember_resets(fingerprint, rec["windows"])
             rec["source"] = "usage document"
             rec["state"] = self.state(rec["windows"], "")
             return rec
@@ -455,6 +471,7 @@ class ClaudeKeys:
             rec["state"] = "unreachable"
             return rec
         rec["windows"] = self.windows_from_headers(headers)
+        self._remember_resets(fingerprint, rec["windows"])
         rec["source"] = "rate-limit headers"
         if not rec["windows"]:
             # Headers arrived and said nothing about the windows. Report the scope refusal
@@ -464,6 +481,36 @@ class ClaudeKeys:
             return rec
         rec["state"] = self.state(rec["windows"], "")
         return rec
+
+    def _remember_resets(self, fingerprint, windows, now=None):
+        """Fill in a reset time this reading did not carry, from the last reading that did.
+
+        Mutates `windows` in place and marks each row it filled with `reset_remembered`, so a
+        page can say the countdown is from memory rather than from this answer. A window whose
+        reset DID arrive overwrites the memory, which is what keeps the memory current across a
+        rollover.
+
+        Rows are remembered by (key, label) rather than by key alone: the per-model weekly caps
+        all come back under `weekly_scoped`, and keying on that would have Opus's reset stand in
+        for Sonnet's.
+        """
+        now = time.time() if now is None else now
+        with self._lock:
+            known = self._resets.setdefault(fingerprint, {})
+            for w in windows:
+                slot = (w.get("key"), w.get("label"))
+                at = _reset_epoch(w.get("resets_at"))
+                if at is not None:
+                    known[slot] = (at, w["resets_at"])
+                    continue
+                remembered = known.get(slot)
+                if not remembered:
+                    continue
+                if remembered[0] <= now:
+                    del known[slot]
+                    continue
+                w["resets_at"] = remembered[1]
+                w["reset_remembered"] = True
 
     # -- reading the document ---------------------------------------------------------------
 
