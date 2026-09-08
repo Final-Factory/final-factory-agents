@@ -273,15 +273,18 @@ is on declared beside it as `CLAUDE_CODE_RATE_TOKEN<n>`. This block only says ho
 between them.
 
 ```json
-"claude": { "spread": true, "five_hour_cap": 0.6, "refresh_secs": 900, "timeout_secs": 10 }
+"claude": { "spread": true, "five_hour_cap": 0.6, "refresh_secs": 900, "timeout_secs": 10,
+            "review_hold_pct": 0.75, "new_conversation_hold_pct": 0.9 }
 ```
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `spread` | `true` | Off spends the first non-empty slot for everything, which is what this box did before 2026-09-04. A box holding one account never reads anything either way. |
+| `spread` | `true` | Off spends the first non-empty slot for everything, which is what this box did before 2026-09-04. |
 | `five_hour_cap` | `0.6` | The share of the **five-hour session** past which an account stops being offered work. |
 | `refresh_secs` | `900` | How often every account's windows are re-read. |
 | `timeout_secs` | `10` | How long one account's reading may take before it is written off for that refresh. |
+| `review_hold_pct` | `0.75` | Above this, a `#codereview` trigger waits for the window to refill instead of starting. |
+| `new_conversation_hold_pct` | `0.9` | Above this, a brand-new conversation waits for its first turn. |
 
 Not seeded — a box with no `claude` block gets exactly the defaults above.
 
@@ -333,6 +336,59 @@ holds, not the one the current reading would prefer.
 
 `ffwatch status` prints a line per account, what is left in each window and when it refills, and
 which account the next turn is going to.
+
+### The holds — what waits instead of running
+
+`five_hour_cap` decides *which account* pays for a turn. The two `_hold_pct` keys decide whether
+the turn happens **now at all**, and above them the request is deferred rather than refused: it
+is left exactly where it arrived and the ordinary poll picks it up on the pass after the window
+turns over. Nobody is told no, nothing is dropped, and nobody has to come back and ask again.
+
+- **`review_hold_pct`** holds a `#codereview` trigger. The comment is recorded in
+  `github.cursor.json` under `held` rather than `seen`, and the cursor's `since` is pinned at
+  its timestamp — which is what brings it back, since `seen` can only recognise a comment GitHub
+  has already handed over again. While anything is held the poll drops its ETag and asks
+  unconditionally: a 304 means "nobody has typed", and what has to change here is the
+  subscription. That costs one of an hourly 5000 a minute, only while the box has no allowance
+  to run the review with anyway.
+- **`new_conversation_hold_pct`** holds a conversation's **first** turn. Its messages stay
+  unclaimed and — this is the load-bearing part — **ungated**, which is what puts the
+  conversation back in front of `claim_turns` on the next pass. It is checked above both the
+  acknowledgement and the engagement gate, so a held conversation costs no reaction that means
+  nothing and no classifier call on the very subscription being protected.
+
+Three things are deliberately never held: a **follow-up** (somebody already in a conversation
+has been told the box is working, and going quiet on them mid-exchange is the worse failure), a
+**local prompt** from `ffwatch submit` or the web page (there is a person at a terminal, and
+nothing offers a shell conversation a second time), and a **review at `create_turn`** (it was
+already gated at its own ingress, before the pull request was even fetched).
+
+**Both rolling windows count, whichever is fuller** — the five-hour session and the week. A box
+three days into a spent week is as unable to do the work as one that has just burned its
+session. A window Anthropic has *locked* counts as full whatever percentage is printed under it.
+The per-model weekly caps are left out: reading Opus's cap as the account's usage would hold
+every request on a box that had merely stopped being able to reach for one model.
+
+**The emptiest account decides, not the first.** The question is whether *any* subscription can
+take this, so on a box spreading over three the hold only lands once all three are over the line.
+
+**Two numbers, because the two requests are not worth the same.** A review is work the box went
+looking for and can do just as well in four hours; somebody typing in a thread is waiting for an
+answer. So reviews stand down first and by a wide margin.
+
+**A box that cannot read its windows runs everything.** An unreadable account, an empty pool, a
+reader that raises — all of them run the work. An outage at Anthropic must not be able to
+silently stop every review and every new report on the box. `null` or `0` on either key turns
+that hold off, and turning **both** off is what restores the pre-2026-09-07 behaviour of a
+one-account box making no outbound request at all: spreading needs the numbers to choose between
+accounts and a box with one has nothing to choose, but the holds need them to answer "is there
+room", which a single subscription has just as much as three do.
+
+`ffwatch status` prints a `claude holds:` block — each hold, its threshold, and whether it is
+clear or waiting with the sentence naming the account and the refill time. Both lines are
+printed even when neither is biting, because "nothing has started for two hours" is exactly the
+moment somebody goes looking for it and an absent line answers nothing. The journal gets one
+line when a hold goes on and one when it lifts, never one per poll.
 
 ## `web_host`, `web_port`
 

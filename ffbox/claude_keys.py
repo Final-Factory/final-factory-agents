@@ -811,6 +811,57 @@ def utilization(record, key):
     return None if pct is None else float(pct) / 100.0
 
 
+def fullest_window(record):
+    """(fraction, key) — the window this account is furthest through, or (None, "").
+
+    THE TWO ROLLING CLOCKS ONLY. The per-model weekly caps sit in the same list and are
+    deliberately left out: they are `weekly_scoped` rows, one per model, and reading Opus's
+    cap as the account's usage would hold every request on a box that had merely stopped
+    being able to reach for one model.
+
+    A LOCKED WINDOW IS FULL, whatever percentage is printed under it. Anthropic saying the
+    window is locked is a fact; the number is only how the account got there — the same
+    precedence `state` already uses.
+    """
+    best, best_key = None, ""
+    for key in ("five_hour", "seven_day"):
+        window = window_of(record, key)
+        if window is None:
+            continue
+        value = 1.0 if window.get("locked") else utilization(record, key)
+        if value is None:
+            continue
+        if best is None or value > best:
+            best, best_key = value, key
+    return best, best_key
+
+
+def emptiest(records, now=None):
+    """(fraction, key, seconds_to_reset, label) for the account with the most room left.
+
+    HOW FULL THIS BOX IS, in one number. A gate asking "are we at 75%" is really asking
+    whether ANY account can take the work, and the account that can is the one with the most
+    room — so a box holding three subscriptions is only at 75% once every one of them is.
+    Within an account it is the FULLEST window that answers, because a turn runs out on
+    whichever clock expires first.
+
+    None when nothing could be read, which every caller has to treat as "no answer" rather
+    than as "empty" or "full": a key set aside by `usable` is one we know nothing about, and
+    an outage at Anthropic must not be able to either stop the box or uncap it.
+    """
+    best = None
+    for record in records:
+        if not usable(record):
+            continue
+        pct, key = fullest_window(record)
+        if pct is None:
+            continue
+        if best is None or pct < best[0]:
+            best = (pct, key, seconds_to_reset(window_of(record, key), key, now),
+                    record.get("label") or record.get("name") or "?")
+    return best
+
+
 def usable(record):
     """Can anything be said about this key at all?
 
