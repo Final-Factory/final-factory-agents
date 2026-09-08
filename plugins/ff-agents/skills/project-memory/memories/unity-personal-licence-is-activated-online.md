@@ -35,10 +35,12 @@ licensing"):
 4. **It must be re-activated roughly daily.** A Personal `.ulf` has no `StopDate` and a rolling
    ~24-hour `UpdateDate`. Live file on the build server, 2026-09-03: `StartDate 2018-10-28`,
    `UpdateDate 2026-09-03T23:03:54`, bound to the constant above.
-5. **The refresh is demand-driven, not a timer.** `unity-offline-license.sh ensure 4` runs before
-   every container launch — `ffbox` for the agent lane, `runners/slot.sh` for CI — and re-activates
-   only when under four hours remain. There is a `renew` subcommand written for a timer, but no
-   timer or cron unit exists on the box (checked `systemctl list-timers` and `crontab -l`).
+5. **The refresh is demand-driven, not a timer.** `unity-offline-license.sh ensure 4` re-activates
+   only when under four hours remain. Two callers: `ffbox` runs it before every agent container
+   launch, and `ffwatch` runs it on a rate-limited daemon check that covers the CI lane — since the
+   2026-09-08 merge `ci_lane.launch` only MOUNTS the `.ulf` and never activates. There is a `renew`
+   subcommand written for a timer, but no timer or cron unit exists on the box (checked
+   `systemctl list-timers` and `crontab -l`).
    `--update-license` looks like the right primitive and is not: it services Unity's newer
    entitlement format, reports success against a valid ULF and leaves `UpdateDate` byte-identical,
    so `refresh` re-runs `--activate-ulf` and verifies the date actually moved.
@@ -53,7 +55,7 @@ registration); with one host-side activator it matches no licence and finds no e
 
 **Before saying anything about ffbox licensing, check these:** `sh ffbox/unity-offline-license.sh
 status` (what is installed, what it binds, when it next renews), the `ensure` call sites in
-`ffbox/ffbox` and `ffbox/runners/slot.sh`, and the header of `ffbox/unity-license.sh`. Do not infer
+`ffbox/ffbox` and `ffbox/ffwatch.py`, and the header of `ffbox/unity-license.sh`. Do not infer
 the mechanism from the word "offline" in a filename.
 
 Related: [[ffbox-installs-as-one-service]], [[ffbox-two-docker-daemons]],

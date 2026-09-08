@@ -140,10 +140,10 @@ result, test output, check run, artifact -- is upstream of the log upload. A day
 readable history.
 
 **It cannot be moved to the host the way the artifact was.** `upload-artifact` was a workflow STEP,
-so it could be deleted and the supervisor could do the PUT while the job waited on `artifact.done`.
+so it could be deleted and the host could do the PUT while the job waited on `artifact.done`.
 The log has no step to intercept: `Runner.Worker` uploads it from inside the container, with
-`Azure.Storage.Blobs.dll` shipped in `/opt/actions-runner/bin`. Nor can the supervisor do it
-afterwards -- `slot.sh` already records what the Results API tells a finished job,
+`Azure.Storage.Blobs.dll` shipped in `/opt/actions-runner/bin`. Nor can the host do it
+afterwards -- `ci_lane.upload_artifact` records what the Results API tells a finished job,
 `403 permission_denied, "job is completed"`.
 
 **Decision, 2026-09-02, revised: the entry goes back, narrowed, as a stopgap.**
@@ -153,12 +153,12 @@ lookahead.
 
 **The replacement is host-side capture, not a better regex.** The runner reads
 `ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT` -- confirmed present in `Runner.Common.dll`, runner 2.337.0,
-in `ffbox:latest`. Set on the job container, the `docker logs -f` that `slot.sh:423` already runs
-picks up the whole job log rather than the six listener lines it captures today, with no egress
-whatsoever; `lib/artifact-upload.py` is generic enough to then put it on the run page on the job's
-own credential. The open question is log volume: `slot.sh` notes a Unity job log is tens of
-megabytes, against one file per slot on `daily / rotate 7 / copytruncate`. When that lands, this
-entry comes off again.
+in `ffbox:latest`. Set on the job container, the `docker logs -f` that `ci_lane._start_follower`
+already runs picks up the whole job log rather than the six listener lines it captures today, with
+no egress whatsoever; `lib/artifact-upload.py` is generic enough to then put it on the run page on
+the job's own credential. The open question is log volume: a Unity job log is tens of megabytes,
+against one file per slot on `daily / rotate 7 / copytruncate`. When that lands, this entry comes
+off again.
 
 #### The mistake this nearly hid, which is the reusable part
 
@@ -181,11 +181,13 @@ well; neither has broken anything.
 
 ### X2. A job chooses the name its cache entry is promoted under, and both lanes read that store
 
-`slot.sh` grants a job the right to archive a specific entry: the job writes `branch.info`, the
-supervisor decides under `ffghr_cache_should_archive`, and the answer is recorded in `CACHE_CLAIM`.
+The host grants a job the right to archive a specific entry: the job writes `branch.info`,
+`ci_lane.decide_cache_archive` calls `ffghr_cache_should_archive`, and the grant is recorded as a
+file under `$CACHE_DIR/claims/<entry name>`.
 
-`CACHE_CLAIM` is never checked again. Grepping it in `slot.sh` returns three lines: the declaration,
-the assignment, and the release in teardown. At promotion time `ffghr_cache_promote` reads the name
+The claim is never checked again. It is written when the grant is made and removed by
+`ffghr_cache_release_claim` in teardown, and nothing reads it in between. At promotion time
+`ffghr_cache_promote` reads the name
 from `$STAGE/ffcache.name`, a file the job wrote, and validates it with `ffghr_cache_name_ok`, which
 is a syntax check:
 

@@ -12,21 +12,22 @@
 #   ffgithubrunners cache seed [REF]    seed it from golden, so the first job is not cold
 #   ffgithubrunners cache clear         delete every entry
 #
-# TWO NUMBERS RUN THE POOL, AND SINCE 2026-09-08 THEY BEHAVE THE SAME WAY. `slots` is the ceiling
-# on jobs in flight; `idle` is how many runners sit registered and waiting while nothing is
-# happening. Both are one number in config.json that waiting slots re-read each time round their
-# loop, so both take effect within seconds and neither needs privilege.
+# THERE IS ONE SUPERVISOR AND IT IS ffwatch. Since 2026-09-08 the CI pool is kept by the ffwatch
+# daemon (ffbox/ci_lane.py, driven from ffbox/ffwatch.py), the same daemon that keeps the agent
+# pool. There are no per-runner systemd units and nothing here starts or stops a process; every
+# command below writes a file the daemon reads on its next pass, a few seconds later.
 #
-# `slots` USED TO NEED ROOT, because one systemd unit instance was rendered per configured slot
-# and only root can enable one. The instances are sized to max_concurrent_runs now
-# (ffghr_slot_units in lib/config.sh), so the supervisors for any legal ceiling already exist. The
-# old behaviour was worse than inconvenient: applying it ran 05-services.sh, which ends in
-# `systemctl restart ffgithubrunners.target`, so raising a number by one killed the jobs in
-# flight.
+# TWO NUMBERS RUN THE POOL. `slots` is the ceiling on jobs in flight (`githubrunner.pool.max`);
+# `idle` is how many runners sit registered and waiting while nothing is happening
+# (`githubrunner.pool.idle`). Both are one number in config.json that the daemon re-reads on every
+# pass rather than holding from startup, so both take effect within seconds.
 #
-# NOTHING HERE NEEDS PRIVILEGE. drain and resume write a flag file that ffwatch's CI keeper reads
+# NOTHING HERE NEEDS PRIVILEGE. drain and resume write a flag file that ffwatch's CI pass reads
 # before it mints, so a drained lane serves what is running and starts nothing new, and nothing has
-# to talk to the system manager. No account gets a sudoers entry.
+# to talk to the system manager. No account gets a sudoers entry. `slots` needed root until
+# 2026-09-08, when a unit instance was rendered per configured slot: applying a change ran
+# 05-services.sh, which ends in `systemctl restart ffgithubrunners.target`, so raising a number by
+# one killed the jobs in flight.
 
 set -eu
 
@@ -36,7 +37,7 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 say()  { printf '==> %s\n' "$*"; }
 die()  { printf 'ffgithubrunners: %s\n' "$*" >&2; exit 1; }
 
- usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
+ usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # --- status ---------------------------------------------------------------------------------------
 
@@ -214,24 +215,26 @@ cmd_slots() {
     # `sudo sh 05-services.sh --install`, because one unit instance was rendered per configured
     # slot and only root can enable one. That install ends in
     # `systemctl restart ffgithubrunners.target`, so raising a number by one killed every job in
-    # flight -- two of them, the evening this was found. The units are sized to the box ceiling
-    # now (ffghr_slot_units in lib/config.sh), so the supervisors for this number already exist
-    # and every waiting one re-reads it within POOL_POLL_SECONDS.
+    # flight -- two of them, the evening this was found. There are no slot units now: ffwatch
+    # mints on demand up to this number, and re-reads it on every pass rather than holding the
+    # value it started with.
     #
     # LOWERING IT STOPS NO JOB, exactly as with `idle`: admission simply stops granting places,
     # and the runners above the new ceiling retire by finishing what they have.
-    say "waiting slots pick this up within ${POOL_POLL_SECONDS}s; nothing needs restarting"
+    say "ffwatch picks this up on its next pass; nothing needs restarting"
 
     # NOTHING HERE WANTS ROOT ANY MORE. The "you asked for more jobs than there are supervisors"
     # warning went with the supervisors: ffwatch mints on demand up to this number, bounded only by
     # the box ceiling it already counts against.
 }
 
-# NO sudo, AND NOTHING RESTARTS. Every waiting slot re-reads this number each time round its
-# poll loop, so raising it starts runners within seconds. LOWERING it does not stop any: killing
-# an idle runner races GitHub handing it a job, and the runners are single-use, so the extra ones
-# retire by taking one job each. `systemctl restart ffgithubrunners.target` shrinks the pool at
-# once if the wait is not acceptable, at the cost of that same race.
+# NO sudo, AND NOTHING RESTARTS. ffwatch re-reads this number on every pass, so raising it starts
+# runners within seconds. LOWERING it does not stop any: killing an idle runner races GitHub
+# handing it a job, and the runners are single-use, so the extra ones retire by taking one job
+# each. `ffgithubrunners drain` is the way to shrink the pool at once if the wait is not
+# acceptable -- ffwatch's drain destroys the IDLE runners and deletes their registrations, leaving
+# what is running alone. Restarting ffgithubrunners.target does nothing to the pool: it carries the
+# reaper and the image timer, not the runners.
 cmd_idle() {
     if [ $# -eq 0 ]; then
         printf '%s\n' "$IDLE_POOL"
@@ -247,7 +250,7 @@ cmd_idle() {
 
     set_config_int idle "$_n"
     say "pool.idle = $_n in $FFGHR_CONFIG"
-    say "waiting slots pick this up within ${POOL_POLL_SECONDS}s; nothing needs restarting"
+    say "ffwatch picks this up on its next pass; nothing needs restarting"
     if [ "$_n" -lt "$IDLE_POOL" ]; then
         say "the $IDLE_POOL already registered are left alone; they retire as they take jobs"
     fi
@@ -260,13 +263,13 @@ cmd_drain() {
         return 0
     fi
     printf 'drained by %s at %s\n' "$(id -un)" "$(date -Is)" > "$FFGHR_DRAIN_FLAG"
-    say "drained. Running jobs finish; no slot takes new work."
+    say "drained. Running jobs finish; ffwatch mints no replacement."
     say "lift with: ffgithubrunners resume"
 }
 
 cmd_resume() {
     if [ -e "$FFGHR_DRAIN_FLAG" ]; then
-        rm -f "$FFGHR_DRAIN_FLAG" && say "drain lifted; slots take work again within their poll interval"
+        rm -f "$FFGHR_DRAIN_FLAG" && say "drain lifted; ffwatch mints again on its next pass"
     else
         say "not drained"
     fi

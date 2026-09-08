@@ -6,6 +6,7 @@ things read it:
 | Reader | Sections it reads |
 |---|---|
 | `ffwatch.py`, `ffweb.py` | the top level, `pools`, `container` |
+| `ffwatch.py` via `ci_lane.py` (`PoolConfig`) | `githubrunner.pool` and `max_concurrent_runs`, re-read live on every daemon pass |
 | `ffgithubrunners` (`ffbox/runners/lib/config.sh`) | `githubrunner`, and `container` for the shared limits |
 | `ffdiscord` and its Gateway listener | `discord` |
 
@@ -72,6 +73,7 @@ already there:
 {
   "approve_before_send": false,
   "catchup_secs": 900,
+  "cluster": { "compact_turns": 20 },
   "container": {
     "workspace_size": "40g",
     "memory": "72g",
@@ -82,7 +84,6 @@ already there:
     "server_id": "",
     "channels": { "example_channel": "" },
     "mentions": { "example_user": "" },
-    "trust": { "operators": { "example_user": "" } },
     "user_pool": "ffagent",
     "operator_pool": "ffdev"
   },
@@ -103,6 +104,7 @@ already there:
   "max_concurrent_runs": 6,
   "workload_reserve": 1,
   "max_send_attempts": 5,
+  "operators": { "example_user": { "discord": "", "github": "" } },
   "pools": {
     "ffagent": {
       "base_ref": "master",
@@ -229,8 +231,12 @@ Default 6. `pools.<class>.pool.max` and `githubrunner.pool.max` cap each lane un
 both have to hold before anything starts. `ffbox/lib-workloads.sh` is the shell half and is
 what actually refuses.
 
-Both lanes are counted by the daemon, so raising or lowering it needs no install and no restart --
-`ffwatch` re-reads its own config on a restart and the CI keeper re-reads this file every pass.
+**Changing it needs an `ffwatch` restart.** `load_config()` runs once, in `main()`, and the
+daemon's own admission arithmetic (`workload_room()`) reads the dict it built then — so a raised
+ceiling does not reach the running daemon on its own. Only `githubrunner.pool.max` and `.idle` are
+truly live, through `ci_lane.PoolConfig.reload()`; the box room they are checked against comes from
+that startup dict. A cold `ffbox` invocation reads the new value at once, through
+`lib-workloads.sh`, which is why the two can briefly disagree.
 
 ## `workload_reserve`
 
@@ -559,8 +565,8 @@ to diverge, and they already do, on the pool and the network.
 A conversation picks its class when it is **opened** — the dropdown on the web page's
 new-prompt box, or `ffwatch submit --agent ffdev` — and every later turn of it runs in the
 same kind of container, so there is no dropdown when replying. A Discord conversation has no
-dropdown either: `discord.user_pool` and `discord.operator_pool` pick by which side of
-`discord.trust.operators` the account that opened it falls on — and a Discord conversation in
+dropdown either: `discord.user_pool` and `discord.operator_pool` pick by which side of the
+top-level `operators` block the account that opened it falls on — and a Discord conversation in
 an unfenced class is demoted to `user_pool` for good if anybody outside that table posts in it.
 Each class is staged into a pool of its own and neither can take the other's warm container.
 
@@ -818,7 +824,9 @@ Final-Factory/FinalFactory is `623631450`.
 | `work_folder` | `/opt/actions-runner/_work` | Where the Actions runner puts a job's tree. |
 | `cap_add` | `CHOWN,FOWNER,DAC_OVERRIDE` | The three capabilities `--cap-drop=ALL` takes that Unity actually needs, found one at a time against a real editmode run. `SYS_ADMIN`, `NET_RAW`, `MKNOD`, `SYS_PTRACE`, `SYS_MODULE` and the rest stay dropped. |
 | `cache_max_age_hours` | `4` | How stale an entry may get before a job is asked to replace it. |
-| `pool_poll_seconds` | `5` | How often a supervisor looks for work to do. |
+| `pool_poll_seconds` | `5` | **Inert since 2026-09-08.** It was how often a waiting `slot.sh` looked for a place. The daemon keeps and serves the pool on its own cadence — ffwatch's top-level `poll_secs` — and `ci_lane.py` never reads this. Only the `ffgithubrunners` CLI still reads it, to print it. |
+| `mirror_wait_secs` | `600` | How long a CI container may wait for the host to answer its git-mirror fetch. Passed in as `FFGHR_MIRROR_WAIT`; `main.yml` computes its poll bound from it, falling back to 120 when absent. 600 because the daemon that answers restarts on every update, and that window has been measured at 247s at worst. |
+| `artifact_wait_secs` | `600` | The same, for the artifact-upload handshake. Passed in as `FFGHR_ARTIFACT_WAIT`; the handoff action falls back to 180 when absent. |
 | `log_dir` | `/var/log/ffgithubrunners` | |
 | `daemon_root` | `/opt/ffbox_container_docker` | |
 | `daemon_quota` | `64G` | |
@@ -880,7 +888,6 @@ read cursors, the doorbell socket, the listener's lock.
   "server_id": "530867164866150410",
   "channels": { "bug_reports": "1069745561672106015" },
   "mentions": { "ben": "226422780445458432" },
-  "trust": { "operators": { "ben": "226422780445458432" } },
   "me": "ben",
   "user_pool": "ffagent",
   "operator_pool": "ffdev"
@@ -941,12 +948,12 @@ seeded: without it `ffdiscord ask` refuses to post rather than sending an anonym
 ## `user_pool`, `operator_pool`
 
 Which pool a Discord conversation opens in, decided by who opened it. A message whose
-Discord-authenticated author is in `trust.operators` opens its conversation in
+Discord-authenticated author is in the top-level `operators` block opens its conversation in
 `operator_pool`; everybody else opens one in `user_pool`.
 
 It moves in exactly one direction afterwards. An operator answering in a player's thread does
 not promote it — nothing promotes anything — but a conversation that opened in an unfenced
-class is moved to `user_pool` on the first message from anybody outside `trust.operators`, and
+class is moved to `user_pool` on the first message from anybody outside `operators`, and
 stays there for the rest of its life. Our own bot's replies do not count; any other bot does.
 The change takes effect on the conversation's next turn, since a container's network is fixed
 when it is created. Local `shell` and `web` conversations are not subject to it.
@@ -1157,13 +1164,14 @@ The CI lane takes `FFGITHUBRUNNERS_<KEY>` for every key in `lib/config.sh`, uppe
 
 # Keeping this document honest
 
-The structure is defined in four places, and a change to any of them belongs in the same
+The structure is defined in five places, and a change to any of them belongs in the same
 commit as a change here:
 
 | File | What it defines |
 |---|---|
 | `ffbox/05-discord-setup.sh` | the seeded template — which keys a fresh box gets and with what values |
 | `ffbox/ffwatch.py` (`DEFAULTS`, `ENV_OVERRIDES`, `load_config`) | every key the agent lane reads, its default, and its env override |
+| `ffbox/ci_lane.py` (`PoolConfig`) | the two CI pool numbers and the box ceiling, as the daemon re-reads them live |
 | `ffbox/runners/lib/config.sh` | every key the CI lane reads and its default |
 | `ffbox/ffbox` | the three `container` limits an agent run is launched with, and the preflight that refuses to start anything when this file does not parse |
 

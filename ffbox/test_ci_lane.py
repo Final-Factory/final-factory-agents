@@ -4,7 +4,7 @@
 
 NO DAEMON, NO GITHUB, NO CONTAINERS. What is covered is everything that DECIDES: the two pool
 numbers and their coercions, admission, which slot number a new container gets, the two clocks,
-and the interlock that keeps this code inert while slot.sh still owns the lane.
+and what stops the lane entirely as against what only stops it minting.
 
 WHAT IS NOT COVERED, AND WHY IT IS NOT A GAP TO BE QUIETLY LEFT. Minting a JIT config and
 launching a container cannot be exercised without talking to GitHub and to the daemon, and doing

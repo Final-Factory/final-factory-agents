@@ -137,9 +137,8 @@ APPLY_FLAG=$CONFIG_DIR/update.applying
 #                 when it forks the unit and never again
 #
 # NOT the runners' ~/.config/ffbox/githubrunners/secrets.env, and not by oversight. That one is
-# sourced per invocation by the ffgithubrunners CLI rather than held by a daemon, and its slots
-# are in ffgithubrunners.target, which this script does not restart — watching it would earn a
-# restart of the wrong target.
+# sourced per container launch by the CI pass rather than held open, so a change to it reaches the
+# next runner minted without anything restarting — watching it would earn a restart nobody needed.
 WATCHED_FILES="config.json secrets.env"
 CONFIG_STAMP=$CONFIG_DIR/update.config-sha
 # WHEN THIS BOX LAST TOOK NEW CODE — one line, `<epoch> <sha>`, written in section 6 by the
@@ -202,11 +201,10 @@ sudo_systemctl() {
 # log: secrets.env's is a fingerprint of a secret, and a journal is not where that goes.
 # THE CI LANE'S OWN NUMBERS, HASHED APART FROM THE REST, so that changing one is not a restart.
 #
-# `githubrunner.pool.max` and `.idle` are re-read LIVE -- by every waiting slot.sh today, and by
-# the daemon'"'"'s CI keeper after the cut-over -- so a process start is not how they take effect.
-# Hashing the whole file makes raising a CI ceiling by one cost a full drain and restart of ffbox:
-# a restart nobody needed, and one that, once the CI lane is the daemon'"'"'s, is also the unattended
-# window this design spends section 5c keeping away from a running job.
+# `githubrunner.pool.max` and `.idle` are re-read LIVE by the daemon'"'"'s CI pass
+# (ci_lane.PoolConfig.reload), so a process start is not how they take effect. Hashing the whole
+# file would make raising a CI ceiling by one cost a full drain and restart of ffbox: a restart
+# nobody needed, and one that is also the unattended window a running job must not meet.
 #
 # SO config.json'"'"'s LINE BECOMES THE HASH OF THE DOCUMENT WITHOUT THAT POOL OBJECT, with a second
 # line carrying the pool on its own. A pool-only edit changes the second and not the first, and the
@@ -744,7 +742,7 @@ rm -f "$_setup_out"
 # --skip-image-build because 03-build.sh above has just built that exact tag from that exact
 # Dockerfile; a second cached build changes nothing and costs a minute and a half with ffbox
 # stopped. If ffbox's build ever moves off this daemon or off this tag, drop the flag — a missing
-# image is not silent, slot.sh's preflight names it.
+# image is not silent -- `docker run` fails on the missing tag and the CI pass logs it.
 #
 # --skip-github because stage 4 verifies the credential by minting a real JIT config and deleting
 # the runner it created. That is the right check when a human is setting a machine up and pointless

@@ -102,9 +102,9 @@ import claude_keys                                          # noqa: E402  (needs
 # would make that argument stronger for nothing. It knows about containers, the runner library and
 # two numbers in config.json -- no database, no conversations, no Discord.
 #
-# IT DOES NOTHING WHILE A slot.sh IS RUNNING ON THIS BOX, which is every box until the cut-over.
-# See ci_lane.Lane.blocked: two minters against one ceiling would overshoot it, and they share no
-# lock. So this import is inert on arrival and stays inert until slot.sh is deleted.
+# IT IS THE ONLY MINTER ON THE BOX since the cut-over on 2026-09-08. The interlock that kept it
+# quiet while a slot.sh was running went with slot.sh itself: two minters against one ceiling would
+# overshoot it, and they shared no lock.
 import ci_lane                                             # noqa: E402  (needs sys.path above)
 
 # What this daemon puts on the outbound requests claude_keys makes on its behalf.
@@ -773,10 +773,10 @@ DEFAULTS = {
     # Per-slot machine ids for this lane are still owed. See ffgithubrunners_design.txt item (e).
     "max_concurrent_runs": 6,
     # HOW MANY PLACES UNDER max_concurrent_runs A SPECULATIVE SPARE MAY NEVER TAKE. It exists so
-    # that nothing on this box has to ASK for a place: `slot.sh` polls the ceiling every five
-    # seconds and logs "waiting" for as long as it takes, a cold `ffbox` exits 77, and schedule()
-    # leaves a turn queued -- none of them has a channel to the keeper, and adding one would mean
-    # a lock, a file and a race over who clears it.
+    # that nothing on this box has to ASK for a place: the CI pass re-reads the ceiling every pass
+    # and mints when there is room, a cold `ffbox` exits 77, and schedule() leaves a turn queued --
+    # none of them has a channel to the keeper, and adding one would mean a lock, a file and a race
+    # over who clears it.
     #
     # With a place always kept free, a waiter simply finds one. Taking it drops the box below the
     # reserve, the next keeper pass sheds ONE evictable spare, and the reserve is whole again: the
@@ -14577,7 +14577,7 @@ class Watcher:
                     # nothing at all while reporting "0 staged, 1 wanted".
                     # test_the_daemon_loop_keeps_the_pool covers it.
                     self.keep_pool()
-                    # The other lane, which does nothing at all while a slot.sh owns it.
+                    # The other lane. Since 2026-09-08 this daemon is its only supervisor.
                     self.ci_pass()
                     # Containers nothing came back for. Cheap when there are none, which is the
                     # normal case; see sweep_dead_containers for why it does not have to be
@@ -14810,15 +14810,13 @@ class Watcher:
         # replaced. Its own reason: it is REGISTERED with GitHub, so an idle one that lives
         # through the update is a runner GitHub may hand a job to while the box is down.
         #
-        # WHAT THIS ADDS OVER THE UPDATER'S OWN SWEEP, which does the same thing from outside
-        # (update_ffbox.sh, the `label=ffghr.slot` loop): the daemon holds the App credential, so
-        # it deletes the REGISTRATION as well. The updater's bare `docker rm -f` cannot, which is
-        # why an update currently leaves offline runners on the org page for the next reap.
-        #
-        # BOTH RUNNING AT ONCE IS HARMLESS AND IS THE POINT while slot.sh still owns the lane:
-        # ci_lane's interlock makes this a no-op today, the updater's loop does the work, and
-        # after the cut-over they swap roles with the loser finding nothing. Neither ordering
-        # breaks, so the two can be retired in either order rather than in one commit.
+        # WHY THIS AND NOT THE UPDATER'S OWN SWEEP. update_ffbox.sh used to walk
+        # `label=ffghr.slot` from outside and `docker rm -f` the idle ones; that loop was deleted
+        # on 2026-09-08 in the same commit that added this. The daemon holds the App credential, so
+        # it deletes the REGISTRATION as well -- a bare `docker rm -f` cannot, which is why an
+        # update used to leave offline runners on the org page for the next reap. Two sweeps
+        # deciding which runner is idle, on the one pass where being wrong costs a job, is worse
+        # than either alone.
         try:
             dropped = self._ci.drop_idle()
             if dropped:

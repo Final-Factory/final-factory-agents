@@ -35,34 +35,43 @@ either, and the next tick drains and restarts into it exactly as a push would;
 services started`. So the rule at the top covers these edits as well: **wait one tick and look,
 do not restart the target by hand.** Three things it does not cover — a dirty checkout refuses
 the pass whatever the trigger; the runners' own `githubrunners/secrets.env` is not watched (it is
-sourced per invocation and its slots are in a different target); and `ffbox/egress/allowlist.txt`
+sourced per container launch, so the next runner minted picks a change up with nothing
+restarting); and `ffbox/egress/allowlist.txt`
 is still its own thing (see the bottom of this note).
 
 **And do not reason from mtimes here.** `setup.sh` rewrites `config.json` on every update pass,
 so its mtime moves every time the box updates whether or not a byte changed — which is exactly
 why the updater fingerprints it by hash. A fresh mtime is not evidence that anyone edited it.
 
-**IT WAITS UP TO AN HOUR BEFORE IT STOPS ANYTHING (revised 2026-09-01).** Before it stops
-anything it drains BOTH lanes — `ffwatch drain` and `ffgithubrunners drain` — and then:
+**IT DOES NOT WAIT FOR CONTAINERS AT ALL (revised 2026-09-08).** The 2026-09-01 version of this
+note said it waited up to an hour for busy containers. That was true then and is not now: a
+container survives the restart. `ffbox` detaches, the ceilings are files, and the daemon that
+comes back ADOPTS what it finds — for CI containers too, since the 2026-09-08 merge put the CI
+lane inside ffwatch. So the update stops being about containers. What it does:
 
+- **it drains BOTH lanes** — `ffwatch drain` and `ffgithubrunners drain`. Since 2026-09-08 a drain
+  an OPERATOR set is left alone rather than lifted at the end of the pass.
 - **idle containers are destroyed.** A staged agent container and a registered-but-jobless CI
-  runner hold a workspace and no work; they are cheap to recreate, and keeping one across a merge
-  is how a container ends up serving a turn through the OLD task script, since its mounts point
-  at inodes the merge replaced.
-- **a container with work in it is never killed**, and neither is the host-side thread behind
-  it. A container is where the agent works; the branch push, the pull request and the Discord
-  reply happen on the host after it exits, and a restart does not survive them. The updater
-  polls `ffwatch quiet` for that second half.
-- **at the end of the hour the update goes ahead**, with `docker stop` and a two-minute grace so
-  each task's trap can harvest its workspace and return the Unity seat, then five minutes for
-  the host to publish what those stops released.
+  runner hold a workspace and no work. `ffwatch drain` does both, and for a CI runner it deletes
+  the GitHub REGISTRATION as well, which the updater's own sweep never could — that sweep was
+  deleted in the same commit.
+- **a container with work in it is never touched**, and neither is a twenty-hour job.
+- **what it DOES wait for is the HOST-SIDE TAIL**: a turn whose container has exited and whose
+  harvest, push, pull request or reply is in a thread right now. A thread does not survive a stop.
+  `ffwatch quiet --host-only` is that question and it is normally answered immediately; the
+  timeout is `FFBOX_DRAIN_TIMEOUT`, default **300s**, after which it goes ahead anyway.
 
-So "a push is live on the next tick" is not reliably true — a CI job takes up to 90 minutes and a
-push behind one waits — but it IS live within about an hour. The journal says so plainly:
-`waiting for N working container(s) to finish`, then `containers are down; waiting for the host`,
-then `nothing is running; safe to stop` or `still not quiet after 3600s — FORCING the update`.
+So a push is normally live within the tick, and the whole stop-to-start window is **6s typically,
+77s at p90 and 247s at worst**, measured over 227 real updates. The journal reads
+`the host has finished publishing; containers are not waited on`, or
+`waiting for the host: <what>`, or `still not quiet after 300s — going ahead.`
 **Read that before concluding a push did not land.** Do not intervene; that is the rule this whole
 note exists for.
+
+**`FFBOX_UPDATE_STOP_RUNNING`, or the `update.stop-running` flag file, arms the OLD behaviour**
+for one pass: count working containers, wait for them, then `docker stop` with a grace so each
+task's trap can harvest its workspace. That is the right thing for a security fix that must apply
+to what is running right now, and it is a deliberate act rather than the default.
 
 **The bug that produced all of this, worth knowing because the shape recurs.** The drain used to
 destroy every container carrying the `ffbox.pool` label. That label goes on at creation and stays

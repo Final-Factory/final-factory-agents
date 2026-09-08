@@ -44,12 +44,12 @@ FFGHR_CONFIG_DIR=${FFGITHUBRUNNERS_CONFIG_DIR:-$FFBOX_CONFIG_DIR/githubrunners}
 # gets before 05-discord-setup.sh seeds it.
 # THE SHARED CLOCK HELPERS COME FROM ffbox's OWN LIBRARY, because the deadline format is one
 # format for both lanes and a second implementation of it here would be the thing that drifts.
-# Sourced from here rather than left to each caller: slot.sh already loads both, but reap.sh,
+# Sourced from here rather than left to each caller: ci_lane loads both through this file, but reap.sh,
 # ffgithubrunners and test_pool.sh load only this file and still reach ffghr_mark_busy.
 #
-# Missing file is survivable the way it is in slot.sh -- warn once, no-op, carry on -- because a
+# Missing file is survivable -- warn once, no-op, carry on -- because a
 # checkout without lib-workloads.sh is a broken checkout and not a reason to stop taking jobs.
-# What is lost is the deadline IN the marker, and slot.sh's work_deadline then falls back to the
+# What is lost is the deadline IN the marker, and ci_lane.deadline() then falls back to the
 # container's own start, which is exactly the pre-2026-09-02 rule.
 if ! command -v ffbox_clock_write >/dev/null 2>&1; then
     _ffghr_here=$(CDPATH= cd -- "$(dirname -- "${0:-.}")" && pwd 2>/dev/null) || _ffghr_here=.
@@ -142,15 +142,16 @@ _ffghr_set() {
     unset _var _key _def _envname _env _json
 }
 
-# --- what a slot is -------------------------------------------------------------------------
+# --- the two pool numbers ---------------------------------------------------------------------
 #
-# TWO NUMBERS, AND THEY MEAN DIFFERENT THINGS. `slots` is the CEILING: how many supervisors run,
-# and so the most jobs that can ever be in flight at once. `idle_pool` is the STANDING COST: how
-# many runners are registered and waiting for work while nothing is happening.
+# TWO NUMBERS, AND THEY MEAN DIFFERENT THINGS. `slots` (`githubrunner.pool.max`) is the CEILING:
+# the most jobs that can ever be in flight at once. `idle_pool` (`githubrunner.pool.idle`) is the
+# STANDING COST: how many runners are registered and waiting for work while nothing is happening.
 #
-# A supervisor whose turn has not come holds NOTHING — no container, no registration, nothing on
-# the org page — and costs a sleeping shell. It starts a runner only when the pool is short of
-# idle ones and there is room under the ceiling. See the pool section at the end of this file.
+# NEITHER IS A COUNT OF PROCESSES. Since 2026-09-08 there is one supervisor for the whole box --
+# the ffwatch daemon, through ci_lane.py -- and it mints a container only when the pool is short
+# of idle ones and there is room under the ceiling. Nothing waits in a loop holding a place, so
+# the standing cost of the harness is idle_pool and nothing else.
 #
 # idle_pool 1 with slots 1 is exactly the old behaviour, which is why both default to 1.
 FFGHR_DEFAULT_SLOTS=1
@@ -381,7 +382,8 @@ ffghr_machine_id() {
 #
 # ONE FILE, SHARED WITH ffbox's OWN LANE, and that is the point rather than an economy: both lanes
 # run containers built from the same image presenting the same /etc/machine-id, so one .ulf is
-# valid in both. ffbox/unity-offline-license.sh mints and installs it; slot.sh mounts it read-only.
+# valid in both. ffbox/unity-offline-license.sh mints and installs it; ci_lane.launch mounts it
+# read-only.
 #
 # A CI JOB'S UNITY SECRETS STILL ARRIVE FROM THE WORKFLOW, out of repository secrets, because
 # main.yml names them in its env: block and changing a workflow file needs a token scope this box
@@ -427,12 +429,13 @@ _ffghr_set MIRROR_LFS_URL   mirror_lfs_url   http://10.81.0.250:8080/FinalFactor
 # when the host passes it and falls back to its own otherwise, so an old container and a new host
 # still agree.
 #
-# WHY 600 AND NOT 120. Today nothing needs it: slot.sh is the answering process, it is not in
-# ffbox.target, and it never goes away. It is being raised for what comes next -- moving the
-# supervisor into ffwatch, which restarts on every code update and every config edit and is gone
-# for minutes while the box merges and rebuilds. A job that reaches its fetch step during that
-# window would burn a 120-second budget and then fail its checkout, intermittently and for a
-# reason nobody would connect to a deploy two minutes earlier.
+# WHY 600 AND NOT 120. The answering process is ffwatch, which restarts on every code update and
+# every config edit and is gone while the box merges and rebuilds -- 6s typically and 247s at
+# worst, measured over 227 real updates. A job that reaches its fetch step during that window would
+# burn a 120-second budget and then fail its checkout, intermittently and for a reason nobody would
+# connect to a deploy two minutes earlier. It was raised BEFORE the cut-over, deliberately: under
+# the old supervisor a ten-minute allowance behaved exactly like a two-minute one, because
+# something always answered.
 #
 # RAISING IT COSTS ALMOST NOTHING, and that is the argument rather than the size of the number.
 # The budget does not bound a SLOW answer: ffghr_mirror_serve_request writes fetch.done on both
@@ -555,11 +558,11 @@ ffghr_cache_stage_dir() { printf '%s/%s\n' "$FFGHR_CACHE_STAGING" "${1:?stage di
 #
 # THE FILES IN A STAGING DIRECTORY ARE A WIRE FORMAT between two programs, and until now they could
 # not disagree about it. The container writes branch.info, fetch.request and artifact.request; the
-# host answers with cache.request, fetch.done and artifact.done. Both halves have always been the
-# same commit, because slot.sh is not in ffbox.target and does not restart: whatever launched the
-# container is still there when the container writes.
+# host answers with cache.request, fetch.done and artifact.done. Under slot.sh both halves were
+# always the same commit, because it was not in ffbox.target and did not restart: whatever launched
+# the container was still there when the container wrote.
 #
-# THAT ENDS WHEN THE SUPERVISOR BECOMES ffwatch, which restarts on every code update. A job
+# THAT ENDED WHEN THE SUPERVISOR BECAME ffwatch, which restarts on every code update. A job
 # launched under commit A can be served by a daemon running commit B, and the files they exchange
 # are the only thing between them. A rename, a new field, a changed meaning -- any of it becomes a
 # job that hangs or, worse, one the host answers wrongly.
@@ -604,8 +607,8 @@ ffghr_protocol_ok() {
 }
 
 # THE ONE REGEX, AND IT IS THE WHOLE PATH-TRAVERSAL DEFENCE. A job proposes a name; this decides
-# whether that string is a name at all. It lives here rather than being written out in slot.sh and
-# reap.sh separately, because two copies of a security check is one copy too many.
+# whether that string is a name at all. It lives here rather than being written out in ci_lane.py
+# and reap.sh separately, because two copies of a security check is one copy too many.
 #
 #   <sanitized branch>@<scope>.tar
 #
@@ -771,28 +774,29 @@ ffghr_cache_promote() {
 
 # --- the pool -----------------------------------------------------------------------------------
 #
-# $SLOTS supervisors run all the time, but a CONTAINER only exists while the pool needs one:
-# $IDLE_POOL runners registered and waiting, plus one per job in flight, never more than $SLOTS
-# altogether. A supervisor with no container is not an idle runner — it holds no registration and
-# GitHub has never heard of it — so the standing cost of the harness is idle_pool, not slots.
+# A CONTAINER ONLY EXISTS WHILE THE POOL NEEDS ONE: $IDLE_POOL runners registered and waiting, plus
+# one per job in flight, never more than $SLOTS altogether. There is nothing else standing by --
+# no supervisor per place -- so the resting cost of the harness is idle_pool, not slots.
 #
-# ADMISSION IS DECIDED HERE AND NOWHERE ELSE, UNDER ONE LOCK, because the decision reads a count
-# that acting on the decision then changes. Two supervisors that both saw "no idle runner" a
-# millisecond apart would both mint one, and the pool would overshoot by exactly as many slots as
-# happened to be waiting.
-# FFGHR_POOL_LOCK went with slot.sh: admission is one process's own decision now, so there is
-# nothing for two supervisors to serialise against.
+# ADMISSION LIVES IN ci_lane.may_admit() AND NOT HERE. It reads a count that acting on it then
+# changes, so it has to be one decision by one process; it used to be ffghr_pool_admit under
+# FFGHR_POOL_LOCK, because a supervisor per slot meant several processes racing to mint. Both went
+# with slot.sh on 2026-09-08: the daemon is the only minter, inside its own lock, so there is
+# nothing left to serialise against.
+#
+# WHAT REMAINS HERE is the state that both halves read -- the markers, the counts, the drain flag
+# and the staging paths. ci_lane calls them by sourcing this file.
 FFGHR_STATE_DIR=$FFGHR_CONFIG_DIR/state
 
-# HOW OFTEN A WAITING SUPERVISOR LOOKS, and how often a supervisor with an IDLE container checks
-# whether its runner has taken a job. Both are on the path between "a job was queued" and "a
-# replacement runner is listening", so this is CI latency, not housekeeping: five seconds each
-# means a second concurrent job waits about ten. Once a container is busy the poll drops back to
-# fifteen, because from then on the loop is only waiting for a job that takes minutes.
+# INERT SINCE 2026-09-08, AND KEPT ONLY SO A CONFIG THAT SETS IT DOES NOT LOOK UNREAD. It used to
+# be how often a waiting slot.sh looked for a place and how often one with an idle container
+# checked whether its runner had taken a job. The daemon does both on ITS pass, whose cadence is
+# ffwatch's own top-level `poll_secs` (5), so this key no longer controls anything. Nothing but
+# `ffgithubrunners` reads it, and only to print it.
 _ffghr_set POOL_POLL_SECONDS pool_poll_seconds 5
 
-# A container that has taken a job. WRITTEN BY THE SUPERVISOR THAT OWNS IT — it is already awake
-# watching that container — and read by every supervisor waiting for a place.
+# A container that has taken a job. WRITTEN BY THE DAEMON serving that container, on the pass that
+# first sees `Runner.Worker` in it, and read by the admission count on every later pass.
 #
 # THE MARKER IS ONLY EVER TRUSTED FOR A CONTAINER THAT IS STILL RUNNING, which is what makes a
 # stale one harmless in both directions. A supervisor SIGKILLed before its job started leaves no
@@ -812,7 +816,7 @@ ffghr_idle_marker() { printf '%s/%s.idle\n' "$FFGHR_STATE_DIR" "${1:?}"; }
 # deadline its predecessor had, instead of granting a fresh 120 minutes on every restart.
 #
 # Nothing ever read the old `at=` key except this function, so the rename breaks no consumer; a
-# marker left by an older supervisor simply has no deadline in it, and slot.sh's work_deadline
+# marker left by an older supervisor simply has no deadline in it, and ci_lane.deadline()
 # falls back to the container's own start, which is exactly the pre-2026-09-02 rule.
 ffghr_mark_busy() {
     mkdir -p "$FFGHR_STATE_DIR" 2>/dev/null || return 1
@@ -844,7 +848,7 @@ ffghr_container_busy() {
 }
 
 # Live job containers, by LABEL. The fence is ffghr-* too and ffbox shares this daemon, so a name
-# prefix is the wrong filter; ffghr.slot is set by slot.sh on the containers this counts.
+# prefix is the wrong filter; ffghr.slot is set by ci_lane.launch on the containers this counts.
 ffghr_pool_containers() {
     docker ps --filter label=ffghr.slot --format '{{.Names}}' 2>/dev/null || true
 }
@@ -929,31 +933,31 @@ _ffghr_coerce_pool() {
 }
 _ffghr_coerce_pool
 
-# Re-read the two pool knobs. A waiting supervisor sits in its loop for as long as the machine is
-# quiet — hours — and an operator who raises idle_pool should not have to restart units for it to
-# take effect. Environment overrides still win, because _ffghr_set applies them last.
+# Re-read the two pool knobs inside a long-lived shell. NO PRODUCTION CALLER SINCE 2026-09-08 --
+# slot.sh was the one, ci_lane.PoolConfig.reload() is the daemon's equivalent, and the CLI sources
+# this file fresh per invocation. It is kept, and tested, because it is the shell half's answer to
+# the same question and the two coercion rules have to stay in step.
 #
-# A config.json that has gone unreadable leaves the current values alone rather than killing the
-# supervisor: `ffgithubrunners idle N` writes through a temporary file and renames, so the only
-# way to see a half-written one is to edit it by hand while a slot is waiting.
+# A config.json that has gone unreadable leaves the current values alone rather than taking the
+# lane to zero: `ffgithubrunners idle N` writes through a temporary file and renames, so the only
+# way to see a half-written one is to edit it by hand.
 #
 # IT COSTS A python3 PER CALL, so it does not make one when the file has not moved. Measured on
 # 2026-09-08 before this guard: a WAITING supervisor -- one holding no container and doing nothing
 # -- burned 4.3 seconds of CPU per 293 seconds elapsed, about 1.5% of a core, forking python3
 # every POOL_POLL_SECONDS to re-parse a file that changes about twice a month.
 #
-# ABOUT HALF THE POLL, NOT ALL OF IT, and the other half is not going anywhere. Profiled the same
+# ABOUT HALF THE POLL, NOT ALL OF IT, and the other half was not going anywhere. Profiled the same
 # day: the python3 parse is ~27ms of CPU and the `docker ps` in ffghr_pool_counts is ~24ms, with
-# the stat and flock forks about 2ms between them. So this guard roughly halves a waiting
-# supervisor and the count is what remains. That was tolerable at one supervisor per configured
-# slot; sizing the units to the box ceiling multiplies it by however much headroom the box has, so
-# the guard comes with that change rather than after it.
+# the stat and flock forks about 2ms between them. So this guard roughly halved a waiting
+# supervisor and the count was what remained. It bought a fortnight: the last waiting supervisor
+# was deleted with slot.sh, and ci_lane parses in-process with no fork to guard against.
 #
 # INODE, NANOSECOND mtime AND SIZE, not a hash: this runs on a five-second loop and must not read
 # the file to decide whether to read the file.
 #
 # ALL THREE, AND THE FIRST TWO ARE NOT BELT AND BRACES. The obvious `%Y %s` -- whole seconds and
-# size -- misses a real edit, and the case is not exotic: `ffgithubrunners max 5` to `max 6` writes
+# size -- misses a real edit, and the case is not exotic: `ffgithubrunners slots 5` to `slots 6` writes
 # the same number of bytes, so two changes inside one second are indistinguishable. Caught by the
 # test for this function, which did exactly that and watched the second one vanish. Every writer
 # here goes through a temporary file and rename -- set_config_int does, the updater does -- so the
@@ -977,17 +981,15 @@ ffghr_reload_limits() {
     _ffghr_coerce_pool
 }
 
-# The flag files behind `drain` and `slot stop|start`, per section 11. slot.sh checks these
-# before it mints a JIT config; nothing here talks to the system manager, which is why no
-# account needs a sudoers entry.
-# THE DRAIN FLAG, WHICH IS STILL A FILE AND STILL MATTERS. `ffgithubrunners drain` writes it, the
+# THE DRAIN FLAG, WHICH IS STILL A FILE AND STILL MATTERS. Nothing here talks to the system
+# manager, which is why no account needs a sudoers entry. `ffgithubrunners drain` writes it, the
 # updater writes it before every update, and ci_lane.drained() reads it -- a file rather than
 # daemon state precisely because the updater sets it before stopping the daemon and lifts it after
 # starting one again.
 #
 # ffghr_slot_stop_flag AND ffghr_is_drained WENT WITH THE SLOTS. Quiescing one slot meant something
 # when there were twelve supervisors; with a keeper minting on demand there is no "one" to stop,
-# and `ffgithubrunners max N` is the control that replaced it.
+# and `ffgithubrunners slots N` is the control that replaced it.
 FFGHR_DRAIN_FLAG=$FFGHR_CONFIG_DIR/drain
 
 # Everything that speaks to docker in this system speaks to ffbox-container's daemon, and none of

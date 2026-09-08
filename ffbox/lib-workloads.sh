@@ -19,11 +19,11 @@
 # belongs where the container is CREATED and nowhere else:
 #
 #     ffbox            every agent container -- a cold run, and a staged pool container
-#     slot.sh          every CI runner container
+#     ffwatch          every CI runner container, through ci_lane.launch
 #
 # Both take the same lock across "count, then docker run". ffwatch keeps its own pre-check, but
 # that one is a scheduling courtesy -- it stops the daemon launching something that would be
-# refused -- and not the boundary. ffgithubrunners' own pool lock is unchanged and still decides
+# refused -- and not the boundary. The CI lane's own admission is unchanged and still decides
 # how many of ITS slots may be busy; this is the ceiling above both of them.
 #
 # A DISPATCH IS NOT AN ADMISSION. Dispatching a turn into a staged container renames a container
@@ -37,10 +37,11 @@ FFBOX_WORKLOAD_LABEL=${FFBOX_WORKLOAD_LABEL:-ffbox.workload}
 
 FFBOX_WL_CONFIG_DIR=${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}
 FFBOX_WL_CONFIG=${FFBOX_WL_CONFIG:-$FFBOX_WL_CONFIG_DIR/config.json}
-# THE LOCK LIVES IN THE CI LANE'S DIRECTORY, which looks wrong and is not. ffgithubrunners@.service
-# runs with ProtectHome=read-only and grants exactly three writable paths, of which
-# ~/.config/ffbox/githubrunners is the only one that is neither a log nor a cache. The parent
-# ~/.config/ffbox is READ-ONLY to a slot supervisor.
+# THE LOCK LIVES IN THE CI LANE'S DIRECTORY, which looks wrong and is not. It is where it is
+# because ffgithubrunners@.service put it there: that unit ran with ProtectHome=read-only and
+# granted exactly three writable paths, of which ~/.config/ffbox/githubrunners was the only one
+# that was neither a log nor a cache. The unit went on 2026-09-08 and the path stays, because
+# moving a lock file is how two processes end up taking two different locks.
 #
 # Measured the hard way on 2026-09-01: with the lock in the parent, every slot died with "cannot
 # create .../.admission.lock: Read-only file system" the moment it tried to admit, and all six
@@ -381,7 +382,7 @@ ffbox_agent_slot_release() {
 # created UNDER, so a config change applies to containers made afterwards and never retroactively.
 #
 # WHOEVER SETS THE DEADLINE WRITES THE FILE. pool-task.sh writes out/staged for an agent spare;
-# slot.sh writes state/<container>.idle at mint and state/<container>.busy when a job starts.
+# the CI pass writes state/<container>.idle at mint and state/<container>.busy when a job starts.
 # ffstatus and the keeper read them. design/ffbox_clocks_design.txt section 3.
 #
 # The file may carry other keys -- out/staged also records commit, entry and ref -- so these read
@@ -420,8 +421,8 @@ ffbox_clock_start() {
 # them. For an IDLE clock, no deadline means nothing is stopped: the cost of being wrong that way
 # is a container that lives too long, which the next update pass clears. For a WORK clock, no
 # deadline would mean a wedged container runs for ever holding a slot, a workspace and a Unity
-# seat, so its caller falls back to the container's own start time instead. slot.sh's
-# work_deadline() is that fallback.
+# seat, so its caller falls back to the container's own start time instead. ci_lane.deadline() is
+# that fallback.
 ffbox_clock_left() {
     _wl_st=$(ffbox_clock_start "${1:?}") || return 1
     _wl_ttl=$(sed -n 's/^ttl_secs=//p' "$1" 2>/dev/null | head -1)

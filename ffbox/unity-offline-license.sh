@@ -12,7 +12,7 @@
 #   * `mint`/`refresh` here perform that ONLINE activation, on the host, in a throwaway container.
 #   * A Personal .ulf carries a rolling ~24h UpdateDate and no StopDate, so it has to be
 #     re-activated roughly DAILY. `ensure` is what does it, called before every container launch by
-#     ffbox and by runners/slot.sh.
+#     ffbox and by the CI lane.
 #   * Only the RUN container is offline: it mounts the resulting file and the licensing client
 #     resolves it from local files with no call and no seat.
 #
@@ -137,7 +137,7 @@ need_image() {
         || die "image '$IMAGE' not built. Run: sh ffbox/03-build.sh"
 }
 
-# The id a RUN container presents. That is our constant, because ffbox and slot.sh pass it and both
+# The id a RUN container presents. That is our constant, because ffbox and ci_lane pass it and both
 # entrypoints write it -- the image's own baked value is only what shows through when nothing
 # overrides it, which is no longer the case for either lane.
 container_machine_id() { printf '%s\n' "$FFBOX_MACHINE_ID_CONST"; }

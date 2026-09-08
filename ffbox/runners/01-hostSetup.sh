@@ -14,7 +14,8 @@
 #                        account that never logs in.
 #   the daemon's store   its own ZFS dataset, outside the boot environment, sync=disabled, with a
 #                        quota.
-#   /var/log/ffgithubrunners  where slot.sh tees container output, with a logrotate rule. `docker
+#   /var/log/ffgithubrunners  where the CI pass follows container output, with a logrotate rule.
+#                        `docker
 #                        run --rm` would otherwise take the log with the container.
 #
 # NO SUDOERS FILE AND NO FIREWALL RULE. Nothing in this system needs privilege at run time: the
@@ -373,7 +374,8 @@ else
   # its staging directory as host uid $(id -u "$CUSER") — namespace root in the rootless daemon maps
   # to the daemon's own account — and NOTHING HERE CAN chown: the supervisor has no CAP_CHOWN. So
   # group inheritance is the only way a directory the supervisor creates is writable by the job.
-  # slot.sh then creates slot-N inside it at 0770 and the group comes along.
+  # The CI pass then creates the container's own staging directory inside it at 0770 and the
+  # group comes along.
   #
   # entries/ is group-writable for the mirror-image reason: the supervisor must be able to unlink
   # archives that the job created and therefore owns. The job cannot write there in spite of the
@@ -421,8 +423,9 @@ if [ -r "$LOGROTATE" ]; then
   skip "$LOGROTATE exists"
 else
   say "writing $LOGROTATE"
-  # copytruncate: slot.sh tees into an open file descriptor and does not reopen it, so a rename
-  # would leave it writing to a rotated inode nobody reads. daily+7 is a week of jobs at one slot.
+  # copytruncate: the log follower holds an open O_APPEND descriptor and does not reopen it, so a
+  # rename would leave it writing to a rotated inode nobody reads. daily+7 is a week of jobs at
+  # one slot.
   as_root tee "$LOGROTATE" >/dev/null <<EOF
 $LOG_DIR/*.log {
     daily
