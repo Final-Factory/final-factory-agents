@@ -1187,6 +1187,27 @@ The engagement gate survives the collapse and is all the classifier does now —
 Haiku, holding no tools. It fails **open**: a gate that cannot decide runs the turn, because a
 gate that silently swallowed a real bug report would look exactly like a quiet channel.
 
+**It is shown the conversation, not one message.** Until 2026-09-08 the gate was handed the new
+message text alone — no thread, no names, no room — and its own false list has always included
+*"two people talking to each other with nothing asked of the project"*, a clause it had no way
+to apply: a paragraph read in isolation carries no evidence of who is talking to whom. What it
+gets now is the room (`#bug_reports`, and whether players read it — declared in the watch block,
+never inferred), the thread title, and up to a dozen earlier messages with each speaker labelled
+*a player*, *a developer of the game* or *the bot itself* from the **stored author id and the
+operator table**, never from anything the text claims about itself. Two bounds keep it cheap: a
+dozen messages, six hundred characters each, and the block is trimmed from the old end until it
+fits six thousand — a pasted crash log in the history must not be able to push the message being
+judged out of the prompt.
+
+That context is what lets the same words answer differently in two rooms. In `#agent_testing`,
+where the developers drive the bot and do not @-mention themselves into their own channel, "can
+you count that again?" is a request. In a forum thread a player opened, a developer's reply to
+that player is a conversation the bot was not invited into — which is what conversation 118 was
+on 2026-09-08, when Max answered Lothsahn explaining to The Meanie why the radiator suggestion
+was not being taken. The bias stays asymmetric and is stated to the model as such: for a player,
+when in doubt engage, because silence there is somebody who never hears back and nobody ever
+finds out; for a developer talking past the bot in public, being wrong costs them one @-mention.
+
 What separates a locally typed prompt from a Discord one is not capability. Since 2026-08-23
 every turn is verified, branched, pushed and proposed as a pull request under the same gates; a
 local prompt used to get none of that, on the reasoning that the person who typed it was standing
