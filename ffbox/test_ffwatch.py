@@ -541,7 +541,11 @@ exit 1
 # $FFWATCH_CLASSIFIER_JSON stopped working the moment the sandbox landed, and rightly. Anything
 # this stub needs has to arrive by a route the sandbox permits, which is its own argv, its own
 # path, or the filesystem.
+# STDIN IS KEPT, because the prompt is the thing under test as much as the answer is. The gate
+# is handed the conversation now — who is in it, what was said before, which room it is — and
+# none of that is observable from the verdict, which the stub decides anyway.
 CLAUDE_ANSWER_STUB = """#!/bin/sh
+cat > "$(dirname "$0")/classifier_prompt.txt"
 cat "$(dirname "$0")/classifier_verdict.json"
 """
 
@@ -712,6 +716,13 @@ class Case:
     def db_exec(self, sql, params=()):
         self.watcher.db.execute(sql, params)
 
+    def gate_prompt(self):
+        """What the stub classifier was last handed on stdin, or "" if it was never called."""
+        path = os.path.join(self.root, "classifier_prompt.txt")
+        if not os.path.exists(path):
+            return ""
+        return io.open(path, encoding="utf-8").read()
+
     def set_verdict(self, verdict):
         """What the stub classifier answers next, in the envelope `claude -p` produces."""
         with open(self.verdict_path, "w", encoding="utf-8") as fh:
@@ -758,6 +769,17 @@ def thread_event(tid, mid=None, kind="thread_message"):
 # conversation row records it, which is what turns a thread id into a link somebody can click —
 # so a fixture without it was quietly testing the one shape (a pre-column row) that has no link.
 GUILD = "530867164866150410"
+
+
+def fenced(prompt, name):
+    """What is inside the <name> fence of a classifier prompt.
+
+    Anchored on the CLOSING tag and then the last opening one, because the prompt names its own
+    fences in prose ("<thread> is what was said before...") well before it opens them, and a
+    plain split on the opening tag reads the instructions instead of the evidence.
+    """
+    body = prompt.split(f"</{name}>")[0]
+    return body[body.rindex(f"<{name}>") + len(name) + 2:]
 
 
 def bug_thread(fixture, tid, title, msgs):
@@ -1707,6 +1729,160 @@ def test_the_gate_declines_a_message_that_asks_nothing():
     check("along with the model's reason",
           "social acknowledgement" in (row["gate_reason"] or ""), row["gate_reason"])
     check("nothing was posted", not any("post" in c for c in case.calls()))
+
+
+def test_the_gate_is_shown_the_conversation_and_who_is_in_it():
+    """Conversation 118, rebuilt: a developer answering a player, read as a request for work.
+
+    The Meanie suggested radiator efficiency changes in September 2025. Eleven months later
+    Lothsahn replied in the thread — "I like this idea, but I just did a heat rework ... maybe
+    for some hardcore top tier stuff" — and the gate, handed that paragraph and nothing else,
+    answered "substantive design feedback" and engaged. Max posted into a conversation between
+    two people who had not asked him anything.
+
+    The false list has always had a clause for exactly that ("two people talking to each other
+    with nothing asked of the project") and the gate could not apply it, because a message read
+    with nothing around it carries no evidence of who is talking to whom. So this checks the
+    PROMPT rather than the verdict: the stub decides the answer, and what is worth asserting is
+    that the model is given what it needs to reach one.
+    """
+    print("the gate reads the conversation, not one message")
+    opener, follow, answer = sflake(-9000000, 1), sflake(-8999000, 2), sflake(-8998000, 3)
+    fixture = base_fixture()
+    bug_thread(fixture, "31800", "Game mechanic suggestion: Radiator efficiency", [
+        message(opener, "One of very few ways to make radiating more efficient is for the "
+                        "radiating thing to be hotter.", channel="31800", name="The Meanie"),
+        message(follow, "Feel free to add to this, I just had the thought.",
+                channel="31800", name="The Meanie"),
+        message(answer, "Half of this is easier than the other half.", channel="31800",
+                author=BOT, name="Max", bot=True)])
+    fixture["thread_lists"][BUG_FORUM] = [{"id": "31800", "name": "Radiator efficiency"}]
+    case = Case("gate-context", fixture,
+                verdict={"engage": False, "reason": "the developer is answering the player"})
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+
+    # THE THREAD IS BACKLOG, exactly as 118's was: it predates this box being pointed at the
+    # channel, so every message in it is gated and none of them produced a turn. They are still
+    # the conversation, and the history the gate has to see.
+    case.watcher.db.execute("UPDATE watch_attach SET watermark_id=? WHERE alias='bug_reports'",
+                            (sflake(-1000),))
+    case.watcher.sweep()
+    check("the backlog is stored and none of it answered",
+          case.rows("SELECT * FROM turn") == []
+          and len(case.rows("SELECT * FROM message")) == 3,
+          case.rows("SELECT gate, gate_reason FROM message"))
+
+    reply = sflake(0, 4)
+    fixture = case.read_fixture()
+    fixture["threads"]["31800"]["messages"].append(
+        message(reply, "I like this idea, but I just did a heat rework so there is more time "
+                       "before things take damage. I will consider coming back to it.",
+                channel="31800", author=LOTHSAHN, name="Lothsahn"))
+    case.write_fixture(fixture)
+    case.events(thread_event("31800", reply, kind="thread_message"))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+
+    prompt = case.gate_prompt()
+    check("the gate was asked at all", "<request>" in prompt, prompt[:200])
+    check("the message being judged is labelled with WHO wrote it, from the operator table",
+          "Lothsahn (a developer of the game)" in fenced(prompt, "request"), prompt[-900:])
+    history = fenced(prompt, "thread")
+    check("the thread the message lands in comes with it",
+          "One of very few ways" in history, history)
+    check("including the messages a watermark held back, which are still the conversation",
+          "Feel free to add to this" in history, history)
+    check("and the bot's own earlier answer, labelled as its own",
+          "Max (the bot itself, answering in an earlier turn)" in history, history)
+    check("the player who opened it is labelled a player",
+          "The Meanie (a player)" in history, history)
+    check("the title is in there too, since a suggestion thread says what it is in its name",
+          "Radiator efficiency" in history, history)
+    check("every older line says how long before the new message it was said",
+          history.count("earlier]") == 3, history)
+    check("and the gap is human, not a snowflake subtraction",
+          "days earlier]" in history, history)
+    check("the room is named, and who reads it",
+          "#bug_reports" in prompt and "players read and post in" in prompt,
+          prompt[:800])
+    check("the new message is NOT repeated into the history it is judged against",
+          "heat rework" not in history, history)
+
+    row = [m for m in case.rows("SELECT * FROM message ORDER BY id") if m["author_id"] == LOTHSAHN]
+    check("and the decision is acted on: no turn, the reason recorded on the message",
+          case.rows("SELECT * FROM turn") == [] and row and row[0]["gate"] == "none", row)
+    check("nothing was posted", not sent_calls(case), sent_calls(case))
+
+
+def test_the_gate_knows_a_dev_room_from_a_room_players_read():
+    """The same words mean two things, and only the harness can say which.
+
+    #agent_testing is where Lothsahn drives the bot, and he does not @-mention himself into
+    his own channel: "Can you count again?" there is a request, and every one of those turns
+    ran unaddressed. The venue is declared in the watch block, never inferred from Discord's
+    permission bits, so it is a fact the gate can be handed rather than something it guesses
+    from the text — which reads identically either way.
+    """
+    print("the gate is told which room it is in")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [
+        message(4501, "Can you count that again?", author=LOTHSAHN, name="Lothsahn")]
+    case = Case("gate-private-room", fixture, venue="private",
+                verdict={"engage": True, "reason": "an operator asking the bot for work"})
+    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.events(ask_event(4501))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    prompt = case.gate_prompt()
+    check("a private room says the developers are talking TO the bot",
+          "private channel no player can see" in prompt, prompt[:800])
+    check("and it does not tell the model players are reading",
+          "players read and post in" not in prompt, prompt[:800])
+    check("the turn runs, which is the behaviour this channel has always had",
+          len(case.rows("SELECT * FROM turn")) == 1, case.rows("SELECT * FROM turn"))
+
+
+def test_a_pasted_log_in_the_history_cannot_push_out_the_message():
+    """The history is bounded twice, and the second bound is the one that matters.
+
+    A dozen messages is a count, not a size: one pasted crash log is a hundred thousand
+    characters on its own. Trimming from the OLD end keeps the newest exchange — the part that
+    says what is being talked about now — and drops the archaeology.
+    """
+    print("the gate's history is bounded")
+    msgs, ids = [], []
+    for i in range(20):
+        ids.append(sflake(-50000 + i * 100, i + 1))
+        msgs.append(message(ids[-1], f"line {i} " + ("x" * 4000), channel="31900",
+                            name="The Meanie"))
+    fixture = bug_thread(base_fixture(), "31900", "a very long thread", msgs)
+    fixture["thread_lists"][BUG_FORUM] = [{"id": "31900", "name": "a very long thread"}]
+    case = Case("gate-bounds", fixture, verdict={"engage": True, "reason": "r"})
+    case.watcher.db.execute("UPDATE watch_attach SET watermark_id=? WHERE alias='bug_reports'",
+                            (sflake(-1000),))
+    case.watcher.sweep()
+
+    fresh = sflake(0, 90)
+    fixture = case.read_fixture()
+    fixture["threads"]["31900"]["messages"].append(
+        message(fresh, "still happening on 0.21.0.23", channel="31900", name="November"))
+    case.write_fixture(fixture)
+    case.events(thread_event("31900", fresh, kind="thread_message"))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+
+    prompt = case.gate_prompt()
+    history = fenced(prompt, "thread")
+    check("the block is capped rather than however long the thread is",
+          len(history) < ffwatch.GATE_HISTORY_CHARS + 600, len(history))
+    check("what survives is the newest end of the conversation",
+          "line 19" in history and "line 0" not in history, history[:300])
+    check("and the model is told the earlier messages exist",
+          "not shown" in history, history[:300])
+    check("the message being judged is still there in full",
+          "still happening on 0.21.0.23" in fenced(prompt, "request"), prompt[-600:])
+    check("every message is capped on its own, so one paste cannot be the whole block",
+          "...[trimmed]" in history, history[:400])
 
 
 def test_the_gate_answers_when_it_is_unsure():
@@ -14053,7 +14229,7 @@ def test_untrusted_text_is_fenced_and_the_task_is_restated_after_it():
     print("untrusted text is fenced, and the task is restated after it")
     for name, prompt, fences, field in (
             ("selector", ffwatch.SELECTOR_PROMPT, ("candidates", "message"), "{message}"),
-            ("gate", ffwatch.CLASSIFIER_PROMPT, ("request",), "{text}")):
+            ("gate", ffwatch.CLASSIFIER_PROMPT, ("thread", "request"), "{text}")):
         for fence in fences:
             check(f"{name}: <{fence}> fences the untrusted text",
                   f"<{fence}>" in prompt and f"</{fence}>" in prompt, prompt[:200])
@@ -15470,6 +15646,9 @@ def main():
         test_a_thread_creation_notice_is_not_somebody_talking,
         test_a_system_event_inside_a_thread_is_history_and_nothing_else,
         test_the_gate_declines_a_message_that_asks_nothing,
+        test_the_gate_is_shown_the_conversation_and_who_is_in_it,
+        test_the_gate_knows_a_dev_room_from_a_room_players_read,
+        test_a_pasted_log_in_the_history_cannot_push_out_the_message,
         test_the_gate_answers_when_it_is_unsure,
         test_evidence_and_thread_openings_never_reach_the_gate,
         test_a_newly_attached_channel_answers_none_of_its_backlog,

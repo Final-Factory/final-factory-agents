@@ -190,7 +190,7 @@ it cannot resolve to a snowflake.
 |---|---|---|---|
 | `kind` | `ask`, `bug_report`, `suggestion` | none, required | What the channel is. Every turn gets the same capabilities whichever it is. |
 | `forum` | `true`, `false` | `false` | Whether this is a Discord forum channel, whose posts are threads. |
-| `venue` | `public`, `private` | `public` | Whether internals may be said out loud there. |
+| `venue` | `public`, `private` | `public` | Whether internals may be said out loud there. It also tells the engagement gate who is in the room: in a private channel the developers are talking *to* the bot even when they do not name it, and in a public one they are usually talking to a player. |
 | `engage` | `all`, `mention` | `mention` | Whether every human message is considered, or only one that @-mentions the bot or replies to it. |
 | `ping` | `true`, `false` | `false` | Whether a reply there may @-mention a human. |
 
@@ -203,7 +203,8 @@ answer its own thread titles.
 
 `venue` and `engage` are declared here and never read off Discord's permission bits: a role
 edit that widened a channel would otherwise reclassify it silently, and the first sign would
-be a file path posted where it should not be. Both fall closed when omitted, and `ffwatch`
+be a file path posted where it should not be — or, since the gate started reading `venue` too,
+a reply posted into a conversation between two people who had not asked for one. Both fall closed when omitted, and `ffwatch`
 logs which entry made it choose.
 
 `ping` is the only thing that lets an escalation pull somebody out of their evening. Mark
