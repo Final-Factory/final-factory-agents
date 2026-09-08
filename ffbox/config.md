@@ -357,6 +357,27 @@ turns over. Nobody is told no, nothing is dropped, and nobody has to come back a
   acknowledgement and the engagement gate, so a held conversation costs no reaction that means
   nothing and no classifier call on the very subscription being protected.
 
+**A held Discord conversation is told so, once.** It gets no 👀 either — the mark means a run
+is in flight and none is — so without a sentence the person who typed it sees nothing at all
+for as long as the window is spent, which is indistinguishable from a box that is down:
+
+> I'm a little tired right now and am taking a break for the next 2h:15m. I'll get to your
+> request soon.
+
+Silent, replying to the message that is waiting, and keyed on an outbound `local_id` of
+`hold:<conversation>` so a daemon restarted mid-hold does not re-announce. The wait is written
+`2h:15m`, or just `15m` when there is no hour in it, and never `0m`.
+
+It goes out **only where the harness already knows it was going to answer** — the
+`always_a_turn` list: somebody addressed the bot, evidence came with the message, or a report
+thread opened. The engagement gate sits *below* the hold, so a message that gate would have
+declined never got as far as being declined, and promising an answer there would be a promise
+made by skipping the step that decides whether to make it. Idle chatter in an `engage: all`
+channel, and anything unaddressed in a `mention` one, get the silence they would have got
+anyway. A `#codereview` hold says nothing at all: a refusal posted into a public pull request
+tells a stranger the trigger exists, which is the same reasoning `take_review_trigger` already
+follows.
+
 Three things are deliberately never held: a **follow-up** (somebody already in a conversation
 has been told the box is working, and going quiet on them mid-exchange is the worse failure), a
 **local prompt** from `ffwatch submit` or the web page (there is a person at a terminal, and

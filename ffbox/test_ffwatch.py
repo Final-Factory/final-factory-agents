@@ -13990,6 +13990,10 @@ def test_a_new_conversation_waits_for_the_refill_instead_of_being_refused():
     check("the message is not claimed", msg["turn_id"] is None, msg["turn_id"])
     check("and not gated, which is what lets a later pass pick it up",
           msg["gate"] is None, (msg["gate"], msg["gate_reason"]))
+    # NOT EVEN THE BREAK NOTICE. Nobody addressed the bot and nothing came with the message,
+    # so always_a_turn says nothing and the engagement gate -- which sits BELOW the hold and is
+    # what would have decided this one -- never ran. Promising an answer here would be a
+    # promise made by skipping the step that says whether to make it.
     check("nothing was said to anybody", case.rows("SELECT * FROM outbound") == [],
           case.rows("SELECT * FROM outbound"))
     # NOR IS THE ACKNOWLEDGEMENT SENT. mark_working sits below the hold in create_turn, and an
@@ -14005,6 +14009,119 @@ def test_a_new_conversation_waits_for_the_refill_instead_of_being_refused():
     check("on the very message that waited", msg["turn_id"] == created[0], dict(msg))
 
 
+def test_a_wait_is_named_as_a_clock():
+    print("holds: how long the break is")
+    check("hours and minutes when there are hours",
+          ffwatch.hold_duration(2 * 3600 + 15 * 60) == "2h:15m", ffwatch.hold_duration(8100))
+    # PADDED ONLY BESIDE AN HOUR. `2h:5m` reads as a typo; `05m` on its own reads as a clock.
+    check("the minutes are padded next to an hour",
+          ffwatch.hold_duration(2 * 3600 + 5 * 60) == "2h:05m",
+          ffwatch.hold_duration(7500))
+    check("and bare minutes are not, which is what was asked for",
+          ffwatch.hold_duration(15 * 60) == "15m", ffwatch.hold_duration(900))
+    check("under an hour never grows an 0h", ffwatch.hold_duration(59 * 60) == "59m",
+          ffwatch.hold_duration(3540))
+    check("exactly an hour is an hour", ffwatch.hold_duration(3600) == "1h:00m",
+          ffwatch.hold_duration(3600))
+    check("days are still hours, because that is the shape asked for",
+          ffwatch.hold_duration(30 * 3600) == "30h:00m", ffwatch.hold_duration(108000))
+    # NEVER `0m`, which would be a promise this cannot keep. The reset behind it is known to
+    # the quarter-hour anyway.
+    check("a few seconds still rounds up to a minute",
+          ffwatch.hold_duration(20) == "1m" and ffwatch.hold_duration(0) == "1m", None)
+
+
+def held_and_addressed(name):
+    """A player who ADDRESSED the bot in #ask_claude, on a box with nothing left to run it."""
+    mid = sflake(0, 1)
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(mid, "hey @max why is my save corrupt?")]
+    fixture["messages"][ASK_CHANNEL][0]["mentions"] = [{"id": BOT}]
+    case = Case(name, fixture)
+    case.events(ask_event(mid))
+    case.watcher.drain_events()
+    # REAL TIME, not CLAUDE_NOW: this is the one test that reads the countdown rather than the
+    # ordering, and seconds_to_reset asks the wall clock.
+    hold_case(case, [key_record("only", five=10.0, seven=91.0, seven_in=2 * 3600 + 15 * 60,
+                                now=time.time())])
+    return case, mid
+
+
+def posts(case):
+    return [json.loads(r["payload_json"]) for r in
+            case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+
+
+def test_a_held_discord_conversation_is_told_the_answer_is_coming():
+    print("holds: the break notice")
+    case, mid = held_and_addressed("hold-note")
+    conv = case.rows("SELECT * FROM conversation")[0]
+
+    check("still no turn", case.watcher.create_turn(conv) is None,
+          case.rows("SELECT * FROM turn"))
+    said = posts(case)
+    check("but this time it says so, once", len(said) == 1, said)
+    check("in the words asked for, with the wait as a clock",
+          said[0]["text"] == ("I'm a little tired right now and am taking a break for the "
+                              "next 2h:15m. I'll get to your request soon."),
+          said[0]["text"])
+    check("addressed to the message that is waiting",
+          said[0]["reply_to"] == mid, said[0])
+    check("in the channel it was asked in", said[0]["channel"] == ASK_CHANNEL, said[0])
+    # SILENT, like every other line the harness writes about itself. Worth reading when they
+    # next look; not worth a phone buzzing.
+    check("and it does not ping anybody", said[0]["silent"] is True, said[0])
+    # NO 👀 WITH IT. The mark means a run is in flight and none is -- the whole reason this
+    # sentence has to exist is that the mark cannot be used to say "heard you".
+    check("no acknowledgement reaction is queued, because nothing is working",
+          case.rows("SELECT * FROM outbound WHERE action='react'") == [], None)
+
+    # ONCE, EVER, and durably: the marker is an outbound row, not this process's memory, so a
+    # daemon restarted mid-hold does not re-announce.
+    check("a second pass says nothing more", case.watcher.create_turn(conv) is None)
+    check("still one post", len(posts(case)) == 1, posts(case))
+    marker = case.rows("SELECT local_id FROM outbound WHERE action='post'")[0]["local_id"]
+    check("kept off a per-process flag, so a restart cannot repeat it",
+          marker == f"hold:{conv['id']}", marker)
+
+    # AND THE WORK STILL HAPPENS. The notice is not a refusal and claims nothing about the
+    # message beyond when it will be read.
+    case.watcher._claude = StubClaudeKeys([key_record("only", five=10.0, seven=12.0)])
+    created = case.watcher.claim_turns()
+    check("the turn runs once the window refills", len(created) == 1, created)
+    check("and no second notice goes out with it", len(posts(case)) == 1, posts(case))
+
+
+def test_the_break_notice_only_goes_where_an_answer_was_certain():
+    print("holds: what is not promised an answer")
+    # THE GATE SITS BELOW THE HOLD, so a message the gate would have declined never got as far
+    # as being declined. Telling that person to expect an answer would be a promise made by
+    # skipping the step that decides whether to make it -- and in a mention-only channel it
+    # would answer somebody the channel is configured never to answer.
+    quiet = sflake(0, 1)
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(quiet, "anyone else seeing this on develop?")]
+    case = Case("hold-note-quiet", fixture)
+    case.cfg["watch"]["ask_claude"]["engage"] = "mention"
+    case.events(ask_event(quiet))
+    case.watcher.drain_events()
+    hold_case(case, [key_record("only", five=10.0, seven=95.0)])
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("no turn", case.watcher.create_turn(conv) is None)
+    check("and no promise either", posts(case) == [], posts(case))
+
+    # A GITHUB CONVERSATION HAS NO DISCORD SIDE TO POST INTO, and its own hold at the ingress
+    # is deliberately silent: a refusal in a public pull request tells a stranger the trigger
+    # exists. say_holding refuses it a second time rather than relying on that.
+    case.db_exec("UPDATE conversation SET kind=? WHERE id=?", (ffwatch.GITHUB_KIND, conv["id"]))
+    check("a review is never told to wait",
+          case.watcher.say_holding(case.rows("SELECT * FROM conversation")[0], 900) is None)
+    case.db_exec("UPDATE conversation SET kind='shell' WHERE id=?", (conv["id"],))
+    check("and neither is a terminal, which has ffwatch status instead",
+          case.watcher.say_holding(case.rows("SELECT * FROM conversation")[0], 900) is None)
+    check("nothing was queued by either", posts(case) == [], posts(case))
+
+
 def test_only_a_first_turn_waits_and_never_a_terminal_or_a_review():
     print("holds: what the new-conversation hold may not touch")
     case, fixture = branch_directive_case("hold-scope", "hey max, first question")
@@ -14017,7 +14134,7 @@ def test_only_a_first_turn_waits_and_never_a_terminal_or_a_review():
     case.db_exec("INSERT INTO turn(conversation_id, seq, status, queued_at)"
                  " VALUES(?,1,'done',?)", (conv["id"], ffwatch.now_iso()))
     check("a conversation that has already run a turn is not held",
-          case.watcher.new_conversation_held(conv) is False)
+          case.watcher.new_conversation_held(conv) == 0)
 
     # AND A LOCAL PROMPT CANNOT BE. submit() raises when create_turn returns None, so a hold
     # there is an error at somebody's terminal rather than a wait -- and nothing would ever
@@ -14026,7 +14143,7 @@ def test_only_a_first_turn_waits_and_never_a_terminal_or_a_review():
     case.db_exec("DELETE FROM turn WHERE conversation_id=?", (conv["id"],))
     local = case.rows("SELECT * FROM conversation")[0]
     check("a shell prompt runs whatever the window says",
-          case.watcher.new_conversation_held(local) is False)
+          case.watcher.new_conversation_held(local) == 0)
 
     # A REVIEW IS NOT HELD HERE EITHER. It has its own, lower hold in poll_github, applied
     # before the pull request is fetched; by the time one reaches create_turn the branch is
@@ -14034,7 +14151,7 @@ def test_only_a_first_turn_waits_and_never_a_terminal_or_a_review():
     case.db_exec("UPDATE conversation SET kind=? WHERE id=?", (ffwatch.GITHUB_KIND, conv["id"]))
     review = case.rows("SELECT * FROM conversation")[0]
     check("nor is a review, which was gated at its own ingress",
-          case.watcher.new_conversation_held(review) is False)
+          case.watcher.new_conversation_held(review) == 0)
 
 
 def test_a_hold_that_cannot_read_the_windows_runs_the_work():
@@ -14045,7 +14162,7 @@ def test_a_hold_that_cannot_read_the_windows_runs_the_work():
     # set aside, an empty pool, a reader that raises -- runs the work.
     hold_case(case, [key_record("only", state="unreachable")])
     check("an unreadable account does not hold anything",
-          case.watcher.new_conversation_held(conv) is False)
+          case.watcher.new_conversation_held(conv) == 0)
 
     class Exploding:
         def read(self, now=None):
@@ -14053,13 +14170,13 @@ def test_a_hold_that_cannot_read_the_windows_runs_the_work():
 
     case.watcher._claude = Exploding()
     check("and neither does a reader that raises",
-          case.watcher.new_conversation_held(conv) is False)
+          case.watcher.new_conversation_held(conv) == 0)
 
     # TURNING THE HOLD OFF PUTS THE BOX BACK to never reading the windows at all, which is what
     # a one-account box did before any of this existed.
     case.watcher._claude = StubClaudeKeys([key_record("only", five=99.0, seven=99.0)])
     case.watcher.cfg["claude"] = {"new_conversation_hold_pct": None, "review_hold_pct": None}
-    check("a null threshold is no hold", case.watcher.new_conversation_held(conv) is False)
+    check("a null threshold is no hold", case.watcher.new_conversation_held(conv) == 0)
     check("and nothing was read to find that out", case.watcher._claude.reads == 0)
 
 
@@ -14597,6 +14714,9 @@ def main():
         test_a_box_with_one_account_is_left_exactly_as_it_was,
         test_the_box_is_full_only_once_its_emptiest_account_is,
         test_a_new_conversation_waits_for_the_refill_instead_of_being_refused,
+        test_a_wait_is_named_as_a_clock,
+        test_a_held_discord_conversation_is_told_the_answer_is_coming,
+        test_the_break_notice_only_goes_where_an_answer_was_certain,
         test_only_a_first_turn_waits_and_never_a_terminal_or_a_review,
         test_a_hold_that_cannot_read_the_windows_runs_the_work,
         test_a_codereview_trigger_waits_in_the_cursor_and_runs_when_the_window_refills,

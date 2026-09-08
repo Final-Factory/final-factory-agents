@@ -5919,15 +5919,59 @@ class Watcher:
         if self.db.scalar("SELECT COUNT(*) FROM turn WHERE conversation_id=?",
                           (conv["id"],), 0):
             return False
-        _, why = self.claude_hold("new")
+        secs, why = self.claude_hold("new")
         self.log_hold(f"conversation {conv['id']}", why)
-        return bool(why)
+        return secs if why else 0
+
+    def say_holding(self, conv, secs):
+        """Tell a Discord conversation its answer is coming later. Once, ever.
+
+        SILENCE IS THE THING THIS FIXES. A held conversation gets no 👀 either — the mark means
+        a run is in flight and none is — so without this the person who typed it sees nothing
+        at all for as long as the window is spent, which is indistinguishable from a box that is
+        down or that decided to ignore them.
+
+        ONLY WHERE THE HARNESS KNOWS IT WAS GOING TO ANSWER. always_a_turn is that list, and it
+        is asked here for the reason it exists: being addressed, being handed evidence, or
+        opening a report are facts the harness can see for itself. The engagement gate sits
+        BELOW the hold and is what would have decided the rest, so promising an answer to a
+        message that gate would have declined -- idle chatter in an engage:all channel, a
+        message nobody addressed in a mention-only one -- would be a promise made by skipping
+        the step that says whether to make it. Those get the silence they would have got anyway.
+
+        ONCE, EVER, and `local_id` is what makes that durable rather than a fact about this
+        process's memory. A held conversation has no turns by construction, so the moment it is
+        answered it stops being holdable and the marker can never wrongly suppress a second
+        notice. A daemon restart mid-hold does not re-announce.
+        """
+        if is_local_conversation(conv) or conv["kind"] == GITHUB_KIND:
+            return None
+        msgs = self.pending_messages(conv["id"])
+        if not msgs or not self.always_a_turn(conv, msgs):
+            return None
+        marker = f"hold:{conv['id']}"
+        if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=?", (marker,), 0):
+            return None
+        nonce = self.record_outbound(None, conv["id"], "post", {
+            "channel": reply_channel(conv),
+            "text": HOLD_NOTE.format(for_how_long=hold_duration(secs)),
+            # SILENT, like every other line the harness writes about itself. It is worth
+            # reading when they next look; it is not worth a phone buzzing.
+            "silent": True, "local_id": marker,
+            "reply_to": msgs[-1]["discord_id"]})
+        if nonce:
+            log(f"conversation {conv['id']}: told them the answer is "
+                f"{hold_duration(secs)} away")
+        return nonce
 
     def create_turn(self, conv):
         # THE ONLY THING ABOVE THE MARK. A conversation held for want of subscription is left
         # untouched — no mark, no gate, no classifier call — because claim_turns has to be able
-        # to offer it again unchanged once the window refills.
-        if self.new_conversation_held(conv):
+        # to offer it again unchanged once the window refills. The one thing it does get is a
+        # sentence saying so; see say_holding.
+        held = self.new_conversation_held(conv)
+        if held:
+            self.say_holding(conv, held)
             return None
 
         # THE MARK GOES ON BEFORE THE SELECTOR, and this is the only thing above resettle().
@@ -13722,6 +13766,26 @@ def answer_is_publishable(turn, terminal):
 # answer to it.
 BLOCKED_NOTE = ("That is my limit for the day, so I have not started on this one. "
                 "It is on the record and nothing is lost.")
+
+# THE OTHER THING THE HARNESS SAYS FOR ITSELF, and the one difference between them is worth
+# keeping straight. BLOCKED_NOTE is a ceiling this box set and will not move today; this one is
+# a subscription window that refills on a clock, so it can say WHEN — and saying when is most of
+# what makes an unanswered message bearable to the person who wrote it.
+HOLD_NOTE = ("I'm a little tired right now and am taking a break for the next {for_how_long}. "
+             "I'll get to your request soon.")
+
+
+def hold_duration(secs):
+    """`2h:15m`, or `15m` when there is no hour in it. Never `0m`.
+
+    The shape was asked for in exactly this form. Minutes are padded only when an hour is
+    printed beside them, because `2h:5m` reads as a typo and `05m` on its own reads as a clock.
+    Anything under half a minute still rounds up to `1m`: "0m" would be a promise this cannot
+    keep, and the number is a reset time known to the quarter-hour anyway.
+    """
+    minutes = max(1, int(round(max(0.0, float(secs)) / 60.0)))
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h:{minutes:02d}m" if hours else f"{minutes}m"
 
 
 def public_correction(turn, verification, publish):
