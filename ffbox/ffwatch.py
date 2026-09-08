@@ -14498,8 +14498,14 @@ class Watcher:
         and none of that may take down a daemon whose main job is somebody's Discord thread.
         """
         try:
+            # SERVE ALWAYS, MINT CONDITIONALLY. A drain or a kill stops new runners appearing; it
+            # does not stop answering the ones already carrying a job, which is what "running jobs
+            # finish" means. ffwatch's own two switches are passed in beside the CI lane's own file
+            # so that draining ffbox drains both lanes, which is what the updater assumes when it
+            # sets one and then the other.
             self._ci.serve(submit=self._ci_submit)
-            self._ci.keep(box_room=self.workload_room())
+            self._ci.keep(box_room=self.workload_room(),
+                          host_drained=self.draining() or self.killed())
         except Exception as exc:                    # noqa: BLE001 — a daemon must survive anything
             log(f"ERROR in the CI pass: {type(exc).__name__}: {exc}")
 

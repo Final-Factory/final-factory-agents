@@ -203,6 +203,55 @@ ok("an unreadable config blocks the lane") if lane.blocked() else \
     bad("an unreadable config must block the lane")
 lane.cfg.error = None
 
+print("\na drain stops minting and does NOT stop serving")
+
+# THE BUG THIS EXISTS FOR. The first version of the lane read neither drain flag, so
+# `ffgithubrunners drain` became a no-op the moment the daemon took the lane -- and the updater
+# calls exactly that before every update, to stop new runners appearing in a window where nothing
+# can answer them. Caught on the box, minutes after the cut-over, by watching it mint into a lane
+# that was drained at the time.
+drain_dir = os.path.join(tmp, "ghr")
+os.makedirs(drain_dir, exist_ok=True)
+os.environ["FFGITHUBRUNNERS_CONFIG_DIR"] = drain_dir
+
+lane2 = ci.Lane(lambda _m: None, cfg=ci.PoolConfig(cfg_path))
+ci.slot_sh_running = lambda: False
+write_config(cfg_path, max=5, idle=1, box=12)
+lane2.cfg.reload()
+
+is_(ci.drained(), False, "no flag file is not drained")
+is_(lane2.blocked(), "", "and the lane is open")
+
+open(ci.drain_flag(), "w").close()
+is_(ci.drained(), True, "the flag the CLI writes is what is read")
+
+# BLOCKED() MUST STAY EMPTY. If a drain went through blocked() it would stop SERVING too, and the
+# jobs the drain exists to let finish would sit waiting for a mirror answer that never came.
+is_(lane2.blocked(), "", "a drain does NOT block the lane wholesale")
+
+minted = []
+ci.may_admit = lambda *a, **k: (True, "would admit")
+ci.runners = lambda include_stopped=False: []
+lane2._free_slot = staticmethod(lambda live: 1)
+
+
+def explode(*a, **k):
+    minted.append(1)
+    raise AssertionError("minted while drained")
+
+
+ci.launch_settings = explode
+is_(lane2.keep(), None, "and keep() mints nothing while the flag is there")
+is_(len(minted), 0, "not even far enough to read the launch settings")
+
+# ffwatch's OWN drain has to reach the CI lane too: the updater sets one and then the other, and
+# assumes draining ffbox drains the box.
+os.remove(ci.drain_flag())
+is_(ci.drained(), False, "the flag is gone")
+is_(lane2.keep(host_drained=True), None, "a host-side drain stops minting as well")
+is_(len(minted), 0, "still nothing minted")
+
+ci.launch_settings = lambda: {}
 print("\nthe launch argument list, rendered rather than run")
 settings = {
     "IMAGE": "ffbox:latest", "EGRESS_NET": "ffghr-net", "EGRESS_IP": "10.81.0.2",
