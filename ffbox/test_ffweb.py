@@ -544,11 +544,15 @@ FFSTATUS_DOC = {
         {"lane": "agent", "class": "ffdev", "name": "ffbox-dev-t1-99aa", "slot": "5",
          "state": "running*", "ttl_secs": None, "ref": "loth/fix", "uptime": "2 minutes"},
         # A CI ROW CARRIES A TTL SINCE 2026-09-02, and this fixture said None for as long as the
-        # column was blank for every CI row -- which encoded the bug as expected output. A busy
-        # runner counts down the watchdog from when its JOB started; a waiting one counts down to
-        # being recycled onto a rebuilt image.
+        # column was blank for every CI row -- which encoded the bug as expected output. A runner
+        # with a job counts down the watchdog from when that job started; a warm one counts down
+        # to being recycled onto a rebuilt image.
+        #
+        # AND IT SAYS `running`, NOT `busy`, SINCE 2026-09-08. Both lanes use one vocabulary now:
+        # `running` is a container doing work whichever lane it is in. That is exactly why the
+        # stop button stopped keying off the word alone -- see is_stoppable.
         {"lane": "ci", "class": None, "name": "ffghr-testbox-1-abcd", "slot": None,
-         "state": "busy", "ttl_secs": 5040, "ref": None, "uptime": "an hour"},
+         "state": "running", "ttl_secs": 5040, "ref": None, "uptime": "an hour"},
         # And one whose supervisor is gone: the deadline in its file is real and nothing is
         # enforcing it, so ffstatus sends no number rather than a countdown to nothing.
         {"lane": "ci", "class": None, "name": "ffghr-testbox-2-ef01", "slot": None,
@@ -3652,9 +3656,46 @@ def test_a_branch_name_cannot_carry_markup_into_the_page():
         srv.stop()
 
 
+def test_only_agent_runs_are_stoppable():
+    """WHICH ROWS THE PAGE OFFERS TO STOP, and why the lane is part of the question.
+
+    This used to be a test on the state word alone, and it worked only because the CI lane
+    happened to call a container with a job `busy` while the agent lane called one `running`. The
+    two lanes were given one vocabulary on 2026-09-08 -- both say `running` for work in progress --
+    and a word-only check would then have started offering a stop button for CI runners, silently.
+
+    That would not be a cosmetic slip. A CI runner belongs to a keeper that mints a replacement the
+    moment one goes, so the button would appear to do nothing while costing a job and a
+    registration. The distinction was never about the word; it was about which lane owns the
+    container.
+    """
+    stoppable = [
+        {"lane": "agent", "state": "running", "name": "a"},
+        {"lane": "agent", "state": "running*", "name": "b"},
+    ]
+    for row in stoppable:
+        check(f"an agent row that is {row['state']} can be stopped", ffweb.is_stoppable(row))
+
+    refused = [
+        ({"lane": "ci", "state": "running", "name": "c"},
+         "a CI runner doing work is NOT stoppable, though it says running"),
+        ({"lane": "ci", "state": "warm", "name": "d"}, "nor a warm CI runner"),
+        ({"lane": "spare", "state": "warm", "name": "e"}, "nor a warm agent spare"),
+        ({"lane": "spare", "state": "running", "name": "f"},
+         "nor anything in the spare lane, whatever it says"),
+        ({"lane": "agent", "state": "warm", "name": "g"},
+         "nor an agent row that is not running a turn"),
+        ({"lane": "agent", "state": "running", "name": ""},
+         "and a row with no container name is refused before anything else"),
+    ]
+    for row, what in refused:
+        check(what, not ffweb.is_stoppable(row))
+
+
 def main():
     print("ffweb — web UI")
     tests = [
+        test_only_agent_runs_are_stoppable,
         test_every_route_serves,
         test_the_page_shows_how_clustering_decided,
         test_the_branch_is_shown_as_the_conversations_own,
