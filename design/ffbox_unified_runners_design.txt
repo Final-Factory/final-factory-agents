@@ -101,8 +101,24 @@ stays, and it now rebuilds one image instead of two.
 5. The supervisor
 -----------------
 
-NOT DONE, AND ON THE EVIDENCE IT SHOULD NOT BE. Written before steps 2 to 5 were implemented; what
-those turned up is that the two dispatch models do not meet.
+SUPERSEDED IN PART, 2026-09-08, by design/ffbox_ci_in_ffwatch_design.txt. Read that alongside this
+section, because on its own this reads as a refusal of work that is now designed and phased.
+
+WHAT STILL STANDS is everything below about DISPATCH. GitHub pushes work to a registered runner;
+ffwatch pulls from a queue it owns. Building one queue for both means moving the lane rules out of
+ffwatch and rewriting how every ffbox run is dispatched, the Discord pipeline included. That
+argument has not weakened and the newer design explicitly does not touch dispatch.
+
+WHAT DOES NOT REACH AS FAR AS THIS SECTION CLAIMED is supervision. Keeping a pool of registered
+runners topped up is not dispatch: GitHub still decides which job runs where, and the keeper only
+decides how many runners exist. That is the same shape as ffwatch's own keep_pool(), and the two
+lanes currently express it twice, in two languages, with two sets of coercion rules. The newer
+design merges the SUPERVISORS on that basis and leaves dispatch alone, so "the supervisors stay
+separate because they supervise different things" is too strong: they supervise the same thing and
+are fed differently.
+
+NOT DONE, AND ON THE EVIDENCE THE SECTION BELOW SHOULD NOT BE DONE AS WRITTEN. Written before
+steps 2 to 5 were implemented; what those turned up is that the two dispatch models do not meet.
 
 A CI slot registers with GitHub and idles in a long poll: GitHub pushes work to it. An agent run is
 launched, as a subprocess, by ffwatch.py, which owns the conversation state, the ceilings and the

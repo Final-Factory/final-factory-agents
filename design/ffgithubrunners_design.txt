@@ -109,16 +109,39 @@ which is an EnvironmentFile for ffbox's units and reaches ffbox's containers. Us
 that file stays empty: the App's two ids are configuration and live in config.json, and its
 private key is github-app.pem beside them, at a fixed path nothing has to record.
 
-    slots             1     the ceiling: unit instances, and so jobs in flight
+    slots             1     the ceiling on jobs in flight  [see the note below: since
+                            2026-09-08 this is NOT the unit-instance count]
     idle_pool         1     runners registered and waiting while nothing is happening
     watchdog_minutes  120
     image             ffghrunner:latest
     labels            self-hosted, Linux, X64, ffgithubrunners
     org               Final-Factory
 
-The unit template carries WantedBy=ffgithubrunners.target, so changing the slot count means
-enabling ffgithubrunners@1 through @slots and disabling the rest, which 05-services.sh and
-`ffgithubrunners slots N` both do.
+The unit template carries WantedBy=ffgithubrunners.target, so the enabled instances are what
+decides how many supervisors run.
+
+AMENDED 2026-09-08: `slots` IS NO LONGER THE UNIT COUNT, AND CONFLATING THEM WAS A BUG. This
+paragraph used to say that changing the slot count means enabling ffgithubrunners@1 through @slots
+and disabling the rest, and that `05-services.sh` and `ffgithubrunners slots N` both do it. That
+was true and it was the wrong design. `slots` is read LIVE -- every waiting supervisor re-reads it
+once per poll -- while the instances behind it could only be changed by root, so the two drifted
+silently: on 2026-09-08 this box held `max: 5`, printed "of 5" in every log line, and ran three
+jobs, because three instances were enabled. Raising the ceiling did nothing anybody could see, and
+applying it by hand ended two jobs in flight, because `05-services.sh --install` finishes with
+`systemctl restart ffgithubrunners.target`.
+
+05-services.sh now renders one instance per place under `max_concurrent_runs`, the BOX ceiling --
+the most containers this machine holds whatever either lane asks for, so a supervisor beyond it
+could never be admitted. `ffgithubrunners slots N` is a plain config write with no sudo and no
+restart, and root is wanted only when `max_concurrent_runs` itself goes up. ffghr_slot_units() in
+lib/config.sh is the rule. design/ffbox_ci_in_ffwatch_design.txt section 12 phase A has the
+account.
+
+A CONSEQUENCE WORTH KNOWING WHEREVER THIS DOCUMENT TALKS ABOUT SLOT NUMBERS: once the instances
+outnumber the ceiling, WHICH slot number a container lands on is arbitrary. Any waiting supervisor
+may win the pool lock, so with max 5 and twelve units the runners sit on 2, 3, 5, 8 and 11. The
+number still names a supervisor, a log file and a staging directory; it no longer tells you
+anything about the pool.
 
 The unit sets StartLimitIntervalSec=0 with RestartSec around 5 seconds. With systemd's defaults a
 fast-failing condition burns five restarts in a second and leaves the slot in `failed` until
@@ -472,8 +495,11 @@ drain is what makes an image update or a slot-count change safe while jobs are r
 drain and slot stop|start write a flag file under ~/.config/ffbox/githubrunners/ which slot.sh checks
 before it mints a JIT config, so a drained slot stays running and idle rather than being stopped.
 Nothing there talks to the system manager, which is why the image timer can drain on its own and
-why no account needs a sudoers entry. slots N is the exception: it enables and disables unit
-instances, so it re-invokes itself through sudo and prompts.
+why no account needs a sudoers entry.
+
+slots N WAS THE EXCEPTION AND IS NOT ANY MORE (2026-09-08). It used to enable and disable unit
+instances and so re-invoked itself through sudo; see the amendment above. It is now the same kind
+of thing as idle N.
 
 idle N is the cheap one: it writes one integer to config.json, which every waiting slot re-reads
 each time round its loop, so it needs no privilege and nothing restarts. It only ever ADDS runners.
