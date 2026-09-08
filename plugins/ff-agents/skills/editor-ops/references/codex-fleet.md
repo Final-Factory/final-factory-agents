@@ -72,12 +72,19 @@ does not select the `implementor` role just because the model is Sol. Explicit m
 mandatory; the remote user's default may still be Sol/xhigh. Do not reuse the old
 `~/ff-worker/run-leg-local.sh`: it invokes `claude -p` and reads Claude credentials.
 
-Keep a foreground job attached to a tool session that the driver can poll. Record job ID, PID,
-HEAD, model, log path, output path and exit code. Retain `thread.started.thread_id` for a deliberate
-`codex exec resume <id>` if needed; never resume an arbitrary latest task. Bounded status waits
-must expose failure, completion and required input. A scheduled monitor is appropriate only when
-continued monitoring was requested; use Codex's automation tool, not a Claude `Monitor` command.
-A child cannot finish by promising to watch a job later. The parent owns collection and reporting.
+Keep a foreground job attached to a tool session that the driver can poll. For a long nested
+`tools.exec_command`, use `text(await tools.exec_command({ ..., yield_time_ms: 1000 }))` so its
+`session_id` is exposed, then poll that terminal with `tools.write_stdin`. `functions.wait` resumes
+only the outer JavaScript cell; empty outer-cell output is not an exit status or evidence that the
+host killed the command. Record job ID, PID, HEAD, model, log path, output path and real exit code.
+Retain `thread.started.thread_id` for a deliberate `codex exec resume <id>` if needed; never resume
+an arbitrary latest task. Bounded status waits must expose failure, completion and required input.
+A scheduled monitor is appropriate only when continued monitoring was requested; use Codex's
+automation tool, not a Claude `Monitor` command. A child cannot finish by promising to watch a job
+later. The parent owns collection and reporting.
+
+For archive verification and complete examples of terminal polling, see
+[long tool sessions and archive verification](../../project-memory/memories/tool-session-polling-and-archive-verification.md).
 
 ## Unity and proof
 
