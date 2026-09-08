@@ -72,10 +72,15 @@ ffgithubrunners reap                sweep orphans now
 ffgithubrunners logs [N]            the RUNNER's log for one slot (not the job's output)
 ```
 
-Only `slots N` needs privilege, and it asks for it: it enables and disables systemd unit instances.
-Everything else is a flag file or one number in the `githubrunner` section of `config.json` that `slot.sh` reads before it mints
-a JIT config, which is why a drained slot stays running and idle rather than being stopped, and why
-no account here has a sudoers entry.
+**None of these needs privilege**, and since 2026-09-08 that includes `slots N`. Every one is a
+flag file or one number in the `githubrunner` section of `config.json` that `slot.sh` reads before
+it mints a JIT config, which is why a drained slot stays running and idle rather than being
+stopped, and why no account here has a sudoers entry.
+
+`slots N` used to end in `sudo sh 05-services.sh --install`, because one unit instance was
+rendered per configured slot. That install restarts `ffgithubrunners.target`, so raising a number
+by one ended every job in flight; it did, twice, the evening the coupling was found. The units are
+sized to the box ceiling now — see the pool section below.
 
 `drain` is what makes an image update or a slot-count change safe while a job is running.
 
@@ -146,8 +151,21 @@ it does not stop any**: killing an idle runner races GitHub handing it a job. Th
 by taking one job each, or `systemctl restart ffgithubrunners.target` clears them at once, at the
 cost of that same race.
 
-`ffgithubrunners slots N` changes the ceiling, needs root, and takes effect when
-`05-services.sh --install` enables or disables the unit instances behind it.
+`ffgithubrunners slots N` changes the ceiling the same way and with the same properties: no
+privilege, no restart, live within a poll. **Lowering it stops no job** either.
+
+THE CEILING AND THE NUMBER OF SUPERVISORS ARE DIFFERENT NUMBERS, and until 2026-09-08 they were
+not. `05-services.sh` rendered one `ffgithubrunners@N.service` per `pool.max`, so the ceiling the
+supervisors re-read every five seconds was capped by a set of unit instances only root could
+change — and a box could hold `max: 5`, print "of 5" in every log line, and run three jobs, with
+nothing anywhere saying why. It did.
+
+The units are sized to `max_concurrent_runs` instead: that is the most containers this machine
+will hold whatever either lane asks for, so a supervisor beyond it could never be admitted however
+high `pool.max` went. Enabling that many costs a sleeping shell each, which is what a waiting
+supervisor already was. So the only thing that still wants
+`sudo sh ffbox/runners/05-services.sh --install` is **raising `max_concurrent_runs` itself**, and
+`ffgithubrunners status` says so when the units are short of the ceiling.
 
 One thing to know before raising `slots` much: **the cache quota is sized for three slots staging
 at once.** 250G is ten 16G entries plus three 16G staging directories; six slots on six different
@@ -278,10 +296,11 @@ So most of this system deploys itself: **push, and within five minutes**
 
 Two things it will not do, both because it holds no root:
 
-- **install or change a unit.** A commit that edits `systemd/`, or a `slots N` that needs another
-  instance enabled, is merged and then owed: `sudo sh ffbox/runners/05-services.sh --install`. The
-  journal says so every time until somebody runs it, and `05-services.sh --check` exits 1 while it
-  is owed.
+- **install or change a unit.** A commit that edits `systemd/`, or a rise in
+  `max_concurrent_runs` that wants more instances enabled, is merged and then owed:
+  `sudo sh ffbox/runners/05-services.sh --install`. The journal says so every time until somebody
+  runs it, and `05-services.sh --check` exits 1 while it is owed. A change to `pool.max` is NOT in
+  this list any more.
 - **provision the host or the daemon** (stages 1 and 2). Same shape, same message.
 
 `ffgithubrunners image update` is a different thing from the rebuild above: it asks GitHub for the

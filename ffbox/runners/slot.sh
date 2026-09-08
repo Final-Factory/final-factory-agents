@@ -5,9 +5,12 @@
 #     -> the container exits -> remove the container, DELETE the registration -> exit 0
 #     -> systemd starts us again
 #
-# A SLOT IS A PLACE FOR A RUNNER, NOT A RUNNER. $SLOTS supervisors run all the time; a container
-# exists only while the pool is short of idle runners, so a quiet machine carries $IDLE_POOL
-# registrations rather than $SLOTS of them. lib/config.sh's pool section is the rule.
+# A SLOT IS A PLACE FOR A RUNNER, NOT A RUNNER. One supervisor runs per ENABLED unit instance --
+# sized to the box ceiling since 2026-09-08, not to $SLOTS, so that raising the ceiling needs no
+# root and no restart; ffghr_slot_units in lib/config.sh has the reasoning. A container exists only
+# while the pool is short of idle runners AND $SLOTS has a place, so a quiet machine carries
+# $IDLE_POOL registrations rather than one per supervisor. lib/config.sh's pool section is the
+# rule.
 #
 # The container did not exist before the job and does not exist after it. No socket, and a tmpfs
 # workspace that dies with the container.
