@@ -493,12 +493,45 @@ no values, which is off.
 | Key | Default | What it does |
 | --- | --- | --- |
 | `start` | `null` | `"HH:MM"`, 24-hour. When the box stops starting work. |
-| `end` | `null` | `"HH:MM"`. When it starts again. |
+| `end` | `null` | `"HH:MM"`, or `"24:00"` for midnight at the far end of the day. When it starts again. |
 | `timezone` | `null` | `null` is the box's own clock. An IANA name (`"America/Detroit"`) pins the window against a host whose timezone later changes. |
 
 The window is **half-open**, `start <= now < end`: the minute it opens is quiet and the minute
 it closes is not, so a box configured to `11:00` answers at 11:00 sharp. `start` **after** `end`
 wraps midnight — `22:00` to `07:00` is nine hours across two dates, not a fifteen-hour day.
+
+### Quiet around the clock
+
+`"start": "00:00", "end": "24:00"` is a window with no gap in it: the box starts nothing, ever,
+until the window is changed. It needs no special case in the arithmetic — `24:00` parses to
+1440, which sorts above every minute a clock can read, so the ordinary half-open test is true
+at 23:59 exactly as it is at 00:00. `24:00` is refused as a `start`, where it would mean a
+window beginning after the day has ended.
+
+**It is spelled out rather than inferred from `start == end`**, which stays off. An always-quiet
+box is something somebody typed two different values to ask for; `start == end` is what a
+half-finished edit looks like, and a box silenced for good by a typo is a fault nobody would
+think to look for.
+
+**Nothing is said to anybody.** Every word of the break notice is about *when* — "taking a break
+for the next 2h:15m", "I'll get to your request soon" — and there is no honest way to write
+either for a box that is off until somebody turns it back on. Posting it anyway would drop a
+promise nobody will keep into a public bug thread, and drop it again every day the box stayed
+off. So the notice is withheld entirely, including from the people a nightly window *would*
+tell. Everything else is unchanged: messages are recorded, unclaimed and ungated, and are
+answered on the pass after the window is changed.
+
+`ffwatch status` says `WAITING: around the clock, until quiet_hours is changed in config.json`
+rather than a countdown, because a box quiet around the clock looks exactly like a broken one
+from every other line of that report. `ffwatch submit` refuses without naming a time.
+
+**CI is not affected, by construction.** Every quiet-hours check is in the agent lane —
+`create_turn`, `keep_pool`, `work_hold`, `submit`, `follow_up`, and the status line. `ci_pass()`
+does not consult them, and the `host_drained` argument it passes to `ci_lane.keep()` is built
+from `draining()`, `killed()` and `config_failsafe()` only. **This is the difference between
+quiet hours and the kill switch**: `kill_switch` and `drain_switch` both feed `host_drained`, so
+either of those stops CI runners being minted. To silence the agent while builds keep running,
+this is the setting, not those.
 
 **It holds everything, which is the one way it differs from the two above.** A new conversation,
 a follow-up, a `#codereview` trigger and a local prompt all wait, where the subscription holds

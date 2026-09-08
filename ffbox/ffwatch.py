@@ -2049,6 +2049,13 @@ def parse_clock(value):
     hand-edited `"2pm"`, `"25:00"`, a number, or a missing key all turn the hold off rather
     than turning it on at some hour nobody chose. A `"2:00"` with no leading zero is accepted:
     it is unambiguous, and refusing it would be pedantry with a nine-hour silence behind it.
+
+    `"24:00"` IS THE ONE HOUR ABOVE 23, and it means midnight at the FAR end of the day: 1440,
+    which sorts above every real minute and is what makes `00:00`-`24:00` a window with no gap
+    in it. It is spelled out rather than inferred from `start == end` on purpose -- that stays
+    off, so no typo can silence the box, and an always-quiet box is something somebody typed
+    two different values to ask for. quiet_hours_window refuses it as a START, where it would
+    mean a window beginning after the day ends.
     """
     if not isinstance(value, str):
         return None
@@ -2059,6 +2066,8 @@ def parse_clock(value):
         hours, minutes = int(parts[0]), int(parts[1])
     except ValueError:
         return None
+    if (hours, minutes) == (24, 0):
+        return 24 * 60
     if not (0 <= hours <= 23 and 0 <= minutes <= 59):
         return None
     return hours * 60 + minutes
@@ -2096,7 +2105,7 @@ def quiet_hours_window(cfg):
     if not isinstance(block, dict):
         return None
     start, end = parse_clock(block.get("start")), parse_clock(block.get("end"))
-    if start is None or end is None or start == end:
+    if start is None or end is None or start == end or start >= 24 * 60:
         return None
     tz, label, ok = quiet_zone(block.get("timezone"))
     return (start, end, tz, label) if ok else None
@@ -2122,8 +2131,12 @@ def _next_wall_clock(ts, minute_of_day, tz):
     back". `mktime` with tm_isdst=-1 asks libc, and `.timestamp()` on a zone-aware datetime
     asks the zone; both give real elapsed seconds rather than a wall-clock difference.
     """
+    # 24:00 ARRIVES HERE AS 1440 and means midnight at the far end of the day. Split off the
+    # carry so the search below is over real clock times -- `.replace(hour=24)` is a ValueError,
+    # and reading it as hour 0 today would look for a midnight that has already gone.
+    carry, minute_of_day = divmod(int(minute_of_day), 24 * 60)
     hours, minutes = divmod(minute_of_day, 60)
-    for day in (0, 1):
+    for day in (carry, carry + 1):
         if tz is None:
             lt = time.localtime(ts)
             # mktime NORMALISES an out-of-range day, so tm_mday + 1 needs no month arithmetic.
@@ -2144,9 +2157,21 @@ def quiet_hours_hold(cfg, now=None):
     the break notice can say when somebody's answer is coming rather than only that it is not
     coming now.
 
+    `seconds` IS None WHEN THERE IS NO LIFTING TIME -- an `00:00`-`24:00` window, which covers
+    the whole day and re-arms at midnight rather than ending there. Every caller has to answer
+    for that separately, and all of them answer the same way: say nothing about when. A box
+    that is off until somebody turns it back on must not tell a player it will be with them in
+    23h:59m, or post that same sentence into their thread again tomorrow. So the break notice
+    is not sent AT ALL on such a window (hold_until_morning), `ffwatch status` says "until it
+    is turned off" rather than a countdown, and `ffwatch submit` refuses without naming a time.
+    None rather than 0 because 0 is a real answer meaning "not held", and the two must not be
+    the same value on a path whose whole job is telling them apart.
+
     THE WINDOW IS HALF-OPEN, `start <= now < end`. The minute it opens is quiet and the minute
     it closes is not, so a box configured 02:00-11:00 answers at 11:00 sharp; the alternative
-    holds one message per day for one minute for no reason anybody could state.
+    holds one message per day for one minute for no reason anybody could state. That is also
+    what makes `00:00`-`24:00` gapless without a special case: 1440 sorts above every minute a
+    clock can read, so `minute < end` is true at 23:59 as it is at 00:00.
     """
     window = quiet_hours_window(cfg)
     if window is None:
@@ -2157,13 +2182,16 @@ def quiet_hours_hold(cfg, now=None):
     inside = (start <= minute < end) if start < end else (minute >= start or minute < end)
     if not inside:
         return 0, ""
+    if (start, end) == (0, 24 * 60):
+        return None, (f"the box is quiet around the clock, {_clock(start)}-{_clock(end)} "
+                      f"{label}; nothing will run until that window is changed")
     secs = int(round(_next_wall_clock(ts, end, tz) - ts))
     return secs, (f"the box is in its quiet hours, {_clock(start)}-{_clock(end)} {label}; "
                   f"they lift in {claude_keys._rough(secs)}")
 
 
 def _clock(minute_of_day):
-    """120 -> `02:00`. The way it is written in the config, so the log line matches the file."""
+    """120 -> `02:00`, 1440 -> `24:00`. As written in the config, so a log line matches the file."""
     hours, minutes = divmod(int(minute_of_day), 60)
     return f"{hours:02d}:{minutes:02d}"
 
@@ -6567,6 +6595,15 @@ class Watcher:
         judges it exactly as it would have judged it at 10:59.
         """
         self.log_hold(f"conversation {conv['id']}", why)
+        # A HOLD WITH NO LIFTING TIME SAYS NOTHING AT ALL, and `secs is None` is how it arrives.
+        # Every word of the break notice is about when — "taking a break for the next 2h:15m",
+        # "I'll get to your request soon" — and there is no honest way to write either for a box
+        # that is off until somebody turns it back on. Silence is not a worse answer than a
+        # promise nobody will keep, repeated into the same public thread every day it stays off.
+        # The messages are still recorded, unclaimed and ungated, and are answered whenever it
+        # lifts; what is withheld is only the sentence about it.
+        if secs is None:
+            return None
         msgs = self.pending_messages(conv["id"])
         if msgs and self.always_a_turn(conv, msgs):
             self.say_holding(conv, secs, msgs)
@@ -10127,9 +10164,17 @@ class Watcher:
             return []
         start, end, _, label = window
         secs, why = quiet_hours_hold(self.cfg)
+        if not why:
+            state = "clear, running now"
+        elif secs is None:
+            # THE ONE LINE ON THIS REPORT THAT NAMES ITS OWN CURE, because a box quiet around
+            # the clock looks exactly like a broken one from every other line here, and whoever
+            # is reading this is asking why nothing has run since Tuesday.
+            state = "WAITING: around the clock, until quiet_hours is changed in config.json"
+        else:
+            state = f"WAITING: they lift in {hold_duration(secs)}"
         return [f"quiet hours: nothing starts between {_clock(start)} and {_clock(end)} "
-                f"{label} — " + (f"WAITING: they lift in {hold_duration(secs)}"
-                                 if why else "clear, running now")]
+                f"{label} — {state}"]
 
     def claude_hold_status(self):
         """What is waiting rather than running, for `ffwatch status`.
@@ -11052,8 +11097,10 @@ class Watcher:
         # written against. Whoever typed it still has the prompt in their terminal.
         secs, why = quiet_hours_hold(self.cfg)
         if why:
+            when = ("once that window is changed" if secs is None
+                    else f"in {hold_duration(secs)}")
             raise RuntimeError(f"{why}. Nothing was started and nothing was recorded — the "
-                               f"prompt is still yours to send in {hold_duration(secs)}.")
+                               f"prompt is still yours to send {when}.")
         key = local_message_key()
         first_line = prompt.splitlines()[0][:100]
         conv_id = self.upsert_conversation(
@@ -11180,8 +11227,9 @@ class Watcher:
         # for a turn id that is not coming.
         secs, why = quiet_hours_hold(self.cfg)
         if why:
-            log(f"conversation {conv['id']}: follow-up recorded, waiting on the quiet hours "
-                f"({hold_duration(secs)} of them left) — {why}")
+            left = "" if secs is None else f" ({hold_duration(secs)} of them left)"
+            log(f"conversation {conv['id']}: follow-up recorded, waiting on the quiet "
+                f"hours{left} — {why}")
             return message_id, None
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv["id"],))
         turn_id = self.create_turn(conv)

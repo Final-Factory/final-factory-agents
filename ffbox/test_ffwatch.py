@@ -15592,6 +15592,115 @@ def test_the_quiet_hours_are_a_window_on_the_wall_clock():
     # schedule, and reading it as one would silence the box for good on a typo.
 
 
+def test_a_box_can_be_made_quiet_around_the_clock():
+    """`00:00`-`24:00`: a window with no gap in it, and therefore no lifting time to promise.
+
+    Spelled out rather than inferred from `start == end`, which stays off so that no typo can
+    silence the box for good. An always-quiet box is something somebody typed two different
+    values to ask for.
+    """
+    print("quiet hours: around the clock")
+    from zoneinfo import ZoneInfo
+    detroit = ZoneInfo("America/Detroit")
+
+    def at(y, m, d, hh, mm):
+        return datetime(y, m, d, hh, mm, tzinfo=detroit).timestamp()
+
+    allday = {"quiet_hours": {"start": "00:00", "end": "24:00",
+                              "timezone": "America/Detroit"}}
+    # 1440 SORTS ABOVE EVERY MINUTE A CLOCK CAN READ, which is what makes the ordinary
+    # half-open test gapless here without a special case for it.
+    for hh, mm in ((0, 0), (2, 0), (11, 0), (16, 30), (23, 59)):
+        _, why = ffwatch.quiet_hours_hold(allday, now=at(2026, 9, 8, hh, mm))
+        check(f"held at {hh:02d}:{mm:02d}", bool(why), why)
+    # AND `seconds` IS None, NOT 0. Zero is a real answer meaning "not held", and the callers
+    # whose whole job is telling those apart must not be handed the same value for both.
+    secs, why = ffwatch.quiet_hours_hold(allday, now=at(2026, 9, 8, 11, 0))
+    check("with no lifting time to name", secs is None, secs)
+    check("and a reason that says so rather than counting down to something",
+          "around the clock" in why and "until that window is changed" in why, why)
+
+    # 24:00 IS AN END, NEVER A START. A window beginning after the day has ended is not a
+    # window, and reading it as midnight would silence a box that asked for the opposite.
+    for broken in ({"start": "24:00", "end": "11:00"}, {"start": "24:00", "end": "24:00"},
+                   {"start": "00:00", "end": "25:00"}):
+        got = ffwatch.quiet_hours_hold({"quiet_hours": broken}, now=at(2026, 9, 8, 3, 0))
+        check(f"{broken} is no window", got == (0, ""), got)
+
+    # AN ORDINARY WINDOW THAT MERELY ENDS AT MIDNIGHT still lifts there, and still counts down
+    # to it. Only 00:00-24:00 is the gapless one.
+    evening = {"quiet_hours": {"start": "05:00", "end": "24:00",
+                               "timezone": "America/Detroit"}}
+    check("a window ending at 24:00 is clear before it opens",
+          ffwatch.quiet_hours_hold(evening, now=at(2026, 9, 8, 4, 59)) == (0, ""))
+    check("and counts down to midnight once it has",
+          ffwatch.hold_duration(
+              ffwatch.quiet_hours_hold(evening, now=at(2026, 9, 8, 23, 0))[0]) == "1h:00m",
+          ffwatch.quiet_hours_hold(evening, now=at(2026, 9, 8, 23, 0)))
+
+
+def test_an_always_quiet_box_says_nothing_to_anybody():
+    """Every word of the break notice is about when, and there is no when.
+
+    "Taking a break for the next 23h:59m. I'll get to your request soon" is a promise nobody
+    will keep, posted into the same public thread again every day the box stays off. Silence is
+    not the worse answer, and nothing else about the hold changes: the message is recorded,
+    unclaimed and ungated, and is answered whenever somebody lifts it.
+    """
+    print("quiet hours: around the clock, and silent with it")
+    case, mid = held_and_addressed("quiet-forever")
+    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    # ADDRESSED DIRECTLY, which on a nightly window is exactly who DOES get told -- so this is
+    # the notice being withheld rather than never having been due.
+    case.watcher.cfg["quiet_hours"] = {"start": "00:00", "end": "24:00", "timezone": None}
+    conv = case.rows("SELECT * FROM conversation")[0]
+
+    check("no turn", case.watcher.create_turn(conv) is None, case.rows("SELECT * FROM turn"))
+    check("and nothing at all is posted, though this player addressed the bot",
+          posts(case) == [], posts(case))
+    check("no acknowledgement reaction either",
+          case.rows("SELECT * FROM outbound WHERE action='react'") == [], None)
+    check("and no model was run to decide it",
+          case.gate_prompt() == "" and case.watcher._claude.reads == 0,
+          (case.gate_prompt()[:80], case.watcher._claude.reads))
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    check("the message is recorded, unclaimed and ungated, so nothing is lost",
+          (msg["turn_id"], msg["gate"]) == (None, None) and msg["discord_id"] == str(mid),
+          dict(msg))
+
+    # A WEEK OF PASSES, STILL SILENT. The notice being withheld must not be a one-pass accident
+    # of the marker: there is no marker on this path at all.
+    for _ in range(5):
+        case.watcher.claim_turns()
+    check("a week of passes says nothing more and starts nothing",
+          posts(case) == [] and case.rows("SELECT * FROM turn") == [], posts(case))
+
+    # AND IT IS A HOLD, NOT A REFUSAL. Turning it off answers the message that waited.
+    quiet_over(case)
+    created = case.watcher.claim_turns()
+    check("turning it off answers the message that waited", len(created) == 1, created)
+    check("on the very message that waited",
+          case.rows("SELECT * FROM message ORDER BY id")[0]["turn_id"] == created[0])
+
+
+def test_an_always_quiet_box_names_its_own_cure():
+    print("quiet hours: around the clock, on the status page and at the terminal")
+    case = Case("quiet-forever-status")
+    case.watcher.cfg["quiet_hours"] = {"start": "00:00", "end": "24:00", "timezone": None}
+    line = [ln for ln in case.watcher.claude_status() if ln.startswith("quiet hours:")]
+    check("the report says it is around the clock, not a countdown", len(line) == 1
+          and "around the clock" in line[0] and "config.json" in line[0], line)
+
+    # THE TERMINAL GETS THE SAME TREATMENT: refused, and told what to change rather than told
+    # to come back at a time that will never arrive.
+    try:
+        case.watcher.submit("anything at all", kind="shell")
+        check("a local prompt is refused", False, "no error raised")
+    except RuntimeError as exc:
+        check("a local prompt is refused without naming a time it will be taken",
+              "once that window is changed" in str(exc) and "23h" not in str(exc), str(exc))
+
+
 def test_inside_the_quiet_hours_nothing_starts_at_all():
     print("quiet hours: everything waits, not only a first turn")
     case, _ = branch_directive_case("quiet-all", "hey max, why is my save corrupt?")
@@ -16436,6 +16545,9 @@ def main():
         test_a_strangers_trigger_is_ignored_rather_than_held,
         test_the_quiet_hours_are_a_window_on_the_wall_clock,
         test_inside_the_quiet_hours_nothing_starts_at_all,
+        test_a_box_can_be_made_quiet_around_the_clock,
+        test_an_always_quiet_box_says_nothing_to_anybody,
+        test_an_always_quiet_box_names_its_own_cure,
         test_a_quiet_box_says_the_same_thing_a_spent_one_does,
         test_a_second_night_gets_a_second_sentence,
         test_a_quiet_night_runs_no_model_at_all,
