@@ -11140,9 +11140,7 @@ class Watcher:
         if not gate_ok:
             return self._no_pr(run_row_id, conv, branch, gate_reason)
         if not verdict.get("confident"):
-            reason = (verdict.get("confidence_reason")
-                      or "the agent was not confident in the change")
-            return self._no_pr(run_row_id, conv, branch, reason[:200])
+            return self._no_pr(run_row_id, conv, branch, _unconfident_reason(verdict))
 
         gh = GitHub(self.cfg, self.conversation_class(conv))
         if not gh.token or not gh.repo:
@@ -11566,9 +11564,7 @@ class Watcher:
             return self._still_no_pr(run, branch, gate_reason)
         verdict = self.run_verdict(run)
         if not verdict.get("confident"):
-            return self._still_no_pr(run, branch,
-                                     verdict.get("confidence_reason")
-                                     or "the agent was not confident in the change")
+            return self._still_no_pr(run, branch, _unconfident_reason(verdict))
         if branch in self._reconcile_refused:
             return {"branch": branch}
         gh = GitHub(self.cfg, self.conversation_class(conv))
@@ -15061,6 +15057,32 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
     # take that session over. It is on the conversation page now, under the branch, where
     # somebody who has decided to take one over is already standing.
     return "\n".join(lines)
+
+
+def _unconfident_reason(verdict):
+    """Why a verdict earns no pull request — which is not the same string as why it earned one.
+
+    `confidence_reason` is whatever the agent wrote about its own confidence, and it is written
+    in BOTH directions: "I could not reproduce the report" on a verdict that says no, and a
+    paragraph of reasons the change is sound on one that says yes. Quoting it whenever
+    `confident` is falsy therefore prints the case FOR the change as the reason against it.
+    Conversation 94 read, in the column that answers "why is there no pull request": "Both fixes
+    are one-line behavioural changes in code I read in full, each covered by a test that I
+    proved is a genuine regression test rather than a tautology" — which is an argument for
+    opening one.
+
+    THE TWO CASES ARE TOLD APART BY `confident` ITSELF, never by reading the prose. An explicit
+    False is the agent answering the question, and its reason belongs to that answer. Anything
+    else falsy is the verdict not carrying the signal at all — a schema that omitted the field,
+    or a result that would not parse — and there is no sentence in it that explains a decision
+    the agent never made. That is the same rule _parse_verdict states below: never guess a
+    confidence signal out of prose.
+    """
+    if verdict.get("confident") is False:
+        return ((verdict.get("confidence_reason")
+                 or "the agent was not confident in the change"))[:200]
+    return ("the agent's verdict did not say whether it was confident, and the harness does "
+            "not read confidence out of prose")
 
 
 def _parse_verdict(result):
