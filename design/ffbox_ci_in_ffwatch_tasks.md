@@ -131,17 +131,40 @@ anything structural moves.
 
 ## Phase D — the daemon grows the CI lane  (design 3, 4, 6, 7)
 
-Land with `slot.sh` still present and `githubrunner.pool.max` at 0, so nothing real runs on the
-new path. The keeper and the serving pass are exercised against containers a test harness starts.
+Land with `slot.sh` still present, so nothing real runs on the new path.
 
-- [ ] **D.1 — `keep_ci_pool()`.** `M`
+**LANDED 2026-09-08, and the interlock turned out to be better than `pool.max: 0`.** The design
+proposed setting the ceiling to 0 so the daemon could not mint. That relies on an operator not
+raising it, and it also disables the SHELL lane, which is still the one doing the work. What
+shipped instead is `ci_lane.slot_sh_running()`: while any `slot.sh` lives on the box, every CI
+pass in the daemon returns immediately. Two minters against one ceiling would overshoot it and
+they share no lock, so the interlock is the real requirement and the ceiling was a proxy for it.
+Phase E deletes `slot.sh` and the predicate goes quiet on its own — nothing has to be remembered
+on the day.
+
+**TWO DEVIATIONS FROM THE DESIGN, both deliberate and both argued in `ci_lane.py`'s header.**
+It is a module rather than more of `ffwatch.py`, because that file is 15k lines and section 10
+names concentration as the strongest argument against this whole change. And it calls the shell
+rather than replacing it: the design says to shell out for credentials because `lib/gh.sh` is
+working and audited, and that reasoning does not stop at credentials — serving a mirror fetch,
+deciding a cache archive, promoting an entry, posting a check run and uploading an artifact are
+all already functions with clean inputs and expensive history. Python decides *when*; the shell
+does the work. A consequence for E.2: `lib/config.sh`'s pool section loses its admission half but
+its helpers are called from the daemon and do not go anywhere.
+
+**WHAT IS NOT PROVEN.** No runner has been minted or launched through this path. Doing it on the
+build server would put a real registered runner on the org page with nothing watching it, so it
+belongs to the cut-over, where it happens once and deliberately. The launch argument list is
+tested by rendering it without running it, because its likely failure is a missing flag.
+
+- [x] **D.1 — DONE — `keep_ci_pool()`.** `M`
   The two conditions of `ffghr_pool_admit` (`runners/lib/config.sh:746`), reading the counters
   `keep_pool()` already reads, minting at most one runner per pass. Inside `owns_lock` (see the
   daemon-lock warning in `ffwatch.py`'s `run()`), or two daemons would both mint (design 9d).
   Returns early on `killed()` and `draining()`; `config_failsafe()` is design open question (c)
   and must be decided here, not discovered.
 
-- [ ] **D.2 — `serve_ci_runners()`.** `L`
+- [x] **D.2 — DONE — `serve_ci_runners()`.** `L`
   The loop half of `slot.sh`, once per daemon pass: flip idle to busy on `Runner.Worker`, write
   the busy marker, decide the cache archive from `branch.info`, serve `fetch.request`, upload on
   `artifact.request`, enforce the two deadlines, and hand a container whose job has ended to the
@@ -155,32 +178,32 @@ new path. The keeper and the serving pass are exercised against containers a tes
   same place — but if this pass ever needs to be slower, it gets its own clock inside the pass
   rather than slowing the loop.
 
-- [ ] **D.3 — the CI launcher.** `M`
+- [x] **D.3 — DONE — the CI launcher.** `M`
   The `docker run` of `slot.sh:390-413` in python: `ffghr-net`, the read-only cache mount, the
   staging mount, the licence, the machine id, `FFBOX_MODE=ci`, the labels, and the JIT config
   through the environment rather than argv.
 
-- [ ] **D.4 — credentials, by subprocess.** `M`
+- [x] **D.4 — DONE — credentials, by subprocess.** `M`
   `gh_mint_jitconfig`, `gh_delete_runner` and `gh_post_check_run` are called by running
   `runners/lib/gh.sh`, not ported. It is working, audited, and its token cache is one line.
   A python port means a new dependency (PyJWT/cryptography) or a hand-rolled RS256 through
   `openssl`, which is what `gh.sh` already is. Design section 7.
 
-- [ ] **D.5 — adoption.** `S`
+- [x] **D.5 — DONE — adoption.** `S`
   In `recover()`: list `label=ffbox.workload=ci`, write a row for any container with none, log one
   line each. Nothing else — the serving pass carries them (design 4). Idempotent because it is
   derived from `docker ps`, so no `adopted_at` equivalent is needed (design 9b).
 
-- [ ] **D.6 — `ci_publishing` in `settling()`.** `M`
+- [x] **D.6 — DONE — `ci_publishing` in `settling()`.** `M`
   CI containers that have exited with teardown still owed. Joins `HOST_TAIL`. `ci_runners` is
   **not** counted: the container survives the stop, which is the whole of requirement 3.
 
-- [ ] **D.7 — the pool numbers are re-read, not held.** `S`
+- [x] **D.7 — DONE — the pool numbers are re-read, not held.** `S`
   `keep_ci_pool` stats `config.json` and re-parses on a change, rather than using the dict
   `load_config()` produced at startup. Otherwise raising a CI ceiling by one triggers the config
   restart, which is the restart this design spends section 5 avoiding. Design section 6.
 
-- [ ] **D.8 — tests.** `M`
+- [x] **D.8 — DONE — tests.** `M`
   Against a stub daemon in `test_ffwatch.py`'s style: admission at and under the ceiling; adoption
   of a container with no row; a container that exits between passes reaching teardown; two threads
   never serving one container; `settling()` counting a teardown and not counting a running job.

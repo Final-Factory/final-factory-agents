@@ -95,6 +95,17 @@ SCHEMA_VERSION = 18
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import claude_keys                                          # noqa: E402  (needs sys.path above)
+# THE SECOND ONE, AND IT IS HERE FOR A DIFFERENT REASON THAN claude_keys. The CI runner pool moved
+# into ci_lane.py rather than into this file because this file is already fifteen thousand lines
+# and design/ffbox_ci_in_ffwatch_design.txt section 10 names concentration as the strongest
+# argument against the daemon owning CI at all; six hundred more lines of unrelated logic here
+# would make that argument stronger for nothing. It knows about containers, the runner library and
+# two numbers in config.json -- no database, no conversations, no Discord.
+#
+# IT DOES NOTHING WHILE A slot.sh IS RUNNING ON THIS BOX, which is every box until the cut-over.
+# See ci_lane.Lane.blocked: two minters against one ceiling would overshoot it, and they share no
+# lock. So this import is inert on arrival and stays inert until slot.sh is deleted.
+import ci_lane                                             # noqa: E402  (needs sys.path above)
 
 # What this daemon puts on the outbound requests claude_keys makes on its behalf.
 claude_keys.USER_AGENT = "ffwatch/1"
@@ -4048,6 +4059,10 @@ class Watcher:
         # missing the permission the endpoint needs, a base that is not there — and a restart is
         # how the fix takes effect without anybody having to clear a flag.
         self._reconcile_refused = set()
+        # THE CI LANE. Built here and never rebuilt: it caches the two pool numbers and which
+        # containers a thread currently holds, both of which are reconstructed from the daemon and
+        # the filesystem, so there is nothing in it a restart could lose.
+        self._ci = ci_lane.Lane(log)
         self.dry_run = bool(dry_run or cfg.get("dry_run"))
         self.state_dir = cfg["state_dir"]
         self.db = Db(os.path.join(self.state_dir, "ffwatch.db"))
@@ -14308,6 +14323,13 @@ class Watcher:
         # as well: ingest_event asks for a catchup rather than sweeping inline once this is set.
         self._catchup_async = True
         self.recover()
+        # WHATEVER IS ALREADY RUNNING IN THE CI LANE. Nothing to do but say so: the containers are
+        # running, the clocks are files and the drop boxes are named after the containers, so the
+        # serving pass carries them from here. design section 4.
+        try:
+            self._ci.adopt()
+        except Exception as exc:                    # noqa: BLE001
+            log(f"ci: could not take stock at startup: {type(exc).__name__}: {exc}")
         last_sweep = 0.0
         # 0.0 so the first pass polls at once: a daemon that has just started is exactly when
         # somebody is watching to see whether it works.
@@ -14349,6 +14371,8 @@ class Watcher:
                     # nothing at all while reporting "0 staged, 1 wanted".
                     # test_the_daemon_loop_keeps_the_pool covers it.
                     self.keep_pool()
+                    # The other lane, which does nothing at all while a slot.sh owns it.
+                    self.ci_pass()
                     # Containers nothing came back for. Cheap when there are none, which is the
                     # normal case; see sweep_dead_containers for why it does not have to be
                     # prompt.
@@ -14384,9 +14408,16 @@ class Watcher:
     SETTLE_LABELS = (("runs", "run(s) in a container"),
                      ("turns", "turn(s) still publishing on the host"),
                      ("publishing", "turn(s) whose container is gone and are still publishing"),
+                     ("ci_publishing", "CI container(s) whose teardown is still owed"),
                      ("outbound", "reply(s) not yet delivered"))
     # WHAT A STOP CAN ACTUALLY LOSE, once containers survive one. See settling().
-    HOST_TAIL = ("publishing", "outbound")
+    #
+    # ci_publishing IS HERE AND A RUNNING CI JOB IS NOT, which is the whole of requirement 3 in
+    # design/ffbox_ci_in_ffwatch_design.txt: a job runs for up to two hours and an update must
+    # never wait for one, while its teardown -- the check run, the cache promotion, the
+    # registration delete -- is seconds of host-side work that a `systemctl stop` genuinely loses.
+    # Exactly the distinction `publishing` already draws for an agent turn.
+    HOST_TAIL = ("publishing", "ci_publishing", "outbound")
 
     def settling(self):
         """Everything still in flight, in the THREE places a shutdown can lose work.
@@ -14440,9 +14471,44 @@ class Watcher:
             # terminal, or when the run row is open but names no live container (the finish pass
             # is about to take it).
             "publishing": self.publishing_count(),
+            # NEVER FATAL. This asks the daemon for a container listing, and a stop that could not
+            # be decided because docker hiccuped should report nothing owed rather than refuse to
+            # answer -- the caller is an updater trying to work out whether it may proceed.
+            "ci_publishing": self._ci_publishing_count(),
             "outbound": int(self.db.scalar(
                 f"SELECT COUNT(*) FROM outbound WHERE status IN {sendable}", (), 0)),
         }
+
+    def _ci_publishing_count(self):
+        try:
+            return self._ci.publishing()
+        except Exception as exc:                    # noqa: BLE001 — see settling()
+            log(f"ci: could not count what teardown is owed: {type(exc).__name__}: {exc}")
+            return 0
+
+    def ci_pass(self):
+        """The CI lane's turn in the daemon loop: serve what is live, then top the pool up.
+
+        SERVE BEFORE KEEP, the same order and for the same reason as the agent lane's expire-then-
+        top-up: a container whose job has just ended frees a place this pass can fill, and a
+        container that has just taken one makes the pool short by one, which is what starts a
+        replacement. Deciding first would spend a pass acting on numbers a moment out of date.
+
+        THE WHOLE PASS IS GUARDED. This lane is new, it talks to docker, to GitHub and to a shell,
+        and none of that may take down a daemon whose main job is somebody's Discord thread.
+        """
+        try:
+            self._ci.serve(submit=self._ci_submit)
+            self._ci.keep(box_room=self.workload_room())
+        except Exception as exc:                    # noqa: BLE001 — a daemon must survive anything
+            log(f"ERROR in the CI pass: {type(exc).__name__}: {exc}")
+
+    @staticmethod
+    def _ci_submit(fn):
+        """Run one container's blocking work off the daemon's own thread. A mirror fetch is
+        seconds and an artifact upload is a transfer; ci_lane keeps the guard that stops two
+        threads landing on one container."""
+        threading.Thread(target=fn, name="ffwatch-ci", daemon=True).start()
 
     def publishing_count(self):
         """Turns whose container is gone and whose host-side half is still owed. See settling()."""
