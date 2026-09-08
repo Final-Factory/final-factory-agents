@@ -2124,6 +2124,20 @@ LOCAL_KINDS = ("shell", "web")
 # where that fork lives; everything else treats it as an ordinary conversation with a thread.
 GITHUB_KIND = "github_pr"
 
+# THE GATE A TRIGGER WEARS WHILE ITS BRANCH IS STILL BEING ADOPTED. It is on the row from the
+# INSERT, so there is no moment at which the daemon loop's claim_turns can see the message and
+# build a turn out of it while poll_github -- a different thread -- is still inside adopt_branch's
+# `git fetch`. take_review_trigger lifts it in the one place the branch is known to be settled.
+REVIEW_STAGING_GATE = "codereview_staging"
+
+# AND THE ONE A DIRECTIVE WEARS FOR THE SAME REASON. `!branch` is decided by
+# take_branch_directive, which runs BELOW insert_message's INSERT and calls adopt_branch's
+# `git fetch`; a `!conv` is decided the same way. insert_message puts this on before the row
+# exists and takes it off again if neither handler claimed it, so the window in which the
+# scheduler can see a message whose directive is still being decided is closed rather than
+# merely narrow.
+DIRECTIVE_PENDING_GATE = "directive_pending"
+
 # The gate is skipped for anything already addressed to the bot by somebody this box trusts.
 # shell and web are typed by a person with a login here; operator_dm and directive come from an
 # account whose id Discord authenticated; mention means somebody said the bot's name. Stated
@@ -4100,6 +4114,9 @@ class Watcher:
         # hold lifts; not persisted, because a restart costs exactly one extra gate call and
         # the notice itself is kept off an outbound row instead. See create_turn.
         self._hold_decided = set()
+        # Conversations the branch backstop in create_turn has already turned away, so it says
+        # so once rather than once per tick. Same shape and same reason as _hold_decided.
+        self._branchless_reviews = set()
         # Ids with a retirement thread in flight, so a keeper pass that comes round again while a
         # `docker stop` is still running does not start a second one. Dropped in the thread's
         # finally, which is what lets a later pass retry a stop that did not take.
@@ -4747,11 +4764,26 @@ class Watcher:
         ref = msg.get("referenced_message") or {}
         return str(((ref.get("author") or {}).get("id")) or "") == me
 
-    def insert_message(self, conv_id, msg, routed_by=None, routed_reason=None):
+    def insert_message(self, conv_id, msg, routed_by=None, routed_reason=None,
+                       gate=None, gate_reason=None):
         """INSERT OR IGNORE — message.discord_id UNIQUE is the whole dedupe story.
 
         turn_id stays NULL: claiming is the scheduler's job, and a message that lands mid-run
         must remain unclaimed so the NEXT turn picks it up (design section 12).
+
+        A CALLER MAY ASK FOR THE ROW TO BE BORN GATED, and take_review_trigger does. The gate
+        has to be part of THIS statement rather than an UPDATE after it, because the daemon's
+        loop and the pollers are different threads: claim_turns runs on the loop, poll_github
+        runs on its own worker, and a row that is ungated even for a moment is a row the loop
+        can turn into a turn. That is not theoretical — it is what happened to pull request
+        #510 on 2026-09-08, reviewed against master while the branch it was about was still
+        being fetched. See take_review_trigger.
+
+        A caller's gate NEVER overrides the two this method decides for itself; a stale or
+        system message stays 'none' whatever was asked for, because those two are about whether
+        the row may EVER be read and the caller's is about whether it may be read YET. It DOES
+        override the provisional directive gate below, which is this method's own "not yet" and
+        has no business competing with somebody else's.
         """
         discord_id = str(msg.get("id"))
         author = msg.get("author") or {}
@@ -4771,6 +4803,28 @@ class Watcher:
         # this catches is the other way in — a thread bundle, which carries whatever Discord
         # filed inside the thread alongside the real posts.
         system = system_message_reason(msg)
+        # A DIRECTIVE'S ROW IS BORN GATED TOO, and for the same reason the review trigger's is.
+        # take_branch_directive runs at the BOTTOM of this method and calls adopt_branch, which
+        # does a `git fetch` -- and for the whole of it the row is committed, ungated, and on a
+        # conversation that does not have the branch yet. The ingest is not always on the loop:
+        # catchup_pass sweeps on a worker, so a `!branch` that no doorbell announced is read
+        # while claim_turns is free to run, and the outcome is a turn against the DEFAULT base
+        # carrying the operator's question. That is the conversation-86 outcome the refusal
+        # path exists to prevent, reached by a different road.
+        #
+        # LIFTED AT THE BOTTOM if neither handler claimed it, which is the common case: almost
+        # nothing that parses as a directive is one anybody may act on.
+        content = msg.get("content") or ""
+        provisional = None
+        if gate is None and (branch_directive(content) or fork_directive(content)):
+            provisional = DIRECTIVE_PENDING_GATE
+            gate = provisional
+            gate_reason = "a directive on this message has not been decided yet"
+        if stale:
+            gate, gate_reason, provisional = "none", (
+                f"posted before {alias} was attached to this box"), None
+        elif system:
+            gate, gate_reason, provisional = "none", system, None
         cur = self.db.execute(
             "INSERT OR IGNORE INTO message(conversation_id, discord_id, direction, author_id,"
             " author_name, is_bot, content, referenced_discord_id, turn_id, created_at,"
@@ -4787,8 +4841,7 @@ class Watcher:
              # WHICH RULE PUT IT HERE. Recorded on every message, not only the ones a model
              # touched: a routing call nobody can inspect is one nobody can debug.
              routed_by, (routed_reason or None),
-             "none" if (stale or system) else None,
-             (f"posted before {alias} was attached to this box" if stale else system)))
+             gate, (gate_reason or None)))
         if cur.rowcount == 0:
             return None                        # already ingested; a duplicate doorbell
         message_id = cur.lastrowid
@@ -4809,6 +4862,13 @@ class Watcher:
         # "actually new" path so a sweep's re-read of a thread cannot fork twice or post its
         # answer twice. The routing half of it lives in ingest_channel_message; see there.
         self.take_fork_directive(conv_id, message_id, author, msg.get("content") or "")
+        # AND NEITHER OF THEM CLAIMED IT, so it is an ordinary message that merely contains
+        # something shaped like a directive: a stranger's `!branch`, a `!conv` on a local
+        # conversation, a line the parser matched and the policy declined. Guarded on the
+        # provisional value, so a real refusal ('branch_directive', 'fork_directive') and the
+        # gate the engagement classifier may yet write are left exactly as they are.
+        if provisional:
+            self.ungate_message(message_id, provisional)
         # THE BACKLOG'S ATTACHMENTS COME DOWN TOO, and that is a deliberate one-time cost —
         # attaching a busy forum pulls every log and save zip in its visible history. Discord's
         # attachment URLs are signed and expire, and nothing re-visits a message once it is
@@ -4842,7 +4902,12 @@ class Watcher:
         leaves nowhere for it to land and gates the message too. See the comment on that.
         """
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
-        if conv is None or is_local_conversation(conv):
+        # NOR ON A REVIEW. A #codereview conversation's only message is the trigger comment,
+        # recorded so the turn has something to point at and never read as a prompt -- so a
+        # `!branch` inside a pull request comment is not a directive, it is somebody's prose.
+        # Acting on it would also write over the staging gate take_review_trigger is holding
+        # that row with, which is the one thing standing between a review and the wrong tree.
+        if conv is None or is_local_conversation(conv) or conv["kind"] == GITHUB_KIND:
             return None
         branch = branch_directive(content)
         if not branch:
@@ -4878,9 +4943,9 @@ class Watcher:
             # would otherwise settle for good — an adopt that lost the `git fetch` and refused
             # with "not on origin" would leave a question that can never be answered even once
             # the branch is plainly there. Guarded on OUR OWN gate value, so this can never lift
-            # the engagement gate's decision or the pre-attach watermark's.
-            self.db.execute("UPDATE message SET gate=NULL, gate_reason=NULL"
-                            " WHERE id=? AND gate='branch_directive'", (message_id,))
+            # the engagement gate's decision or the pre-attach watermark's. The provisional gate
+            # insert_message wrote is a different value and is lifted there, at the bottom.
+            self.ungate_message(message_id, "branch_directive")
         # ONE POST EITHER WAY. A refusal is as much an answer as a confirmation, and an operator
         # who typed a branch name into a thread and heard nothing back would reasonably assume
         # it worked. On a message that also carries a prompt the turn's own reply is coming, but
@@ -4931,7 +4996,8 @@ class Watcher:
         if not source_id:
             return None
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
-        if conv is None or is_local_conversation(conv):
+        # NOT ON A REVIEW EITHER, for the reason take_branch_directive gives.
+        if conv is None or is_local_conversation(conv) or conv["kind"] == GITHUB_KIND:
             return None
         author_id = str((author or {}).get("id") or "")
         if not is_operator(self.cfg, author_id):
@@ -6402,6 +6468,33 @@ class Watcher:
                 "thread": self.gate_thread(conv, msgs, at=at), "at": at}
 
     def create_turn(self, conv):
+        # A REVIEW WITHOUT ITS BRANCH IS NOT A TURN, IT IS THE WRONG TREE. A #codereview
+        # conversation exists to review one pull request's branch, and everything that makes
+        # that true -- the checkout, the diff range, the prompt's own "you are standing on its
+        # branch" -- reads conversation.branch. Empty means adoption has not finished (it does
+        # a `git fetch`, which took 17 seconds the day this was found) or was refused, and a
+        # turn built now runs against the default base and reviews nothing.
+        #
+        # THE BACKSTOP, NOT THE FIX. take_review_trigger keeps its message gated until the
+        # branch is settled, which is what actually closes the window; this is here because the
+        # cost of the two disagreeing is a container, an hour and a confident review of the
+        # wrong diff. Seen on pull request #510, 2026-09-08: the loop's claim_turns reached the
+        # message five seconds after the poller inserted it and seventeen before it adopted.
+        #
+        # SAID ONCE, because claim_turns offers this conversation again every tick for as long
+        # as the row sits there, and a line per tick is a log nobody can read. The set is the
+        # idiom _hold_decided already uses two lines below, for the same shape of problem: a
+        # decision that is stable until something else changes it. Silence would be worse than
+        # noise here -- nothing else in the box would ever mention a review that is not going
+        # to happen.
+        if conv["kind"] == GITHUB_KIND and not self.conversation_branch(conv):
+            if conv["id"] not in self._branchless_reviews:
+                self._branchless_reviews.add(conv["id"])
+                log(f"conversation {conv['id']}: a review with no branch gets no turn — its "
+                    f"pull request's head was never adopted, so a turn now would run against "
+                    f"the default base. Nothing will start until the branch is on the row.")
+            return None
+        self._branchless_reviews.discard(conv["id"])
         # HOW MUCH SUBSCRIPTION IS LEFT, ASKED ONCE AND CARRIED DOWN. It does not stop the pass
         # here. Everything between this line and the hold below still runs — the selector, the
         # mention-only policy, the engagement gate — because whether this box would ANSWER the
@@ -6521,8 +6614,35 @@ class Watcher:
              classification.get("reason") if fc else None, now_iso(),
              tier, actor, why, venue))
         turn_id = cur.lastrowid
+        # THE CLAIM IS GUARDED, AND THAT IS WHAT MAKES IT THE DECISION. Two threads can reach
+        # this: the daemon loop runs claim_turns every tick, and take_review_trigger creates its
+        # own turn from the GitHub worker. Both read pending_messages first, so both can come
+        # back with the same rows -- and an unguarded UPDATE would let both write a turn, with
+        # the same seq (MAX(seq)+1 read twice), each launching a container for one trigger.
+        # Guarded on turn_id IS NULL, a rowcount of zero means the other thread got there
+        # between our read and this write, which is a refusal and not a success. Same shape as
+        # adopt_branch's `WHERE branch IS NULL`, and for the same reason.
+        #
+        # THE TURN ROW IS DELETED RATHER THAN LEFT, because nothing points at it yet: the
+        # messages are somebody else's, claim_ack has not run, and a queued turn no message
+        # belongs to would be picked up by the scheduler and launched with an empty prompt.
         ids = ",".join(str(m["id"]) for m in msgs)
-        self.db.execute(f"UPDATE message SET turn_id=? WHERE id IN ({ids})", (turn_id,))
+        claimed = self.db.execute(
+            f"UPDATE message SET turn_id=? WHERE id IN ({ids}) AND turn_id IS NULL", (turn_id,))
+        if claimed.rowcount != len(msgs):
+            self.db.execute(f"UPDATE message SET turn_id=NULL WHERE turn_id=? AND id IN ({ids})",
+                            (turn_id,))
+            self.db.execute("DELETE FROM turn WHERE id=?", (turn_id,))
+            # AND THE WINNER'S TURN IS WHAT THIS RETURNS, not None. Every caller reads None as
+            # "there is no turn for your message" -- submit() and follow_up() raise on it -- and
+            # that is exactly the wrong thing to say here, because the message HAS a turn and it
+            # is about to run. The only thing that did not happen is that this pass made it.
+            winner = self.db.scalar(
+                f"SELECT turn_id FROM message WHERE id IN ({ids}) AND turn_id IS NOT NULL"
+                " ORDER BY turn_id LIMIT 1")
+            log(f"conversation {conv['id']}: another pass claimed these messages first; "
+                f"turn {turn_id} withdrawn in favour of turn {winner}")
+            return winner
         self.db.execute("UPDATE conversation SET state='queued', lane=? WHERE id=?",
                         (lane, conv["id"]))
         if not is_local_conversation(conv):
@@ -13715,6 +13835,12 @@ class Watcher:
                 # that raises once raises every time and the loop has other work.
                 log(f"#codereview: comment {comment_id} could not be handled: "
                     f"{type(exc).__name__}: {exc}")
+                # AND THE ROW IT LEFT BEHIND IS SETTLED, which became necessary the moment the
+                # trigger's message started life gated. `seen` is appended two lines below
+                # whatever happened here, so a row still wearing the staging gate is one no
+                # pending_messages will select and no poll will ever look at again -- a review
+                # that silently does not happen and that nothing in the box would ever mention.
+                self.settle_a_staged_trigger(gh, comment, exc)
                 turn_id = None
             seen_set.add(comment_id)
             seen.append(comment_id)
@@ -13813,6 +13939,15 @@ class Watcher:
             (str(pull["url"] or number), pull["base_ref"] or "", conv_id))
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
 
+        # BORN GATED, AND THE ORDER OF THIS METHOD RESTS ON IT. This runs on the GitHub worker
+        # and the daemon's claim_turns runs on the loop, so between this INSERT and the
+        # adopt_branch below -- seventeen seconds of `git fetch` on 2026-09-08 -- the loop is
+        # free to claim an ungated message and launch a container against the default base. It
+        # did, on pull request #510: the run started at master's tip, the prompt said "you are
+        # standing on its branch, `?`", `git diff origin/master...HEAD` was empty, and the
+        # review correctly reported that there was nothing in front of it. The gate is the same
+        # door C4's busy refusal declines through, put on one step earlier -- at the INSERT,
+        # because an UPDATE after the fact IS the window.
         message_id = self.insert_message(conv_id, {
             "id": comment_id,
             "author": {"id": author_id, "username": author.get("login") or "?", "bot": False},
@@ -13822,9 +13957,22 @@ class Watcher:
             # asserts this text reaches no container.
             "content": body,
             "timestamp": comment.get("updated_at") or now_iso(),
-        })
+        }, gate=REVIEW_STAGING_GATE,
+            gate_reason="the pull request's branch has not been adopted yet")
         if message_id is None:
-            return None                     # the id collided: an earlier sweep already had it
+            # ORDINARILY A REPLAYED SWEEP, and there is nothing left to do. The exception is a
+            # row this method left staged: the daemon was restarted between the INSERT and the
+            # adoption, and the comment goes into the cursor's `seen` list whatever happens
+            # here -- so returning now would lose the trigger for good rather than merely late.
+            # Picking the staged row back up walks it through the rest of this method exactly
+            # as though it had just arrived, which is what the gate was holding it for.
+            staged = self.db.one(
+                "SELECT id FROM message WHERE discord_id=? AND conversation_id=? AND gate=?",
+                (comment_id, conv_id, REVIEW_STAGING_GATE))
+            if staged is None:
+                return None                 # the id collided: an earlier sweep already had it
+            message_id = staged["id"]
+            log(f"#codereview: #{number} was left staged by an earlier pass; taking it up again")
 
         # ALREADY WORKING. Refused rather than queued, because the person who typed this cannot
         # see that a run is in flight, and starting a second review when the first ends is not
@@ -13843,6 +13991,12 @@ class Watcher:
                 return self.refuse_review(gh, number, comment_id, why)
             conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
 
+        # THE BRANCH IS SETTLED, SO THE MESSAGE MAY BE READ. Every refusal above left its own
+        # gate on the row instead, so this line is reached only when there is a branch to run
+        # against. create_turn builds its turn out of pending_messages, which selects
+        # `gate IS NULL`, so lifting it here is what makes the turn possible at all -- and
+        # lifting it only here is what stops the turn happening against the wrong tree.
+        self.ungate_message(message_id, REVIEW_STAGING_GATE)
         turn_id = self.create_turn(conv)
         if turn_id is None:
             log(f"#codereview: #{number} produced no turn")
@@ -13863,6 +14017,46 @@ class Watcher:
         """
         self.db.execute("UPDATE message SET gate=?, gate_reason=? WHERE id=?",
                         (gate, (reason or "")[:200], message_id))
+
+    def ungate_message(self, message_id, gate):
+        """Lift a gate this ingress put on, and only that one.
+
+        GUARDED ON THE VALUE, exactly as take_branch_directive's lift is, so a provisional gate
+        can never clear the engagement classifier's decision or a watermark's. The two mean
+        different things -- "not yet" against "not ever" -- and a blanket `gate=NULL` here would
+        let a staging path silently overrule a refusal.
+        """
+        self.db.execute("UPDATE message SET gate=NULL, gate_reason=NULL"
+                        " WHERE id=? AND gate=?", (message_id, gate))
+
+    def settle_a_staged_trigger(self, gh, comment, exc):
+        """A trigger whose ingest raised after its row was written. Nothing is left staged.
+
+        THE COST OF A GATED INSERT, PAID HERE. Before the gate, a `take_review_trigger` that
+        raised half-way left an ordinary message that claim_turns would pick up -- badly, which
+        is the bug the gate exists to fix, but visibly. Now it leaves a row that is invisible to
+        every reader by design, on a comment the cursor is about to record as handled. So the
+        gate is replaced with one that says what happened, and the pull request is told: a
+        review that could not be started is a refusal like any other, and the operator who
+        typed the trigger is owed the sentence rather than silence.
+
+        DECIDED ONCE, like every other outcome in this poll. It does not retry, because the
+        comment goes into `seen` regardless and a failure that is a database lock will be gone
+        by the time somebody comments again anyway.
+        """
+        comment_id = str(comment.get("id") or "")
+        staged = self.db.one("SELECT id FROM message WHERE discord_id=? AND gate=?",
+                             (comment_id, REVIEW_STAGING_GATE))
+        if staged is None:
+            return                          # it never got as far as a row, or already settled
+        why = f"{type(exc).__name__}: {exc}"
+        self.gate_message(staged["id"], "codereview_failed", why)
+        number = _issue_number_from_url(comment.get("issue_url"))
+        if number is None:
+            return
+        self.refuse_review(gh, number, comment_id,
+                           f"the run could not be started — {why}. Nothing was changed and "
+                           f"nothing is queued; comment again to try it once more.")
 
     def refuse_review(self, gh, number, comment_id, reason):
         """Say no on the pull request. Always returns None, so callers can `return` it."""

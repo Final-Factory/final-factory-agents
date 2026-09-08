@@ -8,15 +8,15 @@ argv builder), and `05-discord-setup.sh` for config seeding.
 
 Effort: **S** under an hour, **M** an afternoon, **L** a day or more.
 
-## Status: A through E implemented; F partly; G not run.
+## Status: A through E implemented; F partly; G1 run once, failed, fixed and re-armed.
 
 Branch adoption is on master, so the dependency this file carried is discharged; design section
 3b lists what it altered. **A, B, C, D and E are implemented and pushed.** F1-F4 are covered by the
 seven `#codereview` tests in `test_ffwatch.py` (F3 as a source assertion on
 `setup_review_workflow`, the way the pool tests assert what `launch()` does not contain -- there
-is no way to observe a container's config directory from outside one). **G is the
-live end-to-end run, which has not happened** -- it needs the operator table filled in and
-`GH_PR_TOKEN` given Issues write.
+is no way to observe a container's config directory from outside one). **G1 ran for the first
+time on 2026-09-08, on pull request #510, and did not pass** -- the section below says what it
+found and what was changed. Ten `#codereview` tests now; three of them are that failure.
 
 What implementation changed, beyond the design:
 
@@ -38,6 +38,8 @@ What implementation changed, beyond the design:
   channel, for the same reason.
 - **`pull_request()` answers None on a 404** rather than raising. The number comes out of a
   comment's `issue_url` and can name something deleted, or an issue rather than a pull request.
+- **The trigger's message row is born gated** (`codereview_staging`), and the gate comes off in
+  the one line that knows the branch is settled. See "What G1 found" below; this is the fix.
 
 ## A. Config and credentials
 
@@ -156,6 +158,98 @@ What implementation changed, beyond the design:
 - **F4 (S).** A test that the built argv carries `Workflow` in both the `--tools` value and an
   `--allowedTools` entry for this lane, and in neither for the Discord lanes.
 
+## What G1 found: a review of master, on a pull request about something else
+
+The first live run, `!codereview` on #510 at 2026-09-08T07:51Z. The container came up on
+**master's tip**, `git diff origin/master...HEAD` was empty, the prompt read "You are standing
+on its branch, `?`", and the agent correctly answered that there was nothing in front of it to
+review. Cost: one pooled container, four minutes, $1.17, and a review of nothing.
+
+The daemon's own log is the whole story, in four lines:
+
+    07:51:01  conversation 122 kind=github_pr thread=github:pr:510
+    07:51:06  run d122t1-438bf984: agent=ffdev ... pooled
+    07:51:23  conversation 122: adopted ffbox/quick-craft-upgrade-blueprints-d98t1-86e69096
+    07:51:24  #codereview: #510 produced no turn
+
+**A thread race, and the design never had a reason to look for it.** `take_review_trigger` does
+the right things in the right order -- create the conversation, adopt, then create the turn --
+and section 3b says so. What it does not own is the clock. `poll_github` runs on the
+`ffwatch-github` worker (`start_github_poll`), and `claim_turns` runs on the daemon's main loop,
+every tick. Between `insert_message` and `adopt_branch` returning there was an unclaimed,
+ungated message on a conversation with no branch, and `adopt_branch`'s `git fetch` held that
+window open for seventeen seconds. The loop got there in five. It built the turn, `build_job`
+read `conv["branch"]` as NULL, and `launch` staged the default base.
+
+Three consequences fell out of that one race, and each of them contradicts something written
+down as settled:
+
+  * **The pool matched.** "Every `#codereview` run is a cold launch, because `pool_claim_for`
+    matches a warm container on branch and no spare is staged on a pull request branch." True
+    only once the branch is set. With NULL it matched a master spare -- the log says `pooled`.
+  * **The prompt shipped a `?`.** `review_facts` returns `branch: ""` and the prompt renders
+    `` `?` `` for it, which reads as a fact about the branch rather than as a missing one.
+  * **The acknowledgement went out.** `mark_working` put the 👀 on the comment, so the operator
+    was told a review had started, and what had started was a review of the wrong tree.
+
+The adoption itself was fine, and finished 17 seconds late: conversation 122 owns
+`ffbox/quick-craft-upgrade-blueprints-d98t1-86e69096` and a second trigger on #510 would have
+run correctly, because the branch is already there.
+
+**The fix.** The first three points are the race itself; the rest came out of reviewing them,
+and every one of them is a hole the first three opened or failed to close.
+
+  1. `insert_message` takes `gate=`/`gate_reason=` and writes them **in the INSERT**. An UPDATE
+     after the row exists is the window itself; a gate applied one statement later is not a gate.
+     A caller's gate never overrides the `none` a stale or system message gets -- those two mean
+     "may never be read", this one means "may not be read yet".
+  2. `take_review_trigger` inserts the trigger gated `codereview_staging` and calls the new
+     `ungate_message` in the one place the branch is known to be settled, immediately before
+     `create_turn`. Every refusal above that line already writes its own gate over the staging
+     one, so the lift is reached only when there is a branch to run against. A collision on a
+     row still wearing the staging gate is a daemon that died mid-adoption, and is picked back
+     up rather than dropped -- the comment goes into the cursor's `seen` either way, so walking
+     past it would lose the trigger for good.
+  3. `create_turn` refuses a `GITHUB_KIND` conversation with no branch, and says so once per
+     conversation rather than once per tick (the `_hold_decided` idiom). The gate is what closes
+     the window; this is what makes the cost of ever reopening it a turn that does not happen
+     instead of a container that reviews the wrong tree.
+  4. **`settle_a_staged_trigger`, because a gated row is an invisible one.** `poll_github`
+     appends every comment to `seen` whatever became of it -- deliberately, since a comment that
+     raises once raises every time. Before the gate, a `take_review_trigger` that raised
+     half-way left an ordinary message the loop would pick up: badly, but visibly. After it, it
+     leaves a row no `pending_messages` selects on a comment no poll will read again -- a review
+     that silently does not happen and that nothing would ever mention. The exception handler
+     now rewrites the gate to `codereview_failed` with the reason and posts a refusal on the
+     pull request. The collision recovery in point 2 covers the OTHER case, a hard kill before
+     the cursor is written, and only that one.
+  5. **The claim in `create_turn` is guarded.** `seq` is `MAX(seq)+1` read outside any
+     transaction, there is no `UNIQUE(conversation_id, seq)`, and the message claim was an
+     unguarded `UPDATE`. Two threads that both read `pending_messages` before either wrote --
+     the loop and the GitHub worker, which is exactly the pair this whole entry is about -- would
+     each write a turn and each launch a container for one trigger. It is now
+     `WHERE turn_id IS NULL` with a rowcount check, the shape `adopt_branch` already uses for
+     `WHERE branch IS NULL`. The loser withdraws its turn row and **returns the winner's turn
+     id**, not None: `submit()` and `follow_up()` raise on None, and "somebody else made your
+     turn" is not "there is no turn".
+  6. **The `!branch` ingress gets the same treatment**, having first been written off. It has
+     the identical shape -- `take_branch_directive` runs inside `insert_message`, below the
+     INSERT, and calls `adopt_branch`'s `git fetch` -- and it is reachable whenever the ingest
+     is not on the loop, which `catchup_pass`'s own docstring says happens for any message no
+     doorbell announced. The consequence is worse than the review lane's, because that turn
+     writes code and publishes it: the conversation-86 outcome, reached by another road. So
+     `insert_message` now pre-gates any row whose content parses as a directive
+     (`DIRECTIVE_PENDING_GATE`) and lifts it at the bottom if neither handler claimed it, which
+     covers every early return in both handlers without restructuring either.
+  7. **Neither directive handler runs on a `github_pr` conversation.** A `!branch` line inside a
+     pull request comment is prose -- the body is recorded and never read as a prompt -- and
+     acting on it would write over the staging gate that is the only thing standing between the
+     review and the wrong tree. The id-space collision it needed (a GitHub user id present in
+     `discord.trust.operators`) is remote; the point is that the gate's invariant should hold by
+     construction rather than by arithmetic.
+  8. `take_branch_directive`'s hand-written gate lift is now the `ungate_message` helper, so
+     there is one copy of "guarded on our own gate value".
+
 ## G. Live verification
 
 - **G1.** `#codereview` from an operator on a real open pull request with an in-repo head.
@@ -168,12 +262,21 @@ What implementation changed, beyond the design:
 - **G3.** `#codereview` twice in quick succession: the second is refused with a comment naming
   the first run.
 - **G4.** A fork pull request: refused with a comment, no container created.
+- **G5.** The container is standing on the pull request's branch. `head.txt` in the run
+  directory is the branch head and not the base's, and `job.json`'s `review.branch` is a name
+  rather than `""`. This is the one G1 would have caught on the first run and did not, because
+  nothing above it looked at where the workspace was.
+- **G6.** A trigger that fails mid-ingest says so. Hard to stage deliberately; what to check
+  after any failed run is that no `message` row is left on `gate='codereview_staging'`:
+  `SELECT * FROM message WHERE gate='codereview_staging'` should be empty between polls.
 
 ## Facts about this lane that the code decides, not this design
 
 - **Every run is a cold launch.** `pool_claim_for` matches a warm container on branch and no
   spare is staged on a pull request branch, so the pool misses by construction. Cold path plus a
-  Unity delta import, inside the untouched `warmup_secs` of 3600.
+  Unity delta import, inside the untouched `warmup_secs` of 3600. This holds only while the
+  branch is on the conversation before the turn is claimed, which is what the staging gate now
+  guarantees; on 2026-09-08 it did not, and the run took a master spare.
 - **A repeat `#codereview` reviews the current head**, because `mirror_sync_from_origin` runs
   before every turn of an adopted conversation.
 - **A branch deleted mid-run refuses at the publish**, by the prefix rule read off `ls-remote`.

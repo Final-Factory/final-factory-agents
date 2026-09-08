@@ -11755,6 +11755,83 @@ def test_only_an_operator_may_name_a_branch_from_discord():
           said and said[0]["gate"] is None, said)
 
 
+def test_a_branch_directive_is_not_claimable_while_it_is_being_adopted():
+    """The `!branch` flavour of the #codereview race, and the more expensive one.
+
+    take_branch_directive runs INSIDE insert_message, below the INSERT, and calls adopt_branch's
+    `git fetch`. On the doorbell path that is sequential with claim_turns and safe. On the
+    catchup worker it is not -- a message no doorbell announced, which is what a listener outage
+    produces -- and a turn claimed in that window runs the operator's question against the
+    DEFAULT base. Unlike the review lane, that turn writes code and publishes it, so the wrong
+    answer arrives on a branch with a pull request behind it.
+    """
+    print("adoption: the loop cannot claim a directive mid-adoption")
+    case, fixture = branch_directive_case("directive-race", "look at the save bug",
+                                          author=LOTHSAHN)
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/from-discord")
+
+    # THE OPENER IS ALREADY PENDING, and the loop claiming that one is ordinary work rather
+    # than the race. Drain it first, then put the conversation back to idle, so what this test
+    # watches is the directive's own message and nothing else.
+    case.watcher.claim_turns()
+    case.watcher.db.execute("UPDATE conversation SET state='idle' WHERE id=1")
+    turns_before = len(case.rows("SELECT * FROM turn"))
+
+    real_adopt = case.watcher.adopt_branch
+    stolen, gate_during, claimed_during = [], [], []
+
+    def adopt_while_the_loop_runs(conv_id, branch, by):
+        row = case.rows("SELECT * FROM message WHERE discord_id='4902'")
+        gate_during.append(row[0]["gate"] if row else None)
+        stolen.extend(case.watcher.claim_turns())
+        row = case.rows("SELECT * FROM message WHERE discord_id='4902'")
+        claimed_during.append(row[0]["turn_id"] if row else "gone")
+        return real_adopt(conv_id, branch, by)
+
+    case.watcher.adopt_branch = adopt_while_the_loop_runs
+    say_in_channel(case, fixture, 4902, "!branch loth/from-discord\nand look at it",
+                   author=LOTHSAHN)
+
+    check("the directive's row is gated for as long as it is being decided",
+          gate_during == ["directive_pending"], gate_during)
+    check("so the loop claims nothing against the default base", stolen == [], stolen)
+    check("and the directive's message is still unclaimed when the adoption returns",
+          claimed_during == [None], claimed_during)
+    check("no turn was created in the window",
+          len(case.rows("SELECT * FROM turn")) == turns_before,
+          case.rows("SELECT * FROM turn"))
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("and the branch is adopted before any turn can exist",
+          conv["branch"] == "loth/from-discord", conv["branch"])
+    msg = case.rows("SELECT * FROM message WHERE discord_id='4902'")[0]
+    check("the provisional gate comes off once the directive has landed",
+          msg["gate"] is None, dict(msg))
+
+
+def test_a_directive_nobody_may_act_on_is_left_an_ordinary_message():
+    """The provisional gate is lifted on every road out of the handlers, not just the good one.
+
+    Almost nothing that parses as a directive is one anybody may act on -- a stranger's
+    `!branch`, a `!conv` on a local conversation, a line the regex matched in prose. Every one
+    of those returns early, before the handler writes any gate of its own, and a provisional
+    gate left behind would silently swallow the message.
+    """
+    print("adoption: a directive nobody may act on")
+    case, fixture = branch_directive_case("directive-lift", "how do belts work?")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/from-discord")
+    say_in_channel(case, fixture, 4907, "!branch loth/from-discord\nplease", author=PLAYER)
+    row = case.rows("SELECT * FROM message WHERE discord_id='4907'")[0]
+    check("a player's directive leaves an ordinary, ungated message",
+          row["gate"] is None, dict(row))
+    check("and adopts nothing", case.rows("SELECT * FROM conversation")[0]["branch"] is None,
+          None)
+    say_in_channel(case, fixture, 4908, "!conv 4\nwhat about this one", author=PLAYER)
+    row = case.rows("SELECT * FROM message WHERE discord_id='4908'")[0]
+    check("and so does a player's !conv", row["gate"] is None, dict(row))
+
+
 def test_a_directive_only_message_adopts_and_asks_for_no_turn():
     """The whole message is the command, so there is nothing to answer and no turn to spend."""
     print("adoption: a directive on its own")
@@ -12491,6 +12568,190 @@ def test_a_codereview_comment_starts_a_review_on_the_pull_requests_own_branch():
     check("a second trigger continues the same conversation",
           len(again) == 1 and len(case.rows("SELECT * FROM conversation WHERE kind='github_pr'"))
           == 1, again)
+
+
+def test_a_review_trigger_is_not_claimable_while_its_branch_is_being_adopted():
+    """The window that reviewed pull request #510 against master on 2026-09-08.
+
+    poll_github runs on its own worker thread and claim_turns runs on the daemon's loop.
+    adopt_branch does a `git fetch`, which took seventeen seconds that day -- and for all
+    seventeen the trigger's message row sat unclaimed and ungated on a conversation with no
+    branch. The loop reached it five seconds in, made a turn, and launched a container at
+    master's tip: `git diff origin/master...HEAD` was empty, the prompt read "you are standing
+    on its branch, `?`", and the review honestly reported that there was nothing in front of it.
+
+    Calling claim_turns from inside the adoption is that window, held open on purpose.
+    """
+    print("#codereview: the loop cannot claim a trigger mid-adoption")
+    case = Case("codereviewrace")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(9001, 41, "#codereview")
+
+    real_adopt = case.watcher.adopt_branch
+    stolen = []
+    staged = []
+
+    def adopt_while_the_loop_runs(conv_id, branch, by):
+        row = case.rows("SELECT * FROM message WHERE discord_id='9001'")
+        staged.append(dict(row[0]) if row else None)
+        stolen.extend(case.watcher.claim_turns())
+        return real_adopt(conv_id, branch, by)
+
+    case.watcher.adopt_branch = adopt_while_the_loop_runs
+    created = case.watcher.poll_github()
+
+    check("the trigger is on the record before the branch is",
+          staged and staged[0] is not None, staged)
+    check("but gated, so the loop cannot read it",
+          staged and staged[0]["gate"] == "codereview_staging", staged)
+    check("and the loop claims nothing while the adoption is in flight", stolen == [], stolen)
+    check("the trigger still becomes exactly one turn", len(created) == 1, created)
+    check("and only one, because the gate came off once", len(case.rows("SELECT * FROM turn")) == 1,
+          case.rows("SELECT * FROM turn"))
+
+    conv = case.rows("SELECT * FROM conversation WHERE kind='github_pr'")[0]
+    check("which stands on the pull request's branch and not on the base",
+          conv["branch"] == "loth/pr-branch", dict(conv))
+    check("the gate is lifted once the branch is settled",
+          case.rows("SELECT * FROM message WHERE discord_id='9001'")[0]["gate"] is None,
+          dict(case.rows("SELECT * FROM message WHERE discord_id='9001'")[0]))
+    job = case.watcher.build_job(case.rows("SELECT * FROM turn")[0], conv, "r1", case.root)
+    check("so the prompt names a branch rather than a question mark",
+          "`loth/pr-branch`" in job["prompt"] and "`?`" not in job["prompt"],
+          job["prompt"][:300])
+
+
+def test_a_review_conversation_with_no_branch_never_becomes_a_turn():
+    """The backstop under the gate, checked on its own.
+
+    The gate is what closes the window; this is what makes the cost of ever reopening it a
+    turn that does not happen rather than a container that reviews the wrong tree. Anything
+    that hands claim_turns an ungated message on a branchless review conversation -- a future
+    ingress, a hand-written row, a restart between the INSERT and the adoption -- lands here.
+    """
+    print("#codereview: no branch, no turn")
+    case = Case("codereviewnobranch")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(9101, 41, "#codereview")
+    check("the trigger makes a turn in the ordinary way",
+          len(case.watcher.poll_github()) == 1, None)
+
+    conv = case.rows("SELECT * FROM conversation WHERE kind='github_pr'")[0]
+    # Back to the state the race produced: the conversation exists, a trigger is on it
+    # unclaimed and ungated, and the branch column is still empty.
+    case.watcher.db.execute(
+        "UPDATE conversation SET branch=NULL, branch_adopted_at=NULL, state='idle' WHERE id=?",
+        (conv["id"],))
+    case.watcher.db.execute(
+        "UPDATE message SET turn_id=NULL, gate=NULL, gate_reason=NULL WHERE conversation_id=?",
+        (conv["id"],))
+    check("a review with no branch is not turned into a turn",
+          case.watcher.claim_turns() == [], None)
+    check("and nothing was queued to say it was",
+          len(case.rows("SELECT * FROM turn")) == 1, case.rows("SELECT * FROM turn"))
+
+    case.watcher.db.execute("UPDATE conversation SET branch='loth/pr-branch',"
+                            " branch_adopted_at='2026-09-08T00:00:00Z' WHERE id=?",
+                            (conv["id"],))
+    check("once the branch lands the same message is claimed normally",
+          len(case.watcher.claim_turns()) == 1, None)
+
+
+def test_a_trigger_left_staged_by_a_restart_is_taken_up_again():
+    """A daemon KILLED inside the adoption must not lose the trigger.
+
+    This is a process death and not an exception, and the difference is the whole test. An
+    exception is caught by poll_github, which records the comment in `seen` and settles the row
+    (the next test). A kill leaves the cursor exactly as the previous pass wrote it, so the
+    comment comes back -- and it comes back to an insert_message that now collides on it. The
+    collision path recognises its own gate and carries on from where it stopped.
+    """
+    print("#codereview: a staged trigger survives a restart")
+    case = Case("codereviewstaged")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(9201, 41, "#codereview")
+
+    # THE CURSOR AS IT STOOD BEFORE THE CRASH, written here rather than after, so nothing in
+    # this test can be mistaken for tidying up state the code under test had already written.
+    case.watcher.write_github_cursor("2026-01-01T00:00:00Z", [], None, [])
+
+    def die_inside_the_adoption(conv_id, branch, by):
+        raise RuntimeError("the daemon was restarted")
+
+    # CALLED THE WAY poll_github CALLS IT, and then the pass simply does not finish: no `seen`
+    # append, no write_github_cursor. That is what a kill leaves behind.
+    gh = ffwatch.GitHub(case.watcher.cfg, "ffdev")
+    triggers = ffwatch.github_triggers(case.watcher.cfg)
+    case.watcher.adopt_branch = die_inside_the_adoption
+    try:
+        case.watcher.take_review_trigger(gh, GH_STATE["comments"][-1], triggers, "ffdev")
+        check("the interrupted ingest raised", False, "it returned instead")
+    except RuntimeError:
+        check("the interrupted ingest raised", True, None)
+
+    row = case.rows("SELECT * FROM message WHERE discord_id='9201'")[0]
+    check("and leaves the trigger staged rather than claimable",
+          row["gate"] == "codereview_staging", dict(row))
+    check("with no turn behind it", not case.rows("SELECT * FROM turn"), None)
+    check("and the loop cannot make one out of it either",
+          case.watcher.claim_turns() == [], None)
+
+    del case.watcher.adopt_branch
+    created = case.watcher.poll_github()
+    check("the next poll picks the staged trigger back up", len(created) == 1, created)
+    check("and the branch it should have had is adopted",
+          case.rows("SELECT * FROM conversation WHERE kind='github_pr'")[0]["branch"]
+          == "loth/pr-branch", None)
+    check("with one message and one turn, not two of either",
+          (len(case.rows("SELECT * FROM message WHERE discord_id='9201'")),
+           len(case.rows("SELECT * FROM turn"))) == (1, 1), None)
+
+
+def test_a_trigger_whose_ingest_raises_is_settled_and_said_out_loud():
+    """The cost of a gated INSERT, and the thing that pays it.
+
+    poll_github marks every comment `seen` whatever became of it -- deliberately, because a
+    comment that raises once raises every time. Once the trigger's row is born gated, that
+    turns a caught exception into a message no reader will ever select on a comment no poll
+    will ever look at again: a review that silently does not happen. So the row is settled with
+    a gate that says why, and the pull request is told.
+    """
+    print("#codereview: an ingest that raises says so")
+    case = Case("codereviewraised")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(9301, 41, "#codereview")
+
+    def boom(conv_id, branch, by):
+        raise sqlite3.OperationalError("database is locked")
+
+    case.watcher.adopt_branch = boom
+    check("the poll starts nothing", case.watcher.poll_github() == [], None)
+    row = case.rows("SELECT * FROM message WHERE discord_id='9301'")[0]
+    check("the staged row is settled rather than left invisible",
+          row["gate"] == "codereview_failed", dict(row))
+    check("and says what went wrong", "database is locked" in (row["gate_reason"] or ""),
+          row["gate_reason"])
+    check("the pull request is told nothing happened, and why",
+          any("could not be started" in t and "database is locked" in t
+              for _, t in GH_STATE["posted"]), GH_STATE["posted"])
+
+    del case.watcher.adopt_branch
+    check("and it is decided once: a later poll does not retry it",
+          case.watcher.poll_github() == [], None)
+    check("the loop never builds a turn out of it",
+          case.watcher.claim_turns() == [] and not case.rows("SELECT * FROM turn"), None)
 
 
 def test_a_codereview_trigger_is_decided_once_and_only_for_an_operator():
@@ -15855,6 +16116,8 @@ def main():
         test_an_adopted_branch_is_described_as_somebody_elses_work,
         test_a_conversation_can_be_told_which_branch_it_owns,
         test_only_an_operator_may_name_a_branch_from_discord,
+        test_a_branch_directive_is_not_claimable_while_it_is_being_adopted,
+        test_a_directive_nobody_may_act_on_is_left_an_ordinary_message,
         test_a_directive_only_message_adopts_and_asks_for_no_turn,
         test_a_directive_beside_a_question_keeps_its_turn,
         test_a_refused_directive_links_the_thread_holding_it_and_spends_no_turn,
@@ -15862,6 +16125,10 @@ def main():
         test_a_first_poll_answers_nothing_that_predates_it,
         test_the_review_workflow_is_taken_from_the_base_and_not_from_the_branch,
         test_a_codereview_comment_starts_a_review_on_the_pull_requests_own_branch,
+        test_a_review_trigger_is_not_claimable_while_its_branch_is_being_adopted,
+        test_a_review_conversation_with_no_branch_never_becomes_a_turn,
+        test_a_trigger_left_staged_by_a_restart_is_taken_up_again,
+        test_a_trigger_whose_ingest_raises_is_settled_and_said_out_loud,
         test_a_codereview_trigger_is_decided_once_and_only_for_an_operator,
         test_either_spelling_of_the_trigger_starts_a_review,
         test_a_review_refuses_what_it_cannot_commit_onto,
