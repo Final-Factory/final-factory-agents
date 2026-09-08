@@ -140,6 +140,13 @@ key in every section, seeded or not, with defaults and examples. The JSON carrie
 the generated `_help` blocks it used to hold were removed on 2026-09-03 and stage 5 deletes a
 leftover one.
 
+Editing that file needs no restart and no sudo. `ffbox-update.timer` hashes `config.json` and
+`secrets.env` every five minutes against `~/.config/ffbox/update.config-sha` — the hashes the
+running services started on — and drains and restarts `ffbox.target` when either moved. So an
+edit is live within a tick: check `journalctl -u ffbox-update` for `changed in`, never hand
+somebody a `systemctl restart`. (`sudo` refusing one is the sudoers rule working, not a fact
+about the box.) See `plugins/ff-agents/skills/project-memory/memories/ffbox-updater-restarts-everything.md`.
+
 **Changing the config's shape means editing `ffbox/config.md` in the same commit.** The shape
 is defined in `ffbox/05-discord-setup.sh` (the seeded template), `ffbox/ffwatch.py`
 (`DEFAULTS`, `ENV_OVERRIDES`, `load_config`), `ffbox/runners/lib/config.sh`, and the
