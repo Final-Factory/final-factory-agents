@@ -2264,6 +2264,66 @@ def test_attachments_shared():
     check("the blob is shared across two conversations", len(convs) == 2, convs)
 
 
+def test_an_attachment_over_the_cap_is_recorded_rather_than_dropped():
+    """A file this box will not keep is still a file somebody SENT.
+
+    The bug here was never the drop — a ceiling has to sit somewhere — it was the silence.
+    A message whose whole content is an upload carries empty text, so a dropped attachment
+    left a record identical to one from somebody who posted nothing at all, and the agent,
+    reading that, told the sender their message had "landed empty" and then invented a
+    Discord limit to account for it. Conversation 126 on 2026-09-09: a 33.2 MiB
+    lib_burst_generated.pdb that Discord had accepted, against a 32 MiB cap here.
+    """
+    print("oversized attachments")
+    big = {"id": "9", "filename": "lib_burst_generated.pdb", "size": 34844672,
+           "content_type": "chemical/x-pdb", "url": "https://cdn.example/pdb?ex=signed"}
+    small = {"id": "10", "filename": "player.log", "size": 11, "content_type": "text/plain",
+             "url": "https://cdn.example/player.log?ex=signed"}
+    mid = sflake(0, 1)
+    fixture = base_fixture()
+    # No text, like the real one: the upload IS the message.
+    fixture["messages"][ASK_CHANNEL] = [message(mid, "", attachments=[big, small])]
+    fixture["attachments"][big["filename"]] = "x" * 4096
+    fixture["attachments"][small["filename"]] = "NullReference at Belt.cs:120"
+    case = Case("oversized-attachment", fixture)
+    case.cfg["attachment_max_bytes"] = 1024
+    case.events(ask_event(mid))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+
+    rows = {r["filename"]: r for r in case.rows("SELECT * FROM attachment")}
+    check("both files are recorded, the kept one and the skipped one",
+          sorted(rows) == sorted([big["filename"], small["filename"]]), sorted(rows))
+    over = rows[big["filename"]]
+    check("the oversized row holds no blob and no digest",
+          not over["blob_path"] and not over["sha256"], dict(over))
+    check("it says WHY, naming both numbers",
+          "4096" in (over["skip_reason"] or "") and "1024" in (over["skip_reason"] or ""),
+          over["skip_reason"])
+    check("and blames this box rather than Discord",
+          "attachment_max_bytes" in (over["skip_reason"] or ""), over["skip_reason"])
+    check("no blob was written for it",
+          sum(len(f) for _, _, f in os.walk(case.watcher.blobs_dir)) == 1)
+    kept = rows[small["filename"]]
+    check("the file under the cap is stored as before, with no reason attached",
+          bool(kept["blob_path"]) and kept["skip_reason"] is None, dict(kept))
+
+    turns = case.rows("SELECT * FROM turn")
+    conv = case.rows("SELECT * FROM conversation")[0]
+    job = case.watcher.build_job(turns[0], conv, "r1", os.path.join(case.root, "att"))
+    att = [a for m in job["messages"] for a in m["attachments"]]
+    missing = [a for a in att if a["filename"] == big["filename"]][0]
+    check("job.json carries the reason and no path", missing["path"] is None
+          and "attachment_max_bytes" in (missing["skip_reason"] or ""), missing)
+    check("the prompt names the file as NOT AVAILABLE",
+          "attachment NOT AVAILABLE: " + big["filename"] in job["prompt"], job["prompt"])
+    check("with the reason in the same line, so the agent cannot invent one",
+          "attachment_max_bytes" in job["prompt"], job["prompt"])
+    check("and the kept file is still offered by path",
+          "/ffbox/attachments/" in job["prompt"] and small["filename"] in job["prompt"],
+          job["prompt"])
+
+
 def test_reply_chain_and_one_shot():
     """The chain walk survives clustering, for the one job it is still right for.
 
@@ -16625,6 +16685,7 @@ def main():
         test_schema_idempotent,
         test_ingest_dedupe,
         test_attachments_shared,
+        test_an_attachment_over_the_cap_is_recorded_rather_than_dropped,
         test_reply_chain_and_one_shot,
         test_the_gate_fails_open,
         test_an_unwatched_channel_produces_nothing,

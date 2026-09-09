@@ -1277,7 +1277,7 @@ asked for; in `watch` the keys are channel identities, and inheriting four of th
 | `send_backoff_secs` | `60` | |
 | `sweep_limit` | `25` | |
 | `history_messages` | `40` | How much prior conversation goes into `job.json`. |
-| `attachment_max_bytes` | `33554432` | |
+| `attachment_max_bytes` | `1073741824` | Ceiling on ONE stored upload, and deliberately above what Discord itself will accept: it is a guard against a runaway upload filling the state disk, not a second opinion on what a player may send. It was 32 MiB until 2026-09-09, which sat *below* the boosted-server upload limit — a file Discord took could still be dropped here. An attachment over it is still recorded against the message, with `attachment.skip_reason` saying so, and both the agent's prompt and the conversation page name it as NOT AVAILABLE. |
 | `dry_run` | `false` | |
 | `kill_switch` | `~/.config/ffbox/discord.disabled` | Stops launches **and** holds every outbound row. |
 | `drain_switch` | `~/.config/ffbox/draining` | Stops launches only, so an in-flight run's replies still reach Discord while the updater waits for it to end. |

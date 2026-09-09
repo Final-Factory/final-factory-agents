@@ -183,7 +183,12 @@ CREATE TABLE IF NOT EXISTS attachment (
     blob_path       TEXT,
     kind            TEXT,        -- log | save | image | other
     discord_url     TEXT,
-    downloaded_at   TEXT
+    downloaded_at   TEXT,         -- NULL when nothing was stored; see skip_reason
+    -- WHY THERE IS NO BLOB, and NULL on every row that has one. An attachment Discord
+    -- listed but this box could not keep still gets a row, because the alternative is a
+    -- message with empty text and no attachments, which is what a person sending nothing
+    -- at all looks like. sha256 and blob_path are NULL together with a reason here.
+    skip_reason     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_attachment_message ON attachment(message_id);
