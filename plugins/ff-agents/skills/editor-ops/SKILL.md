@@ -85,6 +85,14 @@ Sequence them — run first, leg after, or the reverse — never overlap, and pu
 `play_mode.is_playing` is false" rule in every leg brief so a delegated agent doesn't step on a
 live run it can't see.
 
+A Windows GUI player started through SSH can run in Session 0 and stall at DX11 window setup even
+though its process exists. Before recovery, identify the exact executable, PID, Windows session,
+and owned log. Preserve that attempt, stop only the positively identified player, and launch the
+task-owned executable in the already logged-in desktop session through a uniquely named scoped
+task. Clean up only that task, its automation config, and its player. Never stop Steam, a user's
+game, Unity Hub, or another checkout's editor. The full cross-machine evidence gate is in
+[project memory](../project-memory/memories/cross-machine-built-player-gameplay-acceptance.md).
+
 Also relevant when a leg runs from a worktree: `EnterWorktree` branches from `origin/MASTER` in
 this repo, not `develop` (`git reset --hard origin/develop` first — see
 [project memory](../project-memory/memories/enterworktree-cuts-from-master-not-develop.md)), and

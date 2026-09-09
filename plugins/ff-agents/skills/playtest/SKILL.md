@@ -111,6 +111,23 @@ the game (the player keeps playing; other peers see the agent-driven marker clea
 the player removes its discovery file. There is no `.ff-local-automation.json` to delete unless you
 wrote one, no play mode to exit, and no `isPaused` to undo.
 
+## Multiplayer gameplay fixes need two real built players
+
+For a multiplayer gameplay defect or fix, the acceptance playtest runs matching current builds on
+two physical machines. Include Windows and macOS when the affected path can differ by platform.
+Drive the other peer with a direct child or another explicitly coordinated agent, and replay the
+reported sequence through real inputs on both players. Start a fresh-join case with no actions, then
+add movement, the developer-console step when the report used one, miners, and recovery/rejoin when
+relevant. Keep the phases distinct so the evidence identifies when divergence begins.
+
+Capture both peers at matching milestones and open every image with `view_image` or the runtime's
+equivalent before recording a visual verdict. Use a visual episode for motion; still images do not
+prove movement, timing, or continuity. Record source/build identity, platform, transport, roles,
+scenario, inputs, heartbeat window, duration, lifecycle/desync/crash outcome, artifact paths, and
+gaps. The determinism skill owns the unweakened all-field comparison. See
+[cross-machine built-player gameplay acceptance](../project-memory/memories/cross-machine-built-player-gameplay-acceptance.md)
+for the full gate and Windows interactive-launch cleanup rules.
+
 ## The drive → observe → judge loop
 
 1. **Drive** with the real-input commands: `pointer.*` (world clicks; placement needs
