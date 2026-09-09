@@ -48,6 +48,25 @@ Two complementary layers, plus the cross-machine harness:
    with the repo at `~/nevergames/FinalFactory`. Proven runs + known limits: `gotchas.md`
    §Cross-machine.
 
+## Built-player acceptance for multiplayer gameplay fixes
+
+The editor and scripted layers above are necessary checks, but they do not replace a live gameplay
+run for a multiplayer gameplay fix. Run matching current built players on two physical machines,
+including Windows and macOS when the affected path can differ by platform, and replay the reported
+sequence through real input on both peers. A direct child or another explicitly coordinated agent
+drives the second peer. The playtest skill owns input and visual evidence; this skill owns the
+fingerprint verdict.
+
+Compare the complete shared heartbeat window across every fingerprint field (currently 25). Do not discard the
+first failing heartbeats or raise a window bound to hide them. Typed JSON audit records require the
+typed comparator. If `compare_determinism_reports.sh` says it found no fingerprints for a typed
+report, that is unsupported input, not `NO DIVERGENCE`. Preserve both raw reports and record the
+source/tree, build manifests and hashes, OS/transport/roles, scenario and actions, shared window and
+duration, lifecycle/desync/crash outcome, visual verdict, artifact paths, and gaps. Direct IP does
+not prove the Steam lobby, relay or invite path, even if Steam initialized in the players. The durable checklist and the
+2026-09-09 heartbeat-8 vision witness are in
+[project memory](../project-memory/memories/cross-machine-built-player-gameplay-acceptance.md).
+
 **Before any paired run after a code change**: the clone does NOT auto-recompile — force it
 through the MCP bridge and confirm a clean compile on BOTH editors first (`gotchas.md` §Clone
 stale assembly). **Long audits**: launch detached and monitor the log file, not the job
