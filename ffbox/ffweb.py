@@ -3264,6 +3264,15 @@ class App:
         digest = att["sha256"] or ""
         label = f"{att['filename'] or 'attachment'} · {att['kind'] or 'other'} · " \
                 f"{fmt_int(att['bytes'])} bytes"
+        # Read through row.keys() rather than REQUIRED_COLUMNS: ffwatch adds this column on
+        # its own start-up, and ffweb and ffwatch come up together under ffbox.target, so
+        # requiring it would turn a race this page can simply survive into a refusal to boot.
+        skipped = (att["skip_reason"] if "skip_reason" in att.keys() else None) or ""
+        if skipped:
+            # NAMED, NOT HIDDEN. The row exists precisely so a human reading the page sees
+            # that something was sent and can tell why it is not here to open.
+            return ("<div class=\"meta\">📎 " + esc(label) +
+                    " — <b>not stored:</b> " + esc(skipped) + "</div>")
         if not SHA256_RE.fullmatch(digest):
             # A row without a usable digest cannot be linked, but its filename still renders —
             # escaped, because a filename is user-supplied text like any other.

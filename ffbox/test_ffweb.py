@@ -1327,6 +1327,40 @@ def test_blob_route_refuses_traversal():
         srv.stop()
 
 
+def test_a_skipped_attachment_is_named_on_the_page():
+    """An attachment with no blob is a fact worth showing, not a row to hide.
+
+    ffwatch records one whenever it could not keep a file somebody uploaded — over the size
+    cap, or a download that failed. The page has to say so: the message it hangs off has no
+    text of its own, so suppressing the row leaves a reader looking at a blank message with
+    no way to tell that anything was sent at all.
+    """
+    w = sqlite3.connect(DB_PATH)
+    w.execute("INSERT INTO attachment(message_id, filename, content_type, bytes, kind,"
+              " skip_reason) VALUES(1,?,?,?,?,?)",
+              ("lib<script>.pdb", "chemical/x-pdb", 34844672, "other",
+               "it is 34844672 bytes and this box's attachment_max_bytes is 1024"))
+    w.commit()
+    w.close()
+    srv = serve()
+    try:
+        code, _h, body = srv.get("/conversation/1")
+        page = text_of(body)
+        check("the conversation page is 200", code == 200, code)
+        check("the skipped file is named with its size",
+              "lib&lt;script&gt;.pdb" in page and "34,844,672 bytes" in page, code)
+        check("and says it was not stored, with the reason",
+              "not stored:" in page and "attachment_max_bytes is 1024" in page)
+        check("it is not offered as a link, because there is nothing to open",
+              "/blob/" not in page.split("not stored:")[1][:200])
+    finally:
+        srv.stop()
+        w = sqlite3.connect(DB_PATH)
+        w.execute("DELETE FROM attachment WHERE skip_reason IS NOT NULL")
+        w.commit()
+        w.close()
+
+
 def test_transcript_tree_nests_and_terminates():
     srv = serve()
     try:
@@ -3729,6 +3763,7 @@ def main():
         test_the_ui_cannot_write,
         test_xss_is_escaped,
         test_blob_route_refuses_traversal,
+        test_a_skipped_attachment_is_named_on_the_page,
         test_transcript_tree_nests_and_terminates,
         test_a_long_subagent_chain_is_not_truncated,
         test_the_box_page_reports_what_the_status_script_said,
