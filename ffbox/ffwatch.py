@@ -341,6 +341,9 @@ ADDED_COLUMNS = [
     ("conversation", "is_thread", "INTEGER NOT NULL DEFAULT 0"),
     # v19 (2026-09-09): why an attachment has no blob. NULL on every row that has one.
     ("attachment", "skip_reason", "TEXT"),
+    # Where a GitHub comment came from and what it was anchored to (file, line, hunk, url), as
+    # JSON. NULL for every Discord message. design/pr_feedback_design.txt.
+    ("message", "github_meta", "TEXT"),
     ("outbound", "attempts", "INTEGER NOT NULL DEFAULT 0"),
     ("outbound", "last_attempt_at", "TEXT"),
     ("outbound", "last_error", "TEXT"),
@@ -742,6 +745,27 @@ DEFAULTS = {
         # question. False turns the poller off entirely, which is what a box that is not the
         # Discord harness wants.
         "announce_merges": True,
+        # PULL REQUEST FEEDBACK (design/pr_feedback_design.txt). A comment an operator leaves on
+        # an open pull request -- in the conversation, on a line of the diff, or in the body of a
+        # submitted review -- starts a run on that pull request's branch which makes the changes
+        # the comment asks for. False turns off all of it: the two extra reads, the gate and the
+        # release step, leaving `#codereview` exactly as it was.
+        #
+        # WHOSE COMMENTS is the `operators` block, the same table and the same numeric GitHub id
+        # the trigger is checked against. A stranger's comment is never written down and never
+        # rendered, which is what replaces the absence of a channel the review lane relied on.
+        "feedback": True,
+        # HOW LONG A BATCH WAITS FOR THE NEXT COMMENT. A review submitted through GitHub's own
+        # flow publishes its inline comments together, so those batch themselves; somebody typing
+        # one comment at a time does not, and eight comments must not be eight runs. The rows sit
+        # gated until nothing new has arrived for this long, then go as one turn.
+        "feedback_quiet_secs": 120,
+        # THE MOST COMMENTS ONE TURN TAKES, applied at the RELEASE and never in the prompt.
+        # Forty comments on one review is an afternoon of work, and a run handed all forty does
+        # six of them badly. The oldest this many are released and the rest stay gated, so they
+        # ripen again the moment this turn ends and become the next one on the same conversation
+        # -- the work is split across turns rather than truncated out of a prompt.
+        "feedback_max_comments": 25,
     },
 
     # ceilings (design section 8). Three separate clocks; conflating them makes a slow Unity
@@ -1681,6 +1705,110 @@ def _issue_number_from_url(issue_url):
     return int(tail) if tail.isdigit() else None
 
 
+def github_feedback_on(cfg):
+    """Is the feedback lane switched on? design/pr_feedback_design.txt.
+
+    Config alone. Whether anybody CAN use it is a separate question with a separate answer --
+    an empty `operators` block means no comment is ever acted on, and the pollers return early
+    on that for the same reason poll_github does: a box that has not been told who its operators
+    are should not spend a request a minute finding that out.
+    """
+    return bool((cfg.get("github") or {}).get("feedback"))
+
+
+# THE THREE PLACES A PULL REQUEST COMMENT CAN LIVE, and the prefix each one wears in
+# message.discord_id. That column is UNIQUE and it is the whole dedupe story for the ingest, so
+# the three id spaces have to be kept apart in it: GitHub numbers issue comments and review
+# comments from two independent sequences that run through the same range of integers, and a
+# collision would be an INSERT OR IGNORE that silently drops a comment.
+#
+# `issue` keeps the bare digits it has always been written as, so nothing about the rows already
+# in the table changes and the trigger's own path is untouched.
+GH_COMMENT_PREFIX = {"issue": "", "review": "rc:", "summary": "rv:"}
+
+# Which endpoint each kind's reactions live under, and `summary` is deliberately absent: a
+# submitted review's body cannot carry a reaction at all. See GitHub.react_to_comment.
+GH_REACTABLE = ("issue", "review")
+
+
+def github_message_id(kind, comment_id):
+    """The `message.discord_id` for one GitHub comment. Namespaced; see GH_COMMENT_PREFIX."""
+    return f"{GH_COMMENT_PREFIX.get(kind, '')}{comment_id}"
+
+
+def github_comment_ref(discord_id):
+    """(kind, id) for a message row written by the GitHub ingress, or (None, None).
+
+    ONLY EVER ASKED ABOUT A github_pr CONVERSATION'S ROWS. A Discord snowflake is bare digits
+    too, and this would call one an issue comment -- which is why no caller reaches for it
+    without a conversation kind in hand.
+    """
+    raw = str(discord_id or "")
+    for kind, prefix in GH_COMMENT_PREFIX.items():
+        if prefix and raw.startswith(prefix):
+            return kind, raw[len(prefix):]
+    return ("issue", raw) if raw.isdigit() else (None, None)
+
+
+# HOW MUCH OF A COMMENT IS KEPT. A diff hunk is unbounded -- GitHub sends the whole hunk the
+# comment was left against -- and a comment body can be an essay. Both are capped at ingest
+# rather than at render, because the cap is about what the record holds as much as what the
+# prompt does, and because trimming the same text twice in two places is how the two come to
+# disagree about what the model actually saw.
+FEEDBACK_HUNK_LINES = 12
+FEEDBACK_BODY_CHARS = 4000
+
+
+def _trim(text, chars):
+    text = (text or "").strip()
+    return text if len(text) <= chars else text[:chars].rstrip() + " ...[trimmed]"
+
+
+def feedback_facts(kind, raw, number=None):
+    """One comment, however it arrived, as this file talks about comments. None if unusable.
+
+    ONE SHAPER FOR THREE PAYLOADS, for the reason pull_facts is one for two: the fields differ
+    only in where the same thing is written down, and three readers each digging out their own
+    would drift the day one of them wanted something new.
+
+    `number` is the pull request. A conversation comment carries it in `issue_url`, a diff
+    comment in `pull_request_url` -- both as the last path segment, which is why one parser
+    serves both -- and a review body carries it nowhere, so its caller passes it in.
+
+    `in_reply_to_id` IS DELIBERATELY NOT CARRIED and the parent is never fetched. Quoting it
+    would read well and would put a stranger's text into an operator's prompt through the
+    operator's reply to it (design/pr_feedback_design.txt section 3).
+    """
+    if not isinstance(raw, dict):
+        return None
+    if number is None:
+        number = _issue_number_from_url(raw.get("issue_url") or raw.get("pull_request_url"))
+    author = raw.get("user") or raw.get("author") or {}
+    comment_id = raw.get("id")
+    body = _trim(raw.get("body"), FEEDBACK_BODY_CHARS)
+    if number is None or not comment_id or not body:
+        return None
+    hunk = [ln for ln in str(raw.get("diff_hunk") or "").splitlines() if ln]
+    return {
+        "kind": kind,
+        "id": github_message_id(kind, comment_id),
+        "comment_id": str(comment_id),
+        "number": int(number),
+        "author_id": str(author.get("id") or ""),
+        "login": author.get("login") or "?",
+        "body": body,
+        "stamp": (raw.get("updated_at") or raw.get("submitted_at") or now_iso()),
+        "path": raw.get("path") or "",
+        # `line` is where the comment sits on the CURRENT diff and `original_line` where it sat
+        # when it was written. A comment whose line has since moved has the first as null, and
+        # the second is then the only anchor there is.
+        "line": raw.get("line") or raw.get("original_line") or 0,
+        "hunk": "\n".join(hunk[-FEEDBACK_HUNK_LINES:]),
+        "url": raw.get("html_url") or "",
+        "review_id": str(raw.get("pull_request_review_id") or "") or None,
+    }
+
+
 def is_github_operator(cfg, user_id):
     """GitHub's own comment author id, looked up. Never a login, never the comment body.
 
@@ -2038,8 +2166,41 @@ def config_warnings(cfg):
     return out
 
 
+def prompt_tail(job):
+    """The two things every rendered prompt ends with, wherever the body came from.
+
+    Extracted when a github_pr turn stopped having exactly one body: a turn holding both a review
+    request and a batch of comments renders two of them, and the harness's own instruction and a
+    host-rendered resume summary belong once, at the end, rather than buried in the seam.
+    """
+    parts = []
+    if job.get("note"):
+        parts += ["", "Harness instruction for this turn:", "", job["note"]]
+    if job.get("resume_summary"):
+        parts += ["", "The prior session transcript was lost. Host-rendered summary:",
+                  "", job["resume_summary"]]
+    return parts
+
+
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def iso_secs(stamp):
+    """One ISO timestamp as epoch seconds, or None if it is not one.
+
+    The trailing `Z` is spelled out rather than left to fromisoformat, which only learned it in
+    3.11 and this box does not get to assume its Python. A naive stamp is read as UTC, which is
+    what every stamp this file writes and every stamp GitHub sends actually is.
+    """
+    raw = str(stamp or "").strip()
+    if not raw:
+        return None
+    try:
+        when = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
+    except ValueError:
+        return None
+    return (when if when.tzinfo else when.replace(tzinfo=timezone.utc)).timestamp()
 
 
 # ------------------------------------------------------------------------------------------
@@ -2340,6 +2501,18 @@ GITHUB_KIND = "github_pr"
 # build a turn out of it while poll_github -- a different thread -- is still inside adopt_branch's
 # `git fetch`. take_review_trigger lifts it in the one place the branch is known to be settled.
 REVIEW_STAGING_GATE = "codereview_staging"
+
+# THE GATE A FEEDBACK COMMENT WEARS WHILE ITS BATCH IS STILL FILLING UP
+# (design/pr_feedback_design.txt section 5). It is on the row from the INSERT, for the reason
+# the trigger's is -- the poller and claim_turns are different threads -- and here it is holding
+# the row for much longer than a `git fetch`: a batch does not go until nothing new has arrived
+# for github.feedback_quiet_secs. release_feedback is the one place it comes off.
+FEEDBACK_WAITING_GATE = "feedback_waiting"
+
+# AND THE ONE IT ENDS UP WEARING INSTEAD: a branch this box could not adopt. That refusal IS
+# posted on the pull request, because by then somebody has asked for something and the 👀 has not
+# gone on, so silence would leave them waiting for a run that is never coming.
+FEEDBACK_REFUSED_GATE = "feedback_refused"
 
 # AND THE ONE A DIRECTIVE WEARS FOR THE SAME REASON. `!branch` is decided by
 # take_branch_directive, which runs BELOW insert_message's INSERT and calls adopt_branch's
@@ -2656,6 +2829,17 @@ TERMINAL_TURN_STATES = ("done", "failed", "timed_out", "blocked")
 ACK_EMOJI = "👀"
 
 
+# HOW MESSAGES ARE ORDERED WITHIN A CONVERSATION, in one place because ten queries ask for it.
+# A Discord snowflake sorts by time when read as an integer, which is what the CAST is for. A
+# GitHub comment id namespaced by its endpoint -- `rc:2412...` -- casts to 0, so every inline
+# comment in a conversation would sort equal and SQLite would be free to hand them back in any
+# order it liked. `id` is the tiebreak: it is the order the rows were inserted, which is the
+# order the poller read them in, and it changes nothing for a conversation whose ids are all
+# distinct integers.
+MESSAGE_ORDER = "CAST(discord_id AS INTEGER), id"
+MESSAGE_ORDER_DESC = "CAST(discord_id AS INTEGER) DESC, id DESC"
+
+
 def ack_local_id(turn_id):
     """The outbound `local_id` that ties the acknowledgement to its turn.
 
@@ -2677,8 +2861,18 @@ def ack_payload(conv, message_id, local_id):
     channel called `github:pr:41`.
     """
     if conv is not None and conv["kind"] == GITHUB_KIND:
-        return {"pr_comment": str(message_id), "emoji": GITHUB_ACK_REACTION,
-                "local_id": local_id}
+        # WHICH ENDPOINT, off the namespaced id. A comment left on the diff takes its reactions
+        # at /pulls/comments and one in the conversation at /issues/comments, and the wrong one
+        # is a 404 rather than a misplaced mark.
+        kind, comment_id = github_comment_ref(message_id)
+        # AND SOMETIMES THERE IS NO ENDPOINT AT ALL. A submitted review's body cannot carry a
+        # reaction -- GitHub's reactions API does not cover reviews -- so this answers None and
+        # the two callers do nothing, rather than queueing a row that could only fail at the
+        # wire. A review body's acknowledgement is the comment the run posts when it is done.
+        if kind not in GH_REACTABLE:
+            return None
+        return {"pr_comment": str(comment_id), "pr_comment_kind": kind,
+                "emoji": GITHUB_ACK_REACTION, "local_id": local_id}
     return {"channel": reply_channel(conv), "message": str(message_id), "emoji": ACK_EMOJI,
             "local_id": local_id}
 
@@ -3801,6 +3995,15 @@ def should_engage_for(cfg, conv_kind, text, gate=False, key=None, context=None):
     return bool(return_cls.get("engage", True)), return_cls
 
 
+def feedback_where(comment):
+    """Where one comment was left, in the words the gate and the prompt both use."""
+    if comment.get("path"):
+        line = comment.get("line") or 0
+        return f"{comment['path']}:{line}" if line else comment["path"]
+    return ("the review summary" if comment.get("kind") == "summary"
+            else "the pull request conversation")
+
+
 # ------------------------------------------------------------------------------------------
 # small helpers
 # ------------------------------------------------------------------------------------------
@@ -4140,7 +4343,66 @@ class GitHub:
         # Oldest first for the caller, which walks them in the order they were written.
         return list(reversed(out)), new_etag
 
-    def list_closed_pulls(self, since=None, per_page=50, max_pages=10, etag=None):
+    def list_review_comments(self, since=None, per_page=100, max_pages=10, etag=None):
+        """The comments left ON THE DIFF of this repository's pull requests, newest activity last.
+
+        THE SIBLING OF list_issue_comments, and the other half of what a reviewer writes. That
+        one reads the conversation at the bottom of the pull request; this one reads the notes
+        anchored to a file and a line, which is where most review feedback actually lives. Same
+        repo-wide endpoint shape, same `since` filter on UPDATED, same conditional GET on page
+        one under `direction=desc`, same page ceiling, same oldest-first answer.
+
+        A row carries `path`, `line` (and `original_line`, for a comment whose line has since
+        moved), `diff_hunk`, `html_url` and `pull_request_url` -- the last of which is the only
+        place the pull request number appears, exactly as `issue_url` is for an issue comment.
+
+        Returns (comments oldest-first, etag), or (NOT_MODIFIED, etag).
+        """
+        def url(page):
+            q = f"?sort=updated&direction=desc&per_page={per_page}&page={page}"
+            if since:
+                q += f"&since={urllib.parse.quote(str(since))}"
+            return f"/repos/{self.repo}/pulls/comments{q}"
+
+        first, new_etag = self._request("GET", url(1), etag=etag, conditional=True)
+        if first is NOT_MODIFIED:
+            return NOT_MODIFIED, etag
+        out = list(first) if isinstance(first, list) else []
+        page = 1
+        while len(out) >= per_page * page and page < max_pages:
+            page += 1
+            got = self._request("GET", url(page))
+            if not isinstance(got, list) or not got:
+                break
+            out.extend(got)
+        return list(reversed(out)), new_etag
+
+    def pull_reviews(self, number):
+        """The SUBMITTED reviews on one pull request, oldest first. [] when there are none.
+
+        THE ONE THING WITH NO REPOSITORY-WIDE ENDPOINT. A review's body -- the text somebody
+        types above their inline comments when they press Submit -- is reachable only per pull
+        request, which is why its poller walks open pull requests first and asks this only about
+        the ones that have moved.
+
+        PENDING and DISMISSED are dropped HERE rather than at the caller. A pending review has
+        not been submitted and is nobody's instruction yet; a dismissed one has been withdrawn.
+        Both are "there is no review here", and answering that once means no caller has to know
+        GitHub's state vocabulary.
+        """
+        got = self._request("GET", f"/repos/{self.repo}/pulls/{int(number)}/reviews")
+        out = []
+        for item in (got if isinstance(got, list) else []):
+            state = str(item.get("state") or "").upper()
+            if state in ("PENDING", "DISMISSED"):
+                continue
+            out.append({"id": item.get("id"), "body": item.get("body") or "",
+                        "state": state, "user": item.get("user") or {},
+                        "submitted_at": item.get("submitted_at") or ""})
+        return out
+
+    def list_closed_pulls(self, since=None, per_page=50, max_pages=10, etag=None,
+                          state="closed"):
         """Closed pull requests, most recently updated first, back as far as `since`.
 
         THE SIBLING OF list_issue_comments AND DELIBERATELY A SECOND COPY OF IT. Same
@@ -4154,13 +4416,17 @@ class GitHub:
         past a pull request it has not finished with -- the next walk would stop before reaching
         it. See poll_github_merges.
 
-        `state=closed` rather than `state=all` because an open pull request has nothing to say
-        to this poller and a repository has far more of them than the page size.
+        `state` defaults to closed, which is what the merge poller wants: an open pull request
+        has nothing to say to it and a repository has far more of them than the page size. The
+        feedback poller passes `open` for the opposite reason -- it is looking for pull requests
+        somebody is still working on, and a closed one's reviews are nobody's instruction. It is
+        an argument rather than a third copy of this method because everything else about the two
+        walks is the same, down to the watermark.
 
         Returns (pull requests oldest-first, etag), or (NOT_MODIFIED, etag).
         """
         def url(page):
-            return (f"/repos/{self.repo}/pulls?state=closed&sort=updated&direction=desc"
+            return (f"/repos/{self.repo}/pulls?state={state}&sort=updated&direction=desc"
                     f"&per_page={per_page}&page={page}")
 
         first, new_etag = self._request("GET", url(1), etag=etag, conditional=True)
@@ -4222,16 +4488,27 @@ class GitHub:
                              {"body": body})
         return (made or {}).get("id")
 
-    def react_to_comment(self, comment_id, content="eyes"):
-        """Put a reaction on one issue comment. True when GitHub took it.
+    def react_to_comment(self, comment_id, content="eyes", kind="issue"):
+        """Put a reaction on one comment. True when GitHub took it.
 
-        Best effort by design: this is the acknowledgement that says a trigger was seen, and
+        TWO ENDPOINTS, because GitHub keeps the two kinds of comment apart: a conversation
+        comment's reactions live under /issues/comments and a comment left on the diff under
+        /pulls/comments. Posting to the wrong one is a 404, not a misplaced reaction, so the
+        caller says which it has rather than this guessing from the id.
+
+        THERE IS NO THIRD ENDPOINT. A submitted review's body cannot carry a reaction at all --
+        the reactions API covers issues, issue comments, review comments, commit comments and
+        releases, and not reviews. ack_payload answers None for one rather than sending a call
+        that could only fail here.
+
+        Best effort by design: this is the acknowledgement that says a comment was picked up, and
         failing to place it must never cost the run it is acknowledging. A repeat is a no-op on
         GitHub's side, which is what makes a replayed sweep harmless here.
         """
+        where = "pulls" if kind == "review" else "issues"
         try:
             self._request("POST",
-                          f"/repos/{self.repo}/issues/comments/{int(comment_id)}/reactions",
+                          f"/repos/{self.repo}/{where}/comments/{int(comment_id)}/reactions",
                           {"content": content})
             return True
         except GitHubError as exc:
@@ -4990,7 +5267,7 @@ class Watcher:
         return str(((ref.get("author") or {}).get("id")) or "") == me
 
     def insert_message(self, conv_id, msg, routed_by=None, routed_reason=None,
-                       gate=None, gate_reason=None):
+                       gate=None, gate_reason=None, github_meta=None):
         """INSERT OR IGNORE — message.discord_id UNIQUE is the whole dedupe story.
 
         turn_id stays NULL: claiming is the scheduler's job, and a message that lands mid-run
@@ -5003,6 +5280,11 @@ class Watcher:
         can turn into a turn. That is not theoretical — it is what happened to pull request
         #510 on 2026-09-08, reviewed against master while the branch it was about was still
         being fetched. See take_review_trigger.
+
+        `github_meta` is the same kind of argument as `gate`: a fact the caller has and this
+        method has no way to work out, written in THIS statement rather than an UPDATE after it.
+        It is where a comment left on a diff records the file, the line and the hunk it was
+        anchored to, and it is NULL for every Discord message.
 
         A caller's gate NEVER overrides the two this method decides for itself; a stale or
         system message stays 'none' whatever was asked for, because those two are about whether
@@ -5053,8 +5335,8 @@ class Watcher:
         cur = self.db.execute(
             "INSERT OR IGNORE INTO message(conversation_id, discord_id, direction, author_id,"
             " author_name, is_bot, content, referenced_discord_id, turn_id, created_at,"
-            " addressed, routed_by, routed_reason, gate, gate_reason)"
-            " VALUES(?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
+            " addressed, routed_by, routed_reason, gate, gate_reason, github_meta)"
+            " VALUES(?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?,?)",
             (conv_id, discord_id, "in", str(author.get("id") or ""),
              author.get("global_name") or author.get("username") or "?",
              1 if author.get("bot") else 0, msg.get("content") or "",
@@ -5066,7 +5348,8 @@ class Watcher:
              # WHICH RULE PUT IT HERE. Recorded on every message, not only the ones a model
              # touched: a routing call nobody can inspect is one nobody can debug.
              routed_by, (routed_reason or None),
-             gate, (gate_reason or None)))
+             gate, (gate_reason or None),
+             (json.dumps(github_meta, ensure_ascii=False) if github_meta else None)))
         if cur.rowcount == 0:
             return None                        # already ingested; a duplicate doorbell
         message_id = cur.lastrowid
@@ -5297,15 +5580,21 @@ class Watcher:
                            (conv_id,))
         if conv is None or is_local_conversation(conv):
             return None
-        # A REVIEW HAS NO CHAIN FOR A STRANGER TO GET INTO. Everything the container reads is
-        # built by the harness out of the pull request number, the branch, the base and the diff;
-        # no comment text is carried, not even the operator's, so a stranger commenting on the
-        # pull request has not put a word in front of the model and there is nothing to fence.
+        # A PULL REQUEST CONVERSATION HAS NO CHAIN FOR A STRANGER TO GET INTO, and since
+        # design/pr_feedback_design.txt that is a fact about the INGRESS rather than about the
+        # prompt. A #codereview turn's prompt still carries no comment text at all. A feedback
+        # turn's prompt is nothing but comment text -- and every word of it was written by an
+        # account in the `operators` block, because take_feedback writes down nobody else's
+        # comment and render_feedback_prompt renders nobody else's row. A stranger's comment on
+        # the pull request is read, counted against the cursor, and dropped; it never becomes a
+        # message, so there is no message here to fence.
+        #
         # What covers the DIFF, which a stranger really could have written, is the in-repo head
         # requirement at ingest: creating a branch here needs push access.
         #
-        # This exemption is only sound while that stays true. If free text after the trigger is
-        # ever passed through, the demotion comes back with it.
+        # This exemption is only sound while both of those hold. A third ingress that wrote a
+        # non-operator's text into a github_pr conversation would need the demotion back with
+        # it -- or, better, would need to not do that.
         if conv["kind"] == GITHUB_KIND:
             return None
         current = self.conversation_class(conv)
@@ -5741,7 +6030,7 @@ class Watcher:
         pending = self.db.query(
             "SELECT * FROM message WHERE conversation_id=? AND turn_id IS NULL"
             " AND direction='in' AND is_bot=0 AND gate IS NULL"
-            " ORDER BY CAST(discord_id AS INTEGER)", (conv["id"],))
+            f" ORDER BY {MESSAGE_ORDER}", (conv["id"],))
         if not pending:
             return 0
         selector = getattr(self, "cluster_selector", None)
@@ -5809,7 +6098,7 @@ class Watcher:
         prior = self.db.scalar(
             "SELECT discord_id FROM message WHERE conversation_id=?"
             f" AND id NOT IN ({','.join('?' * len(ids))})"
-            " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT 1", (conv["id"], *ids))
+            f" ORDER BY {MESSAGE_ORDER_DESC} LIMIT 1", (conv["id"], *ids))
         if not prior:
             return None
         row = dict(conv)
@@ -5898,7 +6187,7 @@ class Watcher:
             recent = self.db.query(
                 "SELECT author_name, content, discord_id FROM message WHERE conversation_id=?"
                 " AND CAST(discord_id AS INTEGER) <= CAST(? AS INTEGER)"
-                " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT 2",
+                f" ORDER BY {MESSAGE_ORDER_DESC} LIMIT 2",
                 (row["id"], str(row["in_watermark_id"] or row["root_message_id"]
                                 or row["thread_id"])))
             lines = [f"id: {row['id']}",
@@ -6505,8 +6794,10 @@ class Watcher:
                                " LIMIT 1", (local_id,))
         if existing is not None:
             return existing["id"]
-        nonce = self.record_outbound(None, conv["id"], "react",
-                                     ack_payload(conv, msg["discord_id"], local_id))
+        payload = ack_payload(conv, msg["discord_id"], local_id)
+        if payload is None:
+            return None                 # nothing this message can wear; see ack_payload
+        nonce = self.record_outbound(None, conv["id"], "react", payload)
         if nonce is None:
             return None
         row = self.db.one("SELECT * FROM outbound WHERE nonce=?", (nonce,))
@@ -6538,8 +6829,9 @@ class Watcher:
             return row["id"]
         # No early mark: a turn the gate reached without always_a_turn forcing it, or a path
         # that does not mark at all. Queue it the way this always did.
-        self.record_outbound(None, conv["id"], "react",
-                             ack_payload(conv, msg["discord_id"], ack_local_id(turn_id)))
+        payload = ack_payload(conv, msg["discord_id"], ack_local_id(turn_id))
+        if payload is not None:
+            self.record_outbound(None, conv["id"], "react", payload)
         return None
 
     def retire_ack(self, local_id, reason):
@@ -6591,7 +6883,7 @@ class Watcher:
         return self.db.query(
             "SELECT * FROM message WHERE conversation_id=? AND turn_id IS NULL"
             " AND direction='in' AND is_bot=0 AND gate IS NULL"
-            " ORDER BY CAST(discord_id AS INTEGER)",
+            f" ORDER BY {MESSAGE_ORDER}",
             (conv_id,))
 
     def conversation_held(self, conv):
@@ -6766,7 +7058,7 @@ class Watcher:
             rows = list(reversed(self.db.query(
                 "SELECT * FROM message WHERE conversation_id=?"
                 " AND CAST(discord_id AS INTEGER) < ?"
-                " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT ?",
+                f" ORDER BY {MESSAGE_ORDER_DESC} LIMIT ?",
                 (conv["id"], first, GATE_HISTORY_MESSAGES))))
         body = render_gate_messages(self.cfg, rows, at=at)
         dropped = 0
@@ -8586,7 +8878,7 @@ class Watcher:
                 f"{turn['trust_tier'] or 'player'} ceiling today")
             return 0
         last = self.db.one("SELECT * FROM message WHERE turn_id=?"
-                           " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT 1", (turn_id,))
+                           f" ORDER BY {MESSAGE_ORDER_DESC} LIMIT 1", (turn_id,))
         text = BLOCKED_NOTE
         if (turn["venue"] or "public") == "private":
             text += f"\n\n{reason}"
@@ -8661,7 +8953,7 @@ class Watcher:
         ccfg = ccfg or class_cfg(self.cfg, agent_class)
         cap = capabilities_for(conv)
         msgs = self.db.query(
-            "SELECT * FROM message WHERE turn_id=? ORDER BY CAST(discord_id AS INTEGER)",
+            f"SELECT * FROM message WHERE turn_id=? ORDER BY {MESSAGE_ORDER}",
             (turn["id"],))
         # ACROSS THE FORK PAIR. For an ordinary conversation this is the query it always was.
         # For a fork it also reads the source's messages, up to the watermark the fork was taken
@@ -8911,9 +9203,19 @@ class Watcher:
                         "content_type": a["content_type"], "sha256": a["sha256"],
                         "path": f"/ffbox/attachments/{local}" if local else None,
                         "skip_reason": a["skip_reason"]})
+        try:
+            meta = json.loads(row["github_meta"] or "null")
+        except (json.JSONDecodeError, TypeError, IndexError, KeyError):
+            meta = None
         return {"discord_id": row["discord_id"], "author_id": row["author_id"],
                 "author_name": row["author_name"], "is_bot": bool(row["is_bot"]),
                 "content": row["content"], "created_at": row["created_at"],
+                # WHICH RULE FILED IT, carried through to the prompt because for a github_pr
+                # turn it is also which KIND of prompt this message asks for. See
+                # render_github_prompt.
+                "routed_by": (row["routed_by"] if "routed_by" in row.keys() else None),
+                # Where a comment was anchored: file, line, hunk, url. None for everything else.
+                "github_meta": meta,
                 "attachments": out}
 
     def stage_attachment(self, att_dir, discord_id, att):
@@ -8954,7 +9256,7 @@ class Watcher:
             for t in self.db.query("SELECT * FROM turn WHERE conversation_id=? ORDER BY seq",
                                    (cid,)):
                 rows = self.db.query("SELECT * FROM message WHERE turn_id=?"
-                                     " ORDER BY CAST(discord_id AS INTEGER)", (t["id"],))
+                                     f" ORDER BY {MESSAGE_ORDER}", (t["id"],))
                 if mark:
                     rows = [m for m in rows
                             if str(m["discord_id"]).isdigit()
@@ -8967,7 +9269,121 @@ class Watcher:
                 lines.append("")
         return "\n".join(lines)
 
-    def render_review_prompt(self, job, review):
+    def render_github_prompt(self, job, review):
+        """The prompt for a github_pr turn: a review, a batch of comments, or both.
+
+        A CONVERSATION IS A PULL REQUEST, AND A PULL REQUEST COLLECTS BOTH KINDS OF MESSAGE.
+        Somebody can type `#codereview` in the conversation while inline comments are still
+        sitting out their quiet period, and create_turn claims every ungated pending message it
+        finds -- so a turn can hold a review request, a batch of comments, or one of each.
+        Choosing the prompt off a flag on the CONVERSATION would silently swallow whichever kind
+        did not win; reading what is actually in the turn cannot.
+
+        THE SECOND OPERATOR CHECK LIVES HERE (design/pr_feedback_design.txt section 3), and it is
+        the one that matters. take_feedback will not write a stranger's comment down; this will
+        not render one whoever wrote it down. That makes "no text from outside the operator table
+        reaches a container" a property of the moment the prompt is built rather than of every
+        ingress that ever writes a row -- and it means an account removed from the table stops
+        being able to speak to a container through comments it left last week.
+
+        A TURN WITH NEITHER KIND IS A REVIEW, which is what every github_pr row written before
+        this existed looks like: `routed_by` was NULL then. Falling back that way is what keeps
+        this change from altering a conversation already in the database.
+        """
+        msgs = job.get("messages") or []
+        feedback = [m for m in msgs
+                    if m.get("routed_by") == "github_feedback"
+                    and is_github_operator(self.cfg, str(m.get("author_id") or ""))]
+        dropped = sum(1 for m in msgs if m.get("routed_by") == "github_feedback") - len(feedback)
+        if dropped:
+            log(f"WARNING: {dropped} feedback message(s) on conversation "
+                f"{job['conversation']['id']} were written by an account that is not in the "
+                f"operator table; they are not in the prompt")
+        if not feedback:
+            return self.render_review_prompt(job, review)
+        # IN THE ORDER THEY WERE WRITTEN, on GitHub's own stamps. The rows come back in the
+        # order the message table keeps them, which is by id-then-insertion -- and a namespaced
+        # id casts to 0, so every comment left on the diff sorts ahead of every comment left in
+        # the conversation whenever they arrive. That is fine for the record and wrong for the
+        # prompt: "and the same in the other file" has to follow the comment it is about.
+        feedback.sort(key=lambda m: m.get("created_at") or "")
+        parts = []
+        if any(m.get("routed_by") == "github_trigger" for m in msgs):
+            # BOTH, IN THIS ORDER. The review is a whole job with numbered steps of its own, so
+            # it goes first and the comments follow as a second job rather than being threaded
+            # through it.
+            parts += self.review_prompt_parts(job, review) + ["", "---", ""]
+        return "\n".join(parts + self.feedback_prompt_parts(job, review, feedback)
+                          + prompt_tail(job))
+
+    def feedback_prompt_parts(self, job, review, comments):
+        """The body of a feedback prompt: the pull request, then every comment, then the work.
+
+        THE COMMENTS ARE THE PROMPT, verbatim. They were typed by somebody this box takes
+        instructions from, so they are not fenced and not framed as untrusted input -- the same
+        treatment an operator's DM gets, and for the same reason (see DIRECT_KINDS).
+
+        THE HUNK IS THERE BECAUSE THE LINE NUMBER MAY NOT BE. A comment is anchored to a line as
+        it stood when the comment was written, and the branch can have moved since. Giving the
+        agent both, and saying which is which, is what stops it editing whatever happens to be
+        at line 412 today.
+        """
+        base = review["base"] or self.cfg["github"]["base"]
+        parts = [
+            f"People have left comments on pull request #{review['number']}. Act on them.",
+            "",
+            f"You are standing on its branch, `{review['branch'] or '?'}`, which targets "
+            f"`{base}`. The change they are commenting on is what this branch added after it "
+            f"left `origin/{base}` — `git diff origin/{base}...HEAD`, THREE dots, which is the "
+            f"diff the pull request page itself shows. A two-dot `git diff origin/{base} HEAD` "
+            f"also carries everything the base has gained since this branch started, shown "
+            f"backwards, and 'fixing' something out of that would undo work somebody else "
+            f"already merged.",
+            "",
+            f"There {'is' if len(comments) == 1 else 'are'} {len(comments)} comment"
+            f"{'' if len(comments) == 1 else 's'}. They were written by people who own this "
+            f"code, so each one is a request rather than a suggestion to weigh up. You are the "
+            f"one reading the code, though: a comment can be wrong, or can be a question rather "
+            f"than a request, and doing what it says anyway is worse than saying why you did "
+            f"not.",
+            "",
+        ]
+        for n, msg in enumerate(comments, 1):
+            meta = msg.get("github_meta") or {}
+            where = feedback_where({"path": meta.get("path"), "line": meta.get("line"),
+                                    "kind": meta.get("kind")})
+            parts.append(f"### comment {n} of {len(comments)} — {msg.get('author_name') or '?'}"
+                         f", on {where}")
+            if meta.get("url"):
+                parts.append(meta["url"])
+            if meta.get("hunk"):
+                parts += ["", "the diff it was left against, as it stood then:", "",
+                          "```", meta["hunk"], "```"]
+            parts += ["", (msg.get("content") or "").strip(), ""]
+        parts += [
+            "Do this:",
+            "",
+            "1. Read the branch before you change it. `git log` and `git diff "
+            f"origin/{base}...HEAD` are what is under discussion, and the comments were written "
+            f"about that and not about master.",
+            "2. Work out what each comment is actually asking for. A file and a line are given "
+            "where the comment had one, but the branch may have moved since it was written — "
+            "the hunk above each comment is what the author was looking at, so use it to find "
+            "the code rather than trusting the line number.",
+            "3. Make the changes you agree with. Prefer the smallest change that answers the "
+            "comment. One commit per comment where they are separable; a reviewer reads the "
+            "branch commit by commit.",
+            "4. For anything you did not do — a comment you disagree with, one that turned out "
+            "to be a question, one that is already handled — say so and say why. That goes in "
+            "your summary, and the harness posts it back on the pull request, so it is the "
+            "answer the person who wrote the comment actually gets.",
+            "",
+            "Do not resolve the review threads, do not merge, and do not open anything. The "
+            "harness pushes your commits onto this branch and says what happened.",
+        ]
+        return parts
+
+    def review_prompt_parts(self, job, review):
         """The whole prompt for a #codereview turn, built from the pull request and nothing else.
 
         NOT ONE WORD OF IT CAME FROM A COMMENT. The trigger selected this run; it contributed no
@@ -9006,6 +9422,10 @@ class Watcher:
         it to be inferred from the command name, because a driver that decides to "just read the
         diff itself" produces a review that costs opus rates and has no independent verifier
         behind any of its findings.
+
+        RETURNS THE PARTS AND NOT THE STRING, because a turn can hold a review request AND a
+        batch of comments to act on, and then this is the first half of the prompt rather than
+        the whole of it. render_review_prompt is still the whole of it; see render_github_prompt.
         """
         base = review["base"] or self.cfg["github"]["base"]
         parts = [
@@ -9041,12 +9461,11 @@ class Watcher:
             "A review that changes three things it understood is worth more than one that "
             "changed nine and guessed at six of them.",
         ]
-        if job.get("note"):
-            parts += ["", "Harness instruction for this turn:", "", job["note"]]
-        if job["resume_summary"]:
-            parts += ["", "The prior session transcript was lost. Host-rendered summary:",
-                      "", job["resume_summary"]]
-        return "\n".join(parts)
+        return parts
+
+    def render_review_prompt(self, job, review):
+        """review_prompt_parts plus the tail every prompt in this file ends with."""
+        return "\n".join(self.review_prompt_parts(job, review) + prompt_tail(job))
 
     def render_prompt(self, job):
         """Two prompts, chosen by who wrote the text.
@@ -9062,7 +9481,7 @@ class Watcher:
         lane = job["lane"]
         review = job.get("review")
         if review:
-            return self.render_review_prompt(job, review)
+            return self.render_github_prompt(job, review)
         if job.get("direct"):
             # NOT SOMETHING A STRANGER WROTE. No <discord> fence, no untrusted-input framing, no
             # role and no ff-discord policy: this text was typed by the person who owns this
@@ -9322,7 +9741,7 @@ class Watcher:
             if mark:
                 sql += " AND CAST(discord_id AS INTEGER) <= CAST(? AS INTEGER)"
                 args.append(mark)
-            sql += " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT ?"
+            sql += f" ORDER BY {MESSAGE_ORDER_DESC} LIMIT ?"
             args.append(limit)
             rows.extend(self.db.query(sql, tuple(args)))
         # Newest first across both, then capped once. Sorting here rather than in SQL keeps the
@@ -11522,7 +11941,7 @@ class Watcher:
         run = self.db.one("SELECT * FROM run WHERE turn_id=? ORDER BY id DESC LIMIT 1",
                           (turn_id,))
         last = self.db.one("SELECT * FROM message WHERE turn_id=?"
-                           " ORDER BY CAST(discord_id AS INTEGER) DESC LIMIT 1", (turn_id,))
+                           f" ORDER BY {MESSAGE_ORDER_DESC} LIMIT 1", (turn_id,))
         job = {
             "run_id": (run["ffbox_run_id"] if run else f"turn{turn_id}"),
             "session": {"id": (run["session_id"] if run else conv["session_id"])},
@@ -12745,8 +13164,11 @@ class Watcher:
             return self._send_failed(row, gh.token_error or "this box has no GitHub token")
         try:
             if payload.get("pr_comment"):
+                # DEFAULTED TO `issue`, so a row queued by an older ffwatch and still sitting in
+                # the outbound table when this one starts lands where it always did.
                 ok = gh.react_to_comment(payload["pr_comment"],
-                                         payload.get("emoji") or GITHUB_ACK_REACTION)
+                                         payload.get("emoji") or GITHUB_ACK_REACTION,
+                                         kind=payload.get("pr_comment_kind") or "issue")
                 if not ok:
                     return self._send_failed(row, "the reaction was refused")
                 sent_id = None
@@ -14166,6 +14588,42 @@ class Watcher:
     def github_cursor_path(self):
         return os.path.join(self.state_dir, "github.cursor.json")
 
+    @property
+    def review_comment_cursor_path(self):
+        """The comments left on the diff. Its own cursor because it is its own query."""
+        return os.path.join(self.state_dir, "github.reviewcomments.json")
+
+    @property
+    def review_summary_cursor_path(self):
+        """The bodies of submitted reviews, walked per pull request. See poll_review_summaries."""
+        return os.path.join(self.state_dir, "github.reviews.json")
+
+    def _read_cursor(self, path):
+        """(since, seen, etag, held) out of one cursor file, all four defaulted.
+
+        THREE READERS, ONE FILE FORMAT. The trigger poller's cursor came first and the two
+        feedback pollers keep exactly its shape, down to `held` -- which only the trigger writes,
+        because only the trigger decides whether to run something at the moment it reads a
+        comment. The feedback pollers hold at the release instead (see release_feedback), so
+        their `held` is always empty and is read back for free rather than being a fourth thing
+        to remember not to write.
+        """
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                got = json.load(fh)
+            return ((got.get("since") or None), [str(i) for i in (got.get("seen") or [])],
+                    got.get("etag") or None, [str(i) for i in (got.get("held") or [])])
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return None, [], None, []
+
+    def _write_cursor(self, path, since, seen, etag=None, held=None):
+        """Rewrite one cursor file atomically. `seen` is bounded; see write_github_cursor."""
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"since": since, "seen": [str(i) for i in seen][-500:], "etag": etag,
+                       "held": [str(i) for i in (held or [])]}, fh)
+        os.replace(tmp, path)
+
     def read_github_cursor(self):
         """(since, seen, etag, held). How far the poller has read and what it did with it.
 
@@ -14180,13 +14638,7 @@ class Watcher:
         lift on its own clock rather than on an unrelated comment. So the poll knows to ask
         unconditionally while this list is non-empty, and only while it is.
         """
-        try:
-            with open(self.github_cursor_path, "r", encoding="utf-8") as fh:
-                got = json.load(fh)
-            return ((got.get("since") or None), [str(i) for i in (got.get("seen") or [])],
-                    got.get("etag") or None, [str(i) for i in (got.get("held") or [])])
-        except (OSError, json.JSONDecodeError, AttributeError):
-            return None, [], None, []
+        return self._read_cursor(self.github_cursor_path)
 
     def write_github_cursor(self, since, seen, etag=None, held=None):
         # BOUNDED, because this file is rewritten every poll and a repository accumulates
@@ -14194,11 +14646,7 @@ class Watcher:
         # `held` is NOT trimmed: it is what is waiting to be acted on rather than a record of
         # what already was, it empties itself the moment the window refills, and it is bounded
         # in practice by how many triggers an operator can type inside one spent window.
-        tmp = f"{self.github_cursor_path}.{os.getpid()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"since": since, "seen": [str(i) for i in seen][-500:], "etag": etag,
-                       "held": [str(i) for i in (held or [])]}, fh)
-        os.replace(tmp, self.github_cursor_path)
+        self._write_cursor(self.github_cursor_path, since, seen, etag, held)
 
     def github_review_pool(self):
         """Which agent class a review opens in. Never a name no pool can serve."""
@@ -14225,7 +14673,13 @@ class Watcher:
         as take_branch_directive.
         """
         triggers = github_triggers(self.cfg)
-        if not triggers:
+        # THE TWO LANES READ ONE ENDPOINT. /issues/comments is where a `#codereview` trigger
+        # arrives AND where a plain comment on a pull request arrives, so this poll now serves
+        # both and the early return has to ask about both -- a box that configured the trigger
+        # away used to be a box with no poll at all, and that would now take pull request
+        # feedback down with it (design/pr_feedback_design.txt section 2).
+        feedback = github_feedback_on(self.cfg)
+        if not triggers and not feedback:
             return []
         # NOBODY CAN TRIGGER, SO NOTHING IS ASKED. An empty operator table is the shipped
         # default, and a box that has not filled it in should not be spending a request a sweep
@@ -14268,7 +14722,7 @@ class Watcher:
         if comments is NOT_MODIFIED:
             return []
         seen_set = set(seen)
-        newest, created, holding = since, [], []
+        newest, created, holding, batches = since, [], [], {}
         for comment in comments:
             comment_id = str(comment.get("id") or "")
             stamp = comment.get("updated_at") or ""
@@ -14282,6 +14736,19 @@ class Watcher:
             # walk it through the ordinary path from the top as though it had just arrived.
             if self.review_held(comment, triggers):
                 holding.append((comment_id, stamp))
+                continue
+            # NOT A REVIEW REQUEST, WHICH IS NOT THE SAME AS NOT A REQUEST. Everything without a
+            # trigger word used to fall through take_review_trigger and be forgotten; an
+            # operator's comment is now feedback, collected per pull request and handed over
+            # below. A comment that DOES carry a trigger word is a review request and is not
+            # also feedback -- one comment, one lane.
+            body = (comment.get("body") or "").lower()
+            if not any(trigger in body for trigger in triggers) and self.feedback_wanted(comment):
+                facts = feedback_facts("issue", comment)
+                if facts:
+                    batches.setdefault(facts["number"], []).append(facts)
+                seen_set.add(comment_id)
+                seen.append(comment_id)
                 continue
             try:
                 turn_id = self.take_review_trigger(gh, comment, triggers, agent_class)
@@ -14302,6 +14769,9 @@ class Watcher:
             seen.append(comment_id)
             if turn_id:
                 created.append(turn_id)
+        # AFTER THE LOOP, so one pull request's comments reach take_feedback as one batch and
+        # cost one gate call rather than one each.
+        self.dispatch_feedback(gh, batches, agent_class)
         if holding:
             # THE CURSOR DOES NOT MOVE PAST SOMETHING IT HAS NOT ACTED ON. `since` is the only
             # thing that brings a comment back — `seen` can only recognise one that GitHub has
@@ -14413,7 +14883,16 @@ class Watcher:
             # asserts this text reaches no container.
             "content": body,
             "timestamp": comment.get("updated_at") or now_iso(),
-        }, gate=REVIEW_STAGING_GATE,
+        },
+            # WHICH RULE FILED IT, and here it is also which KIND of turn this message asks for.
+            # A github_pr conversation now carries two kinds of message -- a review request and
+            # a comment to act on -- and render_prompt tells them apart by this column. It was
+            # NULL before, which worked only because nothing was asking. Neither value is
+            # `recent`, so the conversation selector still returns before it does anything: see
+            # select_for_turn.
+            routed_by="github_trigger",
+            routed_reason=f"a review trigger on pull request #{number}",
+            gate=REVIEW_STAGING_GATE,
             gate_reason="the pull request's branch has not been adopted yet")
         if message_id is None:
             # ORDINARILY A REPLAYED SWEEP, and there is nothing left to do. The exception is a
@@ -14525,6 +15004,364 @@ class Watcher:
         except GitHubError as exc:
             log(f"#codereview: could not answer #{number}: {exc}")
         return None
+
+    # -- the pull request feedback ingress ----------------------------------------------------
+    # design/pr_feedback_design.txt. A comment an operator leaves on an open pull request starts
+    # a run on that pull request's branch which makes the changes the comment asks for. It shares
+    # the conversation, the branch adoption, the outbound queue and the reply with #codereview;
+    # what it does not share is the property that made that lane safe. A review's prompt carries
+    # no text anybody wrote. This one is nothing but text somebody wrote, so the fence is moved:
+    # only an operator's comment is ever written down (take_feedback), and only an operator's
+    # comment is ever rendered (render_feedback_prompt). Two checks, two places, on purpose.
+
+    def feedback_author_ok(self, raw):
+        """May this box act on what this account wrote? GitHub's authenticated user id, looked up.
+
+        THE FIRST OF THE TWO GATES IN SECTION 3, and the one that keeps a stranger's words out of
+        the database entirely. Never a login, because a login can be renamed; never
+        `author_association`, because OWNER and MEMBER are handed out for reasons that have
+        nothing to do with this machine and this run pushes commits.
+        """
+        author = (raw or {}).get("user") or (raw or {}).get("author") or {}
+        return is_github_operator(self.cfg, str(author.get("id") or ""))
+
+    def feedback_wanted(self, raw):
+        """Is this comment one the feedback lane should collect at all?"""
+        return github_feedback_on(self.cfg) and self.feedback_author_ok(raw)
+
+    def take_feedback(self, gh, number, comments, agent_class):
+        """One pull request's new comments, ingested and decided. The conversation id, or None.
+
+        `comments` are feedback_facts dicts for ONE pull request, oldest first, already filtered
+        to operators by the poller that read them. They are filtered again here, because this is
+        the method that writes them down and the rule belongs next to the write.
+
+        THE ORDER IS THE DESIGN. Write the rows first, adopt the branch second, mark third. The
+        rows come first because a comment is part of what the pull request said whatever becomes
+        of it, and the row is where anybody later goes to find out what happened to it. The mark
+        comes last because 👀 means a run is going to read this, and until the branch is adopted
+        that is not yet true.
+
+        THE ROWS ARE BORN GATED, for the reason the trigger's row is and then some. claim_turns
+        runs on the daemon's loop and this runs on the GitHub worker, so a row that is ungated for
+        even a moment is a row the loop can build a turn out of -- and here that moment would last
+        the whole quiet period, which would defeat the batching outright.
+        """
+        comments = [c for c in comments if is_github_operator(self.cfg, c["author_id"])]
+        if not comments:
+            return None
+        pull = gh.pull_request(number)
+        if pull is None:
+            log(f"feedback: #{number} is not a pull request; ignoring")
+            return None
+        # SILENTLY, unlike the trigger's equivalent. Nobody asked for a run here, so a refusal
+        # posted under a comment on a merged pull request would be the box talking about itself
+        # in front of people who were talking about the code.
+        if pull["state"] != "open":
+            log(f"feedback: #{number} is {'merged' if pull['merged'] else 'closed'}; "
+                f"{len(comments)} comment(s) ignored")
+            return None
+        if (pull["head_repo"] or "").lower() != (self.cfg["github"]["repo"] or "").lower():
+            log(f"feedback: #{number} is opened from {pull['head_repo'] or 'a fork'}, which "
+                f"this box cannot commit onto; {len(comments)} comment(s) ignored")
+            return None
+
+        conv_id = self.upsert_conversation(
+            f"github:pr:{number}", kind=GITHUB_KIND, channel_id=None,
+            title=(pull["title"] or f"pull request #{number}")[:100],
+            root_message_id=comments[0]["id"], opener=comments[0]["author_id"],
+            is_thread=False, agent_class=agent_class)
+        self.db.execute(
+            "UPDATE conversation SET github_pr=?, github_base=? WHERE id=? AND github_pr IS NULL",
+            (str(pull["url"] or number), pull["base_ref"] or "", conv_id))
+
+        rows = []
+        for fact in comments:
+            message_id = self.insert_message(
+                conv_id, {
+                    "id": fact["id"],
+                    "author": {"id": fact["author_id"], "username": fact["login"], "bot": False},
+                    "content": fact["body"],
+                    "timestamp": fact["stamp"],
+                },
+                routed_by="github_feedback",
+                routed_reason=f"a {fact['kind']} comment on pull request #{number}",
+                gate=FEEDBACK_WAITING_GATE,
+                gate_reason="waiting for the rest of the batch",
+                github_meta={k: fact[k] for k in
+                             ("kind", "path", "line", "hunk", "url", "review_id")})
+            # None is a replayed read of a comment already ingested, which is the ordinary
+            # outcome of an edited comment coming back through the `since` filter.
+            if message_id is not None:
+                rows.append((message_id, fact))
+        if not rows:
+            return conv_id
+
+        # EVERY COMMENT IS ACTED ON. There was a haiku gate here that read each comment and
+        # answered whether it asked for anything, so that "merging this" and "nice" cost
+        # nothing. It was removed on 2026-09-10 by the person the box works for, and the
+        # reasoning is worth keeping: a gate that is right nine times out of ten still drops
+        # one instruction in ten, silently, with no mark on the comment and nothing in the pull
+        # request to show it ever arrived. The cost of the other mistake is one container that
+        # reports there was nothing to do, and the run says so on the pull request either way.
+        # The operator check above is NOT this gate and does not go with it -- that one is the
+        # fence, and it is what keeps a stranger's text out of an unfenced container.
+        acting = list(rows)
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+        if not self.conversation_branch(conv):
+            ok, why = self.adopt_branch(conv_id, pull["head_ref"], by=acting[0][1]["author_id"])
+            if not ok:
+                # SAID OUT LOUD, and this is the one refusal in this lane that is. Somebody has
+                # commented and no 👀 has gone on, so silence would leave them waiting for a run
+                # that is never coming.
+                for message_id, _ in acting:
+                    self.gate_message(message_id, FEEDBACK_REFUSED_GATE, why)
+                self.refuse_feedback(gh, number, why)
+                return conv_id
+            conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+
+        for message_id, _ in acting:
+            row = self.db.one("SELECT * FROM message WHERE id=?", (message_id,))
+            if row is not None:
+                # 👀 NOW, NOT AT THE TURN. The run is a quiet period and possibly a queue away,
+                # and the person who wrote the comment is owed the mark before all of that rather
+                # than after it. mark_working sends its own row, so it is on the comment within
+                # this poll.
+                self.mark_working(conv, row)
+        log(f"feedback: #{number} on {conv['branch']} — {len(acting)} comment(s) queued on "
+            f"conversation {conv_id}, waiting out the quiet period")
+        return conv_id
+
+    def settle_staged_feedback(self, comments, exc):
+        """An ingest that raised half way leaves no row nothing will ever look at.
+
+        THE COST OF A GATED INSERT, PAID THE WAY settle_a_staged_trigger pays it. A row still
+        wearing FEEDBACK_WAITING_GATE is invisible to every reader by design, and the comment it
+        belongs to has already gone into the cursor's `seen` list -- so a half-finished ingest
+        would otherwise be a run that silently never happens and that nothing in the box would
+        mention. The gate is replaced with one that says what went wrong.
+
+        NOTHING IS POSTED. Nobody asked for this run, and the failure is this box's to notice.
+        """
+        why = f"{type(exc).__name__}: {exc}"
+        for fact in comments:
+            row = self.db.one("SELECT id FROM message WHERE discord_id=? AND gate=?",
+                              (fact["id"], FEEDBACK_WAITING_GATE))
+            if row is not None:
+                self.gate_message(row["id"], "feedback_failed", why)
+
+    def refuse_feedback(self, gh, number, reason):
+        """Say on the pull request that the branch cannot be worked on. Always returns None."""
+        text = f"**pull request feedback** — I cannot act on these comments. {reason}"
+        if self.dry_run:
+            log(f"feedback: (dry run) would answer #{number}: {reason}")
+            return None
+        try:
+            gh.create_issue_comment(number, text)
+        except GitHubError as exc:
+            log(f"feedback: could not answer #{number}: {exc}")
+        return None
+
+    def dispatch_feedback(self, gh, batches, agent_class):
+        """Hand each pull request's batch to take_feedback, guarded. Returns conversation ids.
+
+        ONE BAD BATCH MUST NOT STOP THE POLL, and must not be retried forever either: the
+        comments are in the cursor's `seen` list whatever happens here, exactly as the trigger's
+        are, because a comment that raises once raises every time.
+        """
+        out = []
+        for number in sorted(batches):
+            try:
+                conv_id = self.take_feedback(gh, number, batches[number], agent_class)
+            except Exception as exc:                        # noqa: BLE001 - see the docstring
+                log(f"feedback: #{number} could not be handled: {type(exc).__name__}: {exc}")
+                self.settle_staged_feedback(batches[number], exc)
+                continue
+            if conv_id:
+                out.append(conv_id)
+        return out
+
+    def poll_review_comments(self):
+        """Read the comments left ON THE DIFF and collect the ones an operator wrote.
+
+        THE SIBLING OF poll_github AND DELIBERATELY A SECOND COPY OF IT. Same repository-wide
+        endpoint shape, same conditional GET, same `seen` list, same watch-from-now watermark.
+        What it does not have is a hold: reading a comment costs nothing worth holding, and the
+        expensive moment in this lane is the release, which is where release_feedback asks.
+
+        Returns the conversation ids it put comments on.
+        """
+        if not github_feedback_on(self.cfg) or not github_operators(self.cfg):
+            return []
+        agent_class = self.github_review_pool()
+        gh = GitHub(self.cfg, agent_class)
+        if not gh.token or not gh.repo:
+            if gh.token_error:
+                log(f"feedback: no poll — {gh.token_error}")
+            return []
+        since, seen, etag, _ = self._read_cursor(self.review_comment_cursor_path)
+        if since is None:
+            self._write_cursor(self.review_comment_cursor_path, now_iso(), seen, None, [])
+            log(f"feedback: watching {gh.repo}'s review comments from now; anything older is "
+                f"history and starts nothing")
+            return []
+        try:
+            comments, etag = gh.list_review_comments(since=since, etag=etag)
+        except GitHubError as exc:
+            log(f"feedback: could not read review comments: {exc}")
+            return []
+        if comments is NOT_MODIFIED:
+            return []
+        seen_set, newest, batches = set(seen), since, {}
+        for comment in comments:
+            comment_id = str(comment.get("id") or "")
+            stamp = comment.get("updated_at") or ""
+            if stamp and (newest is None or stamp > newest):
+                newest = stamp
+            if not comment_id or comment_id in seen_set:
+                continue
+            seen_set.add(comment_id)
+            seen.append(comment_id)
+            if not self.feedback_wanted(comment):
+                continue
+            facts = feedback_facts("review", comment)
+            if facts:
+                batches.setdefault(facts["number"], []).append(facts)
+        out = self.dispatch_feedback(gh, batches, agent_class)
+        self._write_cursor(self.review_comment_cursor_path, newest, seen, etag, [])
+        return out
+
+    def poll_review_summaries(self):
+        """Read the BODY of submitted reviews on open pull requests.
+
+        THE ONE READ THAT IS NOT REPOSITORY-WIDE, because GitHub has no endpoint that is. The
+        walk is one conditional GET over open pull requests, newest activity first, and then one
+        request per pull request whose `updated_at` has moved since the last poll. On a quiet
+        minute it is a single 304.
+
+        `since` IS A STOP-WALKING WATERMARK HERE, not a server-side filter -- /pulls does not
+        take one -- so this must not advance it past a pull request whose reviews it did not
+        manage to read. Same rule, same reason, as poll_github_merges.
+        """
+        if not github_feedback_on(self.cfg) or not github_operators(self.cfg):
+            return []
+        agent_class = self.github_review_pool()
+        gh = GitHub(self.cfg, agent_class)
+        if not gh.token or not gh.repo:
+            return []
+        since, seen, etag, _ = self._read_cursor(self.review_summary_cursor_path)
+        if since is None:
+            self._write_cursor(self.review_summary_cursor_path, now_iso(), seen, None, [])
+            log(f"feedback: watching {gh.repo}'s review bodies from now; anything older is "
+                f"history and starts nothing")
+            return []
+        try:
+            pulls, etag = gh.list_closed_pulls(since=since, etag=etag, state="open")
+        except GitHubError as exc:
+            log(f"feedback: could not read open pull requests: {exc}")
+            return []
+        if pulls is NOT_MODIFIED:
+            return []
+        seen_set, newest, batches, stalled = set(seen), since, {}, None
+        for pull in pulls:
+            stamp = pull.get("updated_at") or ""
+            try:
+                reviews = gh.pull_reviews(pull["number"])
+            except GitHubError as exc:
+                # THE WATERMARK STOPS HERE. Advancing past a pull request whose reviews could not
+                # be read would mean the next walk stops before reaching it, and the review body
+                # is lost rather than late.
+                log(f"feedback: could not read reviews on #{pull['number']}: {exc}")
+                stalled = stamp if stalled is None else min(stalled, stamp)
+                continue
+            if stamp and (newest is None or stamp > newest):
+                newest = stamp
+            for review in reviews:
+                review_id = str(review.get("id") or "")
+                if not review_id or review_id in seen_set:
+                    continue
+                if (review.get("submitted_at") or "") <= since:
+                    continue
+                seen_set.add(review_id)
+                seen.append(review_id)
+                if not self.feedback_wanted(review):
+                    continue
+                facts = feedback_facts("summary", review, number=pull["number"])
+                if facts:
+                    batches.setdefault(facts["number"], []).append(facts)
+        out = self.dispatch_feedback(gh, batches, agent_class)
+        if stalled:
+            newest, etag = min(newest or stalled, stalled), None
+        self._write_cursor(self.review_summary_cursor_path, newest, seen, etag, [])
+        return out
+
+    def release_feedback(self):
+        """Let the batches that have stopped growing through. Returns the conversation ids.
+
+        THE QUIET PERIOD IS THE WHOLE OF THIS. A batch goes when nothing new has arrived on it
+        for `feedback_quiet_secs`, measured on GitHub's own stamp for the newest comment rather
+        than on when this box happened to read it. Everything else here is the two questions that
+        have to be answered before an hour of container time is spent: is there a branch to run
+        against, and is there any subscription left to run it with.
+
+        THE HOLD IS ASKED ONCE PER PASS, and only when something is actually ripe. It is the same
+        hold the trigger takes in poll_github, moved to the moment it belongs to: reading a
+        comment, gating it and marking it are free, and this is the line after which nothing is.
+
+        THE GATE COMES OFF AND NOTHING ELSE HAPPENS. claim_turns builds the turn on the loop's
+        next tick, which is the one place that knows how, and which already does the right thing
+        with a conversation that is running: it leaves the messages alone and picks them up on
+        the pass after the run ends. That is the queue-behind-the-running-turn behaviour a burst
+        of Discord follow-ups gets, and it is what this lane wants -- unlike a second
+        #codereview, which is refused.
+        """
+        if not github_feedback_on(self.cfg):
+            return []
+        gh_cfg = self.cfg.get("github") or {}
+        quiet = int(gh_cfg.get("feedback_quiet_secs") or 0)
+        cap = int(gh_cfg.get("feedback_max_comments") or 0)
+        now = time.time()
+        ripe = []
+        for row in self.db.query("SELECT DISTINCT conversation_id AS cid FROM message"
+                                 " WHERE gate=?", (FEEDBACK_WAITING_GATE,)):
+            conv = self.db.one("SELECT * FROM conversation WHERE id=?", (row["cid"],))
+            if conv is None:
+                continue
+            # NO BRANCH, NO RELEASE. A github_pr turn with no branch runs against the default
+            # base and reads nothing (create_turn refuses one as a backstop), so a batch whose
+            # adoption never happened waits here rather than becoming a wasted container.
+            if not self.conversation_branch(conv):
+                continue
+            waiting = self.db.query(
+                f"SELECT * FROM message WHERE conversation_id=? AND gate=? ORDER BY"
+                f" {MESSAGE_ORDER}", (conv["id"], FEEDBACK_WAITING_GATE))
+            if not waiting:
+                continue
+            stamps = [iso_secs(m["created_at"]) for m in waiting]
+            newest = max([t for t in stamps if t] or [0])
+            if quiet and newest and (now - newest) < quiet:
+                continue
+            ripe.append((conv, waiting))
+        if not ripe:
+            return []
+        secs, why = self.claude_hold("review", fresh=True)
+        self.log_hold("pull request feedback", why)
+        if why:
+            return []
+        out = []
+        for conv, waiting in ripe:
+            # THE CAP IS APPLIED HERE AND NEVER IN THE PROMPT. create_turn claims every ungated
+            # message whether the prompt quotes it or not, so rendering only the first N would
+            # consume the rest without reading them. Left gated, they ripen again on the poll
+            # after this turn ends and become the next turn on the same conversation.
+            batch = waiting[:cap] if cap else waiting
+            for message in batch:
+                self.ungate_message(message["id"], FEEDBACK_WAITING_GATE)
+            held_back = len(waiting) - len(batch)
+            log(f"feedback: conversation {conv['id']} released {len(batch)} comment(s)"
+                + (f", holding {held_back} for the next turn" if held_back else ""))
+            out.append(conv["id"])
+        return out
 
     # -- the merged-pull-request notice ------------------------------------------------------
     # design/pr_merged_notice_design.txt. A merge is the one moment the person who reported a
@@ -14910,17 +15747,31 @@ class Watcher:
             return False
 
         def guarded():
-            # TWO READS, TWO ERROR BOUNDARIES, ONE WORKER AND ONE CLOCK. They share the thread
-            # because they are two conditional GETs to the same host and a second interval would
-            # be a second number to keep in step. They do NOT share a try/except: the whole
-            # argument for taking this off the catchup tick was that one poll's failure must not
-            # silently stop another's, and putting them under one would rebuild that inside this
-            # thread. The merge poll runs SECOND because a review starting is what somebody is
-            # watching for; a merge notice is not waited on to the minute.
+            # FOUR READS AND A RELEASE, FIVE ERROR BOUNDARIES, ONE WORKER AND ONE CLOCK. They
+            # share the thread because they are conditional GETs to the same host and a second
+            # interval would be a second number to keep in step. They do NOT share a try/except:
+            # the whole argument for taking this off the catchup tick was that one poll's failure
+            # must not silently stop another's, and putting them under one would rebuild that
+            # inside this thread. The merge poll runs LAST because a review or a fix starting is
+            # what somebody is watching for; a merge notice is not waited on to the minute.
             try:
                 self.poll_github()
             except Exception as exc:  # noqa: BLE001 — a worker must never take the daemon down
                 log(f"ERROR in the #codereview poll: {type(exc).__name__}: {exc}")
+            try:
+                self.poll_review_comments()
+            except Exception as exc:  # noqa: BLE001 — a worker must never take the daemon down
+                log(f"ERROR in the review comment poll: {type(exc).__name__}: {exc}")
+            try:
+                self.poll_review_summaries()
+            except Exception as exc:  # noqa: BLE001 — a worker must never take the daemon down
+                log(f"ERROR in the review summary poll: {type(exc).__name__}: {exc}")
+            try:
+                # AFTER THE THREE READS, so a comment that arrives and ripens inside the same
+                # poll goes now rather than waiting out another minute for no reason.
+                self.release_feedback()
+            except Exception as exc:  # noqa: BLE001 — a worker must never take the daemon down
+                log(f"ERROR in the feedback release: {type(exc).__name__}: {exc}")
             try:
                 self.poll_github_merges()
             except Exception as exc:  # noqa: BLE001 — a worker must never take the daemon down
