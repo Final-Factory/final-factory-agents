@@ -200,6 +200,24 @@ assignment; real selection passed join, forced recovery, and reconnect. Repeated
 paths are ambiguous, so select them via observed pointer coordinates. An empty selection
 rectangle proves input lifetime, not successful replacement of an actual structure.
 
+Test Begin while a placement item is still held. `PlayerDataController.UpgradeToolOnSwapsSelected`
+now invokes `RequestClearPlayerHand` before changing state (`f9189ceee`,
+`Assets/Scripts/PlayerController/PlayerDataController.cs:437-446`); otherwise
+`UnitSelector.IsReadyForSelection` rejects the nonempty hand. On two matching Mac players,
+`live-upgrade-hand-fixed011/upgrade` replaced a built Advanced Assembler at footprint (-1,14)
+with a built Hyper Assembler. Client inventory changed Advanced 1→2 and Hyper 2→1; both peers'
+structure snapshots and screenshots confirmed replacement. Reproduce this real input sequence;
+do not pre-clear the hand or substitute `construction.swap` when verifying this callback.
+
+For world placement, `pointer.click|0|2` is only two rendered frames
+(`Assets/Scripts/PlayerController/AutomationPointer.cs:61-75`). Placement samples held input
+in a heartbeat group (`Assets/Scripts/ControllerSystems/BlueprintPlacementSystem.cs:212`;
+`Assets/Scripts/FFCore/Systems/FinalFactorySimulationRateManager.cs:39-72`), so the pulse can be
+missed between ticks. Move, let the preview settle and inspect it, then press, wait one second,
+release, and verify a built structure in the snapshot. This is a stable fixture recipe;
+it does not prove quick player clicks are reliable. Use separate command-array elements for
+AgentControl HTTP chains, as specified in its contract; do not pass a semicolon chain as one element.
+
 **A nearby asteroid's reported `tile` is its footprint anchor, not its center.**
 `PlaytestStateSnapshot.CaptureNearby` emits `Placeable.GridTile` directly
 (`Assets/Scripts/Behaviours/Multiplayer/PlaytestStateSnapshot.cs:354-364`), while `Placeable`
