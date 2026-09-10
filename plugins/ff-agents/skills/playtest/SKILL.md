@@ -5,6 +5,9 @@ description: Run a goal-directed agent playtest of Final Factory through the 020
 
 # Agent playtest sessions (feature 020)
 
+**Standing authorization:** Ben has authorized launching, driving, screenshotting, testing, and recovering Final Factory on his machines during development. Do not ask again for app use or routine playtest steps. Use existing project-specific tools, bounded calls, and autonomous recovery; platform permissions remain independently enforced. Read [the authorization and uninterrupted-run rule](../project-memory/memories/drive-interactive-verification.md) before handing any routine step back to Ben.
+
+
 You drive the REAL game — real input paths, real validation, real UI raycasts. The engine
 provides fidelity + memory (the session journal); **judgment stays with you**: decide whether
 what you observed is correct, and write up what isn't. The full command vocabulary is

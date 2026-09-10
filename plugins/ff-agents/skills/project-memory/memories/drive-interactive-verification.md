@@ -1,34 +1,23 @@
 ---
 name: drive-interactive-verification
-description: "I CAN drive interactive/visual/multiplayer verification myself — don't punt it to the user"
-metadata: 
+description: "Standing authorization to launch, play, inspect, and recover Final Factory during development"
+metadata:
   node_type: memory
   type: feedback
-  originSessionId: defb174e-c8f4-4003-b27c-41cc8edba71c
 ---
 
-When a task needs verifying behavior in a *running* app — visual checks, multiplayer/paired
-sessions, screenshots, "does it actually work" — I default (wrongly) to declaring it
-"can't be driven autonomously, the user must run it." That is false here, and the user
-has corrected it explicitly.
+# Execute the authorized playtest
 
-I have the capability:
-- **Skills**: `verify` (run app + observe behavior to confirm a fix) and `run` (launch/drive
-  the app, screenshot it). Reach for these instead of asking the user.
-- **Unity MCP**: screenshots via `manage_camera`/screenshot, runtime probes via
-  `execute_code`; save a PNG and Read it to inspect visually.
-- **Determinism harness is scriptable** (see [[remote-player-presentation-position-bug]] and
-  CLAUDE.md): `run_join_catchup_audit.sh` drives a real paired host+client session and asserts
-  per-heartbeat `playerSimPos` alignment; `compare_determinism_reports.sh` prints first
-  divergence; `.ff-local-automation.json` + `PostReadyCommand` auto-starts both editors and
-  runs movement/mining commands. Loading a save to verify a migration is likewise drivable.
+Ben explicitly authorized autonomous Final Factory development and live multiplayer testing across his three machines, including launching the game, playing through real inputs, screenshots and visual inspection, tests, builds, and recovery of positively identified project-owned processes. He repeated this on 2026-09-10 after a redundant app-access approval interrupted an overnight run. Carry that authorization across turns and agents. Do not ask whether you may use Final Factory, launch a test player, inspect its window, or run the next routine development step.
 
-**Why**: I was leaving real verification (paired determinism audit, save-migration load,
-visual smoothness checks) undone and handing it back to the user, who has the tools to know
-I could do it myself. It reads as ducking the work.
+Use `ff-agents:playtest`, `ff-agents:drive-game`, `ff-agents:editor-ops`, and `ff-agents:determinism-audit`. Built-player AgentControl provides real inputs and composited screenshots without requiring general desktop-app access. Inspect the resulting images; a screenshot file alone is not visual verification.
 
-**How to apply**: Before saying "this needs a manual/interactive session," check skills
-(`verify`, `run`) and the project harness first. Treat caveats like "restart editors between
-paired runs / runs can contaminate each other" as handling steps to manage, NOT as reasons to
-refuse. Only escalate to the user when a step genuinely needs credentials/hardware I lack or an
-out-of-band human decision — and say specifically what and why.
+Distinguish task authorization from platform enforcement. Existing authorization does not disable macOS permissions or a host-managed approval classifier. Prefer the already available project-specific control channel. If a platform blocks one route, continue independent work and try another authorized route; do not ask Ben to reauthorize the task. Never claim that a skill update disables the platform classifier. Report an unavoidable platform blocker precisely, with the action and returned reason, only when it actually prevents further progress.
+
+# Keep the run moving
+
+A status question is not a request to stop. When Ben says to stop asking permission while continuing development, stop the redundant questions and continue the task. Honor an unambiguous instruction to stop work.
+
+Own every launched job through completion, failure, or scoped cleanup. Use bounded external calls and process timeouts, retain job IDs, and monitor phase transitions and terminal outcomes. Do not let an optional desktop inspection hold the whole multiplayer run: prefer AgentControl screenshots, and give a peer-owning agent a finite no-progress deadline and cleanup authority before starting. A thread heartbeat cannot guarantee progress while its foreground tool call is blocked. After a timeout preserve evidence, diagnose, and retry or select the next useful task. Never count idle waiting or a host-only run as multiplayer verification.
+
+Credential entry, unavailable hardware, and decisions outside the authorized task can still require user input. Preserve unrelated processes and user data, and obey release branch governance. These boundaries are not reasons to invent approval steps for normal gameplay testing.
