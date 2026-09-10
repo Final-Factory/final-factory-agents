@@ -44,3 +44,10 @@ Collision diagnostics must distinguish a raw raycast miss from a hit rejected by
 the raw hit is self or matches the fleet-ignore filter
 (`Assets/Scripts/FFSystems/Core/LinearMotionSystem.cs:465-495`). Record the raw-hit result and the
 rejection reason separately before assigning a gameplay cause.
+
+When inspecting a collider blob, keep a reference: `ref var collider = ref body.Collider.Value`.
+Do not copy its base `Collider` header into a local value before calling shape-dependent methods.
+Unity Physics `Collider.GetCollisionFilter(ColliderKey)` fixes `&this` and casts it to the concrete
+shape (`Unity.Physics/Collision/Colliders/Collider.cs:228-260`); that address must still point to
+the full blob. The cached-body diagnostic uses the reference form in
+`FleetMoverInputDiagnostics.DescribePhysicsBody`.
