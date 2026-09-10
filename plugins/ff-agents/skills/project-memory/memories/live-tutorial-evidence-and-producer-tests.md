@@ -65,3 +65,20 @@ both occupied the OrderFirst bucket, so their relative order needed an explicit 
 and a real sorted-group test. Scope a freshness claim to the phases actually covered:
 `ExecuteShipSpawnCommandSystem` also queries collision state during Initialization, before the
 normal Simulation physics invocation.
+
+A typed simulation pass is not an uninterrupted-connection verdict. The September 10
+`live-heartbeat-physics-fixed011` replay matched all 5,898 shared samples across three epochs,
+but the raw client log recorded repeated `WatchdogTripped` / `TransportLoss` reconnects.
+Its automatic audit lifecycle still ended `clean-after-window`. Inspect both raw terminal
+logs as well as the typed verdict; an epoch transition is not automatically a desync, and a
+death screenshot does not establish why a client reconnected.
+
+Checkpoint publication must not block the game thread. `ExecuteAuditWrite` formerly called
+`WriteReportAsync(...).GetAwaiter().GetResult()`: moving disk work into `Task.Run` did not
+unblock that caller. Large checkpoints preceded receive-queue-full messages and watchdog
+reconnects in that replay. The command now attaches `ChainCompletion`, awaits publication,
+and supplies its exact final path through `FinalResult`; `AutomationChainExecutor.AwaitSegmentAsync`
+copies it into the terminal response. Test both pending completion and the returned path:
+`AgentRequestRouter.LastResult` reads the step result, not completion detail. Keep an independent
+timeout release in a held-publication test so a regressed synchronous wait cannot hang the editor.
+The source correction and fast suite do not substitute for replaying a large checkpoint live.
