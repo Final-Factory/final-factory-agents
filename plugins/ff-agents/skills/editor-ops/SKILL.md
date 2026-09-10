@@ -569,6 +569,13 @@ output or result marker before deciding what happened. The guarded follow-up com
 
 ## Building
 
+**A successful result label is not sufficient.** Accept a native player build only when
+`BuildReport.summary.result == Succeeded` **and** `summary.totalErrors == 0`; inspect the
+reported C# and Burst diagnostics as well. A guarded completion marker proves only that the
+build method returned. Preserve any rejected artifact and its diagnostics, recover the exact
+project editor/JIT using the existing ritual when indicated, and rebuild before live testing.
+See [the observed false-success build](../project-memory/memories/build-report-success-with-errors.md).
+
 Unity Editor menu `Build > Build and Upload All` (requires Steamworks SDK).
 
 ## Capturing editor memory
