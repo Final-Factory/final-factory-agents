@@ -94,6 +94,7 @@ worktrees and apply to ALL branches.
 
 ## Gameplay diagnosis & live-test recipes
 
+- [Snapshot recovery rebinds live input callbacks](memories/recovery-rebinds-input-callbacks.md) — reusing PlayerDataController/StateActions during snapshot apply repeats SetupController; detach exact publishers before rebind and on destruction, then prove clicks through resync → reconnect → resync
 - [Unified 16 UPS smooth presentation](memories/project-unified-16ups-smooth-presentation.md) — feature 057 goal and current progress: player, belts, and projectiles smooth; next formal belt jam-stop checkpoint and Phase C movers
 - [Player domain is already conventional](memories/player-domain-already-conventional.md) — the player replication/simulation boundary already matches the proposed split; presentation rate is the real issue, while combat remains the open domain decision
 - [Cargo ship teleport diagnosis](memories/cargo-ship-teleport-diagnosis.md) — camera-gated presentation sync over ungated simulation = ghost-then-snap artifact (InserterRenderSystem); plus the live-probe/A-B methodology via execute_code (onBeforeRender probes, GravityForces mover, Error-Pause gotcha)
