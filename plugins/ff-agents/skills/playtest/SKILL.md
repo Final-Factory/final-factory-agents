@@ -113,6 +113,15 @@ wrote one, no play mode to exit, and no `isPaused` to undo.
 
 ## Multiplayer gameplay fixes need two real built players
 
+Finalize, copy, and compare both peers' baseline reports **before** injecting a disconnect,
+reconnect, recovery, or load. Those transitions can destroy the client bootstrap and prevent
+its report from being published. Keep lifecycle results separate from the already preserved
+baseline; runtime absence of desyncs cannot replace a lost paired report. See
+[the mining/reconnect evidence lesson](../project-memory/memories/live-baseline-before-lifecycle.md).
+A timing-valid visual episode also needs the intended subject in frame: inspect that framing
+before using the episode to assess motion.
+
+
 For a multiplayer gameplay defect or fix, the acceptance playtest runs matching current builds on
 two physical machines. Include Windows and macOS when the affected path can differ by platform.
 Drive the other peer with a direct child or another explicitly coordinated agent, and replay the

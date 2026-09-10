@@ -117,3 +117,5 @@ final-factory-agents repo — NOT to the per-worktree `~/.claude/projects/*/memo
 are machine-local and do not propagate.
 
 - [Native build success with errors](memories/build-report-success-with-errors.md): require a zero-error BuildReport and inspect Burst diagnostics before accepting the artifact.
+
+- [Baseline before lifecycle tests](memories/live-baseline-before-lifecycle.md): preserve both paired reports before reconnect, and verify temporal capture framing.
