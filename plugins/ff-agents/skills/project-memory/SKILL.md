@@ -115,3 +115,5 @@ worktrees and apply to ALL branches.
 New durable lessons go here (one file in `memories/`, one index line above), committed to the
 final-factory-agents repo — NOT to the per-worktree `~/.claude/projects/*/memory/` dirs, which
 are machine-local and do not propagate.
+
+- [Native build success with errors](memories/build-report-success-with-errors.md): require a zero-error BuildReport and inspect Burst diagnostics before accepting the artifact.
