@@ -21,3 +21,16 @@ A status question is not a request to stop. When Ben says to stop asking permiss
 Own every launched job through completion, failure, or scoped cleanup. Use bounded external calls and process timeouts, retain job IDs, and monitor phase transitions and terminal outcomes. Do not let an optional desktop inspection hold the whole multiplayer run: prefer AgentControl screenshots, and give a peer-owning agent a finite no-progress deadline and cleanup authority before starting. A thread heartbeat cannot guarantee progress while its foreground tool call is blocked. After a timeout preserve evidence, diagnose, and retry or select the next useful task. Never count idle waiting or a host-only run as multiplayer verification.
 
 Credential entry, unavailable hardware, and decisions outside the authorized task can still require user input. Preserve unrelated processes and user data, and obey release branch governance. These boundaries are not reasons to invent approval steps for normal gameplay testing.
+
+## Preserve both live audit reports before cleanup
+
+On a multiplayer failure, run `ffauto:audit.write` through each peer's development AgentControl
+session, then verify, copy and hash BOTH returned report files before stopping either process.
+The command wraps `LocalMultiplayerAutomationCommandRunner.ExecuteAuditWrite` →
+`NetworkDeterminismAudit.WriteReport`; it publishes current rows without resetting capture.
+Do this at useful milestones too. Normal dwell/teardown gates can postpone automatic publication,
+so a RED run is not permission to terminate a peer with its only evidence still in memory.
+Recovery itself retains audit rows; do not claim recovery erased them without evidence. With a
+capture policy, the report path uses run/leg/role identity and ignores the optional label; copy
+milestone reports to distinct artifact filenames. Explicitly report missing peer evidence and
+capture overflow/caps instead of claiming a paired comparison from one log.
