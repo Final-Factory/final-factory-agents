@@ -137,6 +137,20 @@ gaps. The determinism skill owns the unweakened all-field comparison. See
 [cross-machine built-player gameplay acceptance](../project-memory/memories/cross-machine-built-player-gameplay-acceptance.md)
 for the full gate and Windows interactive-launch cleanup rules.
 
+**Built-player screenshot pixels are not native pointer coordinates.** `GET /v1/screenshot`
+defaults to a 1280-pixel maximum edge and downscales larger views; `X-FF-Width` and
+`X-FF-Height` describe that returned PNG. `ffauto:pointer.moveto|x|y|screen` instead takes raw
+bottom-left-origin pixels in the live `Screen.width` × `Screen.height` view. One witnessed
+2560×1289 view produced a 1280×644 PNG, so PNG slot `(752,50)` measured from the bottom-left mapped to roughly native
+`(1504,100)`. Read [the coordinate-scale lesson](../project-memory/memories/built-player-screenshot-coordinate-scale.md)
+before driving built-player UI.
+
+Do not infer the live view from launch `-screen-width`/`-screen-height` or saved display prefs:
+saved display settings can override launch dimensions, and the prefs can still differ from the
+current view. Prefer read-only native screen metadata when the harness exposes it. The existing
+`ffauto:pointer.moveto|999999|999999|screen` bounds diagnostic reports the actual view, but it
+also moves the pointer; move it back to the intended point before any click.
+
 ## The drive → observe → judge loop
 
 1. **Drive** with the real-input commands: `pointer.*` (world clicks; placement needs
@@ -167,6 +181,13 @@ opening the inventory, resolving its current slot, placing the pointer, clicking
 next pointer placement, the observed slot was stale or the click did nothing. Pump or wait between
 those steps and verify the result before continuing; do not assume a same-frame chain exercised the
 interaction.
+
+**Use right-click to clear a blueprint during a live user-path check.** The current
+`ffauto:blueprint.drop` clears the player's blueprint buffer without disposing its entries, while
+the normal `PlayerDataController.ClearBlueprint` path calls `BlueprintTool.DisposeBlueprint`.
+That harness defect can leave an orphan preview, so a remaining ghost after `blueprint.drop` is
+not evidence that normal gameplay failed to clear it. The harness defect is still open; exercise
+the real right-click path when the test is about player-visible blueprint clearing.
 
 **A nearby asteroid's reported `tile` is its footprint anchor, not its center.**
 `PlaytestStateSnapshot.CaptureNearby` emits `Placeable.GridTile` directly
