@@ -185,12 +185,20 @@ next pointer placement, the observed slot was stale or the click did nothing. Pu
 those steps and verify the result before continuing; do not assume a same-frame chain exercised the
 interaction.
 
-**Use right-click to clear a blueprint during a live user-path check.** The current
-`ffauto:blueprint.drop` clears the player's blueprint buffer without disposing its entries, while
-the normal `PlayerDataController.ClearBlueprint` path calls `BlueprintTool.DisposeBlueprint`.
-That harness defect can leave an orphan preview, so a remaining ghost after `blueprint.drop` is
-not evidence that normal gameplay failed to clear it. The harness defect is still open; exercise
-the real right-click path when the test is about player-visible blueprint clearing.
+**Blueprint cleanup has two parts.** `ExecuteBlueprintDrop` now calls both
+`PlayerDataController.CleanupBlueprintItems` (owned preview entities) and `ClearBlueprint`
+(buffer/native allocations), fixed in `0059658fd` and verified with inspected live two-Mac
+before/after screenshots on 2026-09-10. `ClearBlueprint` alone does not remove ghost entities.
+Use actual right-click when validating the player's input path; `blueprint.drop` is valid for
+harness cleanup. See the linked coordinate/cleanup lesson for the evidence boundary.
+
+**Upgrade input requires a functional selection check.** Open `ui.open|upgrade`, select a real
+From/To pair, click Begin, and drag a visible rectangle. Reopening a panel or seeing it close
+is insufficient: `SwapStructureAction.Start` used to capture a null player controller and
+failed only when selection ran. `6778a03ab` initializes through `StartNewGame` after the base
+assignment; real selection passed join, forced recovery, and reconnect. Repeated empty row
+paths are ambiguous, so select them via observed pointer coordinates. An empty selection
+rectangle proves input lifetime, not successful replacement of an actual structure.
 
 **A nearby asteroid's reported `tile` is its footprint anchor, not its center.**
 `PlaytestStateSnapshot.CaptureNearby` emits `Placeable.GridTile` directly

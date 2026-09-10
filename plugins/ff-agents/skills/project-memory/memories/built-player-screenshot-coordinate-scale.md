@@ -22,13 +22,15 @@ harness provides it. Until then,
 the command also calls `AutomationPointer.MoveTo`; reset the pointer to the intended coordinate
 before clicking.
 
-## Blueprint cleanup caveat
+## Blueprint cleanup requires entities and buffer disposal
 
-`ffauto:blueprint.drop` clears `BlueprintMetaItem` without disposing its entries
-(`LocalMultiplayerAutomationCommandRunner.cs:7808-7820`). The normal player path calls
-`PlayerDataController.ClearBlueprint`, which delegates to `BlueprintTool.DisposeBlueprint`
-(`PlayerDataController.cs:757-761`); that method disposes every entry before clearing the buffer
-(`BlueprintTool.cs:667-676`). The automation shortcut can therefore leave an orphan preview.
+`ExecuteBlueprintDrop` now calls both `PlayerDataController.CleanupBlueprintItems` and
+`ClearBlueprint` (`LocalMultiplayerAutomationCommandRunner.cs:7808-7820`). The former destroys
+owner-scoped live previews; the latter delegates native entry disposal to
+`BlueprintTool.DisposeBlueprint`. Calling only `ClearBlueprint` leaves preview entities alive.
 
-This harness defect is still unfixed. When validating the real player's clear action, use the
-normal right-click input and do not treat a ghost left by `blueprint.drop` as gameplay evidence.
+Fixed in `0059658fd`; the real two-Mac run `live-upgrade-drop-retry011/upgrade` on 2026-09-10
+showed the held two-structure preview and its disappearance after `blueprint.drop`, with both
+screenshots inspected. The regression also verifies foreign-owner and unstamped markers survive.
+The earlier open-defect warning applies to older builds. Use actual right-click when the test
+concerns player input, and use the fixed command for harness cleanup.
