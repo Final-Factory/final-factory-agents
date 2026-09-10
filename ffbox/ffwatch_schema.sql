@@ -142,6 +142,12 @@ CREATE TABLE IF NOT EXISTS conversation (
 CREATE TABLE IF NOT EXISTS message (
     id                      INTEGER PRIMARY KEY,
     conversation_id         INTEGER NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+    -- Discord's message id, and for a GitHub-sourced row the comment's, NAMESPACED. This
+    -- column is UNIQUE and it is the only dedupe the ingest has, so the three GitHub id spaces
+    -- -- issue comments, review comments and reviews -- must not be written into it as bare
+    -- digits: two of them run through the same range of integers, and a collision here is an
+    -- INSERT OR IGNORE that silently drops a comment. A conversation comment stays bare digits,
+    -- an inline comment is 'rc:<id>' and a review body 'rv:<id>'. See github_message_id().
     discord_id              TEXT    NOT NULL UNIQUE,
     direction               TEXT    NOT NULL DEFAULT 'in',   -- in | out
     author_id               TEXT,
@@ -162,7 +168,13 @@ CREATE TABLE IF NOT EXISTS message (
     -- reconsidering it on every pass. NULL means "not declined" and says nothing about whether
     -- a turn was made.
     gate                    TEXT,
-    gate_reason             TEXT
+    gate_reason             TEXT,
+    -- Where a GitHub-sourced message came from and what it was anchored to, as JSON:
+    -- {"kind","path","line","hunk","url","review_id"}, with only `kind` on a row that has no
+    -- diff position. NULL for every Discord message. It is stored rather than re-fetched
+    -- because the prompt is rendered by build_job, which is synchronous and has to work when
+    -- GitHub is down. See design/pr_feedback_design.txt.
+    github_meta             TEXT
 );
 
 -- turn_id IS NULL means "not yet claimed by a turn". The scheduler's unclaimed scan is the

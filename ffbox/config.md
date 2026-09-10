@@ -1191,7 +1191,65 @@ and that they are not one.
 
 The comment selects the run and nothing else: the prompt is built by the harness out of the
 pull request number, the branch, the base and the diff, and carries no text anybody wrote. That
-is what keeps an unfenced container out of reach of a public comment box.
+is what keeps an unfenced container out of reach of a public comment box. The feedback lane
+below is the one place that is not true, and it says how it pays for that.
+
+### Pull request feedback
+
+A comment an operator leaves on an open pull request starts an ffdev run on that pull request's
+branch which makes the changes the comment asks for. Comments in the conversation, comments left
+on a line of the diff, and the body of a submitted review all count.
+`design/pr_feedback_design.txt` is the whole of it.
+
+```jsonc
+"github": { "feedback": true, "feedback_quiet_secs": 120, "feedback_max_comments": 25 }
+```
+
+**Only an operator's comment is ever acted on, and only an operator's comment is ever written
+down.** The table is the same top-level [`operators`](#operators) block the trigger uses, keyed
+on the numeric GitHub user id. A stranger's comment is read, counted against the cursor, and
+dropped: it becomes no message, wears no reaction, and gets no reply. That is what replaces the
+property the `#codereview` lane rests on. A review's prompt carries nobody's words; this one is
+nothing but somebody's words, so the fence moves to the ingest, and the same check is made a
+second time when the prompt is built — a row from an account no longer in the table stops being
+rendered.
+
+**Every comment is acted on, including the ones that ask for nothing.** There is deliberately no
+gate on the content. A haiku one shipped and was removed on 2026-09-10: it was right most of the
+time, and the times it was wrong it dropped a developer's instruction silently, with no 👀 on the
+comment and nothing on the pull request to show it had arrived. The other mistake — a run that
+starts, finds nothing to do, and says so — is visible and cheap by comparison. So "nice, merging
+this" costs a container. The quiet period below is what stops a burst of them costing four.
+
+**A burst of comments is one run.** `feedback_quiet_secs` is how long a batch waits for the next
+comment before it goes: a review submitted through GitHub's own flow publishes its inline
+comments together and batches itself, and somebody typing one at a time does not. The clock is
+the newest comment's, so a comment that lands mid-wait restarts it.
+
+**A comment left while a run is going is queued, not refused.** It becomes the next turn on the
+same conversation, which resumes the same session, so the run that reads it knows what the last
+one did. That is deliberately unlike a second `#codereview`, which is refused: typing the trigger
+twice is asking for a second review, and leaving another comment is not.
+
+**`feedback_max_comments` splits a large review across turns.** Forty comments is an afternoon of
+work and a run handed all forty does six of them badly, so the oldest twenty-five go now and the
+rest ripen again when this turn ends. Nothing is truncated out of a prompt and nothing is claimed
+by a turn that will not read it.
+
+**👀 means the comment will be worked on**, and it goes on as soon as the gate says so — before
+the quiet period, before the queue, and before the run. A comment left on the diff gets it
+through a different endpoint from one in the conversation; the body of a submitted review gets
+none, because GitHub has no reactions endpoint for a review. It stays on afterwards: the reply is
+a comment on the pull request, not a replacement for the mark.
+
+**Nothing is posted back except the run's own answer**, and one refusal: a branch this box cannot
+adopt. A closed pull request, a fork's head and a comment the gate declined are all handled in
+silence.
+
+The pool is [`review_pool`](#codereview) and there is deliberately no `feedback_pool`: a pull
+request is one conversation and a conversation has one agent class, so a second knob could only
+disagree with the first. `poll_secs` is shared too — one worker, four conditional requests, one
+clock.
 
 ### A merged pull request
 

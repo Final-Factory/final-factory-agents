@@ -1,0 +1,371 @@
+Pull request feedback: a review comment starts a fix run
+========================================================
+
+2026-09-09.
+Revision 2, 2026-09-10: the gate is gone. Section 4 was a haiku call deciding whether each
+comment asked for anything, so that "merging this" cost nothing. Lothsahn removed it the day it
+shipped, and section 4 now says why and what it costs instead.
+
+Somebody reviews a pull request the box opened, leaves four comments on the diff and one in the
+conversation, and then waits for a developer to sit down and act on them. This makes the box act
+on them instead. The comments are read out of GitHub, an ffdev run is started on the pull
+request's own branch, it makes the changes it agrees with, commits them onto that branch, and the
+harness posts a comment saying what it did and what it left alone. Nothing merges and nothing new
+is opened, exactly as with `#codereview`.
+
+This is a sibling of `design/github_pr_review_design.txt` and reuses almost all of it: the same
+conversation (`github:pr:<number>`), the same adoption of the pull request's head, the same
+outbound queue, the same reply. Three things are new. It reads two GitHub endpoints nothing has
+read before, it decides with a model whether a comment is asking for anything, and -- the part
+that needs the most care -- it puts text somebody typed in front of an unfenced container, which
+the review lane deliberately never did.
+
+
+1. What gets built
+------------------
+
+  1. Two more reads on the GitHub worker: `GET /repos/{repo}/pulls/comments` for the inline
+     comments left on a diff, and, for open pull requests that have moved, `GET
+     /repos/{repo}/pulls/{n}/reviews` for the summary body somebody types in the "Request
+     changes" box. The conversation comments come from `GET /repos/{repo}/issues/comments`,
+     which `poll_github` already reads for the trigger.
+  3. A quiet period. Comments land as gated message rows and are released as one batch once no
+     new one has arrived for `github.feedback_quiet_secs`, so a review submitted as eight inline
+     comments is one run rather than eight.
+  4. 👀 on every comment the run is going to work on, queued once the gate has said it asks
+     for something and the branch has been adopted.
+  5. A prompt built from the comments: who wrote each one, which file and line it is anchored to,
+     the diff hunk it was left against, and the text verbatim.
+  6. `message.github_meta`, a JSON column on a GitHub-sourced row: which of the three sources
+     it came from, and for an inline comment the file, line, diff hunk and url that nothing else
+     in the table has anywhere to put.
+
+Not a goal: replying in the inline comment's own thread. GitHub has
+`POST /pulls/{n}/comments/{id}/replies` and this does not call it. One comment on the pull
+request conversation is what the review lane posts and it is what this posts, for the same
+reason: a run has one outcome and saying it once is how a reader gets the whole of it.
+
+Not a goal: acting on a comment from anybody who is not an operator. Section 3 is the argument,
+and it is the load-bearing one in this design.
+
+Not a goal: resolving review threads, approving, requesting changes, or merging. The `GitHub`
+client has no method for any of them and gains none here.
+
+
+2. The three places a comment can be
+------------------------------------
+
+GitHub keeps pull request feedback in three places and gives them three different id spaces:
+
+  * **Conversation comments**, at the bottom of the pull request. `GET /issues/comments` for the
+    whole repository, filtered by `since`, which `poll_github` has read once a minute since the
+    trigger shipped. A comment that carries a trigger word is a review request and is handled
+    where it always was; everything else an operator wrote is now feedback.
+  * **Inline comments on the diff**. `GET /pulls/comments` for the whole repository, same
+    `since` filter, same `sort=updated&direction=desc`, same conditional GET on page one. The
+    payload carries `path`, `line`, `diff_hunk`, `html_url` and `pull_request_url`, and the
+    number is parsed out of the last of those the way `_issue_number_from_url` parses the
+    trigger's.
+  * **The review summary**, the text somebody types above their inline comments when they submit
+    a review. There is no repository-wide endpoint for it. So this one is walked: one conditional
+    `GET /pulls?state=open&sort=updated&direction=desc`, and for each open pull request whose
+    `updated_at` has moved past the cursor, one `GET /pulls/{n}/reviews`. On a quiet minute that
+    is a single 304 and nothing else; when somebody is working it is one extra request per pull
+    request they touched.
+
+Three sources, three cursors, all of them the `(since, seen, etag)` file the trigger poller
+already keeps in `state_dir`. `seen` is what makes this idempotent and `since` only bounds how
+far back a re-read has to go to consult it. Like the trigger, each cursor records the moment the
+box started watching and answers nothing older, so turning this on does not answer a year of
+review comments at once.
+
+**The ids are namespaced, and that is not fussiness.** `message.discord_id` is UNIQUE over the
+whole table and it is the only dedupe this pipeline has. Issue comment ids and review comment ids
+come from two independent sequences that occupy the same range of integers, so writing both as
+bare digits means an eventual collision, and a collision here is an `INSERT OR IGNORE` that
+silently drops a comment nobody ever finds out about. An inline comment is stored as
+`rc:<id>`, a review summary as `rv:<id>`, and a conversation comment stays bare digits so that
+nothing about the rows already in the table changes.
+
+That costs two things, both small. Messages are ordered by `CAST(discord_id AS INTEGER)` in ten
+places, and a prefixed id casts to 0, so within one conversation every inline comment would sort
+equal and SQLite would be free to hand them back in any order. Every one of those clauses gains
+`, id` as a tiebreak, which is the insertion order, which is the order the poller read them in. It
+changes nothing for a Discord conversation, where the snowflakes are distinct and already ordered.
+
+And because 0 sorts before a comment id, a conversation holding both kinds hands back every
+comment left on the diff ahead of every comment left in the conversation, whenever each arrived.
+That is fine for the record and wrong for the prompt, where "and the same in the other file" has
+to follow the comment it is about, so the renderer sorts the comments it was given by GitHub's own
+timestamp. Ordering the table itself by a timestamp would mean a different query for one kind of
+conversation, which is a worse trade than one sort in the one place that needs it.
+
+
+3. Whose words reach the container
+----------------------------------
+
+`design/github_pr_review_design.txt` section 4 closes with:
+
+    A stranger commenting on the pull request cannot reach a container, so there is nothing to
+    demote. If that ever stops being true -- if somebody adds free text after `#codereview` and
+    passes it through -- the demotion rule comes back with it. The property is the absence of a
+    channel, not a filter on one.
+
+This design is that change. The channel now exists: a comment's text is the whole point of the
+run, and the container it reaches is ffdev, which has the whole internet and a git credential in
+it. So the property has to be rebuilt out of something else, and there are two halves to it.
+
+**At ingest, only an operator's comment is written down.** `is_github_operator` against the
+numeric GitHub user id, the same table and the same lookup the trigger uses. A comment from
+anybody else is recorded against the cursor and never becomes a message row -- not gated, not
+stored, not counted. `demote_for_stranger` exists in the Discord path because a thread carries
+everybody's messages whether the harness likes it or not; here the harness chooses what to write
+down, so the equivalent is refusing to write it.
+
+**At render, only an operator's comment is put in the prompt.** `render_feedback_prompt` looks
+each message's `author_id` up in `github_operators(cfg)` again and drops any that misses. This is
+deliberately the same check twice, in two places, on two occasions -- and the second one is the
+one that actually matters, because it is a fact about the moment the text becomes a prompt rather
+than about the moment it arrived. A row written by some future ingress that forgets the rule
+still cannot reach the model. An account taken out of the operator table stops being able to
+speak to a container through comments it left last week.
+
+Two smaller things fall out of the same reasoning:
+
+  * **A reply to an inline comment is not quoted.** GitHub gives an inline comment
+    `in_reply_to_id`, and pulling the parent in would read well -- and would put a stranger's
+    text in the prompt through an operator's reply to it. The parent is not fetched.
+  * **The head must still be a branch in this repository**, not a fork's. Same check the trigger
+    makes, same reason: creating a branch here takes push access, so the diff the run reads was
+    written by somebody who has it.
+
+What this does NOT try to do is make the text safe. It is not filtered, not fenced, not framed as
+untrusted input. An operator's comment is an instruction, exactly as their Discord DM is
+(`DIRECT_KINDS` already contains `github_pr`), and the container acts on it. The whole protection
+is that the set of people who can put a sentence in there is the set of people who can already
+type into `ffbox` at a shell on this machine.
+
+
+4. Every comment is acted on
+-----------------------------
+
+Revision 1 put a haiku gate here. It read each new comment and answered whether it asked for
+anything, so that "merging this", "yes, that was the bug" and "nice" cost nothing; a false answer
+was a comment recorded with the gate's reason beside it and no run. It shipped and was removed the
+same day, and this section is what replaced it, because the reasoning is worth more than the code
+was.
+
+The gate's two mistakes are not the same size. A comment wrongly read as chatter is an
+instruction from the person the box works for, dropped -- silently, with no 👀 on the comment and
+nothing on the pull request to say it ever arrived. The person who wrote it finds out by noticing
+that nothing happened, which is the failure nobody sees. A comment wrongly read as a request is a
+container, an hour, and a comment on the pull request saying the run found nothing to do. That one
+is visible, cheap by comparison, and self-announcing.
+
+A gate that is right nine times in ten still makes the invisible mistake once in ten. So there is
+no gate on the content: every comment an operator leaves is written down, marked, and worked.
+
+**The operator check is not this gate and did not go with it.** Section 3 is a fence -- who may
+put a sentence in front of an unfenced container -- and it is the thing that makes the lane safe.
+This section was about cost. Removing a cost control is a decision somebody gets to make; removing
+the fence would be a different design.
+
+What the removal costs, stated plainly so nobody has to rediscover it: a pull request where four
+people say "nice" gets four runs, each of which starts a container, reads the branch, finds
+nothing to do, and says so on the pull request. The quiet period (section 5) collapses a burst
+into one of those, and `feedback_max_comments` bounds it, but a comment left an hour after the
+last one is its own run whatever it says.
+
+
+5. The quiet period, and what a comment mid-run gets
+----------------------------------------------------
+
+A review submitted through GitHub's own review flow publishes all its inline comments at once, so
+they arrive in one poll and batch themselves. Somebody typing comments one at a time over four
+minutes does not. So a feedback comment's message row is born gated, with
+`FEEDBACK_WAITING_GATE`, and a release step at the end of each poll lifts the gate on every batch
+that has a branch on its conversation and whose newest comment is older than
+`github.feedback_quiet_secs` (120 by default). Newest is read off the message row's `created_at`,
+which is GitHub's own stamp for the comment rather than the moment the poll saw it.
+
+Born gated for the reason the trigger's row is: `claim_turns` runs on the daemon's loop and the
+poller runs on its own worker, so a row that is ungated for even a moment is a row the loop can
+build a turn out of. Here that moment would be the whole quiet period.
+
+The gate is what the debounce is made of, and it also does the second job for free. Once released,
+the messages are ordinary pending messages: `claim_turns` picks them up on the next tick if the
+conversation is idle, and leaves them alone if a run is in flight, which is exactly the
+queue-behind-the-running-turn behaviour a burst of Discord follow-ups already gets. A comment
+left while the run it is about is still going becomes the next turn on the same conversation, and
+that turn resumes the same session, so the run that reads it knows what the previous one did.
+
+That is deliberately different from what a second `#codereview` gets, which is a refusal. Typing
+the trigger twice means somebody asked for a second review and cannot see that the first is
+running. Leaving another comment does not mean that: they are annotating a diff, and the box
+should collect what they wrote and act on it when it can.
+
+**The subscription hold is applied at release, not at ingest.** The trigger poller holds a
+comment in the cursor when the Claude window is spent (`review_held`), because for the trigger
+there is nothing between reading the comment and starting an hour-long run. Here there is: the
+comment can be read, gated, marked and left, all for free, and the release step is the moment
+something expensive is about to happen. So `release_feedback` asks `claude_hold("review",
+fresh=True)` and leaves the batch gated when the answer is no, logging it once through
+`log_hold`. Nothing is lost and nothing is re-read; the batch goes when the window refills.
+
+
+6. The 👀
+---------
+
+The trigger's acknowledgement is queued at `create_turn` and goes out with the next send pass,
+because `create_turn` is the moment the box decides to answer. Here the decision is earlier: the
+gate has said the comment asks for something and the branch has been adopted, and the run itself
+may be a quiet period and a queue away. So the mark goes on at ingest, one `mark_working` call per
+comment. That is the same method the Discord path uses to get a mark in front of a slow decision,
+and it does two things: it queues the outbound row and it sends that row itself, through
+`_send_row` -- so the kill switch, dry run, approval queue, backoff and send ceilings all still
+apply, and the reviewer sees the 👀 within the poll rather than within the poll after it.
+
+`ack_payload` gains the endpoint, because GitHub has two: an inline comment's reactions are at
+`/pulls/comments/{id}/reactions` and a conversation comment's at `/issues/comments/{id}/reactions`.
+The namespaced id says which, so nothing has to be carried alongside.
+
+**A review summary cannot wear one.** GitHub's reactions API covers issues, issue comments,
+review comments, commit comments and releases. It does not cover reviews. So a review whose body
+asks for something and which carries no inline comments is acknowledged only by the run's own
+comment at the end. `ack_payload` answers None for an `rv:` id and both of its callers check,
+rather than the send path discovering it at the wire.
+
+The mark stays on. `clear_ack` already does nothing for a GitHub row -- it needs `payload
+["message"]`, which a GitHub payload does not have -- so the trigger's 👀 has always stayed after
+its run ended, and this behaves the same way. On Discord the mark means "a run is in flight" and
+is taken off because the reply replaces it. Here it means "this was picked up", it is the only
+mark a comment ever gets, and the reply is a separate comment somewhere else on the page.
+
+
+7. The prompt
+-------------
+
+`render_feedback_prompt`, built from the pull request's facts and the comments themselves:
+
+  - the pull request number, its branch, its base, and the three-dot range that is the change
+    under review -- the same wording `render_review_prompt` uses, and for the same reason: a
+    two-dot diff on a branch that trails master reads the base's commits as this branch's
+    reverts.
+  - each comment, numbered, with who wrote it, where it is anchored (`Assets/.../Foo.cs:412`,
+    or "on the pull request" for a conversation comment), the tail of its `diff_hunk` when it has
+    one, its url, and its text verbatim.
+  - what to do: read the branch first, work out what each comment is asking for, make the changes
+    you agree with, one commit per comment where they are separable, and say in the verdict what
+    you did not do and why.
+
+The instruction to disagree is worth having in writing. A reviewer's comment can be wrong, or can
+be a question rather than a request, and a run that silently makes a change it does not believe in
+produces a diff the reviewer then has to review again. Saying "I did not do 3, because X" in the
+comment the harness posts is a result.
+
+A line anchor can be stale by the time the run reads it: the branch may have moved since the
+comment was left. The hunk is in the prompt so the agent can find what the comment was about when
+the line number no longer points at it, and the prompt says so rather than leaving the agent to
+work out why it is being shown both.
+
+**A batch can hold both kinds of message.** Somebody can type `#codereview` in the conversation
+while inline comments are sitting in the quiet period, and `create_turn` claims every ungated
+pending message. So the renderer looks at what is in the turn: trigger messages get the review
+instruction, feedback messages get the section above, and a turn holding both gets both, in that
+order. Neither kind can be silently swallowed by the other, which is what would happen if the
+prompt were chosen by a single flag on the conversation.
+
+A `github_pr` turn holding neither -- a conversation whose rows were written before this
+existed -- falls back to the review prompt, so nothing already in the database changes what it
+does.
+
+Which kind a row is comes off `message.routed_by`, written at ingest as `github_trigger` or
+`github_feedback`. It is already the column that records which rule filed a message, and neither
+value is `recent`, which is what keeps the conversation selector out of a GitHub conversation --
+`select_for_turn` returns immediately unless something in the batch is routed `recent`.
+
+
+8. Saying something back
+------------------------
+
+Nothing new. `record_reply` already sends a `github_pr` conversation's answer to the pull request
+as a comment composed by `compose_head` out of the run's structured verdict, and a feedback run
+is a run like any other: what it changed, whether verification passed, whether the commits
+reached the branch, and the run id.
+
+A comment is posted whatever the run concluded, including "none of these needed a change". The
+person who left the comments is waiting on an answer and silence is not one.
+
+**What is not said is a refusal.** A comment the gate declined gets nothing at all -- no reply, no
+mark. Posting "I decided this was not a request" under every "thanks" would be worse than useless.
+The decision is in the message row's `gate_reason`, where the web page and a later reader can see
+it. The one refusal that is posted is a branch this box cannot adopt: `adopt_branch`'s reasons are
+sentences written to be posted, and by that point the gate has said somebody is asking for
+something and the 👀 has not gone on, so silence would leave them waiting for a run that is never
+coming.
+
+
+9. Config
+---------
+
+Under `github`, three keys:
+
+```jsonc
+"github": {
+  "feedback": true,
+  "feedback_quiet_secs": 120,
+  "feedback_max_comments": 25
+}
+```
+
+`feedback` false turns off all of it: the two new reads, the gate, the release step. The
+`operators` block gates it as well -- an empty one means nobody can start a run and no request is
+spent finding that out, the same early return `poll_github` already makes.
+
+`feedback_max_comments` bounds one turn, and it bounds it at the RELEASE rather than in the
+prompt. Somebody who leaves forty comments on one review has written an afternoon of work, and a
+prompt carrying all forty produces a run that does six of them badly. So the release lifts the
+gate on the oldest `feedback_max_comments` and leaves the rest gated, which makes them the next
+batch: they ripen again the moment this turn ends, on the same conversation, resuming the same
+session. Nothing is truncated and nothing is dropped -- the work is split across turns, which is
+what a person would do with it.
+
+There is deliberately no `feedback_pool`. A pull request has one conversation and a conversation
+has one `agent_class`, so a second knob could only ever disagree with `review_pool`. The class is
+whatever `review_pool` says, which ships as ffdev, and it has to be an unfenced one for the same
+reason a review does: a fenced container has no push credential and cannot do the job.
+
+`poll_secs` is shared, like the merge poller's. One worker, one clock, four reads.
+
+
+10. What this costs when nothing is happening
+---------------------------------------------
+
+Per poll, on a repository where nobody has commented since the last one: four conditional GETs,
+of which two are already spent today -- `/issues/comments` for the trigger and `/pulls?state=closed`
+for the merge notice. The two this adds are `/pulls/comments` and `/pulls?state=open`. All four
+answer 304, which does not count against the hourly 5000, on a 60-second clock. The release step is a
+SQL query over gated rows and, only when it finds a ripe batch, one usage read.
+
+No model call happens at all: the only model in this lane is the run itself.
+
+
+11. Open questions
+------------------
+
+  - Is "a run per comment" going to be annoying enough to want something back? Not a gate --
+    see section 4 -- but perhaps a quiet period long enough that a conversation settles before
+    anything starts, or a rule that a comment whose whole text is a reaction to another comment
+    joins the batch rather than making one. Wait until it is a real complaint rather than a
+    predicted one.
+  - Should a feedback run be allowed on a pull request this box did not open? Nothing in this
+    design distinguishes them, and the in-repo head requirement is what actually bounds it. It is
+    written down because "the box now edits branches humans wrote" is worth someone deciding on
+    purpose rather than discovering.
+  - Should the run resolve the review threads it acted on? It would read well on the pull request
+    page and it needs `PATCH`/`PUT` methods the client does not have. Resolving a thread is a
+    claim that the comment is dealt with, and the run is not the right judge of that.
+  - `feedback_max_comments` splits a large review across turns silently. The alternative is to
+    say so on the pull request -- "twenty-five of forty this time" -- which is one more comment
+    for the reviewer to read and one more thing to get right. Twenty-five is a guess and should
+    be revisited the first time somebody hits it.
