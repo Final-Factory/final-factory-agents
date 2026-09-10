@@ -332,14 +332,28 @@ kill switch, retried with backoff, invisible in a dry run -- and it is keyed per
 replayed finish pass queues nothing and one thread failing does not take the others with it.
 A thread somebody already resolved by hand is a success, not a conflict.
 
-**The credential is the open end of this.** Measured against `GH_PR_TOKEN` on 2026-09-10, on
-pull request 512: the token reads the thread, posts comments and places reactions, and the
-mutation answers `FORBIDDEN: Resource not accessible by personal access token`. A fine-grained
-token needs Pull requests: Read and write to close a thread, and this one has less. So the code
-is live and the capability is not, until somebody widens the token in GitHub's settings. The
-failure is the safe one -- the fix still lands, the run still says what it did, and the thread
-stays open for a person to close -- and the refusal is turned into a sentence naming the
-permission, so the outbound row says what to change rather than that something went wrong.
+**The credential is the open end of this, and it is not a permission.** Measured against
+`GH_PR_TOKEN` on 2026-09-10, on pull request 512: the token reads the thread over GraphQL, posts
+comments, places reactions, and the mutation answers `FORBIDDEN: Resource not accessible by
+personal access token`. The first guess was that it needed Pull requests: Read and write. It
+already has that -- `POST /pulls/comments/{id}/reactions` accepts exactly `pull_requests=write`
+and answers 200 for this token -- so there is no checkbox to tick. A fine-grained PAT cannot run
+`resolveReviewThread`, and no permission on it changes that.
+
+**The workaround is worse than the problem it solves.** A classic token with `repo` runs the
+mutation, and `repo` also carries `contents=write`. That is the permission the MERGE endpoint
+accepts -- `PUT /pulls/{n}/merge` answers `X-Accepted-Github-Permissions: contents=write`, not
+`pull_requests=write`, which is worth writing down because the names suggest otherwise. This
+token does not have it: `POST /repos/{repo}/merges` answers 403, so the credential cannot merge a
+pull request and cannot push code, exactly as `CREDENTIALS.md` says it was set up not to. Trading
+that away to close a comment thread would be a bad exchange, and it would put the merge
+capability on the box for the first time -- next to a client that deliberately has no method for
+it. A GitHub App installation token is the way to have one without the other.
+
+So the code is live and the capability is not. The failure is the safe one: the fix still lands,
+the run still says what it did, and the thread stays open for a person to close. The refusal is
+turned into a sentence saying it is the token TYPE and not its permissions, so nobody spends an
+afternoon in the settings page looking for the box that would have fixed it.
 
 **What is not said is a refusal.** A comment the gate declined gets nothing at all -- no reply, no
 mark. Posting "I decided this was not a request" under every "thanks" would be worse than useless.

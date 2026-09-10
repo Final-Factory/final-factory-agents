@@ -319,16 +319,34 @@ the comment's thread should close.
   only the named diff comment is queued, the thread the run argued against stays open, a replay
   queues nothing, an invented id resolves nothing, and `record_reply` is the call site. The mock
   grew a `/graphql` route and `GH_STATE["threads"]`.
-- **J9 (S). BLOCKED ON THE TOKEN.** Run live against pull request 512 on 2026-09-10, whose
-  comment had just been fixed and pushed. `review_threads` answered correctly --
-  `{"3972318844": ("PRRT_kwDOJSvcWs6gzn5c", False)}` -- and `resolveReviewThread` came back
-  `FORBIDDEN: Resource not accessible by personal access token`. The same `GH_PR_TOKEN` reads
-  the thread and places reactions, so this is one permission and not a broken path: a
-  fine-grained PAT needs **Pull requests: Read and write** for the mutation. Nothing else is
-  waiting on it -- the fix still lands, the run still comments, and the thread stays open, which
-  is the safe direction. `resolve_review_thread` now turns that particular refusal into a
-  sentence naming the permission, so the outbound row's `last_error` says what to change.
-  **Re-run this the moment the token is widened.**
+- **J9 (S). BLOCKED ON THE TOKEN TYPE, not on a permission.** Run live against pull request 512
+  on 2026-09-10, whose comment had just been fixed and pushed. `review_threads` answered
+  correctly -- `{"3972318844": ("PRRT_kwDOJSvcWs6gzn5c", False)}` -- and `resolveReviewThread`
+  came back `FORBIDDEN: Resource not accessible by personal access token`.
+
+  The first write-up of this said the fix was to widen `GH_PR_TOKEN` to Pull requests: Read and
+  write. **That was wrong and is corrected here.** Measured the same day, by reading
+  `X-Accepted-Github-Permissions` off live responses:
+
+  | probe | accepted permission | result |
+  | --- | --- | --- |
+  | `GET /pulls/512` | `pull_requests=read; contents=read` | 200 |
+  | `POST /pulls/comments/{id}/reactions` | `pull_requests=write` | 200 |
+  | `PUT /pulls/{n}/merge` (nonexistent repo) | `contents=write` | 404 |
+  | `POST /repos/{repo}/merges` (nonexistent branches) | `contents=write` | **403** |
+
+  So the token already holds `pull_requests=write`, which is why there is nothing to widen; and
+  it does not hold `contents=write`, which is why it cannot merge a pull request or push code.
+  It is a fine-grained PAT, and a fine-grained PAT cannot run this mutation at any permission
+  level.
+
+  **The workaround is the trap.** A classic token with `repo` runs it and also carries
+  `contents=write` -- the merge permission. Buying thread-resolution that way would put the
+  ability to merge and to push on this box for the first time, to close a comment. A GitHub App
+  installation token is the way to have the mutation without the rest. Until somebody wants to
+  set one up, the lane runs with `resolve_threads` on and every resolve failing safe: the fix
+  lands, the run comments, the thread stays open for a person. **Re-run this against a real
+  thread the day an App token exists.**
 
 ## I. Live verification
 
