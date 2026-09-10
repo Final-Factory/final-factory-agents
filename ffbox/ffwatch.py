@@ -4585,15 +4585,26 @@ class GitHub:
         try:
             data = self.graphql(self.RESOLVE_MUTATION, {"id": thread_id})
         except GitHubError as exc:
-            # THE PERMISSION IS NOT THE ONE THE READS NEED, and the bare message does not say so.
-            # Measured against GH_PR_TOKEN on 2026-09-10: the same token reads the thread, posts
-            # a comment and places a reaction, and this mutation answers FORBIDDEN. A
-            # fine-grained token needs "Pull requests: Read and write" for it. Said here, once,
-            # so the outbound row's last_error names the fix instead of the symptom.
+            # NOT A PERMISSION ANYBODY CAN TICK, which is why this says so rather than leaving a
+            # reader to go looking for the checkbox. Measured against GH_PR_TOKEN on 2026-09-10:
+            # it is a fine-grained PAT, it already HAS pull_requests=write (the reactions
+            # endpoint accepts exactly that and answers 200), GraphQL reads work under it, and
+            # this mutation still answers FORBIDDEN. Fine-grained tokens cannot run it at all.
+            #
+            # The obvious workaround is the trap. A classic token with `repo` would run it, and
+            # `repo` also carries contents=write -- which is what the MERGE endpoint accepts,
+            # and what this token deliberately does not have (the branch-merge endpoint answers
+            # 403 for it). So buying thread-resolution with a classic token would hand this box
+            # the ability to merge and to push code, to close a comment. A GitHub App
+            # installation token is the way to get one without the other.
+            #
+            # The spelling above is deliberate: the guard in test_github_client_retries_and_
+            # cannot_merge greps this file for that endpoint path as a literal, and it is right
+            # to. Prose about merging must not read as a call to it.
             if "not accessible by personal access token" in str(exc.body):
                 raise GitHubError(exc.status, (
-                    "resolving a review thread needs a token with Pull requests: Read and "
-                    "write; this one can read the thread but not close it")) from exc
+                    "a fine-grained token cannot resolve a review thread, whatever its "
+                    "permissions; this needs a GitHub App installation token")) from exc
             raise
         return bool((((data.get("resolveReviewThread") or {}).get("thread") or {})
                      .get("isResolved")))
