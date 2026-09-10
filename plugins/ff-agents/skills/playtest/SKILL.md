@@ -153,6 +153,20 @@ for the full gate and Windows interactive-launch cleanup rules.
    — D4). An action a human would see fail must be visible there; if it ISN'T, that's an
    FR-008 bug in its own right.
 
+**Allow the real inventory UI to settle between steps.** Without bounded render waits between
+opening the inventory, resolving its current slot, placing the pointer, clicking, closing, and the
+next pointer placement, the observed slot was stale or the click did nothing. Pump or wait between
+those steps and verify the result before continuing; do not assume a same-frame chain exercised the
+interaction.
+
+**A nearby asteroid's reported `tile` is its footprint anchor, not its center.**
+`PlaytestStateSnapshot.CaptureNearby` emits `Placeable.GridTile` directly
+(`Assets/Scripts/Behaviours/Multiplayer/PlaytestStateSnapshot.cs:354-364`), while `Placeable`
+derives its center from that lower-left anchor and its width/length
+(`Assets/Scripts/FFComponents/Core/PlaceableAuthoring.cs:191-207`). Resolve the asteroid footprint
+before choosing a miner placement tile; treating the snapshot tile as the center can put the miner
+on the asteroid or on the wrong edge.
+
 ## Screenshots — two channels, be honest about which (F3)
 
 Journal a marker FIRST (`ffauto:observe.screenshot|<note>|world` or `|ui`), then capture on

@@ -558,6 +558,15 @@ A completion notification alone is insufficient for long silent phases. A single
 the underlying log's last meaningful line. Silence must not be able to mean that the process
 crashed.
 
+**A timed-out synchronous `execute_code` build may still be running.** After one long call timed
+out, repeated build invocations and completion markers were observed; the mechanism was not proven.
+Do not assume the timeout cancelled the work. Schedule the build once from an
+`EditorApplication.update` callback instead. The callback must remove its own delegate before
+starting the build, and task-owned persistent `scheduled` and `started` guards must make a second
+submission a no-op. After a timeout, inspect those guards, the existing job state, and the build
+output or result marker before deciding what happened. The guarded follow-up completed once with
+`BuildOptions.None` and zero errors, with no repeated completion marker observed.
+
 ## Building
 
 Unity Editor menu `Build > Build and Upload All` (requires Steamworks SDK).
