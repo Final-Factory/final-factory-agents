@@ -4436,7 +4436,11 @@ GH_STATE = {"next_number": 41, "pulls": [], "requests": [], "fail_next": [],
             # and `reviews` what /pulls/<n>/reviews serves. `review_reactions` is kept apart
             # from `reactions` because the two are different endpoints and a test that cannot
             # tell them apart would pass with the mark on the wrong one.
-            "review_comments": [], "reviews": [], "review_reactions": []}
+            "review_comments": [], "reviews": [], "review_reactions": [],
+            # Review THREADS, which only GraphQL can see or close: {comment id: resolved}. The
+            # mock keys them on the comment because that is what the harness has in hand, and
+            # `resolved` records what was actually closed so a test can assert it happened once.
+            "threads": {}, "resolved": []}
 GH_SERVER = {"base": None}
 
 
@@ -4584,6 +4588,26 @@ class MockGitHub(BaseHTTPRequestHandler):
         return self._send(200, [p for p in GH_STATE["pulls"]
                                 if p["_head"] == head and want in ("all", p["state"])])
 
+    def _graphql(self, body):
+        """Enough of the GraphQL API to answer the two calls the resolve path makes."""
+        query = body.get("query") or ""
+        variables = body.get("variables") or {}
+        if "reviewThreads" in query:
+            nodes = [{"id": f"PRRT_{cid}", "isResolved": resolved,
+                      "comments": {"nodes": [{"databaseId": int(cid)}]}}
+                     for cid, resolved in GH_STATE["threads"].items()]
+            return self._send(200, {"data": {"repository": {"pullRequest": {
+                "reviewThreads": {"nodes": nodes}}}}})
+        if "resolveReviewThread" in query:
+            cid = str(variables.get("id") or "").replace("PRRT_", "")
+            if cid not in GH_STATE["threads"]:
+                return self._send(200, {"errors": [{"message": "Could not resolve to a node"}]})
+            GH_STATE["threads"][cid] = True
+            GH_STATE["resolved"].append(int(cid))
+            return self._send(200, {"data": {"resolveReviewThread": {
+                "thread": {"id": f"PRRT_{cid}", "isResolved": True}}}})
+        return self._send(200, {"errors": [{"message": "unknown query"}]})
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
@@ -4593,6 +4617,8 @@ class MockGitHub(BaseHTTPRequestHandler):
         if GH_STATE["fail_next"]:
             return self._send(GH_STATE["fail_next"].pop(0),
                               {"message": "You have exceeded a secondary rate limit"})
+        if self.path == "/graphql":
+            return self._graphql(body)
         made = re.match(r"^/repos/Final-Factory/FinalFactory/issues/(\d+)/comments$", self.path)
         if made:
             GH_STATE["posted"].append((int(made.group(1)), body.get("body") or ""))
@@ -5541,6 +5567,16 @@ def test_github_client_retries_and_cannot_merge():
     source = open(os.path.join(HERE, "ffwatch.py"), encoding="utf-8").read()
     check("and nothing in ffwatch calls the merge endpoint",
           "/merge" not in source and "put_merge" not in source)
+    # NOR APPROVES. A review is a person's judgement of somebody's work and this box does not
+    # get one, which is the same argument as the merge: the capability is absent, not withheld.
+    check("and it cannot approve a pull request either",
+          not any("approve" in n.lower() for n in names), names)
+    # RESOLVING IS PRESENT, DELIBERATELY, and is not a third member of that set. It says a
+    # comment has been dealt with -- a claim about a conversation, undone by one click -- and it
+    # is made only where the run said it acted and the commits reached the branch. Pinned here
+    # so the difference is written down next to the two absences it is NOT.
+    check("but it can resolve a review thread, which is a different kind of claim",
+          "resolve_review_thread" in names, names)
 
 
 def test_verification_results_path_is_per_invocation():
@@ -13097,6 +13133,9 @@ def a_review_comment(cid, number, body, *, path="Assets/Scripts/Belt.cs", line=4
                      author=10092359, login="Lothsahn", stamp="2026-09-06T12:00:00Z",
                      hunk="@@ -410,3 +410,4 @@\n     var buf = new int[64];"):
     """A comment left ON THE DIFF, as /pulls/comments serves one."""
+    # EVERY COMMENT ON A DIFF HAS A THREAD, so seeding one is not a fixture convenience --
+    # it is what GitHub is actually like, and the resolve path reads it.
+    GH_STATE["threads"][str(cid)] = False
     GH_STATE["review_comments"].append({
         "id": cid, "body": body, "updated_at": stamp,
         "user": {"id": author, "login": login},
@@ -13123,9 +13162,9 @@ def feedback_cfg(case, *, quiet=0, cap=25, **kw):
     """
     review_cfg(case, **kw)
     case.watcher.cfg["github"].update({"feedback": True, "feedback_quiet_secs": quiet,
-                                       "feedback_max_comments": cap})
+                                       "feedback_max_comments": cap, "resolve_threads": True})
     GH_STATE["review_comments"], GH_STATE["reviews"] = [], []
-    GH_STATE["review_reactions"] = []
+    GH_STATE["review_reactions"], GH_STATE["threads"], GH_STATE["resolved"] = [], {}, []
     for path in (case.watcher.review_comment_cursor_path,
                  case.watcher.review_summary_cursor_path):
         case.watcher._write_cursor(path, "2000-01-01T00:00:00Z", [], None, [])
@@ -13285,6 +13324,69 @@ def test_every_comment_an_operator_leaves_is_acted_on():
     check("no classifier prompt was written, because nothing asked one",
           not os.path.exists(os.path.join(case.root, "classifier_prompt.txt")),
           os.listdir(case.root))
+
+
+def test_a_comment_the_run_addressed_is_resolved_once_the_fix_is_on_the_branch():
+    """Resolving is a claim a reviewer stops looking at, so it takes two facts, not one."""
+    print("feedback: resolving what was addressed")
+    case = Case("prfeedbackresolve")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    feedback_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+    a_review_comment(6601, 41, "this allocates every frame")
+    a_review_comment(6602, 41, "and the name here is backwards", line=88)
+    a_comment(6603, 41, "the empty case needs a test too")
+
+    poll_feedback(case)
+    created = case.watcher.claim_turns()
+    conv = case.rows("SELECT * FROM conversation WHERE kind='github_pr'")[0]
+    turn = case.rows("SELECT * FROM turn WHERE id=?", (created[0],))[0]
+    job = case.watcher.build_job(turn, conv, "r1", case.root)
+    review = case.watcher.review_facts(conv)
+    check("the prompt gives each comment the id it has to hand back",
+          "[rc:6601]" in job["prompt"] and "[rc:6602]" in job["prompt"], job["prompt"][:900])
+
+    # THE RUN SAYS IT DID ONE OF THE THREE. The other diff comment it argued against, and the
+    # conversation comment has no thread to close.
+    verdict = {"summary": "fixed the allocation", "addressed": ["rc:6601", "6603"]}
+    pushed = {"branch": "loth/pr-branch"}
+
+    # NOTHING ON THE BRANCH MEANS NOTHING TO RESOLVE, whatever the run believes it did.
+    check("a run that published nothing resolves nothing",
+          case.watcher.resolve_addressed(None, conv, review, job, verdict, {}) == 0,
+          case.rows("SELECT * FROM outbound WHERE action='resolve'"))
+
+    queued = case.watcher.resolve_addressed(None, conv, review, job, verdict, pushed)
+    check("only the diff comment it named is queued", queued == 1, queued)
+    row = case.rows("SELECT * FROM outbound WHERE action='resolve'")
+    check("as one outbound row, like everything else this box does to GitHub",
+          len(row) == 1 and json.loads(row[0]["payload_json"])["pr_comment"] == "6601",
+          [dict(r) for r in row])
+
+    case.watcher.send_pending()
+    check("and GitHub is told, through the only API that can be",
+          GH_STATE["resolved"] == [6601], GH_STATE["resolved"])
+    check("the thread it argued against is left open",
+          GH_STATE["threads"]["6602"] is False, GH_STATE["threads"])
+
+    # A REPLAYED FINISH PASS MUST NOT QUEUE A SECOND ONE.
+    check("resolving is queued once per comment",
+          case.watcher.resolve_addressed(None, conv, review, job, verdict, pushed) == 0,
+          case.rows("SELECT * FROM outbound WHERE action='resolve'"))
+
+    # AND THE RUN CANNOT NAME A COMMENT THAT WAS NOT IN FRONT OF IT. `addressed` is model
+    # output; the turn's own messages are the harness's.
+    invented = {"summary": "", "addressed": ["rc:999999", "../../etc/passwd", ""]}
+    check("a comment this turn never held is not resolvable",
+          case.watcher.resolve_addressed(None, conv, review, job, invented, pushed) == 0,
+          case.rows("SELECT * FROM outbound WHERE action='resolve'"))
+
+    # THE CALL SITE. The two facts it rests on -- what the run said and what actually got
+    # pushed -- are both only in hand inside record_reply, so that is where it has to be.
+    reply = inspect.getsource(ffwatch.Watcher.record_reply)
+    check("record_reply is what queues it, off the same publish facts the reply is composed from",
+          "resolve_addressed" in reply and "publish_facts" in reply, reply[-800:])
 
 
 def test_a_burst_of_comments_is_one_turn_and_the_clock_restarts():
@@ -17316,6 +17418,7 @@ def main():
         test_comments_on_a_pull_request_start_a_run_that_acts_on_them,
         test_only_an_operators_comment_reaches_a_container,
         test_every_comment_an_operator_leaves_is_acted_on,
+        test_a_comment_the_run_addressed_is_resolved_once_the_fix_is_on_the_branch,
         test_a_burst_of_comments_is_one_turn_and_the_clock_restarts,
         test_a_comment_left_during_a_run_is_queued_and_never_refused,
         test_a_review_body_starts_a_run_and_wears_no_mark,

@@ -1202,7 +1202,8 @@ on a line of the diff, and the body of a submitted review all count.
 `design/pr_feedback_design.txt` is the whole of it.
 
 ```jsonc
-"github": { "feedback": true, "feedback_quiet_secs": 120, "feedback_max_comments": 25 }
+"github": { "feedback": true, "feedback_quiet_secs": 120, "feedback_max_comments": 25,
+            "resolve_threads": true }
 ```
 
 **Only an operator's comment is ever acted on, and only an operator's comment is ever written
@@ -1241,6 +1242,15 @@ the quiet period, before the queue, and before the run. A comment left on the di
 through a different endpoint from one in the conversation; the body of a submitted review gets
 none, because GitHub has no reactions endpoint for a review. It stays on afterwards: the reply is
 a comment on the pull request, not a replacement for the mark.
+
+**A comment whose fix landed gets its thread resolved.** Two things have to be true: the run
+named that comment as one it acted on, and its commits actually reached the branch. A comment the
+run argued against stays open, and so does one it only answered in prose — resolving is a claim
+that a reviewer stops looking, so it is made only where the work is on the branch behind it. Only
+a comment left on the diff has a thread; one in the conversation and the body of a review are
+answered by the run's own comment instead. `resolve_threads` false leaves them all open, which
+costs nothing but clicking. This is the one thing here GitHub has no REST endpoint for, so it is
+also the only reason the client speaks GraphQL at all.
 
 **Nothing is posted back except the run's own answer**, and one refusal: a branch this box cannot
 adopt. A closed pull request, a fork's head and a comment the gate declined are all handled in

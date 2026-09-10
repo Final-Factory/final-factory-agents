@@ -101,9 +101,11 @@ What implementation changed, beyond the design:
   `/repos/{repo}/pulls/comments/{id}/reactions` instead of `/issues/comments/{id}/reactions`.
   Keep it best-effort and keep the WARNING log -- a mark that cannot be placed must never cost
   the run it acknowledges.
-- **C5 (S). DONE.** Still no merge, approve, resolve or reply method. The existing test asserts the
-  string `merge` appears in no method name on the class; extend it to `approve` and `resolve`
-  while it is open.
+- **C5 (S). DONE, then partly reversed 2026-09-10.** No merge and no approve method: the test
+  asserts `merge` appears in no method name, and now that `approve` does not either. `resolve` was
+  going to join them and did not — see J below. Resolving a thread is a claim about a
+  conversation, not a change to the code or to whether it lands, and the two absences are about
+  the latter.
 
 ## D. Ids, cursors and the pollers
 
@@ -283,6 +285,50 @@ All in `test_ffwatch.py`, beside the `#codereview` block, using its `Case`, `git
   nothing.
 - **H15 (S). DONE.** The release cap: with `feedback_max_comments` set to 2 and three ripe comments, the
   turn carries two and the third is still gated; it becomes the next turn once the first ends.
+
+## J. Resolving what was addressed (2026-09-10)
+
+Design section 8. Added after the lane shipped, on Lothsahn's ask: once the fix is on the branch,
+the comment's thread should close.
+
+- **J1 (S). DONE.** `GitHub.graphql()`, and the two callers that need it. Resolving has no REST
+  endpoint — `resolveReviewThread` is a mutation and that is the only way in. A GraphQL error is
+  an HTTP 200 with an `errors` array, so it is raised as a `GitHubError` here or a failure reads
+  as an answer.
+- **J2 (S). DONE.** `review_threads(number)` maps a comment's integer id to its thread's node id.
+  They are different objects and a comment's `node_id` is not the thread's, so this query is the
+  only tie between them. Read fresh every time: a thread's resolved state is GitHub's fact, not
+  this box's.
+- **J3 (S). DONE.** `resolve_review_thread(number, comment_id)`. Already resolved is a success;
+  a comment with no thread answers False without an error, because a conversation comment and a
+  review body have nothing to close.
+- **J4 (S). DONE.** `addressed` in `VERDICT_SCHEMA` (`discord-task.sh`), and the feedback prompt
+  puts each comment's id in its heading so the run can hand it back rather than invent it. The
+  prompt says what the claim means: the reviewer stops looking, so a comment you argued against
+  does not go in the list.
+- **J5 (M). DONE.** `resolve_addressed()`, called from `record_reply` where both facts are in
+  hand. Two conditions: the run named the comment, AND `publish_facts` says the commits reached
+  the branch. `addressed` is filtered against the turn's own messages, so an invented id resolves
+  nothing. One outbound row per comment, keyed `resolve:<id>` so a replayed finish pass queues
+  nothing.
+- **J6 (S). DONE.** `send_github` handles the `resolve` action — before the reaction branch,
+  since a resolve row carries `pr_comment` too and reading the payload first would have put an
+  emoji on the comment instead.
+- **J7 (S). DONE.** `github.resolve_threads`, default true, in `DEFAULTS` and `config.md`.
+- **J8 (S). DONE.** One test: the prompt carries the ids, an unpublished run resolves nothing,
+  only the named diff comment is queued, the thread the run argued against stays open, a replay
+  queues nothing, an invented id resolves nothing, and `record_reply` is the call site. The mock
+  grew a `/graphql` route and `GH_STATE["threads"]`.
+- **J9 (S). BLOCKED ON THE TOKEN.** Run live against pull request 512 on 2026-09-10, whose
+  comment had just been fixed and pushed. `review_threads` answered correctly --
+  `{"3972318844": ("PRRT_kwDOJSvcWs6gzn5c", False)}` -- and `resolveReviewThread` came back
+  `FORBIDDEN: Resource not accessible by personal access token`. The same `GH_PR_TOKEN` reads
+  the thread and places reactions, so this is one permission and not a broken path: a
+  fine-grained PAT needs **Pull requests: Read and write** for the mutation. Nothing else is
+  waiting on it -- the fix still lands, the run still comments, and the thread stays open, which
+  is the safe direction. `resolve_review_thread` now turns that particular refusal into a
+  sentence naming the permission, so the outbound row's `last_error` says what to change.
+  **Re-run this the moment the token is widened.**
 
 ## I. Live verification
 

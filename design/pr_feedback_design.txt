@@ -2,7 +2,8 @@ Pull request feedback: a review comment starts a fix run
 ========================================================
 
 2026-09-09.
-Revision 2, 2026-09-10: the gate is gone. Section 4 was a haiku call deciding whether each
+Revision 3, 2026-09-10: a run resolves the review threads it addressed. Section 8 says how,
+and it turns section 1's first non-goal into a goal. Revision 2, 2026-09-10: the gate is gone. Section 4 was a haiku call deciding whether each
 comment asked for anything, so that "merging this" cost nothing. Lothsahn removed it the day it
 shipped, and section 4 now says why and what it costs instead.
 
@@ -43,13 +44,16 @@ the review lane deliberately never did.
 Not a goal: replying in the inline comment's own thread. GitHub has
 `POST /pulls/{n}/comments/{id}/replies` and this does not call it. One comment on the pull
 request conversation is what the review lane posts and it is what this posts, for the same
-reason: a run has one outcome and saying it once is how a reader gets the whole of it.
+reason: a run has one outcome and saying it once is how a reader gets the whole of it. What a
+run DOES do to a thread is resolve it, once it has fixed what the thread asked for; section 8.
 
 Not a goal: acting on a comment from anybody who is not an operator. Section 3 is the argument,
 and it is the load-bearing one in this design.
 
-Not a goal: resolving review threads, approving, requesting changes, or merging. The `GitHub`
-client has no method for any of them and gains none here.
+Not a goal: approving, requesting changes, or merging. The `GitHub` client has no method for
+any of them and gains none here. Resolving a thread WAS in this list in revision 1, on the
+argument that "the run is not the right judge of that". Section 8 is what changed: it is not the
+only judge any more, and the two facts it is judged on are both the harness's.
 
 
 2. The three places a comment can be
@@ -296,6 +300,47 @@ reached the branch, and the run id.
 A comment is posted whatever the run concluded, including "none of these needed a change". The
 person who left the comments is waiting on an answer and silence is not one.
 
+**A thread whose comment was fixed is resolved.** Two facts have to hold, and neither is
+guessable, which is what makes the claim safe to make automatically. The run has to name the
+comment in `addressed`, a field of its structured verdict, filtered by the harness against the
+comments that were actually in the turn -- so a model that invents an id, or names one it was
+never shown, resolves nothing. And the commits have to have reached the branch, read off the run
+row by `publish_facts` rather than out of the summary, because a resolved thread with no fix
+behind it is a lie a reviewer has no way to catch.
+
+The prompt asks for it in those terms rather than as bookkeeping: this is a claim the reviewer
+will stop looking at that comment, a comment you argued against does not go in the list however
+good the reasons, and leaving a thread open costs somebody one click while closing one that was
+never dealt with costs them the belief that any of the marks mean anything.
+
+**Only a comment left on the diff can be resolved.** A thread is a property of the diff, so a
+comment in the pull request conversation and the body of a submitted review have nothing to
+close. They are skipped in silence -- there is no failure there to report -- and the run's own
+comment is what answers them.
+
+**Resolving is the one thing here that GitHub does not expose over REST.** `resolveReviewThread`
+is a GraphQL mutation and there is no equivalent endpoint, so the client grows a `graphql()`
+method with exactly two callers: one query mapping a comment's integer id to its thread's node id
+(they are different objects and a comment's own `node_id` is not the thread's), and the mutation.
+It is not a general escape hatch. Anything reachable over REST stays there, where the retries,
+the rate-limit handling and the conditional GETs already live. One trap worth writing down: a
+GraphQL error arrives as HTTP 200 with an `errors` array, so it has to be checked for explicitly
+or a failure reads as an answer.
+
+It goes through the outbound queue like everything else -- persisted before sent, held by the
+kill switch, retried with backoff, invisible in a dry run -- and it is keyed per comment, so a
+replayed finish pass queues nothing and one thread failing does not take the others with it.
+A thread somebody already resolved by hand is a success, not a conflict.
+
+**The credential is the open end of this.** Measured against `GH_PR_TOKEN` on 2026-09-10, on
+pull request 512: the token reads the thread, posts comments and places reactions, and the
+mutation answers `FORBIDDEN: Resource not accessible by personal access token`. A fine-grained
+token needs Pull requests: Read and write to close a thread, and this one has less. So the code
+is live and the capability is not, until somebody widens the token in GitHub's settings. The
+failure is the safe one -- the fix still lands, the run still says what it did, and the thread
+stays open for a person to close -- and the refusal is turned into a sentence naming the
+permission, so the outbound row says what to change rather than that something went wrong.
+
 **What is not said is a refusal.** A comment the gate declined gets nothing at all -- no reply, no
 mark. Posting "I decided this was not a request" under every "thanks" would be worse than useless.
 The decision is in the message row's `gate_reason`, where the web page and a later reader can see
@@ -314,7 +359,8 @@ Under `github`, three keys:
 "github": {
   "feedback": true,
   "feedback_quiet_secs": 120,
-  "feedback_max_comments": 25
+  "feedback_max_comments": 25,
+  "resolve_threads": true
 }
 ```
 
@@ -329,6 +375,9 @@ gate on the oldest `feedback_max_comments` and leaves the rest gated, which make
 batch: they ripen again the moment this turn ends, on the same conversation, resuming the same
 session. Nothing is truncated and nothing is dropped -- the work is split across turns, which is
 what a person would do with it.
+
+`resolve_threads` false leaves every thread open and costs nothing but somebody's clicking;
+the fixes still land and the run still says what it did.
 
 There is deliberately no `feedback_pool`. A pull request has one conversation and a conversation
 has one `agent_class`, so a second knob could only ever disagree with `review_pool`. The class is

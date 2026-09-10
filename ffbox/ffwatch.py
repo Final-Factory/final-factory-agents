@@ -766,6 +766,16 @@ DEFAULTS = {
         # ripen again the moment this turn ends and become the next one on the same conversation
         # -- the work is split across turns rather than truncated out of a prompt.
         "feedback_max_comments": 25,
+        # RESOLVE THE THREAD ONCE THE FIX IS ON THE BRANCH. A run says which comments it actually
+        # acted on, in its structured verdict, and each of those whose thread this box can find is
+        # marked resolved -- but only after the commits reached the branch, because a resolved
+        # thread with no fix behind it is a lie a reviewer has no way to catch. Only a comment
+        # left ON THE DIFF has a thread: one in the pull request conversation and the body of a
+        # review have nothing to resolve.
+        #
+        # Resolving needs GraphQL, which is the only reason this client has any. False leaves
+        # every thread open and costs nothing but somebody's clicking.
+        "resolve_threads": True,
     },
 
     # ceilings (design section 8). Three separate clocks; conflating them makes a slow Unity
@@ -1703,6 +1713,11 @@ def _issue_number_from_url(issue_url):
     """
     tail = (str(issue_url or "").rstrip("/").rsplit("/", 1) + [""])[1]
     return int(tail) if tail.isdigit() else None
+
+
+def github_resolve_on(cfg):
+    """Should a run resolve the threads it addressed? design/pr_feedback_design.txt section 8."""
+    return bool((cfg.get("github") or {}).get("resolve_threads"))
 
 
 def github_feedback_on(cfg):
@@ -4487,6 +4502,101 @@ class GitHub:
         made = self._request("POST", f"/repos/{self.repo}/issues/{int(number)}/comments",
                              {"body": body})
         return (made or {}).get("id")
+
+    def graphql(self, query, variables=None):
+        """One GraphQL call. The `data` object, or GitHubError.
+
+        THE SECOND DOOR, AND IT IS NARROW ON PURPOSE. Everything else this client does is REST,
+        and this exists because resolving a review thread has no REST endpoint at all -- GitHub
+        exposes `resolveReviewThread` as a mutation and nowhere else. It is not a general escape
+        hatch: the two callers below are the whole of it, and anything reachable over REST stays
+        on REST, where the retry, the rate-limit handling and the conditional-GET machinery in
+        _request already live.
+
+        A GRAPHQL ERROR IS AN HTTP 200. The transport succeeded and the query did not, which
+        `_request` cannot see, so it is checked here and raised as the same GitHubError every
+        REST failure raises -- otherwise a caller would read `data: null` as an answer.
+        """
+        got = self._request("POST", "/graphql",
+                            {"query": query, "variables": variables or {}})
+        if not isinstance(got, dict):
+            raise GitHubError(200, "GraphQL returned no object")
+        if got.get("errors"):
+            raise GitHubError(200, json.dumps(got["errors"])[:300])
+        return got.get("data") or {}
+
+    REVIEW_THREADS_QUERY = """
+    query($owner:String!, $name:String!, $number:Int!) {
+      repository(owner:$owner, name:$name) {
+        pullRequest(number:$number) {
+          reviewThreads(first:100) {
+            nodes { id isResolved comments(first:100) { nodes { databaseId } } } } } } }
+    """
+
+    def review_threads(self, number):
+        """{comment database id: (thread node id, isResolved)} for one pull request.
+
+        THE MAP EXISTS BECAUSE THE TWO APIS NAME THINGS DIFFERENTLY. A comment arrives over REST
+        carrying an integer id; a thread is resolved over GraphQL by a node id, and the comment's
+        own `node_id` is not it -- a thread is a different object from the comments in it. This
+        is the only place the two are tied together, and it is read fresh rather than stored:
+        a thread id is a fact about GitHub's state, and the box is not the system of record for
+        it.
+        """
+        owner, _, name = (self.repo or "").partition("/")
+        data = self.graphql(self.REVIEW_THREADS_QUERY,
+                            {"owner": owner, "name": name, "number": int(number)})
+        threads = (((data.get("repository") or {}).get("pullRequest") or {})
+                   .get("reviewThreads") or {}).get("nodes") or []
+        out = {}
+        for thread in threads:
+            for comment in ((thread.get("comments") or {}).get("nodes") or []):
+                if comment.get("databaseId") is not None:
+                    out[str(comment["databaseId"])] = (thread.get("id"),
+                                                       bool(thread.get("isResolved")))
+        return out
+
+    RESOLVE_MUTATION = """
+    mutation($id:ID!) { resolveReviewThread(input:{threadId:$id}) {
+      thread { id isResolved } } }
+    """
+
+    def resolve_review_thread(self, number, comment_id):
+        """Mark the thread one comment belongs to as resolved. True when it is now resolved.
+
+        NOT A MERGE, AND NOT AN APPROVAL. This client has neither and gains neither here; the
+        absence of those two is what makes "nothing merges, ever" a property of the code rather
+        than of everybody's care. Resolving says a comment has been dealt with, which is a claim
+        about a conversation and not a change to the code or to whether it lands. A person can
+        unresolve it in one click, which is the difference that matters.
+
+        A THREAD ALREADY RESOLVED IS A SUCCESS. A replayed send, or somebody resolving it by
+        hand first, both end with the state the caller asked for.
+
+        A comment with no thread -- one left in the pull request conversation, or the body of a
+        review -- answers False. There is nothing to resolve and it is not an error.
+        """
+        found = self.review_threads(number).get(str(comment_id))
+        if not found or not found[0]:
+            return False
+        thread_id, resolved = found
+        if resolved:
+            return True
+        try:
+            data = self.graphql(self.RESOLVE_MUTATION, {"id": thread_id})
+        except GitHubError as exc:
+            # THE PERMISSION IS NOT THE ONE THE READS NEED, and the bare message does not say so.
+            # Measured against GH_PR_TOKEN on 2026-09-10: the same token reads the thread, posts
+            # a comment and places a reaction, and this mutation answers FORBIDDEN. A
+            # fine-grained token needs "Pull requests: Read and write" for it. Said here, once,
+            # so the outbound row's last_error names the fix instead of the symptom.
+            if "not accessible by personal access token" in str(exc.body):
+                raise GitHubError(exc.status, (
+                    "resolving a review thread needs a token with Pull requests: Read and "
+                    "write; this one can read the thread but not close it")) from exc
+            raise
+        return bool((((data.get("resolveReviewThread") or {}).get("thread") or {})
+                     .get("isResolved")))
 
     def react_to_comment(self, comment_id, content="eyes", kind="issue"):
         """Put a reaction on one comment. True when GitHub took it.
@@ -9352,8 +9462,10 @@ class Watcher:
             meta = msg.get("github_meta") or {}
             where = feedback_where({"path": meta.get("path"), "line": meta.get("line"),
                                     "kind": meta.get("kind")})
-            parts.append(f"### comment {n} of {len(comments)} — {msg.get('author_name') or '?'}"
-                         f", on {where}")
+            # THE ID IS IN THE HEADING BECAUSE THE RUN HAS TO HAND IT BACK. `addressed` is how a
+            # thread gets resolved, and an id the agent has to invent is one it will get wrong.
+            parts.append(f"### comment {n} of {len(comments)} [{msg.get('discord_id')}] — "
+                         f"{msg.get('author_name') or '?'}, on {where}")
             if meta.get("url"):
                 parts.append(meta["url"])
             if meta.get("hunk"):
@@ -9377,6 +9489,13 @@ class Watcher:
             "to be a question, one that is already handled — say so and say why. That goes in "
             "your summary, and the harness posts it back on the pull request, so it is the "
             "answer the person who wrote the comment actually gets.",
+            "5. Put the id of every comment you ACTED ON in `addressed`, copied from the "
+            "heading above it — `addressed: [\"rc:123\", \"rc:456\"]`. The harness marks those "
+            "review threads resolved once your commits are on the branch, so this is a claim "
+            "that the reviewer will stop looking at that comment. A comment you decided against, "
+            "answered in prose, or could not reproduce does NOT go in the list, however good "
+            "your reasons: leaving a thread open costs somebody one click, and closing one that "
+            "was never dealt with costs them the trust that the marks mean anything.",
             "",
             "Do not resolve the review threads, do not merge, and do not open anything. The "
             "harness pushes your commits onto this branch and says what happened.",
@@ -11214,6 +11333,55 @@ class Watcher:
         # runs wanted different capability sets. They no longer do: a turn that finds a low-risk
         # fix has Edit and Write and makes it, in the run that found it.
 
+    def resolve_addressed(self, run_row_id, conv, review, job, verdict, publish):
+        """Close the review threads this run actually acted on. Returns rows queued.
+
+        TWO CONDITIONS, AND BOTH ARE THE POINT. The run has to SAY it addressed the comment, in
+        the `addressed` field of its structured verdict, and the commits have to have REACHED
+        the branch. A resolved thread is a claim that a reviewer stops looking at, so it may only
+        be made where both halves of it are true -- and neither half is guessable. Scraping the
+        summary for "I fixed the first two" is exactly the failure the structured verdict exists
+        to prevent, and resolving on the agent's word alone would close threads whose fix died in
+        the harvest.
+
+        WHAT THE RUN SAYS IS FILTERED THROUGH WHAT THE TURN HELD. `addressed` is model output, so
+        it can name a comment that is not in this turn, or a string that is not an id at all.
+        Only ids that were actually in front of it are acted on.
+
+        ONLY A COMMENT ON THE DIFF HAS A THREAD. One left in the pull request conversation, and
+        the body of a submitted review, have nothing to resolve; they are skipped in silence
+        rather than reported, because there is no failure there to report.
+        """
+        if not github_resolve_on(self.cfg) or not review:
+            return 0
+        # NOTHING REACHED THE BRANCH, SO NOTHING WAS ADDRESSED, whatever the run believes it
+        # did. publish_facts reads the run row rather than the summary, so this is the harness's
+        # own answer and not the agent's.
+        if not publish.get("branch"):
+            return 0
+        claimed = {str(x) for x in (verdict.get("addressed") or []) if x}
+        if not claimed:
+            return 0
+        queued = 0
+        for msg in (job.get("messages") or []):
+            mid = str(msg.get("discord_id") or "")
+            if mid not in claimed:
+                continue
+            kind, comment_id = github_comment_ref(mid)
+            if kind != "review":
+                continue
+            local_id = f"resolve:{mid}"
+            if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=?", (local_id,), 0):
+                continue                # a re-run of the finish pass; the row is already there
+            if self.record_outbound(run_row_id, conv["id"], "resolve",
+                                    {"pr": review["number"], "pr_comment": comment_id,
+                                     "local_id": local_id}):
+                queued += 1
+        if queued:
+            log(f"conversation {conv['id']}: {queued} review thread(s) to resolve, on the "
+                f"run's own account of what it addressed")
+        return queued
+
     def record_private_half(self, run_row_id, conv, turn, verdict):
         """The second destination of a split reply (design section 7).
 
@@ -11485,7 +11653,8 @@ class Watcher:
                 return 0
             self.record_outbound(run_row_id, conv["id"], "post",
                                  {"pr": review["number"], "text": head})
-            return 1
+            return 1 + self.resolve_addressed(run_row_id, conv, review, job, verdict,
+                                              self.publish_facts(run_row_id))
         payload = {"channel": reply_channel(conv), "text": head, "silent": True,
                    "reply_to": last["discord_id"] if last else None}
         asker = reply_mention(conv, last)
@@ -13163,7 +13332,16 @@ class Watcher:
         if not gh.token or not gh.repo:
             return self._send_failed(row, gh.token_error or "this box has no GitHub token")
         try:
-            if payload.get("pr_comment"):
+            if row["action"] == "resolve":
+                # BEFORE THE REACTION BRANCH, because a resolve row carries `pr_comment` too --
+                # it names the comment whose thread is being closed. The action is what tells
+                # them apart, and reading the payload first would have marked the comment with
+                # an emoji instead.
+                ok = gh.resolve_review_thread(int(payload["pr"]), payload["pr_comment"])
+                if not ok:
+                    return self._send_failed(row, "the review thread could not be resolved")
+                sent_id = None
+            elif payload.get("pr_comment"):
                 # DEFAULTED TO `issue`, so a row queued by an older ffwatch and still sitting in
                 # the outbound table when this one starts lands where it always did.
                 ok = gh.react_to_comment(payload["pr_comment"],

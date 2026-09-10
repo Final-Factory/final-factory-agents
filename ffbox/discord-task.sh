@@ -530,6 +530,13 @@ VERDICT_SCHEMA = {
         # to the channel under the player rules, this goes to the asker's DM. A player's turn
         # never produces one, and setting it costs nothing but is ignored.
         "private_summary": {"type": "string"},
+
+        # WHICH PULL REQUEST COMMENTS THIS RUN ACTED ON, by the ids the prompt gave it. The
+        # harness resolves those review threads, and only once the commits are on the branch --
+        # so it is a claim a reviewer stops looking at, not a note about intent. Every other
+        # lane ignores it; the feedback prompt is the only thing that asks for one, and the
+        # host filters the answer against the comments that were actually in the turn.
+        "addressed": {"type": "array", "items": {"type": "string"}},
     },
 }
 
