@@ -50,4 +50,18 @@ Do not copy its base `Collider` header into a local value before calling shape-d
 Unity Physics `Collider.GetCollisionFilter(ColliderKey)` fixes `&this` and casts it to the concrete
 shape (`Unity.Physics/Collision/Colliders/Collider.cs:228-260`); that address must still point to
 the full blob. The cached-body diagnostic uses the reference form in
-`FleetMoverInputDiagnostics.DescribePhysicsBody`.
+`CachedPhysicsBodyDiagnostics.Describe`.
+
+A collision world with no dynamic bodies can still be stale. In the September 10 two-Mac replay,
+current owner transforms matched at heartbeat 75, but the host cache held heartbeat 73's pose and
+the client cache held heartbeat 74's pose. The host then collided while the client accepted no
+collision (feature069 plan, cached collision-body diagnostic). Test the actual builder and a
+query result under different rendered-time sequences; a counter-only cadence test does not
+prove transform freshness. `PhysicsWorldHeartbeatFreshnessTest` produced the real RED:
+expected body pose `(20,0,0)`, actual cached pose `(0,0,0)` on the sub-timestep peer.
+
+Order comments are not ordering edges. `FFControllerEarlyGroup` and Unity's fixed-physics group
+both occupied the OrderFirst bucket, so their relative order needed an explicit `UpdateAfter`
+and a real sorted-group test. Scope a freshness claim to the phases actually covered:
+`ExecuteShipSpawnCommandSystem` also queries collision state during Initialization, before the
+normal Simulation physics invocation.
