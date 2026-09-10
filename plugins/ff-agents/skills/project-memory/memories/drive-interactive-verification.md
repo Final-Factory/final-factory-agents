@@ -27,10 +27,13 @@ Credential entry, unavailable hardware, and decisions outside the authorized tas
 On a multiplayer failure, run `ffauto:audit.write` through each peer's development AgentControl
 session, then verify, copy and hash BOTH returned report files before stopping either process.
 The command wraps `LocalMultiplayerAutomationCommandRunner.ExecuteAuditWrite` →
-`NetworkDeterminismAudit.WriteReport`; it publishes current rows without resetting capture.
+`NetworkDeterminismAudit.WriteReportAsync`; it publishes current rows without resetting capture.
 Do this at useful milestones too. Normal dwell/teardown gates can postpone automatic publication,
 so a RED run is not permission to terminate a peer with its only evidence still in memory.
-Recovery itself retains audit rows; do not claim recovery erased them without evidence. With a
-capture policy, the report path uses run/leg/role identity and ignores the optional label; copy
-milestone reports to distinct artifact filenames. Explicitly report missing peer evidence and
+Recovery itself retains audit rows; do not claim recovery erased them without evidence. The
+checkpoint command uses a unique `DeterminismAudit/Checkpoints/<GUID>` directory per invocation.
+The core publisher deliberately rejects an existing final report; the optional label does not
+change capture-policy run/leg/role identity. Do not weaken that collision guard or mistake an
+old report for a new checkpoint. Copy the returned paths into distinct milestone artifacts.
+Explicitly report missing peer evidence and
 capture overflow/caps instead of claiming a paired comparison from one log.
