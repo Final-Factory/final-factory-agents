@@ -108,3 +108,14 @@ This is observed harness sequencing, not proof that ordinary human placement is 
 actual built state and the next objective after the click; a completed command receipt alone is
 not a gameplay success. Dismiss the visible Technology Unlocked notification before crafting;
 in the same run it covered the recipe panel and swallowed otherwise successful click dispatch.
+
+Check the established gameplay contract before treating an unexpected inventory payer as a bug.
+Construction deliberately services tasks from the shared nearby player pool:
+`ConstructionTaskAssignerSystem.TryAssignPlayerBot:248-318` picks an eligible in-range player
+holding the item and uses that player's available bot. The regression
+`ConstructionTaskAssignerPlayerBotTest.PlayerBot_FallsThroughToInRangePlayerThatHasItem:87-102`
+explicitly expects another eligible player to supply a task. In the live tutorial, a client-placed
+Solar Panel consumed the host's held panel while the client retained theirs; the combined stock
+fell by exactly one and the station became powered. Inspect both inventories and the chosen bot
+before diagnosing duplication or a requester-ownership regression. A change to that shared-supply
+contract is a design change, not a correction inferred merely from which peer clicked.
