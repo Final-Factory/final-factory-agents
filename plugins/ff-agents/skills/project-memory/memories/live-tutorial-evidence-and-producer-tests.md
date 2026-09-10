@@ -82,3 +82,19 @@ copies it into the terminal response. Test both pending completion and the retur
 `AgentRequestRouter.LastResult` reads the step result, not completion detail. Keep an independent
 timeout release in a held-publication test so a regressed synchronous wait cannot hang the editor.
 The source correction and fast suite do not substitute for replaying a large checkpoint live.
+
+Capture and inspect BOTH peers' final screenshots and copy/hash BOTH final reports before
+stopping either player. Stopping the host while the client is still capturing can produce
+a reconnecting overlay that obscures the actual terminal gameplay state. Keep each peer's
+control owner responsible for its exact process, config and release gates until this shared
+capture barrier is satisfied.
+
+A fully matching simulation can still have a shared gameplay bug. In the September 10 fresh
+`live-tutorial-resume011` run, all 8,637 shared heartbeats matched, yet both players received
+four Bats without paying their raw-resource costs. Host logs rejected all eight consume
+requests. `SmartCrafter.PerformSmartCraftHelper` passed zero-count intermediate removals to
+`RemoveItemAndTrackInTree`, and `DispatchCollectedConsumes` included those entries in a payload
+that `PlayerInventoryEditClientRequest.ValidateDeltas` correctly rejected. Inspect real
+before/after inventory and fleet state, not only fingerprints or successful UI command receipts.
+Regression tests must exercise the recursive crafting producer and actual host operation;
+a hand-constructed valid payload cannot catch a producer emitting invalid entries.
