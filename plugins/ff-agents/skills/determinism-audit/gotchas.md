@@ -6,6 +6,7 @@ load-bearing for future runs even where the original defect is fixed.
 ## TOC
 
 - [Full-window rule: never diagnose from a partial window](#full-window-rule) (052)
+- [Inventory hash roles: retain the raw field, gate the contracted surfaces](#inventory-hash-roles)
 - [A built player pair is the proof instrument for presentation leaks](#built-pair-proof) (055 R25)
 - ["Missing report(s)" is NOT a stuck editor](#missing-reports) (045)
 - [Divergence triage: check command TIMING first](#command-timing) (042)
@@ -52,6 +53,24 @@ comparator flagged) found zero mismatching fields elsewhere; R28's re-fold is wh
 `movers`/`vision`/`combined` were the ONLY three differing fields out of 23 surfaces, ruling out
 a second live cause. A fix that only silences the field the comparator happened to print is
 unproven — re-fold every field, not just the named one, before calling a fix complete.
+
+## Inventory hash roles: retain the raw field, gate the contracted surfaces {#inventory-hash-roles}
+
+`PlayerInventoryHash` folds the slot arrangement of every authoritative player inventory in one
+peer's world. It is a same-peer diagnostic because remote-player inventory is an asynchronous
+projection, so the raw hash is excluded from `Combined` and the wire surface set
+(`Assets/Scripts/FFSystems/Multiplayer/DeterminismStateFingerprint.cs:62-80,291-323`). It is still
+emitted beside every other fingerprint field
+(`Assets/Scripts/FFSystems/Multiplayer/DeterminismFingerprintSystem.cs:144-170`). Keep it in captures
+and report whether it changed; do not hide or delete the field to make a cross-peer run pass.
+
+Adjudicate the mismatch from the source contract. Use a same-peer repeated run to gate the raw slot
+hash. For op-driven cross-peer inventory scenarios, gate `PlayerInventoryTotalsHash`, which sorts
+item totals independently of slot placement, plus every affected cross-peer field such as
+`containers` and `combined` (`DeterminismStateFingerprint.cs:82-95`; the inventory audit applies
+this split at `scripts/audit/run_inventory_audit.sh:216-235`). If a raw inventory mismatch appears,
+state it and its same-peer-only verdict role explicitly; a comparator exemption is not permission
+to suppress the evidence silently.
 
 ## A built player pair is the proof instrument for presentation leaks {#built-pair-proof}
 
