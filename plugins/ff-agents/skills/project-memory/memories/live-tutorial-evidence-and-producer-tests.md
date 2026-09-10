@@ -98,3 +98,13 @@ that `PlayerInventoryEditClientRequest.ValidateDeltas` correctly rejected. Inspe
 before/after inventory and fleet state, not only fingerprints or successful UI command receipts.
 Regression tests must exercise the recursive crafting producer and actual host operation;
 a hand-constructed valid payload cannot catch a producer emitting invalid entries.
+
+For live UI placement, separate opening a panel, selecting a tab or inventory item, moving the
+blueprint preview, and committing the placement with a rendered observation between dependent
+steps. In `live-tutorial-craft-fixed011`, moving the preview and clicking in one immediate chain
+left the replacement Mining Station unbuilt. A subsequent preview move, one-second wait,
+inspected green ghost, and separate click produced the built station and advanced the objective.
+This is observed harness sequencing, not proof that ordinary human placement is broken. Inspect
+actual built state and the next objective after the click; a completed command receipt alone is
+not a gameplay success. Dismiss the visible Technology Unlocked notification before crafting;
+in the same run it covered the recipe panel and swallowed otherwise successful click dispatch.
