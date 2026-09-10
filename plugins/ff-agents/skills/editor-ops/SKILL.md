@@ -5,6 +5,9 @@ description: Final Factory Unity editor operations via the MCP bridge — pinnin
 
 # Editor operations (MCP bridge, verification, recovery)
 
+**Standing authorization:** Ben has authorized launching, driving, screenshotting, testing, and recovering Final Factory on his machines during development. Do not ask again for app use or routine playtest steps. Use existing project-specific tools, bounded calls, and autonomous recovery; platform permissions remain independently enforced. Read [the authorization and uninterrupted-run rule](../project-memory/memories/drive-interactive-verification.md) before handing any routine step back to Ben.
+
+
 This is the full operational detail behind the game repo CLAUDE.md's Build & Test kernel
 (moved here by feature 061 so it loads on demand). The rules below are binding, not advisory.
 
