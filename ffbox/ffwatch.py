@@ -10549,6 +10549,13 @@ class Watcher:
             # the container skips the suite when the tree is untouched, so a question does not
             # spend fifteen minutes proving it changed nothing.
             "verify": {"enabled": True,
+                       # EXCEPT WHEN AN UNTOUCHED TREE IS THE THING THAT NEEDS TESTING. The
+                       # skip asks what this RUN did; this asks what the BRANCH carries, which
+                       # is the question that decides whether a pull request can ever open.
+                       # Decided HERE and not in the container, because the answer is made of
+                       # things only the host holds -- the conversation's branch, its pull
+                       # request, and the verification rows of the runs before this one.
+                       "even_if_unchanged": self.branch_awaits_verification(conv),
                        "assemblies": self.cfg.get("verify_assemblies") or "",
                        "out": "/ffbox/out/verification"},
             "messages": [self.job_message(m, att_dir) for m in msgs],
@@ -13749,6 +13756,55 @@ class Watcher:
         if not row["tests_run"]:
             return False, "no tests ran"
         return True, None
+
+    def branch_awaits_verification(self, conv):
+        """Does this conversation's branch carry work that no verification has passed and that
+        no pull request has been opened for?
+
+        THE QUESTION THE CONTAINER'S SKIP SHOULD BE ASKING. It skips the suite when the RUN
+        changed no files, which is right for a question and wrong for the turn that comes back
+        to a branch an earlier turn already pushed. That tree carries real work; the run that
+        harvested it never got a verdict; and a turn that only reads, re-runs something by hand
+        and answers leaves the branch exactly as stranded as it found it -- with a fresh
+        `skipped` row saying there was nothing to check, over four files sitting on origin.
+
+        AND NOTHING DOWNSTREAM RESCUES IT. verification_gate wants a row for the run in front of
+        it, and reconcile_publication re-runs that same gate against that same unverified run
+        every sweep, forever. Conversation 133 is the worked example: turn 3 pushed the fix and
+        was gated out, turn 4 re-ran the tests, changed nothing, and skipped verification -- so
+        the branch could never acquire a pull request by any path, including waiting.
+
+        TRUE IS FIFTEEN MINUTES AND THE BOX'S ONE UNITY SLOT, so every cheap way to say no comes
+        first: no branch, a pull request already recorded, nothing ever bundled, a pull request
+        already open on the run that bundled it. What is left is a branch with work on it and no
+        verdict that would let it be proposed.
+
+        A FAILED SUITE IS ALSO "NO PASSING VERIFICATION", deliberately, even though the tree has
+        not moved and the answer will usually come back the same. The one time it does not is
+        the one that matters: d133t3 came back `compiled=false` because the agent's own editor
+        still held the project lock, and a rule that took any verdict as final would have left
+        that branch stranded on a fact about Unity rather than about the code. The cost of being
+        wrong the other way is one suite on a turn that was going to be slow anyway; the cost of
+        being wrong this way is work nobody ever reviews.
+        """
+        if not self.conversation_branch(conv):
+            return False
+        try:
+            if conv["github_pr"]:
+                return False
+        except (IndexError, KeyError):
+            pass
+        # THE NEWEST RUN THAT HARVESTED A BUNDLE -- the same row reconcile_publication judges,
+        # chosen the same way, because the whole point is to give that judgement something it
+        # can pass. A conversation that has only ever answered questions selects nothing here.
+        run = self.db.one(
+            "SELECT r.id, r.pr_url FROM run r JOIN turn t ON t.id = r.turn_id"
+            " WHERE t.conversation_id = ? AND r.bundle_path IS NOT NULL"
+            " ORDER BY r.id DESC LIMIT 1", (conv["id"],))
+        if run is None or run["pr_url"]:
+            return False
+        ok, _ = self.verification_gate(run["id"])
+        return not ok
 
     # ======================================================================================
     # publication  (design section 17)
