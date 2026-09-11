@@ -1,31 +1,35 @@
 #!/usr/bin/env python3
-"""The Claude subscription pool: which accounts this box holds, and what is left in each.
+"""Which Claude accounts this box holds, and what is left in each.
 
 ONE MODULE BECAUSE TWO PROCESSES NEED THE SAME ANSWER, and they need it for different reasons.
-`ffweb` renders it — the /claude page, so an operator can see every account's five-hour and
-weekly window before anything runs out. `ffwatch` DECIDES on it: since 2026-09-04 it picks
-which subscription each turn is billed to instead of always spending the first, and that choice
-is `pick` below.
+`ffweb` renders it -- the /claude page, so an operator can see every account's five-hour and
+weekly window before anything runs out. `ffwatch` DECIDES on it: not which account pays, which
+is a routing question answered from who asked (see `claude_route` in ffwatch), but whether the
+account that is going to pay has room for the work right now.
 
-THIS IS A CHANGE OF MIND, AND WORTH SAYING SO. ffweb carried all of this and a comment
-explaining why a shared module was not worth it: the numbering rule is six lines, it lives in
-ffbox's preflight and ffwatch's classifier env too, and a wrong copy shows a wrong row on one
-page. That reasoning still holds for the six lines — ffbox is shell and cannot import Python at
-all, so its copy stays a copy — but it stopped covering this file the moment the daemon needed
-the READING as well as the page: four hundred lines of endpoint fallback, header parsing and
-cache behaviour is not a rule about a file, it is the algorithm the comment said nobody would
-change, and two implementations of it would disagree about which account has room while the
-page said one thing and the box did another.
+WHAT IS HERE AND WHAT IS NOT. Reading: the accounts out of the environment, and the two ways of
+asking Anthropic what is left on one. Nothing about a container, a run, a database, a page or an
+operator -- the callers own all of that, which is what keeps this importable from a daemon that
+must not grow a web server and from a web server that must not grow a daemon. In particular it
+does not know what an operator is: `claude_route` does, and it lives in ffwatch beside the rest
+of the trust table.
 
-WHAT IS HERE AND WHAT IS NOT. Reading and choosing: the pool out of the environment, the two
-ways to ask Anthropic what is left, and the policy that ranks the answers. Nothing about a
-container, a run, a database or a page — the callers own all of that, which is what keeps this
-importable from a daemon that must not grow a web server and from a web server that must not
-grow a daemon.
+THERE USED TO BE A CHOOSER HERE and it is worth saying what happened to it. Until 2026-09-10
+this module ranked the accounts -- allowance per second left before the window refilled -- and
+ffwatch billed each turn to the winner. It did that correctly and it made the box unable to
+answer "whose subscription paid for that". Now each request has exactly one account it can be
+billed to, decided by who asked, so `pick` and `emptiest` are gone and what is left is the
+reading they were built on.
 
-NO TOKEN IS EVER RETURNED TO A CALLER THAT DID NOT ALREADY HAVE ONE. `claude_token_pool` reads
-them because somebody has to make the request, and everything downstream identifies a key by
-its slot number, its variable name and `token_fingerprint`.
+TWO KINDS OF CREDENTIAL, and the difference runs through the whole file. A SUBSCRIPTION is a
+`claude setup-token` token, one per operator, with the five-hour and seven-day rolling windows
+this file measures. The DEFAULT is `ANTHROPIC_API_KEY`, a console key that pays for everything
+no operator asked for; it is metered rather than windowed, so it reports as reachable or not and
+has no bars to draw. `kind` on every record says which one it is.
+
+NO TOKEN IS EVER RETURNED TO A CALLER THAT DID NOT ALREADY HAVE ONE. `claude_subscriptions` and
+`default_api_key` read them because somebody has to make the request, and everything downstream
+identifies a key by its variable name and `token_fingerprint`.
 """
 
 from __future__ import annotations
@@ -51,38 +55,45 @@ def _short(text, limit=120):
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-# ---- the Claude token pool -------------------------------------------------------------
+# ---- the accounts this box holds -------------------------------------------------------
 # secrets.env carries one long-lived subscription token per Claude account, NUMBERED FROM 1:
-# CLAUDE_CODE_OAUTH_TOKEN1, CLAUDE_CODE_OAUTH_TOKEN2, and so on. Only the first non-empty one is
-# ever SPENT — ffbox hands that one to every container and ffwatch calls its classifier with it —
-# and the others are here so this page can say what is left on each account BEFORE the box is
-# pointed at one of them. The unnumbered CLAUDE_CODE_OAUTH_TOKEN is the older spelling and stands
-# in as a pool of one when no numbered name is set, so an install that predates the pool keeps
-# running untouched.
+# CLAUDE_CODE_OAUTH_TOKEN1, CLAUDE_CODE_OAUTH_TOKEN2, and so on. Since 2026-09-10 a slot is not
+# an anonymous member of a pool: it belongs to an operator, who names it in config.json, and
+# every request that operator makes is billed to it. The unnumbered CLAUDE_CODE_OAUTH_TOKEN is
+# the older spelling and stands in as a list of one when no numbered name is set, so an install
+# that predates the numbering keeps running untouched.
 #
-# THE SAME SIX LINES LIVE IN THREE PLACES — here, ffbox's preflight and ffwatch's classifier env
-# — because this file imports nothing from either of them (see the header). What a shared module
-# would buy is not worth what it would cost: a wrong copy here shows the wrong row on one page,
-# and the numbering is a rule about a file rather than an algorithm anybody will change.
+# THE SAME SIX LINES LIVE IN THREE PLACES -- here, ffbox's preflight and setup.sh's readiness
+# check -- because this file imports nothing from either of them (see the header). What a shared
+# module would buy is not worth what it would cost: ffbox is shell and cannot import Python at
+# all, and the numbering is a rule about a file rather than an algorithm anybody will change.
 CLAUDE_TOKEN_PREFIX = "CLAUDE_CODE_OAUTH_TOKEN"
 # A ceiling on the scan, not a limit anybody will meet. Without one, "read until a gap" would
 # silently drop token 3 on a file that left 2 blank, and "read every variable that matches"
-# would make the pool depend on what else the unit happens to export.
+# would make the list depend on what else the unit happens to export.
 CLAUDE_TOKEN_MAX = 16
 # WHICH PLAN EACH TOKEN IS ON, declared beside it as CLAUDE_CODE_RATE_TOKEN1 and numbered to
-# match. The number is the plan's multiplier — 1 for Pro, 5 for Max 5x, 20 for Max 20x — and it
+# match. The number is the plan's multiplier -- 1 for Pro, 5 for Max 5x, 20 for Max 20x -- and it
 # is written by hand because these tokens genuinely cannot say it themselves: the plan lives in
 # Anthropic's profile document, that document needs the `user:profile` scope, and the
-# `claude setup-token` flow this box runs on does not grant it. An operator who knows which
-# account they signed in as knows this number, and a declared 5 is worth more than a blank.
+# `claude setup-token` flow this box runs on does not grant it.
+#
+# IT IS PRINTED AND NO LONGER WEIGHED. The chooser needed it to rank a quarter of a Max 20x
+# against a whole Pro; nothing ranks accounts now. What it still buys is a page that says what
+# somebody is about to run out of.
 CLAUDE_RATE_PREFIX = "CLAUDE_CODE_RATE_TOKEN"
-# WHAT TO CALL EACH TOKEN, declared beside it as CLAUDE_CODE_NAME_TOKEN1 and numbered to match.
-# The variable name is a slot number, not a person, and on a box holding three accounts "Loth"
-# says which account a row is about where "CLAUDE_CODE_OAUTH_TOKEN2" only says where in the file
-# it sits. The page prints this INSTEAD OF the variable name when it is set, and an undeclared
-# or blank slot keeps the variable name, which is what every existing secrets.env has. Purely a
-# label: nothing is looked up by it and no container is told it.
+# WHAT EACH TOKEN IS CALLED, declared beside it as CLAUDE_CODE_NAME_TOKEN1 and numbered to
+# match. THIS IS THE SUBSCRIPTION ID: it is what an operator writes in config.json as
+# `operators.<them>.claude` to claim the account, and it is what the /claude page heads their
+# row with. It began as a label and nothing else, which is why an undeclared slot still falls
+# back to the variable name on the page -- but a slot nobody has named can only be claimed by
+# its number, which is the weaker of the two (see `subscription_named`).
 CLAUDE_NAME_PREFIX = "CLAUDE_CODE_NAME_TOKEN"
+# THE DEFAULT, AND THE ONLY THING IN THIS FILE THAT IS NOT A SUBSCRIPTION. A console API key,
+# metered per token, that pays for every request no operator asked for: a player in a forum
+# thread, the engagement gate, the selector. It is deliberately NOT another subscription -- the
+# whole point of the split is that a stranger's bug report cannot eat an operator's window.
+CLAUDE_API_KEY_NAME = "ANTHROPIC_API_KEY"
 # UNDECLARED MEANS PRO, the smallest plan there is. Guessing low is the safe direction: it makes
 # a key look like it has less room than it may really have, and the failure that costs a run is
 # believing a key has room it does not.
@@ -93,15 +104,15 @@ CLAUDE_PLAN_NAMES = {1: "Pro", 5: "Max 5x", 20: "Max 20x"}
 # How long a usage reading stays good with nobody asking for a fresh one. AN HOUR, and it used
 # to be a quarter of one. The windows being measured are five hours and seven days long, so
 # even an hour-old reading is the same answer as a fresh one for every decision a page
-# supports — and this is no longer the only thing keeping the numbers current. ffwatch forces a
-# reading before every spawn decision and writes it to the shared store below, so in practice
+# supports -- and this is no longer the only thing keeping the numbers current. ffwatch forces a
+# reading before every hold decision and writes it to the shared store below, so in practice
 # the page shows something minutes old and this is the floor under a genuinely idle box. It is
 # also what keeps the fallback below honest: that path costs a (tiny) inference call per key
 # per refresh, and at this interval that is one an hour rather than four.
 CLAUDE_USAGE_TTL_SECS = 3600
 
 # THE FLOOR UNDER A FORCED READING. `read(force=True)` is how a caller says "this decision is
-# worth a round trip" — ffwatch asks for one before deciding whether a new conversation or a
+# worth a round trip" -- ffwatch asks for one before deciding whether a new conversation or a
 # code review starts now or waits for the window. It is a SHORTER TTL rather than no TTL at
 # all, because one claim_turns pass can walk ten new conversations and a poll can carry several
 # held triggers, and ten rounds of requests inside one second answer the question exactly as
@@ -111,9 +122,9 @@ CLAUDE_FORCE_FLOOR_SECS = 30
 # WHERE THE READINGS ARE SHARED. ffwatch and ffweb are separate processes with separate memory,
 # and until this file existed they each paid their own way to Anthropic and each believed a
 # different thing about how full the box was. ffwatch now reads far more often than the page
-# does — once per spawn decision — so the page reading the daemon's answers is both cheaper and
-# fresher than asking again. Lives in the state directory beside ffweb-sessions.json and is
-# written 0600 for the same reason: it carries the account email each key belongs to.
+# does, so the page reading the daemon's answers is both cheaper and fresher than asking again.
+# Lives in the state directory beside ffweb-sessions.json and is written 0600 for the same
+# reason: it carries the account email each key belongs to.
 #
 # A CACHE AND NOTHING MORE. Anything unreadable, malformed or from a future version is treated
 # as absent, because the fallback is one HTTP call and a cache that can break a start-up is
@@ -121,17 +132,25 @@ CLAUDE_FORCE_FLOOR_SECS = 30
 CLAUDE_USAGE_STORE = "claude-usage.json"
 CLAUDE_STORE_VERSION = 1
 
-# The family of response headers every /v1/messages reply carries, and the fallback reading's
-# whole vocabulary. Named once because six strings are built from it.
+# The family of response headers every /v1/messages reply carries on a SUBSCRIPTION token, and
+# the fallback reading's whole vocabulary. An API key's replies carry a different family
+# entirely -- per-minute request and token limits -- which is why an API key has no windows here
+# rather than empty ones. Named once because six strings are built from it.
 RATELIMIT_PREFIX = "anthropic-ratelimit-unified-"
 
+# The two kinds of record `read()` produces. A caller that must tell them apart -- the hold, the
+# page -- reads `kind`; a caller that only wants a credential's name does not care.
+KIND_SUBSCRIPTION = "subscription"
+KIND_API_KEY = "api_key"
 
-def claude_token_pool(env=None, secrets_path=None):
-    """[(name, token, rate, label)] — every Claude account this box holds, in the order spent.
+
+def claude_subscriptions(env=None, secrets_path=None):
+    """[(name, token, rate, label)] -- every Claude SUBSCRIPTION this box holds, in slot order.
 
     `rate` is the plan multiplier declared beside the token as CLAUDE_CODE_RATE_TOKEN<n>, and
     CLAUDE_DEFAULT_RATE when nothing declares one. `label` is what CLAUDE_CODE_NAME_TOKEN<n>
-    calls the account, and "" when nothing declares one — a page prints `label or name`.
+    calls the account, and "" when nothing declares one -- a page prints `label or name`, and
+    `subscription_named` matches an operator's declared id against it.
 
     The environment first, because that is how the unit is fed: ffweb.service carries
     EnvironmentFile=-~/.config/ffbox/secrets.env, so under systemd the tokens are simply here.
@@ -140,7 +159,7 @@ def claude_token_pool(env=None, secrets_path=None):
     empty one that looks like a box with no keys.
 
     NOTHING BUT THE TOKEN, RATE AND NAME VARIABLES COMES OUT OF THAT FILE. It also holds a Unity
-    account password and a GitHub token, and this process has no business learning either — so
+    account password and a GitHub token, and this process has no business learning either -- so
     the read is a filter against the names above rather than a `.env` parser that returns what
     it finds.
     """
@@ -148,20 +167,79 @@ def claude_token_pool(env=None, secrets_path=None):
     found = _claude_tokens_from(env.get)
     if found:
         return found
+    return _claude_tokens_from(_claude_secrets_file(_secrets_path(secrets_path)).get)
+
+
+def default_api_key(env=None, secrets_path=None):
+    """(name, token) for ANTHROPIC_API_KEY, or None when this box has none.
+
+    The same two-step read as the subscriptions and for the same reason. A box with no API key
+    cannot answer anybody who is not an operator, which is a refusal the caller makes -- this
+    just reports the absence.
+    """
+    env = os.environ if env is None else env
+    token = (env.get(CLAUDE_API_KEY_NAME) or "").strip()
+    if not token:
+        token = (_claude_secrets_file(_secrets_path(secrets_path)).get(
+            CLAUDE_API_KEY_NAME) or "").strip()
+    return (CLAUDE_API_KEY_NAME, token) if token else None
+
+
+def _secrets_path(secrets_path):
+    """Where secrets.env is, with the same override ffbox and ffwatch both honour."""
     if secrets_path is None:
         secrets_path = os.environ.get("FFBOX_SECRETS") or os.path.join(
             os.path.expanduser(os.environ.get("FFBOX_CONFIG_DIR", "~/.config/ffbox")),
             "secrets.env")
-    return _claude_tokens_from(_claude_secrets_file(os.path.expanduser(secrets_path)).get)
+    return os.path.expanduser(secrets_path)
+
+
+def slot_ids(name, label):
+    """The ids one slot answers to, case-folded: what it is called, and where it sits.
+
+    TWO, AND THEY ARE NOT WORTH THE SAME. The declared name is the id -- it survives somebody
+    revoking slot 1 and renumbering the file, which is the same reason `run.claude_key` records
+    a variable name rather than an index. The number is here so a box whose slots were never
+    named can still be configured on the day it deploys, before anybody has written the NAME
+    lines, and it is documented as the fallback rather than as the way.
+    """
+    out = set()
+    if label and label.strip():
+        out.add(label.strip().casefold())
+    digits = name[len(CLAUDE_TOKEN_PREFIX):] if name.startswith(CLAUDE_TOKEN_PREFIX) else ""
+    if digits.isdigit():
+        out.add(digits)
+    return out
+
+
+def subscription_named(key_id, subs):
+    """(variable name, why) for the subscription an operator's declared id claims.
+
+    Three answers, and the caller says a different sentence for each: a name with no `why`, or
+    None with "no slot" when nothing answers to that id, or None with "ambiguous" when two do.
+
+    AN AMBIGUOUS ID IS REFUSED RATHER THAN RESOLVED. Two slots both called "Loth" is somebody
+    mid-edit or somebody who pasted a line twice, and guessing which account they meant to spend
+    is exactly the class of decision this whole feature exists to remove from the box.
+    """
+    wanted = (key_id or "").strip().casefold()
+    if not wanted:
+        return None, "no slot"
+    hits = [entry[0] for entry in subs if wanted in slot_ids(entry[0], entry[3])]
+    if not hits:
+        return None, "no slot"
+    if len(hits) > 1:
+        return None, "ambiguous: " + ", ".join(hits)
+    return hits[0], ""
 
 
 def _claude_tokens_from(get):
     """The numbering rule, over anything that answers get(name).
 
     A GAP IS NOT THE END. CLAUDE_CODE_OAUTH_TOKEN2 set with 1 left blank is a person who
-    revoked their first key, and a scan that stopped at the hole would quietly run the box on
-    nothing. So every slot up to the ceiling is looked at and the empty ones are skipped, and
-    "the active one" is the first that survives that — not literally number 1.
+    revoked their first key, and a scan that stopped at the hole would quietly leave that
+    account unreachable. So every slot up to the ceiling is looked at and the empty ones are
+    skipped.
     """
     out = []
     for n in range(1, CLAUDE_TOKEN_MAX + 1):
@@ -181,7 +259,7 @@ def _claude_rate(get, slot):
 
     A DECLARATION THAT DOES NOT PARSE IS NOT AN ERROR HERE. This runs while a page is being
     rendered, and a typo in secrets.env must not be the reason an operator cannot see which
-    keys have room left — so anything that is not a positive number reads as undeclared, which
+    keys have room left -- so anything that is not a positive number reads as undeclared, which
     is Pro, which is the cautious answer. A trailing "x" is allowed because "5x" is how the
     plan is written everywhere else and typing it here should not silently mean Pro.
     """
@@ -216,7 +294,7 @@ def claude_plan(rate):
 
 
 def _claude_secrets_file(path):
-    """{name: value} for the token names only, out of a shell-style KEY=value file.
+    """{name: value} for the credential names only, out of a shell-style KEY=value file.
 
     Deliberately not a shell: the file is sourced by ffbox with `.`, but running it to read two
     variables would execute whatever else somebody put in it, from a process that serves a web
@@ -225,8 +303,8 @@ def _claude_secrets_file(path):
     see.
     """
     prefixes = (CLAUDE_TOKEN_PREFIX, CLAUDE_RATE_PREFIX, CLAUDE_NAME_PREFIX)
-    wanted = set(prefixes) | {prefix + str(n) for prefix in prefixes
-                              for n in range(1, CLAUDE_TOKEN_MAX + 1)}
+    wanted = set(prefixes) | {CLAUDE_API_KEY_NAME} | {prefix + str(n) for prefix in prefixes
+                                                      for n in range(1, CLAUDE_TOKEN_MAX + 1)}
     out = {}
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
@@ -260,7 +338,7 @@ def token_fingerprint(token):
 
 
 class ClaudeKeys:
-    """How much is left on each Claude subscription in the pool, from Anthropic's own endpoint.
+    """How much is left on each Claude account this box holds, from Anthropic's own endpoint.
 
     THE ONLY PLACE THIS PROCESS TALKS TO THE INTERNET, and the only reason it is allowed to:
     the answer does not exist anywhere else. Usage against a subscription is not in ffwatch.db,
@@ -320,11 +398,17 @@ class ClaudeKeys:
     TIGHT_PCT = 80.0
 
     def __init__(self, tokens=None, ttl=CLAUDE_USAGE_TTL_SECS, timeout=10, fetch=None,
-                 probe=None, store=None):
-        # A callable rather than a list, because the pool is read out of the environment and a
-        # value captured at construction would be a snapshot of the moment the server started.
+                 probe=None, store=None, api=None, api_probe=None):
+        # A callable rather than a list, because the accounts are read out of the environment
+        # and a value captured at construction would be a snapshot of the moment the server
+        # started.
         self._tokens = tokens if callable(tokens) else (
-            (lambda: list(tokens)) if tokens is not None else claude_token_pool)
+            (lambda: list(tokens)) if tokens is not None else claude_subscriptions)
+        # THE DEFAULT KEY, ON THE SAME TERMS. `api` is a callable or a (name, token) pair or
+        # None; None means "read the environment", which is what both services want, and a test
+        # that wants a box with no API key passes `lambda: None`.
+        self._api = api if callable(api) else (
+            (lambda: tuple(api)) if api is not None else default_api_key)
         self.ttl = ttl
         self.timeout = timeout
         # The seams the offline tests use. `fetch` takes (url, token) and returns
@@ -333,6 +417,9 @@ class ClaudeKeys:
         # whose body is thrown away — and a single seam would have to fake both.
         self.fetch = fetch or self._http
         self.probe = probe or self._probe
+        # THE THIRD SEAM, because an API key is asked a different question over a different
+        # header. It takes (token) and returns (ok, error).
+        self.api_probe = api_probe or self._probe_api
         self._cache = {}
         # Fingerprints whose usage document answered 403. A `claude setup-token` token will
         # answer that EVERY time, for the life of the token, so asking again on each refresh is
@@ -348,8 +435,8 @@ class ClaudeKeys:
         # `status: rejected` and, on that reply, need not repeat the per-window reset headers, so
         # the row that most needs a countdown is the one that arrives without one. Dropping the
         # instant we already knew would make the page say "locked" and nothing about when the
-        # lock lifts, and would make the chooser below score the key as a whole fresh period from
-        # now — the pessimistic guess — at the exact moment the real answer is known.
+        # lock lifts, and would have the hold count down to a whole fresh period from now — the
+        # pessimistic guess — at the exact moment the real answer is known.
         #
         # ONLY WHILE IT IS STILL IN THE FUTURE. A remembered reset that has passed is not a fact
         # about the current window any more: the window rolled and the next one resets somewhere
@@ -393,8 +480,8 @@ class ClaudeKeys:
     def _store_write(self, fresh):
         """Merge {fingerprint: (at, record)} into the file. Silent on every failure.
 
-        MERGED RATHER THAN OVERWRITTEN, because two processes write here and they do not hold
-        the same pool: ffweb reads whatever is in its environment and ffwatch reads whatever is
+        MERGED RATHER THAN OVERWRITTEN, because two processes write here and they do not read
+        the same environment: ffweb reads whatever is in its shell and ffwatch reads whatever is
         in its unit, and a plain overwrite would have each one deleting the other's keys on
         every read.
 
@@ -507,7 +594,44 @@ class ClaudeKeys:
             return {}, "Anthropic answered without any rate-limit headers"
         return found, ""
 
-    def _load(self, name, token, rate=CLAUDE_DEFAULT_RATE, label=""):
+    def _probe_api(self, token):
+        """(ok, error) -- is this API key live? The cheapest possible question.
+
+        A DIFFERENT HEADER AND A DIFFERENT QUESTION. A console key authenticates with
+        `x-api-key` rather than `Authorization: Bearer`, carries no OAuth beta, and has no usage
+        document to read -- its limits are per-minute org rate limits rather than the rolling
+        windows this file measures, so there is nothing here to draw a bar from. What is worth
+        knowing is whether the key works at all, because the alternative way to discover an
+        expired one is a player's bug report failing.
+
+        A 429 IS A LIVE KEY. It means the org is over its per-minute limit right now, which is
+        a fact about this second rather than about the credential, and reporting it as a broken
+        key would put a red row on the page every busy afternoon.
+        """
+        body = json.dumps({"model": self.PROBE_MODEL, "max_tokens": 1,
+                           "messages": [{"role": "user", "content": "."}]}).encode("utf-8")
+        req = urllib.request.Request(self.PROBE_URL, data=body, headers={
+            "x-api-key": token,
+            "anthropic-version": self.ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                resp.read(1 << 16)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                return True, ""
+            if exc.code == 401:
+                return False, ("401 — this key was refused. Either it was revoked, or it is "
+                               "not an Anthropic API key")
+            return False, f"HTTP {exc.code} asking Anthropic about this key"
+        except (urllib.error.URLError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            return False, f"{type(exc).__name__}: {_short(str(reason), 160)}"
+        return True, ""
+
+    def _load(self, name, token, rate=CLAUDE_DEFAULT_RATE, label="", kind=KIND_SUBSCRIPTION):
         """One key, fetched. The cache is not consulted here — see read().
 
         `rate` and `label` ride along rather than being looked up here because they are facts
@@ -516,7 +640,18 @@ class ClaudeKeys:
         """
         fingerprint = token_fingerprint(token)
         rec = {"name": name, "label": label, "fingerprint": fingerprint, "rate": rate,
-               "account": "", "plan": "", "windows": [], "source": "", "error": ""}
+               "kind": kind, "account": "", "plan": "", "windows": [], "source": "",
+               "error": ""}
+        if kind == KIND_API_KEY:
+            # NO WINDOWS, AND THAT IS THE ANSWER RATHER THAN A GAP IN IT. A console key is
+            # metered: there is no rolling window to be 91% through, so the hold has nothing to
+            # hold on and the page has nothing to draw. Live or not is the whole of what this
+            # can say, and it is worth saying.
+            ok, err = self.api_probe(token)
+            rec["source"] = "api key"
+            rec["error"] = "" if ok else err
+            rec["state"] = "available" if ok else "unreachable"
+            return rec
         with self._lock:
             closed = fingerprint in self._no_scope
         usage, err = (None, "403 — remembered") if closed else self.fetch(self.USAGE_URL, token)
@@ -621,10 +756,10 @@ class ClaudeKeys:
             block = usage.get(key)
             if isinstance(block, dict):
                 # `key` RIDES ALONG BESIDE `label`. The label is prose for the page and has
-                # already been reworded once; `pick` has to find the five-hour row and the
+                # already been reworded once; the hold has to find the five-hour row and the
                 # weekly row without matching on English, and "weekly" is a prefix of
-                # "weekly · Opus 4.5" — so matching on the label would have the chooser reading
-                # one model's cap as the account's whole week.
+                # "weekly · Opus 4.5" — so matching on the label would have a hold reading one
+                # model's cap as the account's whole week.
                 rows.append({"key": key,
                              "label": label,
                              "percent": _as_pct(block.get("utilization")),
@@ -704,9 +839,9 @@ class ClaudeKeys:
     # -- the page's entry point --------------------------------------------------------------
 
     def read(self, now=None, force=False):
-        """[record] — one per key in the pool.
+        """[record] — one per account this box holds, the API key last.
 
-        The keys are fetched IN PARALLEL. Serially, a pool of four with one dead key would make
+        The keys are fetched IN PARALLEL. Serially, four accounts with one dead key would make
         the page wait out that key's timeout before starting the next one, and the wait is the
         whole difference between a page an operator refreshes and one they stop opening.
 
@@ -720,16 +855,28 @@ class ClaudeKeys:
         ffweb and ffwatch each paying their own way and each believing something different
         about how full the box is — and since ffwatch reads far more often than the page does,
         it is usually the page that benefits.
+
+        THE API KEY IS READ THE SAME WAY AND CACHED THE SAME WAY, which is worth one sentence
+        because it is measuring something else entirely: not how full it is, only whether it
+        answers. That still wants a cache — the probe costs a token of Haiku, and a page open
+        in three browsers should not buy three of them a minute.
         """
         now = time.time() if now is None else now
         ttl = min(self.ttl, CLAUDE_FORCE_FLOOR_SECS) if force else self.ttl
-        pool = self._tokens()
+        # ONE LIST, TWO KINDS. Everything below this line treats a subscription and the API key
+        # identically — the same threads, the same cache, the same store — and `kind` is what
+        # `_load` and the callers branch on. The API key goes last because it is the fallback
+        # rather than anybody's account, and the page reads in that order.
+        pool = [entry + (KIND_SUBSCRIPTION,) for entry in self._tokens()]
+        api = self._api()
+        if api:
+            pool.append((api[0], api[1], CLAUDE_DEFAULT_RATE, "", KIND_API_KEY))
         shared = self._store_read()
         records = [None] * len(pool)
         minted = {}
         threads = []
 
-        def work(slot, name, token, rate, label):
+        def work(slot, name, token, rate, label, kind):
             key = token_fingerprint(token)
             with self._lock:
                 hit = self._cache.get(key)
@@ -742,46 +889,52 @@ class ClaudeKeys:
                 with self._lock:
                     self._cache[key] = hit
             if hit and now - hit[0] < ttl:
-                # The declared rate and name are taken from the POOL and not from the cached
-                # record: they come out of secrets.env, so an edit there is meant to show up on
-                # the next reload rather than an hour later with the usage numbers.
-                records[slot] = dict(hit[1], age=int(now - hit[0]), rate=rate, label=label)
+                # The declared rate and name are taken from secrets.env and not from the cached
+                # record, so an edit there shows up on the next reload rather than an hour later
+                # with the usage numbers. `kind` rides along for the same reason: it is a fact
+                # about which variable holds the token.
+                records[slot] = dict(hit[1], age=int(now - hit[0]), rate=rate, label=label,
+                                     kind=kind)
                 return
-            rec = self._load(name, token, rate, label)
+            rec = self._load(name, token, rate, label, kind)
             with self._lock:
                 self._cache[key] = (now, rec)
                 minted[key] = (now, rec)
             records[slot] = dict(rec, age=0)
 
-        for slot, (name, token, rate, label) in enumerate(pool):
-            args = (slot, name, token, rate, label)
-            t = threading.Thread(target=work, args=args, daemon=True)
+        for slot, entry in enumerate(pool):
+            t = threading.Thread(target=work, args=(slot,) + tuple(entry), daemon=True)
             t.start()
             threads.append(t)
         deadline = time.time() + self.timeout * 2 + 5
         for t in threads:
             t.join(max(0.0, deadline - time.time()))
         out = []
-        for slot, (name, token, rate, label) in enumerate(pool):
+        for slot, (name, token, rate, label, kind) in enumerate(pool):
             rec = records[slot]
             if rec is None:
                 # The join gave up. Not a cache entry: a fetch that is still in flight will
                 # write one of its own when it lands, and the next reload picks it up.
-                rec = {"name": name, "label": label, "rate": rate,
+                rec = {"name": name, "label": label, "rate": rate, "kind": kind,
                        "fingerprint": token_fingerprint(token),
                        "account": "", "plan": "", "windows": [], "source": "",
                        "state": "unreachable", "age": 0,
                        "error": f"no answer within {self.timeout}s"}
-            # THE FIRST ONE IS THE ONE THAT GETS SPENT. Marked here rather than in the loader
-            # because it is a fact about the pool's order, not about the key.
-            rec["active"] = slot == 0
             out.append(rec)
         # AFTER THE JOIN AND ONCE, not per key inside the worker: the file is a read-modify-
-        # write, and doing it per thread would have the pool's own keys racing each other for
-        # it. Only what this call actually fetched is written; a record that came off the disk
-        # is already there.
+        # write, and doing it per thread would have the accounts racing each other for it. Only
+        # what this call actually fetched is written; a record that came off the disk is already
+        # there.
         self._store_write(minted)
         return out
+
+
+def record_named(records, name):
+    """The record for one variable name, or None. What the per-key hold looks up."""
+    for rec in records or []:
+        if rec.get("name") == name:
+            return rec
+    return None
 
 
 def _as_float(value):
@@ -896,32 +1049,6 @@ def seconds_to_reset(window, key, now=None):
     return max(MIN_SECONDS_TO_RESET, left)
 
 
-def remaining_fraction(window):
-    """How much of this window is still unspent, 0.0 to 1.0.
-
-    A window that was not read at all counts as FULL. That only ever applies to a key whose
-    other window did come back — `usable` below drops a record with no windows at all — and
-    over-crediting one half of a key we can half-see is the direction that keeps the box
-    running; the gate on the five-hour window is what stops it running somewhere it should not.
-    """
-    pct = (window or {}).get("percent")
-    if pct is None:
-        return 1.0
-    return max(0.0, min(1.0, 1.0 - float(pct) / 100.0))
-
-
-def availability(record, key, now=None):
-    """Allowance per second this key can still give out of `key`'s window. Bigger is better.
-
-    The units are arbitrary and only the ORDER matters: `rate` is a plan multiplier rather than
-    a token count, so this is "plans per second", not tokens per second. It ranks correctly
-    against any other key measured the same way, which is the whole job.
-    """
-    window = window_of(record, key)
-    rate = record.get("rate") or CLAUDE_DEFAULT_RATE
-    return (float(rate) * remaining_fraction(window)) / seconds_to_reset(window, key, now)
-
-
 def utilization(record, key):
     """This window's utilisation as a fraction of 1.0, or None when it was not read."""
     pct = (window_of(record, key) or {}).get("percent")
@@ -953,94 +1080,20 @@ def fullest_window(record):
     return best, best_key
 
 
-def emptiest(records, now=None):
-    """(fraction, key, seconds_to_reset, label) for the account with the most room left.
-
-    HOW FULL THIS BOX IS, in one number. A gate asking "are we at 75%" is really asking
-    whether ANY account can take the work, and the account that can is the one with the most
-    room — so a box holding three subscriptions is only at 75% once every one of them is.
-    Within an account it is the FULLEST window that answers, because a turn runs out on
-    whichever clock expires first.
-
-    None when nothing could be read, which every caller has to treat as "no answer" rather
-    than as "empty" or "full": a key set aside by `usable` is one we know nothing about, and
-    an outage at Anthropic must not be able to either stop the box or uncap it.
-    """
-    best = None
-    for record in records:
-        if not usable(record):
-            continue
-        pct, key = fullest_window(record)
-        if pct is None:
-            continue
-        if best is None or pct < best[0]:
-            best = (pct, key, seconds_to_reset(window_of(record, key), key, now),
-                    record.get("label") or record.get("name") or "?")
-    return best
-
-
 def usable(record):
-    """Can anything be said about this key at all?
+    """Can anything be said about this key's windows at all?
 
-    A key whose windows could not be read is not "empty" and must not be ranked as though it
-    were: an unreachable account would otherwise score as a full plan and take every turn on
-    the box. It is set aside instead, and `pick` falls back to the pool's own order if setting
-    them all aside leaves nothing.
+    A key whose windows could not be read is not "empty" and must not be treated as though it
+    were: the hold fails open on it, because an outage at Anthropic or a revoked scope must not
+    be able to silently stop every review and every new report on the box.
+
+    AN API KEY IS NOT USABLE IN THIS SENSE and that is not a criticism of it. It has no rolling
+    window, so there is no reading that could put it over a threshold, and the hold reads that
+    as "run" — which is the truth: a metered key does not run out, it costs money.
     """
     if record.get("state") == "unreachable":
         return False
     return bool(record.get("windows"))
-
-
-def pick(records, cap=0.6, now=None):
-    """(index, why) — which key in `records` the next turn should be billed to.
-
-    `records` is ClaudeKeys.read()'s output, in pool order. `cap` is the share of the five-hour
-    window past which a slot is not offered work.
-
-    NEVER RETURNS NOTHING. This is on the launch path, and a turn that did not start because
-    the chooser could not decide is a worse outcome than one that ran on a busy plan. With no
-    readable key at all it answers 0 — the first in the pool, which is what this box did before
-    any of this existed.
-    """
-    if not records:
-        return 0, "no Claude keys are configured"
-    live = [i for i, r in enumerate(records) if usable(r)]
-    if not live:
-        return 0, "no key could be read; falling back to the first in the pool"
-
-    def rank(i, key):
-        # Descending on the rate, then on what is simply left, then on the slot number so the
-        # answer is stable rather than dependent on dict order.
-        rec = records[i]
-        return (-availability(rec, key, now),
-                -remaining_fraction(window_of(rec, key)),
-                i)
-
-    under = [i for i in live
-             if not (window_of(records[i], "five_hour") or {}).get("locked")
-             and (utilization(records[i], "five_hour") or 0.0) < cap]
-    if under:
-        chosen = min(under, key=lambda i: rank(i, "seven_day"))
-        return chosen, _why(records[chosen], "seven_day", cap, now)
-    chosen = min(live, key=lambda i: rank(i, "five_hour"))
-    return chosen, ("every key is at or above %.0f%% of its five-hour session; %s"
-                    % (cap * 100.0, _why(records[chosen], "five_hour", cap, now)))
-
-
-def _why(record, key, cap, now=None):      # noqa: ARG001 - cap is for the caller's sentence
-    """One sentence naming the numbers this key was chosen on, for the log and the page."""
-    window = window_of(record, key)
-    left = remaining_fraction(window)
-    secs = seconds_to_reset(window, key, now)
-    label = (window or {}).get("label") or key
-    # THE LABEL IF THERE IS ONE. This sentence goes in the journal and on a page, and
-    # "Loth has 22% of its weekly left" is a fact about an account a person recognises where
-    # "CLAUDE_CODE_OAUTH_TOKEN2 has" is a fact about where a line sits in a file. The NAME is
-    # what anything looks the key up by; this is only what it is called.
-    return ("%s has %.0f%% of its %s left, refilling in %s, on a %s plan"
-            % (record.get("label") or record.get("name") or "?", left * 100.0, label,
-               _rough(secs), claude_plan(record.get("rate"))))
 
 
 def _rough(secs):

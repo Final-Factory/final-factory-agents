@@ -853,9 +853,10 @@ $EDITOR ~/.config/ffbox/secrets.env
 
 | variable | notes |
 |---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` | one per Claude account, from `claude setup-token`; bills against that subscription. **All of them are spent** — ffwatch picks one per turn (see "Spending the pool" below). The unnumbered `CLAUDE_CODE_OAUTH_TOKEN` is the older spelling and still works |
-| `CLAUDE_CODE_RATE_TOKEN1`, `…2`, `…3` | which plan the token in the matching slot is on, as its multiplier: `1` for Pro, `5` for Max 5x, `20` for Max 20x. These tokens cannot ask Anthropic which plan they are on (see below), and the chooser needs it to weigh a percentage of one plan against a percentage of another; an undeclared slot reads as `1` |
-| `CLAUDE_CODE_NAME_TOKEN1`, `…2`, `…3` | optional label for the token in the matching slot — ffweb's `/claude` page heads that row with it instead of the variable name, so a row reads `Loth` rather than `CLAUDE_CODE_OAUTH_TOKEN2`. Undeclared or blank keeps the variable name |
+| `ANTHROPIC_API_KEY` | the metered default, from console.anthropic.com. Pays for every request no operator made: a player in a forum thread, the engagement gate, the selector. Without it this box answers only its operators |
+| `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` | one subscription per OPERATOR, from `claude setup-token`; bills against that subscription, and only for the person who claims it in `config.json` (see "Whose account pays" below). The unnumbered `CLAUDE_CODE_OAUTH_TOKEN` is the older spelling and still works |
+| `CLAUDE_CODE_NAME_TOKEN1`, `…2`, `…3` | the **subscription id** for the token in the matching slot — what an operator writes as `operators.<them>.claude` to claim it, and what ffweb's `/claude` page heads that row with. A slot nobody names can only be claimed by its number |
+| `CLAUDE_CODE_RATE_TOKEN1`, `…2`, `…3` | which plan the token in the matching slot is on, as its multiplier: `1` for Pro, `5` for Max 5x, `20` for Max 20x. These tokens cannot ask Anthropic which plan they are on, and it is printed rather than weighed now that nothing ranks accounts; an undeclared slot reads as `1` |
 | `UNITY_EMAIL` / `UNITY_PASSWORD` | required **even for a Personal license** — activation is an online serial activation |
 | `UNITY_SERIAL` *or* `UNITY_LICENSE_FILE` | the 27-char serial, or a `.ulf` to extract it from |
 
@@ -863,76 +864,84 @@ $EDITOR ~/.config/ffbox/secrets.env
 instructions rather than failing twenty minutes into a Unity import. See `secrets.env.example`
 for why they live on the host rather than in the image or in argv.
 
-**Why the Claude token is a numbered pool.** A subscription has rolling limits, and one plan
-carrying a build server spends most of the week rate-limited while every other account sits
-untouched. So every account goes in the file, numbered, and the box spends all of them. A gap is
-not the end of the list: slot 2 filled with slot 1 blank is a revoked first key, and everything
-here keeps scanning.
+**Why there is one token per operator.** Which account pays for a request is decided by who
+asked: an operator's work is billed to their own subscription, and everything else — a player in
+a forum thread, the engagement gate, the selector — to `ANTHROPIC_API_KEY`, which is metered. So
+every operator's account goes in the file, numbered, and each one is claimed in `config.json` by
+the person it belongs to. A gap is not the end of the list: slot 2 filled with slot 1 blank is a
+revoked first key, and everything here keeps scanning.
 
-### Spending the pool
+### Whose account pays
 
-`ffwatch` picks an account per turn — and for every gate and selector call it makes on the host,
-which on a busy channel is far more often than any agent runs. The rule is **not** "whoever has
-used least":
+| request | billed to |
+|---|---|
+| a forum thread, a mention, a player's DM | `ANTHROPIC_API_KEY` |
+| an operator's message, directive or DM | that operator's subscription |
+| `#codereview` on a pull request | that operator's subscription |
+| a shell or web prompt | that operator's subscription |
+| the engagement gate and the selector | `ANTHROPIC_API_KEY` |
 
-> An account 75% through a window that refills in five minutes has a quarter of a plan that is
-> about to be thrown away — unspent window is not carried over, so spending it costs nothing. An
-> account 50% through a window with five days left has half a plan that has to last five days.
-> The first one is the one to spend, even though it looks busier.
+An operator claims their slot by the name declared beside it:
 
-So each account is scored on the allowance it can still give **per second** before it refills,
-and the largest wins:
+```jsonc
+// ~/.config/ffbox/secrets.env
+CLAUDE_CODE_OAUTH_TOKEN2=sk-ant-oat01-...
+CLAUDE_CODE_NAME_TOKEN2=Loth
 
+// ~/.config/ffbox/config.json
+"operators": { "lothsahn": { "discord": "193...", "github": 10092359,
+                             "shell": "lothsahn", "claude": "Loth" } }
 ```
-        rate × remaining
-       ------------------
-        seconds to reset
-```
 
-`remaining` is the share of the weekly window still unspent, `seconds to reset` is what makes the
-about-to-refill account win, and `rate` is the plan multiplier from `CLAUDE_CODE_RATE_TOKEN<n>` —
-which is what makes this a comparison of *tokens* rather than of percentages, since a quarter of
-a Max 20x plan is five whole Pro ones. Equal reset times cancel the time term, and it reduces to
-"the emptiest week".
+The route is a lookup of an **authenticated id** — Discord's author, GitHub's comment author,
+the unix account a terminal prompt arrived under — and never anything message text can ask for.
+It reads the same `operators` block that decides whether somebody may command the box at all, so
+the person trusted to drive it is the person whose subscription pays for it.
 
-Two rules sit around that score. An account that has spent more than **60%** of its *five-hour*
-session is not offered work at all, whatever its week looks like: that is the headroom a human at
-a terminal needs on the same account, and it is a gate rather than a term so it cannot be
-outweighed. It un-gates itself as soon as that session turns over. And when *every* account is
-over the cap there is no good choice left, only the one that comes back first — the same score
-applied to the five-hour window instead of the week, so an account at 90% that refills in two
-minutes beats one at 65% with four hours to go.
+**An operator with nothing to bill is refused, not rehomed.** No `claude` id, an id naming no
+token, an id two slots both answer to: each is a configuration error, said once in the venue the
+request came from, with the request left where it arrived so the pass after the fix runs it.
+Falling back to the API key would be the box spending money nobody budgeted; falling back to
+another operator's subscription is the behaviour this replaced. `ffwatch` says which variable
+each operator resolved to in the journal at startup, and `/claude` shows the same thing.
 
-The numbers come from Anthropic, through the same `claude_keys` module that draws `/claude`, so
-the page and the box can never disagree about which account has room. `claude.five_hour_cap` and
-`claude.spread` in `~/.config/ffbox/config.json` are the knobs; `ffbox/config.md` documents them,
-and `ffwatch status` prints a line per account and says where the next turn is going:
-
-```
-claude accounts: 3  (cap 60% of the five-hour session; next turn goes to CLAUDE_CODE_OAUTH_TOKEN2)
-  because Loth has 22% of its weekly left, refilling in 41 minutes, on a Max 20x plan
-  CLAUDE_CODE_OAUTH_TOKEN1     Ben  Pro       5h= 72% in 2 hours   7d= 10% in 5 days       OVER CAP
-  CLAUDE_CODE_OAUTH_TOKEN2     Loth Max 20x   5h=  5% in 4 hours   7d= 78% in 41 minutes
-  CLAUDE_CODE_OAUTH_TOKEN3          Max 5x    5h= 12% in 3 hours   7d= 40% in 6 days
-```
+Until 2026-09-04 the first token in the file paid for everything; until 2026-09-10 the box read
+what was left on every account and spent whichever had the most allowance per second before it
+refilled. That worked, and it made "whose subscription paid for that" unanswerable —
+`design/operator_subscriptions_design.txt` has the argument.
 
 **The choice travels as a name, never as a token.** `ffwatch` hands `ffbox` a variable name
-(`--claude-key CLAUDE_CODE_OAUTH_TOKEN2`) and `ffbox` resolves it out of `secrets.env` itself, so
-no credential reaches argv — world-readable through `/proc` for the life of the call — or the
-database, which records the name against the run. `ffbox` refuses a name that is not one of its
-own Claude tokens rather than falling back, which is what stops a wrong `--claude-key` handing a
-container some other secret.
+(`--claude-key CLAUDE_CODE_OAUTH_TOKEN2`, or `--claude-key ANTHROPIC_API_KEY`) and `ffbox`
+resolves it out of `secrets.env` itself, so no credential reaches argv — world-readable through
+`/proc` for the life of the call — or the database, which records the name against the run.
+`ffbox` refuses a name that is not one of its own credentials rather than falling back, and
+refuses `ANTHROPIC_API_KEY` with nothing in it rather than quietly billing a subscription.
 
-**A warm container spends the account it was staged with.** A container's environment is fixed
-when docker creates it and cannot be added to afterwards, so for a pooled run the choice is made
-when the spare is staged — possibly hours before the turn that lands in it. The reading behind
-that choice is therefore up to a few hours old, and the run row records the account the container
-actually holds rather than the one this moment would prefer. Spares turn over as they are
-consumed, so the pool spreads across accounts on its own; the alternative — getting a freshly
-chosen token into a running container through its spool, with a mode and a group so only it could
-read the file, an export ordered before the `exec`, a fallback for when it did not arrive and a
-deletion afterwards — was a great deal of machinery to buy a fresher number. Cold runs, which
-create their own container, are chosen at launch.
+`ffwatch status` prints a line per operator, plus the metered default and anything nobody claims:
+
+```
+claude: 3 subscriptions, default ANTHROPIC_API_KEY
+  ben              CLAUDE_CODE_OAUTH_TOKEN1     Pro       5h= 72% in 2 hours   7d= 10% in 5 days
+  lothsahn         CLAUDE_CODE_OAUTH_TOKEN2     Max 20x   5h=  5% in 4 hours   7d= 78% in 41 minutes
+  (unclaimed)      CLAUDE_CODE_OAUTH_TOKEN3     declared Max5x-spare
+```
+
+**A warm container can only serve a turn billed to what it was staged with.** A container's
+environment is fixed when docker creates it and cannot be added to afterwards, so a spare carries
+one credential for its whole life — and `ffwatch` will only hand it to a turn routed to that same
+one. The ffagent pool stages on the API key, so every player-facing spare matches every
+player-facing turn; the ffdev pool stages for whichever operator ran something most recently, and
+a wrong guess costs one cold launch. Getting a freshly chosen token into a *running* container
+instead — through its spool, with a mode and a group so only it could read the file, an export
+ordered before the `exec`, a fallback for when it did not arrive and a deletion afterwards — was
+a great deal of machinery, and a live credential on disk, to save forty seconds.
+
+**What waits instead of running.** Above `claude.review_hold_pct` / `new_conversation_hold_pct`
+of the account that would pay, a `#codereview` trigger or a new conversation is left exactly
+where it arrived and picked up on the pass after the window refills. One operator's spent week
+holds their own work and nobody else's. The metered key has no rolling window, so player traffic
+never waits for one — what bounds a player-facing run is `max_budget_usd`, which can be set per
+agent class. `ffbox/config.md` documents all of it under `claude`.
 
 ## Results
 

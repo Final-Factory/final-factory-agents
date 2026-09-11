@@ -150,6 +150,86 @@ grep -q 'not in ffbox/egress/allowlist.txt' "$LOG" \
 [ "$(forwarded)" = 1 ] && ok "and still passed, because the allowlist may have been edited" \
     || bad "and still passed, because the allowlist may have been edited (saw $(forwarded))"
 
+# --- which Claude credential the container is handed -----------------------------------------
+#
+# ONE OF TWO, NEVER BOTH, AND NEVER BY VALUE. A subscription token goes in as
+# CLAUDE_CODE_OAUTH_TOKEN and the metered key as ANTHROPIC_API_KEY, forwarded by NAME so the
+# value stays out of docker's argv -- the same rule the GitHub token above is held to.
+#
+# AND THE API KEY IS NEVER THE UNASKED-FOR FALLBACK. `--claude-key ANTHROPIC_API_KEY` on a box
+# where that variable is empty has to REFUSE: falling through to a subscription slot would be a
+# player's turn silently billed to somebody's personal plan, which is the exact failure the
+# routing exists to prevent (design/operator_subscriptions_design.txt).
+echo "claude credential: one of two, by name"
+
+printf 'CLAUDE_CODE_OAUTH_TOKEN1=%s\nANTHROPIC_API_KEY=%s\n' \
+    "sk-ant-oat01-$FAKE_TOKEN" "sk-ant-api03-$FAKE_TOKEN" > "$TMP/secrets-claude.env"
+printf 'CLAUDE_CODE_OAUTH_TOKEN1=%s\n' "sk-ant-oat01-$FAKE_TOKEN" > "$TMP/secrets-noapi.env"
+chmod 600 "$TMP/secrets-claude.env" "$TMP/secrets-noapi.env"
+
+# stage_key <name> <secrets file> [--claude-key NAME] -> ARGV/LOG/RC, as `stage` above
+stage_key() {
+    _n=$1; _sec=$2; shift 2
+    ARGV="$TMP/$_n.argv"; LOG="$TMP/$_n.log"
+    : > "$ARGV"
+    mkdir -p "$TMP/pool"
+    set +e
+    PATH="$TMP/bin:$PATH" \
+    FFBOX_TEST_ARGV="$ARGV" \
+    FFBOX_SECRETS="$_sec" \
+    FFBOX_CONFIG_JSON="$TMP/config.json" \
+    FFBOX_CACHE_DIR="$TMP/cache" \
+        timeout 120 bash "$HERE/ffbox" --stage-pool "$_n" --pool-dir "$TMP/pool" \
+            --agent-class ffdev --network bridge --ref master "$@" > "$LOG" 2>&1
+    RC=$?
+    set -e
+    unset _n _sec
+}
+
+# How many times a bare `-e NAME` was handed to docker, which is the forwarding form.
+env_named() { tr '\0' '\n' < "$ARGV" | grep -c "^$1\$" || true; }
+
+stage_key k1 "$TMP/secrets-claude.env" --claude-key ANTHROPIC_API_KEY
+[ "$RC" -eq 0 ] && [ "$(env_named ANTHROPIC_API_KEY)" = 1 ] \
+    && ok "--claude-key ANTHROPIC_API_KEY forwards the API key" \
+    || bad "--claude-key ANTHROPIC_API_KEY forwards the API key (rc=$RC): $(tail -2 "$LOG")"
+[ "$(env_named CLAUDE_CODE_OAUTH_TOKEN)" = 0 ] \
+    && ok "and no subscription token goes in beside it" \
+    || bad "and no subscription token goes in beside it"
+
+stage_key k2 "$TMP/secrets-claude.env" --claude-key CLAUDE_CODE_OAUTH_TOKEN1
+[ "$RC" -eq 0 ] && [ "$(env_named CLAUDE_CODE_OAUTH_TOKEN)" = 1 ] \
+    && ok "a named slot forwards that subscription instead" \
+    || bad "a named slot forwards that subscription instead (rc=$RC): $(tail -2 "$LOG")"
+[ "$(env_named ANTHROPIC_API_KEY)" = 0 ] \
+    && ok "and the API key does not ride along with it" \
+    || bad "and the API key does not ride along with it"
+
+# THE VALUE NEVER TOUCHES argv, on either branch. Same property, same reason, as the GitHub
+# token above: /proc/<pid>/cmdline is world-readable.
+tr '\0' '\n' < "$ARGV" | grep -q "$FAKE_TOKEN" \
+    && bad "no Claude token reaches the command line" \
+    || ok "no Claude token reaches the command line"
+
+stage_key k3 "$TMP/secrets-noapi.env" --claude-key ANTHROPIC_API_KEY
+[ "$RC" -eq 78 ] \
+    && ok "an empty ANTHROPIC_API_KEY is refused rather than silently billed to a slot" \
+    || bad "an empty ANTHROPIC_API_KEY is refused (rc=$RC): $(tail -2 "$LOG")"
+grep -q "operator" "$LOG" \
+    && ok "and the refusal says what the key is for" \
+    || bad "and the refusal says what the key is for: $(tail -2 "$LOG")"
+
+stage_key k4 "$TMP/secrets-claude.env" --claude-key GH_PR_TOKEN
+[ "$RC" -eq 78 ] \
+    && ok "a name that is not a Claude credential is still refused" \
+    || bad "a name that is not a Claude credential is still refused (rc=$RC)"
+
+# NO FLAG AT ALL is a run typed by hand at a terminal, and it takes the first subscription slot.
+stage_key k5 "$TMP/secrets-claude.env"
+[ "$RC" -eq 0 ] && [ "$(env_named CLAUDE_CODE_OAUTH_TOKEN)" = 1 ] \
+    && ok "with no flag the first subscription slot is used" \
+    || bad "with no flag the first subscription slot is used (rc=$RC): $(tail -2 "$LOG")"
+
 # --- what the container does with it ---------------------------------------------------------
 #
 # The staging itself, as entrypoint.sh performs it: a ~/.git-credentials at 600 and a global

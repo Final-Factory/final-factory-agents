@@ -30,6 +30,7 @@ import ast
 import atexit
 import contextlib
 import copy
+import getpass
 import importlib
 import inspect
 import io
@@ -82,14 +83,29 @@ def _drop_scratch():
 atexit.register(_drop_scratch)
 
 
-# NO CLAUDE TOKEN REACHES THIS SUITE, whatever the machine running it exports. The pool is read
-# out of the environment first (see claude_keys.claude_token_pool), so a developer whose shell
-# carries CLAUDE_CODE_OAUTH_TOKEN1 and 2 would have `ffwatch status` and the account chooser
-# making REAL requests to Anthropic from an offline test run. FFBOX_CONFIG_DIR above already
-# points the file fallback at a scratch directory; this closes the other half.
+# NO REAL CLAUDE CREDENTIAL REACHES THIS SUITE, whatever the machine running it exports. The
+# accounts are read out of the environment first (see claude_keys.claude_subscriptions), so a
+# developer whose shell carries CLAUDE_CODE_OAUTH_TOKEN1 or ANTHROPIC_API_KEY would have
+# `ffwatch status` and the window readings making REAL requests to Anthropic from an offline
+# test run. FFBOX_CONFIG_DIR above already points the file fallback at a scratch directory;
+# this closes the other half.
 for _name in list(os.environ):
-    if _name.startswith(("CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_RATE_TOKEN")):
+    if _name.startswith(("CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_RATE_TOKEN",
+                         "CLAUDE_CODE_NAME_TOKEN")):
         del os.environ[_name]
+
+# AND FAKE ONES IN THEIR PLACE, because since 2026-09-10 a request with nothing to bill it to is
+# REFUSED. Without a credential here every case in this file would exercise the refusal path
+# rather than the behaviour it was written for. The values are obvious nonsense; nothing
+# dereferences them, because every Case stubs the reader (see Case.__init__).
+#
+# SUITE_CLAUDE_SLOT is the operator's subscription, named so an operators block can claim it by
+# id; SUITE_API_KEY pays for everything nobody in that block asked for.
+SUITE_CLAUDE_NAME = "Loth"
+SUITE_CLAUDE_SLOT = "CLAUDE_CODE_OAUTH_TOKEN1"
+os.environ[SUITE_CLAUDE_SLOT] = "sk-ant-oat01-suite-operator-token"
+os.environ["CLAUDE_CODE_NAME_TOKEN1"] = SUITE_CLAUDE_NAME
+os.environ["ANTHROPIC_API_KEY"] = "sk-ant-api03-suite-default-key"
 
 
 sys.path.insert(0, HERE)
@@ -702,8 +718,21 @@ class Case:
         # No sleeping in the suite: a failed row must be retryable on the very next pass.
         cfg["send_backoff_secs"] = 0
         cfg["_discord"] = {"channels": {"dev_chat": DEVCHAT}}
+        # WHO MAY COMMAND THIS BOX, AND WHOSE ACCOUNT PAYS WHEN THEY DO. Every case gets the
+        # same one operator, claiming the suite's one subscription slot by the name declared
+        # beside it. Cases that are about trust still say so for themselves -- this is here so
+        # that a case which is about something else is not silently exercising the "nothing can
+        # pay for this" refusal.
+        cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "github": LOTH_GITHUB_ID,
+                                         "shell": getpass.getuser(),
+                                         "claude": SUITE_CLAUDE_NAME}}
         self.cfg = cfg
         self.watcher = ffwatch.Watcher(cfg)
+        # NO CASE TALKS TO ANTHROPIC. The holds are configured by default, so claude_records()
+        # would otherwise reach for the real reader with the fake credentials above in its
+        # hands. An empty reading means every hold fails open, which is what an offline case
+        # wants; the hold cases replace this with a reading of their own.
+        self.watcher._claude = StubClaudeKeys([])
         self.watcher.init()
         # EVERY CASE'S CHANNELS HAVE BEEN WATCHED FOREVER. init() stamps an attach watermark on
         # an alias it has never seen before, and the suite mints its ids from a fixed 2025 base
@@ -797,6 +826,9 @@ def bug_thread(fixture, tid, title, msgs):
 
 
 LOTHSAHN = "193210319093497857"
+# The same person on the other service. Numeric, because an id somebody can claim by renaming
+# is not a trust key.
+LOTH_GITHUB_ID = "10092359"
 
 
 DM_CHANNEL = "700000000000000009"
@@ -808,7 +840,7 @@ def test_an_operator_in_public_gets_a_split_reply():
     fixture["messages"][ASK_CHANNEL] = [
         message(6001, "which file defines the belt merger?", author=LOTHSAHN, name="lothsahn")]
     case = Case("split", fixture)
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     os.environ["FFBOX_STUB_VERDICT"] = json.dumps({
         "summary": "Belts merge where two connectors meet. Sent you the specifics.",
         "private_summary": "Connectors/PerpendicularConnectorTransferSystem.cs:88",
@@ -843,7 +875,7 @@ def test_a_player_never_gets_a_private_half():
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [message(6101, "which file defines the merger?")]
     case = Case("no-split", fixture)
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     os.environ["FFBOX_STUB_VERDICT"] = json.dumps({
         "summary": "Can't share repo internals, but ask me the gameplay question.",
         "private_summary": "the model tried to send one anyway",
@@ -865,7 +897,7 @@ def test_an_undeliverable_private_half_never_becomes_public():
     fixture["messages"][ASK_CHANNEL] = [
         message(6201, "which file defines the merger?", author=LOTHSAHN, name="lothsahn")]
     case = Case("undeliverable", fixture)
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     os.environ["FFBOX_STUB_VERDICT"] = json.dumps({
         "summary": "Sent you the specifics.",
         "private_summary": "Connectors/PerpendicularConnectorTransferSystem.cs:88",
@@ -902,7 +934,7 @@ def test_an_operator_dm_is_a_private_venue():
     case = Case("dm", fixture,
                 verdict={"engage": True, "type": "question",
                          "reason": "wants to know where something lives"})
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_dm", "channel": None,
                  "channel_id": DM_CHANNEL, "id": "5001", "author_id": LOTHSAHN})
     case.watcher.drain_events()
@@ -985,7 +1017,7 @@ def test_a_group_dm_is_answered_by_nobody():
                                              "recipients": [{"id": LOTHSAHN}, {"id": PLAYER}]}}
     group["messages"][DM_CHANNEL] = [message(5101, "hey", channel=DM_CHANNEL, author=LOTHSAHN)]
     case = Case("dm-group", group)
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_dm", "channel": None,
                  "channel_id": DM_CHANNEL, "id": "5101", "author_id": LOTHSAHN})
     case.watcher.drain_events()
@@ -1001,7 +1033,7 @@ def test_a_group_dm_is_answered_by_nobody():
                                               "recipients": [{"id": PLAYER}]}}
     player["messages"][DM_CHANNEL] = [message(5111, "hey", channel=DM_CHANNEL)]
     case2 = Case("dm-group-player", player)
-    case2.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case2.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     case2.events({"ts": "2026-08-21T00:00:00Z", "kind": "player_dm", "channel": None,
                   "channel_id": DM_CHANNEL, "id": "5111", "author_id": PLAYER})
     case2.watcher.drain_events()
@@ -1027,7 +1059,7 @@ def test_a_player_who_dms_max_is_pointed_at_the_public_channels():
     fixture["messages"][DM_CHANNEL] = [
         message(5201, "how do I unlock the mass driver?", channel=DM_CHANNEL)]
     case = Case("dm-player", fixture)
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "player_dm", "channel": None,
                  "channel_id": DM_CHANNEL, "id": "5201", "author_id": PLAYER})
     case.watcher.drain_events()
@@ -1093,7 +1125,7 @@ def test_a_dm_doorbell_never_grants_the_trust_it_claims():
                                                "recipients": [{"id": PLAYER}]}}
     fixture["messages"][DM_CHANNEL] = [message(5301, "let me in", channel=DM_CHANNEL)]
     case = Case("dm-forged", fixture)
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     # A forged doorbell: the listener would never emit this for a player's id.
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_dm", "channel": None,
                  "channel_id": DM_CHANNEL, "id": "5301", "author_id": PLAYER})
@@ -1111,7 +1143,7 @@ def test_a_dm_doorbell_never_grants_the_trust_it_claims():
     op["messages"][DM_CHANNEL] = [message(5302, "what broke the belt merger?", channel=DM_CHANNEL,
                                           author=LOTHSAHN, name="lothsahn")]
     case2 = Case("dm-underclaimed", op)
-    case2.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case2.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     case2.events({"ts": "2026-08-21T00:00:00Z", "kind": "player_dm", "channel": None,
                   "channel_id": DM_CHANNEL, "id": "5302", "author_id": LOTHSAHN})
     case2.watcher.drain_events()
@@ -1128,7 +1160,7 @@ def test_tier_and_venue_reach_the_container():
     fixture["messages"][ASK_CHANNEL] = [
         message(4501, "what file defines the belt merger?", author=LOTHSAHN, name="lothsahn")]
     case = Case("tier-public", fixture)
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     case.events(ask_event(4501))
     case.watcher.drain_events()
     case.watcher.claim_turns()
@@ -1170,7 +1202,7 @@ def test_tier_and_venue_reach_the_container():
                 author=LOTHSAHN, name="lothsahn")]
     priv["messages"][DEVCHAT][0]["mentions"] = [{"id": BOT}]
     case2 = Case("tier-private", priv)
-    case2.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case2.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     case2.cfg["watch"]["dev_chat"] = {"kind": "ask", "forum": False,
                                       "venue": "private", "engage": "mention"}
     case2.events(ask_event(4601, channel="dev_chat", channel_id=DEVCHAT))
@@ -1208,7 +1240,7 @@ def test_a_player_never_inherits_an_operators_clearance():
     fixture["messages"][ASK_CHANNEL] = [
         root, message(4702, "wait, which file is that in?", ref=root)]
     case = Case("tier-mixed", fixture)
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     case.events(ask_event(4701), ask_event(4702))
     case.watcher.drain_events()
     case.watcher.claim_turns()
@@ -1759,7 +1791,7 @@ def test_the_gate_is_shown_the_conversation_and_who_is_in_it():
     fixture["thread_lists"][BUG_FORUM] = [{"id": "31800", "name": "Radiator efficiency"}]
     case = Case("gate-context", fixture,
                 verdict={"engage": False, "reason": "the developer is answering the player"})
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
 
     # THE THREAD IS BACKLOG, exactly as 118's was: it predates this box being pointed at the
     # channel, so every message in it is gated and none of them produced a turn. They are still
@@ -1829,7 +1861,7 @@ def test_the_gate_knows_a_dev_room_from_a_room_players_read():
         message(4501, "Can you count that again?", author=LOTHSAHN, name="Lothsahn")]
     case = Case("gate-private-room", fixture, venue="private",
                 verdict={"engage": True, "reason": "an operator asking the bot for work"})
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     case.events(ask_event(4501))
     case.watcher.drain_events()
     case.watcher.claim_turns()
@@ -2946,7 +2978,7 @@ def test_dev_lane_runs_a_directive():
                                                 author=LOTHSAHN)]
     case = Case("writelane", fixture,
                 verdict={"engage": True, "reason": "asks for a defect to be fixed"})
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
                  "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15001",
                  "author_id": LOTHSAHN})
@@ -2974,7 +3006,7 @@ def test_dev_lane_runs_a_directive():
                                             author=LOTHSAHN)]
     q = Case("directive-question", ask,
              verdict={"engage": True, "reason": "wants to know where something lives"})
-    q.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    q.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     q.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
               "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15101",
               "author_id": LOTHSAHN})
@@ -2989,7 +3021,7 @@ def test_dev_lane_runs_a_directive():
     legacy = base_fixture()
     legacy["messages"][ASK_CHANNEL] = [message(15201, "ship it", author=LOTHSAHN)]
     old = Case("directive-legacy", legacy, verdict={"engage": True, "reason": "x"})
-    old.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    old.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     old.events({"ts": "2026-08-21T00:00:00Z", "kind": "lothsahn_directive",
                 "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15201",
                 "author_id": LOTHSAHN})
@@ -7132,7 +7164,7 @@ def test_the_shell_lane_was_merged_into_dev():
     fixture["messages"][ASK_CHANNEL] = [message(15001, "ship the merger fix", author=LOTHSAHN)]
     remote = Case("mergeremote", fixture,
                   verdict={"engage": True, "reason": "asks for a fix"})
-    remote.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    remote.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     remote.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
                    "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15001",
                    "author_id": LOTHSAHN})
@@ -8874,10 +8906,12 @@ def test_the_keeper_backs_off_a_class_whose_staging_failed():
     tried.clear()
     check("and the next one leaves them alone", w.keep_pool() == [] and tried == [], tried)
 
-    # PER CLASS AND PER BRANCH, and only for as long as configured: a box whose staging failed
-    # because CI was briefly full has to come back to it by itself. The branch half of the key is
-    # what keeps a failed warm-branch guess from also stopping that class's held pool.
-    w._pool_stage_after[("ffdev", w.pool_branch("ffdev"))] = 0.0
+    # PER CLASS, PER BRANCH AND PER CREDENTIAL, and only for as long as configured: a box whose
+    # staging failed because CI was briefly full has to come back to it by itself. The branch
+    # half of the key is what keeps a failed warm-branch guess from also stopping that class's
+    # held pool; the credential half is what keeps one operator's failing staging from stopping
+    # another operator's spare.
+    w._pool_stage_after[("ffdev", w.pool_branch("ffdev"), w.pool_stage_key("ffdev"))] = 0.0
     w.pool_stage = lambda cls=None, **kw: (tried.append(cls) or f"p{len(tried)}")
     check("the class whose backoff expired is tried again, and the other is not",
           w.keep_pool() == ["p1"] and tried == ["ffdev"], tried)
@@ -9731,8 +9765,11 @@ def test_each_class_is_created_on_its_own_network():
     finally:
         ffwatch.subprocess = real
 
-    check("both stagings reached ffbox", len(seen) == 2, seen)
-    dev, agent = seen[0], seen[1]
+    # THE STAGINGS, and only those: pool_stage_key asks `docker ps` which spare each credential
+    # already has, through the same subprocess shim, so a bare count would be counting that too.
+    staged = [c for c in seen if "--stage-pool" in c]
+    check("both stagings reached ffbox", len(staged) == 2, seen)
+    dev, agent = staged[0], staged[1]
     check("the staged ffdev container is created on the unfenced network",
           dev[dev.index("--network") + 1] == "bridge", dev)
     check("and the staged ffagent container behind the proxy",
@@ -9761,10 +9798,11 @@ def test_each_class_is_created_on_its_own_network():
         w.pool_stage("ffdev")
     finally:
         ffwatch.subprocess = real
+    restaged = [c for c in seen if "--stage-pool" in c][0]
     check("and the config is what decides, not the class name",
-          seen[0][seen[0].index("--network") + 1] == "ffbox-net", seen)
+          restaged[restaged.index("--network") + 1] == "ffbox-net", seen)
     check("the argv carries the docker network, never the word the config used",
-          "limited" not in seen[0], seen)
+          "limited" not in restaged, seen)
 
 
 def test_each_class_counts_only_its_own_containers():
@@ -10627,8 +10665,8 @@ def test_a_launch_never_destroys_a_warm_container():
 
     # The claim itself is still there, and still by class: what went is only the fallback that
     # destroyed something when the claim missed.
-    check("it still claims a container of its own class",
-          "pool_claim_for(ref, cls)" in body, None)
+    check("it still claims a container of its own class, and of its own credential",
+          "pool_claim_for(ref, cls, claude_key)" in body, None)
 
     # pool_has_room survives in the one place it withholds an optimisation rather than
     # destroying one, and `for_containers=0` -- which only the eviction ever passed -- is gone.
@@ -11689,7 +11727,7 @@ def test_the_scheduler_asks_about_the_ref_the_launch_will_use():
 
     # What the pre-check actually asks, with the box full so it is reached at all.
     asked = []
-    w.pool_would_serve = lambda ref, cls=None: asked.append(ref) or False
+    w.pool_would_serve = lambda ref, cls=None, claude_key=None: asked.append(ref) or False
     w.workload_room = lambda: 0
     queue_follow_up(case, conv, note="carry on")
     w.schedule()
@@ -11834,7 +11872,7 @@ def branch_directive_case(name, text, *, author=None):
                    name="lothsahn" if author else "someone")
     fixture["messages"][ASK_CHANNEL] = [root]
     case = Case(name, fixture)
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     ev = ask_event(4901)
     if author:
         ev["author_id"] = author
@@ -11930,7 +11968,8 @@ def test_a_backlog_only_conversation_never_asks_anthropic_anything():
     case.watcher.db.execute("DELETE FROM turn")
 
     asked = []
-    case.watcher.conversation_held = lambda conv: asked.append(conv["id"]) or 0
+    case.watcher.conversation_held = (
+        lambda conv, msgs: asked.append(conv["id"]) or ("run", 0, "", "ANTHROPIC_API_KEY"))
     check("the pass builds no turn", case.watcher.claim_turns() == [], None)
     check("and never reaches the subscription to ask about one", asked == [], asked)
 
@@ -12290,8 +12329,11 @@ def review_cfg(case, *, operators=None, trigger=None):
         "api_base": github_base(), "repo": "Final-Factory/FinalFactory", "base": "develop",
         "token": "gh-test-token", "trigger": trigger, "review_pool": "ffdev",
     })
-    case.watcher.cfg["operators"] = ({"loth": {"github": "10092359"}} if operators is None
-                                     else operators)
+    # `claude` beside the github id, because a review is an operator's turn and an operator with
+    # no subscription to bill has it refused rather than run on somebody else's.
+    case.watcher.cfg["operators"] = (
+        {"loth": {"github": LOTH_GITHUB_ID, "claude": SUITE_CLAUDE_NAME}}
+        if operators is None else operators)
     GH_STATE["comments"], GH_STATE["posted"], GH_STATE["reactions"] = [], [], []
     GH_STATE["pulls"] = []
     try:
@@ -12329,7 +12371,7 @@ def fork_case(name, *, source_venue="public", run_it=True):
     root["guild_id"] = GUILD
     fixture["messages"][ASK_CHANNEL] = [root]
     case = Case(name, fixture, venue=source_venue)
-    case.cfg["_discord"]["trust"] = {"operators": {"lothsahn": LOTHSAHN}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
     case.cfg["watch"]["dev_chat"] = {"kind": "ask", "forum": False,
                                      "venue": "private", "engage": "all"}
     case.events(ask_event(5101))
@@ -13862,7 +13904,9 @@ def test_a_ripe_batch_waits_for_the_subscription_rather_than_running():
     feedback_cfg(case)
     a_pull_request(41, "loth/pr-branch")
     a_comment(7201, 41, "the empty case needs a test")
-    hold_case(case, [key_record("only", five=10.0, seven=78.0)])
+    # NAMED FOR THE ACCOUNT THAT WOULD PAY: a review is an operator's turn, and since 2026-09-10
+    # the hold asks that operator's own window rather than the emptiest on the box.
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=78.0)])
 
     check("nothing is released while the window is spent", poll_feedback(case) == [], None)
     row = case.rows("SELECT * FROM message")[0]
@@ -13872,7 +13916,8 @@ def test_a_ripe_batch_waits_for_the_subscription_rather_than_running():
           GH_STATE["reactions"] == [(7201, "eyes")], GH_STATE["reactions"])
     check("and no turn happens", case.watcher.claim_turns() == [], None)
 
-    case.watcher._claude = StubClaudeKeys([key_record("only", five=10.0, seven=12.0)])
+    case.watcher._claude = StubClaudeKeys([key_record(SUITE_CLAUDE_SLOT, five=10.0,
+                                                     seven=12.0)])
     conv = case.rows("SELECT * FROM conversation WHERE kind='github_pr'")[0]
     check("the same batch goes once the window refills",
           case.watcher.release_feedback() == [conv["id"]], None)
@@ -15491,55 +15536,31 @@ def test_a_message_that_loses_its_turn_gives_the_mark_back():
           [(r["action"], r["status"]) for r in rows] == [("react", "rejected")], rows)
 
 
-def test_the_classifier_is_handed_one_token_out_of_the_pool():
-    """secrets.env numbers the Claude tokens; the classifier gets exactly one of them.
+def test_the_classifier_is_handed_the_metered_key_and_no_subscription():
+    """The gate and the selector are billed to ANTHROPIC_API_KEY, and see nothing else.
 
-    THE CHILD MUST NOT INHERIT THE POOL. This daemon holds every account the box has, and the
-    classifier is a subprocess that answers a pick-an-id question — handing it all of them
-    would put every subscription this box owns inside a process that needs one. So the numbered
-    names never reach the child, and the one that does arrives under the unnumbered name
-    `claude` actually reads.
-
-    A GAP IS NOT THE END OF THE LIST either: slot 2 filled with slot 1 blank is a revoked first
-    key, and resolving that to "no token" would silently run the classifier on whatever
-    credential happened to be in HOME.
+    THE CHILD MUST NOT INHERIT AN OPERATOR'S ACCOUNT. This daemon holds every subscription the
+    box has, and the classifier is a subprocess that answers a pick-an-id question about a
+    message a stranger wrote — handing it somebody's personal plan would be the box spending an
+    operator's window on work that operator did not ask for. Since 2026-09-10 the answer is
+    simpler than choosing one: it gets the metered key, which is what pays for everything
+    nobody asked for, and the numbered names never reach it at all.
     """
-    print("the classifier is handed one token out of the pool")
+    print("the classifier is handed the metered key and no subscription")
     cfg = ffwatch.load_config()
     saved = {k: os.environ.pop(k) for k in list(os.environ)
              if k.startswith("CLAUDE_CODE_OAUTH_TOKEN")}
     try:
-        check("the first non-empty slot is the one that is spent",
-              ffwatch.active_claude_token({"CLAUDE_CODE_OAUTH_TOKEN1": "one",
-                                           "CLAUDE_CODE_OAUTH_TOKEN2": "two"}) == "one")
-        check("a blank slot is skipped rather than ending the scan",
-              ffwatch.active_claude_token({"CLAUDE_CODE_OAUTH_TOKEN1": " ",
-                                           "CLAUDE_CODE_OAUTH_TOKEN2": "two"}) == "two")
-        check("the unnumbered spelling still works, for a secrets.env written before the pool",
-              ffwatch.active_claude_token({"CLAUDE_CODE_OAUTH_TOKEN": "old"}) == "old")
-        check("and a numbered slot takes precedence over it",
-              ffwatch.active_claude_token({"CLAUDE_CODE_OAUTH_TOKEN": "old",
-                                           "CLAUDE_CODE_OAUTH_TOKEN1": "one"}) == "one")
-        check("an environment holding none is an empty answer, not a crash",
-              ffwatch.active_claude_token({}) == "")
-
-        os.environ["CLAUDE_CODE_OAUTH_TOKEN1"] = "sk-ant-oat01-the-one-that-is-spent"
-        os.environ["CLAUDE_CODE_OAUTH_TOKEN2"] = "sk-ant-oat01-inventory-only"
+        os.environ["CLAUDE_CODE_OAUTH_TOKEN1"] = "sk-ant-oat01-an-operators-account"
+        os.environ["CLAUDE_CODE_OAUTH_TOKEN2"] = "sk-ant-oat01-another-operators"
         _argv, env, _cwd, _stdin = ffwatch.classifier_invocation(
             cfg, "text", ffwatch.SELECTOR_SCHEMA)
-        check("the child gets the active token under the name claude reads",
-              env.get("CLAUDE_CODE_OAUTH_TOKEN") == "sk-ant-oat01-the-one-that-is-spent", env)
-        check("and none of the numbered names reach it",
-              not [k for k in env if k.startswith("CLAUDE_CODE_OAUTH_TOKEN")
-                   and k != "CLAUDE_CODE_OAUTH_TOKEN"], sorted(env))
-        check("nor does any other account's token, by any name",
-              "sk-ant-oat01-inventory-only" not in env.values(), sorted(env))
-
-        os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN1")
-        _argv, env2, _cwd, _stdin = ffwatch.classifier_invocation(
-            cfg, "text", ffwatch.SELECTOR_SCHEMA)
-        check("with slot 1 emptied the box falls through to the next account rather than none",
-              env2.get("CLAUDE_CODE_OAUTH_TOKEN") == "sk-ant-oat01-inventory-only", env2)
+        check("the child is given the metered key",
+              env.get("ANTHROPIC_API_KEY") == os.environ["ANTHROPIC_API_KEY"], sorted(env))
+        check("and no subscription token by any name",
+              not [v for v in env.values() if str(v).startswith("sk-ant-oat01")], sorted(env))
+        check("nor any of the numbered variables",
+              not [k for k in env if k.startswith("CLAUDE_CODE_OAUTH_TOKEN")], sorted(env))
     finally:
         for k in list(os.environ):
             if k.startswith("CLAUDE_CODE_OAUTH_TOKEN"):
@@ -15737,12 +15758,18 @@ def test_the_fast_answer_is_held_to_the_schema_the_flag_would_have_enforced():
 
 
 # ------------------------------------------------------------------------------------------
-# the Claude subscriptions
+# whose subscription pays
 # ------------------------------------------------------------------------------------------
 #
-# THE POLICY IS A PURE FUNCTION and is tested as one: claude_keys.pick takes the readings and
-# answers an index, so every case below is a table rather than a box in a state. The daemon
-# half — that the answer reaches ffbox as a NAME and reaches the run row — is the last test.
+# THE ROUTE IS A PURE FUNCTION and is tested as one: claude_route takes a trust tier, an actor,
+# a conversation kind and the credentials this box holds, and answers a variable NAME. Every
+# case below is a table rather than a box in a state. The daemon half — that the answer reaches
+# ffbox as a name, reaches the run row, and decides which warm spare a turn may have — is the
+# three tests after them.
+#
+# There used to be a chooser here: the box read what was left on every account and spent
+# whichever had the most allowance per second before it refilled. It worked, and it made "whose
+# subscription paid for that" unanswerable. design/operator_subscriptions_design.txt.
 
 import claude_keys  # noqa: E402
 from datetime import datetime, timezone  # noqa: E402
@@ -15750,13 +15777,34 @@ from datetime import datetime, timezone  # noqa: E402
 
 CLAUDE_NOW = 1_800_000_000.0
 
+# The two credentials a routing case chooses between, in the shape claude_keys hands over.
+ROUTE_SUBS = [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-bens", 5, "Ben"),
+              ("CLAUDE_CODE_OAUTH_TOKEN2", "sk-ant-oat01-loths", 20, "Loth")]
+ROUTE_API = ("ANTHROPIC_API_KEY", "sk-ant-api03-default")
+ROUTE_KEYS = (ROUTE_SUBS, ROUTE_API)
+
+ROUTE_CFG = {"operators": {
+    "ben": {"discord": "800000000000000001", "github": "11", "shell": "ben", "claude": "Ben"},
+    # CLAIMED IN A DIFFERENT CASE FROM THE DECLARATION, on purpose: "Loth" in secrets.env and
+    # "loth" in config.json is not a mistake anybody should have to debug.
+    "lothsahn": {"discord": "800000000000000002", "github": "22", "shell": "lothsahn",
+                 "claude": "loth"},
+    # AN OPERATOR WITH NOTHING TO BILL. Trusted to command the box, and every request they make
+    # is refused until somebody writes the id down.
+    "newcomer": {"discord": "800000000000000003", "claude": ""},
+}}
+
+
+def route(tier, actor, kind="ask", cfg=None, keys=None):
+    return ffwatch.claude_route(cfg or ROUTE_CFG, tier, actor, kind, keys or ROUTE_KEYS)
+
 
 class StubClaudeKeys:
     """Stands in for the reader. ClaudeKeys.read() is the only thing the daemon asks of it, and
     the only thing it does is talk to Anthropic — which this suite never does.
 
     `forced` counts the calls that asked for a round trip rather than a cached answer, which is
-    what the spawn decisions are supposed to do and nothing else is.
+    what the hold decisions are supposed to do and nothing else is.
     """
 
     def __init__(self, records):
@@ -15774,8 +15822,8 @@ class StubClaudeKeys:
 def claude_pool(**tokens):
     """Put exactly these CLAUDE_CODE_* variables in the environment for the block.
 
-    The suite clears the pool at import, so a case that wants one puts it back and takes it out
-    again — otherwise a box with two accounts leaks into every later launch.
+    The suite sets one slot at import, so a case that wants a different set puts it back and
+    takes it out again — otherwise a box with two accounts leaks into every later launch.
     """
     saved = {k: v for k, v in os.environ.items() if k.startswith("CLAUDE_CODE_")}
     for k in saved:
@@ -15794,109 +15842,115 @@ def key_record(name, *, rate=1, five=10.0, seven=10.0, five_in=3600, seven_in=3 
                state="available", locked="", now=CLAUDE_NOW):
     """One ClaudeKeys.read() record, with both windows and a reset time for each.
 
-    `now` is the clock the reset times are relative to. The policy tests pin it, because a
-    fixed clock is what makes them read as a table; the integration test uses the real one,
-    because the code path it exercises goes through pick() without a `now` of its own.
+    `now` is the clock the reset times are relative to. The hold tests pin it, because a fixed
+    clock is what makes them read as a table.
     """
     def at(secs):
         if secs is None:
             return None
         return datetime.fromtimestamp(now + secs, timezone.utc).isoformat()
-    return {"name": name, "rate": rate, "state": state, "error": "", "windows": [
-        {"key": "five_hour", "label": "5-hour session", "percent": five,
-         "resets_at": at(five_in), "locked": locked},
-        {"key": "seven_day", "label": "weekly", "percent": seven,
-         "resets_at": at(seven_in), "locked": ""}]}
+    return {"name": name, "rate": rate, "state": state, "error": "",
+            "kind": claude_keys.KIND_SUBSCRIPTION, "windows": [
+                {"key": "five_hour", "label": "5-hour session", "percent": five,
+                 "resets_at": at(five_in), "locked": locked},
+                {"key": "seven_day", "label": "weekly", "percent": seven,
+                 "resets_at": at(seven_in), "locked": ""}]}
 
 
-def test_the_account_about_to_refill_is_the_one_worth_spending():
-    print("allowance per second, not lowest usage")
-    # THE CASE THE POLICY EXISTS FOR. A is three-quarters through its week and gets it back in
-    # five minutes; B is half through and has five days to go. A's remaining quarter is about to
-    # be thrown away — unspent window is not carried over — so spending it costs nothing, while
-    # every point of B's has to last the week. The busier-looking account is the right answer.
-    a = key_record("A", seven=75.0, seven_in=300)
-    b = key_record("B", seven=50.0, seven_in=5 * 86400)
-    i, why = claude_keys.pick([a, b], now=CLAUDE_NOW)
-    check("the one refilling in five minutes wins over the one that is emptier", i == 0, why)
-    check("and the reason says why", "5 minutes" in why and "25%" in why, why)
+def test_an_operators_request_is_billed_to_the_subscription_they_claimed():
+    print("the route: an operator pays for their own work")
+    name, why = route("operator", "800000000000000001")
+    check("a Discord operator bills the slot their id claims",
+          name == "CLAUDE_CODE_OAUTH_TOKEN1", (name, why))
+    check("and the reason names the person and the id they wrote",
+          "ben" in why and "Ben" in why, why)
+    # CASE AND SPACE ARE NOT PART OF AN ID. "Loth" beside the token, "loth" in the operators
+    # block: the same account, and nobody should have to debug the difference.
+    check("a claim matches its slot case-insensitively",
+          route("operator", "800000000000000002")[0] == "CLAUDE_CODE_OAUTH_TOKEN2")
 
-    # Reverse the reset times and the answer reverses with them: nothing here is about the
-    # order of the pool or about which account is called what.
-    flipped = claude_keys.pick([key_record("A", seven=75.0, seven_in=5 * 86400),
-                                key_record("B", seven=50.0, seven_in=300)], now=CLAUDE_NOW)[0]
-    check("with the resets swapped, so is the choice", flipped == 1)
+    # THE ID SPACES NEVER MIX. The same string is a Discord snowflake in one table and a GitHub
+    # user id in another, and an actor is only ever tested against the surface it arrived on.
+    check("a review resolves through the github ids",
+          route("operator", "22", kind=ffwatch.GITHUB_KIND)[0] == "CLAUDE_CODE_OAUTH_TOKEN2")
+    check("and a Discord snowflake is nobody on GitHub",
+          route("operator", "800000000000000002",
+                kind=ffwatch.GITHUB_KIND)[0] == "ANTHROPIC_API_KEY")
+    check("a shell prompt resolves through the unix account names",
+          route("operator", "lothsahn", kind="shell")[0] == "CLAUDE_CODE_OAUTH_TOKEN2")
+    check("and the web ingress reads the same table",
+          route("operator", "ben", kind="web")[0] == "CLAUDE_CODE_OAUTH_TOKEN1")
 
-
-def test_with_equal_resets_it_is_the_emptiest_week():
-    print("the old rule, still there underneath")
-    # When two accounts refill at the same moment the time term cancels, and what is left is
-    # exactly "lowest weekly usage" — which is what this was before the reset was taken into
-    # account, and it must still hold.
-    a = key_record("A", seven=40.0, seven_in=3 * 86400)
-    b = key_record("B", seven=12.0, seven_in=3 * 86400)
-    check("the emptier week takes it", claude_keys.pick([a, b], now=CLAUDE_NOW)[0] == 1)
-
-
-def test_a_bigger_plan_counts_for_more():
-    print("percentages of different-sized plans")
-    # A quarter of a Max 20x account is five whole Pro accounts. Comparing the percentages
-    # alone would hand the turn to the Pro key, which is the smaller amount of actual work.
-    pro = key_record("PRO", rate=1, seven=0.0)
-    max20 = key_record("MAX", rate=20, seven=75.0)
-    i, why = claude_keys.pick([pro, max20], now=CLAUDE_NOW)
-    check("a quarter of a Max 20x beats an untouched Pro", i == 1, why)
-    check("and the sentence names the plan", "Max 20x" in why, why)
+    # A SLOT NOBODY NAMED can still be claimed, by its number. Weaker, and documented as the
+    # fallback: slot 2 stops meaning the same account the moment somebody renumbers the file.
+    unnamed = [("CLAUDE_CODE_OAUTH_TOKEN1", "t", 1, ""), ("CLAUDE_CODE_OAUTH_TOKEN2", "t", 1, "")]
+    by_number = {"operators": {"ben": {"discord": "1", "claude": "2"}}}
+    check("a numeric id claims the slot it numbers",
+          route("operator", "1", cfg=by_number, keys=(unnamed, ROUTE_API))[0]
+          == "CLAUDE_CODE_OAUTH_TOKEN2")
 
 
-def test_the_five_hour_cap_is_a_gate_and_not_a_term():
-    print("the session cap")
-    # A's week is emptier by a mile, and A has spent its session. The cap is what stops the
-    # week's arithmetic reaching for an account that has no session left to run in.
-    a = key_record("A", five=65.0, seven=5.0)
-    b = key_record("B", five=10.0, seven=60.0)
-    check("a slot over the cap is passed over whatever its week says",
-          claude_keys.pick([a, b], now=CLAUDE_NOW)[0] == 1)
-    check("exactly at the cap is over it",
-          claude_keys.pick([key_record("A", five=60.0, seven=5.0), b], now=CLAUDE_NOW)[0] == 1)
-    check("just under it is not",
-          claude_keys.pick([key_record("A", five=59.9, seven=5.0), b], now=CLAUDE_NOW)[0] == 0)
-    # And the cap is configurable, because "60% of a session" is a judgement about how much
-    # room a human at the same account needs, not a fact.
-    check("a higher cap lets it through",
-          claude_keys.pick([a, b], cap=0.9, now=CLAUDE_NOW)[0] == 0)
-    # A window Anthropic has LOCKED is out regardless of the number under it.
-    check("a locked session is out even at 0%",
-          claude_keys.pick([key_record("A", five=0.0, seven=0.0, locked="exceeded"), b],
-                           now=CLAUDE_NOW)[0] == 1)
+def test_everybody_else_is_billed_to_the_metered_default():
+    print("the route: everything nobody asked for")
+    name, why = route("player", "999999999999999999")
+    check("a player goes to the API key", name == "ANTHROPIC_API_KEY", (name, why))
+    check("and so does a stranger the box happens to trust nowhere",
+          route("operator", "999999999999999999")[0] == "ANTHROPIC_API_KEY")
+    # THE CONSERVATIVE DIRECTION, and turn_trust already takes it: one player in a batch makes
+    # the whole turn a player's, so a mixed batch is billed to the API key rather than to the
+    # operator who happened to speak first. This is the routing half of that.
+    check("a turn whose tier is player is a player's turn whoever the actor is",
+          route("player", "800000000000000001")[0] == "ANTHROPIC_API_KEY")
+
+    # A LOCAL CONVERSATION WITH NO OPENER reports the KIND as its actor. Reading that as a name
+    # would have a box that one day acquires an operator called "shell" billing anonymous
+    # terminal prompts to them.
+    name, why = route("operator", "shell", kind="shell")
+    check("the bare kind is not an operator name", name == "ANTHROPIC_API_KEY", (name, why))
 
 
-def test_when_every_session_is_spent_it_is_the_one_that_comes_back_first():
-    print("nothing left under the cap")
-    # No good choice, only a least-bad one. The literal rule would be "lowest five-hour usage",
-    # which picks B — but A refills in two minutes and B in four hours, so A is the account
-    # that can actually do work soon. The same rate, applied to the session instead of the week.
-    a = key_record("A", five=90.0, five_in=120, seven=5.0)
-    b = key_record("B", five=65.0, five_in=4 * 3600, seven=5.0)
-    i, why = claude_keys.pick([a, b], now=CLAUDE_NOW)
-    check("the nearly-spent account that refills in two minutes wins", i == 0, why)
-    check("and the line says the box is out of session, not out of work",
-          "every key is at or above 60%" in why, why)
+def test_an_operator_with_nothing_to_bill_is_refused_rather_than_rehomed():
+    print("the route: the four refusals")
+    name, why = route("operator", "800000000000000003")
+    check("an operator who declared no subscription id is refused", name is None, (name, why))
+    check("and the sentence names them and what is missing",
+          "newcomer" in why and "claude" in why, why)
+
+    missing = {"operators": {"ben": {"discord": "1", "claude": "no-such-account"}}}
+    name, why = route("operator", "1", cfg=missing)
+    check("an id naming no slot is refused", name is None, (name, why))
+    check("and the sentence quotes the id they wrote", "no-such-account" in why, why)
+
+    # TWO SLOTS ANSWERING TO ONE ID. Guessing which account somebody meant to spend is exactly
+    # the class of decision this feature removed from the box.
+    twice = [("CLAUDE_CODE_OAUTH_TOKEN1", "t", 1, "Loth"),
+             ("CLAUDE_CODE_OAUTH_TOKEN3", "t", 1, "loth")]
+    name, why = route("operator", "1", cfg={"operators": {"ben": {"discord": "1",
+                                                                  "claude": "Loth"}}},
+                      keys=(twice, ROUTE_API))
+    check("an ambiguous id is refused rather than resolved", name is None, (name, why))
+    check("and both slots are named, so the file can be fixed",
+          "CLAUDE_CODE_OAUTH_TOKEN1" in why and "CLAUDE_CODE_OAUTH_TOKEN3" in why, why)
+
+    # AND THE FIFTH, which is about the box rather than about a person: with no API key nothing
+    # that is not an operator's request can run at all.
+    name, why = route("player", "1", keys=(ROUTE_SUBS, None))
+    check("a player on a box with no API key is refused", name is None, (name, why))
+    check("and the sentence names the variable to add", "ANTHROPIC_API_KEY" in why, why)
 
 
-def test_a_key_that_cannot_be_read_is_set_aside_not_believed():
-    print("an unreachable account")
-    # The failure that matters: an account whose windows did not come back has no percentages,
-    # and anything that read "no reading" as "nothing used" would hand it every turn on the box.
-    dead = {"name": "DEAD", "rate": 20, "state": "unreachable", "error": "401 — refused",
-            "windows": []}
-    live = key_record("LIVE", seven=80.0)
-    check("a revoked key is not treated as an empty one",
-          claude_keys.pick([dead, live], now=CLAUDE_NOW)[0] == 1)
-    i, why = claude_keys.pick([dead], now=CLAUDE_NOW)
-    check("but with nothing else it falls back to the pool's own order rather than refusing",
-          i == 0, why)
-    check("and says so", "falling back" in why, why)
+def test_the_shell_id_is_a_name_and_the_other_two_are_not():
+    print("what counts as an id, per service")
+    cfg = {"operators": {"ben": {"discord": "notanumber", "github": "also-not",
+                                 "shell": "ben"}}}
+    check("a non-numeric discord id is dropped", ffwatch.operator_ids(cfg, "discord") == {})
+    check("and so is a non-numeric github id", ffwatch.operator_ids(cfg, "github") == {})
+    # THE ARGUMENT DOES NOT CARRY OVER. A handle is renameable by whoever holds it; a local unix
+    # account is renameable only by root, who can read secrets.env directly anyway.
+    check("a unix account name is kept, because it is the only id that surface has",
+          ffwatch.operator_ids(cfg, "shell") == {"ben": "ben"})
+    check("and a blank one is still nobody",
+          ffwatch.operator_ids({"operators": {"b": {"shell": "  "}}}, "shell") == {})
 
 
 def test_a_reset_in_the_past_is_a_window_that_has_already_refilled():
@@ -15928,8 +15982,8 @@ def test_windows_are_found_by_key_and_never_by_their_label():
           claude_keys.window_of(rec, "seven_day")["percent"] == 20.0)
 
 
-def test_the_chosen_account_reaches_ffbox_as_a_name_and_lands_on_the_run():
-    print("the choice, all the way to the container")
+def test_the_routed_account_reaches_ffbox_as_a_name_and_lands_on_the_run():
+    print("the route, all the way to the container")
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [message(9301, "how do belts work?")]
     case = Case("claude-roundtrip", fixture)
@@ -15937,34 +15991,38 @@ def test_the_chosen_account_reaches_ffbox_as_a_name_and_lands_on_the_run():
     case.watcher.drain_events()
     case.watcher.claim_turns()
     turn = case.rows("SELECT * FROM turn")[0]
-
-    with claude_pool(CLAUDE_CODE_OAUTH_TOKEN1="sk-ant-oat01-first",
-                     CLAUDE_CODE_OAUTH_TOKEN2="sk-ant-oat01-second"):
-        # The reading is handed over rather than fetched: this suite makes no network calls, and
-        # what is under test here is the plumbing, not the policy.
-        real_now = time.time()
-        case.watcher._claude = StubClaudeKeys([
-            key_record("CLAUDE_CODE_OAUTH_TOKEN1", seven=60.0, seven_in=4 * 86400,
-                       now=real_now),
-            key_record("CLAUDE_CODE_OAUTH_TOKEN2", seven=80.0, seven_in=300, now=real_now)])
-        chosen, why = case.watcher.pick_claude_key()
-        check("the second account is chosen, because its week refills in five minutes",
-              chosen == "CLAUDE_CODE_OAUTH_TOKEN2", why)
-        case.watcher.launch(turn["id"])
+    check("a player's message made a player's turn", turn["trust_tier"] == "player",
+          turn["trust_tier"])
+    case.watcher.launch(turn["id"])
 
     run = case.rows("SELECT * FROM run WHERE turn_id=?", (turn["id"],))[0]
-    check("the run row records which account paid for it",
-          run["claude_key"] == "CLAUDE_CODE_OAUTH_TOKEN2", run["claude_key"])
+    check("the run row records which credential paid for it",
+          run["claude_key"] == "ANTHROPIC_API_KEY", run["claude_key"])
     argv = json.load(open(os.path.join(os.path.dirname(run["stream_path"]),
                                        "ffbox-argv.json"), encoding="utf-8"))
-    check("ffbox is told which account", "--claude-key" in argv, argv)
-    check("by name", argv[argv.index("--claude-key") + 1] == "CLAUDE_CODE_OAUTH_TOKEN2", argv)
+    check("ffbox is told which one", "--claude-key" in argv, argv)
+    check("by name", argv[argv.index("--claude-key") + 1] == "ANTHROPIC_API_KEY", argv)
     check("AND NEVER BY TOKEN — argv is world-readable through /proc",
-          not any("sk-ant-oat01" in a for a in argv), argv)
+          not any("sk-ant-" in a for a in argv), argv)
 
 
-def test_a_warm_container_bills_the_account_it_was_staged_with():
-    print("a spare spends what it was created with")
+def test_an_operators_turn_is_billed_to_their_own_subscription():
+    print("an operator's turn bills their slot, not the metered default")
+    case, _fixture = branch_directive_case("claude-operator-run", "rebuild the belt merger",
+                                          author=LOTHSAHN)
+    case.watcher.claim_turns()
+    turn = case.rows("SELECT * FROM turn")[0]
+    check("the turn is the operator's", turn["trust_tier"] == "operator", turn["trust_tier"])
+    case.watcher.launch(turn["id"])
+    run = case.rows("SELECT * FROM run WHERE turn_id=?", (turn["id"],))[0]
+    # THE WHOLE POINT OF THE FEATURE, in one assertion: the same box, the same pass, a different
+    # account, decided by who typed the message.
+    check("it is billed to the slot that operator claims, not to the API key",
+          run["claude_key"] == SUITE_CLAUDE_SLOT, run["claude_key"])
+
+
+def test_a_warm_container_can_only_serve_the_account_it_was_staged_with():
+    print("a spare spends what it was created with, and serves nobody else")
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [message(9401, "how do belts work?")]
     case = Case("claude-pooled", fixture)
@@ -15974,55 +16032,74 @@ def test_a_warm_container_bills_the_account_it_was_staged_with():
     turn = case.rows("SELECT * FROM turn")[0]
     w = case.watcher
 
-    # A spare, staged earlier, with slot 1 written down beside its spool the way pool_stage
-    # does. Everything else about the dispatch is stubbed: what is under test is which account
-    # the run is billed to, not the pool's own machinery.
+    # A spare, staged earlier, with a credential written down beside its spool the way
+    # pool_stage does.
     os.makedirs(w.pool_dir("s9"), exist_ok=True)
     with open(os.path.join(w.pool_dir("s9"), "claude-key"), "w", encoding="utf-8") as fh:
-        fh.write("CLAUDE_CODE_OAUTH_TOKEN1\n")
-    check("the staged account is read back", w.pool_claude_key("s9") == "CLAUDE_CODE_OAUTH_TOKEN1")
+        fh.write("ANTHROPIC_API_KEY\n")
+    check("the staged credential is read back", w.pool_claude_key("s9") == "ANTHROPIC_API_KEY")
     check("and a spool that never had one answers None", w.pool_claude_key("nope") is None)
 
-    with claude_pool(CLAUDE_CODE_OAUTH_TOKEN1="sk-ant-oat01-first",
-                     CLAUDE_CODE_OAUTH_TOKEN2="sk-ant-oat01-second"):
-        # The reading says slot 2 is far and away the better choice RIGHT NOW. It does not
-        # matter: this turn is going into a container that was created hours ago holding slot
-        # 1's token, and docker cannot change that.
-        real_now = time.time()
-        w._claude = StubClaudeKeys([
-            key_record("CLAUDE_CODE_OAUTH_TOKEN1", seven=90.0, seven_in=6 * 86400,
-                       now=real_now),
-            key_record("CLAUDE_CODE_OAUTH_TOKEN2", seven=1.0, seven_in=300, now=real_now)])
-        check("a cold launch now would take slot 2",
-              w.pick_claude_key()[0] == "CLAUDE_CODE_OAUTH_TOKEN2")
-        w.pool_claim_for = lambda ref, agent_class=None: "s9"
-        w.stage_session_into = lambda *a, **k: None
-        w.stage_attachments_into = lambda *a, **k: None
-        w.launch(turn["id"])
+    # THE MATCHING RULE, straight at it. A container's environment is fixed when it is created,
+    # so a spare staged on one credential cannot bill another whatever else matches.
+    spare = {"id": "s9", "branch": "master", "class": "ffagent", "tier": "held"}
+    check("a spare matches a turn billed to the same credential",
+          w.pool_matches(spare, "master", "ANTHROPIC_API_KEY"))
+    check("and not one billed to an operator's subscription",
+          not w.pool_matches(spare, "master", SUITE_CLAUDE_SLOT))
+    check("the branch rule still applies on top of it",
+          not w.pool_matches(spare, "develop", "ANTHROPIC_API_KEY"))
+    # A CALLER THAT NAMES NO CREDENTIAL IS NOT ASKING ABOUT ONE.
+    check("and a caller asking only about branches gets an answer about branches",
+          w.pool_matches(spare, "master", None))
 
+    w.pool_claim_for = lambda ref, agent_class=None, claude_key=None: "s9"
+    w.stage_session_into = lambda *a, **k: None
+    w.stage_attachments_into = lambda *a, **k: None
+    w.launch(turn["id"])
     run = case.rows("SELECT * FROM run WHERE turn_id=?", (turn["id"],))[0]
-    check("the run is billed to the account its container actually holds",
-          run["claude_key"] == "CLAUDE_CODE_OAUTH_TOKEN1", run["claude_key"])
+    check("the run is billed to the credential its container actually holds",
+          run["claude_key"] == "ANTHROPIC_API_KEY", run["claude_key"])
     argv = json.load(open(os.path.join(os.path.dirname(run["stream_path"]),
                                        "ffbox-argv.json"), encoding="utf-8"))
-    check("and no account is passed on the dispatch, which starts no container",
+    check("and nothing is passed on the dispatch, which starts no container",
           "--claude-key" not in argv, argv)
 
 
-def test_a_box_with_one_account_is_left_exactly_as_it_was():
-    print("nothing to choose between")
-    case = Case("claude-single")
-    with claude_pool(CLAUDE_CODE_OAUTH_TOKEN1="sk-ant-oat01-only"):
-        # THE READER IS NEVER EVEN ASKED. A box with one account has the same answer either
-        # way, and this is what keeps it making no outbound request at all — which is also what
-        # keeps every other test in this file offline.
-        case.watcher._claude = StubClaudeKeys([key_record("CLAUDE_CODE_OAUTH_TOKEN1")])
-        check("no choice is made", case.watcher.pick_claude_key() == (None, ""))
-        check("and nothing is read", case.watcher._claude.reads == 0)
-        check("the status line says so plainly",
-              "not spreading" in "\n".join(case.watcher.claude_status()),
-              case.watcher.claude_status())
+def test_a_spare_is_staged_for_whoever_is_likely_to_want_it():
+    print("which credential the next spare carries")
+    case = Case("claude-stage-key")
+    w = case.watcher
+    # THE PLAYER LANE HAS ONE ANSWER. Player work is billed to the metered default, so every
+    # ffagent spare matches every ffagent turn and that pool behaves as it always did.
+    check("an ffagent spare is staged on the API key",
+          w.pool_stage_key("ffagent") == "ANTHROPIC_API_KEY")
+    # THE DEV LANE IS A GUESS, made out of what this box has actually run.
+    check("an ffdev spare is staged for an operator", w.pool_stage_key("ffdev")
+          == SUITE_CLAUDE_SLOT, w.pool_stage_key("ffdev"))
+    # AND A BOX THAT CANNOT BILL ANYBODY STAGES NOTHING, rather than asking ffbox for a
+    # container it would refuse to create.
+    w.cfg["operators"] = {}
+    check("with no operator able to pay, the dev pool is not staged",
+          w.pool_stage_key("ffdev") is None)
 
+
+def test_a_box_that_cannot_bill_anybody_says_so_at_startup():
+    print("the billing table, said once")
+    case = Case("claude-startup")
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": "no-such-account"}}
+    lines = []
+    saved, ffwatch.log = ffwatch.log, lines.append
+    try:
+        case.watcher.say_claude_routes()
+        case.watcher.say_claude_routes()
+    finally:
+        ffwatch.log = saved
+    said = "\n".join(lines)
+    check("an operator whose id resolves to nothing is a WARNING",
+          "WARNING" in said and "lothsahn" in said and "no-such-account" in said, said)
+    check("and it is said once per process, not once per pass",
+          said.count("lothsahn") == 1, said)
 
 
 # --- waiting for the window rather than being refused ------------------------------------------
@@ -16039,8 +16116,25 @@ def hold_case(case, records):
     return case.watcher._claude
 
 
-def test_the_box_is_full_only_once_its_emptiest_account_is():
-    print("holds: how full the box is")
+def held_secs(case, conv):
+    """How long conversation_held says this conversation waits. 0 for a turn that may run.
+
+    conversation_held answers (verdict, seconds, why, key) since 2026-09-10 — three outcomes
+    where there were two, because "nothing can pay for this" is not a wait. These cases are
+    about the wait, so this reads the seconds and asserts nothing was refused.
+    """
+    # THE MESSAGES, because the route is decided from who wrote them. Passing an empty batch
+    # would route every case to the metered default and quietly test nothing.
+    msgs = case.watcher.pending_messages(conv["id"])
+    verdict, secs, why, _key = case.watcher.conversation_held(conv, msgs)
+    check_verdict = verdict != "refused"
+    if not check_verdict:                       # a refusal here is a broken fixture, not a hold
+        raise AssertionError(f"conversation {conv['id']} has nothing to bill: {why}")
+    return secs
+
+
+def test_the_account_that_would_pay_is_the_one_the_hold_asks_about():
+    print("holds: the account that pays decides")
     # THE FULLEST WINDOW WITHIN AN ACCOUNT. A turn runs out on whichever clock expires first,
     # so a spent week is as disqualifying as a spent session and the larger number answers.
     spent_week = key_record("A", five=5.0, seven=92.0)
@@ -16054,33 +16148,42 @@ def test_the_box_is_full_only_once_its_emptiest_account_is():
     pct, _ = claude_keys.fullest_window(key_record("A", five=0.0, seven=0.0, locked="exceeded"))
     check("a locked window is full at 0%", pct == 1.0, pct)
 
-    # THE EMPTIEST ACCOUNT ACROSS THE POOL. The gate is asking whether ANY subscription can
-    # take the work, so three accounts at 99% and one at 4% is a box with room.
-    got = claude_keys.emptiest([key_record("A", five=99.0, seven=99.0),
-                                key_record("B", five=4.0, seven=8.0)], now=CLAUDE_NOW)
-    check("the account with the most room speaks for the box",
-          got and round(got[0], 4) == 0.08 and got[3] == "B", got)
-    got = claude_keys.emptiest([key_record("A", five=99.0, seven=20.0),
-                                key_record("B", five=80.0, seven=8.0)], now=CLAUDE_NOW)
-    check("and the box is only at 80% once every account is", got and round(got[0], 4) == 0.8,
-          got)
-    check("it says when that window refills, so the wait can be named",
-          got and got[1] == "five_hour" and 3500 < got[2] <= 3600, got)
+    # AND THE HOLD ASKS ONE ACCOUNT: the one this request is billed to. It used to ask whether
+    # ANY account on the box had room, which is the question a pool has and a routed box does
+    # not — one operator's spent week now holds their own work and nobody else's.
+    case = Case("hold-per-key")
+    w = case.watcher
+    hold_case(case, [key_record("CLAUDE_CODE_OAUTH_TOKEN1", five=10.0, seven=95.0),
+                     key_record("CLAUDE_CODE_OAUTH_TOKEN2", five=4.0, seven=8.0)])
+    secs, why = w.claude_hold("new", "CLAUDE_CODE_OAUTH_TOKEN1")
+    check("the spent account holds its own work", secs > 0 and "95%" in why, (secs, why))
+    check("and names the account in the sentence it will be read in",
+          "CLAUDE_CODE_OAUTH_TOKEN1" in why, why)
+    check("while the account beside it runs",
+          w.claude_hold("new", "CLAUDE_CODE_OAUTH_TOKEN2") == (0, ""))
 
-    # UNREADABLE IS NOT EMPTY AND NOT FULL. An outage at Anthropic must be able neither to stop
-    # the box nor to uncap it, so such an account is set aside and the callers fail open.
-    check("a key that could not be read contributes nothing",
-          claude_keys.emptiest([key_record("A", state="unreachable")]) is None)
-    check("and neither does an empty pool", claude_keys.emptiest([]) is None)
+    # FAIL OPEN AT EVERY STEP. An outage at Anthropic must be able neither to stop the box nor
+    # to uncap it, so an account that could not be read runs the work.
+    hold_case(case, [{"name": "DEAD", "rate": 1, "state": "unreachable", "windows": [],
+                      "error": "401 — refused", "kind": claude_keys.KIND_SUBSCRIPTION}])
+    check("an account that could not be read does not hold", w.claude_hold("new", "DEAD")
+          == (0, ""))
+    check("and neither does a name nothing reported on", w.claude_hold("new", "GONE") == (0, ""))
+
+    # THE METERED DEFAULT HAS NO WINDOW TO BE OVER. A console key does not run out; it costs
+    # money, which is a different problem with a different answer.
+    hold_case(case, [{"name": "ANTHROPIC_API_KEY", "rate": 1, "state": "available",
+                      "windows": [], "error": "", "kind": claude_keys.KIND_API_KEY}])
+    check("the API key never holds", w.claude_hold("new", "ANTHROPIC_API_KEY") == (0, ""))
 
 
 def test_a_new_conversation_waits_for_the_refill_instead_of_being_refused():
     print("holds: a new conversation stands down at 90%")
-    case, _ = branch_directive_case("hold-new", "hey max, why is my save corrupt?")
+    case, _ = branch_directive_case("hold-new", "why is my save corrupt?", author=LOTHSAHN)
     conv = case.rows("SELECT * FROM conversation")[0]
 
     # NINETY PER CENT OF THE WEEK, on the only account there is.
-    hold_case(case, [key_record("only", five=10.0, seven=91.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=91.0)])
     check("no turn is made", case.watcher.create_turn(conv) is None,
           case.rows("SELECT * FROM turn"))
 
@@ -16104,7 +16207,7 @@ def test_a_new_conversation_waits_for_the_refill_instead_of_being_refused():
           case.rows("SELECT * FROM outbound WHERE action='react'") == [], None)
 
     # THE WINDOW TURNS OVER, and the pass after it does the work with no prompting.
-    case.watcher._claude = StubClaudeKeys([key_record("only", five=10.0, seven=12.0)])
+    case.watcher._claude = StubClaudeKeys([key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=12.0)])
     created = case.watcher.claim_turns()
     check("the ordinary sweep picks it up once the window refills", len(created) == 1, created)
     msg = case.rows("SELECT * FROM message ORDER BY id")[0]
@@ -16144,17 +16247,26 @@ def test_a_wait_is_named_as_a_clock():
 
 
 def held_and_addressed(name):
-    """A player who ADDRESSED the bot in #ask_claude, on a box with nothing left to run it."""
+    """An OPERATOR who addressed the bot in #ask_claude, on an account with nothing left in it.
+
+    An operator rather than a player, and that is the feature rather than a fixture detail: a
+    player's work is billed to the metered API key, which has no rolling window and therefore
+    nothing to wait for. Only a subscription can run out, so only an operator's request can be
+    held.
+    """
     mid = sflake(0, 1)
     fixture = base_fixture()
-    fixture["messages"][ASK_CHANNEL] = [message(mid, "hey @max why is my save corrupt?")]
+    fixture["messages"][ASK_CHANNEL] = [message(mid, "hey @max why is my save corrupt?",
+                                                author=LOTHSAHN, name="lothsahn")]
     fixture["messages"][ASK_CHANNEL][0]["mentions"] = [{"id": BOT}]
     case = Case(name, fixture)
-    case.events(ask_event(mid))
+    ev = ask_event(mid)
+    ev["author_id"] = LOTHSAHN
+    case.events(ev)
     case.watcher.drain_events()
     # REAL TIME, not CLAUDE_NOW: this is the one test that reads the countdown rather than the
     # ordering, and seconds_to_reset asks the wall clock.
-    hold_case(case, [key_record("only", five=10.0, seven=91.0, seven_in=2 * 3600 + 15 * 60,
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=91.0, seven_in=2 * 3600 + 15 * 60,
                                 now=time.time())])
     return case, mid
 
@@ -16204,7 +16316,7 @@ def test_a_held_discord_conversation_is_told_the_answer_is_coming():
 
     # AND THE WORK STILL HAPPENS. The notice is not a refusal and claims nothing about the
     # message beyond when it will be read.
-    case.watcher._claude = StubClaudeKeys([key_record("only", five=10.0, seven=12.0)])
+    case.watcher._claude = StubClaudeKeys([key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=12.0)])
     created = case.watcher.claim_turns()
     check("the turn runs once the window refills", len(created) == 1, created)
     check("and no second notice goes out with it", len(posts(case)) == 1, posts(case))
@@ -16221,13 +16333,19 @@ def test_the_break_notice_waits_on_the_gate_rather_than_getting_ahead_of_it():
     print("holds: the gate decides, the hold only delays")
 
     def one_asking(name, verdict):
+        # AN OPERATOR ASKING, because only a subscription can run out: player work is billed to
+        # the metered key, which has no window to be over. The gate still runs on it — a
+        # conversation in a watched channel is gated whoever opened it.
         mid = sflake(0, 1)
         fixture = base_fixture()
-        fixture["messages"][ASK_CHANNEL] = [message(mid, "anyone else seeing this on develop?")]
+        fixture["messages"][ASK_CHANNEL] = [message(mid, "anyone else seeing this on develop?",
+                                                    author=LOTHSAHN, name="lothsahn")]
         case = Case(name, fixture, verdict=verdict)
-        case.events(ask_event(mid))
+        ev = ask_event(mid)
+        ev["author_id"] = LOTHSAHN
+        case.events(ev)
         case.watcher.drain_events()
-        hold_case(case, [key_record("only", five=10.0, seven=95.0, now=time.time())])
+        hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=95.0, now=time.time())])
         return case
 
     # THE GATE SAYS YES. Held, and told so -- the classifier ran while the box had no room to
@@ -16256,7 +16374,7 @@ def test_the_break_notice_waits_on_the_gate_rather_than_getting_ahead_of_it():
     conv = blind.rows("SELECT * FROM conversation")[0]
     check("no turn", blind.watcher.create_turn(conv) is None)
     check("and no promise on a guess", posts(blind) == [], posts(blind))
-    blind.watcher._claude = StubClaudeKeys([key_record("only", five=10.0, seven=12.0)])
+    blind.watcher._claude = StubClaudeKeys([key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=12.0)])
     check("the fail-open still engages once the window refills",
           len(blind.watcher.claim_turns()) == 1, blind.rows("SELECT * FROM turn"))
 
@@ -16287,7 +16405,7 @@ def test_a_held_conversation_costs_one_gate_call_and_not_one_per_pass():
 
     # THE MEMO IS DROPPED THE MOMENT THE HOLD LIFTS, so the pass after the refill runs the
     # whole pipeline properly rather than skipping it as already decided.
-    case.watcher._claude = StubClaudeKeys([key_record("only", five=10.0, seven=12.0)])
+    case.watcher._claude = StubClaudeKeys([key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=12.0)])
     check("the turn runs once the window refills",
           len(case.watcher.claim_turns()) == 1, case.rows("SELECT * FROM turn"))
     check("and the conversation is no longer remembered as held",
@@ -16306,7 +16424,7 @@ def test_a_spawn_decision_asks_anthropic_rather_than_the_cache():
     case, _ = held_and_addressed("hold-fresh")
     conv = case.rows("SELECT * FROM conversation")[0]
     check("the new-conversation decision asks Anthropic",
-          case.watcher.conversation_held(conv) and case.watcher._claude.forced == 1,
+          held_secs(case, conv) and case.watcher._claude.forced == 1,
           (case.watcher._claude.reads, case.watcher._claude.forced))
 
     # AND THE REVIEW INGRESS DOES THE SAME, on every poll for as long as a trigger is held:
@@ -16317,7 +16435,7 @@ def test_a_spawn_decision_asks_anthropic_rather_than_the_cache():
     review_cfg(review)
     a_pull_request(41, "loth/pr-branch")
     a_comment(5701, 41, "#codereview")
-    hold_case(review, [key_record("only", five=10.0, seven=95.0)])
+    hold_case(review, [key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=95.0)])
     check("no review starts", review.watcher.poll_github() == [], None)
     check("and the trigger was decided on a fresh reading",
           review.watcher._claude.forced == 1, review.watcher._claude.forced)
@@ -16325,18 +16443,20 @@ def test_a_spawn_decision_asks_anthropic_rather_than_the_cache():
           review.watcher.poll_github() == [] and review.watcher._claude.forced == 2,
           review.watcher._claude.forced)
 
-    # EVERYTHING ELSE STILL TAKES THE CACHED ANSWER. Which account pays is re-chosen on the
-    # next turn either way, and a forced read there would put a round trip on every launch,
-    # every staging and every gate call.
-    with claude_pool(CLAUDE_CODE_OAUTH_TOKEN1="sk-ant-oat01-a",
-                     CLAUDE_CODE_OAUTH_TOKEN2="sk-ant-oat01-b"):
-        picker = Case("hold-fresh-pick")
-        picker.watcher._claude = StubClaudeKeys(
-            [key_record("A", five=10.0, seven=10.0), key_record("B", five=20.0, seven=20.0)])
-        picker.watcher.pick_claude_key()
-        check("choosing an account does not force one",
-              picker.watcher._claude.reads == 1 and picker.watcher._claude.forced == 0,
-              (picker.watcher._claude.reads, picker.watcher._claude.forced))
+    # EVERYTHING ELSE STILL TAKES THE CACHED ANSWER, and most of it reads nothing at all:
+    # WHICH account pays is a lookup of an authenticated id, not a reading, so a launch and a
+    # staging now cost no round trip whatever the cache says.
+    picker = Case("hold-fresh-pick")
+    picker.watcher._claude = StubClaudeKeys([key_record(SUITE_CLAUDE_SLOT)])
+    key, _why = picker.watcher.claude_route_for_turn(
+        {"trust_tier": "operator", "trust_actor": LOTHSAHN}, "ask")
+    check("routing a turn asks Anthropic nothing at all",
+          key == SUITE_CLAUDE_SLOT and picker.watcher._claude.reads == 0,
+          (key, picker.watcher._claude.reads))
+    picker.watcher.claude_hold("review", SUITE_CLAUDE_SLOT)
+    check("and an unforced hold takes the cached reading",
+          picker.watcher._claude.reads == 1 and picker.watcher._claude.forced == 0,
+          (picker.watcher._claude.reads, picker.watcher._claude.forced))
 
 
 def test_the_daemon_leaves_its_readings_where_ffweb_can_find_them():
@@ -16361,9 +16481,9 @@ def test_the_daemon_leaves_its_readings_where_ffweb_can_find_them():
 
 def test_what_the_subscription_hold_may_not_touch():
     print("holds: what the subscription hold reaches, and what it does not")
-    case, fixture = branch_directive_case("hold-scope", "hey max, first question")
+    case, fixture = branch_directive_case("hold-scope", "first question", author=LOTHSAHN)
     conv = case.rows("SELECT * FROM conversation")[0]
-    hold_case(case, [key_record("only", five=95.0, seven=95.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=95.0, seven=95.0)])
     check("the first turn waits", case.watcher.create_turn(conv) is None)
 
     # AND SO DOES A FOLLOW-UP, since 2026-09-08. It used not to: somebody already in a
@@ -16374,7 +16494,7 @@ def test_what_the_subscription_hold_may_not_touch():
     case.db_exec("INSERT INTO turn(conversation_id, seq, status, queued_at)"
                  " VALUES(?,1,'done',?)", (conv["id"], ffwatch.now_iso()))
     check("a conversation that has already run a turn waits too",
-          case.watcher.conversation_held(conv) > 0)
+          held_secs(case, conv) > 0)
 
     # A LOCAL PROMPT IS NOT HELD BY THIS ONE. There is a person at a terminal, and nothing would
     # ever come back for it: no poller offers a shell conversation with no turn a second time.
@@ -16382,7 +16502,7 @@ def test_what_the_subscription_hold_may_not_touch():
     case.db_exec("DELETE FROM turn WHERE conversation_id=?", (conv["id"],))
     local = case.rows("SELECT * FROM conversation")[0]
     check("a shell prompt runs whatever the window says",
-          case.watcher.conversation_held(local) == 0)
+          held_secs(case, local) == 0)
 
     # A REVIEW IS NOT HELD HERE EITHER. It has its own, lower hold in poll_github, applied
     # before the pull request is fetched; by the time one reaches create_turn the branch is
@@ -16390,18 +16510,18 @@ def test_what_the_subscription_hold_may_not_touch():
     case.db_exec("UPDATE conversation SET kind=? WHERE id=?", (ffwatch.GITHUB_KIND, conv["id"]))
     review = case.rows("SELECT * FROM conversation")[0]
     check("nor is a review, which was gated at its own ingress",
-          case.watcher.conversation_held(review) == 0)
+          held_secs(case, review) == 0)
 
 
 def test_a_hold_that_cannot_read_the_windows_runs_the_work():
     print("holds: fail open")
-    case, _ = branch_directive_case("hold-open", "hey max, another question")
+    case, _ = branch_directive_case("hold-open", "another question", author=LOTHSAHN)
     conv = case.rows("SELECT * FROM conversation")[0]
     # AN OUTAGE AT ANTHROPIC MUST NOT BE ABLE TO STOP THE BOX. Every unreadable path -- a key
     # set aside, an empty pool, a reader that raises -- runs the work.
-    hold_case(case, [key_record("only", state="unreachable")])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, state="unreachable")])
     check("an unreadable account does not hold anything",
-          case.watcher.conversation_held(conv) == 0)
+          held_secs(case, conv) == 0)
 
     class Exploding:
         def read(self, now=None):
@@ -16409,13 +16529,13 @@ def test_a_hold_that_cannot_read_the_windows_runs_the_work():
 
     case.watcher._claude = Exploding()
     check("and neither does a reader that raises",
-          case.watcher.conversation_held(conv) == 0)
+          held_secs(case, conv) == 0)
 
     # TURNING THE HOLD OFF PUTS THE BOX BACK to never reading the windows at all, which is what
     # a one-account box did before any of this existed.
-    case.watcher._claude = StubClaudeKeys([key_record("only", five=99.0, seven=99.0)])
+    case.watcher._claude = StubClaudeKeys([key_record(SUITE_CLAUDE_SLOT, five=99.0, seven=99.0)])
     case.watcher.cfg["claude"] = {"new_conversation_hold_pct": None, "review_hold_pct": None}
-    check("a null threshold is no hold", case.watcher.conversation_held(conv) == 0)
+    check("a null threshold is no hold", held_secs(case, conv) == 0)
     check("and nothing was read to find that out", case.watcher._claude.reads == 0)
 
 
@@ -16430,7 +16550,7 @@ def test_a_codereview_trigger_waits_in_the_cursor_and_runs_when_the_window_refil
 
     # SEVENTY-FIVE PER CENT HOLDS A REVIEW AND NOT A CONVERSATION. This account is over the
     # review line and well under the other one, which is the whole reason there are two.
-    hold_case(case, [key_record("only", five=10.0, seven=78.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=78.0)])
     check("no review starts", case.watcher.poll_github() == [], None)
 
     # AND NOTHING IS SAID. A refusal is what this replaced: the operator would have had to
@@ -16455,7 +16575,7 @@ def test_a_codereview_trigger_waits_in_the_cursor_and_runs_when_the_window_refil
           GH_STATE["not_modified"] == 0, GH_STATE["not_modified"])
 
     # THE WEEK TURNS OVER. Nobody re-types the trigger; the poll that follows starts the review.
-    case.watcher._claude = StubClaudeKeys([key_record("only", five=10.0, seven=12.0)])
+    case.watcher._claude = StubClaudeKeys([key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=12.0)])
     created = case.watcher.poll_github()
     check("the review starts on its own once the window refills", len(created) == 1, created)
     conv = case.rows("SELECT * FROM conversation WHERE kind='github_pr'")
@@ -16633,7 +16753,7 @@ def test_an_always_quiet_box_says_nothing_to_anybody():
     """
     print("quiet hours: around the clock, and silent with it")
     case, mid = held_and_addressed("quiet-forever")
-    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=2.0, seven=3.0)])
     # ADDRESSED DIRECTLY, which on a nightly window is exactly who DOES get told -- so this is
     # the notice being withheld rather than never having been due.
     case.watcher.cfg["quiet_hours"] = {"start": "00:00", "end": "24:00", "timezone": None}
@@ -16691,7 +16811,7 @@ def test_inside_the_quiet_hours_nothing_starts_at_all():
     conv = case.rows("SELECT * FROM conversation")[0]
     # A BOX WITH ROOM TO SPARE. Nothing here is about the subscription, and leaving it full is
     # what proves that: the only thing holding this turn is what time it is.
-    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=2.0, seven=3.0)])
     quiet_window(case)
 
     check("a new conversation waits", case.watcher.create_turn(conv) is None,
@@ -16737,7 +16857,7 @@ def test_a_quiet_box_says_the_same_thing_a_spent_one_does():
     case, mid = held_and_addressed("quiet-note")
     # THE SAME CASE, WITH THE SUBSCRIPTION PUT BACK. held_and_addressed sets up an account at
     # 91% of its week; refilling it leaves the clock as the only thing holding anything.
-    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=2.0, seven=3.0)])
     quiet_window(case, hours_left=2)
     conv = case.rows("SELECT * FROM conversation")[0]
 
@@ -16768,7 +16888,7 @@ def test_a_second_night_gets_a_second_sentence():
     """
     print("quiet hours: told again the next time")
     case, mid = held_and_addressed("quiet-twice")
-    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=2.0, seven=3.0)])
     conv = case.rows("SELECT * FROM conversation")[0]
     quiet_window(case)
     check("the first night is announced", case.watcher.create_turn(conv) is None
@@ -16819,7 +16939,7 @@ def test_a_quiet_night_runs_no_model_at_all():
     case = Case("quiet-nomodel", fixture, verdict={"engage": True, "reason": "a real question"})
     case.events(ask_event(mid))
     case.watcher.drain_events()
-    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=2.0, seven=3.0)])
     quiet_window(case)
     conv = case.rows("SELECT * FROM conversation")[0]
 
@@ -16864,7 +16984,7 @@ def test_a_message_the_box_would_certainly_answer_is_still_told():
     """
     print("quiet hours: who still gets told")
     case, mid = held_and_addressed("quiet-addressed")
-    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=2.0, seven=3.0)])
     quiet_window(case)
     conv = case.rows("SELECT * FROM conversation")[0]
     check("no turn", case.watcher.create_turn(conv) is None)
@@ -16977,7 +17097,7 @@ def test_a_quiet_box_holds_a_review_at_the_gate_it_already_had():
     a_pull_request(42, "loth/pr-branch")
     a_comment(5701, 42, "#codereview", stamp="2026-09-06T12:00:00Z")
     # AGAIN A BOX WITH ROOM. The subscription would run this review; the clock is what does not.
-    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=2.0, seven=3.0)])
     quiet_window(case)
 
     check("no review starts", case.watcher.poll_github() == [], None)
@@ -16999,7 +17119,7 @@ def test_a_quiet_box_holds_a_review_at_the_gate_it_already_had():
 def test_the_status_page_says_which_hold_is_biting():
     print("quiet hours: ffwatch status")
     case, _ = branch_directive_case("quiet-status", "hey max")
-    hold_case(case, [key_record("only", five=2.0, seven=3.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=2.0, seven=3.0)])
     quiet_over(case)
     lines = case.watcher.claude_status()
     check("with no window configured the report says nothing about one",
@@ -17040,7 +17160,7 @@ def test_a_strangers_trigger_is_ignored_rather_than_held():
     review_cfg(case)
     a_pull_request(41, "loth/pr-branch")
     a_comment(5601, 41, "#codereview", author=999999, login="passerby")
-    hold_case(case, [key_record("only", five=10.0, seven=99.0)])
+    hold_case(case, [key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=99.0)])
 
     check("nothing starts", case.watcher.poll_github() == [], None)
     _, seen, _, held = case.watcher.read_github_cursor()
@@ -17504,18 +17624,18 @@ def test_the_warm_branch_tier_says_why_it_is_not_staging():
 
 def main():
     tests = [
-        test_the_account_about_to_refill_is_the_one_worth_spending,
-        test_with_equal_resets_it_is_the_emptiest_week,
-        test_a_bigger_plan_counts_for_more,
-        test_the_five_hour_cap_is_a_gate_and_not_a_term,
-        test_when_every_session_is_spent_it_is_the_one_that_comes_back_first,
-        test_a_key_that_cannot_be_read_is_set_aside_not_believed,
+        test_an_operators_request_is_billed_to_the_subscription_they_claimed,
+        test_everybody_else_is_billed_to_the_metered_default,
+        test_an_operator_with_nothing_to_bill_is_refused_rather_than_rehomed,
+        test_the_shell_id_is_a_name_and_the_other_two_are_not,
         test_a_reset_in_the_past_is_a_window_that_has_already_refilled,
         test_windows_are_found_by_key_and_never_by_their_label,
-        test_the_chosen_account_reaches_ffbox_as_a_name_and_lands_on_the_run,
-        test_a_warm_container_bills_the_account_it_was_staged_with,
-        test_a_box_with_one_account_is_left_exactly_as_it_was,
-        test_the_box_is_full_only_once_its_emptiest_account_is,
+        test_the_routed_account_reaches_ffbox_as_a_name_and_lands_on_the_run,
+        test_an_operators_turn_is_billed_to_their_own_subscription,
+        test_a_warm_container_can_only_serve_the_account_it_was_staged_with,
+        test_a_spare_is_staged_for_whoever_is_likely_to_want_it,
+        test_a_box_that_cannot_bill_anybody_says_so_at_startup,
+        test_the_account_that_would_pay_is_the_one_the_hold_asks_about,
         test_a_new_conversation_waits_for_the_refill_instead_of_being_refused,
         test_a_wait_is_named_as_a_clock,
         test_a_held_discord_conversation_is_told_the_answer_is_coming,
@@ -17789,7 +17909,7 @@ def main():
         test_the_turn_adopts_the_mark_rather_than_sending_a_second,
         test_an_unforced_turn_still_does_not_flicker,
         test_a_message_that_loses_its_turn_gives_the_mark_back,
-        test_the_classifier_is_handed_one_token_out_of_the_pool,
+        test_the_classifier_is_handed_the_metered_key_and_no_subscription,
         test_a_classifier_call_carries_a_thinking_budget,
         test_untrusted_text_is_fenced_and_the_task_is_restated_after_it,
         test_the_selector_can_only_choose_an_id_it_was_offered,

@@ -1,0 +1,475 @@
+Per-operator Claude subscriptions: whose account pays is decided by who asked
+============================================================================
+
+2026-09-10.
+
+Every model call this box makes today is billed to whichever account `claude_keys.pick` liked
+best at the moment the call started. secrets.env holds a numbered slot per Claude account,
+ffwatch reads what is left on each one every fifteen minutes, and the account with the most
+allowance per second left before it refills gets the work. That is `claude_keys.pick`, added
+on 2026-09-04, and it is doing exactly what it was written to do.
+
+What it cannot do is answer "whose subscription paid for that". A player's bug report in
+#bug-reports comes out of whoever had room. A dev directive Loth typed in Discord can land on
+Ben's Max 20x. The engagement gate, which runs once per candidate message whether or not a turn
+follows, spends whichever account was emptiest at the last reading. `run.claude_key` records
+the answer per run, so the history is there, but it is a record of a coin flip rather than of a
+decision anybody made.
+
+This replaces the chooser with a routing table. An operator's request is billed to that
+operator's own subscription, named by them in config.json. Everything else -- a player in a
+forum thread, the gate, the selector, an autofix turn a triage verdict spawned -- goes to one
+Anthropic API key, which is metered and billed to the console org rather than to anybody's
+Claude plan. Nothing chooses between accounts any more, because there is nothing left to choose
+between: each request has exactly one place it can be billed.
+
+
+1. What gets built
+------------------
+
+  1. Each operator names a subscription id in the top-level `operators` block. That id resolves
+     to one variable in secrets.env, and every request that operator makes is billed to it.
+  2. `ANTHROPIC_API_KEY` in secrets.env is the default, and pays for everything nobody in
+     `operators` asked for: forum threads, mentions from strangers, DMs the harness answers,
+     the gate, the selector, the clustering calls, and any turn a harness verdict spawned off a
+     player's report.
+  3. A container is handed exactly one credential, as it is today, and still never sees a
+     second one. Which one it gets is decided host-side and travels as a variable NAME.
+  4. An operator whose configured id names no token is told so, once, in the venue they asked
+     from. Their request waits where it arrived and runs on the pass after the config is fixed;
+     nothing is spent in the meantime.
+  5. An operator whose subscription is spent gets the existing deferral: the request waits
+     where it arrived and runs after the window turns over. Nobody else's account absorbs it.
+  6. Warm spares are claimed by key as well as by class and branch. A spare staged on Ben's
+     subscription is never handed to Loth's turn.
+  7. `pick`, `emptiest`, `spread`, `five_hour_cap` and `pick_claude_key` are deleted, along with
+     the config keys behind them.
+
+Not a goal: metering what the API key spends. The box already records `run.cost_usd` per run
+and `max_budget_usd` already bounds one container, so the numbers exist. A budget that stops
+work when the month's spend crosses a line is a separate feature and section 12 says what it
+would need.
+
+
+2. The routing decision already exists
+--------------------------------------
+
+`turn_trust(conv, msgs)` (ffwatch.py:6375) answers "(tier, actor, reason)" for every turn, from
+config and from an authenticated author id, with no model involved. It is written to
+`turn.trust_tier` and `turn.trust_actor` and is already what decides which pool a conversation
+runs in and which framing the prompt carries. It is also, without any change to how it works,
+the routing key this feature needs:
+
+    request                            tier      actor id space   billed to
+    ------------------------------------------------------------------------------------
+    forum thread, mention, player DM   player    discord          ANTHROPIC_API_KEY
+    operator message or directive      operator  discord          that operator's slot
+    operator DM                        operator  discord          that operator's slot
+    #codereview on a pull request      operator  github           that operator's slot
+    shell or web prompt                operator  unix account     that operator's slot
+    the gate and the selector          --        --               ANTHROPIC_API_KEY
+
+The id space matters and is the reason the `operators` block is shaped the way it is: one entry
+per person, one id per service, and `operator_ids(cfg, service)` never hands a caller from one
+service an id from another. Routing reads the same block through the same function, so the
+person who is trusted to command the box from Discord is the same person whose subscription
+pays for it, and neither list can drift from the other.
+
+Three details are worth stating because they are easy to get wrong:
+
+A turn batches messages, and operator tier already requires that EVERY message in the batch
+came from an operator. One player in the batch makes the whole turn a player's. That rule was
+written so a player replying under an operator's message cannot inherit their clearance, and it
+gives the right answer here for free: a mixed batch is billed to the API key, not to the
+operator who happened to speak first.
+
+An autofix turn -- the fix leg a triage verdict enqueues, with `parent_turn_id` set -- has no
+new message and inherits the trust of the conversation it belongs to. A player's bug report
+that escalates to a fix is still a player's, so it stays on the API key for its whole life. That
+is the answer this design wants: the box did that work on its own initiative, and no operator
+asked for it.
+
+A `#codereview` turn's `trust_actor` is a GitHub user id, stored in `conversation.
+opener_discord_id` because that column is where an opener goes whatever service it came from.
+`turn_trust` already special-cases this (the lookup table is Discord snowflakes and every GitHub
+id would miss), and routing must special-case it the same way: kind `github_pr` resolves through
+`operator_ids(cfg, "github")`.
+
+
+3. The subscription id
+----------------------
+
+secrets.env does not change shape. It already carries, per slot:
+
+    CLAUDE_CODE_OAUTH_TOKEN2=sk-ant-...
+    CLAUDE_CODE_RATE_TOKEN2=20
+    CLAUDE_CODE_NAME_TOKEN2=Loth
+
+`CLAUDE_CODE_NAME_TOKEN<n>` was added as a label for ffweb's `/claude` page, so a row could read
+"Loth" instead of a variable name. It becomes the subscription id: what an operator writes in
+config.json to say which of these accounts is theirs.
+
+    "operators": {
+      "lothsahn": { "discord": "800...", "github": 10092359, "shell": "lothsahn",
+                    "claude": "Loth" },
+      "ben":      { "discord": "801...", "github": 10092360, "shell": "ben",
+                    "claude": "Ben" }
+    }
+
+Matched case-insensitively after stripping, because "Loth" in one file and "loth" in the other
+is not a mistake anybody should have to debug. Two slots declaring the same name is refused
+rather than resolved: the daemon logs both variable names at startup and every request that
+resolves to that id is refused, since guessing which of two accounts somebody meant is exactly
+the class of decision this feature exists to remove.
+
+A slot number is an accepted alias, so `"claude": "2"` means `CLAUDE_CODE_OAUTH_TOKEN2`. It
+costs four lines and it is what a box with unnamed slots can use on the day it deploys, before
+anybody has written the NAME lines. It is second-best: slot 2 stops meaning the same account the
+moment somebody revokes slot 1 and renumbers the file, and the whole reason `run.claude_key`
+records a variable name rather than an index is that names survive that and numbers do not.
+Documented as the fallback, not as the way.
+
+`CLAUDE_CODE_RATE_TOKEN<n>` stays and becomes decoration. It exists because the chooser had to
+weigh a percentage of a Pro plan against a percentage of a Max 20x, and nothing chooses any
+more. The `/claude` page still prints the plan, which is worth the two lines that keep it.
+
+The `shell` field is new and is the third id space. A shell or web prompt opens its conversation
+with `getpass.getuser()` as the opener (ffwatch.py:11186), so the actor is a unix account name
+on this box. `operator_ids` currently drops any value that is not a digit string, on the
+argument that a renameable handle is not a trust key. That argument does not hold for a local
+account: renaming it takes root on the box, and anybody with root on the box can read secrets.env
+directly. So `shell` accepts a name, and `operator_ids` grows a per-service rule -- digits for
+`discord` and `github`, a non-empty string for `shell` -- rather than one rule for everything.
+An operator with no `shell` field simply cannot bill a terminal prompt to their subscription,
+which is a refusal at the door rather than a fallback onto somebody else's plan.
+
+`turn_trust` has one more shape worth naming here, because it is a trap rather than a case:
+when a local conversation has no opener recorded, the actor it returns is the KIND -- the bare
+string `shell` or `web`. Routing must read that as unresolvable rather than looking up an
+operator named "shell", or a box that one day acquires an operator by that name starts billing
+anonymous terminal prompts to them.
+
+
+4. The default is an API key, and that is a real change
+--------------------------------------------------------
+
+Everything that is not an operator's request is billed to `ANTHROPIC_API_KEY` -- a console key,
+`sk-ant-api...`, metered per token. Not another `claude setup-token` subscription. Four
+consequences, and none of them is small:
+
+**Player-facing work starts costing money per run.** A triage turn on a bug report is a full
+agent run in a container. Under a subscription it consumed window; against an API key it
+consumes dollars, and `run.cost_usd` -- which the database already records and ffweb already
+renders -- stops being "API-equivalent" and starts being the bill. `max_budget_usd` (default 10,
+ffwatch.py:967, one number for the whole box) becomes the real ceiling on a single run rather
+than a number nobody had to think about. It should move into the class blocks so ffagent can
+carry a lower one than ffdev, and ffagent's should be set deliberately before this ships.
+
+**The gate moves onto the meter too.** `should_engage_for` runs once per candidate message,
+whether or not a turn follows, on the Haiku classifier with a 1024-token thinking budget and a
+`classifier_budget_usd` of 0.25. A gate call is a few thousand input tokens and a few hundred
+output; at Haiku 4.5 rates that is under a cent each. Busy afternoon in a channel with engage
+"all", a few hundred of them, a couple of dollars. That is the right place for them -- they are
+the box reading strangers' text, not work anybody asked an operator to pay for -- but it is a
+line item that did not exist yesterday.
+
+**Player-facing work can no longer be held at all, because there is no window to hold it on.**
+The unified rate-limit headers `claude_keys` reads
+(`anthropic-ratelimit-unified-5h-utilization` and its siblings) come back on subscription calls.
+An API key has org rate limits per minute instead, and no rolling window to be 91% through. So
+the deferral holds do not apply to it: player traffic never waits for a window, because there is
+no window. It waits for quiet hours and for `max_concurrent_runs` like
+everything else, and it stops when Anthropic rate-limits the org, which is a 429 the run reports
+rather than a state the box can read ahead of time. Section 5 says what the holds become.
+
+**The auth header is different, and `claude_keys` has to know.** An OAuth token goes on
+`Authorization: Bearer` with `anthropic-beta: oauth-2025-04-20`; an API key goes on `x-api-key`.
+The `/api/oauth/usage` and `/api/oauth/profile` endpoints do not exist for an API key at all. So
+`ClaudeKeys.read` gets one more row shape: the API key reports as reachable or not, with no
+windows and no plan, and the `/claude` page renders that row as "metered, no window" rather than
+as two empty bars. A one-token Haiku probe against `/v1/messages` with `x-api-key` is what
+proves the key works at all, and it is worth keeping for exactly that: an expired or revoked API
+key would otherwise be discovered by a player's bug report failing.
+
+There is one thing to verify on the box before this ships, because it is a claim about Claude
+Code's behaviour rather than about this repository: that `claude -p --dangerously-skip-permissions`
+inside the container accepts `ANTHROPIC_API_KEY` from the environment without asking for the
+key to be approved. Interactive Claude Code records approved keys in `.claude.json` under
+`customApiKeyResponses`. If the headless path turns out to want the same, the fix is one seeded
+key in the container's claude directory, which `pool_stage` and the cold launch both already
+create and mount. Verify it with a throwaway container before switching the player lane over,
+not after.
+
+
+5. Refuse, hold, or run
+-----------------------
+
+Three outcomes, and the difference between the first two is whether waiting can help.
+
+**Refuse** when the route resolves to nothing: an operator with no `claude` field, an id naming
+no token in secrets.env, an id two slots both claim, or a missing `ANTHROPIC_API_KEY` on the
+player path. Every one of these is a configuration error, and the reason is said out loud in the
+venue the request came from rather than swallowed. The journal names the operator and the id
+that did not resolve, `/claude` shows the same thing, and `ffwatch status` prints it.
+
+Said out loud, but NOT gated. A refusal here is a hold that speaks: the messages stay unclaimed
+and ungated, one Discord post carries a durable `local_id` so the sentence is said once rather
+than once a tick, and the pass after somebody fixes the config runs the request that was waiting.
+This is `say_holding`'s shape, and it is the shape because the alternative is worse in exactly
+the case that matters. `gate_message` is permanent: an operator who fixed their config would find
+the request they had asked about never ran, and would have to type it again to learn that the fix
+worked. Only `#codereview` refuses in the older sense, through `refuse_review` and the poller's
+`seen` list, because that path already consumes its trigger for every other refusal and an
+operator who has fixed their config can comment again.
+
+A shell or web prompt takes neither path, because `conversation_held` deliberately reaches a
+Discord conversation and nothing else: there is a person at a terminal and `claim_turns` never
+offers a local conversation twice. Its turn is created and the refusal lands at launch, as a
+failed turn whose `error` carries the same sentence, which is what the conversations page
+already renders and what the person who typed it is already looking at.
+
+**Hold** when the route resolves to a subscription that is over its line. This is the existing
+`review_hold_pct` / `new_conversation_hold_pct` machinery with one change: it asks the key that
+would pay rather than the emptiest account on the box. `claude_keys.emptiest` was written for
+exactly the question that no longer exists ("can ANY of them take this"), and it goes. What
+replaces it is a lookup of one record by variable name, and the same two thresholds against the
+fuller of that key's two windows -- `fullest_window` and `usable`, which `emptiest` used
+internally and which now have a caller of their own.
+
+The holds therefore apply to operator requests only, since the API key has no window to be over.
+A box whose operators are all spent still answers players, which is the right shape: the person
+whose account ran out is the person who can see that it did, on `/claude`, and the strangers in
+the forum are not waiting on somebody else's plan.
+
+**Run** otherwise. `work_hold` gains the key as an argument and keeps its meaning: quiet hours
+first, then the subscription.
+
+The order of operations is then:
+
+    msgs              = pending_messages(conv)           read above the hold, not below it
+    tier, actor, why  = turn_trust(conv, msgs)           unchanged
+    key, route_why    = claude_route(cfg, tier, actor, conv["kind"], keys)
+    (refuse if key is None, saying route_why once)
+    secs, hold_why    = work_hold(what, key, fresh=True)
+    (hold if secs, exactly as today)
+    ... launch with --claude-key key
+
+Two details in that sequence are not cosmetic.
+
+`create_turn` reads its messages BELOW the hold today, because the hold has never needed to know
+who wrote them. It has to move above it, which puts it above `resettle()` -- the selector call
+that can move a message into another conversation. So the batch the hold routes on is
+provisional, and the authoritative key is worked out again at launch from the turn row's
+`trust_tier` and `trust_actor`, after the batch is settled. The two disagree only when a resettle
+moves a message across a trust boundary in the same pass, and what it costs is a turn admitted
+against the wrong key's window: the same class of staleness the reading itself already carries,
+since a cached reading can be `refresh_secs` old.
+
+`claude_route` is a pure function of config, the trust triple, the conversation's kind and the
+keys it is handed -- `keys` above being what secrets.env holds, read once by the caller. That is
+what makes it testable without a database and what keeps it out of `Watcher`. It lives beside
+`operator_ids` in ffwatch, not in `claude_keys`: `claude_keys` answers "which accounts exist and
+what is left on them" and has no business knowing what an operator is.
+
+
+6. Warm spares become key-aware
+-------------------------------
+
+A container's environment is fixed when docker creates it. A spare is staged hours before it has
+a turn, and `pool_stage` (ffwatch.py:7582) already writes the account it was staged with into
+`<pool dir>/claude-key` and already reads it back at launch, because a pooled run has never been
+able to re-choose. Routing makes that recorded key part of the claim:
+
+  * `pool_claim_for(ref, agent_class, key)` matches on the staged key as well as on class and
+    branch. A miss is a cold launch, which is the ordinary fallback and costs about forty
+    seconds. `pool_would_serve` takes the same argument and applies the same rule, because the
+    two must agree or a turn is admitted on the promise of a spare it cannot have.
+  * The ffagent pool stages on `ANTHROPIC_API_KEY` always. One key, so every ffagent spare
+    matches every ffagent turn and that pool behaves exactly as it does today. A box with no API
+    key stages no ffagent spare and says so once, rather than asking ffbox for a container it
+    would refuse to create.
+  * The ffdev pool stages on an operator's subscription, and which one is a guess about who will
+    ask next. The guess is made the way `pool_branch_activity` already guesses at branches: from
+    what this box has actually run. Take the `claude_key` of the most recent ffdev runs inside a
+    window, order the configured operator keys by that, and stage the next spare on the key at
+    the top that does not already have a warm spare. On a box with one active operator this is
+    their key every time, which is the common case.
+  * `keep_pool` counts warm held spares per (class, key) rather than per class, or a pool of one
+    would report itself full while holding a spare no one can claim.
+
+A spare staged on the wrong operator's key is not corrected. It ages out at
+`idle_agent_ttl_secs` and the box stages another, which is what already happens to a spare on a
+branch nobody asks for. Correcting it would mean destroying a filled workspace to guess again,
+and the thing it saves is forty seconds.
+
+Injecting the token at dispatch instead -- one warm pool for everybody, the credential written
+into the spare's spool as the job goes in -- was considered and is refused for the reason
+`pool_stage`'s comment already gives. It puts a live credential in a file on disk, needs a mode
+and a group and an ordering against the exec and a deletion afterwards, and buys a warm start
+for a lane whose turns run for minutes.
+
+
+7. What is deleted
+------------------
+
+From `claude_keys.py`: `pick`, `_why`, `emptiest`, `availability` and `remaining_fraction`. The
+last two exist only to rank one key against another, which is the question being removed. The
+module keeps the pool reader, the two ways of asking Anthropic what is left, the shared store,
+the reset memory, `window_of` / `utilization` / `seconds_to_reset` for the page and the status
+line, and `fullest_window` / `usable`, which were `emptiest`'s internals and are now the per-key
+hold's.
+
+From `ffwatch.py`: `pick_claude_key`, `claude_spreads`, `active_claude_token`, and the `key=`
+parameter on `classifier_invocation`, `run_classifier` and `should_engage_for` -- those calls
+take the API key unconditionally now, which is one fewer thing for a call site to decide. The
+four `pick_claude_key()` call sites become one route lookup at launch, one demand lookup at
+staging, and nothing at all at the gate or the selector.
+
+From config: `claude.spread` and `claude.five_hour_cap`. `refresh_secs` and `timeout_secs` stay,
+because the readings still happen for the holds and for the page. `review_hold_pct` and
+`new_conversation_hold_pct` stay and change meaning as described above. A box whose config still
+carries the deleted keys keeps working and the daemon says once, at startup, that they no longer
+do anything. A key nothing reads is merged in and forgotten, and that silence is how somebody
+comes to believe the box is still spreading.
+
+From ffbox (the shell): the "first non-empty slot" fallback for a run with no `--claude-key`
+stays, because a run typed by hand at a terminal has to work, but it is now the fallback of last
+resort rather than the normal path -- ffwatch always passes the flag. The flag's allowlist grows
+one entry: `ANTHROPIC_API_KEY` is a legal value, resolved out of secrets.env by the same loop and
+exported as `ANTHROPIC_API_KEY` rather than as `CLAUDE_CODE_OAUTH_TOKEN`. The container gets one
+of the two and never both, since a Claude Code that finds both has a precedence rule this box
+should not be relying on.
+
+The fallback does not apply to a flag that names the API key. `--claude-key ANTHROPIC_API_KEY`
+against an empty or absent variable exits 78 like any other name the loop could not resolve;
+falling through to the first slot there would be a player's turn silently billed to somebody's
+subscription, which is the whole failure this feature exists to prevent.
+
+
+8. The page and the status line
+-------------------------------
+
+`/claude` stops being a report on a pool and becomes a report on who is billed where. One row
+per subscription, headed by the operator who claims it rather than by the slot label, plus a row
+for the API key that says it is metered and carries no windows. A subscription no operator claims
+is still listed, marked unclaimed, because a token sitting in secrets.env that nothing can spend
+is worth seeing. An operator whose id resolves to nothing is listed with the id they wrote and
+the reason it did not resolve, which is where somebody will look first when their work starts
+getting refused.
+
+`ffwatch status` loses the "next turn goes to X" line, which has no meaning any more, and gains
+the same table in one line per operator: who, which variable, both windows, and whether they are
+over a hold.
+
+
+9. Config and secrets, in full
+------------------------------
+
+secrets.env, on a box with two operators:
+
+    ANTHROPIC_API_KEY=sk-ant-api03-...       # everything nobody in operators asked for
+    CLAUDE_CODE_OAUTH_TOKEN1=sk-ant-oat01-...
+    CLAUDE_CODE_RATE_TOKEN1=5
+    CLAUDE_CODE_NAME_TOKEN1=Ben
+    CLAUDE_CODE_OAUTH_TOKEN2=sk-ant-oat01-...
+    CLAUDE_CODE_RATE_TOKEN2=20
+    CLAUDE_CODE_NAME_TOKEN2=Loth
+
+config.json:
+
+    "operators": {
+      "ben":      { "discord": "800...", "github": 10092360, "shell": "ben",
+                    "claude": "Ben" },
+      "lothsahn": { "discord": "801...", "github": 10092359, "shell": "lothsahn",
+                    "claude": "Loth" }
+    },
+    "claude": { "refresh_secs": 900, "timeout_secs": 10,
+                "review_hold_pct": 0.75, "new_conversation_hold_pct": 0.9 }
+
+`ffbox/config.md` documents the config half and is edited in the same commit, per the rule in
+CLAUDE.md: `operators` gains `shell` and `claude`, the `claude` section loses two keys and
+rewrites what the holds ask, and the routing table from section 2 goes in as the reference
+anybody will actually look up. `ffbox/secrets.env.example` gains `ANTHROPIC_API_KEY` with the
+paragraph saying what it pays for, and `ffbox/README.md`'s "Spending the pool" section is
+replaced rather than amended -- there is no pool to spend.
+
+`setup.sh` stage 5 prompts for a `claude setup-token` today and writes it to
+`CLAUDE_CODE_OAUTH_TOKEN1`. It gains a second prompt for the API key, and `secrets_ready()` --
+which today calls a file ready if any one slot is filled -- also requires `ANTHROPIC_API_KEY`,
+since a box without one answers no players at all.
+
+
+10. Migration on the live box
+-----------------------------
+
+The order matters, because the middle of it is a box that holds operator work and says so.
+
+  1. Put `ANTHROPIC_API_KEY` in secrets.env and the `claude` and `shell` fields in config.json
+     first, before the code that reads them ships. Both files are read fresh -- the update timer
+     hashes them every five minutes and restarts `ffbox.target` when either moves -- and neither
+     the current code nor the new code minds a key it does not know about.
+  2. Ship the code. On the first pass the daemon logs one line per operator saying which
+     variable their id resolved to, and one WARNING per operator whose id resolved to nothing.
+     Read the journal before assuming it worked.
+  3. Warm spares staged under the old code carry a `claude-key` file naming an OAuth slot. They
+     are claimable by whichever operator owns that slot and unclaimable by anybody else, which
+     is correct by accident and needs no migration. The ffagent spares staged on an OAuth slot
+     will not match an ffagent turn's API key and will age out; the first player turn after the
+     deploy runs cold.
+  4. `run.claude_key` keeps its column and its meaning. Historical rows name OAuth slots chosen
+     by a chooser that no longer exists, which is true and stays true. New rows name the variable
+     the route resolved to, `ANTHROPIC_API_KEY` included.
+
+
+11. Tests
+---------
+
+Offline, in `ffbox/test_ffwatch.py` unless said otherwise:
+
+  * `claude_route` over the whole table in section 2: each tier and id space to the right
+    variable, an unknown operator to the API key, a mixed-author batch to the API key, a
+    `github_pr` turn resolving through the GitHub ids and not the Discord ones, an autofix turn
+    inheriting its parent conversation's answer.
+  * A `claude` id that names no token, an id two slots claim, an operator with no `claude`
+    field, a local conversation whose actor is the bare kind, and a player path with no
+    `ANTHROPIC_API_KEY`: all five refuse, and each refusal names what was wrong.
+  * A refusal is said once and self-heals: a second pass queues no second post, the messages
+    stay unclaimed and ungated, and the pass after the config is fixed creates the turn.
+  * Case and whitespace: `"Loth"`, `"loth"` and `" Loth "` all resolve to slot 2. `"2"` resolves
+    to slot 2 as the numeric alias.
+  * The per-key hold: an operator over `new_conversation_hold_pct` holds their own request while
+    a player's request on the API key runs in the same pass.
+  * `pool_claim_for` refuses a spare staged on another key and accepts one staged on the same
+    key; `pool_would_serve` agrees with it on both.
+  * `keep_pool` stages one ffdev spare per demanded key and stops at `idle_agents`.
+  * No credential in argv: the existing assertion that `--claude-key` carries a name is extended
+    to the API key path.
+  * In `test_container_credential.sh`, which already drives the real ffbox against a stub
+    docker: `--claude-key ANTHROPIC_API_KEY` with the variable empty exits 78 rather than
+    falling back to a slot, and a resolved run carries exactly one of the two `-e` names.
+  * In `test_ffweb.py`: an API-key row renders with no windows and does not blank the page; an
+    unclaimed subscription is marked; an operator whose id resolves to nothing shows the id.
+  * In `test_ffwatch.py`'s classifier assertions: the child environment carries
+    `ANTHROPIC_API_KEY` and no `CLAUDE_CODE_OAUTH_TOKEN` of any spelling.
+
+`sh ffbox/test.sh` runs the offline suite, `test_ffwatch.py` and `test_ffweb.py` included.
+`test_container_credential.sh` is not in it and should be, in this commit: it drives the real
+ffbox against a stub docker, which is exactly the shape of the two ffbox assertions above.
+Nothing here needs the daemon, a real container or the network.
+
+
+12. What this does not do
+-------------------------
+
+No spend cap on the API key. `max_budget_usd` bounds one container run and `classifier_budget_usd`
+bounds one gate call, and neither knows what the month has cost. A real cap needs a rolling sum
+over `run.cost_usd` plus an estimate of the gate calls, which the database does not record at
+all, and a decision about what a box does when it hits the line -- refuse players, or refuse
+everything. Worth doing, separately, once there is a month of real numbers to set the line from.
+
+No sharing. An operator whose subscription is spent waits for their window. There is deliberately
+no "borrow Ben's account" path, because that is the feature being removed.
+
+No per-request override. Nobody can say "bill this one to the API key" from Discord, and they
+should not be able to: the whole trust model here rests on the route being a lookup of an
+authenticated id, never a thing message text can ask for.
