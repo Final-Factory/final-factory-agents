@@ -631,6 +631,24 @@ class ClaudeKeys:
             return False, f"{type(exc).__name__}: {_short(str(reason), 160)}"
         return True, ""
 
+    def probe_one(self, name, token, kind=KIND_SUBSCRIPTION):
+        """(ok, error): does this one credential answer, asked now?
+
+        NO CACHE, NO STORE, AND NO DEPENDENCE ON A HOLD BEING CONFIGURED, which is the whole
+        difference from read(). ffwatch's health hold asks this about one credential that has
+        stopped answering, and the answer it needs is about now: a cached reading from before
+        the outage would lift the hold on a credential that is still down.
+
+        A subscription's 429 with rate-limit headers is a live key here as it is in _probe, and
+        that is safe only because the health hold never counts a 429 in the first place.
+        """
+        if not token:
+            return False, f"{name} holds no credential"
+        if kind == KIND_API_KEY:
+            return self.api_probe(token)
+        _headers, err = self.probe(token)
+        return (not err), err
+
     def _load(self, name, token, rate=CLAUDE_DEFAULT_RATE, label="", kind=KIND_SUBSCRIPTION):
         """One key, fetched. The cache is not consulted here — see read().
 
