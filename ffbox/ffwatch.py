@@ -82,7 +82,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 # THE ONE MODULE THIS DAEMON IMPORTS FROM BESIDE IT, and it is deliberately not ffweb: the
 # Claude subscription pool moved into claude_keys.py on 2026-09-04 precisely so that the
@@ -550,6 +550,16 @@ ADDED_COLUMNS = [
     ("conversation", "requested_base", "TEXT"),
     ("conversation", "requested_base_at", "TEXT"),
     ("conversation", "requested_base_by", "TEXT"),
+    # -- v21, a classification that fails waits ---------------------------------------------
+    # design/openrouter_provider_design.txt section 7. The backoff and the flag are on the row
+    # rather than in the daemon's memory, because `ffwatch status` and ffweb are other processes
+    # and they are exactly what somebody reads to find a conversation that will not classify.
+    # gate_released_by is who ran `ffwatch release` on it, cleared when its turn is written.
+    ("conversation", "classify_failures", "INTEGER NOT NULL DEFAULT 0"),
+    ("conversation", "classify_retry_at", "TEXT"),
+    ("conversation", "classify_error", "TEXT"),
+    ("conversation", "classify_flagged_at", "TEXT"),
+    ("conversation", "gate_released_by", "TEXT"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -1267,6 +1277,20 @@ DEFAULTS = {
         # all — which is the right answer for a box whose only credential is the API key.
         "review_hold_pct": 0.75,
         "new_conversation_hold_pct": 0.9,
+
+        # -- WHEN A CREDENTIAL OR A CLASSIFICATION DOES NOT ANSWER ---------------------------
+        # design/openrouter_provider_design.txt section 7.
+        #
+        # health: `after_failures` outages in a row (a timeout, no envelope, a 401/403/5xx)
+        # take a credential down, and a 402 takes it down at once. While it is down nothing
+        # billed to it starts, and nothing that could need a classification billed to it starts
+        # either. It is probed on its own every `probe_secs`. A conversation waiting on it with
+        # no end in sight is told so after `notice_after_secs`.
+        "health": {"after_failures": 2, "probe_secs": 60, "notice_after_secs": 600},
+        # classify_retry: a conversation whose classification failed while its credential was
+        # answering backs off `first_secs`, doubling to `max_secs`, and after `flag_after`
+        # failures is flagged for a person, who runs it with `ffwatch release`.
+        "classify_retry": {"first_secs": 60, "max_secs": 1800, "flag_after": 5},
     },
 
     # -- THE BOX'S OWN NIGHT ----------------------------------------------------------------
@@ -2398,6 +2422,24 @@ def iso_secs(stamp):
     except ValueError:
         return None
     return (when if when.tzinfo else when.replace(tzinfo=timezone.utc)).timestamp()
+
+
+def iso_at(secs):
+    """Epoch seconds as the same ISO stamp now_iso() writes. The inverse of iso_secs."""
+    return datetime.fromtimestamp(float(secs), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def row_col(row, key, default=None):
+    """row[key] for a sqlite3.Row or a dict, or `default` when the row has no such column.
+
+    For the columns a migration adds. A conversation row read before init_schema ran, or built
+    by hand in a test, does not carry them, and a KeyError there would take down the pass that
+    was only asking whether anything was set.
+    """
+    try:
+        return row[key] if key in row.keys() else default
+    except (AttributeError, IndexError, KeyError, TypeError):
+        return default
 
 
 # ------------------------------------------------------------------------------------------
@@ -3620,6 +3662,9 @@ class Db:
             #
             # v20 (2026-09-10): requested bases. No statement either, for the same reason: NULL
             # means "the agent chooses", which is what every existing conversation did.
+            #
+            # v21 (2026-09-10): credential_health (in the schema file) and the classify_*
+            # columns. No statement: nothing is down and nothing has failed to classify yet.
             have = self.conn.execute(
                 "SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
             if have < SCHEMA_VERSION:
@@ -4028,33 +4073,135 @@ def parse_classifier_output(text, schema):
     return parsed, None
 
 
+# THE FIVE WAYS A MODEL CALL CAN COME BACK WITHOUT AN ANSWER, sorted by what the CLI reports
+# rather than by how the process ended. design/openrouter_provider_design.txt section 7.
+#
+# Only two of them say anything about whether the CREDENTIAL answers, and only those two count
+# toward its health hold. A 429 is deliberately not one of them: a subscription past its session
+# limit answers 429, the window holds already cover that, and the probe reads a 429 as a live key
+# (claude_keys._probe). Counting it would take the credential down, lift the hold on the next
+# probe, and fail the next run the same way, forever.
+FAILURE_REFUSED = "refused"     # there is nothing to make the call with
+FAILURE_OUTAGE = "outage"       # no answer: a timeout, no envelope, 401/403/5xx
+FAILURE_BUDGET = "budget"       # 402: the credential's money is spent
+FAILURE_LIMITED = "limited"     # 429: a rate limit or a session limit, which clear on their own
+FAILURE_UNUSABLE = "unusable"   # it answered, and the answer did not validate
+HEALTH_FAILURES = (FAILURE_OUTAGE, FAILURE_BUDGET)
+
+
+class ClassifierFailure(str):
+    """A failure sentence that also says which of the five kinds it is.
+
+    A str, so every caller and every test that has always treated the error as the sentence it
+    is keeps doing so. `.kind` is the part that is new, and the only part the holds read.
+    """
+
+    def __new__(cls, message, kind=FAILURE_UNUSABLE):
+        obj = str.__new__(cls, message)
+        obj.kind = kind
+        return obj
+
+
+def api_error_kind(status):
+    """Which failure an API error of this HTTP status is.
+
+    An error with no status is an outage: the CLI says "API Error" with nothing after it when it
+    could not reach the endpoint at all. Any other 4xx is about this one request (a prompt too
+    long, a malformed body) and not about the credential, so it is unusable and not an outage.
+    """
+    try:
+        code = int(status)
+    except (TypeError, ValueError):
+        return FAILURE_OUTAGE
+    if code == 402:
+        return FAILURE_BUDGET
+    if code == 429:
+        return FAILURE_LIMITED
+    if code in (401, 403) or code >= 500:
+        return FAILURE_OUTAGE
+    return FAILURE_UNUSABLE
+
+
+def envelope_failure(envelope, what):
+    """The ClassifierFailure an `is_error` envelope reports, or None for one that is not an error.
+
+    The same three fields result_failure_detail reads out of a container's result.json, because
+    the CLI writes the same envelope in both places.
+    """
+    if not isinstance(envelope, dict) or not envelope.get("is_error"):
+        return None
+    detail = result_failure_detail(envelope) or "the call reported an error"
+    if str(envelope.get("terminal_reason") or "") == "api_error":
+        kind = api_error_kind(envelope.get("api_error_status"))
+    elif str(envelope.get("result") or "").lstrip().startswith("API Error"):
+        kind = FAILURE_OUTAGE
+    else:
+        kind = FAILURE_UNUSABLE
+    return ClassifierFailure(f"{what}: {detail}", kind)
+
+
+class ClassifyHold:
+    """What the selector hands back when it could not answer. Carries the failure up.
+
+    Distinct from None, which is the selector answering "keep the deterministic answer", and
+    from SPLIT_OUT, which is it answering "this starts something new". This is it not answering
+    at all, and create_turn reads it as a reason to wait rather than to guess.
+    """
+
+    __slots__ = ("failure",)
+
+    def __init__(self, failure):
+        self.failure = failure
+
+    def __repr__(self):
+        return f"ClassifyHold({str(self.failure)!r})"
+
+
 def classifier_attempt(cfg, prompt, schema, structured, what):
-    """One call. (parsed, error); never raises."""
+    """One call. (parsed, error); never raises. `error` is a ClassifierFailure."""
     argv, env, cwd, stdin = classifier_invocation(cfg, prompt, schema, structured=structured)
     if os.sep not in argv[0]:
         # Resolution failed, so this is about to be FileNotFoundError with a one-word message
         # that says nothing about why. Say where we looked instead.
-        return None, (f"{what}: {argv[0]!r} is not on the PATH this daemon can see "
-                      f"({classifier_path(cfg)}); set claude_bin to an absolute path")
+        return None, ClassifierFailure(
+            f"{what}: {argv[0]!r} is not on the PATH this daemon can see "
+            f"({classifier_path(cfg)}); set claude_bin to an absolute path", FAILURE_REFUSED)
     try:
         proc = subprocess.run(argv, input=stdin, env=env, cwd=cwd, capture_output=True,
                               text=True, encoding="utf-8", errors="replace",
                               timeout=int(cfg["classifier_secs"]))
+    except subprocess.TimeoutExpired:
+        return None, ClassifierFailure(
+            f"{what} gave no answer in {cfg['classifier_secs']}s", FAILURE_OUTAGE)
     except (OSError, subprocess.SubprocessError) as exc:
-        return None, f"{what} could not run: {type(exc).__name__}: {exc}"
-    if proc.returncode != 0:
-        return None, f"{what} exited {proc.returncode}"
+        return None, ClassifierFailure(
+            f"{what} could not run: {type(exc).__name__}: {exc}", FAILURE_OUTAGE)
+    # THE ENVELOPE FIRST, WHATEVER THE EXIT CODE. An API error comes back as an envelope with
+    # `is_error` set, and the status inside it is the only thing that tells a spent budget or a
+    # session limit from an endpoint that is down. Reading the exit code first threw that away
+    # and called all of them "exited 1".
     try:
         envelope = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return None, f"{what}: the CLI envelope was not JSON"
+    except (json.JSONDecodeError, TypeError):
+        envelope = None
+    if not isinstance(envelope, dict):
+        if proc.returncode != 0:
+            return None, ClassifierFailure(f"{what} exited {proc.returncode}", FAILURE_OUTAGE)
+        return None, ClassifierFailure(f"{what}: the CLI envelope was not JSON", FAILURE_OUTAGE)
+    failure = envelope_failure(envelope, what)
+    if failure is not None:
+        return None, failure
+    if proc.returncode != 0:
+        return None, ClassifierFailure(f"{what} exited {proc.returncode}", FAILURE_OUTAGE)
     result = envelope.get("result")
     if not isinstance(result, str):
         # --json-schema hands back the object already parsed.
         why = schema_violation(result, schema)
-        return (None, f"{what} output did not match the schema: {why}") if why else (result, None)
+        return ((None, ClassifierFailure(f"{what} output did not match the schema: {why}",
+                                         FAILURE_UNUSABLE))
+                if why else (result, None))
     parsed, why = parse_classifier_output(result, schema)
-    return (None, f"{what} {why}") if why else (parsed, None)
+    return (None, ClassifierFailure(f"{what} {why}", FAILURE_UNUSABLE)) if why else (parsed, None)
 
 
 def run_classifier(cfg, prompt, schema, what="gate"):
@@ -4082,6 +4229,13 @@ def run_classifier(cfg, prompt, schema, what="gate"):
     parsed, error = classifier_attempt(cfg, prompt, schema, structured=False, what=what)
     if parsed is not None:
         return parsed, None
+    if getattr(error, "kind", FAILURE_UNUSABLE) != FAILURE_UNUSABLE:
+        # THE RETRY FIXES SHAPE AND NOTHING ELSE. A call that got no answer at all, or an answer
+        # that was an API error, gets the same thing under --json-schema, after another wait of
+        # up to classifier_secs for it.
+        log(f"{what}: {error}; not retrying, because --json-schema only fixes the shape of an "
+            f"answer and this was not one")
+        return None, error
     log(f"{what}: the schema-free call did not give usable JSON ({error}); "
         f"retrying under --json-schema")
     return classifier_attempt(cfg, prompt, schema, structured=True, what=what)
@@ -4104,11 +4258,15 @@ def looks_hostile(text):
 
 
 def should_engage(cfg, text, context=None):
-    """Does this message need the assistant? Returns a dict. NEVER raises — it fails OPEN.
+    """Does this message need the assistant? Returns a dict. NEVER raises, and never guesses.
 
-    Fails open, and that direction is deliberate: a gate that cannot decide would otherwise
-    silently swallow a real bug report, which is the one outcome nobody can see happening. A
-    false engage costs one container.
+    A GATE THAT CANNOT DECIDE HOLDS, since 2026-09-10. It used to fail open, on the argument that
+    a gate which declined when it could not decide would silently swallow a real bug report.
+    That argument still stands against declining; it does not stand against waiting. The gate
+    and the container that would answer bill the same credential, so a gate that cannot get an
+    answer is almost always a container that cannot either, and a fail-open turn claimed the
+    messages and then failed. A hold leaves them unclaimed and ungated, and create_turn asks
+    again later (design/openrouter_provider_design.txt section 7).
 
     `context` is {where, thread}: the room this was said in, and what was said in the
     conversation before it. Both are optional and both change answers — a message read with
@@ -4123,10 +4281,11 @@ def should_engage(cfg, text, context=None):
         thread=(context.get("thread") or GATE_NO_HISTORY).strip()),
                                    CLASSIFIER_SCHEMA, what="gate")
     if error:
-        return failed_open(error)
+        return classify_hold_result(error)
 
     if "engage" not in parsed:
-        return failed_open("gate output did not match the schema")
+        return classify_hold_result(
+            ClassifierFailure("gate output did not match the schema", FAILURE_UNUSABLE))
 
     markers = looks_hostile(text)
     if markers and not parsed.get("engage", True):
@@ -4145,20 +4304,22 @@ def should_engage(cfg, text, context=None):
     }
 
 
-def failed_open(reason):
-    """The gate could not decide, so the turn runs.
+def classify_hold_result(failure):
+    """The gate could not decide, so nothing is decided.
 
-    Named for what it does. Its ancestor was failed_closed(), which had a second job — pick the
-    least-privileged lane — and the asymmetry that justified it: a question misread as a change
-    handed write capability to a run that never needed it. Capability is uniform now, so there is
-    no privilege left to withhold and only the engagement half survives, which never failed
-    closed in the first place.
+    It replaced failed_open() on 2026-09-10. `engage` is None rather than True or False, because
+    both of those are answers and this is not one; create_turn reads `status` first and waits.
+    Historical turn rows still carry `failed_closed` and a `failed_open` status, and the prompt
+    and the reply footer still render them.
     """
+    if not isinstance(failure, ClassifierFailure):
+        failure = ClassifierFailure(str(failure or "the gate did not answer"), FAILURE_UNUSABLE)
     return {
-        "engage": True,
-        "reason": reason,
-        "status": "failed_open",
-        "source": "fail_open",
+        "engage": None,
+        "reason": str(failure)[:200],
+        "status": "hold",
+        "source": "hold",
+        "failure": failure,
     }
 
 
@@ -4176,6 +4337,8 @@ def should_engage_for(cfg, conv_kind, text, gate=False, context=None):
         return True, {"engage": True, "status": "ok", "source": "doorbell",
                       "reason": f"conversation kind {conv_kind!r} was selected by its doorbell"}
     return_cls = should_engage(cfg, text, context=context)
+    if return_cls.get("status") == "hold":
+        return None, return_cls
     return bool(return_cls.get("engage", True)), return_cls
 
 
@@ -6368,6 +6531,10 @@ class Watcher:
         selector = getattr(self, "cluster_selector", None)
         target, reason = (selector(conv, pending) if selector
                           else self.select_for_turn(conv, pending))
+        if isinstance(target, ClassifyHold):
+            # THE SELECTOR COULD NOT ANSWER. Nothing moves and nothing is stamped, and
+            # create_turn reads this as a reason to wait rather than build a turn on a guess.
+            return target
         if target is None:
             return 0
         if target == conv["id"]:
@@ -6537,7 +6704,7 @@ class Watcher:
 
     def model_selection(self, msg, cands, alias=None):
         """S4. (conversation_id, reason) or (None, reason) for new; None,None to keep the
-        deterministic answer.
+        deterministic answer; (ClassifyHold, reason) when the selector could not answer at all.
 
         Runs through the same sandbox every other model call here does. Its answer is validated
         against the ids that were offered: the model NARROWS a choice the harness has already
@@ -6555,9 +6722,17 @@ class Watcher:
             message=f"{(msg.get('author') or {}).get('username') or 'someone'}: "
                     f"{(msg.get('content') or '').strip()[:1500]}")
         parsed, error = run_classifier(self.cfg, prompt, SELECTOR_SCHEMA, what="selector")
+        self.record_classification(error)
         if error:
-            log(f"cluster: {error}; keeping the deterministic answer")
-            return None, None
+            # NOT THE DETERMINISTIC ANSWER ANY MORE. A selector that could not answer used to
+            # leave the batch where ingest put it and let the turn go ahead, which is a guess
+            # made on the one pass where nothing could check it. It now waits with the gate's
+            # failures (design/openrouter_provider_design.txt section 7). An answer that names
+            # an id nobody offered is still refused below and still keeps the deterministic
+            # answer: the model did answer, and waiting on it would let a message written to
+            # produce a fake id stall its conversation for good.
+            log(f"cluster: {error}; nothing moves until the selector can answer")
+            return ClassifyHold(error), str(error)
         choice, why = parsed.get("continues"), str(parsed.get("reason", ""))[:200]
         if choice is None:
             # A REAL ANSWER, and not the same as "could not decide". Both used to come back as
@@ -7268,6 +7443,19 @@ class Watcher:
         if key is None:
             self.log_hold(f"conversation {conv['id']}", why)
             return "refused", 0, why, None
+        # DOWN: the credential this turn would bill is not answering, or the one the gate and the
+        # selector bill is not and this conversation could need one of them. `key` in the answer
+        # is then the credential that is down, which is what the notice and the log name.
+        down = self.credential_down(key)
+        if down is None and msgs and self.could_need_classification(conv, msgs):
+            down = self.credential_down(self.classifier_credential_name())
+        if down is not None:
+            until = iso_secs(down["until"])
+            secs = int(until - time.time()) if until and until > time.time() else 0
+            why_down = (f"{down['name']} is not answering ({down['last_error'] or 'no detail'}), "
+                        f"so nothing that needs it starts until it does")
+            self.log_hold(f"conversation {conv['id']}", why_down)
+            return "down", secs, why_down, down["name"]
         # FRESH, because this is the decision. See claude_hold.
         secs, hold_why = self.claude_hold("new", key, fresh=True)
         self.log_hold(f"conversation {conv['id']}", hold_why)
@@ -7389,6 +7577,321 @@ class Watcher:
             log(f"conversation {conv['id']}: nothing can pay for this — {why}")
         return nonce
 
+    # -- when a credential or a classification does not answer --------------------------------
+    #
+    # design/openrouter_provider_design.txt section 7. Two scopes of waiting, both in the
+    # database so `ffwatch status` and ffweb read what the daemon wrote and a restart does not
+    # forget a credential that is down: `credential_health`, one row per credential, and the
+    # classify_* columns on a conversation.
+
+    def classifier_credential_name(self):
+        """The credential the gate and the selector are billed to, as a variable name.
+
+        classifier_invocation hands its child ANTHROPIC_API_KEY and nothing else, so that is the
+        credential a classification reports on.
+        """
+        return claude_keys.CLAUDE_API_KEY_NAME
+
+    def _claude_number(self, section, key):
+        """One positive number out of claude.<section>, or its default for anything else."""
+        block = self.claude_cfg().get(section)
+        default = DEFAULTS["claude"][section][key]
+        try:
+            value = float((block if isinstance(block, dict) else {}).get(key, default))
+        except (TypeError, ValueError):
+            return default
+        return value if value > 0 else default
+
+    def credential_health(self, name):
+        """This credential's credential_health row, or None when nothing has been recorded."""
+        if not name:
+            return None
+        return self.db.one("SELECT * FROM credential_health WHERE name=?", (name,))
+
+    def credential_down(self, name):
+        """The credential_health row when this credential is down, else None."""
+        row = self.credential_health(name)
+        return row if row is not None and row["state"] == "down" else None
+
+    def record_call(self, name, failure=None):
+        """What one call billed to `name` said about whether that credential answers.
+
+        A success, or an answer that did not validate (the credential answered; the model did
+        not follow the contract), resets the count and lifts a hold. An outage counts, and
+        `after_failures` in a row take the credential down; a spent budget takes it down at once.
+        A 429 and a refusal write nothing: see FAILURE_LIMITED for why a 429 must not.
+        """
+        if not name:
+            return
+        kind = getattr(failure, "kind", None) if failure is not None else None
+        now = now_iso()
+        row = self.credential_health(name)
+        if failure is None or kind == FAILURE_UNUSABLE:
+            if row is not None and (row["state"] != "up" or row["failures"]):
+                self.db.execute(
+                    "UPDATE credential_health SET state='up', failures=0, down_since=NULL,"
+                    " until=NULL, next_probe_at=NULL, last_error=NULL, updated_at=? WHERE name=?",
+                    (now, name))
+                if row["state"] == "down":
+                    log(f"credential {name}: answering again, so the hold on it has lifted")
+            return
+        if kind not in HEALTH_FAILURES:
+            return
+        failures = (int(row["failures"] or 0) if row is not None else 0) + 1
+        was_down = row is not None and row["state"] == "down"
+        down = (was_down or kind == FAILURE_BUDGET
+                or failures >= int(self._claude_number("health", "after_failures")))
+        until = (self.budget_until(name) if kind == FAILURE_BUDGET
+                 else (row["until"] if was_down else None))
+        self.db.execute("INSERT OR IGNORE INTO credential_health(name, updated_at) VALUES(?,?)",
+                        (name, now))
+        self.db.execute(
+            "UPDATE credential_health SET state=?, failures=?, down_since=?, until=?,"
+            " next_probe_at=?, last_error=?, updated_at=? WHERE name=?",
+            ("down" if down else "up", failures,
+             (row["down_since"] if was_down else now) if down else None,
+             until if down else None,
+             iso_at(time.time() + self._claude_number("health", "probe_secs")) if down else None,
+             str(failure)[:300], now, name))
+        if down and not was_down:
+            log(f"WARNING: credential {name} is not answering ({kind}: {failure}); nothing "
+                f"billed to it starts until a probe says it does")
+
+    def budget_until(self, name):
+        """When a spent budget on this credential refills, as an ISO stamp, or None if unknown.
+
+        Nothing on this box can read a budget yet, so this is always None and a budget hold is
+        probed like an outage.
+        """
+        return None
+
+    def record_classification(self, failure):
+        """Report one gate or selector call to the classifier credential's health."""
+        self.record_call(self.classifier_credential_name(), failure)
+
+    def record_run_health(self, run_row_id, result, terminal):
+        """Report a finished container run to the health of the credential it billed.
+
+        A run that ended `done` is proof the credential answers. A run that failed on an API
+        error is sorted by its status exactly as a classification is. Anything else (a timeout,
+        a stop, an agent that gave up) says nothing about the credential and reports nothing.
+        """
+        name = self.db.scalar("SELECT claude_key FROM run WHERE id=?", (run_row_id,))
+        if not name:
+            return
+        if terminal == "done":
+            self.record_call(name, None)
+            return
+        if (isinstance(result, dict) and result.get("is_error")
+                and str(result.get("terminal_reason") or "") == "api_error"):
+            self.record_call(name, ClassifierFailure(
+                f"run {run_row_id}: {result_failure_detail(result)}",
+                api_error_kind(result.get("api_error_status"))))
+
+    def could_need_classification(self, conv, msgs):
+        """Could this conversation's next pass call the selector or the gate?
+
+        Asked ABOVE resettle, before anything has moved, so it is conservative: it answers
+        whether either COULD run, from config and the pending rows alone. The selector runs for
+        a non-thread, non-local conversation holding a message ingest routed `recent`; the gate
+        runs for a kind outside GATE_BYPASS_KINDS in an `engage: all` channel that
+        always_a_turn does not already force. A released conversation needs neither.
+        """
+        if row_col(conv, "gate_released_by") or is_local_conversation(conv):
+            return False
+        if not conv["is_thread"] and any(row_col(m, "routed_by") == "recent" for m in msgs):
+            return True
+        if conv["kind"] in GATE_BYPASS_KINDS:
+            return False
+        alias = conv["watch_alias"] or alias_for_channel(self.cfg, conv["channel_id"])
+        return engage_for(self.cfg, alias) == "all" and not self.always_a_turn(conv, msgs)
+
+    def classify_waiting(self, conv):
+        """Is this conversation inside its classification backoff?"""
+        if row_col(conv, "gate_released_by"):
+            return False
+        at = iso_secs(row_col(conv, "classify_retry_at"))
+        return at is not None and at > time.time()
+
+    def classify_held(self, conv, failure):
+        """A classification that did not answer: nothing is decided, and the conversation waits.
+
+        When the classifier's credential is down, the health hold is the wait and nothing is
+        added here. Otherwise this one conversation backs off, first_secs doubling to max_secs,
+        and after flag_after failures it is flagged for a person. It is never released by the
+        box: `ffwatch release` is how a person does that. Always returns None.
+        """
+        if not isinstance(failure, ClassifierFailure):
+            failure = ClassifierFailure(str(failure or "the classification did not answer"),
+                                        FAILURE_UNUSABLE)
+        subject = f"conversation {conv['id']}"
+        classifier = self.classifier_credential_name()
+        if self.credential_down(classifier) is not None:
+            self.log_hold(subject, f"{classifier} is not answering, so nothing is classified "
+                                   f"until it does")
+            return None
+        row = self.db.one("SELECT classify_failures, classify_flagged_at FROM conversation"
+                          " WHERE id=?", (conv["id"],))
+        if row is None:
+            return None
+        failures = int(row["classify_failures"] or 0) + 1
+        wait = min(self._claude_number("classify_retry", "first_secs") * (2 ** min(failures - 1,
+                                                                                   20)),
+                   self._claude_number("classify_retry", "max_secs"))
+        flagged = row["classify_flagged_at"] or (
+            now_iso() if failures >= int(self._claude_number("classify_retry", "flag_after"))
+            else None)
+        self.db.execute(
+            "UPDATE conversation SET classify_failures=?, classify_retry_at=?, classify_error=?,"
+            " classify_flagged_at=? WHERE id=?",
+            (failures, iso_at(time.time() + wait), str(failure)[:300], flagged, conv["id"]))
+        self.log_hold(subject, f"its classification did not answer ({failure.kind}: {failure}); "
+                               f"asking again in {hold_duration(wait)}")
+        if flagged and not row["classify_flagged_at"]:
+            log(f"WARNING: conversation {conv['id']} has failed to classify {failures} times "
+                f"({failure}). It keeps waiting; `ffwatch release {conv['id']}` runs it without "
+                f"the gate")
+        return None
+
+    def classify_answered(self, conv):
+        """A classification answered for this conversation, so its backoff is over."""
+        if (row_col(conv, "classify_failures") or row_col(conv, "classify_retry_at")
+                or row_col(conv, "classify_flagged_at")):
+            self.db.execute(
+                "UPDATE conversation SET classify_failures=0, classify_retry_at=NULL,"
+                " classify_error=NULL, classify_flagged_at=NULL WHERE id=?", (conv["id"],))
+            self.log_hold(f"conversation {conv['id']}", "")
+
+    def hold_down(self, conv, secs, why, name):
+        """A conversation waiting on a credential that is down. Always returns None.
+
+        SPEAKS ONLY WHERE A TURN WAS COMING. This returns above the gate, so the message may be
+        one the gate would decline, and a notice under it would be a promise nobody made; the
+        filter is always_a_turn, the same one hold_until_morning uses. A hold with a known end
+        (a budget that refills) says so through say_holding. One with no end waits
+        `notice_after_secs` first, because most outages are over before anybody notices them.
+        """
+        msgs = self.pending_messages(conv["id"])
+        if (not msgs or is_local_conversation(conv) or conv["kind"] == GITHUB_KIND
+                or not self.always_a_turn(conv, msgs)):
+            return None
+        if secs:
+            self.say_holding(conv, secs, msgs)
+            return None
+        row = self.credential_health(name)
+        since = iso_secs(row["down_since"]) if row is not None else None
+        if (since is not None
+                and time.time() - since >= self._claude_number("health", "notice_after_secs")):
+            self.say_waiting(conv, msgs)
+        return None
+
+    def say_waiting(self, conv, msgs):
+        """Tell a Discord conversation its answer is waiting on something that is down. Once.
+
+        Its own `down:` marker rather than say_holding's `hold:`, so a window or quiet-hours
+        notice earlier in the same wait does not silence this one: they are different waits
+        and the second is the one with no end in sight.
+        """
+        if is_local_conversation(conv) or conv["kind"] == GITHUB_KIND or not msgs:
+            return None
+        turns = self.db.scalar("SELECT COUNT(*) FROM turn WHERE conversation_id=?",
+                               (conv["id"],), 0)
+        marker = f"down:{conv['id']}:{turns}"
+        if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=?", (marker,), 0):
+            return None
+        nonce = self.record_outbound(None, conv["id"], "post", {
+            "channel": reply_channel(conv), "text": WAITING_NOTE,
+            "silent": True, "local_id": marker, "reply_to": msgs[-1]["discord_id"]})
+        if nonce:
+            log(f"conversation {conv['id']}: told them the answer is waiting on a credential "
+                f"that is not answering")
+        return nonce
+
+    def credential_token(self, name):
+        """(token, kind) for one credential, out of the environment or secrets.env, or (None, None)."""
+        for entry in claude_keys.claude_subscriptions():
+            if entry[0] == name:
+                return entry[1], claude_keys.KIND_SUBSCRIPTION
+        api = claude_keys.default_api_key()
+        if api and api[0] == name:
+            return api[1], claude_keys.KIND_API_KEY
+        return None, None
+
+    def probe_credential(self, name):
+        """(ok, error): does this one credential answer, asked now and uncached?"""
+        token, kind = self.credential_token(name)
+        if not token:
+            return False, f"{name} is not in this process's environment or secrets.env"
+        probe = getattr(self._claude, "probe_one", None)
+        if probe is None:
+            return False, "nothing here can probe a credential"
+        try:
+            return probe(name, token, kind)
+        except Exception as exc:  # noqa: BLE001 - a probe must not take down a pass
+            return False, f"{type(exc).__name__}: {exc}"
+
+    def probe_down_credentials(self):
+        """Probe ONE down credential whose probe is due. Called once per pass.
+
+        One per pass, so a dead network costs a pass one probe timeout and not one per
+        credential. A budget hold with a known end is not probed before that end.
+        """
+        now = time.time()
+        for row in self.db.query("SELECT * FROM credential_health WHERE state='down'"
+                                 " ORDER BY COALESCE(next_probe_at, '')"):
+            until = iso_secs(row["until"])
+            due = iso_secs(row["next_probe_at"])
+            if (until is not None and until > now) or (due is not None and due > now):
+                continue
+            ok, err = self.probe_credential(row["name"])
+            if ok:
+                self.record_call(row["name"], None)
+            else:
+                self.db.execute(
+                    "UPDATE credential_health SET next_probe_at=?, last_error=?, updated_at=?"
+                    " WHERE name=?",
+                    (iso_at(now + self._claude_number("health", "probe_secs")),
+                     (err or row["last_error"] or "")[:300], now_iso(), row["name"]))
+            return
+
+    def release_conversation(self, conv_id, who):
+        """`ffwatch release`: the next turn of this conversation runs without the gate.
+
+        Written to the database rather than to the daemon, the same way `ffwatch approve` is,
+        because the command is a separate process. create_turn reads the column and clears it
+        when it writes the turn row.
+        """
+        cur = self.db.execute(
+            "UPDATE conversation SET gate_released_by=?, classify_retry_at=NULL WHERE id=?",
+            (who or "an operator", conv_id))
+        if cur.rowcount != 1:
+            log(f"conversation {conv_id}: no such conversation, nothing released")
+            return False
+        log(f"conversation {conv_id}: released by {who}; its next turn runs without the gate")
+        return True
+
+    def health_status(self):
+        """Credentials that are down and conversations that will not classify, for status."""
+        out = []
+        down = self.db.query("SELECT * FROM credential_health WHERE state='down' ORDER BY name")
+        if down:
+            out.append("credential health: nothing billed to these starts until a probe says "
+                       "they answer")
+            for row in down:
+                until = f", held until {row['until']}" if row["until"] else ""
+                out.append(f"  {row['name']:<28} DOWN since {row['down_since']}{until}: "
+                           f"{row['last_error'] or 'no detail'}")
+        flagged = self.db.query(
+            "SELECT id, classify_failures, classify_error FROM conversation"
+            " WHERE classify_flagged_at IS NOT NULL AND gate_released_by IS NULL ORDER BY id")
+        if flagged:
+            out.append("classifications that keep failing (each one waits; `ffwatch release "
+                       "<id>` runs it without the gate):")
+            for row in flagged:
+                out.append(f"  conversation {row['id']}: {row['classify_failures']} failures, "
+                           f"last: {row['classify_error'] or 'no detail'}")
+        return out
+
     def gate_where(self, conv, alias):
         """The trusted half of the gate's context: which room this is and who reads it.
 
@@ -7508,6 +8011,11 @@ class Watcher:
         quiet_secs, quiet_why = quiet_hours_hold(self.cfg)
         if quiet_why:
             return self.hold_until_morning(conv, quiet_secs, quiet_why)
+        # A CONVERSATION WHOSE CLASSIFICATION KEEPS FAILING waits out its backoff here, above
+        # every model call below, so a message the model cannot classify is asked about once
+        # per backoff step rather than once per tick. See classify_held.
+        if self.classify_waiting(conv):
+            return None
         # WHO PAYS, AND WHETHER THEY CAN, ASKED ONCE AND CARRIED DOWN. It does not stop the pass
         # here. Everything between this line and the hold below still runs — the selector, the
         # mention-only policy, the engagement gate — because whether this box would ANSWER the
@@ -7524,6 +8032,11 @@ class Watcher:
         # and none is.
         verdict, held, hold_why, _key = self.conversation_held(conv, self.pending_messages(
             conv["id"]))
+        if verdict == "down":
+            # A CREDENTIAL THAT IS NOT ANSWERING, and this return sits ABOVE resettle and the
+            # gate, the way quiet hours do, because both of those are model calls billed to a
+            # credential that may be the one that is down. Nothing is gated, claimed or marked.
+            return self.hold_down(conv, held, hold_why, _key)
         if verdict == "run":
             self._hold_decided.discard(conv["id"])
             self._route_refused.discard(conv["id"])
@@ -7553,7 +8066,17 @@ class Watcher:
 
         # THE LAST MOMENT ANYTHING MAY MOVE. After this a turn exists, the messages are claimed,
         # and a session is about to read them (design 4.3).
-        if self.resettle(conv):
+        # RELEASED BY AN OPERATOR, with `ffwatch release`, because its classification kept
+        # failing. The gate is skipped below, and a selector that still cannot answer keeps the
+        # deterministic answer instead of holding the conversation again.
+        released = row_col(conv, "gate_released_by")
+        settled = self.resettle(conv)
+        if isinstance(settled, ClassifyHold):
+            if not released:
+                return self.classify_held(conv, settled.failure)
+            log(f"conversation {conv['id']}: the selector could not answer and {released} "
+                f"released this conversation, so it stays where ingest put it")
+        elif settled:
             conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv["id"],))
             if conv is None:
                 return None
@@ -7570,7 +8093,7 @@ class Watcher:
         # lookup is only a fallback for rows written before that column existed.
         alias = conv["watch_alias"] or alias_for_channel(self.cfg, conv["channel_id"])
         engage_policy = engage_for(self.cfg, alias)
-        forced = self.always_a_turn(conv, msgs)
+        forced = self.always_a_turn(conv, msgs) or (f"released by {released}" if released else None)
         # Only a WATCHED channel has an engagement policy, and a kind in GATE_BYPASS_KINDS was
         # addressed to the bot by construction — the doorbell for those fires only because
         # somebody spoke to it or typed the prompt.
@@ -7593,37 +8116,33 @@ class Watcher:
         # stranger wrote; no operator asked for it, so no operator's window pays for it.
         engage, classification = should_engage_for(
             self.cfg, conv["kind"], request, gate=gate, context=context)
+        if gate:
+            self.record_classification(classification.get("failure"))
+        if classification.get("status") == "hold":
+            # THE GATE COULD NOT ANSWER, AND NOTHING IS DECIDED. Until 2026-09-10 this engaged
+            # anyway and recorded `failed_closed`, which claimed the messages for a turn that,
+            # during an outage, failed in its container for the same reason the gate had. Now the
+            # messages stay unclaimed and ungated and are classified again after a backoff.
+            return self.classify_held(conv, classification.get("failure"))
+        if gate:
+            self.classify_answered(conv)
         if gate and not engage:
             return self.gate_declines(conv, msgs,
                                       classification.get("reason") or "the gate saw no ask")
-        # The column is still `failed_closed`; what it records is a gate that could not decide
-        # and engaged anyway. Renaming a column that every historical row uses would buy a word.
-        fc = classification.get("status") == "failed_open"
-        if fc:
-            log(f"conversation {conv['id']}: the gate failed open — "
-                f"{classification.get('reason')}")
 
         # THE HOLD, AT THE LAST LINE BEFORE A TURN EXISTS. Everything that could have said no
         # has said yes, so this is the first moment "we are going to answer this" is a fact,
         # and the only honest moment to say it out loud.
-        #
-        # EXCEPT WHEN THE GATE COULD NOT DECIDE. A fail-open engages, deliberately, because a
-        # gate that cannot run must not be able to swallow a bug report — but "I could not tell
-        # and erred towards answering" is not the same claim as "I am going to answer this",
-        # and only the second is worth putting in front of somebody. So the turn still waits
-        # and still runs after the refill; nothing is said about it in the meantime.
         if verdict == "refused":
             # NOTHING ON THIS BOX CAN PAY FOR THIS, and it is a configuration error rather than
             # a wait. Said once and never gated: the messages stay where they are, so the pass
             # after somebody adds the missing id or key creates the turn that was waiting.
             self._hold_decided.add(conv["id"])
-            if not fc:
-                self.say_route_refused(conv, msgs, hold_why)
+            self.say_route_refused(conv, msgs, hold_why)
             return None
         if held:
             self._hold_decided.add(conv["id"])
-            if not fc:
-                self.say_holding(conv, held, msgs)
+            self.say_holding(conv, held, msgs)
             return None
 
         lane = "dev"
@@ -7636,8 +8155,7 @@ class Watcher:
             " failed_closed, failed_closed_reason, queued_at, trust_tier, trust_actor,"
             " trust_reason, venue) VALUES(?,?,?,?,'queued',?,?,?,?,?,?,?,?)",
             (conv["id"], seq, TRIGGER_BY_KIND.get(conv["kind"], "message"), lane,
-             json.dumps(classification), 1 if fc else 0,
-             classification.get("reason") if fc else None, now_iso(),
+             json.dumps(classification), 0, None, now_iso(),
              tier, actor, why, venue))
         turn_id = cur.lastrowid
         # THE CLAIM IS GUARDED, AND THAT IS WHAT MAKES IT THE DECISION. Two threads can reach
@@ -7669,8 +8187,11 @@ class Watcher:
             log(f"conversation {conv['id']}: another pass claimed these messages first; "
                 f"turn {turn_id} withdrawn in favour of turn {winner}")
             return winner
-        self.db.execute("UPDATE conversation SET state='queued', lane=? WHERE id=?",
-                        (lane, conv["id"]))
+        # A TURN EXISTS, so whatever the classification backoff and a release were holding
+        # open is spent: the next message starts from a clean slate.
+        self.db.execute("UPDATE conversation SET state='queued', lane=?, classify_failures=0,"
+                        " classify_retry_at=NULL, classify_error=NULL, classify_flagged_at=NULL,"
+                        " gate_released_by=NULL WHERE id=?", (lane, conv["id"]))
         if not is_local_conversation(conv):
             # HERE, and not in record_reply, is the whole point: the acknowledgement goes out
             # on the pass that DECIDES to answer, not after a container run that can take a
@@ -9487,6 +10008,14 @@ class Watcher:
             # A route that comes back None is not decided here -- launch() raises on it, with
             # the sentence, and this only declines to count a container that does not exist.
             sched_key, _ = self.claude_route_for_turn(turn, turn["conv_kind"])
+            # A CREDENTIAL THAT IS DOWN KEEPS ITS TURNS QUEUED. `continue` and not `break`: this
+            # is about one turn's credential, and the turn behind it may bill another. It is
+            # checked here and not in launch(), because by then the turn is already running.
+            if sched_key and self.credential_down(sched_key) is not None:
+                self.log_hold(f"turn {turn['id']}", f"{sched_key} is not answering; the turn "
+                                                    f"stays queued until it does")
+                continue
+            self.log_hold(f"turn {turn['id']}", "")
             if ((self.workload_room() <= 0 or self.agent_room(turn_class) <= 0)
                     and not self.pool_would_serve(ref, turn_class, sched_key)):
                 break
@@ -11539,7 +12068,7 @@ class Watcher:
                 out.append(f"  {'(unclaimed)':<16} {name:<28} "
                            + (f"declared {label}" if label else "declares no name, so only its "
                                                                "slot number can claim it"))
-        return out + self.claude_hold_status()
+        return out + self.claude_hold_status() + self.health_status()
 
     def quiet_hold_status(self):
         """The quiet-hours line for `ffwatch status`, or [] when no window is configured.
@@ -12055,6 +12584,7 @@ class Watcher:
              task.get("verify_secs"),
              _existing(os.path.join(run_dir, "changes.patch")),
              base_sha or None, run_row_id))
+        self.record_run_health(run_row_id, result, terminal)
 
         if base_sha and not conv["base_sha"]:
             # BASE PINNING: the conversation stays on the sha it was first cloned from, so turn
@@ -15505,6 +16035,7 @@ class Watcher:
         # HERE AND IN run(), for the reason the pool keeper's comment below spells out: the
         # daemon does not call once(), so a hook added to one of them reaches half the callers.
         self.say_claude_routes()
+        self.probe_down_credentials()
         self.claim_turns()
         # NO EARLY send_pending() HERE, AND run() HAS ONE. The difference is not an oversight:
         # this form runs the whole turn before it returns, so nothing is waiting on the
@@ -15875,6 +16406,12 @@ class Watcher:
         key, _why = self.claude_route_for_comment(comment)
         if key is None:
             return False
+        # A CREDENTIAL THAT IS DOWN HOLDS A TRIGGER the way a spent window does: the comment
+        # stays in the cursor and is read again when it answers.
+        if self.credential_down(key) is not None:
+            self.log_hold(f"#codereview comment {comment.get('id')}",
+                          f"{key} is not answering")
+            return True
         _, why = self.work_hold("review", key, fresh=True)
         self.log_hold(f"#codereview comment {comment.get('id')}", why)
         return bool(why)
@@ -17025,6 +17562,7 @@ class Watcher:
                     # refused, and they should learn that from the journal rather than from
                     # asking. Latched inside; see say_claude_routes.
                     self.say_claude_routes()
+                    self.probe_down_credentials()
                     self.claim_turns()
                     # BEFORE THE EXPENSIVE HALF, for the reason spelled out in once(): the
                     # acknowledgement create_turn just queued is worth nothing late, and
@@ -17619,6 +18157,12 @@ BLOCKED_NOTE = ("That is my limit for the day, so I have not started on this one
 HOLD_NOTE = ("I'm a little tired right now and am taking a break for the next {for_how_long}. "
              "I'll get to your request soon.")
 
+# WHAT A CONVERSATION HEARS WHEN THE CREDENTIAL THAT WOULD ANSWER IT IS NOT ANSWERING, and there
+# is no time to give: HOLD_NOTE's whole sentence is a duration, and an outage does not have one.
+# Public, so max-voice binds it: no dashes, no promise of when.
+WAITING_NOTE = ("My brain's not answering right now, so I can't get to this yet. It's saved, "
+                "and I'll pick it up as soon as it's back.")
+
 # WHAT A CONVERSATION IS TOLD WHEN NOTHING CAN PAY FOR IT. Deliberately not a Max-voiced joke:
 # a refusal nobody can act on is worth nothing, and the one person who can act on this is a
 # developer reading the same thread. The reason itself names the operator and the id, so the
@@ -18096,6 +18640,9 @@ def build_parser():
                          "two minutes and a page cannot hold a request open that long")
     sp = sub.add_parser("approve", help="release outbound rows held for approval")
     sp.add_argument("id", nargs="+", type=int, help="outbound row id(s) from `ffwatch status`")
+    sp = sub.add_parser("release", help="run a conversation whose classification keeps failing, "
+                                        "without the engagement gate")
+    sp.add_argument("id", type=int, help="conversation id, from `ffwatch status`")
     sp = sub.add_parser("submit", help="run a prompt through the pipeline (the local ingress)")
     sp.add_argument("prompt", nargs="*", help="the prompt; '-' or empty reads stdin")
     sp.add_argument("--source", choices=list(LOCAL_KINDS), default="shell",
@@ -18285,6 +18832,11 @@ def main(argv=None):
         # Approving and then waiting up to poll_secs for the daemon to notice is fine, but a
         # hand-run approve with no daemon up would otherwise appear to do nothing.
         print(f"approved {len(done)} row(s); sent {watcher.send_pending()}")
+        return 0 if done else 1
+    if args.cmd == "release":
+        done = watcher.release_conversation(args.id, getpass.getuser())
+        print(f"released conversation {args.id}; its next turn runs without the gate" if done
+              else f"no conversation {args.id}")
         return 0 if done else 1
     if args.cmd == "reject":
         done = watcher.reject(args.id, args.reason)

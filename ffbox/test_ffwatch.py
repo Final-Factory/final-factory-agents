@@ -543,7 +543,7 @@ exit 0
 """
 
 CLAUDE_FAIL_STUB = """#!/bin/sh
-# Stub classifier that cannot complete. Everything downstream must fail CLOSED.
+# Stub classifier that cannot complete. Everything downstream must wait rather than guess.
 echo "classifier unavailable" >&2
 exit 1
 """
@@ -564,6 +564,68 @@ CLAUDE_ANSWER_STUB = """#!/bin/sh
 cat > "$(dirname "$0")/classifier_prompt.txt"
 cat "$(dirname "$0")/classifier_verdict.json"
 """
+
+
+# THE SUITE'S CLASSIFIER WHEN A CASE ASKS FOR NO VERDICT. The gate engages; the selector answers
+# with a conversation id nobody offered, which the harness refuses, keeping its own deterministic
+# answer. Those are exactly the outcomes such a case got from CLAUDE_FAIL_STUB while a failed
+# classification engaged instead of waiting, so a case about something else goes on being about
+# that. It writes no classifier_prompt.txt, as the failing stub never did, so a case asserting the
+# gate was never handed anything still means it.
+CLAUDE_DEFAULT_STUB = """#!/bin/sh
+prompt=$(cat)
+case "$prompt" in
+  *"You are a request gate"*)
+    echo '{"result": {"engage": true, "reason": "the suite default engages"}}' ;;
+  *)
+    echo '{"result": {"continues": -1, "reason": "the suite default keeps the answer"}}' ;;
+esac
+"""
+
+
+# A CLASSIFIER THAT ANSWERS WITH WHATEVER ENVELOPE THE CASE WROTE, exits with the code it wrote,
+# and counts its calls. For the cases about how a failure is sorted and what it costs.
+CLAUDE_ENVELOPE_STUB = """#!/bin/sh
+here="$(dirname "$0")"
+cat > "$here/classifier_prompt.txt"
+echo x >> "$here/classifier_calls.txt"
+if [ -f "$here/classifier_sleep" ]; then sleep "$(cat "$here/classifier_sleep")"; fi
+if [ -f "$here/classifier_envelope.json" ]; then cat "$here/classifier_envelope.json"; fi
+exit "$(cat "$here/classifier_rc" 2>/dev/null || echo 0)"
+"""
+
+
+def envelope_classifier(root, envelope=None, rc=0, sleep=None):
+    """A CLAUDE_ENVELOPE_STUB in `root`, answering `envelope`. Returns its path; resets its count."""
+    os.makedirs(root, exist_ok=True)
+    for name in ("classifier_envelope.json", "classifier_rc", "classifier_sleep",
+                 "classifier_calls.txt"):
+        if os.path.exists(os.path.join(root, name)):
+            os.remove(os.path.join(root, name))
+    if envelope is not None:
+        with open(os.path.join(root, "classifier_envelope.json"), "w", encoding="utf-8") as fh:
+            fh.write(envelope if isinstance(envelope, str) else json.dumps(envelope))
+    with open(os.path.join(root, "classifier_rc"), "w", encoding="utf-8") as fh:
+        fh.write(str(rc))
+    if sleep:
+        with open(os.path.join(root, "classifier_sleep"), "w", encoding="utf-8") as fh:
+            fh.write(str(sleep))
+    return write_stub(os.path.join(root, "claude_envelope.sh"), CLAUDE_ENVELOPE_STUB)
+
+
+def classifier_calls(root):
+    """How many times the CLAUDE_ENVELOPE_STUB in `root` has been called since it was set."""
+    path = os.path.join(root, "classifier_calls.txt")
+    return len(open(path, encoding="utf-8").read().split()) if os.path.exists(path) else 0
+
+
+def api_error_envelope(status):
+    """The envelope `claude -p` writes for an API error, as result_failure_detail documents it."""
+    envelope = {"type": "result", "is_error": True, "terminal_reason": "api_error",
+                "subtype": "success", "result": f"API Error: {status}"}
+    if status is not None:
+        envelope["api_error_status"] = status
+    return envelope
 
 
 def write_stub(path, body, executable=True):
@@ -636,7 +698,7 @@ class Case:
     """One isolated ffwatch installation: its own state dir, fixture, events file and stubs."""
 
     def __init__(self, name, fixture=None, mode="ok", classifier_ok=False, approve=False,
-                 verdict=None, venue="public"):
+                 verdict=None, venue="public", classifier_fails=False):
         self.root = os.path.join(TMPROOT, name)
         os.makedirs(self.root, exist_ok=True)
         self.fixture_path = os.path.join(self.root, "fixture.json")
@@ -660,9 +722,15 @@ class Case:
                                             FFDISCORD_STUB),
             "FFWATCH_FFBOX": write_stub(os.path.join(self.root, "ffbox_stub.py"), FFBOX_STUB),
             "FFWATCH_DOCKER": write_stub(os.path.join(self.root, "docker_stub.sh"), DOCKER_STUB),
+            # THREE CLASSIFIERS. A case that sets a verdict gets exactly that answer. A case
+            # that sets none gets the suite's default, which engages at the gate and names no
+            # offered conversation at the selector -- the two outcomes a failing classifier
+            # amounted to until 2026-09-10, when a classification that fails started waiting
+            # instead of engaging. A case about that waiting asks for the one that fails.
             "FFWATCH_CLAUDE": write_stub(
                 os.path.join(self.root, "claude_stub.sh"),
-                CLAUDE_ANSWER_STUB if verdict is not None else CLAUDE_FAIL_STUB),
+                CLAUDE_FAIL_STUB if classifier_fails
+                else CLAUDE_ANSWER_STUB if verdict is not None else CLAUDE_DEFAULT_STUB),
             "FFWATCH_STATE_DIR": self.state_dir,
             "FFWATCH_EVENTS": self.events_path,
             "FFWATCH_KILL_SWITCH": self.kill_switch,
@@ -1917,19 +1985,374 @@ def test_a_pasted_log_in_the_history_cannot_push_out_the_message():
           "...[trimmed]" in history, history[:400])
 
 
-def test_the_gate_answers_when_it_is_unsure():
-    print("engage: all, gate cannot decide")
+
+def test_the_gate_waits_when_it_cannot_decide():
+    """A gate that cannot decide neither declines nor engages. It waits.
+
+    It failed open until 2026-09-10, and during an outage that claimed the messages for a turn
+    which then failed in its container for the same reason the gate had. Now nothing is claimed,
+    nothing is gated, and the conversation is classified again once its backoff passes
+    (design/openrouter_provider_design.txt section 7).
+    """
+    print("the engagement gate waits when it cannot decide")
     fixture = base_fixture()
-    fixture["messages"][ASK_CHANNEL] = [message(4301, "belt merger drops items sometimes")]
-    case = Case("gate-failclosed", fixture)          # the classifier stub exits non-zero
+    fixture["messages"][ASK_CHANNEL] = [message(4001, "please fix the merger")]
+    case = Case("gate-waits", fixture, classifier_fails=True)
+    case.events(ask_event(4001))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    check("no turn is made", case.rows("SELECT * FROM turn") == [], case.rows("SELECT * FROM turn"))
+    msg = case.rows("SELECT gate, turn_id FROM message")[0]
+    check("the message is neither declined nor claimed",
+          msg["gate"] is None and msg["turn_id"] is None, msg)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("the conversation records one failed classification, and why",
+          conv["classify_failures"] == 1 and "gate" in (conv["classify_error"] or ""), conv)
+    check("and waits before it is asked again",
+          (ffwatch.iso_secs(conv["classify_retry_at"]) or 0) > time.time(), conv["classify_retry_at"])
+
+    case.cfg["claude_bin"] = envelope_classifier(
+        case.root, {"type": "result", "result": {"engage": True, "reason": "a request"}})
+    case.watcher.claim_turns()
+    check("a pass inside the backoff does not ask again",
+          classifier_calls(case.root) == 0 and case.rows("SELECT * FROM turn") == [],
+          classifier_calls(case.root))
+
+    case.db_exec("UPDATE conversation SET classify_retry_at=? WHERE id=?",
+                 (ffwatch.iso_at(time.time() - 1), conv["id"]))
+    case.watcher.claim_turns()
+    turns = case.rows("SELECT * FROM turn")
+    check("once the backoff has passed and the gate answers, the turn is made", len(turns) == 1, turns)
+    check("and it is not marked as a gate that could not decide",
+          bool(turns) and turns[0]["failed_closed"] == 0, turns)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("the failure count is spent with it",
+          conv["classify_failures"] == 0 and conv["classify_retry_at"] is None, conv)
+
+
+def test_a_failed_classification_is_sorted_by_what_the_cli_reports():
+    """Five kinds, read off the envelope before the exit code, and only a shape problem retries.
+
+    A 429 in particular must come back `limited` and not `outage`: a subscription past its
+    session limit answers 429, and counting that toward the credential's health would put it
+    down and up again on every probe.
+    """
+    print("classifier failures: the five kinds")
+    cfg = ffwatch.load_config()
+    root = os.path.join(TMPROOT, "failure-kinds")
+    table = [
+        ("a 402 is a spent budget", api_error_envelope(402), 0, ffwatch.FAILURE_BUDGET),
+        ("a 429 is a limit, not an outage", api_error_envelope(429), 0, ffwatch.FAILURE_LIMITED),
+        ("and still a limit behind a non-zero exit", api_error_envelope(429), 1,
+         ffwatch.FAILURE_LIMITED),
+        ("a 401 is an outage", api_error_envelope(401), 0, ffwatch.FAILURE_OUTAGE),
+        ("a 503 is an outage", api_error_envelope(503), 0, ffwatch.FAILURE_OUTAGE),
+        ("an API error with no status is an outage", api_error_envelope(None), 0,
+         ffwatch.FAILURE_OUTAGE),
+        ("a 400 is about the request, not the credential", api_error_envelope(400), 0,
+         ffwatch.FAILURE_UNUSABLE),
+        ("no envelope and a non-zero exit is an outage", None, 1, ffwatch.FAILURE_OUTAGE),
+        ("an answer that does not validate is unusable",
+         '{"type": "result", "result": "sure, engage it"}', 0, ffwatch.FAILURE_UNUSABLE),
+    ]
+    for label, envelope, rc, want in table:
+        cfg["claude_bin"] = envelope_classifier(root, envelope, rc)
+        parsed, err = ffwatch.classifier_attempt(cfg, "p", ffwatch.CLASSIFIER_SCHEMA,
+                                                 structured=False, what="gate")
+        check(label, parsed is None and getattr(err, "kind", None) == want,
+              (str(err), getattr(err, "kind", None)))
+
+    cfg["claude_bin"] = envelope_classifier(root, None, 0, sleep=3)
+    cfg["classifier_secs"] = 1
+    _, err = ffwatch.classifier_attempt(cfg, "p", ffwatch.CLASSIFIER_SCHEMA, structured=False,
+                                        what="gate")
+    check("no answer in time is an outage", getattr(err, "kind", None) == ffwatch.FAILURE_OUTAGE,
+          str(err))
+    cfg["classifier_secs"] = 120
+    cfg["claude_bin"] = "no-such-claude-anywhere"
+    _, err = ffwatch.classifier_attempt(cfg, "p", ffwatch.CLASSIFIER_SCHEMA, structured=False,
+                                        what="gate")
+    check("nothing to run is refused, not an outage",
+          getattr(err, "kind", None) == ffwatch.FAILURE_REFUSED, str(err))
+    check("and the error still reads as the sentence it always was",
+          isinstance(err, str) and "PATH" in err, str(err))
+
+    cfg["claude_bin"] = envelope_classifier(root, api_error_envelope(503), 0)
+    ffwatch.run_classifier(cfg, "p", ffwatch.CLASSIFIER_SCHEMA)
+    check("an outage is not retried under --json-schema", classifier_calls(root) == 1,
+          classifier_calls(root))
+    cfg["claude_bin"] = envelope_classifier(root, '{"type": "result", "result": "nope"}', 0)
+    ffwatch.run_classifier(cfg, "p", ffwatch.CLASSIFIER_SCHEMA)
+    check("an answer of the wrong shape still is", classifier_calls(root) == 2,
+          classifier_calls(root))
+
+
+def test_a_selector_that_cannot_answer_moves_nothing_and_waits():
+    """The selector no longer keeps the deterministic answer when it cannot answer. It waits.
+
+    What still keeps the deterministic answer is an answer naming a conversation that was never
+    offered (test_the_selector_can_only_choose_an_id_it_was_offered): the model answered, and
+    waiting on it would let a message written to produce a fake id stall its conversation.
+    """
+    print("the selector waits when it cannot answer")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(4101, "and the other one too")]
+    case = Case("selector-waits", fixture, verdict={"engage": True, "reason": "r"})
+    case.events(ask_event(4101))
+    case.watcher.drain_events()
+    failure = ffwatch.ClassifierFailure("selector exited 1", ffwatch.FAILURE_UNUSABLE)
+    case.watcher.cluster_selector = lambda conv, pending: (ffwatch.ClassifyHold(failure),
+                                                           str(failure))
+    before = case.rows("SELECT id, conversation_id, routed_by, routed_reason FROM message")
+    conv = case.watcher.db.one("SELECT * FROM conversation")
+    check("create_turn makes no turn", case.watcher.create_turn(conv) is None)
+    check("no turn row exists", case.rows("SELECT * FROM turn") == [])
+    check("nothing moved and nothing was stamped",
+          case.rows("SELECT id, conversation_id, routed_by, routed_reason FROM message") == before,
+          case.rows("SELECT id, conversation_id, routed_by, routed_reason FROM message"))
+    check("the conversation waits", case.rows("SELECT * FROM conversation")[0]["classify_failures"]
+          == 1, case.rows("SELECT * FROM conversation")[0])
+
+    failing = Case("selector-fails", base_fixture(), classifier_fails=True)
+    cands = [({"id": 7, "title": "t", "in_watermark_id": "1", "root_message_id": "1",
+               "thread_id": "1"}, 60, 0)]
+    got, _ = failing.watcher.model_selection(
+        {"id": "3", "content": "hello", "author": {"username": "someone"}}, cands,
+        alias="ask_claude")
+    check("model_selection hands back a hold rather than a guess",
+          isinstance(got, ffwatch.ClassifyHold), got)
+
+
+def test_a_conversation_that_will_not_classify_backs_off_and_is_flagged_until_released():
+    """Backoff, the flag, and `ffwatch release`.
+
+    An answer that never validates is not an outage, so the credential stays up and this one
+    conversation backs off on its own: a minute, doubling. After five it is flagged for a person,
+    and nothing but a person releases it.
+    """
+    print("classification backoff, the flag, and ffwatch release")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(4201, "hmm")]
+    case = Case("classify-backoff", fixture)
+    case.cfg["claude_bin"] = envelope_classifier(case.root, '{"type": "result", "result": "no"}')
+    case.events(ask_event(4201))
+    case.watcher.drain_events()
+    cid = case.rows("SELECT id FROM conversation")[0]["id"]
+    waits = []
+    for _ in range(5):
+        case.db_exec("UPDATE conversation SET classify_retry_at=NULL WHERE id=?", (cid,))
+        started = time.time()
+        case.watcher.claim_turns()
+        row = case.rows("SELECT * FROM conversation WHERE id=?", (cid,))[0]
+        waits.append(round((ffwatch.iso_secs(row["classify_retry_at"]) - started) / 60))
+    check("each failure waits twice as long, starting from a minute", waits == [1, 2, 4, 8, 16],
+          waits)
+    check("an answer that never validates does not take the credential down",
+          case.watcher.credential_down(claude_keys.CLAUDE_API_KEY_NAME) is None)
+    row = case.rows("SELECT * FROM conversation WHERE id=?", (cid,))[0]
+    check("five failures flag it", row["classify_failures"] == 5
+          and row["classify_flagged_at"] is not None, row)
+    check("and a person can find it",
+          any(f"conversation {cid}" in line for line in case.watcher.health_status()),
+          case.watcher.health_status())
+    check("but nothing has run it", case.rows("SELECT * FROM turn") == [])
+
+    calls = classifier_calls(case.root)
+    check("release takes a conversation that exists", case.watcher.release_conversation(cid, "tester"))
+    check("and says so for one that does not", not case.watcher.release_conversation(99999, "tester"))
+    case.watcher.claim_turns()
+    turns = case.rows("SELECT * FROM turn")
+    check("the next pass makes the turn", len(turns) == 1, turns)
+    check("without asking the gate", classifier_calls(case.root) == calls,
+          (calls, classifier_calls(case.root)))
+    row = case.rows("SELECT * FROM conversation WHERE id=?", (cid,))[0]
+    check("and the release, the flag and the count are spent with it",
+          row["gate_released_by"] is None and row["classify_flagged_at"] is None
+          and row["classify_failures"] == 0, row)
+
+
+def test_a_credential_that_stops_answering_holds_its_work_until_a_probe_says_it_answers():
+    """Down after two outages; held; queued turns stay queued; probed; up. In the database.
+
+    A 429 and an answer that did not validate count for nothing, and the state survives a new
+    Watcher on the same state directory, because `ffwatch status` and ffweb are other processes.
+    """
+    print("credential health: down, held, probed, up")
+    api = claude_keys.CLAUDE_API_KEY_NAME
+    outage = ffwatch.ClassifierFailure("gate exited 1", ffwatch.FAILURE_OUTAGE)
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(4301, "the merger drops items")]
+    case = Case("health", fixture, verdict={"engage": True, "reason": "a report"})
     case.events(ask_event(4301))
     case.watcher.drain_events()
     case.watcher.claim_turns()
-    turns = case.rows("SELECT * FROM turn")
-    check("a gate that cannot decide still answers", len(turns) == 1, turns)
-    check("and it is a dev turn like every other", turns[0]["lane"] == "dev", turns[0])
-    check("the message is claimed, not declined",
-          case.rows("SELECT * FROM message")[0]["gate"] is None)
+    w = case.watcher
+    check("a turn is queued while everything answers", len(case.rows("SELECT * FROM turn")) == 1)
+
+    w.record_call(api, ffwatch.ClassifierFailure("slow down", ffwatch.FAILURE_LIMITED))
+    w.record_call(api, ffwatch.ClassifierFailure("bad json", ffwatch.FAILURE_UNUSABLE))
+    row = w.credential_health(api)
+    check("a 429 and an unusable answer count for nothing",
+          w.credential_down(api) is None and (row is None or row["failures"] == 0), row)
+    w.record_call(api, outage)
+    check("one outage is not enough", w.credential_down(api) is None)
+    w.record_call(api, outage)
+    check("two in a row take it down", w.credential_down(api) is not None)
+    check("and status says so", any("DOWN since" in line for line in w.health_status()),
+          w.health_status())
+
+    check("the queued turn is not started", w.schedule() == [])
+    check("and stays queued", case.rows("SELECT status FROM turn")[0]["status"] == "queued",
+          case.rows("SELECT status FROM turn"))
+    conv = w.db.one("SELECT * FROM conversation")
+    verdict, _secs, _why, name = w.conversation_held(conv, [])
+    check("a player's conversation on it is down", verdict == "down" and name == api,
+          (verdict, name))
+
+    again = ffwatch.Watcher(case.cfg)
+    again._claude = StubClaudeKeys([])
+    again.init()
+    check("a new Watcher on the same state still sees it down",
+          again.credential_down(api) is not None)
+
+    w._claude.probe_one = lambda name, token, kind: (False, "still not answering")
+    case.db_exec("UPDATE credential_health SET next_probe_at=? WHERE name=?",
+                 (ffwatch.iso_at(time.time() - 1), api))
+    w.probe_down_credentials()
+    row = w.credential_health(api)
+    check("a probe that fails keeps it down and puts the next probe off",
+          row["state"] == "down" and ffwatch.iso_secs(row["next_probe_at"]) > time.time(), row)
+    w._claude.probe_one = lambda name, token, kind: (True, "")
+    case.db_exec("UPDATE credential_health SET next_probe_at=? WHERE name=?",
+                 (ffwatch.iso_at(time.time() - 1), api))
+    w.probe_down_credentials()
+    check("a probe that answers brings it back", w.credential_down(api) is None,
+          w.credential_health(api))
+
+
+def test_a_down_credential_holds_only_the_work_that_needs_it():
+    """An operator's addressed request on their own subscription still runs while the metered key
+    is down; a player's addressed request, and a message the gate would have had to read, wait."""
+    print("credential health: what a down credential holds")
+    api = claude_keys.CLAUDE_API_KEY_NAME
+    outage = ffwatch.ClassifierFailure("gate exited 1", ffwatch.FAILURE_OUTAGE)
+
+    def one(name, author, content, addressed):
+        mid = sflake(0, 1)
+        fixture = base_fixture()
+        fixture["messages"][ASK_CHANNEL] = [message(mid, content, author=author, name=name)]
+        if addressed:
+            fixture["messages"][ASK_CHANNEL][0]["mentions"] = [{"id": BOT}]
+        case = Case(f"health-holds-{name}-{addressed}", fixture)
+        ev = ask_event(mid)
+        ev["author_id"] = author
+        case.events(ev)
+        case.watcher.drain_events()
+        for _ in range(2):
+            case.watcher.record_call(api, outage)
+        case.watcher.claim_turns()
+        return case
+
+    op = one("lothsahn", LOTHSAHN, "hey @max why is my save corrupt?", True)
+    check("an operator's addressed request on their own subscription runs",
+          len(op.rows("SELECT * FROM turn")) == 1, op.rows("SELECT * FROM turn"))
+    player = one("player", PLAYER, "hey @max the merger is broken", True)
+    check("a player's addressed request on the down key waits",
+          player.rows("SELECT * FROM turn") == [], player.rows("SELECT * FROM turn"))
+    unaddressed = one("lothsahn", LOTHSAHN, "the merger is broken again", False)
+    check("an operator's message the gate would have to read waits too",
+          unaddressed.rows("SELECT * FROM turn") == [], unaddressed.rows("SELECT * FROM turn"))
+
+
+def test_a_finished_run_reports_to_the_health_of_the_credential_it_billed():
+    """A run that ended done is proof; an API error is sorted as a classification is; a 429 is
+    nothing, because a session limit is a 429."""
+    print("credential health: what a finished run says")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(4401, "the merger drops items")]
+    case = Case("health-runs", fixture, verdict={"engage": True, "reason": "a report"})
+    case.events(ask_event(4401))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    w = case.watcher
+    name = "ANTHROPIC_API_KEY"
+    turn_id = case.rows("SELECT id FROM turn")[0]["id"]
+    case.db_exec("INSERT INTO run(turn_id, ffbox_run_id, container_name, claude_key)"
+                 " VALUES(?,?,?,?)", (turn_id, "health-r1", "ffbox-health-r1", name))
+    run_id = case.rows("SELECT id FROM run WHERE ffbox_run_id='health-r1'")[0]["id"]
+    for _ in range(3):
+        w.record_run_health(run_id, api_error_envelope(429), "failed")
+    check("session limits never take a credential down", w.credential_down(name) is None,
+          w.credential_health(name))
+    w.record_run_health(run_id, {"is_error": True, "subtype": "the agent gave up"}, "failed")
+    w.record_run_health(run_id, {}, "timed_out")
+    check("nor does a run that failed for its own reasons", w.credential_health(name) is None,
+          w.credential_health(name))
+    w.record_run_health(run_id, api_error_envelope(503), "failed")
+    w.record_run_health(run_id, api_error_envelope(503), "failed")
+    check("two 503s do", w.credential_down(name) is not None)
+    w.record_run_health(run_id, {"is_error": False}, "done")
+    check("and a run that finished brings it back", w.credential_down(name) is None)
+
+
+def test_a_review_trigger_waits_for_its_credential_to_answer():
+    print("credential health: #codereview holds on a down credential")
+    case = Case("health-review")
+    case.cfg["github"]["trigger"] = "#codereview"
+    comment = {"id": 77, "body": "#codereview please", "user": {"id": int(LOTH_GITHUB_ID)}}
+    triggers = ffwatch.github_triggers(case.cfg)
+    check("a trigger on a credential that answers is not held",
+          case.watcher.review_held(comment, triggers) is False)
+    outage = ffwatch.ClassifierFailure("exited 1", ffwatch.FAILURE_OUTAGE)
+    for _ in range(2):
+        case.watcher.record_call(SUITE_CLAUDE_SLOT, outage)
+    check("one on a credential that is down is", case.watcher.review_held(comment, triggers)
+          is True)
+
+
+def test_a_conversation_waiting_on_a_down_credential_is_told_once_and_only_where_a_turn_was_coming():
+    """The notice waits notice_after_secs, speaks once under its own marker, in Max's voice, and
+    only for a message the harness would have answered without the gate."""
+    print("credential health: the waiting notice")
+    api = claude_keys.CLAUDE_API_KEY_NAME
+    outage = ffwatch.ClassifierFailure("gate exited 1", ffwatch.FAILURE_OUTAGE)
+
+    def waiting(name, content, addressed):
+        mid = sflake(0, 1)
+        fixture = base_fixture()
+        fixture["messages"][ASK_CHANNEL] = [message(mid, content)]
+        if addressed:
+            fixture["messages"][ASK_CHANNEL][0]["mentions"] = [{"id": BOT}]
+        case = Case(name, fixture)
+        case.events(ask_event(mid))
+        case.watcher.drain_events()
+        for _ in range(2):
+            case.watcher.record_call(api, outage)
+        return case
+
+    case = waiting("health-notice", "hey @max the merger is broken", True)
+    case.watcher.claim_turns()
+    check("no turn while it is down", case.rows("SELECT * FROM turn") == [])
+    check("and nothing said in the first ten minutes", posts(case) == [], posts(case))
+    case.db_exec("UPDATE credential_health SET down_since=? WHERE name=?",
+                 (ffwatch.iso_at(time.time() - 601), api))
+    case.watcher.claim_turns()
+    case.watcher.claim_turns()
+    said = posts(case)
+    check("after that it says so, once", len(said) == 1, said)
+    markers = [r["local_id"] for r in case.rows("SELECT local_id FROM outbound WHERE action='post'")]
+    check("under its own marker", markers and markers[0].startswith("down:"), markers)
+    text = said[0]["text"] if said else ""
+    check("in Max's voice: no dashes and no time promised",
+          text and "\u2014" not in text and "\u2013" not in text and "next" not in text, text)
+
+    quiet = waiting("health-notice-unaddressed", "the merger is broken", False)
+    quiet.db_exec("UPDATE credential_health SET down_since=? WHERE name=?",
+                  (ffwatch.iso_at(time.time() - 601), api))
+    quiet.watcher.claim_turns()
+    check("a message the gate would have had to read gets no notice", posts(quiet) == [],
+          posts(quiet))
+
 
 
 def test_evidence_and_thread_openings_never_reach_the_gate():
@@ -2406,30 +2829,6 @@ def test_reply_chain_and_one_shot():
           convs[root["id"]]["session_id"])
 
 
-def test_the_gate_fails_open():
-    """A gate that cannot decide engages anyway, and the record says why.
-
-    This direction is deliberate and it is the opposite of the lane decision it replaced. That
-    one failed CLOSED, because a question misread as a change handed write capability to a run
-    that never needed it. There is no capability left to withhold, and the failure that matters
-    now is the other one: a gate that silently swallowed a real bug report would look exactly
-    like a quiet channel.
-    """
-    print("the engagement gate fails open")
-    fixture = base_fixture()
-    fixture["messages"][ASK_CHANNEL] = [message(4001, "please fix the merger")]
-    case = Case("failopen", fixture)
-    # ask_claude is watched and engage:all, so the gate runs — and this stub cannot.
-    case.events(ask_event(4001))
-    case.watcher.drain_events()
-    case.watcher.claim_turns()
-    turn = case.rows("SELECT * FROM turn")[0]
-    check("a gate that could not decide still runs the turn", turn["lane"] == "dev", turn)
-    check("the turn records that it did", turn["failed_closed"] == 1, turn)
-    check("with a reason a human can act on",
-          "gate" in (turn["failed_closed_reason"] or ""), turn["failed_closed_reason"])
-    cls = json.loads(turn["classification_json"])
-    check("and the classification says so too", cls["status"] == "failed_open", cls)
 
 
 def test_an_unwatched_channel_produces_nothing():
@@ -4080,11 +4479,16 @@ def test_the_reply_has_two_shapes():
 
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [message(24001, "why does the belt stall?")]
-    # A watched engage:all channel whose gate stub cannot run, so the gate fails open. The turn
-    # ran with the same capabilities as any other, so the warning is about the READING of it
-    # rather than about what it was allowed to do.
+    # A TURN ROW FROM BEFORE 2026-09-10, when a gate that could not decide engaged anyway and
+    # marked the turn. No new turn is written that way (test_the_gate_waits_when_it_cannot_
+    # decide), but those rows exist and still render the warning, which is what this checks.
+    # The turn ran with the same capabilities as any other, so the warning is about the READING
+    # of it rather than about what it was allowed to do.
     blind = Case("head", fixture, approve=True)
     blind.events(ask_event(24001))
+    blind.watcher.drain_events()
+    blind.watcher.claim_turns()
+    blind.db_exec("UPDATE turn SET failed_closed=1, failed_closed_reason=?", ("gate exited 1",))
     blind.watcher.once()
     btext = json.loads(blind.rows("SELECT * FROM outbound WHERE action='post'"
                                   " ORDER BY id")[0]["payload_json"])["text"]
@@ -4102,6 +4506,9 @@ def test_the_reply_has_two_shapes():
     priv_fixture["messages"][ASK_CHANNEL] = [message(24101, "why does the belt stall?")]
     priv = Case("headprivate", priv_fixture, approve=True, venue="private")
     priv.events(ask_event(24101))
+    priv.watcher.drain_events()
+    priv.watcher.claim_turns()
+    priv.db_exec("UPDATE turn SET failed_closed=1, failed_closed_reason=?", ("gate exited 1",))
     priv.watcher.once()
     ptext = json.loads(priv.rows("SELECT * FROM outbound WHERE action='post'"
                                  " ORDER BY id")[0]["payload_json"])["text"]
@@ -16487,12 +16894,14 @@ def test_a_new_conversation_waits_for_the_refill_instead_of_being_refused():
     check("the message is not claimed", msg["turn_id"] is None, msg["turn_id"])
     check("and not gated, which is what lets a later pass pick it up",
           msg["gate"] is None, (msg["gate"], msg["gate_reason"]))
-    # NOT EVEN THE BREAK NOTICE. This case has no classifier stub, so the gate fails open --
-    # it engages, deliberately, but it could not tell. "I could not decide and erred towards
-    # answering" is not the claim "I am going to answer this", and only the second is worth
-    # putting in front of somebody. The turn still runs after the refill, below.
-    check("nothing was said to anybody", case.rows("SELECT * FROM outbound") == [],
-          case.rows("SELECT * FROM outbound"))
+    # THE BREAK NOTICE AND NOTHING ELSE. The gate answered yes, so "we are going to answer this"
+    # is a fact and the notice says when; test_a_held_discord_conversation_is_told_the_answer_
+    # is_coming has its words. Until 2026-09-10 this case's classifier could not run, the gate
+    # failed open, and nothing was said. A gate that cannot run now waits instead, and says
+    # nothing either way: see test_the_gate_waits_when_it_cannot_decide.
+    said = case.rows("SELECT * FROM outbound WHERE action='post'")
+    check("only the break notice was said",
+          len(said) == 1 and (said[0]["local_id"] or "").startswith("hold:"), said)
     # NOR IS THE ACKNOWLEDGEMENT SENT. mark_working sits below the hold in create_turn, and an
     # "I am working on this" put on a message nothing is working on is worse than silence.
     check("and no reaction was queued either",
@@ -16624,7 +17033,7 @@ def test_the_break_notice_waits_on_the_gate_rather_than_getting_ahead_of_it():
     """
     print("holds: the gate decides, the hold only delays")
 
-    def one_asking(name, verdict):
+    def one_asking(name, verdict, classifier_fails=False):
         # AN OPERATOR ASKING, because only a subscription can run out: player work is billed to
         # the metered key, which has no window to be over. The gate still runs on it — a
         # conversation in a watched channel is gated whoever opened it.
@@ -16632,7 +17041,7 @@ def test_the_break_notice_waits_on_the_gate_rather_than_getting_ahead_of_it():
         fixture = base_fixture()
         fixture["messages"][ASK_CHANNEL] = [message(mid, "anyone else seeing this on develop?",
                                                     author=LOTHSAHN, name="lothsahn")]
-        case = Case(name, fixture, verdict=verdict)
+        case = Case(name, fixture, verdict=verdict, classifier_fails=classifier_fails)
         ev = ask_event(mid)
         ev["author_id"] = LOTHSAHN
         case.events(ev)
@@ -16658,16 +17067,18 @@ def test_the_break_notice_waits_on_the_gate_rather_than_getting_ahead_of_it():
     check("the decline is on the record, the same as on an unheld box",
           msg["gate"] == "none", dict(msg))
 
-    # THE GATE COULD NOT RUN. It fails open on purpose -- a gate that cannot decide must not be
-    # able to swallow a bug report -- so the turn still happens after the refill. But "I could
-    # not tell and erred towards answering" is not the claim "I am going to answer this", and
-    # only the second is worth putting in front of somebody.
-    blind = one_asking("hold-gate-blind", None)      # no verdict: the stub classifier exits 1
+    # THE GATE COULD NOT RUN. Since 2026-09-10 it waits rather than failing open, so there is
+    # no answer to promise: nothing is said, and the message is left for a later pass that asks
+    # again once the window has refilled, the classifier answers and the backoff has passed.
+    blind = one_asking("hold-gate-blind", None, classifier_fails=True)
     conv = blind.rows("SELECT * FROM conversation")[0]
     check("no turn", blind.watcher.create_turn(conv) is None)
     check("and no promise on a guess", posts(blind) == [], posts(blind))
     blind.watcher._claude = StubClaudeKeys([key_record(SUITE_CLAUDE_SLOT, five=10.0, seven=12.0)])
-    check("the fail-open still engages once the window refills",
+    blind.cfg["claude_bin"] = write_stub(os.path.join(blind.root, "claude_default.sh"),
+                                         CLAUDE_DEFAULT_STUB)
+    blind.db_exec("UPDATE conversation SET classify_retry_at=NULL")
+    check("the turn happens once the window refills and the gate can answer",
           len(blind.watcher.claim_turns()) == 1, blind.rows("SELECT * FROM turn"))
 
     # A MENTION-ONLY CHANNEL NOBODY ADDRESSED is refused above the gate, and above the hold
@@ -17998,7 +18409,10 @@ def main():
         test_the_gate_is_shown_the_conversation_and_who_is_in_it,
         test_the_gate_knows_a_dev_room_from_a_room_players_read,
         test_a_pasted_log_in_the_history_cannot_push_out_the_message,
-        test_the_gate_answers_when_it_is_unsure,
+        test_the_gate_waits_when_it_cannot_decide,
+        test_a_failed_classification_is_sorted_by_what_the_cli_reports,
+        test_a_selector_that_cannot_answer_moves_nothing_and_waits,
+        test_a_conversation_that_will_not_classify_backs_off_and_is_flagged_until_released,
         test_evidence_and_thread_openings_never_reach_the_gate,
         test_a_newly_attached_channel_answers_none_of_its_backlog,
         test_a_channel_already_in_use_is_not_cut_off,
@@ -18025,7 +18439,11 @@ def main():
         test_attachments_shared,
         test_an_attachment_over_the_cap_is_recorded_rather_than_dropped,
         test_reply_chain_and_one_shot,
-        test_the_gate_fails_open,
+        test_a_credential_that_stops_answering_holds_its_work_until_a_probe_says_it_answers,
+        test_a_down_credential_holds_only_the_work_that_needs_it,
+        test_a_finished_run_reports_to_the_health_of_the_credential_it_billed,
+        test_a_review_trigger_waits_for_its_credential_to_answer,
+        test_a_conversation_waiting_on_a_down_credential_is_told_once_and_only_where_a_turn_was_coming,
         test_an_unwatched_channel_produces_nothing,
         test_read_only_capabilities,
         test_batching_during_a_run,

@@ -286,7 +286,9 @@ and when a request waits for one to refill.
 
 ```json
 "claude": { "refresh_secs": 900, "timeout_secs": 10,
-            "review_hold_pct": 0.75, "new_conversation_hold_pct": 0.9 }
+            "review_hold_pct": 0.75, "new_conversation_hold_pct": 0.9,
+            "health": { "after_failures": 2, "probe_secs": 60, "notice_after_secs": 600 },
+            "classify_retry": { "first_secs": 60, "max_secs": 1800, "flag_after": 5 } }
 ```
 
 | Key | Default | What it does |
@@ -295,6 +297,12 @@ and when a request waits for one to refill.
 | `timeout_secs` | `10` | How long one account's reading may take before it is written off for that refresh. |
 | `review_hold_pct` | `0.75` | Above this share of the account that would pay, a `#codereview` trigger — or a ripe batch of pull-request feedback — waits for the window to refill instead of starting. Asked per pull request, since the account that pays is per operator. |
 | `new_conversation_hold_pct` | `0.9` | Above this, a brand-new conversation waits for its first turn. |
+| `health.after_failures` | `2` | Outages in a row (a timeout, no answer at all, a 401, 403 or 5xx) that take a credential down. A 402 takes it down at once. A 429 never counts. See [When a credential or a classification does not answer](#when-a-credential-or-a-classification-does-not-answer). |
+| `health.probe_secs` | `60` | How often a credential that is down is asked again, on its own. |
+| `health.notice_after_secs` | `600` | How long a conversation waits on a down credential before Max says so. |
+| `classify_retry.first_secs` | `60` | How long a conversation whose gate or selector call failed waits before it is classified again. Doubles on each failure. |
+| `classify_retry.max_secs` | `1800` | The longest that wait gets. |
+| `classify_retry.flag_after` | `5` | Failures before the conversation is flagged for a person in `ffwatch status`. It keeps waiting either way. |
 
 Not seeded — a box with no `claude` block gets exactly the defaults above. `spread` and
 `five_hour_cap` were here until 2026-09-10 and are gone with the chooser; a box whose file still
@@ -486,6 +494,60 @@ are waiting, with the sentence naming the account and the refill time. Both line
 printed even when neither is biting, because "nothing has started for two hours" is exactly the
 moment somebody goes looking for it and an absent line answers nothing. The journal gets one
 line when a hold goes on and one when it lifts, never one per poll.
+
+### When a credential or a classification does not answer
+
+**A classification that fails waits.** Until 2026-09-10 an engagement gate that could not decide
+engaged anyway and marked the turn `failed_closed`. During an outage that claimed the messages for
+a turn that then failed in its container for the same reason the gate had. Now, when the gate or
+the selector does not produce a usable answer, nothing is decided: the messages stay unclaimed and
+ungated, no turn row is written, and the conversation is classified again later. Historical turns
+keep their `failed_closed` marks and still render them.
+
+**Five kinds of failure**, read off the CLI's `is_error`, `terminal_reason` and `api_error_status`:
+
+| Kind | What it is | Counts toward the credential's health |
+| --- | --- | --- |
+| `refused` | nothing to make the call with (no `claude` binary) | no |
+| `outage` | no answer, a timeout, no envelope, or an API error of 401, 403, 5xx or no status | yes |
+| `budget` | an API error of 402 | yes, at once |
+| `limited` | an API error of 429: a rate limit, or a subscription's session limit | **no** |
+| `unusable` | it answered, and the answer did not validate even under `--json-schema` | no |
+
+The `--json-schema` retry only runs after an `unusable` first attempt, because it fixes the shape
+of an answer and nothing else. A 429 never counts toward health: a subscription past its session
+limit answers 429, the window holds above already cover that, and the probe reads a 429 as a live
+key, so counting it would lift the hold into the same failure on every run.
+
+A selector answer that validates but names a conversation nobody offered is **not** a failure. The
+model answered and the harness refused the content, so the deterministic answer stands.
+
+**Two scopes of waiting**, both in the database so `ffwatch status` and ffweb read what the daemon
+wrote and a restart does not forget them:
+
+- **A credential that is down** (`credential_health`). `health.after_failures` outages in a row, or
+  one `budget`, from a classification or from a container run billed to it. While it is down,
+  nothing billed to it starts:
+  - A conversation whose turn would bill it waits, above the selector and the gate, so a down
+    credential costs no model calls.
+  - A conversation that *could* need a classification billed to it waits too.
+  - A queued turn on it stays queued.
+  - A `#codereview` trigger on it stays in the cursor.
+  - It is probed on its own every `health.probe_secs` and comes back up the moment the probe or
+    any real call answers. A window reading that fails is not a failure here; that rule is
+    unchanged.
+- **One conversation whose classification keeps failing** while its credential is answering. It
+  waits `classify_retry.first_secs`, doubling up to `classify_retry.max_secs`. After
+  `classify_retry.flag_after` failures it is flagged in `ffwatch status`, and it keeps waiting.
+  Nothing releases it but a person: `ffwatch release <conversation>` runs its next turn without the
+  gate, and an operator @-mentioning the bot in that thread also gets a turn, because an addressed
+  message never reaches the gate.
+
+**Max says so only where a turn was coming.** A conversation waiting on a down credential is told,
+once, after `health.notice_after_secs`, and only when the harness would have answered it without
+asking the gate: an addressed message, one with evidence attached, or a new forum thread. The
+notice has its own `down:<conversation>:<turns>` marker, so an earlier break notice in the same wait
+does not silence it.
 
 ## `quiet_hours`
 

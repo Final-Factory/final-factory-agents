@@ -1193,8 +1193,14 @@ import somebody else's commits) stays as a tripwire, and was never a boundary: `
 push'` walks straight through it.
 
 The engagement gate survives the collapse and is all the classifier does now — one boolean, on
-Haiku, holding no tools. It fails **open**: a gate that cannot decide runs the turn, because a
-gate that silently swallowed a real bug report would look exactly like a quiet channel.
+Haiku, holding no tools. A gate that cannot decide **waits**. It does not decline, because a gate
+that silently swallowed a real bug report would look exactly like a quiet channel. Since
+2026-09-10 it does not engage either: it used to fail open, and during an outage that claimed the
+messages for a turn that then failed in its container for the same reason the gate had. Now the
+messages stay unclaimed and ungated and are classified again after a backoff, and a credential
+that keeps not answering is held until a probe says it does. `config.md` has the rules under
+`claude`, and `ffwatch release <conversation>` runs a conversation that will not classify
+without the gate.
 
 **It is shown the conversation, not one message.** Until 2026-09-08 the gate was handed the new
 message text alone — no thread, no names, no room — and its own false list has always included

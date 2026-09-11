@@ -424,3 +424,24 @@ CREATE TABLE IF NOT EXISTS watch_attach (
     attached     INTEGER NOT NULL DEFAULT 1,
     detached_at  TEXT
 );
+
+-- WHETHER EACH CREDENTIAL ANSWERS (schema v21). One row per credential that has ever failed a
+-- call, keyed by its secrets.env variable name, never by its token.
+-- design/openrouter_provider_design.txt section 7.
+--
+-- `state` is 'up' or 'down'. A credential goes down after claude.health.after_failures outages
+-- in a row, or at once on a spent budget, and comes back up when a probe or a real call answers.
+-- `until` is when a budget hold ends, where anybody knows; NULL means "until it answers".
+-- `next_probe_at` is when the daemon asks it again. In the database rather than in the daemon's
+-- memory so `ffwatch status` and ffweb see the same thing, and a restart keeps a credential that
+-- is down, down.
+CREATE TABLE IF NOT EXISTS credential_health (
+    name          TEXT PRIMARY KEY,
+    state         TEXT NOT NULL DEFAULT 'up',
+    failures      INTEGER NOT NULL DEFAULT 0,
+    down_since    TEXT,
+    until         TEXT,
+    next_probe_at TEXT,
+    last_error    TEXT,
+    updated_at    TEXT
+);
