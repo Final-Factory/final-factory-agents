@@ -1,7 +1,10 @@
 OpenRouter as a credential type, and GLM-5.3 Flash for the work nobody's subscription pays for
 ============================================================================================
-Revision 5, 2026-09-10. Revisions 1-4, 2026-09-10. Not built. Section 13 runs before any of it is.
-Tasks: design/openrouter_provider_tasks.md.
+Revision 6, 2026-09-10. Revisions 1-5, 2026-09-10. Tasks: design/openrouter_provider_tasks.md.
+
+Section 13's measurements run before phases C onward are deployed. Phases A and B (sections 7 and
+14) rest on failure shapes the code already recognises (`result_failure_detail`,
+ffwatch.py:17231) and ship first.
 
 eb4cfaa ("whose subscription pays is decided by who asked", design/operator_subscriptions_design.txt)
 gave every request exactly one payer. An operator's request is billed to the credential that
@@ -14,19 +17,20 @@ can hold three types of credential under one namespace of names: an Anthropic su
 Anthropic API key, and an OpenRouter key. An operator can claim any of them. The default can be
 any metered one. The routing eb4cfaa built does not change; what a name resolves to does.
 
-Revision 5 changes, from revision 4:
+Revision 6 folds in a cross-check of revision 5 against its tasks and the code:
 
-  - OpenRouter is a type of credential, declared per key in secrets.env with its own name and
-    model. Revision 4 had one box-wide `OPENROUTER_API_KEY` chosen by `claude.default`.
-  - `claude.default` and `claude.classifier` name a credential by id, the same way
-    `operators.<them>.claude` does.
-  - A conversation moving between providers from one turn to the next is intended behaviour, and
-    section 10 says what makes it work. Revision 4 listed it as a risk.
-  - `max_budget_usd` is accepted as Claude Code's own estimate, which may not hold for a
-    credential that is not Anthropic's. The provider's own key limit is the ceiling that does.
-
-Carried from revisions 3 and 4: GLM-5.3 Flash is the model an OpenRouter credential uses unless it
-names another, and a classification that fails for any reason waits instead of guessing.
+  - Health and flag state are in the database, because `ffwatch status` and ffweb are separate
+    processes and could never have read a daemon's memory.
+  - A failure has one of five kinds, read from the error fields the CLI already writes. Only an
+    outage or a spent budget counts toward a credential's health, never a 429. A subscription's
+    session limit is a 429, and counting it would have looped: the hold would lift on the next
+    probe and every run would fail the same way.
+  - A turn on a credential that is down stays queued because `schedule` skips it. `launch` has
+    already marked the turn running, and cannot put it back.
+  - `launch` resolves the credential before `build_job`, so section 10's crossing rule has
+    something to compare.
+  - Callers revision 5 missed: `claude_route_for_comment`, ffweb's `claude_claims`, and
+    `review_held`, which now also checks health.
 
 
 1. What gets built
@@ -35,17 +39,17 @@ names another, and a classification that fails for any reason waits instead of g
   1. Classification failures wait. A gate or selector call that does not produce a usable answer
      leaves the conversation's messages unclaimed and ungated, and they are classified again
      later. `failed_open` is retired for new turns.
-  2. A health hold per credential. While a credential cannot be reached, or its provider-side
-     budget is spent, nothing billed to it starts, and nothing that needs a classification billed
-     to it starts either.
+  2. A health hold per credential, recorded in the database. While a credential cannot be
+     reached, or its provider-side budget is spent, nothing billed to it starts, and nothing that
+     could need a classification billed to it starts either.
   3. Three credential types in secrets.env, one namespace of ids across them (section 2).
   4. `claude.default` and `claude.classifier` in config.json name the credential that pays for
      requests no operator made, and for the two classifications.
   5. `ffbox` accepts any of the three types as `--claude-key` and hands the container the
      environment that type needs, and no other credential.
-  6. `classifier_invocation` builds its child's environment from the classifier credential's type.
-  7. `claude_keys` reads and reports all three types; an OpenRouter credential's budget comes from
-     `GET /api/v1/key`.
+  6. The classifier builds its child's environment from the classifier credential's type.
+  7. `claude_keys` reads and reports all three types, and can probe one credential on its own.
+     An OpenRouter credential's budget comes from `GET /api/v1/key`.
   8. `openrouter.ai` on `ffbox/egress/allowlist.txt`.
   9. `config.md`, `secrets.env.example`, `CREDENTIALS.md`, `setup.sh`, `05-discord-setup.sh`,
      `ffbox/README.md` and `docs/docker-security-model.md` updated in the same commits as the code
@@ -63,20 +67,25 @@ Not a goal: providers other than Anthropic and OpenRouter, or Codex, or the CI l
 2. Credentials have a type
 --------------------------
 
-The type is the variable family a credential is declared in. A type field that could disagree
-with its variable name would be a new way to be wrong, so there is none.
+The type is the variable family a credential is declared in. A type field that could disagree with
+its variable name would be a new way to be wrong, so there is none.
 
-    type           variables, numbered 1..16                     answers to
+    type           variables                                        answers to
     ---------------------------------------------------------------------------------------------
     subscription   CLAUDE_CODE_OAUTH_TOKEN<n>    the token          its NAME, its variable name,
-                   CLAUDE_CODE_NAME_TOKEN<n>     the id              and its bare slot number
+                   CLAUDE_CODE_NAME_TOKEN<n>     the id             and its bare slot number
                    CLAUDE_CODE_RATE_TOKEN<n>     plan, printed only
-    anthropic_api  ANTHROPIC_API_KEY<n>          the key            its NAME and its variable name
-                   ANTHROPIC_NAME_KEY<n>         the id
+    api_key        ANTHROPIC_API_KEY[<n>]        the key            its NAME and its variable name
+                   ANTHROPIC_NAME_KEY[<n>]       the id
     openrouter     OPENROUTER_API_KEY<n>         the key            its NAME and its variable name
                    OPENROUTER_NAME_KEY<n>        the id
                    OPENROUTER_MODEL_KEY<n>       optional, default z-ai/glm-5.3-flash
                    OPENROUTER_URL_KEY<n>         optional, default https://openrouter.ai/api
+
+`<n>` is 1 to 16. `[<n>]` means the unnumbered spelling is valid too.
+
+The type names are the `kind` values `claude_keys` already writes to its shared store and ffweb
+already reads: `subscription` and `api_key` exist today, and `openrouter` is new.
 
 The unnumbered spellings that already exist keep their meaning. `CLAUDE_CODE_OAUTH_TOKEN` is the
 legacy single subscription, read only when no numbered slot is set, exactly as today. The
@@ -95,13 +104,16 @@ Every credential also answers to its own variable name, which is unique, so `"cl
 
 **What each type brings.**
 
-    type           metered  windows and       reachability probe                 budget reading
-                            window holds
-    subscription   no       yes (eb4cfaa)     one-token Haiku, rate-limit hdrs   --
-    anthropic_api  yes      no                one-token Haiku, x-api-key         --
-    openrouter     yes      no                one-token request to its model     GET /api/v1/key
+    type          metered  window holds   probe, one credential on its own     budget reading
+    subscription  no       yes (eb4cfaa)  one-token Haiku, rate-limit headers  --
+    api_key       yes      no             one-token Haiku, x-api-key           --
+    openrouter    yes      no             GET /api/v1/key, then one request    GET /api/v1/key
+                                          to its model
 
-The first three columns exist today for the first two types. The OpenRouter row is new.
+The probes exist today for the first two types, but only inside `ClaudeKeys.read()`, which reads
+every credential at once behind a cache. Section 7 needs one credential probed on demand, so
+`claude_keys` gains that (section 9). How many tokens the OpenRouter request asks for is a constant
+set by section 13d, because Flash reasons by default and one token may not be enough for a reply.
 
 
 3. Who pays
@@ -119,20 +131,27 @@ eb4cfaa's routing table, restated in credential ids:
     #codereview on a pull request          operator  the credential that operator claims
     shell or web prompt                    operator  the credential that operator claims
 
-`claude_route` (ffwatch.py:1944) is unchanged in shape. It still returns a variable name or a
-refusal. What changes is the lookup underneath it: `subscription_named` becomes
-`credential_named` over all three types, and the default is resolved from `claude.default` instead
-of being the constant `ANTHROPIC_API_KEY`.
+`claude_route` (ffwatch.py:1944) is unchanged in shape and still returns a variable name or a
+refusal. What changes is the lookup underneath it: `subscription_named` becomes `credential_named`
+over all three types, and the default is resolved from `claude.default` instead of being the
+constant `ANTHROPIC_API_KEY`. Its four callers move together: `claude_route_for`,
+`claude_route_for_turn`, `claude_routes` and `claude_route_for_comment`.
 
 **An operator may claim any type.** `"claude": "Ben-glm"` beside `OPENROUTER_NAME_KEY2=Ben-glm` puts
 everything Ben asks for on that OpenRouter key and its model. Nobody else's request can reach it,
 for the same reason nobody else's could reach his subscription.
 
 **The default and the classifier must be metered.** `claude.default` or `claude.classifier` naming
-a subscription is refused. That is eb4cfaa's line: a stranger's bug report cannot eat an
-operator's window. The refusal is the same shape as a default that names nothing. The daemon logs
-it at startup, `/claude` and `ffwatch status` show it, and every request that would use it is
-refused with that sentence and waits.
+a subscription is refused. That is eb4cfaa's line: a stranger's bug report cannot eat an operator's
+window. The refusal has the same shape as a default that names nothing. The daemon logs it at
+startup, and `/claude` and `ffwatch status` show it.
+
+What the refusal does to requests:
+  - A request routed to a default that does not resolve is refused by `claude_route`, as today.
+  - A conversation that could need a classification while the classifier credential does not
+    resolve gets `conversation_held`'s `refused` verdict. It waits, and it says so once.
+  - Neither of these is a health failure. Nothing is probed, because a missing name will not start
+    answering.
 
 **Unset keeps today's behaviour.** `claude.default` unset means the unnumbered `ANTHROPIC_API_KEY`.
 `claude.classifier` unset means whatever `claude.default` resolved to.
@@ -142,13 +161,13 @@ refused with that sentence and waits.
 --------------------------
 
 ffwatch asks a model two questions on the host. Both go through `classifier_invocation`
-(ffwatch.py:3831), the only place a host model call is built: no tools, `--safe-mode`, no
-settings, no session persistence, the prompt on stdin. Ingest calls neither:
-`select_conversation` (ffwatch.py:6574) routes every message deterministically, so ingest cannot
-block on a model or fail when one is down.
+(ffwatch.py:3831), the only place a host model call is built: no tools, `--safe-mode`, no settings,
+no session persistence, the prompt on stdin. Ingest calls neither: `select_conversation`
+(ffwatch.py:6574) routes every message deterministically, so ingest cannot block on a model or fail
+when one is down.
 
-**a. The conversation selector (S4).** "Does this new message continue one of these
-conversations, or start a new one?"
+**a. The conversation selector (S4).** "Does this new message continue one of these conversations,
+or start a new one?"
 
   - Where: `resettle` (ffwatch.py:6312) -> `select_for_turn` (:6412) -> `model_selection` (:6498).
   - When: a non-thread, non-local conversation whose pending batch ingest routed as `recent`, the
@@ -164,9 +183,9 @@ conversations, or start a new one?"
 **b. The engagement gate.** "Does the newest message need the bot at all?"
 
   - Where: `create_turn` (ffwatch.py:7554) -> `should_engage_for` (:4136) -> `should_engage` (:4077).
-  - When: only in a watched channel with `engage: all`. Never for a kind in GATE_BYPASS_KINDS, never
-    when `always_a_turn` already decided (the bot was addressed, evidence was attached, a thread
-    was opened), and never in a mention-only channel.
+  - When: only in a watched channel with `engage: all`. Never for a kind in GATE_BYPASS_KINDS
+    (:2720), never when `always_a_turn` already decided (the bot was addressed, evidence was
+    attached, a thread was opened), and never in a mention-only channel.
   - Shown: where it was said, the conversation's last 12 messages (600 characters each, 6000 in
     total), and the new messages, each labelled player, developer or bot from the stored author id.
   - Answers `{"engage": <bool>, "reason": <200 chars>}`. False only for a closed list: social
@@ -182,54 +201,51 @@ first, because `--json-schema` is served as a tool and measured three to four ti
 both attempts fail, each waiting up to `classifier_secs` (120).
 
 A failed-open gate CLAIMS the messages for a new turn (ffwatch.py:7617), and they are never offered
-again. During an outage that also takes the containers down, every message the gate lets through
-is spent on a turn that fails.
+again. During an outage that also takes the containers down, every message the gate lets through is
+spent on a turn that fails.
 
 
 5. What a credential puts in a Claude Code environment
 ------------------------------------------------------
 
-Whether the process is a container turn or a host classification, a credential produces exactly
-one of these environments, and never pieces of two:
+Whether the process is a container turn or a host classification, a credential produces exactly one
+of these environments, and never pieces of two:
 
-    subscription    CLAUDE_CODE_OAUTH_TOKEN=<token>
-    anthropic_api   ANTHROPIC_API_KEY=<key>
-    openrouter      ANTHROPIC_BASE_URL=<OPENROUTER_URL_KEY<n>, or https://openrouter.ai/api>
-                    ANTHROPIC_AUTH_TOKEN=<key>
-                    ANTHROPIC_API_KEY=                              (set and empty, per OpenRouter)
-                    ANTHROPIC_DEFAULT_FABLE_MODEL=<model>
-                    ANTHROPIC_DEFAULT_OPUS_MODEL=<model>
-                    ANTHROPIC_DEFAULT_SONNET_MODEL=<model>
-                    ANTHROPIC_DEFAULT_HAIKU_MODEL=<model>
+    subscription  CLAUDE_CODE_OAUTH_TOKEN=<token>
+    api_key       ANTHROPIC_API_KEY=<key>
+    openrouter    ANTHROPIC_BASE_URL=<OPENROUTER_URL_KEY<n>, or https://openrouter.ai/api>
+                  ANTHROPIC_AUTH_TOKEN=<key>
+                  ANTHROPIC_API_KEY=                              (set and empty, per OpenRouter)
+                  ANTHROPIC_DEFAULT_FABLE_MODEL=<model>
+                  ANTHROPIC_DEFAULT_OPUS_MODEL=<model>
+                  ANTHROPIC_DEFAULT_SONNET_MODEL=<model>
+                  ANTHROPIC_DEFAULT_HAIKU_MODEL=<model>
 
 where `<model>` is `OPENROUTER_MODEL_KEY<n>`, or `z-ai/glm-5.3-flash` when the slot declares none.
 
 **Aliases stay aliases.** job.json keeps `model: opus` and `fallback_model: sonnet`, and the
-classifier keeps `--model haiku`. The credential's environment decides what they mean. That is
-what lets one pool, one job and one session serve every type: the same `opus` is Opus on an
-operator's subscription and Flash on the player default. The payer is decided at launch
-(`claude_route_for_turn`, ffwatch.py:11521), after job.json is written, so job.json could not
-record a slug correctly anyway. `run.claude_key` records the credential, and the credential
-determines the model. On OpenRouter, `--fallback-model sonnet` is the model falling back to
-itself, which is harmless.
+classifier keeps `--model haiku`. The credential's environment decides what they mean. That is what
+lets one pool, one job and one session serve every type: the same `opus` is Opus on an operator's
+subscription and Flash on the player default. `run.claude_key` records the credential, and the
+credential determines the model. On OpenRouter, `--fallback-model sonnet` is the model falling back
+to itself, which is harmless.
 
-`CLAUDE_CODE_SUBAGENT_MODEL` is left unset. Every ff-discord and ff-agents role declares a
-`model:` by alias, and a role that did not would inherit the session's model.
+`CLAUDE_CODE_SUBAGENT_MODEL` is left unset. Every ff-discord and ff-agents role declares a `model:`
+by alias, and a role that did not would inherit the session's model.
 
 Authentication precedence ranks `ANTHROPIC_AUTH_TOKEN` above `ANTHROPIC_API_KEY` and
 `CLAUDE_CODE_OAUTH_TOKEN`. Nothing here relies on that, for the reason ffbox's comment gives since
-eb4cfaa: a container is handed one credential, and precedence is a fact about a version of
-`claude`, not a decision this box made.
+eb4cfaa: a container is handed one credential, and precedence is a fact about a version of `claude`,
+not a decision this box made.
 
-A full model id bypasses the alias variables. An agent that names `claude-opus-5` in a subagent
-call would get real Opus from OpenRouter, billed per token. The env map is scope; the key's model
+A full model id bypasses the alias variables. An agent that names `claude-opus-5` in a subagent call
+would get real Opus from OpenRouter, billed per token. The env map is scope; the key's model
 allowlist (section 8) is what refuses the request.
 
 **Why Flash is the default model.** It takes text, image and video; GLM-5.3 takes text only, and a
-player's bug report routinely carries a screenshot the agent Reads out of `/ffbox/attachments`.
-From OpenRouter's endpoints API on 2026-09-10: `z-ai/glm-5.3-flash`, released 2026-08-26, 1M
-context, 25 providers, tools, tool_choice and structured outputs supported. USD per million
-tokens:
+player's bug report routinely carries a screenshot the agent Reads out of `/ffbox/attachments`. From
+OpenRouter's endpoints API on 2026-09-10: `z-ai/glm-5.3-flash`, released 2026-08-26, 1M context, 25
+providers, tools, tool_choice and structured outputs supported. USD per million tokens:
 
     most providers (Fireworks, Together, Cloudflare, Z.AI, ...)   0.15 in   0.50 out   0.03 cache
     DeepInfra fp4, the cheapest                                   0.075     0.25       0.015
@@ -276,25 +292,29 @@ config.json:
 `health` and `classify_retry` are section 7.
 
 **Everything about a credential lives in secrets.env**: the key, its id, and for OpenRouter its
-model and base URL. config.json only says who uses which id. That keeps ffbox reading one file to
-build a container, and it means the update timer, which already hashes secrets.env, applies a model
-change within a tick.
+model and base URL. config.json only says who uses which id. ffbox reads one file to build a
+container, and the update timer, which already hashes secrets.env, drains and restarts `ffbox.target`
+when it changes. That restart destroys idle spares too, so a model change reaches the next turn
+within a tick, spares included.
 
-Per CLAUDE.md, config.md changes in the same commit as the shape: the `claude` table gains
-`default`, `classifier`, `health` and `classify_retry`; the routing table says what `default` and
-`classifier` resolve through; and the `operators` entry says `claude` may name any type. The seeded
-template in `05-discord-setup.sh` does not seed `default`. Its missing-id hint names the three NAME
-variables, not just `CLAUDE_CODE_NAME_TOKEN<n>`. `setup.sh`'s `api_key_ready` counts any metered
-credential, not just `ANTHROPIC_API_KEY`, and says ffwatch's startup line is where "does the
-default resolve" is actually answered.
+**Declaring a credential is not quite free.** A new credential whose NAME matches an id already in
+use makes that id ambiguous, and the operator using it is refused until one of the two is renamed.
+The startup line names both variables.
+
+Per CLAUDE.md, config.md changes in the same commit as the shape. `health`, `classify_retry` and the
+gate's new failure behaviour ship with phases A and B. `default`, `classifier`, the credential types
+and the routing table's wording ship with phases C onward. The seeded template in
+`05-discord-setup.sh` does not seed `default`, and its missing-id hint names all three NAME
+variables. `setup.sh`'s `api_key_ready` counts any metered credential and points at ffwatch's
+startup line for whether the default actually resolves.
 
 
 7. A classification that fails waits
 ------------------------------------
 
 **The rule.** If the gate or the selector does not produce a usable answer, nothing is decided.
-`create_turn` returns None with the conversation's messages unclaimed, ungated and unmarked. That
-is the shape quiet hours use (ffwatch.py:7468), and the shape of eb4cfaa's `refused` and `hold`
+`create_turn` returns None with the conversation's messages unclaimed, ungated and unmarked. That is
+the shape quiet hours use (ffwatch.py:7468), and the shape of eb4cfaa's `refused` and `hold`
 verdicts. No turn row, no 👀, no `failed_closed` footer. The messages come back on a later pass and
 are classified then.
 
@@ -302,78 +322,113 @@ The gate and a player's container bill the same default, so a box that cannot ge
 the gate most likely cannot get one out of the container either. A fail-open turn during an outage
 claims the messages and fails. Waiting keeps them.
 
-"Did not produce a usable answer" is everything `run_classifier` can hit: a non-zero exit, a
-timeout, an envelope that is not JSON, a credential that does not resolve, and a reply that still
-does not validate after the `--json-schema` retry. Underneath sit 401, 402 (OpenRouter: the key's
-budget or the account is spent), 429, 5xx including OpenRouter's 502 and 503, or no network.
+**Five kinds of failure.** A classification or a container run that did not produce an answer is
+sorted by what the CLI reports, using the fields `result_failure_detail` already reads
+(`is_error`, `terminal_reason`, `api_error_status`):
 
-One thing is NOT a failure: a selector answer that validates but names an id that was never
-offered. The model answered and the harness refused the content, so it keeps the deterministic
-answer as today. If it waited instead, a message written to make the selector name a fake id would
-stall its conversation for good.
+    kind        what it is                                            counts toward health
+    ------------------------------------------------------------------------------------------
+    refused     the credential does not resolve                       no; conversation_held
+                                                                      refuses instead
+    outage      no envelope, a timeout, a non-zero exit with nothing   yes
+                parseable, or an API error of 401, 403 or 5xx, or one
+                with no status
+    budget      an API error of 402                                   yes, at once
+    limited     an API error of 429: a rate limit, or a               no
+                subscription's session limit
+    unusable    the call ran and its answer did not validate, even    no
+                under --json-schema
+
+A 429 is never a health failure. A subscription over its session limit answers 429, and eb4cfaa's
+window holds already cover that. A metered key's 429 is the org's per-minute limit, and it clears
+on its own. Counting either would take the credential down, the probe would read the 429 as a live
+key (claude_keys.py:583, deliberately), the hold would lift, and the next run would fail the same
+way.
+
+The `--json-schema` retry runs only after an `unusable` first attempt, because it fixes shape and
+nothing else.
+
+One thing is NOT a failure: a selector answer that validates but names an id that was never offered.
+The model answered and the harness refused the content, so the deterministic answer stands, as
+today. If it waited instead, a message written to make the selector name a fake id would stall its
+conversation for good.
 
 `failed_open` is retired for new turns. The `failed_closed` column, its prompt note
 (ffwatch.py:10060) and its reply footer (:17356, :17480) stay so historical rows still render. In
-`create_turn`, the two `if not fc` guards before `say_route_refused` and `say_holding`
-(ffwatch.py:7575-7587) have nothing left to guard and go.
+`create_turn`, the two `if not fc` guards before `say_route_refused` and `say_holding` (:7575-7587)
+have nothing left to guard and go.
 
-**Two scopes of waiting.** A failure is either about a credential or about one conversation. One
-message that confuses the model must not stop the box, and a dead credential must not be re-asked
-once per conversation per tick.
+**Two scopes of waiting**, both recorded in the database, so the daemon, `ffwatch status` and ffweb
+read the same thing, and a restart does not forget a credential that is down.
 
-  - **The health hold** is per credential, any type. It is entered after `after_failures` (2)
-    consecutive CALLS billed to that credential that could not run (a classification that exited,
-    timed out or produced no envelope, or a container run whose result is an API error), across
-    conversations, or at once on an OpenRouter 402. A classification that ran and did not validate
-    does not count, and neither does a window READING that fails: eb4cfaa's rule that an unreadable
-    reading runs the work stands. While it holds: `conversation_held` (ffwatch.py:7180) returns a
-    new `down` verdict for a conversation whose route is that credential, or that could need a
-    classification billed to it. "Could need" is decided before `resettle`, so it is conservative:
-    a non-thread, non-local conversation holding a message routed `recent` (the selector's band), or
-    a conversation in an `engage: all` channel that `always_a_turn` does not force (the gate's).
+  - **The health hold** is per credential, any type, in a `credential_health` table. It is entered
+    after `after_failures` (2) consecutive `outage` failures billed to that credential, across
+    conversations and counting container runs, or at once on `budget`. Only calls count. A window
+    READING that fails does not, because eb4cfaa's rule that an unreadable reading runs the work
+    stands.
+
+    While it holds, `conversation_held` (ffwatch.py:7180) returns a new `down` verdict for a
+    conversation whose route is that credential, or that could need a classification billed to it.
+    "Could need" is decided before `resettle`, so it is conservative. The selector could run for a
+    non-thread, non-local conversation holding a message routed `recent`. The gate could run for a
+    conversation of a kind outside GATE_BYPASS_KINDS, in an `engage: all` channel, that
+    `always_a_turn` does not force.
+
     `create_turn` returns on `down` ABOVE `resettle` and the gate, the way `hold_until_morning`
-    does, so a down credential costs no model calls. The launcher leaves already-queued turns billed
-    to it in `queued`. Every `probe_secs` (60) the credential's own probe (section 2) runs; success
-    lifts the hold. A classifier credential's probe is one real classification when one is waiting,
-    because that is the better evidence.
-  - **The conversation backoff** is one conversation whose classification failed while other calls
-    billed to the same credential are succeeding. It retries after `first_secs` (60), doubling to
-    `max_secs` (30 minutes). This is the case "queue regardless" makes new: a message the model
-    reliably cannot classify would otherwise be re-asked every few seconds forever.
+    does, so a down credential costs no model calls. `schedule` skips a queued turn whose route
+    credential is down with `continue`, so it stays queued; `launch` is not involved, because by
+    then the turn is already running. `review_held` treats a down credential the way it treats a
+    window over its line: the trigger stays in the cursor.
+
+    Every `probe_secs` (60) the credential is probed on its own (section 2), and success lifts the
+    hold. A budget hold with a known end (below) is not probed before that end.
+
+  - **The conversation backoff** is one conversation whose classification failed with `limited`,
+    `unusable`, or an `outage` that did not take the classifier's credential down. It retries after
+    `first_secs` (60), doubling to `max_secs` (30 minutes), and is stored on the conversation row.
+    This is the case "queue regardless" makes new: a message the model reliably cannot classify would
+    otherwise be re-asked every few seconds forever.
 
 A success resets the credential's failure count and clears that conversation's backoff.
 
 **Why every type, subscriptions included.** An operator's subscription that starts refusing is the
 same situation as a dead OpenRouter key: waiting keeps the request, and failing it throws the
-request away. The window holds eb4cfaa kept are unchanged and sit beside this one. A window over
-its line holds with a known end; a credential that is down holds until it answers.
+request away. The window holds are unchanged and sit beside this one. A window over its line holds
+with a known end; a credential that is down holds until it answers.
 
-**Operators whose work needs a classification.** An operator's own turn bills their credential,
-but the gate and selector bill the classifier's. While the classifier's credential is down, an
-operator conversation that needs a classification waits too, even if its own credential works. One
-that needs none still runs: an addressed message, a DM, a local prompt, a `#codereview`.
+**Operators whose work needs a classification.** An operator's own turn bills their credential, but
+the gate and selector bill the classifier's. While the classifier's credential is down, an operator
+conversation that could need a classification waits too, even if its own credential works. One that
+cannot still runs: an addressed message, a DM, a directive, a local prompt, a `#codereview`.
 
-**A message that never classifies.** After `flag_after` (5) failures on one conversation while its
-credential is up, the conversation is flagged, not released. `ffwatch status`, `/claude` and the
-conversations page list it with the last error; the journal gets one WARNING; it keeps waiting at
-`max_secs`. `ffwatch release <conversation>` runs its turn without the gate and records who
-released it, and an operator @-mentioning the bot in that thread also gets a turn, because an
+**A message that never classifies.** After `flag_after` (5) failures on one conversation, the
+conversation is flagged, not released. `ffwatch status`, `/claude` and the conversations page list
+it with the last error, the journal gets one WARNING, and it keeps waiting at `max_secs`.
+`ffwatch release <conversation>` records who released it on the conversation row. The next turn
+then runs without the gate, keeps the selector's deterministic answer if the selector fails again,
+and ignores the backoff. An operator @-mentioning the bot in that thread also gets a turn, because an
 addressed message never reaches the gate.
 
-**Budget exhaustion is a hold with a known end.** On an OpenRouter 402, `claude_keys` reads
-`GET /api/v1/key` for that credential (`limit`, `limit_remaining`, `limit_reset`, `usage_daily`).
-If the key's own limit is spent, the hold lasts until `limit_reset` and nothing is probed before
-then. A negative account balance has no reset time and needs a person: it is an error in the
-journal, on `/claude`, and in `ffwatch status`.
+**Budget exhaustion is a hold with a known end.** On `budget` from an OpenRouter credential,
+`claude_keys` reads `GET /api/v1/key` for it (`limit`, `limit_remaining`, `limit_reset`,
+`usage_daily`). If the key's own limit is spent, the hold lasts until `limit_reset`. A negative
+account balance has no reset time and needs a person: an error in the journal, on `/claude`, and in
+`ffwatch status`. A `budget` from an Anthropic API key has no reading behind it and holds as an
+outage does.
 
-**What the person waiting is told.** A budget hold knows its end, so it goes through `say_holding`
-and HOLD_NOTE (ffwatch.py:17300) unchanged. An outage does not know its end, and HOLD_NOTE needs a
-duration. Proposed: silence for the first `notice_after_secs` (10 minutes), since most blips end
-before anyone notices, then one post per hold under the same `hold:<conversation>:<turns>`
-local_id, with a sentence that promises no time. The wording goes through max-voice. Section 15.
+**What the person waiting is told**, and only where `always_a_turn` says the message would have got
+a turn, the same filter `hold_until_morning` uses (ffwatch.py:7272). A message above the gate may
+turn out to be one the gate would decline, and a notice under it would be a promise nobody made.
+
+  - A hold with a known end goes through `say_holding` and HOLD_NOTE (ffwatch.py:17300) unchanged.
+  - A hold with no known end says nothing for the first `notice_after_secs` (10 minutes), since
+    most blips end before anyone notices. It then posts once per hold under its own
+    `down:<conversation>:<turns>` local_id, so an earlier window or quiet-hours notice does not
+    silence it. The sentence promises no time. Its wording goes through max-voice, section 15.
 
 **Containers during an outage.** A turn already running when its credential goes down fails the
-normal way. The hold only stops new containers starting into the outage.
+normal way. The hold only stops new containers starting into the outage. Its result counts toward
+the credential's health by the table above.
 
 
 8. OpenRouter keys
@@ -381,20 +436,20 @@ normal way. The hold only stops new containers starting into the outage.
 
 Each OpenRouter credential is its own key in OpenRouter's console, and each gets guardrails there:
 
-  - **A budget limit with a daily reset.** eb4cfaa's design section 12 says the box has no spend
-    cap on a metered key and building one is separate work. OpenRouter's per-key limit is that cap,
+  - **A budget limit with a daily reset.** eb4cfaa's design section 12 says the box has no spend cap
+    on a metered key and building one is separate work. OpenRouter's per-key limit is that cap,
     enforced by the provider. A spent limit is what section 7's budget hold waits on.
-  - **A model allowlist** holding the slot's `OPENROUTER_MODEL_KEY<n>` and nothing else. This
-    closes the full-model-id hole from section 5.
+  - **A model allowlist** holding the slot's `OPENROUTER_MODEL_KEY<n>` and nothing else. This closes
+    the full-model-id hole from section 5.
   - **A provider allowlist.** For Flash, leave out the fp4 endpoints until section 13 shows they
     answer the same way, and leave out endpoints with poor uptime.
   - **A data policy.** Restrict to providers that do not train on inputs. The player default's key
     carries Discord messages from strangers and the repository contents an agent reads.
 
-`max_budget_usd` is passed as it is today. It is Claude Code's own estimate from its own price
-table, so on an OpenRouter credential it may not stop anything; the key's limit is the ceiling that
-does. `run.cost_usd` (ffwatch.py:11817) and ffweb's cost columns carry the same estimate for those
-runs, and the `/claude` row carries OpenRouter's own `usage_daily`.
+`max_budget_usd` is passed as it is today. It is Claude Code's own estimate from its own price table,
+so on an OpenRouter credential it may not stop anything; the key's limit is the ceiling that does.
+`run.cost_usd` (ffwatch.py:11817) and ffweb's cost columns carry the same estimate for those runs,
+and the `/claude` row carries OpenRouter's own `usage_daily`.
 
 The player default and a host-only classifier key can be two credentials, which lets the container
 key be rotated after an incident without stopping the gate. `claude.classifier` is how that is
@@ -406,94 +461,105 @@ expressed. One key for both is also fine, and matches what eb4cfaa does with `AN
 
 **claude_keys.py.**
 
-  - `claude_credentials()` scans the three families (section 2) and returns one tuple per
-    credential: name, token, type, label, rate, model and url, with type-specific fields empty
-    where they do not apply. `claude_subscriptions()` becomes the subscription filter over it, so
-    existing callers keep working.
-  - `slot_ids(name, label)` (claude_keys.py:~200) answers the variable name for every type and the
-    bare number for subscriptions only. `credential_named(key_id, creds)` replaces
-    `subscription_named` with the same three answers: found, "no slot", "ambiguous".
-  - `default_api_key()` (:173) is replaced by `credential_for(key_id, creds)`, and the constant
-    default (`ANTHROPIC_API_KEY` when `claude.default` is unset) moves to the one ffwatch caller
-    that knows the config.
-  - `_claude_secrets_file` (:296) widens its `wanted` set to the new families and nothing else. The
-    rule that this process never learns the Unity password or the GitHub token is unchanged.
-  - `ClaudeKeys` takes a `credentials` callable in place of `tokens` and `api`. `read()` (:841)
-    builds its list from it with `kind` = the type. `_load` (:634) branches three ways: a
-    subscription reads usage as today; an Anthropic API key probes as today; an OpenRouter key
-    reads `GET /api/v1/key` (which costs nothing) and makes one `max_tokens: 1` request to its
-    model, recording `limit`, `limit_remaining`, `limit_reset` and `usage_daily` on the record.
-  - A new `KIND_OPENROUTER` beside `KIND_SUBSCRIPTION` and `KIND_API_KEY`, and a `metered(kind)`
-    helper so no caller writes "is this an API key" as a test against one constant.
+  - `claude_credentials()` scans the three families (section 2), unnumbered spellings included, and
+    returns one tuple per credential: name, token, kind, label, rate, model and url, with fields
+    that do not apply to a kind left empty. `claude_subscriptions()` becomes the subscription filter
+    over it, so existing callers keep working.
+  - `credential_kind(name)` answers a kind from a variable name's prefix. `slot_ids(name, label)`
+    keeps its two arguments and uses it: every credential answers to its declared NAME and its
+    variable name, and a subscription also to its bare slot number. `credential_named(key_id,
+    creds)` replaces `subscription_named`, with the same three answers: found, "no slot",
+    "ambiguous".
+  - `default_api_key()` (:173) goes. `credential_for(name, creds)` returns one credential's tuple for
+    callers that need its token, kind and model together.
+  - `_claude_secrets_file` (:296) widens its `wanted` set to the new families and nothing else. This
+    process still never learns the Unity password or the GitHub token.
+  - `ClaudeKeys` takes a `credentials` callable in place of `tokens` and `api`. `read()` (:841) builds
+    its list from it, with `kind` set on every record. `_load` (:634) branches three ways: a
+    subscription reads usage as today, an API key probes as today, and an OpenRouter key reads
+    `GET /api/v1/key`, which costs nothing, recording `limit`, `limit_remaining`, `limit_reset` and
+    `usage_daily`, and makes one `OPENROUTER_PROBE_MAX_TOKENS` request to its model.
+  - `ClaudeKeys.probe_one(name)` probes one credential with no cache and no dependence on whether a
+    window hold is configured. `claude_records` returns `[]` when neither hold is set, and the health
+    hold must still be able to lift.
+  - `KIND_OPENROUTER` beside `KIND_SUBSCRIPTION` and `KIND_API_KEY`, and `metered(kind)`.
 
 **ffwatch.py.**
 
-  - `claude_keys_now` (ffwatch.py:11060) returns `(credentials, default, classifier)`: the scan,
-    and the two resolved names or refusals. A default or classifier that resolves to a subscription
-    is a refusal (section 3).
-  - `claude_route` (:1944) resolves an operator's id with `credential_named` and a non-operator
-    through the resolved default. Its refusal sentences name the id and variable involved instead
-    of the constant `ANTHROPIC_API_KEY`.
-  - `classifier_invocation` (:3831) takes the classifier credential and builds the child's
-    environment from section 5 for its type. `ANTHROPIC_API_KEY` leaves the passthrough list at
-    :3889; only the credential puts a credential in the child.
-  - `run_classifier` (:4031) returns why it failed, skips the `--json-schema` retry when the first
-    attempt could not run at all, and reports every call's outcome to the health hold.
-    `should_engage` and `model_selection` return HOLD instead of failing open or keeping the
-    deterministic answer.
-  - `conversation_held` (:7180) gains the `down` verdict and the conversation backoff. `create_turn`
-    returns on `down` above `resettle`, and on a HOLD from either classification with nothing
-    written.
-  - `claude_hold` (:11170) reads `metered(kind)` instead of assuming only the API key is metered.
-  - `launch` (:11393) leaves a turn `queued` while its credential is down, and a run whose result
-    is an API error counts toward that credential's health.
-  - `pool_stage_key` (:8339) stages player-pool spares on the resolved default instead of on
-    `default_api_key()`. `pool_claim_for` (:9108) already matches spares on the credential name.
-    A change to a slot's `OPENROUTER_MODEL_KEY<n>` with the same name is not caught: spares keep the
-    old model until `idle_agent_ttl_secs` (4 hours). Accepted, because the spare's name is what the
-    run records and a model change is rare.
-  - The startup check (:11134) and the status line (:11276) name the resolved default and classifier,
-    each operator's credential and its type, and each credential's health.
+  - `classifier_credential(cfg, creds)`, at module level beside `claude_route`: resolves
+    `claude.classifier`, else `claude.default`, else the unnumbered `ANTHROPIC_API_KEY`, and refuses a
+    subscription. `classifier_invocation` calls it itself, so the module-level classifier functions
+    keep taking only `cfg`. The Watcher calls the same function to know which credential's health a
+    classification reports to.
+  - `claude_keys_now` (:11060) returns `(credentials, default, classifier)`. `claude_route` (:1944)
+    resolves an operator's id with `credential_named` and a non-operator through the resolved
+    default. Its refusal sentences name the id and variable involved.
+  - `classifier_invocation` (:3831) builds the child's environment from section 5 for the
+    credential's type. `ANTHROPIC_API_KEY` leaves the passthrough list at :3889, so only the
+    credential puts a credential in the child.
+  - `classifier_attempt` and `run_classifier` (:4002, :4031) return a failure that carries its kind
+    (section 7), read from the envelope's `is_error`, `terminal_reason` and `api_error_status` as well
+    as the exit code. `should_engage` and `model_selection` return HOLD instead of failing open or
+    keeping the deterministic answer.
+  - `conversation_held` (:7180) gains `down`, the classifier-unresolved `refused`, and the
+    conversation backoff. `create_turn` returns on `down` above `resettle`, and on a HOLD from either
+    classification, with nothing written.
+  - `schedule` (:9188) skips a queued turn whose route credential is down.
+  - `review_held` (:15600) holds a trigger whose operator's credential is down.
+  - `finish_run` sorts a failed run's `result.json` into section 7's kinds and reports it.
+  - `launch` (:11393) resolves the credential before `build_job` (today it resolves it at :11521,
+    after the job is written) and passes it in. That lets section 10's rule read it.
+  - `pool_stage_key` (:8339) stages player-pool spares on the resolved default instead of calling
+    `default_api_key()` itself. `pool_claim_for` (:9108) already matches spares on the credential name.
+  - `claude_hold` (:11170) needs no change. `usable()` is false for a record with no windows, so a
+    metered record never holds on a window, OpenRouter included.
+  - The startup check (:11134) and `claude_status` (:11270) name the resolved default and classifier,
+    each operator's credential and its kind, each credential's health, and flagged conversations.
   - `ffwatch release <conversation>`.
 
-**ffbox.** The `--claude-key` block scans the three families the same way `claude_credentials` does
-and accepts only a name it found. Type comes from the prefix. For OpenRouter it reads
-`OPENROUTER_MODEL_KEY<n>` and `OPENROUTER_URL_KEY<n>` for the same slot, out of the secrets.env it
-has already sourced. It exports that type's environment from section 5 and sets `CLAUDE_ENV_ARGS`
-to forward it: every credential by bare name, so no value reaches argv, and the empty
-`ANTHROPIC_API_KEY` as a literal `-e ANTHROPIC_API_KEY=`. A name whose variable is empty exits 78,
-as `ANTHROPIC_API_KEY` does since eb4cfaa. With no `--claude-key` at all it still takes the first
-subscription slot, as eb4cfaa left it.
+**ffbox.** The `--claude-key` block scans the three families the way `claude_credentials` does and
+accepts only a name it found. The type comes from the prefix. For OpenRouter it reads
+`OPENROUTER_MODEL_KEY<n>` and `OPENROUTER_URL_KEY<n>` for the same slot, out of the secrets.env it has
+already sourced; the loop already knows `<n>`. It exports that type's environment from section 5 and
+sets `CLAUDE_ENV_ARGS` to forward it. Every credential goes by bare name, so no value reaches argv,
+and the empty `ANTHROPIC_API_KEY` is passed as a literal `-e ANTHROPIC_API_KEY=`. A name whose
+variable is empty exits 78, as `ANTHROPIC_API_KEY` does since eb4cfaa. With no `--claude-key` at all
+it still takes the first subscription slot, as eb4cfaa left it.
 
-**ffweb.py.** `page_claude` (ffweb.py:~2750) renders one row per credential with its type. A
-subscription row is unchanged. An Anthropic API key row reads "metered, no window". An OpenRouter row
-shows its model and its budget ("$X of $Y left today, resets in Z", or "no limit set"). Every row
-carries its health state and which operators, default or classifier use it. The header counts
-credentials by type and names what the default and classifier resolve to.
+**ffweb.py.**
+  - `page_claude` (ffweb.py:2719) renders one row per credential with its kind. A subscription row is
+    unchanged, an API key row reads "metered, no window", and an OpenRouter row shows its model and
+    its budget ("$X of $Y left today, resets in Z", or "no limit set").
+  - Every row carries its health from `credential_health` and names the operators, default or
+    classifier that use it.
+  - The header names what the default and classifier resolve to.
+  - A section lists flagged conversations with the command that releases them.
+  - `claude_claims` (:3815) matches across every kind rather than excluding `api_key`, because an
+    operator may now claim any.
 
 **Egress.** `openrouter.ai` joins `ffbox/egress/allowlist.txt`, because any credential in a fenced
 container may now be an OpenRouter one. `api.anthropic.com` and `platform.claude.com` stay.
 
-**The security model.** docs/docker-security-model.md:236 says the allowlist narrows exfiltration
-to two vendors because the model endpoint is a POST sink. It becomes three. The credential in a
-container keeps the blast radius CREDENTIALS.md gives its type. An OpenRouter key's is money, like
-an API key's, bounded by a provider-side daily limit and a one-model allowlist. CREDENTIALS.md's
-"the two Claude credentials" becomes three.
+**The security model.** docs/docker-security-model.md:236 says the allowlist narrows exfiltration to
+two vendors because the model endpoint is a POST sink; it becomes three. Its credential table (:98)
+still lists only `CLAUDE_CODE_OAUTH_TOKEN` and gains both metered types. An OpenRouter key's blast
+radius is money, like an API key's, bounded by a provider-side daily limit and a one-model allowlist.
+CREDENTIALS.md's "the two Claude credentials" becomes three.
 
 
 10. Conversations that move between credentials
 -----------------------------------------------
 
 **This is intended.** A turn is billed to whoever asked it, and a credential carries its provider
-and model with it. A conversation that a player and an operator both speak in therefore moves
-between credentials from turn to turn. A player's report runs on the default. The developer who
-@-mentions the bot in the same thread runs on what they chose. The next player message goes back
-to the default. Nothing in the harness should resist that, and nothing should warn about it.
+and model with it. A conversation that a player and an operator both speak in therefore moves between
+credentials from turn to turn. A player's report runs on the default. The developer who @-mentions
+the bot in the same thread runs on what they chose. The next player message goes back to the default.
+Nothing in the harness should resist that, and nothing should warn about it.
 
 **What has to be true for it to work: the session survives the switch.** Turns in a conversation
-share one Claude Code session. That session's transcript is replayed to whichever endpoint the
-next turn's credential points at, thinking blocks included, and those blocks carry a signature
-from the model that wrote them. Three crossings matter:
+share one Claude Code session. That session's transcript is replayed to whichever endpoint the next
+turn's credential points at, thinking blocks included, and those blocks carry a signature from the
+model that wrote them. Three crossings matter:
 
   - Anthropic to OpenRouter (a subscription or API key turn, then an OpenRouter turn).
   - OpenRouter to Anthropic.
@@ -502,15 +568,15 @@ from the model that wrote them. Three crossings matter:
 Anthropic subscription to Anthropic API key already happens since eb4cfaa, on the same models, and
 is not in question.
 
-Section 13e measures all three crossings. For any crossing that does not resume, the harness's
-answer is the path a lost transcript already takes (`resume_summary` in `build_job`): that turn
-starts a new session carrying the host-rendered summary, and the conversation carries on. The
-switch key is the pair (base URL, model) of the previous run's credential against this one's. Two
-credentials on the same pair never trigger it. If every crossing resumes, no rule is needed and
-this section keeps only its first paragraph.
+Section 13e measures all three crossings. For any crossing that does not resume, the harness uses
+the path a lost transcript already takes (`resume_summary` in `build_job`): that turn starts a new
+session carrying the host-rendered summary, and the conversation carries on. The switch key is the
+pair (base URL, model) of the previous run's credential against this turn's, which `launch` passes
+to `build_job`. Two credentials on the same pair never trigger it. If every crossing resumes, no rule
+is needed and this section keeps only its first paragraph.
 
-`run.claude_key` already records each turn's credential, so a conversation's history on the web
-page shows the moves without new columns.
+`run.claude_key` already records each turn's credential, so a conversation's history on the web page
+shows the moves without new columns.
 
 
 11. What is not moved, and why
@@ -536,12 +602,12 @@ The CI lane never runs a model.
   2. **Flash doing player work.** With the default on Flash, the triage verdict, the answers, and the
      fix legs a triage verdict spawns all run on the smallest GLM model, and fix legs push branches.
   3. **Injection resistance on the lane that reads hostile text.** The containment does not change:
-     network fence, no git credential, no `gh`. What can change is how often an injected message
-     gets the agent to do something inside that fence.
+     network fence, no git credential, no `gh`. What can change is how often an injected message gets
+     the agent to do something inside that fence.
   4. **Waiting is silent for the first ten minutes, and possibly for hours.** A message the model can
      never classify waits for a person, and on a quiet week nobody may look.
-  5. **The gate on Flash.** A gate that declines more is the one failure nobody sees. The 1024
-     thinking budget was tuned against Haiku's answers.
+  5. **The gate on Flash.** A gate that declines more is the one failure nobody sees. The 1024 thinking
+     budget was tuned against Haiku's answers.
   6. **Tool calling through Claude Code.** OpenRouter's own guide says the integration is only
      guaranteed against Anthropic's first-party models. Edits, the triage verdict under
      `--json-schema`, and subagent calls depend on it.
@@ -553,36 +619,36 @@ The CI lane never runs a model.
   9. **Provider variance.** 25 providers for Flash, three of them fp4.
 
 
-13. Measure before building
----------------------------
+13. Measure before building phases C onward
+-------------------------------------------
 
 By hand on the build server. No code ships and no config changes. Each result goes into the next
 revision of this file.
 
   a. **The classifications.** A scratch script imports ffwatch, re-renders the gate and selector
      prompts for the last few hundred messages that reached them (message.gate, routed_by = 'model',
-     routed_reason), and runs each through the real flag set with section 5's OpenRouter
-     environment on Flash. Record: agreement with the stored answer, p50 and p90 latency, how often
-     the prose attempt fails to parse, how often both attempts fail (each of those would now wait),
-     and reasoning tokens. The bar for the gate: it never declines a message the current gate
-     engaged. Read every selector disagreement by hand.
-  b. **Player turns.** Take finished player runs' job.json files, a bug report with a screenshot
-     among them, and run each through a scratch copy of ffbox with an OpenRouter credential wired by
-     hand, the egress proxy in log mode, and `--debug-file` on. Record: whether the screenshot was
-     read, whether the triage verdict validated and agrees with the original, `cache_read_input_tokens`,
-     `total_cost_usd` next to OpenRouter's activity page for the same requests, the model every
-     request actually named, every SNI, and whether the reply would have been fit to post.
-  c. **Failures, on purpose.** A key with a $0.01 limit (402), a model the key's allowlist refuses,
-     a provider allowlist no endpoint satisfies (503), and a revoked key (401). For each: the
-     classifier's exit code and envelope, and what `stream.jsonl` and `claude.log` say in a
-     container.
-  d. **The OpenRouter probe.** `GET /api/v1/key` against a real key, its fields as documented and at
-     no cost, and a `max_tokens: 1` request to Flash, which reasons by default and may need more
-     room than one token to answer at all.
+     routed_reason), and runs each through the real flag set with section 5's OpenRouter environment
+     on Flash. Record: agreement with the stored answer, p50 and p90 latency, how often the prose
+     attempt fails to parse, how often both attempts fail (each of those would now wait), and
+     reasoning tokens. The bar for the gate: it never declines a message the current gate engaged.
+     Read every selector disagreement by hand.
+  b. **Player turns.** Take finished player runs' job.json files, a bug report with a screenshot among
+     them, and run each through a scratch copy of ffbox with an OpenRouter credential wired by hand,
+     the egress proxy in log mode, and `--debug-file` on. Record: whether the screenshot was read,
+     whether the triage verdict validated and agrees with the original, `cache_read_input_tokens`,
+     `total_cost_usd` next to OpenRouter's activity page for the same requests, the model every request
+     actually named, every SNI, and whether the reply would have been fit to post.
+  c. **Failures, on purpose.** A key with a $0.01 limit (402), a model the key's allowlist refuses, a
+     provider allowlist no endpoint satisfies (503), and a revoked key (401). For each: the
+     classifier's exit code and envelope, and the container's `result.json`, `claude.log` and
+     `stream.jsonl`, so section 7's kinds can be read off real shapes.
+  d. **The OpenRouter probe.** `GET /api/v1/key` against a real key, its fields as documented and at no
+     cost, and the smallest `max_tokens` Flash will answer a request with, which sets
+     `OPENROUTER_PROBE_MAX_TOKENS`.
   e. **Session crossings**, section 10's three, each in both directions where there are two, on a
      throwaway session with at least one thinking block and one tool call in it before the switch.
-  f. **A bug-report thread and an ask thread from the last week**, replayed on Flash, each reply
-     read against max-voice and the venue rules.
+  f. **A bug-report thread and an ask thread from the last week**, replayed on Flash, each reply read
+     against max-voice and the venue rules.
   g. **An operator's own turn on an OpenRouter credential in ffdev**: one small real change through
      compile and the fast suite, to see whether a dev turn is workable before anybody claims one.
 
@@ -590,37 +656,43 @@ revision of this file.
 14. Rollout
 -----------
 
-**Phase 1, wait instead of failing open.** Section 7 on today's credentials: HOLD, the health hold
-for all types, the conversation backoff, flagging, `ffwatch release`. No OpenRouter. It changes
-behaviour on every box, so it ships and runs on its own first.
+**Phase 1, wait instead of failing open.** Section 7 on today's credentials:
+  - HOLD from the classifications
+  - the five failure kinds
+  - the health hold for both existing types
+  - the conversation backoff and flagging
+  - `ffwatch release`
+  - `schedule`'s skip and `review_held`'s check
 
-**Phase 2, credential types.** The scan, `credential_named`, the OpenRouter record and page row, the
-ffbox environment, the egress entry, `claude.default` and `claude.classifier`. Shipped with
-neither key set and no OpenRouter credential declared, it changes nothing. Declaring a credential
-changes only the page.
+No OpenRouter. It changes behaviour on every box, so it ships and runs on its own first.
 
-**Phase 3, the classifications.** An OpenRouter credential for the classifier, and
-`claude.classifier` naming it. Players' containers stay where they are. Unsetting
-`claude.classifier` undoes it. Run a week and compare the gate's decline rate with the week before.
+**Phase 2, credential types.** The scan, `credential_named`, `classifier_credential`, the OpenRouter
+record, probe and page row, the ffbox environment, the egress entry, and `claude.default` and
+`claude.classifier`. Shipped with neither key set and no OpenRouter credential declared, it changes
+nothing. Declaring a credential changes only the page, unless its name collides with an id already in
+use (section 6).
 
-**Phase 4, player turns.** `claude.default` naming an OpenRouter credential, with
-`approve_before_send` on for the trial. It is box-wide (ffwatch.py:1297), so operators' replies
-wait for approval too. Accept that for a week, or make it per route first, which is a small change
-at `_send_row`.
+**Phase 3, the classifications.** An OpenRouter credential for the classifier, and `claude.classifier`
+naming it. Players' containers stay where they are. Unsetting `claude.classifier` undoes it. Run a
+week and compare the gate's decline rate with the week before.
 
-**Operators opt in whenever they like after phase 2**, by pointing their `claude` id at an
-OpenRouter credential. Section 13g first.
+**Phase 4, player turns.** `claude.default` naming an OpenRouter credential, with `approve_before_send`
+on for the trial. It is box-wide (ffwatch.py:1297), so operators' replies wait for approval too.
+Accept that for a week, or make it per route first, which is a small change at `_send_row`.
+
+**Operators opt in whenever they like after phase 2**, by pointing their `claude` id at an OpenRouter
+credential. Section 13g first.
 
 **Rollback** is config. Unset `claude.default` and `claude.classifier`, and point operator ids back.
-Spares stop matching and age out, and conversations cross back over section 10's path. Phase 1
-stays.
+Spares are destroyed by the updater's restart, and conversations cross back over section 10's path.
+Phase 1 stays.
 
 
 15. Decisions still open
 ------------------------
 
-  1. **The outage notice** (section 7): how long to stay silent, and what Max says with no end time
-     to give.
+  1. **The outage notice** (section 7): how long to stay silent, and what Max says with no end time to
+     give.
   2. **`approve_before_send` during phase 4**: box-wide, or per route first.
 
 Taken here, and changeable if wrong:
@@ -629,7 +701,8 @@ Taken here, and changeable if wrong:
   - The default and the classifier must be metered types (section 3).
   - The slot number stays a subscription-only alias (section 2).
   - Model and base URL live in secrets.env beside the key (section 6).
-  - The health hold covers subscriptions too (section 7).
+  - The health hold covers subscriptions too, and never counts a 429 (section 7).
+  - Health and flag state live in the database (section 7).
 
 
 Sources
