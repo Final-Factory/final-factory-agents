@@ -332,28 +332,34 @@ kill switch, retried with backoff, invisible in a dry run -- and it is keyed per
 replayed finish pass queues nothing and one thread failing does not take the others with it.
 A thread somebody already resolved by hand is a success, not a conflict.
 
-**The credential is the open end of this, and it is not a permission.** Measured against
-`GH_PR_TOKEN` on 2026-09-10, on pull request 512: the token reads the thread over GraphQL, posts
-comments, places reactions, and the mutation answers `FORBIDDEN: Resource not accessible by
-personal access token`. The first guess was that it needed Pull requests: Read and write. It
-already has that -- `POST /pulls/comments/{id}/reactions` accepts exactly `pull_requests=write`
-and answers 200 for this token -- so there is no checkbox to tick. A fine-grained PAT cannot run
-`resolveReviewThread`, and no permission on it changes that.
+**The credential is the open end of this, and it is neither a permission nor GraphQL.** It is
+this one pair of mutations. Measured against `GH_PR_TOKEN` on 2026-09-10, against pull request
+512's real thread:
 
-**The workaround is worse than the problem it solves.** A classic token with `repo` runs the
-mutation, and `repo` also carries `contents=write`. That is the permission the MERGE endpoint
-accepts -- `PUT /pulls/{n}/merge` answers `X-Accepted-Github-Permissions: contents=write`, not
-`pull_requests=write`, which is worth writing down because the names suggest otherwise. This
-token does not have it: `POST /repos/{repo}/merges` answers 403, so the credential cannot merge a
-pull request and cannot push code, exactly as `CREDENTIALS.md` says it was set up not to. Trading
-that away to close a comment thread would be a bad exchange, and it would put the merge
-capability on the box for the first time -- next to a client that deliberately has no method for
-it. A GitHub App installation token is the way to have one without the other.
+    REST   POST /pulls/comments/{id}/reactions   accepts pull_requests=write      200
+    query  reviewThreads                                                          200
+    mut    addReaction                           needs pull_requests=write        200
+    mut    resolveReviewThread                                              FORBIDDEN
+    mut    unresolveReviewThread                                            FORBIDDEN
+
+The token is a fine-grained PAT and it does hold `pull_requests=write`: the reactions endpoint
+accepts exactly that permission and answers 200, and `addReaction` -- a mutation under the same
+permission -- goes through. So there is no checkbox to tick and no general GraphQL problem.
+GitHub's own message names the credential class rather than a scope: "Resource not accessible by
+personal access token". Resolve and unresolve are the pair it will not expose to one, and a
+GitHub App installation token is the documented way to run them. Whether a CLASSIC PAT would is
+untested here; the message suggests not, and it is a two-minute experiment for anybody holding
+one.
+
+**The permission question that started this is worth recording separately**, because the names
+mislead. Merging a pull request accepts `contents=write`, NOT `pull_requests=write` --
+`PUT /pulls/{n}/merge` answers `X-Accepted-Github-Permissions: contents=write`. This token does
+not have it: a `POST` to the repository's branch-merge endpoint answers 403. So the credential
+cannot merge a pull request and cannot push code, exactly as `CREDENTIALS.md` says it was set up
+not to, and widening it for pull requests would not have changed that either way.
 
 So the code is live and the capability is not. The failure is the safe one: the fix still lands,
-the run still says what it did, and the thread stays open for a person to close. The refusal is
-turned into a sentence saying it is the token TYPE and not its permissions, so nobody spends an
-afternoon in the settings page looking for the box that would have fixed it.
+the run still says what it did, and the thread stays open for a person to close.
 
 **What is not said is a refusal.** A comment the gate declined gets nothing at all -- no reply, no
 mark. Posting "I decided this was not a request" under every "thanks" would be worse than useless.
