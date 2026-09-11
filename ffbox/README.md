@@ -1396,8 +1396,13 @@ the skills merely advise:
   exception is an escalation into a channel whose `watch` entry sets `"ping": true`, and that
   asks to ping. No alias is special in the source; if nothing is marked, nothing can ping.
 - **The 2000-character limit never fails a post.** `check_length` exits rather than truncating,
-  so anything longer goes out as a head under `HEAD_CAP` (1500) with the whole message attached
-  as a file. Nothing is lost and nothing is halved.
+  so nothing over it is ever handed to the CLI. A composed reply is fitted before it is queued:
+  `compose_head` assembles the post around the WHOLE summary — correction, footer, provenance
+  rows, and the `<@id>` mention the sender prefixes — measures it the way the CLI will (mentions
+  expanded), and cuts only if that measurement is over, and only by the overflow. What was cut
+  goes up as `summary.md`. A reply that fits is posted whole and carries no file. Text nobody
+  composed (a private half, an `ask`) still meets the sender's blind backstop, which cuts at
+  `HEAD_CAP` (1500) and attaches the whole message. Nothing is lost and nothing is halved.
 - **`nonce` + `enforce_nonce`.** Posting is not idempotent, so a crash between "Discord
   accepted it" and "the row says sent" would double-post on restart. The nonce is derived from
   the outbound row's uuid — deterministic, so the retry presents the same one and Discord hands

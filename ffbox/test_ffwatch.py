@@ -4247,10 +4247,13 @@ def test_a_session_limit_is_not_a_failure_called_success():
 def test_a_failed_public_run_attaches_nothing_either():
     """Withholding the text and attaching the whole of it is not withholding it.
 
-    record_reply uploads summary.md whenever the summary runs past HEAD_CAP, and that gate knew
+    record_reply uploads summary.md whenever the summary does not fit, and that gate knew
     nothing about the venue. A timed-out fix run in a public bug thread whose last prose ran
     long would have been answered with "something broke on my end" and a file holding the file
     paths and test names the public shape exists to keep out.
+
+    The gate lives in compose_head now — it reports a withheld body as NOT truncated — so the
+    rule is checked through the same door the length rule goes through.
     """
     print("reply: the overflow follows the same rule as the head")
     case = Case("overflowgate")
@@ -4260,7 +4263,7 @@ def test_a_failed_public_run_attaches_nothing_either():
         "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
         " VALUES(?,1,'fix','timed_out',?,'public')", (conv_id, ffwatch.now_iso()))
     turn = case.rows("SELECT * FROM turn ORDER BY id DESC")[0]
-    leak = "Assets/Belt.cs:214 FF.BeltTests.Merges " + "x" * ffwatch.HEAD_CAP
+    leak = "Assets/Belt.cs:214 FF.BeltTests.Merges " + "x" * ffwatch.DISCORD_LIMIT
     job = {"run_id": "d1t1-long", "session": {"id": "S"}, "classification": {},
            "messages": [{"discord_id": "22001"}]}
     run_dir = case.watcher.conv_dir(conv_id)
@@ -4270,8 +4273,8 @@ def test_a_failed_public_run_attaches_nothing_either():
     case.watcher.record_reply(None, conv, turn, run_dir, "timed_out", result, "agent", job)
     payload = json.loads(case.rows(
         "SELECT * FROM outbound WHERE action='post'")[0]["payload_json"])
-    check("the fixture really is the trap: the summary is over HEAD_CAP",
-          len(leak) > ffwatch.HEAD_CAP, len(leak))
+    check("the fixture really is the trap: the summary cannot fit in a message",
+          len(leak) > ffwatch.DISCORD_LIMIT, len(leak))
     check("the head withholds it", payload["text"] == ffwatch.PUBLIC_TIMED_OUT, payload["text"])
     check("and no file is sent carrying it instead", not payload.get("files"), payload)
     check("nothing was even written to disk for it",
@@ -4288,6 +4291,120 @@ def test_a_failed_public_run_attaches_nothing_either():
           payload.get("files") and payload["files"][0].endswith("summary.md"), payload)
     check("and its head says where the rest went", "attached" in payload["text"],
           payload["text"][-200:])
+
+
+def test_a_reply_is_cut_only_where_it_does_not_fit():
+    """The head is fitted to the post, not sliced at a fixed width.
+
+    Every summary over HEAD_CAP used to be cut at 1500 and the whole of it attached as
+    summary.md, on the theory that the framing needed the other 500 characters. A Discord reply
+    frames with one @-mention and one branch line, so the rule put a file nobody opens under a
+    post that stopped mid-sentence on answers that would have gone out whole — for months, on
+    every reply in a thread where the box was explaining a crash dump.
+
+    compose_head measures the assembled post now: the correction, the footer, the harness's own
+    rows, the summary, and the mention record_reply prefixes afterwards, expanded the way the
+    CLI will expand it. It cuts only if that measurement is over, and only by the overflow.
+    """
+    print("reply: the post is measured, not cut to a fixed width")
+    case = Case("fitreply")
+    conv_id = seed_conversation(case)
+    conv = case.rows("SELECT * FROM conversation WHERE id=?", (conv_id,))[0]
+    run_dir = case.watcher.conv_dir(conv_id)
+    os.makedirs(run_dir, exist_ok=True)
+    spath = os.path.join(run_dir, "summary.md")
+    # An asker, so the reply really does carry the <@id> prefix whose room the composer has to
+    # reserve. Eighteen digits and the brackets and the space are 22 characters of the budget.
+    asker = "193210319093497857"
+    job = {"run_id": "d1t1-fit", "session": {"id": "S"}, "classification": {},
+           "messages": [{"discord_id": "22001", "author_id": asker}]}
+    prefix = len(f"<@{asker}> ")
+
+    seq = [0]
+    def reply(summary, venue="public"):
+        if os.path.exists(spath):
+            os.remove(spath)
+        seq[0] += 1
+        case.watcher.db.execute(
+            "INSERT INTO turn(conversation_id, seq, lane, status, queued_at, venue)"
+            " VALUES(?,?,'answer','done',?,?)",
+            (conv_id, seq[0], ffwatch.now_iso(), venue))
+        turn = case.rows("SELECT * FROM turn ORDER BY id DESC")[0]
+        case.watcher.record_reply(None, conv, turn, run_dir, "done",
+                                  {"result": json.dumps({"summary": summary})}, None, job)
+        return json.loads(case.rows("SELECT * FROM outbound WHERE action='post'"
+                                    " ORDER BY id DESC")[0]["payload_json"])
+
+    # -- the one that used to be cut for nothing ---------------------------------------------
+    fits = ("The ECB ran out of room in ScalableLaserJob. " * 38).strip()
+    check("the fixture really is the trap: it is over the old blind cap",
+          ffwatch.HEAD_CAP < len(fits) <= ffwatch.DISCORD_LIMIT - prefix, len(fits))
+    payload = reply(fits)
+    check("a summary that fits is posted whole", payload["text"].endswith(fits),
+          payload["text"][-120:])
+    check("it is not told that anything was attached",
+          "attached" not in payload["text"], payload["text"][-160:])
+    check("and nothing is attached", not payload.get("files"), payload)
+    check("nothing was written to disk for it either", not os.path.exists(spath), run_dir)
+    check("the mention is still on the front of it",
+          payload["text"].startswith(f"<@{asker}> "), payload["text"][:40])
+
+    # -- the one that genuinely does not fit --------------------------------------------------
+    over = ("Root cause: the merger re-reads its buffer every tick. " * 60).strip()
+    payload = reply(over)
+    check("a summary that cannot fit is still attached",
+          payload.get("files") and payload["files"][0].endswith("summary.md"), payload)
+    check("its head says where the rest went", "attached" in payload["text"],
+          payload["text"][-160:])
+    check("the whole summary is in the file, not just the part that was cut",
+          open(payload["files"][0], encoding="utf-8").read().endswith(over + "\n"),
+          payload["files"][0])
+    check("the post is legal", case.watcher.expanded_len(payload["text"])
+          <= ffwatch.DISCORD_LIMIT, len(payload["text"]))
+    check("and ONLY the overflow was cut: the head is nowhere near the old 1500",
+          len(payload["text"]) > ffwatch.DISCORD_LIMIT - 100, len(payload["text"]))
+
+    # -- the mention's own room ---------------------------------------------------------------
+    # Legal on its own and illegal once the prefix lands on it. Cutting to a fixed width hid
+    # this; measuring the body alone would bring it back.
+    tight = "x" * (ffwatch.DISCORD_LIMIT - 4)
+    payload = reply(tight)
+    check("a body that only overflows once the mention is added is cut too",
+          payload.get("files"), payload)
+    check("and the assembled post lands under the limit",
+          case.watcher.expanded_len(payload["text"]) <= ffwatch.DISCORD_LIMIT,
+          len(payload["text"]))
+
+    # -- what the CLI will make of it ---------------------------------------------------------
+    # @ben becomes <@226...> before check_length runs, so the fitter is handed expanded_len and
+    # not len. A head measured raw would pass here and die in the CLI.
+    import ffdiscord as real_cli
+    mentions = {"ben": "226000000000000001"}
+    case.watcher.cfg["_discord"] = dict(case.watcher.cfg.get("_discord") or {},
+                                        mentions=mentions)
+    spammy = (("ask @ben about it. " * 100) + ("tail " * 60)).strip()
+    payload = reply(spammy)
+    text = payload["text"]
+    check("the fixture really is the trap: raw length passes, expanded does not",
+          len(text) <= ffwatch.DISCORD_LIMIT
+          and len(real_cli.expand_mentions(spammy, mentions)) > ffwatch.DISCORD_LIMIT,
+          (len(text), len(real_cli.expand_mentions(spammy, mentions))))
+    try:
+        real_cli.check_length(real_cli.expand_mentions(text, mentions))
+        survives = True
+    except SystemExit:
+        survives = False
+    check("the head the composer fitted survives the CLI's expand-then-check", survives,
+          (len(text), case.watcher.expanded_len(text)))
+
+    # -- the private shape pays for its own provenance ----------------------------------------
+    # The branch line, the verification row and the state line are fixed cost: the summary is
+    # cut to what is left after them, never the other way round.
+    payload = reply(over, venue="private")
+    check("the private shape fits too", case.watcher.expanded_len(payload["text"])
+          <= ffwatch.DISCORD_LIMIT, len(payload["text"]))
+    check("and it still attaches what it could not carry",
+          payload.get("files") and payload["files"][0].endswith("summary.md"), payload)
 
 
 def test_a_capped_lane_tells_a_channel_once_not_every_asker():
@@ -7227,15 +7344,15 @@ def test_the_shell_lane_was_merged_into_dev():
               "ends on develop, master or main is refused" in pre, pre[:200])
         check(f"the {name} one still forbids what the container cannot do anyway",
               "Do NOT push" in pre and "do NOT open a pull request" in pre, pre[:200])
-    # Discord hard-limits a message to 2000 characters. compose_head already cuts at HEAD_CAP
-    # and attaches the rest, but a post that stops mid-sentence next to an unopened file is a
-    # worse answer than a shorter one, so the lane writing it is told the budget.
+    # Discord hard-limits a message to 2000 characters. compose_head fits the post to that and
+    # attaches whatever will not go, but a post that stops mid-sentence next to an unopened file
+    # is a worse answer than a shorter one, so the lane writing it is told the budget.
     check("the Discord preamble states the 2000-character limit and a budget under it",
           "2000 characters" in remote_pre and "1500" in remote_pre, remote_pre[-320:])
     check("which the local one does not carry",
           "2000 characters" not in local_pre, local_pre[-160:])
-    check("and the budget is under the host's own cap, so the host never has to truncate",
-          ffwatch.HEAD_CAP == 1500, ffwatch.HEAD_CAP)
+    check("and the budget it is given leaves the composer room it will not have to take back",
+          ffwatch.HEAD_CAP == 1500 < ffwatch.DISCORD_LIMIT, ffwatch.HEAD_CAP)
 
     # -- the migration -------------------------------------------------------------------------
     old = os.path.join(case.root, "pre-v8.db")
@@ -17791,6 +17908,7 @@ def main():
         test_a_public_venue_never_publishes_a_failed_runs_output,
         test_a_session_limit_is_not_a_failure_called_success,
         test_a_failed_public_run_attaches_nothing_either,
+        test_a_reply_is_cut_only_where_it_does_not_fit,
         test_a_capped_lane_tells_a_channel_once_not_every_asker,
         # phase 3
         test_fix_lane_launches_with_write_capabilities,
