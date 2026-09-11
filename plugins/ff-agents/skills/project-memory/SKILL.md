@@ -106,6 +106,8 @@ worktrees and apply to ALL branches.
 - [Black hole visual test recipe](memories/blackhole-visual-test-recipe.md) — "BlackHole" save + teleport coords, 200u death radius, swirl = rotating skybox (the shader never animates), fixed-res Game view screenshot workaround
 - [Tutorial objectives 76–78 from the harness](memories/tutorial-map-fleet-complete-automation.md) — ui.open|map then ui.close|map (MapUsed ticks on CLOSE), ui.open|fleet, and the final Complete button is a LOCAL click on every peer (pointer coords inside)
 - [MoversDetail group diffs and the float mirror flicker](memories/movers-detail-group-diff-and-float-mirror-flicker.md) — diff v/h/d/f/m/p/r + raw vel/hd by key first; the cross-platform movers flicker is float ULP noise CombatMoverRailMirrorSystem quantizes from LinearMotion.Velocity into the compared rail; BEAST-host + M5-editor-client leg recipe
+- [Derived-on-load grid state must ride the save](memories/derived-on-load-grid-state-must-ride-the-save.md) — the load-time regrid of FFGrid.EntityMap is not idempotent (circle re-claim, irregular bit-buffer origin/tail-shift mismatch, first-wins); persist the ownership (EntityGridPersistenceSystem) and overlay after the regrid pass; probe host reports from their LAST epoch-1 block
+- [Cross-platform leg staging and the movers position residual](memories/cross-platform-leg-staging-and-the-movers-position-residual.md) — tar.gz+scp+make_manifest on BEAST, the nohup launch form that starts, and the one-ULP Position flips left after mirrored Velocity/Heading stopped folding (Ben's scope call)
 
 ## Modding
 
