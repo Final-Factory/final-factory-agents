@@ -121,6 +121,9 @@ reconnect, recovery, or load. Those transitions can destroy the client bootstrap
 its report from being published. Keep lifecycle results separate from the already preserved
 baseline; runtime absence of desyncs cannot replace a lost paired report. See
 [the mining/reconnect evidence lesson](../project-memory/memories/live-baseline-before-lifecycle.md).
+For final shutdown, release both peers' owned gates and wait for BOTH automatic bootstraps to
+reach `report-written` before stopping either process. Preserved manual checkpoints alone do
+not satisfy this shutdown barrier.
 A timing-valid visual episode also needs the intended subject in frame: inspect that framing
 before using the episode to assess motion.
 
