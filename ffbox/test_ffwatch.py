@@ -5516,7 +5516,14 @@ def test_the_github_client_reads_comments_and_says_things_back():
     GH_STATE["posted"], GH_STATE["reactions"] = [], []
     check("a comment can be posted onto the conversation",
           gh.create_issue_comment(7, "done") is not None
-          and GH_STATE["posted"] == [(7, "done")], GH_STATE["posted"])
+          and GH_STATE["posted"] and GH_STATE["posted"][0][0] == 7
+          and GH_STATE["posted"][0][1].startswith("done"), GH_STATE["posted"])
+    # SIGNED HERE AND NOWHERE ELSE. Every comment this box writes goes through this method --
+    # the run's reply, a #codereview refusal, a feedback refusal -- and the marker is what the
+    # pollers recognise it by. Pinned at the choke point, because a composer that forgets it is
+    # a comment the box will read back as an instruction (pull request 516, 2026-09-11).
+    check("and it is signed, so this box can tell its own voice from an operator's",
+          ffwatch.HARNESS_COMMENT_MARKER in GH_STATE["posted"][0][1], GH_STATE["posted"])
     check("and a reaction placed on the comment that asked",
           gh.react_to_comment(12) and GH_STATE["reactions"] == [(12, "eyes")],
           GH_STATE["reactions"])
@@ -13389,6 +13396,130 @@ def test_a_comment_the_run_addressed_is_resolved_once_the_fix_is_on_the_branch()
           "resolve_addressed" in reply and "publish_facts" in reply, reply[-800:])
 
 
+def test_the_box_does_not_hear_its_own_voice():
+    """Pull request 516, 2026-09-11, rebuilt.
+
+    A #codereview run failed. The harness posted "the run failed / no branch: the run changed no
+    files" on the pull request, as it should. The poller read that comment back, and every check
+    said yes: the author id was Lothsahn's, because GH_PR_TOKEN *is* Lothsahn's account and the
+    box has no identity of its own on GitHub. So it put 👀 on its own status line and started a
+    second run off it -- which would have posted another comment, and so on, one container a lap,
+    until somebody noticed.
+
+    Discord cannot reach this state: the bot has its own id there and is_bot settles it. This is
+    the stand-in, and it is two checks because neither covers the whole of it.
+    """
+    print("feedback: the box is deaf to its own voice")
+    case = Case("prfeedbackselftrigger")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    feedback_cfg(case)
+    a_pull_request(41, "loth/pr-branch")
+
+    # THE HARNESS SAYS SOMETHING, exactly as record_reply does: through the outbound queue, sent
+    # by the sender, landing on the pull request as a comment from the operator's own account.
+    conv_id = case.watcher.upsert_conversation(
+        "github:pr:41", kind="github_pr", channel_id=None, title="a change",
+        root_message_id=None, opener="10092359", is_thread=False, agent_class="ffdev")
+    case.watcher.record_outbound(None, conv_id, "post",
+                                 {"pr": 41, "text": "the run failed\nno branch: the run "
+                                                    "changed no files"})
+    case.watcher.send_pending()
+    posted = GH_STATE["posted"]
+    check("the harness's comment is on the pull request", len(posted) == 1, posted)
+    check("and it is signed, so anything reading it can tell",
+          ffwatch.HARNESS_COMMENT_MARKER in posted[0][1], posted[0][1])
+
+    # NOW IT COMES BACK ROUND. GitHub serves it like any other comment, by an author who is in
+    # the operator table, because that is whose token wrote it.
+    a_comment(8001, 41, posted[0][1], author=10092359, login="Lothsahn")
+    check("the poll starts nothing", poll_feedback(case) == [], None)
+    check("no turn is built", case.watcher.claim_turns() == [], None)
+    check("it is not even recorded as a message",
+          case.rows("SELECT * FROM message WHERE discord_id='8001'") == [],
+          case.rows("SELECT discord_id FROM message"))
+    check("and it wears no mark, because nothing was working on it",
+          GH_STATE["reactions"] == [], GH_STATE["reactions"])
+
+    # THE SECOND CHECK, ON ITS OWN. A comment written before the marker existed carries none --
+    # which is exactly the one already sitting on 516 when this ships -- and the outbound row is
+    # what recognises it.
+    case.db_exec("UPDATE outbound SET discord_id='8002' WHERE action='post'")
+    a_comment(8002, 41, "the run failed\nno branch: the run changed no files",
+              author=10092359, login="Lothsahn", stamp="2026-09-06T13:00:00Z")
+    check("an unsigned comment this box posted is recognised by the outbound record",
+          poll_feedback(case) == [] and case.watcher.claim_turns() == [],
+          case.rows("SELECT discord_id FROM message"))
+
+    # AND A PERSON'S COMMENT STILL GETS THROUGH. The whole risk of a rule like this is that it
+    # silences the operator it is protecting them from.
+    a_comment(8003, 41, "the empty case still needs a test", author=10092359,
+              login="Lothsahn", stamp="2026-09-06T14:00:00Z")
+    check("a real comment from the same account is still acted on",
+          poll_feedback(case) != [], case.rows("SELECT discord_id, gate FROM message"))
+
+
+def test_a_refusal_cannot_trigger_the_review_it_refuses():
+    """`refuse_review` posts a comment containing the word `#codereview`, which is a trigger.
+
+    Latent since the trigger lane shipped and reachable without the feedback lane at all: refuse
+    a review on a closed pull request, and the refusal is a comment carrying the trigger word,
+    written by an operator's account, which the next poll reads as a fresh request -- refuses
+    again, and posts again. The marker is what breaks it.
+    """
+    print("#codereview: a refusal is not a trigger")
+    case = Case("codereviewrefusalloop")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    review_cfg(case)
+    a_pull_request(41, "loth/pr-branch", state="closed")
+    a_comment(8101, 41, "!codereview")
+
+    check("the trigger on a closed pull request starts nothing",
+          case.watcher.poll_github() == [], None)
+    check("and is refused out loud", len(GH_STATE["posted"]) == 1, GH_STATE["posted"])
+    refusal = GH_STATE["posted"][0][1]
+    check("the refusal names the trigger word, which is the whole hazard",
+          "#codereview" in refusal, refusal)
+    check("so it is signed", ffwatch.HARNESS_COMMENT_MARKER in refusal, refusal)
+
+    a_comment(8102, 41, refusal, author=10092359, login="Lothsahn",
+              stamp="2026-09-06T13:00:00Z")
+    check("and reading it back refuses nothing and posts nothing",
+          case.watcher.poll_github() == [] and len(GH_STATE["posted"]) == 1,
+          GH_STATE["posted"])
+
+
+def test_a_pull_request_cannot_spend_the_box_in_a_loop():
+    """The backstop under the fix: whatever starts a loop, one number ends it."""
+    print("feedback: the turns-per-hour cap")
+    case = Case("prfeedbackcap2")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/pr-branch")
+    feedback_cfg(case)
+    case.watcher.cfg["github"]["feedback_max_turns_per_hour"] = 2
+    a_pull_request(41, "loth/pr-branch")
+    a_comment(8201, 41, "the empty case needs a test")
+    poll_feedback(case)
+    conv = case.rows("SELECT * FROM conversation WHERE kind='github_pr'")[0]
+    check("the first batch goes", len(case.watcher.claim_turns()) == 1, None)
+
+    # Two turns inside the hour is the cap.
+    case.db_exec("UPDATE conversation SET state='idle' WHERE id=?", (conv["id"],))
+    case.db_exec("INSERT INTO turn(conversation_id,seq,status,queued_at) VALUES(?,?,?,?)",
+                 (conv["id"], 99, "done", ffwatch.now_iso()))
+    a_comment(8202, 41, "and another thing", stamp="2026-09-06T13:00:00Z")
+    check("the next batch is held rather than run", poll_feedback(case) == [], None)
+    row = case.rows("SELECT * FROM message WHERE discord_id='8202'")[0]
+    check("held and not dropped, so it goes when the hour clears",
+          row["gate"] == "feedback_waiting", dict(row))
+
+    # THE HOUR CLEARS. Nothing is lost: the same batch goes.
+    case.db_exec("UPDATE turn SET queued_at='2020-01-01T00:00:00Z'")
+    check("and once the hour rolls off it runs",
+          case.watcher.release_feedback() == [conv["id"]], None)
+
+
 def test_a_burst_of_comments_is_one_turn_and_the_clock_restarts():
     print("feedback: the quiet period")
     case = Case("prfeedbackquiet")
@@ -17418,6 +17549,9 @@ def main():
         test_comments_on_a_pull_request_start_a_run_that_acts_on_them,
         test_only_an_operators_comment_reaches_a_container,
         test_every_comment_an_operator_leaves_is_acted_on,
+        test_the_box_does_not_hear_its_own_voice,
+        test_a_refusal_cannot_trigger_the_review_it_refuses,
+        test_a_pull_request_cannot_spend_the_box_in_a_loop,
         test_a_comment_the_run_addressed_is_resolved_once_the_fix_is_on_the_branch,
         test_a_burst_of_comments_is_one_turn_and_the_clock_restarts,
         test_a_comment_left_during_a_run_is_queued_and_never_refused,

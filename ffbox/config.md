@@ -1215,6 +1215,17 @@ nothing but somebody's words, so the fence moves to the ingest, and the same che
 second time when the prompt is built — a row from an account no longer in the table stops being
 rendered.
 
+**The box never acts on its own comments.** It posts with `GH_PR_TOKEN`, which is an operator's
+own account, so nothing about the author can tell the harness apart from the person — on Discord
+the bot has its own id and this cannot happen. Instead, every comment the harness writes is
+signed with an invisible marker, and every comment id the outbound queue sent is on record; a
+comment matching either is read and dropped. Without it a failed run's status comment starts a
+run, which posts a comment, which starts a run (pull request 516, 2026-09-11).
+
+`feedback_max_turns_per_hour` (6) sits underneath that as a backstop for the next loop of any
+shape: a pull request that has had that many turns in an hour stops releasing batches until the
+hour clears. Held, not dropped — a reviewer working quickly waits and is never ignored.
+
 **Every comment is acted on, including the ones that ask for nothing.** There is deliberately no
 gate on the content. A haiku one shipped and was removed on 2026-09-10: it was right most of the
 time, and the times it was wrong it dropped a developer's instruction silently, with no 👀 on the

@@ -766,6 +766,17 @@ DEFAULTS = {
         # ripen again the moment this turn ends and become the next one on the same conversation
         # -- the work is split across turns rather than truncated out of a prompt.
         "feedback_max_comments": 25,
+        # THE BACKSTOP ON A LOOP, whatever causes the next one. A pull request that has already
+        # produced this many turns in the last hour stops releasing batches until the hour rolls
+        # off. It is not the fix for anything -- own_github_comment is -- and it exists because
+        # the failure it bounds is unbounded spend: on 2026-09-11 a comment the harness wrote
+        # was read back as an instruction, and the only thing between that and a container an
+        # hour, forever, was somebody noticing. A throttle rather than a drop: the comments stay
+        # gated and go when the window clears, so a person who is genuinely commenting fast is
+        # delayed and never ignored.
+        #
+        # Six is well above anybody reviewing by hand and well below a runaway.
+        "feedback_max_turns_per_hour": 6,
         # RESOLVE THE THREAD ONCE THE FIX IS ON THE BRANCH. A run says which comments it actually
         # acted on, in its structured verdict, and each of those whose thread this box can find is
         # marked resolved -- but only after the commits reached the branch, because a resolved
@@ -2471,6 +2482,28 @@ CAPABILITIES = {
 # a forum post has no use for one, and every tool in a container built from a stranger's text is
 # surface that text gets to aim at.
 REVIEW_TOOL = "Workflow"
+
+# WHAT THIS BOX SIGNS ITS OWN COMMENTS WITH, and why one is needed at all.
+#
+# On Discord the harness has an identity of its own: bot_id() answers "that was me", every
+# message row carries is_bot, and pending_messages selects is_bot=0. Nothing the bot says can
+# become a turn. On GitHub there is no such identity -- the harness posts with GH_PR_TOKEN,
+# which is an OPERATOR'S OWN ACCOUNT, and that operator is in the trust table because the whole
+# point of the table is that they may command this box. So "who wrote it" cannot tell the box
+# apart from the person: is_github_operator answers YES to the harness's own comments.
+#
+# That is not a hypothetical. On 2026-09-11 a failed review on pull request 516 posted "the run
+# failed / no branch: the run changed no files", the feedback poller read it back as an
+# operator's instruction, put 👀 on it, and started a second run -- which would have posted
+# another comment, and so on, one container per lap, forever.
+#
+# So the harness signs what it writes and skips what it signed. An HTML comment renders as
+# nothing on GitHub, survives an edit of the visible text, and needs no second API call to
+# check. It is one of TWO answers to the same question; see own_github_comment, which also asks
+# the outbound table. Neither alone covers everything: a refusal is posted straight through the
+# client and never becomes an outbound row, and a comment posted before this marker existed has
+# no marker to find.
+HARNESS_COMMENT_MARKER = "<!-- ffbox: written by the harness, not to be acted on -->"
 
 # What a review puts on the comment that asked for it. GitHub's reaction vocabulary is
 # fixed and does not include Discord's 👀, so this is the nearest thing it has.
@@ -4499,8 +4532,12 @@ class GitHub:
         merge: what this box may do to a pull request is add a branch and say something, and a
         capability that does not exist cannot be reached for by a later edit.
         """
+        # SIGNED HERE, at the one place this box turns text into a pull request comment. Every
+        # composer above it -- the run's reply, a #codereview refusal, a feedback refusal --
+        # gets the marker without having to remember it, which is the only version of this that
+        # stays true. See HARNESS_COMMENT_MARKER for what it is for.
         made = self._request("POST", f"/repos/{self.repo}/issues/{int(number)}/comments",
-                             {"body": body})
+                             {"body": f"{body}\n\n{HARNESS_COMMENT_MARKER}"})
         return (made or {}).get("id")
 
     def graphql(self, query, variables=None):
@@ -4741,6 +4778,9 @@ class Watcher:
         # Conversations the branch backstop in create_turn has already turned away, so it says
         # so once rather than once per tick. Same shape and same reason as _hold_decided.
         self._branchless_reviews = set()
+        # Which conversations have been told they are at the feedback turn cap, so the line is
+        # said once an hour rather than once a poll. Same idiom as _branchless_reviews.
+        self._hot_said = set()
         # Ids with a retirement thread in flight, so a keeper pass that comes round again while a
         # `docker stop` is still running does not start a second one. Dropped in the thread's
         # finally, which is what lets a later pass retry a stop that did not take.
@@ -14920,6 +14960,15 @@ class Watcher:
                 newest = stamp
             if not comment_id or comment_id in seen_set:
                 continue
+            # OUR OWN VOICE, SKIPPED BEFORE ANYTHING ELSE LOOKS AT IT. This box posts as an
+            # operator, so every check below would say yes to a comment it wrote itself: the
+            # trigger word matches (a #codereview refusal literally contains it), the author is
+            # in the table, and the run that answers posts another comment. See
+            # own_github_comment. Recorded as seen, like every other decision in this poll.
+            if self.own_github_comment(comment_id, comment.get("body")):
+                seen_set.add(comment_id)
+                seen.append(comment_id)
+                continue
             # THE HOLD IS DECIDED BEFORE ANYTHING IS SPENT ON THIS COMMENT — before the pull
             # request is fetched, before a branch is adopted, before a conversation exists.
             # A held comment is left in none of those states, which is what lets the next poll
@@ -15204,6 +15253,34 @@ class Watcher:
     # only an operator's comment is ever written down (take_feedback), and only an operator's
     # comment is ever rendered (render_feedback_prompt). Two checks, two places, on purpose.
 
+    def own_github_comment(self, comment_id, body=""):
+        """Did this box write this comment? The one check `is_github_operator` cannot make.
+
+        THE HARNESS AND THE OPERATOR ARE THE SAME ACCOUNT HERE. GH_PR_TOKEN belongs to a person
+        in the trust table, so every comment this box posts comes back through the poller
+        looking exactly like an instruction from somebody it takes instructions from. Discord
+        cannot reach this state -- the bot has its own id there, and is_bot on the message row
+        settles it. This method is what stands in for that, and it asks TWO independent
+        questions because neither covers the whole of it:
+
+          * THE MARKER, which create_issue_comment puts on everything it writes. It catches a
+            refusal, which is posted straight through the client and never becomes an outbound
+            row at all.
+          * THE OUTBOUND TABLE, which records the id GitHub gave every comment the queue sent.
+            It catches a comment written before the marker existed -- including the one already
+            sitting on pull request 516, which is exactly what this box will re-read the moment
+            it comes back up.
+
+        Joined to the conversation kind rather than matched on the id alone: `outbound.discord_id`
+        holds Discord message ids too, and a snowflake is not a comment id, but asking the
+        precise question costs nothing.
+        """
+        if HARNESS_COMMENT_MARKER in (body or ""):
+            return True
+        return bool(self.db.scalar(
+            "SELECT COUNT(*) FROM outbound o JOIN conversation c ON c.id = o.conversation_id"
+            " WHERE o.discord_id=? AND c.kind=?", (str(comment_id), GITHUB_KIND), 0))
+
     def feedback_author_ok(self, raw):
         """May this box act on what this account wrote? GitHub's authenticated user id, looked up.
 
@@ -15412,6 +15489,10 @@ class Watcher:
                 continue
             seen_set.add(comment_id)
             seen.append(comment_id)
+            # This box leaves no comments on a diff today, and asking anyway is what keeps that
+            # from being a fact somebody has to remember. See own_github_comment.
+            if self.own_github_comment(comment_id, comment.get("body")):
+                continue
             if not self.feedback_wanted(comment):
                 continue
             facts = feedback_facts("review", comment)
@@ -15474,6 +15555,8 @@ class Watcher:
                     continue
                 seen_set.add(review_id)
                 seen.append(review_id)
+                if self.own_github_comment(review_id, review.get("body")):
+                    continue
                 if not self.feedback_wanted(review):
                     continue
                 facts = feedback_facts("summary", review, number=pull["number"])
@@ -15484,6 +15567,35 @@ class Watcher:
             newest, etag = min(newest or stalled, stalled), None
         self._write_cursor(self.review_summary_cursor_path, newest, seen, etag, [])
         return out
+
+    def feedback_running_hot(self, conv):
+        """Has this pull request already had its hour's worth of turns? Said once per hour.
+
+        THE BACKSTOP, NOT THE FIX. What stopped the 2026-09-11 loop is own_github_comment, which
+        makes the box deaf to its own voice. This is here because that loop was UNBOUNDED, and
+        the next bug of its shape will be too: something reaches the ingest, every turn produces
+        a comment, every comment produces a turn, and nothing in the box says stop. One number
+        says stop.
+
+        It throttles rather than drops. The batch stays gated and goes when the hour clears, so
+        a reviewer working through a diff quickly waits; they are never ignored.
+        """
+        cap = int((self.cfg.get("github") or {}).get("feedback_max_turns_per_hour") or 0)
+        if cap <= 0:
+            return False
+        since = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        recent = self.db.scalar(
+            "SELECT COUNT(*) FROM turn WHERE conversation_id=? AND queued_at>=?",
+            (conv["id"], since), 0)
+        if recent < cap:
+            self._hot_said.discard(conv["id"])
+            return False
+        if conv["id"] not in self._hot_said:
+            self._hot_said.add(conv["id"])
+            log(f"feedback: conversation {conv['id']} has had {recent} turns in the last hour, "
+                f"at the feedback_max_turns_per_hour cap of {cap}. Holding its comments until "
+                f"the hour clears — if this is not somebody commenting fast, it is a loop.")
+        return True
 
     def release_feedback(self):
         """Let the batches that have stopped growing through. Returns the conversation ids.
@@ -15530,6 +15642,8 @@ class Watcher:
             stamps = [iso_secs(m["created_at"]) for m in waiting]
             newest = max([t for t in stamps if t] or [0])
             if quiet and newest and (now - newest) < quiet:
+                continue
+            if self.feedback_running_hot(conv):
                 continue
             ripe.append((conv, waiting))
         if not ripe:
