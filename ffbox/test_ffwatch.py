@@ -12722,6 +12722,69 @@ def a_comment(cid, number, body, *, author=10092359, login="Lothsahn",
                      % number})
 
 
+def test_a_container_that_dies_early_still_says_why():
+    """The evidence gap that cost the 2026-09-11 diagnosis.
+
+    Two #codereview runs on pull request 516 exited about two minutes in having written NOTHING
+    to their output directory -- no stream.jsonl, no task.json, no claude.log, not even the
+    .container-rc their own finish trap writes. Everything under $OUT is written by the
+    container, so a container that dies before it gets that far leaves no evidence anywhere:
+    its stdout and stderr are in `docker logs`, and the next thing that happens is the removal
+    that deletes them. Which of the entrypoint's three steps failed is still unknown.
+    """
+    print("evidence: a container's last words survive it")
+    task = open(os.path.join(os.path.dirname(ffwatch.__file__), "ffbox"),
+                encoding="utf-8").read()
+    body = task[task.index("cleanup() {"):]
+    body = body[:body.index("\n}\n")]
+    check("the run's container log is captured into the run directory",
+          'docker logs' in body and '"$OUT/container.log"' in body, body[-900:])
+    # THE ONLY WINDOW THAT WORKS. Before the stop the container may still be talking; after the
+    # removal there is nothing left to ask.
+    check("after the stop, so the container has finished talking",
+          body.index("docker stop") < body.index("docker logs"), body[-900:])
+    check("and before the removal, which is what destroys them",
+          body.index("docker logs") < body.index("docker rm -f"), body[-900:])
+    check("bounded, because a healthy run's output carries a Unity import",
+          "--tail" in body, body[-900:])
+    check("and never fatal to a cleanup that has other things to finish",
+          "container.log\" 2>&1 || :" in body, body[-900:])
+
+    # AND THE SAME FOR A STAGED SPARE, whose death is otherwise recorded as an id that stopped
+    # appearing in the log. Two of those died on 516's branch while the runs on it were failing.
+    expire = inspect.getsource(ffwatch.Watcher._pool_expire_one)
+    check("a spare's log is captured too",
+          "capture_container_log" in expire, expire[-600:])
+    check("before it is removed", expire.index("capture_container_log")
+          < expire.index("container_rm"), expire[-600:])
+
+
+def test_a_captured_log_is_written_where_somebody_will_look():
+    print("evidence: capture_container_log")
+    case = Case("containerlog")
+    # The docker stub exits 0 and says nothing, which is the no-output case: nothing is written
+    # rather than an empty file left to look like evidence.
+    path = os.path.join(case.root, "quiet", "container.log")
+    check("a container with nothing to say leaves no file",
+          case.watcher.capture_container_log("ffbox-nothing", path) is False
+          and not os.path.exists(path), path)
+
+    # A stub that DOES print, on both streams, the way a dying entrypoint would.
+    talker = write_stub(os.path.join(case.root, "docker_talks.sh"), """#!/bin/sh
+echo "2026-09-11T00:17:20Z ffbox: restoring the workspace"
+echo "2026-09-11T00:19:37Z ffbox: workspace restore failed" >&2
+exit 0
+""")
+    case.watcher.cfg["docker"] = talker
+    path = os.path.join(case.root, "loud", "container.log")
+    check("and one that died writes both streams into the run directory",
+          case.watcher.capture_container_log("ffbox-dying", path) is True, path)
+    body = open(path, encoding="utf-8").read()
+    check("carrying what it said on stdout", "restoring the workspace" in body, body)
+    check("and the stderr that actually says why",
+          "workspace restore failed" in body, body)
+
+
 def test_the_review_workflow_is_taken_from_the_base_and_not_from_the_branch():
     """The container copies code-review-sonnet.js out of the BASE ref.
 
@@ -17665,6 +17728,8 @@ def main():
         test_a_refused_directive_links_the_thread_holding_it_and_spends_no_turn,
         test_the_comment_poll_is_not_the_discord_sweeps_passenger,
         test_a_first_poll_answers_nothing_that_predates_it,
+        test_a_container_that_dies_early_still_says_why,
+        test_a_captured_log_is_written_where_somebody_will_look,
         test_the_review_workflow_is_taken_from_the_base_and_not_from_the_branch,
         test_a_codereview_comment_starts_a_review_on_the_pull_requests_own_branch,
         test_a_review_trigger_is_not_claimable_while_its_branch_is_being_adopted,

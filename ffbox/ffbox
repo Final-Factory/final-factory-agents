@@ -1097,6 +1097,33 @@ cleanup() {
         docker stop --timeout 120 "$RUN_NAME" >/dev/null 2>&1
     fi
 
+    # AND KEEP WHAT IT SAID, before the line below destroys the only copy.
+    #
+    # A container's stdout and stderr go to `docker logs` and nowhere else. Everything under $OUT
+    # is written by the container itself, so a container that dies BEFORE it can write there --
+    # in the entrypoint, restoring the workspace, taking the licence -- leaves no evidence
+    # anywhere on the box, and the removal below takes the logs with it.
+    #
+    # Measured, and the reason this exists: on 2026-09-11 two #codereview runs on pull request
+    # 516 exited about two minutes in having written NOTHING -- no stream.jsonl, no task.json,
+    # no claude.log, not even the .container-rc their own finish trap writes. The whole diagnosis
+    # available afterwards was "it wrote nothing and then it was gone". Which of the entrypoint's
+    # three steps failed is still unknown and now unknowable for those two.
+    #
+    # AFTER THE STOP AND BEFORE THE REMOVAL. That is the only window in which the container has
+    # finished talking and still exists to be asked.
+    #
+    # BOUNDED, because a healthy run's output carries a Unity import and this is not a second
+    # copy of claude.log. A startup failure fits in the tail many times over, which is the case
+    # this is for.
+    #
+    # BEST EFFORT AND NEVER FATAL: a container already gone writes docker's own complaint into
+    # the file, which is itself the answer to "where did it go". `|| :` because cleanup runs on
+    # every exit path including the failures, and it has other things to finish.
+    if [ -n "${OUT:-}" ] && [ -n "${RUN_NAME:-}" ]; then
+        docker logs --timestamps --tail 2000 "$RUN_NAME" > "$OUT/container.log" 2>&1 || :
+    fi
+
     # AND REMOVE IT, because --rm no longer does. By the time this runs everything worth reading
     # has been read: the exit code is in out/.container-rc and the harvest has already run off
     # $OUT. A cold run's container is this script's to remove; a DISPATCHED one is the pool's,
