@@ -7844,6 +7844,12 @@ class Watcher:
         except Exception as exc:                                  # noqa: BLE001
             log(f"pool: retiring {name} failed: {exc}")
         finally:
+            # WHAT IT SAID, FIRST. A spare that retired on its clock has nothing to tell anybody
+            # and writes no file; one that died on its own has the only account of why, and the
+            # removal below is the end of it. capture_container_log writes nothing when there is
+            # nothing, so a healthy expiry leaves the spool exactly as it was.
+            self.capture_container_log(
+                name, os.path.join(self.pool_dir(pool_id), "out", "container.log"))
             # AND REMOVE IT. A stopped container is not a gone one since --rm came off, and a
             # spare that retired holds nothing anybody wants: it was never dispatched, so there
             # is no exit code to read and no output to harvest. Left behind it would sit in
@@ -14211,6 +14217,46 @@ class Watcher:
         if proc.returncode not in (0, 123, 124, 125) and proc.stderr:
             log(f"run {run['ffbox_run_id']}: harvest validation said: "
                 f"{proc.stderr.strip()[:300]}")
+        return True
+
+    def capture_container_log(self, name, path, tail=2000):
+        """Write what a container said into `path`, before something removes it. True if written.
+
+        THE ONLY COPY IS THE CONTAINER'S. Everything a run leaves under its output directory is
+        written by the container itself, so one that dies before it gets there -- in the
+        entrypoint, restoring a workspace, taking a licence -- leaves nothing anywhere, and the
+        removal that follows takes `docker logs` with it. ffbox keeps this for a RUN's container;
+        this is the same thing for a staged spare, whose death is otherwise recorded as an id
+        that stopped appearing.
+
+        Two spares on pull request 516's branch died unexplained on 2026-09-11 while the runs on
+        that same branch were failing, and the pool simply staged replacements. Whatever they
+        would have said is gone.
+
+        BOUNDED AND BEST EFFORT. A healthy container's output carries a Unity import, and a
+        failure that matters fits in the tail many times over. Never raises: this is evidence
+        collection on a path whose actual job is to free a place on the box.
+        """
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            proc = subprocess.run(
+                [self.cfg["docker"], "logs", "--timestamps", "--tail", str(tail), name],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"could not read {name}'s log: {exc}")
+            return False
+        # STDERR TOO, AND IN THE SAME FILE. A container's own stderr is most of what is
+        # interesting here, and docker's complaint about a container that is already gone is
+        # itself the answer to where it went.
+        body = (proc.stdout or "") + (proc.stderr or "")
+        if not body.strip():
+            return False
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(body)
+        except OSError as exc:
+            log(f"could not write {name}'s log to {path}: {exc}")
+            return False
         return True
 
     def container_rm(self, refs):
