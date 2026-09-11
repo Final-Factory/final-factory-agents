@@ -1482,6 +1482,21 @@ and the agent cannot touch:
   leaves no `verification` row at all — an absent row means "nothing to verify here", and a
   row saying it did not run means the check was owed and is missing, which is what the reply
   reports as `NOT VERIFIED`.
+
+  **Unless the branch itself is what needs testing** (2026-09-11). "Did this run change
+  files" is the wrong question on the turn that comes back to a branch an earlier turn already
+  pushed: the commits are on it, so a turn that reads it, re-runs the tests by hand and edits
+  nothing skips the suite, and the branch is left with no verdict any gate can pass — not
+  `publish()`'s and not the sweep's, which re-runs the same gate against the same run forever.
+  So the host asks the other question, `branch_awaits_verification`: does this conversation's
+  branch carry work that no verification has passed and that no pull request has been opened
+  for? When it does, `verify.even_if_unchanged` goes into the job and the container runs the
+  suite on the untouched tree. The decision is the host's because it is made of things only the
+  host holds — the conversation's branch, its pull request, the earlier runs' verification rows
+  — and the suite is still the harness's, run after the agent is gone. The agent's own word
+  that the tests passed is not part of it and is never asked for. Conversation 133 is why: four
+  files on origin, a green suite the agent ran itself, and no pull request that any amount of
+  waiting could produce.
 - **Publication.** The run starts on `ffbox/<run-id>` and the agent is told to make its own
   branch off it, named for the change (see "Local git" below); ffbox commits whatever is left
   over, publishes whatever branch HEAD ended on as `ffbox/<the agent's name>-<run-id>`, and

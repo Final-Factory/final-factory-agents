@@ -400,18 +400,25 @@ if branch and os.environ.get("FFBOX_STUB_GIT_ORIGIN"):
         git("-C", work, "add", "-A")
         git("-C", work, "-c", "user.name=ffbox", "-c", "user.email=ffbox@invalid",
             "commit", "--quiet", "-m", "ffbox %s: agent work" % run_id)
-        # THE WHOLE RANGE, the way harvest-workspace.sh writes it: `git diff --name-only
-        # base..branch`, not the files this one turn touched. On a continuation those differ —
-        # the branch carries the earlier turn's files too — and the count the database records
-        # and the page shows is the branch's, not the turn's.
-        #
-        # UNLESS --range-from-start, which moves the bottom of the range to the commit the run
-        # was checked out at. That is what an adopted branch is given, because the range is
-        # otherwise measured from origin/develop and carries every commit the person who made
-        # the branch put on it — their identity, their files, against this run's ceilings.
-        range_base = start if "--range-from-start" in argv else base
-        listed = git("-C", work, "diff", "--name-only",
-                     "%s..%s" % (range_base, branch)).stdout.strip()
+    # THE WHOLE RANGE, the way harvest-workspace.sh writes it: `git diff --name-only
+    # base..branch`, not the files this one turn touched. On a continuation those differ —
+    # the branch carries the earlier turn's files too — and the count the database records
+    # and the page shows is the branch's, not the turn's.
+    #
+    # WHICH IS ALSO WHY THE RANGE, AND NOT `changed`, DECIDES WHETHER ANYTHING IS HARVESTED.
+    # A turn that reads the branch, re-runs its tests and edits nothing still publishes: the
+    # commits are already on it, the range is not empty, and the real harvest bundles them
+    # again. Modelling that as "no branch at all" hid the case this file now tests — the turn
+    # that changes nothing on a branch that has never been verified.
+    #
+    # UNLESS --range-from-start, which moves the bottom of the range to the commit the run
+    # was checked out at. That is what an adopted branch is given, because the range is
+    # otherwise measured from origin/develop and carries every commit the person who made
+    # the branch put on it — their identity, their files, against this run's ceilings.
+    range_base = start if "--range-from-start" in argv else base
+    listed = git("-C", work, "diff", "--name-only",
+                 "%s..%s" % (range_base, branch)).stdout.strip()
+    if listed or changed:
         with open(os.path.join(out, "changed_files.txt"), "w", encoding="utf-8") as fh:
             fh.write((listed or "\n".join(changed)) + "\n")
         with open(os.path.join(out, "branch.txt"), "w", encoding="utf-8") as fh:
@@ -9331,6 +9338,94 @@ def test_a_run_that_changed_nothing_is_not_verified():
           "no tests" not in text and "NOT VERIFIED" not in text, text[:400])
     check("nor that it published no branch, which nobody asked it to",
           "no branch" not in text and "bundled" not in text, text[:400])
+
+
+def test_an_unverified_branch_is_what_the_next_turn_tests():
+    """The skip asks what the RUN changed; the branch is what has to be verified.
+
+    Conversation 133, exactly. Turn 3 pushed four files and never got a verdict -- it was
+    killed on the agent clock with the suite still to run. Turn 4 resumed onto the branch, ran
+    the tests by hand, reported them green and edited nothing, so the container skipped the
+    suite over a tree carrying real work. Nothing downstream could rescue that: the gate wants
+    a row for the run in front of it, and reconcile_publication re-ran the same gate against
+    the same unverified run every sweep. The fix is one flag the HOST decides and the container
+    obeys -- the agent's word for the test results is worth nothing here and is never asked for.
+    """
+    print("verification: a branch nothing has passed is tested by the turn that changes nothing")
+    case = bug_case("stranded", venue="private")
+    origin, host = git_origin(case)
+
+    # Turn one: files change, no verification report comes back at all.
+    escalate(case, changed=["Assets/Belt.cs"], verify=None)
+    first = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                      " ORDER BY r.id DESC")[0]
+    check("the work reaches origin", first["pushed"] == 1 and first["branch"],
+          (first["pushed"], first["branch"]))
+    check("but nothing verified it, so no pull request opens",
+          first["pr_number"] is None and "could not verify" in (first["no_pr_reason"] or ""),
+          (first["pr_number"], first["no_pr_reason"]))
+    first_job = json.load(io.open(os.path.join(case.watcher.conv_dir(1), "runs",
+                                               first["ffbox_run_id"], "job.json"),
+                                  encoding="utf-8"))
+    check("that turn asked for no special treatment: there was no branch yet when it launched",
+          first_job["verify"]["even_if_unchanged"] is False, first_job["verify"])
+
+    # Turn two: the agent reads the branch, re-runs the tests itself, and edits nothing.
+    escalate(case, changed=[], verify=PASSING_VERIFY,
+             verdict=dict(CONFIDENT_VERDICT, summary="Tests pass on the branch."))
+    second = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                       " ORDER BY r.id DESC")[0]
+    second_dir = os.path.join(case.watcher.conv_dir(1), "runs", second["ffbox_run_id"])
+    second_job = json.load(io.open(os.path.join(second_dir, "job.json"), encoding="utf-8"))
+    check("this one is told to run the suite even though the run changed nothing",
+          second_job["verify"]["even_if_unchanged"] is True, second_job["verify"])
+    check("the branch is still harvested, because the commits are on it either way",
+          second["branch"] == first["branch"] and second["changed_files"] == 1,
+          (second["branch"], second["changed_files"]))
+    ver = case.rows("SELECT * FROM verification WHERE run_id=?", (second["id"],))[0]
+    check("and the suite is what answered, not the agent's summary",
+          (ver["ran"], ver["skipped"], ver["tests_passed"]) == (1, 0, 214), dict(ver))
+    check("so the work the earlier turn stranded gets its pull request",
+          second["pr_number"] is not None, (second["pr_number"], second["no_pr_reason"]))
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("and the conversation records it", bool(conv["github_pr"]), conv["github_pr"])
+
+    # Turn three: there is a pull request now, so the expensive answer stops being given.
+    escalate(case, changed=[], verify=PASSING_VERIFY,
+             verdict=dict(CONFIDENT_VERDICT, summary="Nothing further."))
+    third = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                      " ORDER BY r.id DESC")[0]
+    third_job = json.load(io.open(os.path.join(case.watcher.conv_dir(1), "runs",
+                                               third["ffbox_run_id"], "job.json"),
+                                  encoding="utf-8"))
+    check("once the branch is under review the flag goes back off",
+          third_job["verify"]["even_if_unchanged"] is False, third_job["verify"])
+
+
+def test_the_container_obeys_the_host_about_an_untouched_tree():
+    """The other half of the flag, read out of the script that acts on it.
+
+    The skip and the override are shell, not Python, so the only honest test of them is the
+    shell: the flag is read from job.json -- not from anything the agent can reach -- and it is
+    what decides whether an untouched tree writes a `skipped` report or goes to the editor.
+    """
+    print("verification: the container's half of the override")
+    task = io.open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
+    check("the flag comes out of job.json, like every other capability",
+          "v.get('even_if_unchanged')" in task and 'VERIFY_UNCHANGED=$(python3' in task)
+    read_it = task.split("VERIFY_UNCHANGED=$(python3")[1].split("\n\n")[0]
+    check("and it is read from $JOB_FILE, not from anything under /ffbox/out",
+          '"$JOB_FILE"' in read_it and "FFBOX_OUT" not in read_it, read_it)
+
+    block = task.split("CHANGED_START=$(date +%s)")[1].split("\nlog ")[0]
+    check("an untouched tree only writes the skipped report when the host did not override it",
+          'if [ "$VERIFY_UNCHANGED" = 1 ]; then' in block
+          and block.index('if [ "$VERIFY_UNCHANGED" = 1 ]; then')
+              < block.index("verification skipped: this run changed no files"), block)
+    check("and the override leaves VERIFY_ENABLED alone, so the suite actually runs",
+          block.count("VERIFY_ENABLED=0") == 1
+          and block.index('if [ "$VERIFY_UNCHANGED" = 1 ]; then')
+              < block.index("VERIFY_ENABLED=0"), block)
 
 
 def run_base_resolution(root, *, base_refs, ending):
@@ -18885,6 +18980,8 @@ def main():
         test_the_agent_names_the_branch_it_publishes,
         test_a_local_run_publishes_like_a_dev_dm,
         test_a_run_that_changed_nothing_is_not_verified,
+        test_an_unverified_branch_is_what_the_next_turn_tests,
+        test_the_container_obeys_the_host_about_an_untouched_tree,
         test_the_agent_picks_the_branch_its_work_is_for,
         test_the_pull_request_targets_the_branch_the_work_is_based_on,
         test_every_lane_agrees_on_the_workspace_path,

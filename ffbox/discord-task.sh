@@ -1182,10 +1182,30 @@ except Exception:
 print('1' if v.get('enabled') else '0')
 " "$JOB_FILE" 2>/dev/null || echo 0)
 
-# A run that changed nothing has nothing to verify, and the suite costs fifteen minutes and the
-# machine's one Unity slot. This is what let verification be turned ON for locally typed prompts
-# without making `ffbox "which file defines the belt merger?"` a quarter of an hour: the lane is
-# a write lane, so the flag is set, and the question simply never reaches the editor.
+# VERIFY AN UNTOUCHED TREE ANYWAY, when the host says this conversation's branch carries work
+# that nothing has passed and no pull request has been opened for. The skip below asks what THIS
+# RUN did, which is the wrong question on the turn that comes back to a branch an earlier turn
+# pushed: the work is already committed, so the turn that re-runs the tests by hand and reports
+# them changes no files, skips the suite, and leaves the branch with no verdict any gate can
+# pass. The decision is the host's -- it is made of the conversation's branch, its pull request
+# and the earlier runs' verification rows, none of which exist in here -- and it is still the
+# HARNESS that runs the suite, after the agent is gone. See branch_awaits_verification.
+VERIFY_UNCHANGED=$(python3 -c "
+import json, sys
+try:
+    v = (json.load(open(sys.argv[1], encoding='utf-8')).get('verify') or {})
+except Exception:
+    v = {}
+print('1' if v.get('even_if_unchanged') else '0')
+" "$JOB_FILE" 2>/dev/null || echo 0)
+
+# A run that changed nothing has usually nothing to verify, and the suite costs fifteen minutes
+# and the machine's one Unity slot. Usually, not always: VERIFY_UNCHANGED above is the case where
+# the tree this run left untouched is itself what needs testing.
+#
+# The skip is what let verification be turned ON for locally typed prompts without making
+# `ffbox "which file defines the belt merger?"` a quarter of an hour: the lane is a write lane,
+# so the flag is set, and the question simply never reaches the editor.
 #
 # Measured against PRE_AGENT_HEAD, which was read before the agent started, and by CONTENT
 # rather than by commit count: an agent that committed a change and then reverted it in a second
@@ -1205,14 +1225,19 @@ run_changed_anything() {
 CHANGED_START=$(date +%s)
 if [ "$VERIFY_ENABLED" = 1 ] && ! run_changed_anything; then
     log "changed-file check took $(($(date +%s) - CHANGED_START))s"
-    log "verification skipped: this run changed no files"
-    python3 -c "
+    if [ "$VERIFY_UNCHANGED" = 1 ]; then
+        log "this run changed no files, but the branch it is on carries work with no passing"
+        log "verification and no pull request, so the suite runs on it"
+    else
+        log "verification skipped: this run changed no files"
+        python3 -c "
 import json, sys
 json.dump({'ran': False, 'skipped': True, 'compiled': None, 'evidence':
            'the run changed no files, so the harness ran no tests'},
           open(sys.argv[1], 'w'), indent=2)
 " "$FFBOX_OUT/verification.json"
-    VERIFY_ENABLED=0
+        VERIFY_ENABLED=0
+    fi
 fi
 
 log "post-agent bookkeeping so far: $(($(date +%s) - AGENT_END))s since the agent exited"
