@@ -28,7 +28,7 @@ than windowed, so it reports as reachable or not and has no bars to draw. An OPE
 (`OPENROUTER_API_KEY<n>`) is metered too, serves the one model its slot declares, and reports a
 budget instead of a window. `kind` on every record says which one it is, and a variable's prefix
 is what decides it (design/openrouter_provider_design.txt section 2). All three share one
-namespace of ids: an operator's `claude` id, and config.json's `claude.default` and
+namespace of ids: an operator's `model` id, and config.json's `claude.default` and
 `claude.classifier`, can each name a credential of any kind.
 
 NO TOKEN IS EVER RETURNED TO A CALLER THAT DID NOT ALREADY HAVE ONE. `claude_subscriptions` and
@@ -88,7 +88,7 @@ CLAUDE_TOKEN_MAX = 16
 CLAUDE_RATE_PREFIX = "CLAUDE_CODE_RATE_TOKEN"
 # WHAT EACH TOKEN IS CALLED, declared beside it as CLAUDE_CODE_NAME_TOKEN1 and numbered to
 # match. THIS IS THE SUBSCRIPTION ID: it is what an operator writes in config.json as
-# `operators.<them>.claude` to claim the account, and it is what the /claude page heads their
+# `operators.<them>.model` to claim the account, and it is what the /claude page heads their
 # row with. It began as a label and nothing else, which is why an undeclared slot still falls
 # back to the variable name on the page -- but a slot nobody has named can only be claimed by
 # its number, which is the weaker of the two (see `subscription_named`).

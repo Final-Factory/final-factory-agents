@@ -300,7 +300,7 @@ and OpenRouter keys; see [Credential kinds](#credential-kinds).
 | `timeout_secs` | `10` | How long one account's reading may take before it is written off for that refresh. |
 | `review_hold_pct` | `0.75` | Above this share of the account that would pay, a `#codereview` trigger — or a ripe batch of pull-request feedback — waits for the window to refill instead of starting. Asked per pull request, since the account that pays is per operator. |
 | `new_conversation_hold_pct` | `0.9` | Above this, a brand-new conversation waits for its first turn. |
-| `default` | `null` | The credential that pays for every request no operator made: players, a fix leg spawned off a player's report, and the gate and the selector unless `classifier` says otherwise. An id, matched the way an operator's `claude` is. It must name a metered credential (an API key or an OpenRouter key); a subscription is refused, and so is an id nothing or two things answer to. `null` is the unnumbered `ANTHROPIC_API_KEY`. |
+| `default` | `null` | The credential that pays for every request no operator made: players, a fix leg spawned off a player's report, and the gate and the selector unless `classifier` says otherwise. An id, matched the way an operator's `model` is. It must name a metered credential (an API key or an OpenRouter key); a subscription is refused, and so is an id nothing or two things answer to. `null` is the unnumbered `ANTHROPIC_API_KEY`. |
 | `classifier` | `null` | The credential the engagement gate and the selector bill, when it should not be `default`'s. The same rules. `null` follows `default`. |
 | `health.after_failures` | `2` | Outages in a row (a timeout, no answer at all, a 401, 403 or 5xx) that take a credential down. A 402 takes it down at once. A 429 never counts. See [When a credential or a classification does not answer](#when-a-credential-or-a-classification-does-not-answer). |
 | `health.probe_secs` | `60` | How often a credential that is down is asked again, on its own. |
@@ -336,7 +336,7 @@ and goes to the API key. And a fix leg a triage verdict spawned inherits the con
 belongs to, so work the box went looking for off a player's bug report stays on the API key for
 its whole life.
 
-**An operator with nothing to bill is refused, not rehomed.** No `claude` id, an id naming no
+**An operator with nothing to bill is refused, not rehomed.** No `model` id, an id naming no
 token, or an id two slots both answer to: all three are configuration errors, and falling back
 to the API key would be the box deciding to spend money nobody budgeted while falling back to
 another operator's subscription is the behaviour this replaced. The refusal is said once in the
@@ -360,7 +360,7 @@ variable family it is declared in, and every kind shares one namespace of ids:
 `<n>` is 1 to 16. Ids are matched case-insensitively, and an id two credentials answer to is
 refused whatever kinds they are. The bare slot number is a subscription-only alias.
 
-An operator's `claude` id can name **any** kind, and every request they make is billed to it. An
+An operator's `model` id can name **any** kind, and every request they make is billed to it. An
 OpenRouter key puts that person's turns on the one model its slot declares: every model alias
 (`opus`, `sonnet`, `haiku`, `fable`) resolves to it inside the container. `claude.default` and
 `claude.classifier` can name any **metered** kind. So player traffic can move to OpenRouter by
@@ -1094,8 +1094,8 @@ one only when you mean to.
 ```jsonc
 "operators": {
   "lothsahn": { "discord": "193210319093497857", "github": 10092359,
-                "shell": "lothsahn", "claude": "Loth" },
-  "ben":      { "discord": "226422780445458432", "shell": "ben", "claude": "Ben" }
+                "shell": "lothsahn", "model": "Loth" },
+  "ben":      { "discord": "226422780445458432", "shell": "ben", "model": "Ben" }
 }
 ```
 
@@ -1113,11 +1113,11 @@ arrives under the unix account that typed it, which is the only id that surface 
 renaming argument does not carry over, since renaming a local account takes root and anybody
 with root can read `secrets.env` directly.
 
-**`claude` is the credential that person's requests are billed to**: the name declared beside it
+**`model` is the credential that person's requests are billed to**: the name declared beside it
 in `secrets.env` (`CLAUDE_CODE_NAME_TOKEN<n>`, `ANTHROPIC_NAME_KEY<n>` or `OPENROUTER_NAME_KEY<n>`),
 matched case-insensitively, or its variable name, or for a subscription its slot number as a weaker
 fallback. It can be a subscription, an API key or an OpenRouter key; see
-[Credential kinds](#credential-kinds). An operator with no `claude` has
+[Credential kinds](#credential-kinds). An operator with no `model` has
 every request refused rather than billed to somebody else's plan — see
 [`claude`](#claude) for the whole routing table and what a refusal looks like.
 
@@ -1128,7 +1128,7 @@ against a Discord author, and a snowflake is never matched against a GitHub one 
 because the two id spaces are unrelated and a collision would otherwise be a way in.
 
 Somebody with no `github` id cannot start a review. Somebody with no `discord` id fires no
-operator directive and no operator DM. Somebody with no `claude` id can do neither, because
+operator directive and no operator DM. Somebody with no `model` id can do neither, because
 nothing on this box can pay for it. Empty means nobody is an operator anywhere, which is what a
 fresh box gets and the right default.
 

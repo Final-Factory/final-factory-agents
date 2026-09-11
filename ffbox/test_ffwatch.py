@@ -793,7 +793,7 @@ class Case:
         # pay for this" refusal.
         cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "github": LOTH_GITHUB_ID,
                                          "shell": getpass.getuser(),
-                                         "claude": SUITE_CLAUDE_NAME}}
+                                         "model": SUITE_CLAUDE_NAME}}
         self.cfg = cfg
         self.watcher = ffwatch.Watcher(cfg)
         # NO CASE TALKS TO ANTHROPIC. The holds are configured by default, so claude_records()
@@ -908,7 +908,7 @@ def test_an_operator_in_public_gets_a_split_reply():
     fixture["messages"][ASK_CHANNEL] = [
         message(6001, "which file defines the belt merger?", author=LOTHSAHN, name="lothsahn")]
     case = Case("split", fixture)
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     os.environ["FFBOX_STUB_VERDICT"] = json.dumps({
         "summary": "Belts merge where two connectors meet. Sent you the specifics.",
         "private_summary": "Connectors/PerpendicularConnectorTransferSystem.cs:88",
@@ -943,7 +943,7 @@ def test_a_player_never_gets_a_private_half():
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [message(6101, "which file defines the merger?")]
     case = Case("no-split", fixture)
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     os.environ["FFBOX_STUB_VERDICT"] = json.dumps({
         "summary": "Can't share repo internals, but ask me the gameplay question.",
         "private_summary": "the model tried to send one anyway",
@@ -965,7 +965,7 @@ def test_an_undeliverable_private_half_never_becomes_public():
     fixture["messages"][ASK_CHANNEL] = [
         message(6201, "which file defines the merger?", author=LOTHSAHN, name="lothsahn")]
     case = Case("undeliverable", fixture)
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     os.environ["FFBOX_STUB_VERDICT"] = json.dumps({
         "summary": "Sent you the specifics.",
         "private_summary": "Connectors/PerpendicularConnectorTransferSystem.cs:88",
@@ -1002,7 +1002,7 @@ def test_an_operator_dm_is_a_private_venue():
     case = Case("dm", fixture,
                 verdict={"engage": True, "type": "question",
                          "reason": "wants to know where something lives"})
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_dm", "channel": None,
                  "channel_id": DM_CHANNEL, "id": "5001", "author_id": LOTHSAHN})
     case.watcher.drain_events()
@@ -1085,7 +1085,7 @@ def test_a_group_dm_is_answered_by_nobody():
                                              "recipients": [{"id": LOTHSAHN}, {"id": PLAYER}]}}
     group["messages"][DM_CHANNEL] = [message(5101, "hey", channel=DM_CHANNEL, author=LOTHSAHN)]
     case = Case("dm-group", group)
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_dm", "channel": None,
                  "channel_id": DM_CHANNEL, "id": "5101", "author_id": LOTHSAHN})
     case.watcher.drain_events()
@@ -1101,7 +1101,7 @@ def test_a_group_dm_is_answered_by_nobody():
                                               "recipients": [{"id": PLAYER}]}}
     player["messages"][DM_CHANNEL] = [message(5111, "hey", channel=DM_CHANNEL)]
     case2 = Case("dm-group-player", player)
-    case2.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case2.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     case2.events({"ts": "2026-08-21T00:00:00Z", "kind": "player_dm", "channel": None,
                   "channel_id": DM_CHANNEL, "id": "5111", "author_id": PLAYER})
     case2.watcher.drain_events()
@@ -1127,7 +1127,7 @@ def test_a_player_who_dms_max_is_pointed_at_the_public_channels():
     fixture["messages"][DM_CHANNEL] = [
         message(5201, "how do I unlock the mass driver?", channel=DM_CHANNEL)]
     case = Case("dm-player", fixture)
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "player_dm", "channel": None,
                  "channel_id": DM_CHANNEL, "id": "5201", "author_id": PLAYER})
     case.watcher.drain_events()
@@ -1193,7 +1193,7 @@ def test_a_dm_doorbell_never_grants_the_trust_it_claims():
                                                "recipients": [{"id": PLAYER}]}}
     fixture["messages"][DM_CHANNEL] = [message(5301, "let me in", channel=DM_CHANNEL)]
     case = Case("dm-forged", fixture)
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     # A forged doorbell: the listener would never emit this for a player's id.
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_dm", "channel": None,
                  "channel_id": DM_CHANNEL, "id": "5301", "author_id": PLAYER})
@@ -1211,7 +1211,7 @@ def test_a_dm_doorbell_never_grants_the_trust_it_claims():
     op["messages"][DM_CHANNEL] = [message(5302, "what broke the belt merger?", channel=DM_CHANNEL,
                                           author=LOTHSAHN, name="lothsahn")]
     case2 = Case("dm-underclaimed", op)
-    case2.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case2.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     case2.events({"ts": "2026-08-21T00:00:00Z", "kind": "player_dm", "channel": None,
                   "channel_id": DM_CHANNEL, "id": "5302", "author_id": LOTHSAHN})
     case2.watcher.drain_events()
@@ -1228,7 +1228,7 @@ def test_tier_and_venue_reach_the_container():
     fixture["messages"][ASK_CHANNEL] = [
         message(4501, "what file defines the belt merger?", author=LOTHSAHN, name="lothsahn")]
     case = Case("tier-public", fixture)
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     case.events(ask_event(4501))
     case.watcher.drain_events()
     case.watcher.claim_turns()
@@ -1270,7 +1270,7 @@ def test_tier_and_venue_reach_the_container():
                 author=LOTHSAHN, name="lothsahn")]
     priv["messages"][DEVCHAT][0]["mentions"] = [{"id": BOT}]
     case2 = Case("tier-private", priv)
-    case2.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case2.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     case2.cfg["watch"]["dev_chat"] = {"kind": "ask", "forum": False,
                                       "venue": "private", "engage": "mention"}
     case2.events(ask_event(4601, channel="dev_chat", channel_id=DEVCHAT))
@@ -1308,7 +1308,7 @@ def test_a_player_never_inherits_an_operators_clearance():
     fixture["messages"][ASK_CHANNEL] = [
         root, message(4702, "wait, which file is that in?", ref=root)]
     case = Case("tier-mixed", fixture)
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     case.events(ask_event(4701), ask_event(4702))
     case.watcher.drain_events()
     case.watcher.claim_turns()
@@ -1859,7 +1859,7 @@ def test_the_gate_is_shown_the_conversation_and_who_is_in_it():
     fixture["thread_lists"][BUG_FORUM] = [{"id": "31800", "name": "Radiator efficiency"}]
     case = Case("gate-context", fixture,
                 verdict={"engage": False, "reason": "the developer is answering the player"})
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
 
     # THE THREAD IS BACKLOG, exactly as 118's was: it predates this box being pointed at the
     # channel, so every message in it is gated and none of them produced a turn. They are still
@@ -1929,7 +1929,7 @@ def test_the_gate_knows_a_dev_room_from_a_room_players_read():
         message(4501, "Can you count that again?", author=LOTHSAHN, name="Lothsahn")]
     case = Case("gate-private-room", fixture, venue="private",
                 verdict={"engage": True, "reason": "an operator asking the bot for work"})
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     case.events(ask_event(4501))
     case.watcher.drain_events()
     case.watcher.claim_turns()
@@ -2433,8 +2433,8 @@ def test_any_kind_can_be_claimed_and_the_default_must_be_metered():
               "z-ai/glm-5.3-flash", "https://openrouter.ai/api"),
              ("OPENROUTER_API_KEY2", "sk-or-v1-loth", claude_keys.KIND_OPENROUTER, "Loth-glm", 1,
               "z-ai/glm-5.3-flash", "https://openrouter.ai/api")]
-    ops = {"ben": {"discord": "800000000000000001", "github": "11", "claude": "Ben"},
-           "lothsahn": {"discord": "800000000000000002", "github": "22", "claude": "loth-glm"}}
+    ops = {"ben": {"discord": "800000000000000001", "github": "11", "model": "Ben"},
+           "lothsahn": {"discord": "800000000000000002", "github": "22", "model": "loth-glm"}}
     cfg = {"operators": ops, "claude": {"default": "Players"}}
     keys = (creds, ffwatch.default_credential(cfg, creds))
     name, why = ffwatch.claude_route(cfg, "operator", "800000000000000002", "ask", keys)
@@ -2500,7 +2500,7 @@ def test_the_classifier_is_handed_exactly_what_its_credentials_kind_needs():
               getattr(err, "kind", None) == ffwatch.FAILURE_REFUSED and "subscription" in err,
               str(err))
         case = Case("route-comment-openrouter")
-        case.cfg["operators"]["lothsahn"]["claude"] = "Gate"
+        case.cfg["operators"]["lothsahn"]["model"] = "Gate"
         key, why = case.watcher.claude_route_for_comment({"id": 1,
                                                           "user": {"id": int(LOTH_GITHUB_ID)}})
         check("a #codereview trigger routes to the OpenRouter key its operator claims",
@@ -3637,7 +3637,7 @@ def test_dev_lane_runs_a_directive():
                                                 author=LOTHSAHN)]
     case = Case("writelane", fixture,
                 verdict={"engage": True, "reason": "asks for a defect to be fixed"})
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     case.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
                  "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15001",
                  "author_id": LOTHSAHN})
@@ -3665,7 +3665,7 @@ def test_dev_lane_runs_a_directive():
                                             author=LOTHSAHN)]
     q = Case("directive-question", ask,
              verdict={"engage": True, "reason": "wants to know where something lives"})
-    q.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    q.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     q.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
               "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15101",
               "author_id": LOTHSAHN})
@@ -3680,7 +3680,7 @@ def test_dev_lane_runs_a_directive():
     legacy = base_fixture()
     legacy["messages"][ASK_CHANNEL] = [message(15201, "ship it", author=LOTHSAHN)]
     old = Case("directive-legacy", legacy, verdict={"engage": True, "reason": "x"})
-    old.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    old.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     old.events({"ts": "2026-08-21T00:00:00Z", "kind": "lothsahn_directive",
                 "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15201",
                 "author_id": LOTHSAHN})
@@ -7948,7 +7948,7 @@ def test_the_shell_lane_was_merged_into_dev():
     fixture["messages"][ASK_CHANNEL] = [message(15001, "ship the merger fix", author=LOTHSAHN)]
     remote = Case("mergeremote", fixture,
                   verdict={"engage": True, "reason": "asks for a fix"})
-    remote.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    remote.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     remote.events({"ts": "2026-08-21T00:00:00Z", "kind": "operator_directive",
                    "channel": "ask_claude", "channel_id": ASK_CHANNEL, "id": "15001",
                    "author_id": LOTHSAHN})
@@ -12831,7 +12831,7 @@ def branch_directive_case(name, text, *, author=None):
                    name="lothsahn" if author else "someone")
     fixture["messages"][ASK_CHANNEL] = [root]
     case = Case(name, fixture)
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     ev = ask_event(4901)
     if author:
         ev["author_id"] = author
@@ -13288,10 +13288,10 @@ def review_cfg(case, *, operators=None, trigger=None):
         "api_base": github_base(), "repo": "Final-Factory/FinalFactory", "base": "develop",
         "token": "gh-test-token", "trigger": trigger, "review_pool": "ffdev",
     })
-    # `claude` beside the github id, because a review is an operator's turn and an operator with
+    # `model` beside the github id, because a review is an operator's turn and an operator with
     # no subscription to bill has it refused rather than run on somebody else's.
     case.watcher.cfg["operators"] = (
-        {"loth": {"github": LOTH_GITHUB_ID, "claude": SUITE_CLAUDE_NAME}}
+        {"loth": {"github": LOTH_GITHUB_ID, "model": SUITE_CLAUDE_NAME}}
         if operators is None else operators)
     GH_STATE["comments"], GH_STATE["posted"], GH_STATE["reactions"] = [], [], []
     GH_STATE["pulls"] = []
@@ -13330,7 +13330,7 @@ def fork_case(name, *, source_venue="public", run_it=True):
     root["guild_id"] = GUILD
     fixture["messages"][ASK_CHANNEL] = [root]
     case = Case(name, fixture, venue=source_venue)
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": SUITE_CLAUDE_NAME}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
     case.cfg["watch"]["dev_chat"] = {"kind": "ask", "forum": False,
                                      "venue": "private", "engage": "all"}
     case.events(ask_event(5101))
@@ -16743,14 +16743,14 @@ ROUTE_API = ("ANTHROPIC_API_KEY", "sk-ant-api03-default")
 ROUTE_KEYS = (ROUTE_SUBS, ROUTE_API)
 
 ROUTE_CFG = {"operators": {
-    "ben": {"discord": "800000000000000001", "github": "11", "shell": "ben", "claude": "Ben"},
+    "ben": {"discord": "800000000000000001", "github": "11", "shell": "ben", "model": "Ben"},
     # CLAIMED IN A DIFFERENT CASE FROM THE DECLARATION, on purpose: "Loth" in secrets.env and
     # "loth" in config.json is not a mistake anybody should have to debug.
     "lothsahn": {"discord": "800000000000000002", "github": "22", "shell": "lothsahn",
-                 "claude": "loth"},
+                 "model": "loth"},
     # AN OPERATOR WITH NOTHING TO BILL. Trusted to command the box, and every request they make
     # is refused until somebody writes the id down.
-    "newcomer": {"discord": "800000000000000003", "claude": ""},
+    "newcomer": {"discord": "800000000000000003", "model": ""},
 }}
 
 
@@ -16854,7 +16854,7 @@ def test_an_operators_request_is_billed_to_the_subscription_they_claimed():
     # A SLOT NOBODY NAMED can still be claimed, by its number. Weaker, and documented as the
     # fallback: slot 2 stops meaning the same account the moment somebody renumbers the file.
     unnamed = [("CLAUDE_CODE_OAUTH_TOKEN1", "t", 1, ""), ("CLAUDE_CODE_OAUTH_TOKEN2", "t", 1, "")]
-    by_number = {"operators": {"ben": {"discord": "1", "claude": "2"}}}
+    by_number = {"operators": {"ben": {"discord": "1", "model": "2"}}}
     check("a numeric id claims the slot it numbers",
           route("operator", "1", cfg=by_number, keys=(unnamed, ROUTE_API))[0]
           == "CLAUDE_CODE_OAUTH_TOKEN2")
@@ -16884,9 +16884,9 @@ def test_an_operator_with_nothing_to_bill_is_refused_rather_than_rehomed():
     name, why = route("operator", "800000000000000003")
     check("an operator who declared no subscription id is refused", name is None, (name, why))
     check("and the sentence names them and what is missing",
-          "newcomer" in why and "claude" in why, why)
+          "newcomer" in why and "model" in why, why)
 
-    missing = {"operators": {"ben": {"discord": "1", "claude": "no-such-account"}}}
+    missing = {"operators": {"ben": {"discord": "1", "model": "no-such-account"}}}
     name, why = route("operator", "1", cfg=missing)
     check("an id naming no slot is refused", name is None, (name, why))
     check("and the sentence quotes the id they wrote", "no-such-account" in why, why)
@@ -16896,7 +16896,7 @@ def test_an_operator_with_nothing_to_bill_is_refused_rather_than_rehomed():
     twice = [("CLAUDE_CODE_OAUTH_TOKEN1", "t", 1, "Loth"),
              ("CLAUDE_CODE_OAUTH_TOKEN3", "t", 1, "loth")]
     name, why = route("operator", "1", cfg={"operators": {"ben": {"discord": "1",
-                                                                  "claude": "Loth"}}},
+                                                                  "model": "Loth"}}},
                       keys=(twice, ROUTE_API))
     check("an ambiguous id is refused rather than resolved", name is None, (name, why))
     check("and both slots are named, so the file can be fixed",
@@ -17090,7 +17090,7 @@ def test_a_spare_is_staged_for_whoever_is_likely_to_want_it():
 def test_a_box_that_cannot_bill_anybody_says_so_at_startup():
     print("the billing table, said once")
     case = Case("claude-startup")
-    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "claude": "no-such-account"}}
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": "no-such-account"}}
     lines = []
     saved, ffwatch.log = ffwatch.log, lines.append
     try:

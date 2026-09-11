@@ -857,7 +857,7 @@ $EDITOR ~/.config/ffbox/secrets.env
 | `ANTHROPIC_API_KEY1`, `…2`, and `ANTHROPIC_NAME_KEY`, `…1`, `…2` | more API keys, and the ids that let an operator claim one |
 | `OPENROUTER_API_KEY1`, `…2`, with `OPENROUTER_NAME_KEY<n>`, `OPENROUTER_MODEL_KEY<n>`, `OPENROUTER_URL_KEY<n>` | an OpenRouter key, its id, the one model it serves (GLM-5.3 Flash when unset) and its endpoint (openrouter.ai when unset). An operator can claim one, and `claude.default` can name one to pay for everything no operator asked for. See `config.md`, "Credential kinds" |
 | `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` | one subscription per OPERATOR, from `claude setup-token`; bills against that subscription, and only for the person who claims it in `config.json` (see "Whose account pays" below). The unnumbered `CLAUDE_CODE_OAUTH_TOKEN` is the older spelling and still works |
-| `CLAUDE_CODE_NAME_TOKEN1`, `…2`, `…3` | the **subscription id** for the token in the matching slot — what an operator writes as `operators.<them>.claude` to claim it, and what ffweb's `/claude` page heads that row with. A slot nobody names can only be claimed by its number |
+| `CLAUDE_CODE_NAME_TOKEN1`, `…2`, `…3` | the **subscription id** for the token in the matching slot — what an operator writes as `operators.<them>.model` to claim it, and what ffweb's `/claude` page heads that row with. A slot nobody names can only be claimed by its number |
 | `CLAUDE_CODE_RATE_TOKEN1`, `…2`, `…3` | which plan the token in the matching slot is on, as its multiplier: `1` for Pro, `5` for Max 5x, `20` for Max 20x. These tokens cannot ask Anthropic which plan they are on, and it is printed rather than weighed now that nothing ranks accounts; an undeclared slot reads as `1` |
 | `UNITY_EMAIL` / `UNITY_PASSWORD` | required **even for a Personal license** — activation is an online serial activation |
 | `UNITY_SERIAL` *or* `UNITY_LICENSE_FILE` | the 27-char serial, or a `.ulf` to extract it from |
@@ -896,7 +896,7 @@ CLAUDE_CODE_NAME_TOKEN2=Loth
 
 // ~/.config/ffbox/config.json
 "operators": { "lothsahn": { "discord": "193...", "github": 10092359,
-                             "shell": "lothsahn", "claude": "Loth" } }
+                             "shell": "lothsahn", "model": "Loth" } }
 ```
 
 The route is a lookup of an **authenticated id** — Discord's author, GitHub's comment author,
@@ -904,7 +904,7 @@ the unix account a terminal prompt arrived under — and never anything message 
 It reads the same `operators` block that decides whether somebody may command the box at all, so
 the person trusted to drive it is the person whose subscription pays for it.
 
-**An operator with nothing to bill is refused, not rehomed.** No `claude` id, an id naming no
+**An operator with nothing to bill is refused, not rehomed.** No `model` id, an id naming no
 token, an id two slots both answer to: each is a configuration error, said once in the venue the
 request came from, with the request left where it arrived so the pass after the fix runs it.
 Falling back to the API key would be the box spending money nobody budgeted; falling back to

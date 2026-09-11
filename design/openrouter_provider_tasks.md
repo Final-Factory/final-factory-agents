@@ -369,7 +369,7 @@ Split by deploy step, because config.md changes in the same commit as the shape 
 
 - **I3.** `ffbox/config.md`:
   - `claude.default` and `claude.classifier`.
-  - `operators.<name>.claude` may name any kind.
+  - `operators.<name>.model` may name any kind.
   - A subsection on credential kinds with the design's section 2 tables.
   - The routing table's wording.
 - **I4.** `ffbox/secrets.env.example`: the three families with the section 6 example. Loses "the
@@ -378,7 +378,7 @@ Split by deploy step, because config.md changes in the same commit as the shape 
   guardrails.
 - **I6.** `ffbox/setup.sh`: `api_key_ready` counts any `ANTHROPIC_API_KEY[n]` or
   `OPENROUTER_API_KEY<n>`; `check_api_key`'s text names both and points at the startup line.
-- **I7.** `ffbox/05-discord-setup.sh`: the `operators.<name>.claude` hint names the three NAME
+- **I7.** `ffbox/05-discord-setup.sh`: the `operators.<name>.model` hint names the three NAME
   variables.
 - **I8.** `ffbox/README.md`: "whose account pays" gains the kinds and the default id.
 - **I9.** `docs/docker-security-model.md`: three vendors at :236, and both metered types in the
@@ -486,4 +486,4 @@ New:
 5. **`claude.classifier`** naming one. A week; compare the gate's decline rate with the week before.
 6. **`claude.default`** naming one, with `approve_before_send` on, which holds operators' replies
    too for that week (decision 10). B8's placeholder notice is replaced before this step.
-7. **Operators opt in** by pointing `operators.<them>.claude` at an OpenRouter id, after 0g.
+7. **Operators opt in** by pointing `operators.<them>.model` at an OpenRouter id, after 0g.

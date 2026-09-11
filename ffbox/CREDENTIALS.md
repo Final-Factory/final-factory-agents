@@ -332,7 +332,7 @@ the wrong person's money.
 
 **`CLAUDE_CODE_OAUTH_TOKEN<n>` — one operator's subscription.** Minted by that person with
 `claude setup-token`, on their own account, and claimed by them in `config.json` as
-`operators.<them>.claude`. It bills their Claude plan, and since 2026-09-10 it pays for exactly
+`operators.<them>.model`. It bills their Claude plan, and since 2026-09-10 it pays for exactly
 one thing: requests that person makes. Nobody else's work can reach it — not a player's bug
 report, not the engagement gate, not another operator's directive — because the route is a lookup
 of an authenticated id rather than a choice the box makes. Its blast radius is one subscription's
