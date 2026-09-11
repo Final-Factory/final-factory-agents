@@ -23,6 +23,12 @@
 api.anthropic.com
 platform.claude.com
 
+# --- OpenRouter --------------------------------------------------------------------------------
+# openrouter.ai carries the model traffic for a credential declared as OPENROUTER_API_KEY<n>
+# (design/openrouter_provider_design.txt). Listed whether or not this box declares one, because
+# which credential a fenced container holds is decided per turn by who asked.
+openrouter.ai
+
 # Deliberately ABSENT, and the container's environment is what keeps them absent rather than
 # this file: the two Datadog intake hosts (CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1) and
 # downloads.claude.ai (DISABLE_AUTOUPDATER=1). A run that silently updated its own Claude Code

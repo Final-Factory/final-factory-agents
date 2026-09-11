@@ -202,7 +202,17 @@ secrets_ready() {
 api_key_ready() {
   ( set +u
     . "$SECRETS" 2>/dev/null || exit 1
-    [ -n "$ANTHROPIC_API_KEY" ]                                  || exit 1
+    # ANY METERED CREDENTIAL, since 2026-09-10: the unnumbered ANTHROPIC_API_KEY, a numbered one,
+    # or an OpenRouter key. Whether claude.default actually resolves to one is config.json's
+    # business, and ffwatch says so in its first lines at startup.
+    [ -n "$ANTHROPIC_API_KEY" ] && exit 0
+    n=1
+    while [ "$n" -le 16 ]; do
+      eval "a=\${ANTHROPIC_API_KEY${n}}; o=\${OPENROUTER_API_KEY${n}}"
+      { [ -n "$a" ] || [ -n "$o" ]; } && exit 0
+      n=$((n + 1))
+    done
+    exit 1
   ) 2>/dev/null
 }
 
@@ -340,10 +350,12 @@ mint_claude_token() {
 # ------------------------------------------------------------------------------------------------
 check_api_key() {
   api_key_ready && return 0
-  printf '\n==> no ANTHROPIC_API_KEY in %s\n' "$SECRETS"
-  printf '    It pays for every request no operator made: a player in a forum thread, the\n'
-  printf '    engagement gate, the selector. Without it this box will refuse all of them.\n'
-  printf '    Mint one at console.anthropic.com and put it in that file.\n'
+  printf '\n==> no metered credential in %s\n' "$SECRETS"
+  printf '    One pays for every request no operator made: a player in a forum thread, the\n'
+  printf '    engagement gate, the selector. Without one this box will refuse all of them.\n'
+  printf '    Mint an ANTHROPIC_API_KEY at console.anthropic.com, or an OPENROUTER_API_KEY1 at\n'
+  printf '    openrouter.ai and name it in config.json as claude.default. Whether the default\n'
+  printf '    actually resolves is the first thing ffwatch logs when it starts.\n'
 }
 
 mint_claude_token

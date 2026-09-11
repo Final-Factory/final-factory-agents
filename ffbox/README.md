@@ -853,7 +853,9 @@ $EDITOR ~/.config/ffbox/secrets.env
 
 | variable | notes |
 |---|---|
-| `ANTHROPIC_API_KEY` | the metered default, from console.anthropic.com. Pays for every request no operator made: a player in a forum thread, the engagement gate, the selector. Without it this box answers only its operators |
+| `ANTHROPIC_API_KEY` | the metered default, from console.anthropic.com. Pays for every request no operator made: a player in a forum thread, the engagement gate, the selector. Without it this box answers only its operators, unless `claude.default` names another metered credential |
+| `ANTHROPIC_API_KEY1`, `…2`, and `ANTHROPIC_NAME_KEY`, `…1`, `…2` | more API keys, and the ids that let an operator claim one |
+| `OPENROUTER_API_KEY1`, `…2`, with `OPENROUTER_NAME_KEY<n>`, `OPENROUTER_MODEL_KEY<n>`, `OPENROUTER_URL_KEY<n>` | an OpenRouter key, its id, the one model it serves (GLM-5.3 Flash when unset) and its endpoint (openrouter.ai when unset). An operator can claim one, and `claude.default` can name one to pay for everything no operator asked for. See `config.md`, "Credential kinds" |
 | `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` | one subscription per OPERATOR, from `claude setup-token`; bills against that subscription, and only for the person who claims it in `config.json` (see "Whose account pays" below). The unnumbered `CLAUDE_CODE_OAUTH_TOKEN` is the older spelling and still works |
 | `CLAUDE_CODE_NAME_TOKEN1`, `…2`, `…3` | the **subscription id** for the token in the matching slot — what an operator writes as `operators.<them>.claude` to claim it, and what ffweb's `/claude` page heads that row with. A slot nobody names can only be claimed by its number |
 | `CLAUDE_CODE_RATE_TOKEN1`, `…2`, `…3` | which plan the token in the matching slot is on, as its multiplier: `1` for Pro, `5` for Max 5x, `20` for Max 20x. These tokens cannot ask Anthropic which plan they are on, and it is printed rather than weighed now that nothing ranks accounts; an undeclared slot reads as `1` |
@@ -875,11 +877,15 @@ revoked first key, and everything here keeps scanning.
 
 | request | billed to |
 |---|---|
-| a forum thread, a mention, a player's DM | `ANTHROPIC_API_KEY` |
-| an operator's message, directive or DM | that operator's subscription |
-| `#codereview` on a pull request | that operator's subscription |
-| a shell or web prompt | that operator's subscription |
-| the engagement gate and the selector | `ANTHROPIC_API_KEY` |
+| a forum thread, a mention, a player's DM | what `claude.default` names (`ANTHROPIC_API_KEY` when unset) |
+| an operator's message, directive or DM | the credential that operator claims |
+| `#codereview` on a pull request | the credential that operator claims |
+| a shell or web prompt | the credential that operator claims |
+| the engagement gate and the selector | `claude.classifier`, else `claude.default` |
+
+A credential can be an Anthropic subscription, an Anthropic API key or an OpenRouter key, and
+whoever claims one gets its provider and model. A conversation a player and an operator both speak
+in therefore moves between them turn by turn, which is intended.
 
 An operator claims their slot by the name declared beside it:
 
@@ -911,7 +917,8 @@ refilled. That worked, and it made "whose subscription paid for that" unanswerab
 `design/operator_subscriptions_design.txt` has the argument.
 
 **The choice travels as a name, never as a token.** `ffwatch` hands `ffbox` a variable name
-(`--claude-key CLAUDE_CODE_OAUTH_TOKEN2`, or `--claude-key ANTHROPIC_API_KEY`) and `ffbox`
+(`--claude-key CLAUDE_CODE_OAUTH_TOKEN2`, `--claude-key ANTHROPIC_API_KEY` or
+`--claude-key OPENROUTER_API_KEY1`) and `ffbox`
 resolves it out of `secrets.env` itself, so no credential reaches argv — world-readable through
 `/proc` for the life of the call — or the database, which records the name against the run.
 `ffbox` refuses a name that is not one of its own credentials rather than falling back, and

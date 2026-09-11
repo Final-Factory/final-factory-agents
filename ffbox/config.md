@@ -281,12 +281,15 @@ would spray a thread no matter how few turns it took.
 `~/.config/ffbox/secrets.env` as `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` (one subscription per
 operator, with its id declared beside it as `CLAUDE_CODE_NAME_TOKEN<n>`) and `ANTHROPIC_API_KEY`
 (the metered default). **Which one pays is not configured here either**: it is decided by who
-asked, from the [`operators`](#operators) block. This block only says how the windows are read
-and when a request waits for one to refill.
+asked, from the [`operators`](#operators) block. This block says how the windows are read, when
+a request waits for one to refill, and which metered credential pays for everything no operator
+asked for (`default`, `classifier`). Since 2026-09-10 `secrets.env` can also hold numbered API keys
+and OpenRouter keys; see [Credential kinds](#credential-kinds).
 
 ```json
 "claude": { "refresh_secs": 900, "timeout_secs": 10,
             "review_hold_pct": 0.75, "new_conversation_hold_pct": 0.9,
+            "default": null, "classifier": null,
             "health": { "after_failures": 2, "probe_secs": 60, "notice_after_secs": 600 },
             "classify_retry": { "first_secs": 60, "max_secs": 1800, "flag_after": 5 } }
 ```
@@ -297,6 +300,8 @@ and when a request waits for one to refill.
 | `timeout_secs` | `10` | How long one account's reading may take before it is written off for that refresh. |
 | `review_hold_pct` | `0.75` | Above this share of the account that would pay, a `#codereview` trigger — or a ripe batch of pull-request feedback — waits for the window to refill instead of starting. Asked per pull request, since the account that pays is per operator. |
 | `new_conversation_hold_pct` | `0.9` | Above this, a brand-new conversation waits for its first turn. |
+| `default` | `null` | The credential that pays for every request no operator made: players, a fix leg spawned off a player's report, and the gate and the selector unless `classifier` says otherwise. An id, matched the way an operator's `claude` is. It must name a metered credential (an API key or an OpenRouter key); a subscription is refused, and so is an id nothing or two things answer to. `null` is the unnumbered `ANTHROPIC_API_KEY`. |
+| `classifier` | `null` | The credential the engagement gate and the selector bill, when it should not be `default`'s. The same rules. `null` follows `default`. |
 | `health.after_failures` | `2` | Outages in a row (a timeout, no answer at all, a 401, 403 or 5xx) that take a credential down. A 402 takes it down at once. A 429 never counts. See [When a credential or a classification does not answer](#when-a-credential-or-a-classification-does-not-answer). |
 | `health.probe_secs` | `60` | How often a credential that is down is asked again, on its own. |
 | `health.notice_after_secs` | `600` | How long a conversation waits on a down credential before Max says so. |
@@ -312,11 +317,11 @@ carries them keeps working and the daemon says once, at startup, that nothing re
 
 | request | tier | id space | billed to |
 | --- | --- | --- | --- |
-| forum thread, mention, player DM | player | discord | `ANTHROPIC_API_KEY` |
-| operator message, directive, DM | operator | discord | that operator's slot |
-| `#codereview` on a pull request | operator | github | that operator's slot |
-| shell or web prompt | operator | unix account | that operator's slot |
-| the engagement gate and the selector | — | — | `ANTHROPIC_API_KEY` |
+| forum thread, mention, player DM | player | discord | what `claude.default` names (`ANTHROPIC_API_KEY` when unset) |
+| operator message, directive, DM | operator | discord | the credential that operator claims |
+| `#codereview` on a pull request | operator | github | the credential that operator claims |
+| shell or web prompt | operator | unix account | the credential that operator claims |
+| the engagement gate and the selector | — | — | `claude.classifier`, else `claude.default` |
 
 The route is a lookup of an **authenticated id** and never a thing message text can ask for. It
 reads the same `operators` block the trust tier reads, through the same function, so the person
@@ -340,6 +345,42 @@ ungated — so the pass after somebody fixes the config runs it. `#codereview` r
 request instead, because that path consumes its trigger and the operator can comment again; a
 shell prompt's refusal lands on `turn.error`, which is what the person at the terminal is
 already looking at.
+
+### Credential kinds
+
+**The provider is a property of each credential, not of the box.** A credential's kind is the
+variable family it is declared in, and every kind shares one namespace of ids:
+
+| kind | variables in `secrets.env` | answers to |
+| --- | --- | --- |
+| subscription | `CLAUDE_CODE_OAUTH_TOKEN<n>`, `CLAUDE_CODE_NAME_TOKEN<n>`, `CLAUDE_CODE_RATE_TOKEN<n>` | its name, its variable name, its bare slot number |
+| API key | `ANTHROPIC_API_KEY` and `ANTHROPIC_API_KEY<n>`, with `ANTHROPIC_NAME_KEY` / `ANTHROPIC_NAME_KEY<n>` | its name, its variable name |
+| OpenRouter key | `OPENROUTER_API_KEY<n>`, `OPENROUTER_NAME_KEY<n>`, and optionally `OPENROUTER_MODEL_KEY<n>` (default `z-ai/glm-5.3-flash`) and `OPENROUTER_URL_KEY<n>` (default `https://openrouter.ai/api`) | its name, its variable name |
+
+`<n>` is 1 to 16. Ids are matched case-insensitively, and an id two credentials answer to is
+refused whatever kinds they are. The bare slot number is a subscription-only alias.
+
+An operator's `claude` id can name **any** kind, and every request they make is billed to it. An
+OpenRouter key puts that person's turns on the one model its slot declares: every model alias
+(`opus`, `sonnet`, `haiku`, `fable`) resolves to it inside the container. `claude.default` and
+`claude.classifier` can name any **metered** kind. So player traffic can move to OpenRouter by
+declaring `OPENROUTER_API_KEY1` with `OPENROUTER_NAME_KEY1=Players` and setting
+`"default": "Players"`.
+
+A conversation a player and an operator both speak in moves between credentials from turn to
+turn, and so between providers and models. That is intended: each turn is billed to whoever asked
+it.
+
+**Declaring a credential can make an existing id ambiguous.** A new `OPENROUTER_NAME_KEY2=Loth`
+beside `CLAUDE_CODE_NAME_TOKEN1=Loth` refuses the operator who claims `Loth` until one is renamed.
+The startup line names both variables.
+
+**`max_budget_usd` is Claude Code's estimate, priced for Anthropic's models.** On an OpenRouter
+credential it may not stop anything. Give each OpenRouter key a daily budget limit and a one-model
+allowlist in OpenRouter's console: that limit is the ceiling, and a spent one holds the credential
+until it refills (see [When a credential or a classification does not
+answer](#when-a-credential-or-a-classification-does-not-answer)). `/claude` shows each OpenRouter
+key's model and what is left of its budget.
 
 **What the metered key changes.** An API key has no five-hour or seven-day window to be part way
 through — it has per-minute org rate limits and a bill — so the holds below do not apply to it,
@@ -1072,9 +1113,11 @@ arrives under the unix account that typed it, which is the only id that surface 
 renaming argument does not carry over, since renaming a local account takes root and anybody
 with root can read `secrets.env` directly.
 
-**`claude` is the subscription that person's requests are billed to**: the
-`CLAUDE_CODE_NAME_TOKEN<n>` declared beside their token in `secrets.env`, matched
-case-insensitively, or the slot number as a weaker fallback. An operator with no `claude` has
+**`claude` is the credential that person's requests are billed to**: the name declared beside it
+in `secrets.env` (`CLAUDE_CODE_NAME_TOKEN<n>`, `ANTHROPIC_NAME_KEY<n>` or `OPENROUTER_NAME_KEY<n>`),
+matched case-insensitively, or its variable name, or for a subscription its slot number as a weaker
+fallback. It can be a subscription, an API key or an OpenRouter key; see
+[Credential kinds](#credential-kinds). An operator with no `claude` has
 every request refused rather than billed to somebody else's plan — see
 [`claude`](#claude) for the whole routing table and what a refusal looks like.
 

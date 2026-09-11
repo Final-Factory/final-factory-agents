@@ -2215,14 +2215,14 @@ def test_a_credential_that_stops_answering_holds_its_work_until_a_probe_says_it_
     check("a new Watcher on the same state still sees it down",
           again.credential_down(api) is not None)
 
-    w._claude.probe_one = lambda name, token, kind: (False, "still not answering")
+    w._claude.probe_one = lambda *_: (False, "still not answering")
     case.db_exec("UPDATE credential_health SET next_probe_at=? WHERE name=?",
                  (ffwatch.iso_at(time.time() - 1), api))
     w.probe_down_credentials()
     row = w.credential_health(api)
     check("a probe that fails keeps it down and puts the next probe off",
           row["state"] == "down" and ffwatch.iso_secs(row["next_probe_at"]) > time.time(), row)
-    w._claude.probe_one = lambda name, token, kind: (True, "")
+    w._claude.probe_one = lambda *_: (True, "")
     case.db_exec("UPDATE credential_health SET next_probe_at=? WHERE name=?",
                  (ffwatch.iso_at(time.time() - 1), api))
     w.probe_down_credentials()
@@ -2352,6 +2352,266 @@ def test_a_conversation_waiting_on_a_down_credential_is_told_once_and_only_where
     quiet.watcher.claim_turns()
     check("a message the gate would have had to read gets no notice", posts(quiet) == [],
           posts(quiet))
+
+
+@contextlib.contextmanager
+def credential_env(**values):
+    """Put these credential variables in the environment for the block, and take them out after."""
+    saved = {k: os.environ.get(k) for k in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_every_kind_of_credential_is_read_under_one_namespace():
+    """Three families, one list, one namespace of ids (design/openrouter_provider_design.txt 2)."""
+    print("credentials: three kinds under one namespace")
+    env = {"CLAUDE_CODE_OAUTH_TOKEN2": "sk-ant-oat01-two", "CLAUDE_CODE_NAME_TOKEN2": "Loth",
+           "ANTHROPIC_API_KEY": "sk-ant-api03-default", "ANTHROPIC_API_KEY3": "sk-ant-api03-three",
+           "OPENROUTER_API_KEY2": "sk-or-v1-two", "OPENROUTER_NAME_KEY2": "Ben-glm",
+           "OPENROUTER_MODEL_KEY2": "z-ai/glm-5.3", "OPENROUTER_URL_KEY2": "https://example.invalid/api/",
+           "OPENROUTER_API_KEY5": "sk-or-v1-five", "GH_PR_TOKEN": "ghp_never"}
+    nowhere = os.path.join(TMPROOT, "no-such-secrets")
+    creds = claude_keys.claude_credentials(env, secrets_path=nowhere)
+    names = [c[0] for c in creds]
+    check("all three families, subscriptions first, with a gap in each",
+          names == ["CLAUDE_CODE_OAUTH_TOKEN2", "ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY3",
+                    "OPENROUTER_API_KEY2", "OPENROUTER_API_KEY5"], names)
+    kinds = {c[0]: c[2] for c in creds}
+    check("each kind comes from its prefix",
+          kinds["CLAUDE_CODE_OAUTH_TOKEN2"] == claude_keys.KIND_SUBSCRIPTION
+          and kinds["ANTHROPIC_API_KEY3"] == claude_keys.KIND_API_KEY
+          and kinds["OPENROUTER_API_KEY5"] == claude_keys.KIND_OPENROUTER, kinds)
+    two = claude_keys.credential_for("OPENROUTER_API_KEY2", creds)
+    check("an OpenRouter slot carries its declared model and URL",
+          two[5] == "z-ai/glm-5.3" and two[6] == "https://example.invalid/api", two)
+    five = claude_keys.credential_for("OPENROUTER_API_KEY5", creds)
+    check("and one that declares neither gets Flash on openrouter.ai",
+          five[5] == "z-ai/glm-5.3-flash" and five[6] == "https://openrouter.ai/api", five)
+    check("nothing else in the environment is read", "GH_PR_TOKEN" not in names, names)
+
+    named = claude_keys.credential_named
+    check("a declared name matches across kinds, case-insensitively",
+          named("ben-GLM", creds)[0] == "OPENROUTER_API_KEY2", named("ben-GLM", creds))
+    check("a variable name matches for every kind",
+          named("openrouter_api_key5", creds)[0] == "OPENROUTER_API_KEY5"
+          and named("ANTHROPIC_API_KEY3", creds)[0] == "ANTHROPIC_API_KEY3")
+    check("the bare slot number is a subscription alias only",
+          named("5", creds)[0] is None and named("2", creds)[0] == "CLAUDE_CODE_OAUTH_TOKEN2",
+          (named("5", creds), named("2", creds)))
+    clash = creds + [("OPENROUTER_API_KEY9", "sk-or-v1-nine", claude_keys.KIND_OPENROUTER, "Loth",
+                      1, "m", "u")]
+    name, why = named("loth", clash)
+    check("an id credentials of two kinds answer to is ambiguous",
+          name is None and why.startswith("ambiguous") and "OPENROUTER_API_KEY9" in why, why)
+
+    path = os.path.join(TMPROOT, "secrets-kinds.env")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("OPENROUTER_API_KEY1=sk-or-v1-file\nOPENROUTER_NAME_KEY1=Players\n"
+                 "UNITY_PASSWORD=never\nANTHROPIC_API_KEY=sk-ant-api03-file\n")
+    mixed = claude_keys.claude_credentials({"ANTHROPIC_API_KEY": "sk-ant-api03-env"},
+                                           secrets_path=path)
+    check("each family falls back to secrets.env on its own",
+          [(c[0], c[1]) for c in mixed] == [("ANTHROPIC_API_KEY", "sk-ant-api03-env"),
+                                            ("OPENROUTER_API_KEY1", "sk-or-v1-file")], mixed)
+    check("and nothing but credential lines come out of that file",
+          "UNITY_PASSWORD" not in claude_keys._claude_secrets_file(path))
+
+
+def test_any_kind_can_be_claimed_and_the_default_must_be_metered():
+    print("the route: credential kinds")
+    creds = [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-bens", claude_keys.KIND_SUBSCRIPTION, "Ben",
+              5, "", ""),
+             ("ANTHROPIC_API_KEY", "sk-ant-api03-default", claude_keys.KIND_API_KEY, "", 1, "", ""),
+             ("OPENROUTER_API_KEY1", "sk-or-v1-players", claude_keys.KIND_OPENROUTER, "Players", 1,
+              "z-ai/glm-5.3-flash", "https://openrouter.ai/api"),
+             ("OPENROUTER_API_KEY2", "sk-or-v1-loth", claude_keys.KIND_OPENROUTER, "Loth-glm", 1,
+              "z-ai/glm-5.3-flash", "https://openrouter.ai/api")]
+    ops = {"ben": {"discord": "800000000000000001", "github": "11", "claude": "Ben"},
+           "lothsahn": {"discord": "800000000000000002", "github": "22", "claude": "loth-glm"}}
+    cfg = {"operators": ops, "claude": {"default": "Players"}}
+    keys = (creds, ffwatch.default_credential(cfg, creds))
+    name, why = ffwatch.claude_route(cfg, "operator", "800000000000000002", "ask", keys)
+    check("an operator can claim an OpenRouter key", name == "OPENROUTER_API_KEY2"
+          and "OpenRouter key" in why, (name, why))
+    check("and a review reads the same claim",
+          ffwatch.claude_route(cfg, "operator", "22", ffwatch.GITHUB_KIND, keys)[0]
+          == "OPENROUTER_API_KEY2")
+    check("a player bills what claude.default names",
+          ffwatch.claude_route(cfg, "player", "9", "ask", keys)[0] == "OPENROUTER_API_KEY1")
+    check("and so do the gate and the selector when no classifier is set",
+          ffwatch.classifier_credential(cfg, creds)[0][0] == "OPENROUTER_API_KEY1")
+    split = {"operators": ops, "claude": {"default": "Players", "classifier": "ANTHROPIC_API_KEY"}}
+    check("claude.classifier bills the classifications somewhere else",
+          ffwatch.classifier_credential(split, creds)[0][0] == "ANTHROPIC_API_KEY")
+    for key, resolve in (("default", ffwatch.default_credential),
+                         ("classifier", ffwatch.classifier_credential)):
+        cred, why = resolve({"operators": ops, "claude": {key: "Ben"}}, creds)
+        check(f"claude.{key} naming a subscription is refused, and says so",
+              cred is None and "subscription" in why and "Ben" in why, why)
+    nothing = {"operators": ops, "claude": {"default": "no-such-id"}}
+    keys2 = (creds, ffwatch.default_credential(nothing, creds))
+    name, why = ffwatch.claude_route(nothing, "player", "9", "ask", keys2)
+    check("a default naming nothing refuses players and quotes what it named",
+          name is None and "no-such-id" in why, why)
+    check("while an operator's own claim still resolves",
+          ffwatch.claude_route(nothing, "operator", "800000000000000001", "ask", keys2)[0]
+          == "CLAUDE_CODE_OAUTH_TOKEN1")
+    check("unset, the default is the unnumbered ANTHROPIC_API_KEY",
+          ffwatch.default_credential({"operators": ops}, creds)[0][0] == "ANTHROPIC_API_KEY")
+
+
+def test_the_classifier_is_handed_exactly_what_its_credentials_kind_needs():
+    print("the classifier environment follows its credential's kind")
+    with credential_env(OPENROUTER_API_KEY7="sk-or-v1-classifier", OPENROUTER_NAME_KEY7="Gate"):
+        cfg = ffwatch.load_config()
+        cfg["claude"] = dict(cfg.get("claude") or {}, classifier="Gate")
+        argv, env, _cwd, _stdin = ffwatch.classifier_invocation(cfg, "text",
+                                                                ffwatch.CLASSIFIER_SCHEMA)
+        check("the OpenRouter key goes in as the bearer token",
+              env.get("ANTHROPIC_AUTH_TOKEN") == "sk-or-v1-classifier", sorted(env))
+        check("beside openrouter.ai", env.get("ANTHROPIC_BASE_URL") == "https://openrouter.ai/api",
+              env.get("ANTHROPIC_BASE_URL"))
+        check("with every alias on Flash, haiku included",
+              all(env.get(f"ANTHROPIC_DEFAULT_{a}_MODEL") == "z-ai/glm-5.3-flash"
+                  for a in ("FABLE", "OPUS", "SONNET", "HAIKU")), sorted(env))
+        check("ANTHROPIC_API_KEY is set empty rather than passed through",
+              env.get("ANTHROPIC_API_KEY") == "", env.get("ANTHROPIC_API_KEY"))
+        check("no subscription token by any name",
+              not [k for k in env if k.startswith("CLAUDE_CODE_OAUTH_TOKEN")], sorted(env))
+        check("and nothing beyond the sandbox's names and this kind's",
+              set(env) <= {"PATH", "HOME", "MAX_THINKING_TOKENS", "LANG", "LC_ALL",
+                           "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY",
+                           "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                           "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"},
+              sorted(env))
+        check("--model stays the alias the environment resolves",
+              argv[argv.index("--model") + 1] == cfg["classifier_model"], argv)
+        cfg["claude"]["classifier"] = SUITE_CLAUDE_SLOT
+        _, err = ffwatch.classifier_attempt(cfg, "p", ffwatch.CLASSIFIER_SCHEMA, structured=False,
+                                            what="gate")
+        check("a classifier naming a subscription is refused before anything runs",
+              getattr(err, "kind", None) == ffwatch.FAILURE_REFUSED and "subscription" in err,
+              str(err))
+        case = Case("route-comment-openrouter")
+        case.cfg["operators"]["lothsahn"]["claude"] = "Gate"
+        key, why = case.watcher.claude_route_for_comment({"id": 1,
+                                                          "user": {"id": int(LOTH_GITHUB_ID)}})
+        check("a #codereview trigger routes to the OpenRouter key its operator claims",
+              key == "OPENROUTER_API_KEY7", (key, why))
+
+
+def test_an_openrouter_key_reports_its_budget_and_is_probed_on_its_own():
+    print("claude_keys: an OpenRouter key")
+    creds = [("OPENROUTER_API_KEY1", "sk-or-v1-live", claude_keys.KIND_OPENROUTER, "Players", 1,
+              "z-ai/glm-5.3-flash", "https://openrouter.ai/api"),
+             ("OPENROUTER_API_KEY2", "sk-or-v1-revoked", claude_keys.KIND_OPENROUTER, "", 1,
+              "z-ai/glm-5.3-flash", "https://openrouter.ai/api")]
+    asked, messages = [], []
+
+    def fetch(url, token):
+        asked.append((url, token))
+        if token == "sk-or-v1-revoked":
+            return None, "401 — OpenRouter refused this key"
+        return {"limit": 5.0, "limit_remaining": 0.0, "limit_reset": "daily", "usage": 12.0,
+                "usage_daily": 5.0}, ""
+
+    def probe(url, token, model):
+        messages.append(model)
+        return True, ""
+
+    keys = claude_keys.ClaudeKeys(credentials=creds, openrouter_fetch=fetch,
+                                  openrouter_probe=probe,
+                                  store=os.path.join(TMPROOT, "openrouter-store.json"))
+    recs = {r["name"]: r for r in keys.read()}
+    live = recs["OPENROUTER_API_KEY1"]
+    check("the row is an OpenRouter row carrying its model",
+          live["kind"] == claude_keys.KIND_OPENROUTER and live["model"] == "z-ai/glm-5.3-flash", live)
+    check("with its budget, read off the key",
+          live["budget"]["limit"] == 5.0 and live["budget"]["usage_daily"] == 5.0, live.get("budget"))
+    check("a spent limit reads as spent", live["state"] == "spent", live["state"])
+    dead = recs["OPENROUTER_API_KEY2"]
+    check("a refused key is unreachable, with the sentence",
+          dead["state"] == "unreachable" and "401" in dead["error"], dead)
+    check("reading the page asked no model anything", messages == [], messages)
+    ok, err = keys.probe_one("OPENROUTER_API_KEY1", "sk-or-v1-live", claude_keys.KIND_OPENROUTER,
+                             "z-ai/glm-5.3-flash", "https://openrouter.ai/api")
+    check("a probe asks the key and then the model", ok and messages == ["z-ai/glm-5.3-flash"],
+          (ok, err, messages))
+    ok, err = keys.probe_one("OPENROUTER_API_KEY2", "sk-or-v1-revoked", claude_keys.KIND_OPENROUTER)
+    check("a refused key fails the probe before any model is asked",
+          not ok and "401" in err and messages == ["z-ai/glm-5.3-flash"], (ok, err, messages))
+    check("a daily limit resets at the next midnight UTC",
+          claude_keys.budget_reset_at({"limit_reset": "daily"}, now=CLAUDE_NOW)
+          == (CLAUDE_NOW // 86400 + 1) * 86400)
+    check("a reset nobody can read is None", claude_keys.budget_reset_at({"limit_reset": "someday"})
+          is None)
+
+
+def test_a_spent_openrouter_budget_holds_until_it_refills_and_says_when():
+    """A 402 on an OpenRouter default goes down at once, with its end read off the key; the
+    addressed player hears the break notice with that duration; nothing probes before it."""
+    print("credential health: a spent OpenRouter budget")
+    with credential_env(OPENROUTER_API_KEY6="sk-or-v1-players", OPENROUTER_NAME_KEY6="Players6"):
+        mid = sflake(0, 1)
+        fixture = base_fixture()
+        fixture["messages"][ASK_CHANNEL] = [message(mid, "hey @max the merger is broken")]
+        fixture["messages"][ASK_CHANNEL][0]["mentions"] = [{"id": BOT}]
+        case = Case("health-budget", fixture)
+        # REPLACED, NOT MUTATED: cfg["claude"] can be the very dict DEFAULTS holds, and a key set
+        # on it in place would be the default for every case after this one.
+        case.cfg["claude"] = dict(case.cfg["claude"], default="Players6")
+        w = case.watcher
+        check("a player-pool spare is staged on the OpenRouter default",
+              w.pool_stage_key("ffagent") == "OPENROUTER_API_KEY6", w.pool_stage_key("ffagent"))
+        w._claude.openrouter_budget = lambda url, token: (
+            {"limit": 5.0, "limit_remaining": 0.0, "limit_reset": "daily", "usage_daily": 5.0}, "")
+        case.events(ask_event(mid))
+        w.drain_events()
+        w.record_call("OPENROUTER_API_KEY6",
+                      ffwatch.ClassifierFailure("402", ffwatch.FAILURE_BUDGET))
+        row = w.credential_down("OPENROUTER_API_KEY6")
+        check("one 402 takes it down", row is not None)
+        check("with the refill time read off the key",
+              row is not None and (ffwatch.iso_secs(row["until"]) or 0) > time.time(),
+              row and row["until"])
+        w.claim_turns()
+        said = posts(case)
+        check("no turn", case.rows("SELECT * FROM turn") == [])
+        check("the addressed player is told when, with the break notice",
+              len(said) == 1 and "break" in said[0]["text"], said)
+        w._claude.probe_one = lambda *_: (True, "")
+        case.db_exec("UPDATE credential_health SET next_probe_at=? WHERE name=?",
+                     (ffwatch.iso_at(time.time() - 1), "OPENROUTER_API_KEY6"))
+        w.probe_down_credentials()
+        check("and no probe lifts it before the refill",
+              w.credential_down("OPENROUTER_API_KEY6") is not None)
+
+
+def test_a_turn_with_nothing_to_bill_writes_no_job():
+    print("launch: the credential is resolved before the job is written")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(4701, "the merger drops items")]
+    case = Case("launch-nothing-to-bill", fixture, verdict={"engage": True, "reason": "a report"})
+    case.events(ask_event(4701))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    check("a turn is queued while the default resolves", len(case.rows("SELECT * FROM turn")) == 1)
+    case.cfg["claude"] = dict(case.cfg["claude"], default="no-such-credential")
+    case.watcher.once()
+    turn = case.rows("SELECT * FROM turn")[0]
+    check("the turn fails", turn["status"] == "failed", turn["status"])
+    check("saying there is nothing to bill", "no Claude account to bill" in (turn["error"] or ""),
+          turn["error"])
+    jobs = [os.path.join(d, f) for d, _, fs in os.walk(case.state_dir) for f in fs
+            if f == "job.json"]
+    check("and no job.json was written for it", jobs == [], jobs)
 
 
 
@@ -16494,8 +16754,19 @@ ROUTE_CFG = {"operators": {
 }}
 
 
+def route_keys(subs, api, cfg=None):
+    """(credentials, default) in claude_route's shape, from the older (subscriptions, api) pair."""
+    creds = [(name, token, claude_keys.KIND_SUBSCRIPTION, label, rate, "", "")
+             for name, token, rate, label in subs]
+    if api:
+        creds.append((api[0], api[1], claude_keys.KIND_API_KEY, "", 1, "", ""))
+    return creds, ffwatch.default_credential(cfg or {}, creds)
+
+
 def route(tier, actor, kind="ask", cfg=None, keys=None):
-    return ffwatch.claude_route(cfg or ROUTE_CFG, tier, actor, kind, keys or ROUTE_KEYS)
+    subs, api = keys or ROUTE_KEYS
+    return ffwatch.claude_route(cfg or ROUTE_CFG, tier, actor, kind,
+                                route_keys(subs, api, cfg or ROUTE_CFG))
 
 
 class StubClaudeKeys:
@@ -18444,6 +18715,12 @@ def main():
         test_a_finished_run_reports_to_the_health_of_the_credential_it_billed,
         test_a_review_trigger_waits_for_its_credential_to_answer,
         test_a_conversation_waiting_on_a_down_credential_is_told_once_and_only_where_a_turn_was_coming,
+        test_every_kind_of_credential_is_read_under_one_namespace,
+        test_any_kind_can_be_claimed_and_the_default_must_be_metered,
+        test_the_classifier_is_handed_exactly_what_its_credentials_kind_needs,
+        test_an_openrouter_key_reports_its_budget_and_is_probed_on_its_own,
+        test_a_spent_openrouter_budget_holds_until_it_refills_and_says_when,
+        test_a_turn_with_nothing_to_bill_writes_no_job,
         test_an_unwatched_channel_produces_nothing,
         test_read_only_capabilities,
         test_batching_during_a_run,

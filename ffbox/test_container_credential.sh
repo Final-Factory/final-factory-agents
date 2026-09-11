@@ -45,6 +45,9 @@ cat > "$TMP/bin/docker" <<'STUB'
 # Records every argument, NUL-separated so a value carrying spaces or newlines cannot hide a
 # match, then answers the four questions ffbox asks before it creates anything.
 printf '%s\0' "$@" >> "$FFBOX_TEST_ARGV"
+# AND THE MODEL ENVIRONMENT, which reaches docker by name and so is not in argv: a case about an
+# OpenRouter credential checks the values that went with those names. No token is written here.
+env | grep -E '^ANTHROPIC_(BASE_URL|DEFAULT_[A-Z]+_MODEL)=' >> "$FFBOX_TEST_ARGV.env" 2>/dev/null || :
 case "$1 $2" in
     "image inspect")   exit 0 ;;
     "network inspect") exit 0 ;;
@@ -229,6 +232,58 @@ stage_key k5 "$TMP/secrets-claude.env"
 [ "$RC" -eq 0 ] && [ "$(env_named CLAUDE_CODE_OAUTH_TOKEN)" = 1 ] \
     && ok "with no flag the first subscription slot is used" \
     || bad "with no flag the first subscription slot is used (rc=$RC): $(tail -2 "$LOG")"
+
+# --- an OpenRouter key, and a numbered API key -----------------------------------------------
+#
+# THE THIRD KIND, and what it puts in the container: the key as the bearer token beside its base
+# URL, ANTHROPIC_API_KEY passed EMPTY, every model alias pointed at the slot's model, and nothing of
+# the other two kinds (design/openrouter_provider_design.txt section 5).
+echo "claude credential: an OpenRouter key, and a numbered API key"
+
+printf 'OPENROUTER_API_KEY1=%s\nOPENROUTER_MODEL_KEY1=%s\nOPENROUTER_URL_KEY1=%s\nOPENROUTER_API_KEY2=\nOPENROUTER_API_KEY3=%s\nANTHROPIC_API_KEY=%s\nANTHROPIC_API_KEY2=%s\nCLAUDE_CODE_OAUTH_TOKEN1=%s\n' \
+    "sk-or-v1-$FAKE_TOKEN" "vendor/declared-model" "https://openrouter.example/api" \
+    "sk-or-v1-three-$FAKE_TOKEN" "sk-ant-api03-$FAKE_TOKEN" "sk-ant-api03-two-$FAKE_TOKEN" \
+    "sk-ant-oat01-$FAKE_TOKEN" > "$TMP/secrets-or.env"
+chmod 600 "$TMP/secrets-or.env"
+
+stage_key k6 "$TMP/secrets-or.env" --claude-key OPENROUTER_API_KEY1
+[ "$RC" -eq 0 ] && [ "$(env_named ANTHROPIC_AUTH_TOKEN)" = 1 ] \
+    && ok "--claude-key OPENROUTER_API_KEY1 forwards the key as the bearer token" \
+    || bad "--claude-key OPENROUTER_API_KEY1 forwards the key as the bearer token (rc=$RC): $(tail -2 "$LOG")"
+[ "$(env_named ANTHROPIC_BASE_URL)" = 1 ] && [ "$(env_named ANTHROPIC_DEFAULT_HAIKU_MODEL)" = 1 ] \
+    && [ "$(env_named ANTHROPIC_DEFAULT_OPUS_MODEL)" = 1 ] \
+    && ok "with its base URL and the model every alias resolves to" \
+    || bad "with its base URL and the model every alias resolves to"
+[ "$(env_named ANTHROPIC_API_KEY=)" = 1 ] && [ "$(env_named ANTHROPIC_API_KEY)" = 0 ] \
+    && ok "ANTHROPIC_API_KEY goes in empty, as OpenRouter asks, and never with a value" \
+    || bad "ANTHROPIC_API_KEY goes in empty, as OpenRouter asks, and never with a value"
+[ "$(env_named CLAUDE_CODE_OAUTH_TOKEN)" = 0 ] \
+    && ok "and no subscription token goes in beside it" \
+    || bad "and no subscription token goes in beside it"
+tr '\0' '\n' < "$ARGV" | grep -q "$FAKE_TOKEN" \
+    && bad "no OpenRouter key reaches the command line" \
+    || ok "no OpenRouter key reaches the command line"
+grep -q '^ANTHROPIC_DEFAULT_OPUS_MODEL=vendor/declared-model$' "$ARGV.env" \
+    && grep -q '^ANTHROPIC_BASE_URL=https://openrouter.example/api$' "$ARGV.env" \
+    && ok "the model and base URL the slot declares are the ones that go in" \
+    || bad "the model and base URL the slot declares are the ones that go in: $(cat "$ARGV.env" 2>/dev/null)"
+
+stage_key k7 "$TMP/secrets-or.env" --claude-key OPENROUTER_API_KEY3
+grep -q '^ANTHROPIC_DEFAULT_SONNET_MODEL=z-ai/glm-5.3-flash$' "$ARGV.env" \
+    && grep -q '^ANTHROPIC_BASE_URL=https://openrouter.ai/api$' "$ARGV.env" \
+    && ok "a slot that declares neither gets Flash on openrouter.ai" \
+    || bad "a slot that declares neither gets Flash on openrouter.ai (rc=$RC): $(cat "$ARGV.env" 2>/dev/null)"
+
+stage_key k8 "$TMP/secrets-or.env" --claude-key OPENROUTER_API_KEY2
+[ "$RC" -eq 78 ] \
+    && ok "an empty OpenRouter key is refused rather than falling back to a slot" \
+    || bad "an empty OpenRouter key is refused (rc=$RC): $(tail -2 "$LOG")"
+
+stage_key k9 "$TMP/secrets-or.env" --claude-key ANTHROPIC_API_KEY2
+[ "$RC" -eq 0 ] && [ "$(env_named ANTHROPIC_API_KEY)" = 1 ] \
+    && [ "$(env_named ANTHROPIC_AUTH_TOKEN)" = 0 ] \
+    && ok "a numbered API key forwards ANTHROPIC_API_KEY alone" \
+    || bad "a numbered API key forwards ANTHROPIC_API_KEY alone (rc=$RC): $(tail -2 "$LOG")"
 
 # --- what the container does with it ---------------------------------------------------------
 #
