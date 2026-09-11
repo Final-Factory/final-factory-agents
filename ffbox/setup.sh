@@ -181,10 +181,10 @@ stage() { printf '\n######## %s\n\n' "$*"; }
 secrets_ready() {
   ( set +u
     . "$SECRETS" 2>/dev/null || exit 1
-    # ANY slot in the Claude pool, not slot 1 specifically. secrets.env numbers the tokens from
-    # 1 (CLAUDE_CODE_OAUTH_TOKEN1, ...2, ...) and ffwatch spends whichever has room, so a file
-    # whose slot 1 was emptied after a revocation is still a ready file. The unnumbered name is
-    # the older spelling and still counts.
+    # ANY slot, not slot 1 specifically. secrets.env numbers the subscription tokens from 1
+    # (CLAUDE_CODE_OAUTH_TOKEN1, ...2, ...), one per operator, so a file whose slot 1 was
+    # emptied after a revocation is still a ready file. The unnumbered name is the older
+    # spelling and still counts.
     n=1
     while [ "$n" -le 16 ]; do
       eval "v=\${CLAUDE_CODE_OAUTH_TOKEN${n}}"
@@ -192,6 +192,17 @@ secrets_ready() {
       n=$((n + 1))
     done
     [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]                            || exit 1
+  ) 2>/dev/null
+}
+
+# THE OTHER HALF OF READY, and it is a separate question rather than part of the one above. A
+# subscription pays for the operator who claims it; ANTHROPIC_API_KEY pays for everyone else,
+# which on this box is every player in every forum thread plus the gate that reads their
+# messages. A box with subscriptions and no API key runs dev work and answers nobody.
+api_key_ready() {
+  ( set +u
+    . "$SECRETS" 2>/dev/null || exit 1
+    [ -n "$ANTHROPIC_API_KEY" ]                                  || exit 1
   ) 2>/dev/null
 }
 
@@ -250,7 +261,7 @@ mint_claude_token() {
   # offering to run an OAuth flow at it would be setup.sh second-guessing that. Adding another
   # account is an edit to the file, deliberately — the numbering is the whole interface.
   if secrets_ready; then
-    printf '    a Claude token is already set — leaving the pool alone\n'
+    printf '    a Claude subscription token is already set — leaving the file alone\n'
     return 0
   fi
   command -v claude >/dev/null 2>&1     || { printf '    claude not on PATH — set CLAUDE_CODE_OAUTH_TOKEN1 by hand\n'; return 0; }
@@ -259,7 +270,7 @@ mint_claude_token() {
     return 0
   fi
 
-  printf '\n==> the Claude token pool is empty. Run "claude setup-token" now? [Y/n] '
+  printf '\n==> no Claude subscription token yet. Run "claude setup-token" now? [Y/n] '
   read -r _ans
   case "$_ans" in [Nn]*) printf '    skipped\n'; return 0 ;; esac
 
@@ -321,7 +332,22 @@ mint_claude_token() {
   unset _tok _raw
 }
 
+# ------------------------------------------------------------------------------------------------
+# THE METERED KEY. Not minted here and not mintable here: an API key comes out of the console at
+# console.anthropic.com and there is no CLI flow to drive. What this can do is say plainly that a
+# box without one answers only its operators, which is the kind of half-configured state somebody
+# discovers a week later from a forum thread that never got a reply.
+# ------------------------------------------------------------------------------------------------
+check_api_key() {
+  api_key_ready && return 0
+  printf '\n==> no ANTHROPIC_API_KEY in %s\n' "$SECRETS"
+  printf '    It pays for every request no operator made: a player in a forum thread, the\n'
+  printf '    engagement gate, the selector. Without it this box will refuse all of them.\n'
+  printf '    Mint one at console.anthropic.com and put it in that file.\n'
+}
+
 mint_claude_token
+check_api_key
 
 # THE UNITY IMPORT STAGE IS GONE, so nothing here depends on secrets being filled in yet. It used
 # to warn and skip when they were not; setup now completes regardless and secrets are only needed

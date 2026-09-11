@@ -680,9 +680,20 @@ DEFAULTS = {
     # and this bounds it: a conversation nobody has touched in a week has been moved on from by
     # a human, and the harness re-deciding its publication is no longer help.
     "reconcile_secs": 7 * 24 * 3600,
-    # WHO MAY COMMAND THIS BOX, in one place, with one entry per PERSON and one id per service.
+    # WHO MAY COMMAND THIS BOX, in one place, with one entry per PERSON and one id per service,
+    # and WHOSE SUBSCRIPTION PAYS FOR WHAT THEY ASK FOR.
     #
-    #     "operators": { "lothsahn": {"discord": "8000...", "github": 10092359} }
+    #     "operators": { "lothsahn": {"discord": "8000...", "github": 10092359,
+    #                                 "shell": "lothsahn", "claude": "Loth"} }
+    #
+    # `claude` IS THE SUBSCRIPTION ID: the CLAUDE_CODE_NAME_TOKEN<n> declared beside that
+    # person's token in secrets.env, or the slot number as a weaker fallback. An operator with
+    # no `claude` has no account to be billed and their requests are refused rather than
+    # rehomed onto somebody else's plan. See claude_route.
+    #
+    # `shell` IS A UNIX ACCOUNT NAME on this box, and the only id that is not numeric. A shell
+    # or web prompt opens its conversation with the account that typed it, and renaming a local
+    # account takes root — which anybody who could read secrets.env directly already has.
     #
     # It used to be `discord.trust.operators`, a bare name-to-snowflake table, and adding a
     # second service to it would have meant a second table somewhere else and two lists of the
@@ -916,6 +927,13 @@ DEFAULTS = {
         # seeded config does.
         "ffagent": {
             "base_ref": "master",
+            # WHAT ONE RUN OF THIS CLASS MAY COST, or null for the box's `max_budget_usd`.
+            # It stopped being a formality on 2026-09-10: player-facing work is billed to
+            # ANTHROPIC_API_KEY, which is metered, so this is the real ceiling on a single run
+            # rather than a number that only mattered if something went badly wrong. Per class
+            # because the two lanes are not worth the same -- a stranger's bug report is not a
+            # dev task, and ffdev's runs are billed to an operator's own subscription anyway.
+            "max_budget_usd": None,
             "agent_secs": 1800,
             "warmup_secs": 3600,
             "verify_secs": 1800,
@@ -969,6 +987,7 @@ DEFAULTS = {
             "agent_pool_max": 3,
             "idle_agent_ttl_secs": 14400,
             "pool_ref": None,
+            "max_budget_usd": None,
             "network": "full",
             # ffdev GETS ff-agents TOO, and it is the only class that does. This lane is an
             # operator's own Claude Code session with the operator not sitting there, so it wants
@@ -1160,39 +1179,25 @@ DEFAULTS = {
 
     # -- the Claude subscriptions ------------------------------------------------------------
     #
-    # WHICH ACCOUNT EACH TURN IS BILLED TO. secrets.env carries one token per subscription
-    # (CLAUDE_CODE_OAUTH_TOKEN1, ...2, ...3) and until 2026-09-04 the first one paid for
-    # everything while the rest sat there as inventory for ffweb's /claude page to report on.
-    # This block is what spends them. claude_keys.pick has the policy and the argument for it;
-    # in one line, the account with the most allowance per second between now and the moment it
-    # refills wins, and a slot that has spent more than `five_hour_cap` of its session is not
-    # offered work at all.
+    # WHICH ACCOUNT EACH REQUEST IS BILLED TO IS NOT CONFIGURED HERE. It is decided by who
+    # asked: an operator's request goes to the subscription they named in `operators.<them>.
+    # claude`, and everything else goes to ANTHROPIC_API_KEY. See `claude_route`, and
+    # design/operator_subscriptions_design.txt for why the chooser that used to live here is
+    # gone. NO TOKEN IS CONFIGURED HERE OR ANYWHERE ELSE IN THIS FILE: the answer is a variable
+    # NAME, handed to ffbox as --claude-key, and ffbox resolves it out of secrets.env itself.
     #
-    # NO TOKEN IS CONFIGURED HERE OR ANYWHERE ELSE IN THIS FILE. The choice is a variable NAME,
-    # handed to ffbox as --claude-key, and ffbox resolves it out of secrets.env itself.
+    # WHAT IS LEFT IN THIS BLOCK IS THE READING AND THE HOLDS.
     "claude": {
-        # OFF SPENDS THE FIRST KEY FOR EVERYTHING, which is exactly what this box did before.
-        # Kept as a switch because the reading behind the choice is an outbound request, and a
-        # box that cannot make one should be able to say so rather than fail quietly.
-        "spread": True,
-        # The share of the FIVE-HOUR session past which a slot stops being offered work.
-        #
-        # WHY NOT 1.0. A session run to its ceiling stops a turn mid-flight, and the turn is
-        # lost rather than queued. The 40% left over is what keeps a human at a terminal able
-        # to use the same account, and it absorbs the age of the reading — which is up to
-        # `refresh_secs` old by construction.
-        "five_hour_cap": 0.6,
         # HOW OFTEN THE WINDOWS ARE RE-READ WHEN NOBODY ASKS FOR A FRESH ONE. A quarter of an
         # hour: the windows being measured are five hours and seven days long, so a reading
         # that old answers this question exactly as well as a fresh one, and the reading is not
         # free — a key whose usage document is closed to it (which is every `claude
         # setup-token` key) is priced at one token of Haiku per refresh.
         #
-        # THE SPAWN DECISIONS DO NOT WAIT ON IT. Whether a new conversation or a code review
+        # THE HOLD DECISIONS DO NOT WAIT ON IT. Whether a new conversation or a code review
         # starts now or waits for the window is the one decision a stale reading gets wrong in
         # a way nothing later corrects, so those ask for a round trip of their own; see
-        # claude_hold. This is the floor under everything else — the account each turn is
-        # billed to, a staging, the gate's own key — where the next turn re-decides anyway.
+        # claude_hold. This is the floor under everything else.
         #
         # It is no longer ffweb's number too. That page holds its reading for an hour and now
         # reads this daemon's answers out of the shared store rather than asking Anthropic
@@ -1203,7 +1208,7 @@ DEFAULTS = {
         # cost rather than a turn.
         "timeout_secs": 10,
 
-        # -- WHAT WAITS INSTEAD OF RUNNING when the subscriptions are nearly spent -----------
+        # -- WHAT WAITS INSTEAD OF RUNNING when an account is nearly spent -------------------
         #
         # A DEFERRAL, NOT A REFUSAL, and that is the whole feature. Above these shares the
         # request is left exactly where it arrived — a #codereview comment stays unread in the
@@ -1215,9 +1220,10 @@ DEFAULTS = {
         # A box three days into a spent week is as unable to do the work as one that has just
         # burned its session, and the deferral is the same answer to both.
         #
-        # AND IT IS THE EMPTIEST ACCOUNT THAT DECIDES, not the first: on a box spreading over
-        # three subscriptions the question is whether ANY of them can take this, so the hold
-        # only lands once all of them are over the line. See claude_keys.emptiest.
+        # AND IT IS THE ACCOUNT THAT WOULD PAY THAT DECIDES, nobody else's. An operator who has
+        # spent their week holds their own work and no one else's, and a box whose operators are
+        # all spent still answers players — because player work is billed to the API key, which
+        # is metered and has no window to be over. That is also why these holds do not touch it.
         #
         # TWO NUMBERS, BECAUSE THE TWO REQUESTS ARE NOT WORTH THE SAME. A review is work this
         # box went looking for and can do just as well in four hours; somebody typing in a
@@ -1228,8 +1234,8 @@ DEFAULTS = {
         # A BOX THAT CANNOT READ ITS WINDOWS RUNS EVERYTHING, and that direction is chosen:
         # an outage at Anthropic, a revoked scope or a network fault must not be able to
         # silently stop every review and every new report on the box. null (or 0) on either
-        # key turns that hold off, and turning BOTH off is what restores the pre-2026-09-07
-        # behaviour of never reading the windows on a one-account box.
+        # key turns that hold off, and turning BOTH off means the box never reads a window at
+        # all — which is the right answer for a box whose only credential is the API key.
         "review_hold_pct": 0.75,
         "new_conversation_hold_pct": 0.9,
     },
@@ -1459,6 +1465,16 @@ def _class_blocks(ffbox_raw, max_runs, to_int):
         # A value that is not readable as names falls back to THIS class's default, never to the
         # other class's -- which is what keeps a mangled ffagent block from inheriting ff-agents.
         block["plugins"] = resolve_plugin_names(block.get("plugins"), fallback["plugins"])
+        # WHAT ONE RUN OF THIS CLASS MAY COST. null (the shipped default) means the box's own
+        # `max_budget_usd`, resolved at the job rather than here, so a box that sets one number
+        # at the top level still gets it on both lanes. A number that does not parse is null for
+        # the same reason every other coercion here falls back: a typo must not take the daemon
+        # down or silently uncap a metered run.
+        try:
+            _b = block.get("max_budget_usd")
+            block["max_budget_usd"] = None if _b is None else float(_b)
+        except (TypeError, ValueError):
+            block["max_budget_usd"] = None
         # THE CREDENTIAL NAMES, FILLED IN RATHER THAN COPIED. Same treatment as `pool` above and
         # for the same reason: a class that names one of the two keys must still come back with
         # the other one present and null, so every reader can ask for either without guarding.
@@ -1659,17 +1675,31 @@ VENUES = ("public", "private")
 ENGAGEMENTS = ("all", "mention")
 
 
+# WHAT COUNTS AS AN ID, PER SERVICE. `discord` and `github` take digits and nothing else: an
+# account handle is renameable, so a trust key somebody can claim by renaming is not a trust
+# key, and a `".slims"` in there would match nobody while looking like it worked.
+#
+# `shell` IS THE EXCEPTION AND IT IS ARGUED RATHER THAN ASSUMED. A shell or web prompt opens its
+# conversation with the unix account name that typed it, and that argument does not carry over:
+# renaming a local account takes root on this box, and anybody with root here can read
+# secrets.env directly. A name is the only id that surface has, so a name is what it takes.
+OPERATOR_ID_RULES = {
+    "discord": lambda v: str(v).isdigit(),
+    "github": lambda v: str(v).isdigit(),
+    "shell": lambda v: bool(str(v).strip()) and v is not None,
+}
+
+
 def operator_ids(cfg, service):
     """{name: id} for one service, out of the shared `operators` block. {} when there are none.
 
     ONE BLOCK, ONE ENTRY PER PERSON, ONE ID PER SERVICE — and this is the only reader, so the
-    two services cannot come to disagree about who is trusted while still never sharing a set of
+    services cannot come to disagree about who is trusted while still never sharing a set of
     ids. `service` picks the field; nothing here can return a Discord snowflake to a caller
     asking about GitHub.
 
-    Anything whose value is not a digit string is DROPPED rather than kept, per service. A
-    handle is renameable, so a trust key somebody else can claim by renaming is not a trust key,
-    and a `".slims"` in here would match nobody while looking like it worked.
+    A value that does not satisfy that service's rule is DROPPED rather than kept. See
+    OPERATOR_ID_RULES for what each one takes and why they are not all the same.
 
     THE OLD SHAPE STILL READS, for `discord` only: `discord.trust.operators` was a bare
     name-to-snowflake table and is where every box before 2026-09-06 keeps its operators. It is
@@ -1677,13 +1707,14 @@ def operator_ids(cfg, service):
     removing somebody from it removes them, rather than leaving them trusted from a stale copy
     two sections away.
     """
+    ok = OPERATOR_ID_RULES.get(service, lambda v: str(v).isdigit())
     block = cfg.get("operators")
     if isinstance(block, dict) and block:
         out = {}
         for name, entry in block.items():
             value = entry.get(service) if isinstance(entry, dict) else None
-            if str(value).isdigit():
-                out[str(name)] = str(value)
+            if value is not None and ok(value):
+                out[str(name)] = str(value).strip()
         return out
     if service != "discord":
         return {}
@@ -1859,6 +1890,102 @@ def is_github_operator(cfg, user_id):
     to do with this machine, and a review run pushes commits.
     """
     return bool(user_id) and str(user_id) in set(github_operators(cfg).values())
+
+
+# ==========================================================================================
+# WHOSE SUBSCRIPTION PAYS (design/operator_subscriptions_design.txt)
+# ==========================================================================================
+#
+# An operator's request is billed to that operator's own Claude subscription, named by them in
+# `operators.<them>.claude`. Everything else -- a player in a forum thread, the engagement gate,
+# the selector, a fix leg a triage verdict spawned off somebody's bug report -- is billed to
+# ANTHROPIC_API_KEY, which is metered rather than windowed.
+#
+# THE ROUTE IS A LOOKUP OF AN AUTHENTICATED ID AND NEVER A THING TEXT CAN ASK FOR. It reads the
+# same `operators` block the trust tier reads, through the same function, so the person trusted
+# to command this box is the person whose subscription pays for it and the two cannot drift.
+# Nobody can say "bill this one to the API key" in a message, and that is not an oversight.
+#
+# IT LIVES HERE AND NOT IN claude_keys BECAUSE claude_keys DOES NOT KNOW WHAT AN OPERATOR IS.
+# That module answers "which accounts exist and what is left on them" for a page and for a
+# daemon; this is the trust table's business and sits with the rest of it.
+
+
+def claude_key_id(cfg, name):
+    """The subscription id one operator declared, or "" for an operator who declared none."""
+    entry = (cfg.get("operators") or {}).get(name)
+    return str((entry or {}).get("claude") or "").strip() if isinstance(entry, dict) else ""
+
+
+def operator_for(cfg, service, actor):
+    """Which operator this authenticated id belongs to, or None. The inverse of operator_ids."""
+    if not actor:
+        return None
+    for name, value in operator_ids(cfg, service).items():
+        if value == str(actor):
+            return name
+    return None
+
+
+def claude_service_for(kind):
+    """Which id space an actor from this conversation kind lives in.
+
+    THREE SPACES AND THEY NEVER MIX. A Discord snowflake that happened to collide with a GitHub
+    user id must not be a way into somebody's subscription, and it is not: an actor is only ever
+    tested against the table for the surface it arrived on.
+    """
+    if kind == GITHUB_KIND:
+        return "github"
+    if kind in LOCAL_KINDS:
+        return "shell"
+    return "discord"
+
+
+def claude_route(cfg, tier, actor, kind, keys):
+    """(variable name, why) for the credential this request is billed to, or (None, refusal).
+
+    `keys` is (subscriptions, api_key) -- claude_keys.claude_subscriptions() and
+    claude_keys.default_api_key(), read once by the caller. `tier` and `actor` are turn_trust's
+    answer, which is a dictionary lookup over authenticated ids and never a model.
+
+    A PLAYER, OR ANYBODY IN NO OPERATOR TABLE, GETS THE API KEY. That is the whole of the
+    default: work this box does for people who are not operating it is metered, and no
+    operator's window can be spent on it.
+
+    AN OPERATOR WITH NOTHING TO BILL IS REFUSED, NOT QUIETLY REHOMED. Falling back to the API
+    key would be the box deciding to spend money nobody budgeted; falling back to another
+    operator's subscription is the behaviour being removed. Every refusal here is a
+    configuration error, it names what was wrong, and the caller says it out loud -- see
+    `conversation_held` for the Discord venue and `review_held` for GitHub.
+    """
+    subs, api = keys
+    api_name = api[0] if api else None
+    if (tier or "player") != "operator":
+        return (api_name, "not an operator's request") if api_name else (
+            None, f"this box has no {claude_keys.CLAUDE_API_KEY_NAME}, so it cannot answer "
+                  f"anybody who is not an operator")
+    service = claude_service_for(kind)
+    # A LOCAL CONVERSATION WITH NO OPENER RECORDED reports the KIND as its actor -- the bare
+    # string "shell" or "web" -- because that is turn_trust's fallback. Reading that as a name
+    # to look up would have a box that one day acquires an operator called "shell" start billing
+    # anonymous terminal prompts to them.
+    who = None if str(actor) == str(kind) else operator_for(cfg, service, actor)
+    if not who:
+        return (api_name, f"no operator owns {service} id {actor or '?'}") if api_name else (
+            None, f"no operator owns {service} id {actor or '?'}, and this box has no "
+                  f"{claude_keys.CLAUDE_API_KEY_NAME} to fall back to")
+    key_id = claude_key_id(cfg, who)
+    if not key_id:
+        return None, (f"{who} has no `claude` subscription id in the operators block, so there "
+                      f"is no account to bill this to")
+    name, why = claude_keys.subscription_named(key_id, subs)
+    if name:
+        return name, f"{who}'s subscription, declared as {key_id}"
+    if why.startswith("ambiguous"):
+        return None, (f"{who}'s subscription id {key_id!r} is claimed by more than one slot in "
+                      f"secrets.env ({why.split(': ', 1)[1]}), so which account they meant is "
+                      f"not knowable")
+    return None, (f"{who}'s subscription id {key_id!r} names no token in secrets.env")
 
 
 # WHICH POOL DISCORD TRAFFIC LANDS IN, and it is two answers rather than one because the two
@@ -3693,46 +3820,21 @@ def classifier_dir(cfg):
     return path
 
 
-# THE CLAUDE TOKEN POOL. secrets.env carries one token per Claude account, numbered from 1
-# (CLAUDE_CODE_OAUTH_TOKEN1, CLAUDE_CODE_OAUTH_TOKEN2, ...). Until 2026-09-04 the first
-# non-empty one was spent for everything; now a turn is billed to whichever account has the most
-# allowance per second left before it refills, and `key` below is that choice arriving as the
-# NAME of the variable holding its token.
-#
-# THE NUMBERING RULE ITSELF LIVES IN claude_keys, which ffweb reads too — a gap is not the end
-# of the list, and the unnumbered name is the older spelling and still stands in as a pool of
-# one. ffbox has the third copy and always will: it is shell and cannot import any of this.
+# THE CREDENTIAL NAMES, re-exported so callers in this file do not each import them. The
+# numbering rule itself lives in claude_keys, which ffweb reads too; ffbox has the third copy
+# and always will, because it is shell and cannot import any of this.
 CLAUDE_TOKEN_PREFIX = claude_keys.CLAUDE_TOKEN_PREFIX
 CLAUDE_TOKEN_MAX = claude_keys.CLAUDE_TOKEN_MAX
+CLAUDE_API_KEY_NAME = claude_keys.CLAUDE_API_KEY_NAME
 
 
-def active_claude_token(env=None, key=None):
-    """The token this box should spend, or "" when it holds none.
-
-    `key` names the variable a chooser settled on — pick_claude_key's answer. Without one this
-    falls back to the first non-empty slot, which is what every caller did before the pool was
-    spent and is still the right answer for a box holding one account.
-
-    A NAME THAT IS NOT IN THE POOL IS IGNORED rather than looked up. The whole point of the
-    check is that this function turns a name into a credential: unvalidated, a caller that
-    passed `GH_PR_TOKEN` would be handed the GitHub token to give to a container as a Claude
-    one. Only names the pool itself produced are honoured.
-    """
-    env = os.environ if env is None else env
-    pool = claude_keys.claude_token_pool(env)
-    if key:
-        for entry in pool:
-            if entry[0] == key:
-                return entry[1]
-        log(f"WARNING: {key!r} is not a Claude token in secrets.env; using the first key")
-    return pool[0][1] if pool else ""
-
-def classifier_invocation(cfg, prompt, schema, structured=True, key=None):
+def classifier_invocation(cfg, prompt, schema, structured=True):
     """(argv, env, cwd, stdin) for one sandboxed model call.
 
-    `key` names the secrets.env variable holding the subscription this call is billed to, or
-    None for the first key in the pool. The caller resolves it, because this function is a pure
-    function of its arguments by design and reaching into a Watcher from here would end that.
+    ALWAYS ON THE API KEY, and it no longer takes an argument saying so. The gate and the
+    selector are the box reading text strangers wrote, once per candidate message whether or not
+    a turn follows; that is work nobody asked an operator to pay for, so it is billed to the
+    metered default like every other request no operator made.
 
     `structured` picks which of the two shapes this is. True passes --json-schema and the model
     cannot answer off-shape; False leaves the flag off, appends the contract to the prompt in
@@ -3787,19 +3889,10 @@ def classifier_invocation(cfg, prompt, schema, structured=True, key=None):
     for passthrough in ("ANTHROPIC_API_KEY", "LANG", "LC_ALL"):
         if os.environ.get(passthrough):
             env[passthrough] = os.environ[passthrough]
-    # THE POOL, RESOLVED TO ONE. This is not a passthrough like the three above: the daemon's
-    # environment holds CLAUDE_CODE_OAUTH_TOKEN1..N and the classifier is handed exactly one
-    # credential, under the unnumbered name `claude` actually reads. A child that inherited the
-    # whole pool would be a subprocess holding every account this box has, to answer a
-    # pick-an-id question with one of them.
-    #
-    # AND SINCE 2026-09-04 IT IS A CHOSEN ONE. The gate runs far more often than any agent does
-    # — once per candidate message, whether or not a turn follows — so leaving it pinned to the
-    # first account while runs spread over the rest would have one plan quietly carrying every
-    # small call on the box.
-    _token = active_claude_token(key=key)
-    if _token:
-        env[CLAUDE_TOKEN_PREFIX] = _token
+    # NO SUBSCRIPTION REACHES THIS CHILD. The daemon's environment holds every operator's token
+    # and this process has no business handing one of them to a subprocess that answers a
+    # pick-an-id question about a stranger's message. ANTHROPIC_API_KEY is in the passthrough
+    # list above and is the only credential here.
     # The prompt goes on STDIN, never argv: as an argument it is visible in `ps` to every user
     # on the box for the life of the call, and it counts against ARG_MAX.
     return argv, env, classifier_dir(cfg), prompt
@@ -3906,10 +3999,9 @@ def parse_classifier_output(text, schema):
     return parsed, None
 
 
-def classifier_attempt(cfg, prompt, schema, structured, what, key=None):
+def classifier_attempt(cfg, prompt, schema, structured, what):
     """One call. (parsed, error); never raises."""
-    argv, env, cwd, stdin = classifier_invocation(cfg, prompt, schema, structured=structured,
-                                                  key=key)
+    argv, env, cwd, stdin = classifier_invocation(cfg, prompt, schema, structured=structured)
     if os.sep not in argv[0]:
         # Resolution failed, so this is about to be FileNotFoundError with a one-word message
         # that says nothing about why. Say where we looked instead.
@@ -3936,7 +4028,7 @@ def classifier_attempt(cfg, prompt, schema, structured, what, key=None):
     return (None, f"{what} {why}") if why else (parsed, None)
 
 
-def run_classifier(cfg, prompt, schema, what="gate", key=None):
+def run_classifier(cfg, prompt, schema, what="gate"):
     """Run one classification. Returns a parsed dict, or None with a reason on any failure.
 
     TWO SHAPES OF THE SAME CALL, fast one first. --json-schema is served to the model as a
@@ -3958,15 +4050,12 @@ def run_classifier(cfg, prompt, schema, what="gate", key=None):
 
     Never raises. Every caller decides for itself what a failure means; this only reports it.
     """
-    parsed, error = classifier_attempt(cfg, prompt, schema, structured=False, what=what,
-                                       key=key)
+    parsed, error = classifier_attempt(cfg, prompt, schema, structured=False, what=what)
     if parsed is not None:
         return parsed, None
     log(f"{what}: the schema-free call did not give usable JSON ({error}); "
         f"retrying under --json-schema")
-    # THE SAME ACCOUNT FOR THE RETRY. Splitting one classification across two subscriptions
-    # would save nothing and make the usage numbers harder to read than they already are.
-    return classifier_attempt(cfg, prompt, schema, structured=True, what=what, key=key)
+    return classifier_attempt(cfg, prompt, schema, structured=True, what=what)
 
 
 # Words that only appear in a message trying to talk the gate into doing something it cannot.
@@ -3985,7 +4074,7 @@ def looks_hostile(text):
     return [m for m in INJECTION_MARKERS if m in low]
 
 
-def should_engage(cfg, text, key=None, context=None):
+def should_engage(cfg, text, context=None):
     """Does this message need the assistant? Returns a dict. NEVER raises — it fails OPEN.
 
     Fails open, and that direction is deliberate: a gate that cannot decide would otherwise
@@ -4003,7 +4092,7 @@ def should_engage(cfg, text, key=None, context=None):
         text=text,
         where=(context.get("where") or GATE_NOWHERE).strip(),
         thread=(context.get("thread") or GATE_NO_HISTORY).strip()),
-                                   CLASSIFIER_SCHEMA, what="gate", key=key)
+                                   CLASSIFIER_SCHEMA, what="gate")
     if error:
         return failed_open(error)
 
@@ -4044,7 +4133,7 @@ def failed_open(reason):
     }
 
 
-def should_engage_for(cfg, conv_kind, text, gate=False, key=None, context=None):
+def should_engage_for(cfg, conv_kind, text, gate=False, context=None):
     """(engage, classification). The lane half of the old lane_for() is gone with the lanes.
 
     A kind in GATE_BYPASS_KINDS is addressed to the bot by somebody this box trusts and is never
@@ -4057,7 +4146,7 @@ def should_engage_for(cfg, conv_kind, text, gate=False, key=None, context=None):
     if not gate:
         return True, {"engage": True, "status": "ok", "source": "doorbell",
                       "reason": f"conversation kind {conv_kind!r} was selected by its doorbell"}
-    return_cls = should_engage(cfg, text, key=key, context=context)
+    return_cls = should_engage(cfg, text, context=context)
     return bool(return_cls.get("engage", True)), return_cls
 
 
@@ -4784,6 +4873,10 @@ class Watcher:
         # not silence the message for the other -- an operator reading the journal wants to know
         # which pool could not be filled, not that some pool could not be.
         self._pool_squeeze_logged = {}
+        # PER AGENT CLASS AGAIN, for the other reason a class can be skipped: nothing on this
+        # box can pay for a turn it would serve. Latched for the same reason and dropped the
+        # moment a credential appears. See keep_pool.
+        self._pool_keyless_logged = {}
         # WHAT IS CURRENTLY WAITING ON A REFILL, subject -> the sentence last logged for it, so
         # a hold that lasts four hours costs one line going in and one coming out rather than
         # one per poll. See log_hold.
@@ -4793,6 +4886,15 @@ class Watcher:
         # hold lifts; not persisted, because a restart costs exactly one extra gate call and
         # the notice itself is kept off an outbound row instead. See create_turn.
         self._hold_decided = set()
+        # WHETHER THE PER-OPERATOR BILLING TABLE HAS BEEN SAID OUT LOUD. Once per process, on
+        # the first pass: a box that cannot bill somebody should say so before they ask, and on
+        # the deploy that turned this on every operator was in that position at once. See
+        # say_claude_routes.
+        self._claude_routes_said = False
+        # CONVERSATIONS ALREADY TOLD THAT NOTHING CAN PAY FOR THEM, so a misconfigured operator
+        # is answered once rather than once per pass. The durable half of that promise is the
+        # outbound row's local_id; this is what keeps the gate from re-running in the meantime.
+        self._route_refused = set()
         # Conversations the branch backstop in create_turn has already turned away, so it says
         # so once rather than once per tick. Same shape and same reason as _hold_decided.
         self._branchless_reviews = set()
@@ -4803,12 +4905,15 @@ class Watcher:
         # `docker stop` is still running does not start a second one. Dropped in the thread's
         # finally, which is what lets a later pass retry a stop that did not take.
         self._pool_expiring = set()
-        # KEYED BY (class, branch), and the branch half is not decoration. The evictable tier
-        # needs a per-branch cooldown -- after a failed staging and after a shed -- and on a
-        # per-class key a guess that could not be staged would also stop that class's HELD pool
-        # being topped up, which is a guess blocking a promise. The held path's key is
-        # (class, pool_branch(class)). Monotonic deadline before which the keeper does not try
-        # this pair again; set only where a staging attempt actually failed, or a spare was shed.
+        # KEYED BY WHAT WOULD BE RETRIED, and the two tiers key differently because they retry
+        # different things. The evictable tier is (class, branch): it needs a per-branch cooldown
+        # -- after a failed staging and after a shed -- because on a per-class key a guess that
+        # could not be staged would also stop that class's HELD pool being topped up, which is a
+        # guess blocking a promise. The held tier is (class, pool_branch(class), credential),
+        # because since 2026-09-10 a spare is staged for one operator's subscription and one
+        # operator's failing staging must not stop another operator's spare. Two shapes in one
+        # dict, and they cannot collide. Monotonic deadline before which the keeper does not try
+        # that again; set only where a staging attempt actually failed, or a spare was shed.
         self._pool_stage_after = {}
         # WHY THE EVICTABLE TIER LAST DECLINED, per class (and "*" for the box-wide dead band),
         # so the journal gets ONE line per transition rather than one every poll. Six conditions
@@ -6409,8 +6514,7 @@ class Watcher:
             candidates=self.render_candidates(cands, at=at),
             message=f"{(msg.get('author') or {}).get('username') or 'someone'}: "
                     f"{(msg.get('content') or '').strip()[:1500]}")
-        parsed, error = run_classifier(self.cfg, prompt, SELECTOR_SCHEMA, what="selector",
-                                       key=self.pick_claude_key()[0])
+        parsed, error = run_classifier(self.cfg, prompt, SELECTOR_SCHEMA, what="selector")
         if error:
             log(f"cluster: {error}; keeping the deterministic answer")
             return None, None
@@ -7073,8 +7177,20 @@ class Watcher:
             f" ORDER BY {MESSAGE_ORDER}",
             (conv_id,))
 
-    def conversation_held(self, conv):
-        """Seconds this conversation's next turn should wait for, or 0 to run it now.
+    def conversation_held(self, conv, msgs):
+        """(verdict, seconds, why, key) for this conversation's next turn.
+
+        THREE OUTCOMES WHERE THERE WERE TWO, and a caller reading only the seconds could not
+        tell the last two apart. `run` goes ahead. `hold` waits for a window to refill and says
+        so through say_holding. `refused` means nothing on this box can pay for the work — an
+        operator with no subscription id, an id naming no token, a box with no API key — and
+        that is a configuration error rather than a wait.
+
+        THE MESSAGES ARE LEFT EXACTLY AS THEY ARE on both of the last two — unclaimed, ungated,
+        unmarked — so claim_turns offers this conversation again on every pass and the turn is
+        created on the one after the hold lifts OR the one after somebody fixes the config.
+        Nothing is dropped and nothing is permanently refused; a refusal that gated the messages
+        would leave an operator who had fixed their config with a request that never ran.
 
         THE MESSAGES ARE LEFT EXACTLY AS THEY ARE — unclaimed, ungated, unmarked — so
         claim_turns offers this conversation again on every pass and the turn is created on
@@ -7104,11 +7220,18 @@ class Watcher:
         same conversation is held rather than once for its lifetime.
         """
         if is_local_conversation(conv) or conv["kind"] == GITHUB_KIND:
-            return 0
+            # A local prompt and a review both route at their own site: a review in review_held,
+            # before a request is spent on it, and a local prompt at launch, because there is a
+            # person at a terminal and claim_turns never offers that conversation twice.
+            return "run", 0, "", None
+        key, why = self.claude_route_for(conv, msgs)
+        if key is None:
+            self.log_hold(f"conversation {conv['id']}", why)
+            return "refused", 0, why, None
         # FRESH, because this is the decision. See claude_hold.
-        secs, why = self.claude_hold("new", fresh=True)
-        self.log_hold(f"conversation {conv['id']}", why)
-        return secs if why else 0
+        secs, hold_why = self.claude_hold("new", key, fresh=True)
+        self.log_hold(f"conversation {conv['id']}", hold_why)
+        return ("hold" if hold_why else "run"), secs, hold_why, key
 
     def hold_until_morning(self, conv, secs, why):
         """The quiet-hours refusal, done WITHOUT a model. Always returns None.
@@ -7195,6 +7318,35 @@ class Watcher:
         if nonce:
             log(f"conversation {conv['id']}: told them the answer is "
                 f"{hold_duration(secs)} away")
+        return nonce
+
+    def say_route_refused(self, conv, msgs, why):
+        """Tell a Discord conversation that nothing on this box can pay for it. Once per wait.
+
+        THE SHAPE OF say_holding AND NOT OF A GATE, and the difference is the whole design. A
+        gate is permanent: an operator who fixed their config would find the request they asked
+        about had never run and would have to type it again to learn the fix worked. This says
+        the sentence once, leaves the messages unclaimed and ungated, and the pass after the fix
+        creates the turn that was waiting.
+
+        ONCE PER WAIT, keyed on the conversation and its turn count exactly as the hold notice
+        is: a second message typed into the same conversation while it waits does not re-say it,
+        and a daemon restarted mid-wait does not either.
+        """
+        if is_local_conversation(conv) or conv["kind"] == GITHUB_KIND or not msgs:
+            return None
+        turns = self.db.scalar("SELECT COUNT(*) FROM turn WHERE conversation_id=?",
+                               (conv["id"],), 0)
+        marker = f"claudekey:{conv['id']}:{turns}"
+        if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=?", (marker,), 0):
+            return None
+        nonce = self.record_outbound(None, conv["id"], "post", {
+            "channel": reply_channel(conv),
+            "text": ROUTE_REFUSED_NOTE.format(why=why),
+            "silent": True, "local_id": marker,
+            "reply_to": msgs[-1]["discord_id"]})
+        if nonce:
+            log(f"conversation {conv['id']}: nothing can pay for this — {why}")
         return nonce
 
     def gate_where(self, conv, alias):
@@ -7316,18 +7468,25 @@ class Watcher:
         quiet_secs, quiet_why = quiet_hours_hold(self.cfg)
         if quiet_why:
             return self.hold_until_morning(conv, quiet_secs, quiet_why)
-        # HOW MUCH SUBSCRIPTION IS LEFT, ASKED ONCE AND CARRIED DOWN. It does not stop the pass
+        # WHO PAYS, AND WHETHER THEY CAN, ASKED ONCE AND CARRIED DOWN. It does not stop the pass
         # here. Everything between this line and the hold below still runs — the selector, the
         # mention-only policy, the engagement gate — because whether this box would ANSWER the
         # message and whether it can answer it YET are two questions, and only the first can
         # decide whether to promise an answer. The buffer under the cap is there precisely so
         # the small calls that ask the first question still go through.
         #
+        # THE MESSAGES ARE READ HERE RATHER THAN BELOW THE GATE, and that is new: routing needs
+        # to know who wrote them. It puts the read above resettle(), so this batch is the batch
+        # before the selector has had its say — see claude_route_for, which owns that caveat.
+        # The list is read again below, after resettle, exactly as it always was.
+        #
         # WHAT THE HOLD DOES TAKE AWAY UP HERE is the 👀. That mark means a run is in flight,
         # and none is.
-        held = self.conversation_held(conv)
-        if not held:
+        verdict, held, hold_why, _key = self.conversation_held(conv, self.pending_messages(
+            conv["id"]))
+        if verdict == "run":
             self._hold_decided.discard(conv["id"])
+            self._route_refused.discard(conv["id"])
         elif conv["id"] in self._hold_decided:
             # ONE PASS PER HELD CONVERSATION, NOT ONE PER TICK. claim_turns offers this again
             # every few seconds for as long as the window is spent, and the gate below is a
@@ -7389,13 +7548,11 @@ class Watcher:
             # Nothing but attachments or an empty body. The title is all there is to judge,
             # which is what this call has always fallen back to.
             request += f"\n\n(no message text; the thread is titled: {conv['title'] or ''})"
+        # ON THE METERED KEY, like every model call this box makes on its own initiative. The
+        # gate runs once per candidate message whether or not a turn follows, reading text a
+        # stranger wrote; no operator asked for it, so no operator's window pays for it.
         engage, classification = should_engage_for(
-            self.cfg, conv["kind"], request, gate=gate, context=context,
-            # THE GATE SPENDS THE SUBSCRIPTION TOO, and on a busy channel far more often than
-            # any agent does — once per candidate message, whether or not a turn follows. Left
-            # on the first account while runs spread over the rest, one plan would quietly
-            # carry every small call on the box.
-            key=self.pick_claude_key()[0])
+            self.cfg, conv["kind"], request, gate=gate, context=context)
         if gate and not engage:
             return self.gate_declines(conv, msgs,
                                       classification.get("reason") or "the gate saw no ask")
@@ -7415,6 +7572,14 @@ class Watcher:
         # and erred towards answering" is not the same claim as "I am going to answer this",
         # and only the second is worth putting in front of somebody. So the turn still waits
         # and still runs after the refill; nothing is said about it in the meantime.
+        if verdict == "refused":
+            # NOTHING ON THIS BOX CAN PAY FOR THIS, and it is a configuration error rather than
+            # a wait. Said once and never gated: the messages stay where they are, so the pass
+            # after somebody adds the missing id or key creates the turn that was waiting.
+            self._hold_decided.add(conv["id"])
+            if not fc:
+                self.say_route_refused(conv, msgs, hold_why)
+            return None
         if held:
             self._hold_decided.add(conv["id"])
             if not fc:
@@ -8064,7 +8229,8 @@ class Watcher:
         shutil.rmtree(self.pool_dir(pool_id), ignore_errors=True)
         return True
 
-    def pool_stage(self, agent_class=None, ref=None, tier=POOL_TIER_HELD, ttl_secs=None):
+    def pool_stage(self, agent_class=None, ref=None, tier=POOL_TIER_HELD, ttl_secs=None,
+                   claude_key=None):
         """Start one staged container of one class. Returns its id, or None.
 
         `ref`, `tier` and `ttl_secs` all default to today's behaviour: the class's own pool
@@ -8122,21 +8288,28 @@ class Watcher:
         # configured with when it was STAGED -- so a config change reaches the pool as the spares
         # aged out of it are replaced, the same way `network` and the clocks do.
         cmd += self.plugin_mounts(ccfg["plugins"], frozen)
-        # WHICH ACCOUNT THIS SPARE IS CREATED WITH, AND THEREFORE BILLS. A container's
+        # WHICH CREDENTIAL THIS SPARE IS CREATED WITH, AND THEREFORE BILLS. A container's
         # environment is fixed when it is created and docker cannot add to it afterwards, so
-        # this is the only moment the choice can be made for a pooled run — the turn that
-        # eventually lands here may be hours away, and gets whichever account was chosen now.
+        # this is the only moment it can be decided for a pooled run — the turn that eventually
+        # lands here may be hours away and can only be a turn billed to this same credential.
+        # pool_claim_for enforces that half; `claude_key` is this half, and the caller chooses
+        # it (pool_stage_key) rather than this method guessing.
         #
-        # THE ALTERNATIVE WAS WORSE THAN THE STALENESS. Choosing again at dispatch meant getting
-        # the token into a running container: a file in its read-only spool, a group and a mode
-        # so it could read it and nobody else could, an export ordered before the exec so
-        # /proc/1/environ named one account, a fallback for when it did not arrive, and a
-        # deletion afterwards. All of that to replace a reading up to four hours old with a
-        # fresher one, on a box whose spares turn over as they are consumed anyway. The spare is
-        # staged with a considered account and the turn spends it.
-        _staged_key = self.pick_claude_key()[0]
-        if _staged_key:
-            cmd += ["--claude-key", _staged_key]
+        # THE ALTERNATIVE WAS WORSE. Getting the token into a RUNNING container at dispatch
+        # means a file in its read-only spool, a group and a mode so it could read it and nobody
+        # else could, an export ordered before the exec so /proc/1/environ named one account, a
+        # fallback for when it did not arrive, and a deletion afterwards — a live credential on
+        # disk, to save forty seconds on a lane whose turns run for minutes.
+        _staged_key = claude_key or self.pool_stage_key(agent_class)
+        if not _staged_key:
+            # NOTHING CAN PAY FOR WHAT THIS WOULD SERVE, so it is not staged. ffbox would refuse
+            # to create it anyway (exit 78 on a name it cannot resolve); this is that refusal
+            # arriving before a 180-second subprocess rather than after one.
+            log(f"pool: not staging {agent_class} — no Claude account can pay for a turn it "
+                f"would serve")
+            shutil.rmtree(d, ignore_errors=True)
+            return None
+        cmd += ["--claude-key", _staged_key]
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                                   errors="replace", timeout=180)
@@ -8149,10 +8322,11 @@ class Watcher:
                 f"{(proc.stderr or '').strip()[:300]}")
             shutil.rmtree(d, ignore_errors=True)
             return None
-        # RECORDED BESIDE THE SPOOL so the run this eventually serves can say which account
-        # paid for it. A NAME and not a token, so there is nothing here to protect: the file
-        # sits in a directory the container can already read, and reading it teaches a reader
-        # the name of a variable they would have to be on the host to dereference.
+        # RECORDED BESIDE THE SPOOL, and it is no longer only bookkeeping: pool_claim_for reads
+        # this file to decide whether a turn may have this spare at all. A NAME and not a token,
+        # so there is nothing here to protect — the file sits in a directory the container can
+        # already read, and reading it teaches a reader the name of a variable they would have
+        # to be on the host to dereference.
         try:
             with open(os.path.join(d, "claude-key"), "w", encoding="utf-8") as fh:
                 fh.write((_staged_key or "") + "\n")
@@ -8161,6 +8335,55 @@ class Watcher:
         log(f"pool: staging {tier} {agent_class} {pool_id} on {ref}"
             f"{' billing ' + _staged_key if _staged_key else ''}")
         return pool_id
+
+    def pool_stage_key(self, agent_class):
+        """Which credential the next spare of this class should be created with, or None.
+
+        TWO ANSWERS FOR TWO CLASSES, because the two pools serve different people.
+
+        ffagent serves players, and player work is billed to the metered default — one
+        credential, so every ffagent spare matches every ffagent turn and that pool behaves
+        exactly as it did before any of this. None when the box has no API key at all, which
+        means no ffagent turn can run either and staging one would be creating a container
+        nothing can be dispatched into.
+
+        ffdev serves operators, and which operator asks next is a GUESS. It is made the way
+        `pool_branch_activity` guesses at branches: out of what this box has actually run, most
+        recent first, skipping any operator who already has a spare waiting. A wrong guess costs
+        one cold launch and the spare ages out at `idle_agent_ttl_secs`, the same as a spare on a
+        branch nobody asks for; correcting it would mean destroying a filled workspace.
+
+        A BOX WITH ONE ACTIVE OPERATOR GETS THEIR KEY EVERY TIME, which is the common case and
+        the one worth being right about.
+        """
+        if discord_pool(self.cfg, "user_pool") == agent_class:
+            api = claude_keys.default_api_key()
+            return api[0] if api else None
+        routed = {name for _who, _id, name, _why in self.claude_routes() if name}
+        if not routed:
+            return None
+        staged = {self.pool_claude_key(c["id"]) for c in self.pool_containers()
+                  if c["class"] == agent_class}
+        # MOST RECENTLY SPENT FIRST. `run.claude_key` is what the turn was actually billed to,
+        # which is the only record of demand this box keeps, and a key that is not in `routed`
+        # any more (an operator who left, or renamed their id) is ignored rather than staged for.
+        recent = self.db.query(
+            "SELECT r.claude_key AS key FROM run r JOIN turn t ON t.id=r.turn_id"
+            " JOIN conversation c ON c.id=t.conversation_id"
+            " WHERE r.claude_key IS NOT NULL AND COALESCE(c.agent_class,?)=?"
+            " ORDER BY COALESCE(t.ended_at, t.started_at, t.queued_at) DESC LIMIT 50",
+            (DEFAULT_AGENT_CLASS, agent_class))
+        order = []
+        for row in recent:
+            if row["key"] in routed and row["key"] not in order:
+                order.append(row["key"])
+        # THEN EVERYBODY ELSE, in a stable order, so an operator who has never run anything here
+        # still gets a spare once the people who have are covered.
+        order += sorted(routed - set(order))
+        for key in order:
+            if key not in staged:
+                return key
+        return None
 
     def pool_claude_key(self, pool_id):
         """Which account the spare `pool_id` was staged with, or None.
@@ -8559,14 +8782,10 @@ class Watcher:
         # spare staged before the config broke still has a clock, and letting it run out is the
         # box shedding containers rather than accumulating them. What stops is the topping up.
         #
-        # THE QUIET HOURS STOP THE TOPPING UP FOR THE SAME REASON AND IN THE SAME PLACE, and
-        # this is the third model call a quiet night would otherwise make. Staging chooses the
-        # account the spare will bill, and choosing reads every account's windows — which for a
-        # `claude setup-token` key is not an HTTP lookup at all but a real one-token Haiku
-        # request against /v1/messages, because the usage document is closed to such a key
-        # (claude_keys.ClaudeKeys._probe). Cached for `refresh_secs`, so a nine-hour night at
-        # the default quarter-hour is about thirty-six of them per account, to keep containers
-        # warm for turns that cannot start.
+        # THE QUIET HOURS STOP THE TOPPING UP FOR THE SAME REASON AND IN THE SAME PLACE. It no
+        # longer costs a model call to stage — which credential a spare carries is a lookup now,
+        # not a reading — but it costs 22 GiB of extraction and a container's worth of memory to
+        # keep a workspace warm for turns that cannot start until morning.
         #
         # THE SPARES STILL AGE OUT, because expiry and reaping are above this line: a pool left
         # warm all night would be reaped at `idle_agent_ttl_secs` and staged again two or three
@@ -8589,14 +8808,6 @@ class Watcher:
             want = int(class_cfg(self.cfg, agent_class).get("idle_agents") or 0)
             if want <= 0:
                 continue
-            # A CLASS WHOSE LAST ATTEMPT FAILED IS LEFT ALONE FOR A WHILE. This loop runs on the
-            # daemon's own thread and pool_stage blocks for as long as ffbox takes, so an
-            # attempt that cannot succeed is not merely a wasted call -- it is a pass in which
-            # nothing else the daemon does happens at all. Nothing is lost by waiting: a warm
-            # container is an optimisation, and a turn that finds no pool runs cold.
-            if time.monotonic() < self._pool_stage_after.get(
-                    (agent_class, self.pool_branch(agent_class)), 0.0):
-                continue
             # COUNTS "WILL BE WARM", not "is warm", and the difference is deliberate: a container
             # still extracting its tar has no owner file and belongs in this count, or a pass
             # every two seconds would stage another twenty of them while the first one filled.
@@ -8611,6 +8822,31 @@ class Watcher:
                     and self.effective_pool_tier(c) == POOL_TIER_HELD
                     and not os.path.exists(self.pool_owner_path(c["id"]))]
             if len(warm) >= want:
+                continue
+            # AND WHICH CREDENTIAL THE NEXT ONE CARRIES, asked before the room checks because a
+            # class that has nobody to stage for is not a class that is short of spares — it is
+            # one with nothing to do. pool_stage_key skips a key that already has a spare, so a
+            # two-operator box with idle=2 ends up with one each rather than two for whoever
+            # spoke last.
+            stage_key = self.pool_stage_key(agent_class)
+            if not stage_key:
+                if not self._pool_keyless_logged.get(agent_class):
+                    log(f"pool: not staging {agent_class} — no Claude account can pay for a "
+                        f"turn it would serve")
+                    self._pool_keyless_logged[agent_class] = True
+                continue
+            self._pool_keyless_logged[agent_class] = False
+            # A STAGING THAT FAILED IS LEFT ALONE FOR A WHILE. This loop runs on the daemon's own
+            # thread and pool_stage blocks for as long as ffbox takes, so an attempt that cannot
+            # succeed is not merely a wasted call -- it is a pass in which nothing else the
+            # daemon does happens at all. Nothing is lost by waiting: a warm container is an
+            # optimisation, and a turn that finds no pool runs cold.
+            #
+            # ASKED AFTER THE CREDENTIAL IS KNOWN, because the cooldown is keyed on it: one
+            # operator's failing staging must not stop another operator's spare being staged,
+            # and a check above this line could not tell the two apart.
+            if time.monotonic() < self._pool_stage_after.get(
+                    (agent_class, self.pool_branch(agent_class), stage_key), 0.0):
                 continue
             # THE BOX AND THEN THIS CLASS. workload_room() is re-read per class rather than
             # hoisted, because a container staged for the class before this one has just taken
@@ -8627,12 +8863,14 @@ class Watcher:
                     self._pool_squeeze_logged[agent_class] = True
                 continue
             self._pool_squeeze_logged[agent_class] = False
-            pool_id = self.pool_stage(agent_class)
+            pool_id = self.pool_stage(agent_class, claude_key=stage_key)
             if not pool_id:
                 # pool_stage has already said what went wrong. This is how long the keeper
                 # believes it, and it is the difference between one stuck staging and a daemon
-                # that spends every pass inside one.
-                self._pool_stage_after[(agent_class, self.pool_branch(agent_class))] = (
+                # that spends every pass inside one. KEYED BY CREDENTIAL TOO, so one operator's
+                # failing staging does not stop another operator's spare being staged.
+                self._pool_stage_after[(agent_class, self.pool_branch(agent_class),
+                                        stage_key)] = (
                     time.monotonic() + float(self.cfg["pool_stage_backoff_secs"]))
             if pool_id:
                 staged.append(pool_id)
@@ -8867,10 +9105,18 @@ class Watcher:
                          f"{self.cfg['max_concurrent_runs']} run(s)")
         return lines
 
-    def pool_claim_for(self, ref, agent_class=None):
+    def pool_claim_for(self, ref, agent_class=None, claude_key=None):
         """A warm container of THIS CLASS that this turn may use, claimed, or None.
 
-        BY CLASS AND BY BRANCH, and both for the same kind of reason. The workspace is only warm
+        BY CLASS, BY BRANCH AND BY CREDENTIAL, and the three are for different reasons.
+
+        THE CREDENTIAL IS THE ONE DOCKER DECIDES. A container's environment is fixed when it is
+        created, so a spare staged on Ben's subscription can only ever bill Ben's subscription,
+        and handing it to Loth's turn would undo the whole point of routing. `claude_key` is the
+        name this turn routed to; a spare staged on anything else is skipped and the turn takes
+        a cold launch, which is what a pool miss has always cost.
+
+        And the rest for the same kind of reason as each other. The workspace is only warm
         for the branch its cache entry came from: a master-staged tree handed a develop turn
         checks out the whole divergence and Unity re-imports it, which is slower than the cold
         run that would have picked the develop entry. ffbox's own entry ladder chooses by branch
@@ -8887,18 +9133,34 @@ class Watcher:
         agent_class = agent_class or DEFAULT_AGENT_CLASS
         if int(class_cfg(self.cfg, agent_class).get("idle_agents") or 0) <= 0:
             return None
-        want = (ref or "").replace("origin/", "")
-        # A pinned sha asks for no branch in particular; the container resets to it from
-        # wherever it is staged, and a cold run would pay the same reset from the same tar.
-        looks_like_sha = len(want) >= 7 and all(c in "0123456789abcdef" for c in want.lower())
         for c in self.pool_warm(agent_class):
-            if not looks_like_sha and c["branch"] != want:
+            if not self.pool_matches(c, ref, claude_key):
                 continue
             if self.pool_take(c["id"]):
                 return c["id"]
         return None
 
-    def pool_would_serve(self, ref, agent_class=None):
+    def pool_matches(self, container, ref, claude_key):
+        """Can this warm spare serve a turn on `ref` billed to `claude_key`?
+
+        ONE RULE, TWO CALLERS. pool_claim_for takes a spare and pool_would_serve only asks
+        whether one exists, and the two disagreeing would admit a turn on the promise of a
+        container it cannot have.
+        """
+        want = (ref or "").replace("origin/", "")
+        # A pinned sha asks for no branch in particular; the container resets to it from
+        # wherever it is staged, and a cold run would pay the same reset from the same tar.
+        looks_like_sha = len(want) >= 7 and all(c in "0123456789abcdef" for c in want.lower())
+        if not looks_like_sha and container["branch"] != want:
+            return False
+        # A CALLER THAT NAMES NO KEY IS NOT ASKING ABOUT ONE. Nothing in the daemon launches
+        # without a routed key any more, but `ffwatch pool` and the tests both ask this question
+        # about branches alone and should keep getting an answer about branches.
+        if claude_key and self.pool_claude_key(container["id"]) != claude_key:
+            return False
+        return True
+
+    def pool_would_serve(self, ref, agent_class=None, claude_key=None):
         """Is there a warm container of this class this ref could use, WITHOUT claiming it?
 
         The same matching rule as pool_claim_for and deliberately no side effect: this is asked
@@ -8908,9 +9170,7 @@ class Watcher:
         agent_class = agent_class or DEFAULT_AGENT_CLASS
         if int(class_cfg(self.cfg, agent_class).get("idle_agents") or 0) <= 0:
             return False
-        want = (ref or "").replace("origin/", "")
-        looks_like_sha = len(want) >= 7 and all(c in "0123456789abcdef" for c in want.lower())
-        return any(looks_like_sha or c["branch"] == want
+        return any(self.pool_matches(c, ref, claude_key)
                    for c in self.pool_warm(agent_class))
 
     def running_counts(self):
@@ -8955,7 +9215,7 @@ class Watcher:
         queued = self.db.query(
             "SELECT t.*, c.state AS conv_state, c.base_sha AS conv_base_sha,"
             " c.agent_class AS conv_agent_class, c.branch AS conv_branch,"
-            " c.requested_base AS conv_requested_base FROM turn t"
+            " c.requested_base AS conv_requested_base, c.kind AS conv_kind FROM turn t"
             " JOIN conversation c ON c.id=t.conversation_id"
             " WHERE t.status='queued' ORDER BY t.queued_at, t.id")
         for turn in queued:
@@ -8988,8 +9248,13 @@ class Watcher:
                                       "base_sha": turn["conv_base_sha"],
                                       "requested_base": turn["conv_requested_base"],
                                       "agent_class": turn_class}, log_override=False)
+            # THE CREDENTIAL THIS TURN WILL ROUTE TO, asked here for the same reason `ref` is:
+            # a spare that cannot bill this turn is not a spare this turn can be admitted on.
+            # A route that comes back None is not decided here -- launch() raises on it, with
+            # the sentence, and this only declines to count a container that does not exist.
+            sched_key, _ = self.claude_route_for_turn(turn, turn["conv_kind"])
             if ((self.workload_room() <= 0 or self.agent_room(turn_class) <= 0)
-                    and not self.pool_would_serve(ref, turn_class)):
+                    and not self.pool_would_serve(ref, turn_class, sched_key)):
                 break
             if turn["conv_state"] == "running":
                 continue
@@ -9348,7 +9613,12 @@ class Watcher:
             "history": [self.job_message(m, att_dir) for m in reversed(history)],
             "resume_summary": summary,
             "model": {"model": self.cfg["model"], "fallback_model": self.cfg["fallback_model"],
-                      "max_budget_usd": self.cfg["max_budget_usd"], "effort": self.cfg["effort"]},
+                      # THE CLASS'S CEILING, FALLING BACK TO THE BOX'S. A class that declares
+                      # none wants whatever the box says; see _class_blocks.
+                      "max_budget_usd": (ccfg.get("max_budget_usd")
+                                         if ccfg.get("max_budget_usd") is not None
+                                         else self.cfg["max_budget_usd"]),
+                      "effort": self.cfg["effort"]},
             # Mounted on EVERY lane. It used to be withheld from local runs, because with the
             # answerer role loaded `ffbox "what file defines the belt merger?"` came back with
             # a policy refusal addressed to a player. That was the right diagnosis and the
@@ -10767,39 +11037,116 @@ class Watcher:
     # the Claude subscriptions
     # ======================================================================================
     #
-    # THE POLICY IS IN claude_keys.pick AND THE ARGUMENT FOR IT IS THERE TOO. What lives here is
-    # only how the answer reaches ffbox.
+    # WHICH ACCOUNT PAYS IS A ROUTING QUESTION, answered by `claude_route` from who asked; what
+    # lives here is everything after that. Whether that account has room (`claude_hold`), how
+    # the answer reaches ffbox (a NAME on its command line), and what `ffwatch status` says.
     #
     # THE CHOICE TRAVELS AS A NAME, NEVER AS A TOKEN. `--claude-key CLAUDE_CODE_OAUTH_TOKEN2`
     # goes on ffbox's command line and ffbox resolves it out of secrets.env itself, so no
-    # credential passes through this daemon's argv — which is world-readable through /proc for
-    # the life of the call — or through the database. The one place a token is held at all is
+    # credential passes through this daemon's argv -- which is world-readable through /proc for
+    # the life of the call -- or through the database. The one place a token is held at all is
     # the classifier's own environment, which is a child process's env rather than an argument,
-    # and it is handed exactly one.
+    # and it is handed exactly one: the API key.
     #
-    # READ WHEN ASKED, AND STALE IS FINE. This used to keep the last reading on the Watcher and
-    # refresh it on a background thread from the pass, so that a launch never waited on
-    # Anthropic. ClaudeKeys already caches for `refresh_secs`, so all that machinery bought was
-    # moving one cache miss per quarter-hour off the launch path — and paid for it with a
-    # thread, a lock, four fields of state and two hook sites that had to be kept in step. The
-    # reading is a couple of calls; the box is choosing between subscriptions, not counting
-    # them. So this asks, takes whatever comes back, and a reading up to fifteen minutes old is
-    # the answer.
+    # READ WHEN ASKED, AND STALE IS FINE. ClaudeKeys caches for `refresh_secs`; the reading is a
+    # couple of calls, and the decisions that cannot afford a stale answer ask for a fresh one
+    # explicitly (see `claude_hold`'s `fresh`).
 
     def claude_cfg(self):
         """The `claude` block, every key present. Never raises on a hand-edited config."""
         block = self.cfg.get("claude")
         return _deep_merge(DEFAULTS["claude"], block if isinstance(block, dict) else {})
 
-    def claude_spreads(self):
-        """Is this box choosing between accounts at all?
+    def claude_keys_now(self):
+        """(subscriptions, api key) out of secrets.env, for one routing decision.
 
-        False for a box with one key, which is most of them: the choice is the same either way,
-        and this is what keeps such a box making no outbound request at all.
+        Read per call rather than cached on the Watcher: secrets.env is edited by hand and the
+        update timer restarts this process within five minutes of that, but a routing answer
+        that is a snapshot of start-up would be wrong for exactly as long as it took somebody to
+        notice. Two filtered reads of a small file; the expensive part of a route is the HTTP,
+        and there is none here.
         """
-        if not self.claude_cfg().get("spread"):
-            return False
-        return len(claude_keys.claude_token_pool()) > 1
+        return claude_keys.claude_subscriptions(), claude_keys.default_api_key()
+
+    def claude_route_for(self, conv, msgs):
+        """(key name, why) for a conversation's next turn, or (None, refusal).
+
+        PROVISIONAL BY CONSTRUCTION, and the call site knows it. This runs in create_turn ABOVE
+        resettle(), which can move a message into another conversation, so the batch it routes
+        on is the batch as it stands before the selector has had its say. The authoritative
+        answer is claude_route_for_turn below, taken at launch from the settled turn row. They
+        differ only when a resettle crosses a trust boundary mid-pass, and what that costs is a
+        turn admitted against the wrong key's window -- the same class of staleness a cached
+        reading already carries.
+        """
+        tier, actor, _ = self.turn_trust(conv, msgs)
+        return claude_route(self.cfg, tier, actor, conv["kind"], self.claude_keys_now())
+
+    def claude_route_for_turn(self, turn, kind):
+        """(key name, why) for a turn that exists, from the trust recorded on its row.
+
+        THE ROW AND NOT THE MESSAGES. trust_tier and trust_actor were written when the turn was
+        created, from the settled batch, by the same turn_trust every other decision reads. A
+        launch that re-derived them from the conversation's messages could reach a different
+        answer than the one the turn was admitted under, which is the one thing this must not
+        do.
+        """
+        return claude_route(self.cfg, turn["trust_tier"], turn["trust_actor"], kind,
+                            self.claude_keys_now())
+
+    def claude_routes(self):
+        """[(operator, id they declared, key name or None, why)] -- the whole table, resolved.
+
+        For the startup check and for `ffwatch status`. An operator with no `claude` id is in
+        here too, with None: a person who cannot have their work billed is exactly who somebody
+        reading this is looking for.
+        """
+        subs, _ = self.claude_keys_now()
+        out = []
+        for who in sorted((self.cfg.get("operators") or {})):
+            key_id = claude_key_id(self.cfg, who)
+            if not key_id:
+                out.append((who, "", None, "declares no `claude` subscription id"))
+                continue
+            name, why = claude_keys.subscription_named(key_id, subs)
+            # THE SAME SENTENCES claude_route SAYS, because this is the same answer read from
+            # the other end and a reader should not have to learn two vocabularies for it.
+            if not name:
+                why = (f"{key_id!r} is claimed by more than one slot in secrets.env "
+                       f"({why.split(': ', 1)[1]})" if why.startswith("ambiguous")
+                       else f"{key_id!r} names no token in secrets.env")
+            out.append((who, key_id, name, why))
+        return out
+
+    def say_claude_routes(self):
+        """Log what each operator's subscription id resolved to. ONCE, at the first pass.
+
+        A BOX THAT CANNOT BILL SOMEBODY SAYS SO BEFORE THEY ASK. The alternative is an operator
+        typing into Discord, getting a refusal they have to read carefully, and coming here
+        anyway -- and on the deploy that turns this on, every operator is in that position at
+        once. Latched because this runs from the loop.
+        """
+        if self._claude_routes_said:
+            return
+        self._claude_routes_said = True
+        _, api = self.claude_keys_now()
+        if not api:
+            log(f"WARNING: no {claude_keys.CLAUDE_API_KEY_NAME} in this process's environment; "
+                f"every request that is not an operator's will be refused until there is one")
+        for who, key_id, name, why in self.claude_routes():
+            if name:
+                log(f"claude: {who} bills {name} (declared as {key_id})")
+            else:
+                log(f"WARNING: claude: {who} has nothing to bill — {why}")
+        # A CONFIG KEY NOTHING READS IS MERGED IN AND FORGOTTEN, and that silence is how
+        # somebody comes to believe this box still spreads work over its accounts. Said once,
+        # here, because this is where the rest of the billing picture is said.
+        stale = [k for k in ("spread", "five_hour_cap")
+                 if k in (self.cfg.get("claude") or {})]
+        if stale:
+            log(f"claude: config.json still sets claude.{', claude.'.join(stale)}; nothing "
+                f"reads {'them' if len(stale) > 1 else 'it'} any more — which account pays is "
+                f"decided by who asked (operators.<name>.claude)")
 
     def claude_hold_pct(self, what):
         """The configured share for one hold, or None when that hold is off.
@@ -10820,39 +11167,48 @@ class Watcher:
         """Is either hold configured? What decides whether the windows are read at all."""
         return any(self.claude_hold_pct(w) is not None for w in ("review", "new"))
 
-    def claude_hold(self, what, fresh=False):
+    def claude_hold(self, what, key, fresh=False):
         """(seconds, why) — how long a `what` request should wait, or (0, "") to run now.
+
+        `key` is the variable this request is billed to, which claude_route has already decided.
+        THE ACCOUNT THAT PAYS IS THE ACCOUNT THAT DECIDES, and that is the whole change from the
+        version of this that asked whether ANY account on the box had room: one operator's spent
+        subscription now holds their own work and nobody else's, and a box whose operators are
+        all spent still answers players.
 
         `seconds` is when the offending window refills, so a caller with somewhere to put it
         can say how long the wait is rather than only that there is one.
 
         `fresh` ASKS ANTHROPIC RATHER THAN THE CACHE, and the two callers that decide whether
         work starts both pass it. This is the one decision on the box that a stale reading gets
-        WRONG in a way nothing later corrects: an hour-old number is fine for choosing which
-        account pays, because the next turn re-chooses, but a conversation held on a window that
-        has since refilled sits there until something else happens to wake it, and one started
-        on a window that has since filled up runs into a mid-flight cutoff. The reading is two
-        GETs per key, in parallel, floored at CLAUDE_FORCE_FLOOR_SECS so a pass over ten new
-        conversations still makes one round of them.
+        WRONG in a way nothing later corrects: an hour-old number is fine for a page, but a
+        conversation held on a window that has since refilled sits there until something else
+        happens to wake it, and one started on a window that has since filled up runs into a
+        mid-flight cutoff. The reading is two GETs per key, in parallel, floored at
+        CLAUDE_FORCE_FLOOR_SECS so a pass over ten new conversations still makes one round.
 
-        FAIL OPEN AT EVERY STEP. The hold is off, or the windows could not be read, or the
-        emptiest account is under the line: all three run the work. The only path that holds
-        is a reading that came back and said there is no room.
+        FAIL OPEN AT EVERY STEP. The hold is off, the key is the metered one, the key could not
+        be read, or it is under the line: all of them run the work. The only path that holds is
+        a reading that came back and said there is no room. An API key is the second of those
+        and is not an exception to it — a metered key has no rolling window to be over, so there
+        is nothing here that could hold it.
         """
         cap = self.claude_hold_pct(what)
-        if cap is None:
+        if cap is None or not key:
             return 0, ""
-        got = claude_keys.emptiest(self.claude_records(fresh=fresh))
-        if got is None:
+        rec = claude_keys.record_named(self.claude_records(fresh=fresh), key)
+        if rec is None or not claude_keys.usable(rec):
             return 0, ""
-        pct, key, secs, label = got
-        if pct < cap:
+        pct, window_key = claude_keys.fullest_window(rec)
+        if pct is None or pct < cap:
             return 0, ""
-        window = "five-hour session" if key == "five_hour" else "weekly window"
+        secs = claude_keys.seconds_to_reset(claude_keys.window_of(rec, window_key), window_key)
+        window = "five-hour session" if window_key == "five_hour" else "weekly window"
+        label = rec.get("label") or rec.get("name") or key
         return int(secs), (f"{label} is {pct:.0%} through its {window}, at or over the "
                            f"{cap:.0%} hold; it refills in {claude_keys._rough(secs)}")
 
-    def work_hold(self, what, fresh=False):
+    def work_hold(self, what, key, fresh=False):
         """(seconds, why) -- should a request of this kind wait? THE ONE GATE EVERY CALLER ASKS.
 
         Two unlike reasons behind one answer, and the callers are better off not knowing which
@@ -10868,7 +11224,7 @@ class Watcher:
         secs, why = quiet_hours_hold(self.cfg)
         if why:
             return secs, why
-        return self.claude_hold(what, fresh=fresh)
+        return self.claude_hold(what, key, fresh=fresh)
 
     def log_hold(self, subject, why):
         """Say a hold ONCE, and say when it lifts.
@@ -10894,18 +11250,16 @@ class Watcher:
     def claude_records(self, fresh=False):
         """Every account's windows, as ClaudeKeys.read() gives them. [] if none can be read.
 
-        Cached inside ClaudeKeys for `refresh_secs`, so calling this per launch, per gate and
-        per staging costs one round of requests a quarter-hour and dictionary lookups after
-        that. Never raises: a box that cannot reach Anthropic still has to run turns, and the
-        callers all read [] as "nothing to choose on".
+        Cached inside ClaudeKeys for `refresh_secs`, so calling this per hold costs one round of
+        requests a quarter-hour and dictionary lookups after that. Never raises: a box that
+        cannot reach Anthropic still has to run turns, and the callers all read [] as "nothing
+        to hold on".
 
-        READ FOR TWO REASONS NOW, and the second one is why a one-account box can end up
-        asking. Spreading needs the numbers to choose between accounts and a box with one has
-        nothing to choose; the holds need them to answer "is there room at all", which is a
-        question a single subscription has just as much as three do. Turning both holds off
-        puts such a box back to making no outbound request.
+        READ ONLY FOR THE HOLDS NOW. Nothing chooses between accounts any more, so a box with
+        both holds turned off makes no outbound request at all — which is the right answer for a
+        box that has no decision the numbers could change.
         """
-        if not (self.claude_spreads() or self.claude_holds()):
+        if not self.claude_holds():
             return []
         try:
             return self._claude.read(force=fresh)
@@ -10913,64 +11267,44 @@ class Watcher:
             log(f"WARNING: could not read the Claude accounts: {type(exc).__name__}: {exc}")
             return []
 
-    def pick_claude_key(self, records=None):
-        """(name, why) — which account the next turn is billed to. Never raises.
-
-        `name` is None when this box has nothing to choose between, which is the signal to
-        every caller to leave the pool's own order alone rather than to pass a name that means
-        the same thing. That keeps a one-account box's command line, environment and run rows
-        exactly as they were.
-        """
-        # ASKED BEFORE THE READING AND NOT AFTER IT. claude_records() answers a box with one
-        # account now, because the holds want the numbers — so "no records" is no longer the
-        # same question as "nothing to choose between", and reading the first as the second
-        # would start naming an account on the command line of a box that never named one.
-        if not self.claude_spreads():
-            return None, ""
-        records = self.claude_records() if records is None else records
-        if not records:
-            return None, ""
-        try:
-            cap = float(self.claude_cfg().get("five_hour_cap"))
-        except (TypeError, ValueError):
-            cap = DEFAULTS["claude"]["five_hour_cap"]
-        index, why = claude_keys.pick(records, cap=cap)
-        return records[index]["name"], why
-
     def claude_status(self):
         """The subscription lines for `ffwatch status`."""
         quiet = self.quiet_hold_status()
-        pool = claude_keys.claude_token_pool()
-        if not pool:
-            return quiet + ["claude accounts: none in this process's environment "
-                            "(secrets.env reaches the daemon through its unit, not a shell)"]
-        if not self.claude_spreads():
-            return quiet + [f"claude accounts: {len(pool)} — not spreading"
-                            f"{' (claude.spread is off)' if len(pool) > 1 else ''}; "
-                            f"every turn is billed to {pool[0][0]}"] + self.claude_hold_status()
-        records = self.claude_records()
-        chosen, why = self.pick_claude_key(records)
-        cap = float(self.claude_cfg().get("five_hour_cap"))
-        out = quiet + [f"claude accounts: {len(pool)}  (cap {cap:.0%} of the five-hour "
-                       f"session; next turn goes to {chosen or pool[0][0]})"]
-        if why:
-            out.append(f"  because {why}")
-        for rec in records:
+        subs, api = self.claude_keys_now()
+        out = quiet + [f"claude: {len(subs)} subscription{'' if len(subs) == 1 else 's'}, "
+                       + (f"default {api[0]}" if api
+                          else f"NO {claude_keys.CLAUDE_API_KEY_NAME} — nothing that is not an "
+                               f"operator's request can run")]
+        # WHO PAYS FOR WHAT, which is the question this command is asked. One line per operator,
+        # including the ones who cannot be billed at all: an operator with nothing to bill is
+        # who somebody is looking for when they run this.
+        by_name = {}
+        for rec in self.claude_records():
+            by_name[rec["name"]] = rec
+        for who, key_id, name, why in self.claude_routes():
+            if not name:
+                out.append(f"  {who:<16} NO ACCOUNT — {why}")
+                continue
+            rec = by_name.get(name)
             bits = []
             for key in ("five_hour", "seven_day"):
-                w = claude_keys.window_of(rec, key) or {}
+                w = claude_keys.window_of(rec or {}, key) or {}
                 pct = w.get("percent")
                 short_label = "5h" if key == "five_hour" else "7d"
                 bits.append(f"{short_label}={'  ?' if pct is None else format(pct, '3.0f') + '%'}"
                             f" in {claude_keys._rough(claude_keys.seconds_to_reset(w, key))}")
-            gate = "  OVER CAP" if (claude_keys.utilization(rec, "five_hour") or 0.0) >= cap \
-                else ""
-            named = rec.get("label") or ""
-            out.append(f"  {rec['name']:<28} {(named + ' ') if named else ''}"
-                       f"{claude_plan_label(rec)} "
+            out.append(f"  {who:<16} {name:<28} {claude_plan_label(rec or {})} "
                        + "  ".join(bits)
-                       + (f"  [{rec['error']}]" if rec.get("error") else "")
-                       + gate)
+                       + (f"  [{rec['error']}]" if rec and rec.get("error") else ""))
+        # A SUBSCRIPTION NOBODY CLAIMS is a token in secrets.env that nothing on this box can
+        # spend, which is worth a line: it is either somebody who has not finished configuring
+        # themselves or a key that should have been removed.
+        claimed = {name for _, _, name, _ in self.claude_routes() if name}
+        for name, _token, _rate, label in subs:
+            if name not in claimed:
+                out.append(f"  {'(unclaimed)':<16} {name:<28} "
+                           + (f"declared {label}" if label else "declares no name, so only its "
+                                                               "slot number can claim it"))
         return out + self.claude_hold_status()
 
     def quiet_hold_status(self):
@@ -11014,12 +11348,17 @@ class Watcher:
         if not wanted:
             return []
         out = ["claude holds: a request over the line waits for the window to refill "
-               "rather than being refused"]
+               "rather than being refused; each operator's own account decides"]
         for what, label in wanted:
             cap = self.claude_hold_pct(what)
-            _, why = self.claude_hold(what)
+            # PER ACCOUNT, because the hold is. A box with two operators can have one of them
+            # held and the other running, and a single "clear/WAITING" line would be a lie
+            # about one of them.
+            held = [(who, self.claude_hold(what, name)[1])
+                    for who, _id, name, _why in self.claude_routes() if name]
+            biting = [f"{who} ({why})" for who, why in held if why]
             out.append(f"  {label:<18} hold at {cap:.0%} — "
-                       + (f"WAITING: {why}" if why else "clear, running now"))
+                       + ("WAITING: " + "; ".join(biting) if biting else "clear, running now"))
         return out
 
     @staticmethod
@@ -11169,7 +11508,27 @@ class Watcher:
         # and a turn that cannot get a place under it QUEUES: schedule() leaves it queued and
         # tries again next pass, and it starts when a run finishes and gives its place back.
         # That is the answer everywhere else in this daemon, and it is now the answer here.
-        pool_id = self.pool_claim_for(ref, cls)
+        #
+        # WHICH CREDENTIAL PAYS FOR THIS TURN, decided BEFORE the claim because the claim needs
+        # it: a spare was created hours ago with one credential in its environment and docker
+        # cannot change that, so a spare staged on another operator's subscription is no use to
+        # this turn whatever else matches. A NAME, not a token: ffbox turns it into a credential
+        # out of secrets.env, so nothing here or in argv holds one.
+        #
+        # FROM THE TURN ROW AND NOT FROM THE MESSAGES. trust_tier and trust_actor were written
+        # when the turn was created, out of the settled batch; re-deriving them here could reach
+        # a different answer than the one the turn was admitted under.
+        claude_key, claude_why = self.claude_route_for_turn(turn, conv["kind"])
+        if claude_key is None:
+            # THE ONE PATH THAT REACHES HERE is a local prompt: conversation_held covers Discord
+            # and review_held covers a review, and both refuse before a turn exists. Anything
+            # else arriving here means the config changed between the two, which deserves the
+            # same answer. Raised rather than run on some other account -- there is no fallback
+            # by design -- and BranchUnavailable's shape is exactly right: the turn fails, the
+            # sentence lands on turn.error, and nothing was started.
+            raise BranchUnavailable(
+                f"this turn has no Claude account to bill: {claude_why}. Nothing was run.")
+        pool_id = self.pool_claim_for(ref, cls, claude_key)
         # THE CONTAINER'S CLAUDE DIRECTORY IS ITS OWN, because that mount was fixed before
         # anyone knew which conversation it would serve. The session the turn resumes is copied
         # in here and moved back when the run ends; a handful of megabytes, and the alternative
@@ -11192,21 +11551,12 @@ class Watcher:
         # directory is the answer afterwards. finish_runs, the clock pass and `ffbox --finish`
         # all read it. design/ffbox_live_update_design.txt section 5.
         out_dir = os.path.join(self.pool_dir(pool_id), "out") if pool_id else run_dir
-        # WHICH SUBSCRIPTION PAYS FOR THIS TURN, recorded on the row before anything starts.
-        # A NAME, not a token: ffbox turns it into a credential out of secrets.env, so nothing
-        # here or in argv holds one. None means this box has one account, or could not read
-        # them, and the pool's own order stands.
-        #
-        # A POOLED RUN DOES NOT GET A CHOICE, and this is where that shows. Its container was
-        # created hours ago with an account in its environment, and docker cannot change that,
-        # so the honest thing to record is the account the spare was actually staged with
-        # rather than the one this moment's reading would prefer. A cold run is created now and
-        # is chosen now.
+        # A POOLED RUN HOLDS WHAT IT WAS STAGED WITH. pool_claim_for only hands over a spare
+        # staged on the key this turn routed to, so the two agree -- and the spare's own file is
+        # what gets recorded, because it is what the container actually holds.
         if pool_id:
-            claude_key = self.pool_claude_key(pool_id)
-            claude_why = "the account this warm container was staged with" if claude_key else ""
-        else:
-            claude_key, claude_why = self.pick_claude_key()
+            claude_key = self.pool_claude_key(pool_id) or claude_key
+            claude_why = "the account this warm container was staged with"
         cur = self.db.execute(
             "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, resumed,"
             " base_sha, unity, tools, disallowed, allowed, stream_path, branch,"
@@ -14902,6 +15252,9 @@ class Watcher:
         """
         self.recover()
         self.drain_events()
+        # HERE AND IN run(), for the reason the pool keeper's comment below spells out: the
+        # daemon does not call once(), so a hook added to one of them reaches half the callers.
+        self.say_claude_routes()
         self.claim_turns()
         # NO EARLY send_pending() HERE, AND run() HAS ONE. The difference is not an oversight:
         # this form runs the whole turn before it returns, so nothing is waiting on the
@@ -15256,6 +15609,12 @@ class Watcher:
 
         A STRANGER'S TRIGGER IS NOT HELD, it is ignored, and it has to reach the ignoring code
         to be ignored in the silence that code is written for.
+
+        A ROUTE THAT RESOLVES TO NOTHING IS NOT A HOLD EITHER. It is a configuration error, it
+        will not lift, and holding would leave a trigger sitting in the cursor being re-read
+        every minute forever. It is refused where every other #codereview refusal is refused —
+        see `take_review_trigger`, which asks `claude_route_for_comment` again and answers on
+        the pull request. Returning False here is what lets it get there.
         """
         body = (comment.get("body") or "").lower()
         if not any(trigger in body for trigger in triggers):
@@ -15263,9 +15622,23 @@ class Watcher:
         author = comment.get("author") or comment.get("user") or {}
         if not is_github_operator(self.cfg, str(author.get("id") or "")):
             return False
-        _, why = self.work_hold("review", fresh=True)
+        key, _why = self.claude_route_for_comment(comment)
+        if key is None:
+            return False
+        _, why = self.work_hold("review", key, fresh=True)
         self.log_hold(f"#codereview comment {comment.get('id')}", why)
         return bool(why)
+
+    def claude_route_for_comment(self, comment):
+        """(key name, why) for the operator who typed a #codereview trigger, or (None, refusal).
+
+        The one route that is taken from a comment rather than from a conversation or a turn:
+        the hold and the refusal both happen before either of those exists, which is the whole
+        point of asking here — nothing has been spent on this comment yet.
+        """
+        author = comment.get("author") or comment.get("user") or {}
+        return claude_route(self.cfg, "operator", str(author.get("id") or ""), GITHUB_KIND,
+                            self.claude_keys_now())
 
     def take_review_trigger(self, gh, comment, triggers, agent_class):
         """One comment, decided. The turn id when a review started, else None.
@@ -15286,6 +15659,17 @@ class Watcher:
                 f"({author_id or 'no id'}), who is not in github.trust.operators")
             return None
         number = _issue_number_from_url(comment.get("issue_url"))
+        # NOTHING TO BILL IT TO IS A REFUSAL AND NOT A HOLD, and it is said out loud because the
+        # person who typed the trigger is an operator: they can fix it, and they are the only
+        # one who can. Refused HERE rather than in review_held so it goes through refuse_review
+        # like every other "no" this poller says, and so the comment lands in `seen` and is not
+        # re-read every minute for as long as the config stays wrong.
+        _key, route_why = self.claude_route_for_comment(comment)
+        if _key is None:
+            if number is None:
+                log(f"#codereview: {route_why}")
+                return None
+            return self.refuse_review(gh, number, str(comment.get("id")), route_why)
         if number is None:
             log(f"#codereview: comment {comment.get('id')} names no issue; ignoring")
             return None
@@ -15863,12 +16247,24 @@ class Watcher:
             ripe.append((conv, waiting))
         if not ripe:
             return []
-        secs, why = self.claude_hold("review", fresh=True)
-        self.log_hold("pull request feedback", why)
-        if why:
-            return []
         out = []
         for conv, waiting in ripe:
+            # PER CONVERSATION, because the account that pays is. A batch on one operator's pull
+            # request has nothing to do with another operator's window, and asking once for all
+            # of them would hold work on an account with room because somebody else's was spent.
+            # The route here is the one launch() will take -- both go through turn_trust -- so a
+            # batch released now is a batch the launch can bill.
+            key, route_why = self.claude_route_for(conv, waiting)
+            subject = f"pull request feedback on conversation {conv['id']}"
+            if key is None:
+                # NOTHING CAN PAY FOR IT, so the comments stay gated and ripen again on the next
+                # poll. Said once: this is a configuration error and the poll runs every minute.
+                self.log_hold(subject, route_why)
+                continue
+            _secs, why = self.claude_hold("review", key, fresh=True)
+            self.log_hold(subject, why)
+            if why:
+                continue
             # THE CAP IS APPLIED HERE AND NEVER IN THE PROMPT. create_turn claims every ungated
             # message whether the prompt quotes it or not, so rendering only the first N would
             # consume the rest without reading them. Left gated, they ripen again on the poll
@@ -16374,6 +16770,11 @@ class Watcher:
                             or DEFAULTS["github"]["poll_secs"]):
                         if self.start_github_poll():
                             last_github = time.time()
+                    # WHO PAYS FOR WHAT, said once per process and before anything is claimed.
+                    # An operator whose subscription id resolves to nothing has every request
+                    # refused, and they should learn that from the journal rather than from
+                    # asking. Latched inside; see say_claude_routes.
+                    self.say_claude_routes()
                     self.claim_turns()
                     # BEFORE THE EXPENSIVE HALF, for the reason spelled out in once(): the
                     # acknowledgement create_turn just queued is worth nothing late, and
@@ -16898,6 +17299,14 @@ BLOCKED_NOTE = ("That is my limit for the day, so I have not started on this one
 # what makes an unanswered message bearable to the person who wrote it.
 HOLD_NOTE = ("I'm a little tired right now and am taking a break for the next {for_how_long}. "
              "I'll get to your request soon.")
+
+# WHAT A CONVERSATION IS TOLD WHEN NOTHING CAN PAY FOR IT. Deliberately not a Max-voiced joke:
+# a refusal nobody can act on is worth nothing, and the one person who can act on this is a
+# developer reading the same thread. The reason itself names the operator and the id, so the
+# sentence stays short and the detail lands in the journal and on /claude with it.
+ROUTE_REFUSED_NOTE = ("I can't run this: there's no Claude account configured to bill it to "
+                      "({why}). Nothing is lost — fix the config and I'll pick this up on the "
+                      "next pass.")
 
 
 def hold_duration(secs):

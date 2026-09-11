@@ -356,15 +356,18 @@ Options:
                        conversation was opened with. It does NOT pick the network — that comes
                        from --network, which ffwatch also passes, resolved from that pool's
                        "network" mode; see there.
-  --claude-key NAME    Which Claude subscription pays for the container this creates, named as
-                       the secrets.env variable holding its token (CLAUDE_CODE_OAUTH_TOKEN2,
-                       say). A NAME, never a token — the value is resolved here, so no
-                       credential reaches argv. ffwatch passes the account with the most
-                       allowance per second before it refills; left off, the first non-empty
-                       slot is used. A name that is not one of this box's tokens is refused,
-                       not fallen back from. Meaningless with --dispatch, which starts no
-                       container: a warm one keeps the account it was staged with, because a
-                       container's environment is fixed when it is created.
+  --claude-key NAME    Which Claude credential pays for the container this creates, named as the
+                       secrets.env variable holding it: CLAUDE_CODE_OAUTH_TOKEN2 for an
+                       operator's subscription, or ANTHROPIC_API_KEY for the metered default
+                       that pays for everything no operator asked for. A NAME, never a token —
+                       the value is resolved here, so no credential reaches argv. ffwatch
+                       decides it from who asked; left off, the first non-empty subscription
+                       slot is used, which is what a run typed by hand gets. A name that is not
+                       one of this box's credentials is refused, not fallen back from — and
+                       ANTHROPIC_API_KEY with nothing in it is refused too, rather than quietly
+                       billing somebody's subscription. Meaningless with --dispatch, which
+                       starts no container: a warm one keeps the credential it was staged with,
+                       because a container's environment is fixed when it is created.
   --agent-timeout N    Seconds of AGENT working time (default 1800). The clock starts when the
                        task creates <out>/.agent-started, not when ffbox does.
   --warmup-timeout N   Seconds for everything before that marker (default 3600).
@@ -540,44 +543,42 @@ else
     echo "       Run 'sh ffbox/setup.sh' to create it from the template." >&2
 fi
 
-# --- the Claude token pool ------------------------------------------------------------------
+# --- which Claude credential this container gets ----------------------------------------------
 #
-# secrets.env carries ONE TOKEN PER CLAUDE ACCOUNT, numbered from 1: CLAUDE_CODE_OAUTH_TOKEN1,
-# CLAUDE_CODE_OAUTH_TOKEN2, and so on. This resolves the pool down to the one that gets spent
-# and exports it under the unnumbered name, which is what the `docker run` below passes with
-# `-e CLAUDE_CODE_OAUTH_TOKEN` and what `claude` inside the container reads. NOTHING PAST THIS
-# POINT KNOWS THERE IS A POOL, on purpose: the container is handed one credential, and which
-# one is a host-side decision made here.
+# TWO KINDS, AND A CONTAINER IS HANDED EXACTLY ONE. secrets.env carries one SUBSCRIPTION token
+# per operator, numbered from 1 (CLAUDE_CODE_OAUTH_TOKEN1, CLAUDE_CODE_OAUTH_TOKEN2, ...), and
+# one API key, ANTHROPIC_API_KEY, which pays for everything no operator asked for. This resolves
+# --claude-key down to one of them and exports it under the name `claude` inside the container
+# actually reads. NOTHING PAST THIS POINT KNOWS THERE IS MORE THAN ONE, on purpose: which
+# credential a container gets is a host-side decision made here.
 #
-# ALL OF THEM ARE SPENT SINCE 2026-09-04, and until then only the first was. ffwatch reads what
-# is left on every account — see claude_keys.py, which has the policy and the argument for it —
-# and passes the winner as --claude-key. Without that flag this still resolves to the first
-# non-empty slot, which is the only one on a box holding one account and is what a run typed by
-# hand at a terminal gets.
+# WHO PAYS IS DECIDED BY WHO ASKED, and that decision is ffwatch's (see `claude_route` there and
+# design/operator_subscriptions_design.txt). An operator's request is billed to the subscription
+# they claimed in config.json; a player's, a gate's or a selector's to the API key. Until
+# 2026-09-10 this box ranked its accounts and spent whichever had the most room, which worked
+# and made "whose subscription paid for that" unanswerable.
 #
 # RESOLVED ONCE PER CONTAINER, at creation, because that is the only moment there is: docker
 # fixes an environment when it makes a container and cannot add to it afterwards. A warm spare
-# is therefore staged with an account and bills that account whenever its turn arrives, which
-# may be hours later.
+# is therefore staged with one credential and can only ever serve a turn billed to that same
+# one -- which is why ffwatch matches on it when claiming a spare.
 #
 # A GAP IS NOT THE END OF THE LIST. Slot 2 set with slot 1 blank is somebody who revoked their
-# first key; a loop that stopped at the hole would run the box on nothing.
+# first key; a loop that stopped at the hole would leave that operator unbillable.
 #
-# The unnumbered name is the OLDER SPELLING and is still honoured when no numbered slot is set,
-# so a secrets.env written before this change keeps working with no edit.
+# The unnumbered CLAUDE_CODE_OAUTH_TOKEN is the OLDER SPELLING and is still honoured when no
+# numbered slot is set, so a secrets.env written before the numbering keeps working with no edit.
 #
-# --claude-key NAMES ONE OF THEM, and is how ffwatch spends the pool instead of only its first
-# entry: it reads what is left on every account (see claude_keys.py) and passes the variable
-# whose account should pay for this turn. A NAME AND NEVER A TOKEN — argv is world-readable
-# through /proc for the life of the process and lands in a shell history, which is the same rule
-# that keeps GH_PR_TOKEN out of the push url.
+# --claude-key NAMES ONE OF THEM, and ffwatch always passes it. Left off -- which is a run typed
+# by hand at a terminal -- the first non-empty subscription slot is used. A NAME AND NEVER A
+# TOKEN: argv is world-readable through /proc for the life of the process and lands in a shell
+# history, which is the same rule that keeps GH_PR_TOKEN out of the push url.
 #
-# THE NAME IS CHECKED AGAINST THE POOL BEFORE IT IS DEREFERENCED. This turns a string from the
-# command line into a credential, so without the check `--claude-key GH_PR_TOKEN` would hand a
-# container the GitHub token as its Claude one. Only names this loop itself produced are
-# accepted; anything else is refused rather than quietly falling back, because a caller asking
-# for an account that is not there has a wrong idea about this box and running the turn on
-# another account would hide that.
+# THE NAME IS CHECKED AGAINST WHAT THIS LOOP ITSELF FOUND BEFORE IT IS DEREFERENCED. This turns
+# a string from the command line into a credential, so without the check `--claude-key
+# GH_PR_TOKEN` would hand a container the GitHub token as its Claude one. Anything else is
+# refused rather than quietly falling back, because a caller asking for an account that is not
+# there has a wrong idea about this box and running the turn on another account would hide that.
 _ff_active_token=""
 _ff_active_name=""
 _ff_v=""
@@ -604,19 +605,52 @@ if [ -z "$_ff_active_token" ] && [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
     _ff_active_name=CLAUDE_CODE_OAUTH_TOKEN
     [ "$CLAUDE_KEY" = "CLAUDE_CODE_OAUTH_TOKEN" ] && _ff_wanted_ok=1
 fi
+# THE API KEY IS A LEGAL --claude-key VALUE and is never the unasked-for fallback. A run that
+# names it gets it or gets nothing: falling through to a subscription slot here would be a
+# player's turn silently billed to somebody's personal plan, which is the exact failure the
+# routing exists to prevent.
+if [ "$CLAUDE_KEY" = "ANTHROPIC_API_KEY" ]; then
+    if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+        _ff_active_token=${ANTHROPIC_API_KEY}
+        _ff_active_name=ANTHROPIC_API_KEY
+        _ff_wanted_ok=1
+    else
+        echo "ffbox: --claude-key ANTHROPIC_API_KEY, but that variable is empty or absent in" >&2
+        echo "       $SECRETS. It pays for every request no operator made — a player in a" >&2
+        echo "       forum thread, the engagement gate, the selector — so without it this box" >&2
+        echo "       can only answer its operators." >&2
+        exit 78
+    fi
+fi
 
 if [ -z "$_ff_active_token" ]; then
-    echo "ffbox: no Claude token. Generate one with 'claude setup-token' and put it in" >&2
-    echo "       $SECRETS as CLAUDE_CODE_OAUTH_TOKEN1 — it bills against your subscription," >&2
-    echo "       not an API key. Further accounts go in as CLAUDE_CODE_OAUTH_TOKEN2 and up;" >&2
-    echo "       ffwatch spreads turns over all of them and ffweb's /claude page reports each." >&2
+    echo "ffbox: no Claude credential. Generate a subscription token with" >&2
+    echo "       'claude setup-token' and put it in $SECRETS as CLAUDE_CODE_OAUTH_TOKEN1 — it" >&2
+    echo "       bills against that subscription. Further operators go in as" >&2
+    echo "       CLAUDE_CODE_OAUTH_TOKEN2 and up, each claimed in config.json by the operator" >&2
+    echo "       it belongs to; ANTHROPIC_API_KEY beside them pays for everything else." >&2
     exit 78
 fi
 if [ -n "$CLAUDE_KEY" ] && [ "$_ff_wanted_ok" != 1 ]; then
-    echo "ffbox: --claude-key ${CLAUDE_KEY} names no Claude token in $SECRETS" >&2
+    echo "ffbox: --claude-key ${CLAUDE_KEY} names no Claude credential in $SECRETS" >&2
     exit 78
 fi
-export CLAUDE_CODE_OAUTH_TOKEN="$_ff_active_token"
+# ONE NAME, ONE VALUE, AND NEVER BOTH KINDS. Claude Code reads both variables and has its own
+# precedence between them; a container that held an API key and a subscription token would be
+# billing whichever one that precedence happens to prefer, which is a fact about a version of
+# `claude` rather than a decision this box made. A subscription goes in under the UNNUMBERED
+# name, which is what `claude` reads.
+#
+# FORWARDED BY NAME, NEVER AS `-e NAME=VALUE`. docker's argv is world-readable through /proc for
+# the life of the call; the bare form takes the value out of this process's environment instead,
+# which is the same rule that keeps the GitHub token off the command line.
+if [ "$_ff_active_name" = "ANTHROPIC_API_KEY" ]; then
+    export ANTHROPIC_API_KEY="$_ff_active_token"
+    CLAUDE_ENV_ARGS=(-e ANTHROPIC_API_KEY)
+else
+    export CLAUDE_CODE_OAUTH_TOKEN="$_ff_active_token"
+    CLAUDE_ENV_ARGS=(-e CLAUDE_CODE_OAUTH_TOKEN)
+fi
 CLAUDE_KEY=$_ff_active_name
 unset _ff_active_token _ff_active_name _ff_v _ff_n _ff_name _ff_wanted_ok
 
@@ -1329,7 +1363,7 @@ RUN_ARGS=(
     "${DOCKER_MOUNTS[@]}"
     "${ENTRY_ENV[@]}"
     "${UNITY_LICENCE_ARGS[@]}"
-    -e CLAUDE_CODE_OAUTH_TOKEN
+    "${CLAUDE_ENV_ARGS[@]}"
     "${GH_TOKEN_ARGS[@]}"
     -e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
     -e DISABLE_AUTOUPDATER=1

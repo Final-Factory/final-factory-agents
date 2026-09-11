@@ -232,20 +232,22 @@ def is_stoppable(row):
             and row.get("lane") in STOPPABLE_LANES
             and bool(row.get("name")))
 
-# ---- the Claude token pool -------------------------------------------------------------
+# ---- the Claude accounts ------------------------------------------------------------------
 # MOVED OUT ON 2026-09-04, and the comment that used to sit here argued against exactly this.
 # It said a shared module was not worth it: the numbering rule is six lines, the same six live
 # in ffbox's preflight and in ffwatch, and a wrong copy here would only show a wrong row on one
 # page. That was true of the six lines and is still true of ffbox's copy, which is shell and
-# cannot import Python. It stopped being true of the READING when ffwatch started choosing
-# which subscription each turn is billed to: the endpoint fallback, the header parsing and the
-# cache are the algorithm the old comment said nobody would change, and two copies of it would
-# have this page and the daemon disagreeing about which account has room.
+# cannot import Python. It stopped being true of the READING: the endpoint fallback, the header
+# parsing and the cache are the algorithm the old comment said nobody would change, and two
+# copies of it would have this page and the daemon disagreeing about which account has room.
 #
 # So it lives in claude_keys.py and both import it. This file still imports NOTHING from
 # ffwatch — that rule is about not becoming a second copy of the daemon, and a module that
-# knows only about tokens and windows is not one.
+# knows only about credentials and windows is not one. WHICH IS ALSO WHY THIS PAGE CANNOT SAY
+# WHOSE ACCOUNT A ROW IS: that lives in config.json's `operators` block, which ffwatch owns and
+# this page reads for itself, below.
 from claude_keys import (                                    # noqa: E402  (see the header)
+    CLAUDE_API_KEY_NAME,
     CLAUDE_DEFAULT_RATE,
     CLAUDE_NAME_PREFIX,
     CLAUDE_PLAN_NAMES,
@@ -254,10 +256,15 @@ from claude_keys import (                                    # noqa: E402  (see 
     CLAUDE_TOKEN_PREFIX,
     CLAUDE_USAGE_STORE,
     CLAUDE_USAGE_TTL_SECS,
+    KIND_API_KEY,
     RATELIMIT_PREFIX,
     ClaudeKeys,
     claude_plan,
-    claude_token_pool,
+    # Not used by this page: `claude_claims` reads the records ClaudeKeys already returned.
+    # Re-exported because `python3 ffbox/ffweb.py` in a terminal and the offline suite both
+    # reach for it here, and one import list is better than two ways in.
+    claude_subscriptions,
+    slot_ids,
     token_fingerprint,
 )
 import claude_keys as _claude_keys
@@ -2718,17 +2725,21 @@ class App:
         row this could read instead. What the database DOES hold — what each run cost — is a
         different quantity in different units and is on the conversations page already.
 
-        EVERY KEY IS SPENT, AND THIS PAGE SAYS WHAT IS LEFT IN EACH. Until 2026-09-04 the first
-        in the pool paid for everything and the rest were inventory an operator read here before
-        deciding to move the box; now ffwatch chooses per turn, on these same numbers and by the
-        same code — claude_keys is shared, which is what stops the page and the daemon
-        disagreeing about which account has room.
+        ONE ROW PER ACCOUNT, HEADED BY WHOSE IT IS. Since 2026-09-10 a subscription is not an
+        anonymous member of a pool: an operator claims it in config.json and every request they
+        make is billed to it, so the question this page answers is "who is about to run out"
+        rather than "what has the box got". A subscription nobody claims is still listed and
+        said to be unclaimed, because a token nothing can spend is worth seeing.
 
-        THAT IS ALSO WHY THIS PAGE STILL HAS NO BUTTON. There is no longer a key to "switch to":
-        the choice is made per turn by whoever is scheduling, and what is left to decide here is
-        which accounts exist and how big each plan is, both of which are edits to secrets.env. A
-        control that overrode the chooser would be this process reaching around the daemon that
-        owns the ceiling, which is the rule the whole site is built on.
+        AND ONE ROW FOR THE METERED DEFAULT, which is not a subscription and has no windows to
+        draw. Everything no operator asked for is billed to it — a player in a forum thread, the
+        engagement gate, the selector — so "is it live" is the whole of what it can report and
+        the whole of what anybody needs from it here.
+
+        THIS PAGE HAS NO BUTTON. There is nothing to "switch to": which account pays is decided
+        by who asked, and changing that is an edit to config.json or secrets.env. A control here
+        would be this process reaching around the daemon that owns the decision, which is the
+        rule the whole site is built on.
 
         NO TOKEN IS RENDERED. A row names its key by the variable it came from, by the account
         Anthropic says it belongs to, and by eight hex characters of its digest — which is
@@ -2736,41 +2747,63 @@ class App:
         a credential.
         """
         rows = self.keys.read()
+        claims = claude_claims(rows)
         head = ["<h1>claude keys</h1>"]
         if not rows:
             return page("Claude", head + [
-                "<p class=\"note\">No Claude token in this process's environment, and none in "
-                + esc(os.environ.get("FFBOX_SECRETS") or "~/.config/ffbox/secrets.env") +
-                ". Put one key per account in that file as " +
+                "<p class=\"note\">No Claude credential in this process's environment, and none "
+                "in " + esc(os.environ.get("FFBOX_SECRETS") or "~/.config/ffbox/secrets.env") +
+                ". Put one subscription token per operator in that file as " +
                 esc(CLAUDE_TOKEN_PREFIX) + "1, " + esc(CLAUDE_TOKEN_PREFIX) + "2, … "
-                "(each from <code>claude setup-token</code> signed in as that account), say "
-                "which plan each one is on beside it as " + esc(CLAUDE_RATE_PREFIX) +
-                "1=5, optionally what to call it as " + esc(CLAUDE_NAME_PREFIX) +
-                "1=Loth, and restart ffweb.</p>"], refresh=True)
+                "(each from <code>claude setup-token</code> signed in as that account), name it "
+                "beside it as " + esc(CLAUDE_NAME_PREFIX) + "1=Loth so an operator can claim it "
+                "in config.json, say which plan it is on as " + esc(CLAUDE_RATE_PREFIX) +
+                "1=5, put an " + esc(CLAUDE_API_KEY_NAME) + " beside them for everything no "
+                "operator asked for, and restart ffweb.</p>"], refresh=True)
 
         # THE TTL IS NOT ADVERTISED HERE ANY MORE. It described a ceiling on how often this page
         # would ask Anthropic, which was never the interesting number and is now a misleading
         # one: the daemon's forced readings are what actually keep the store current, they
         # happen when work arrives rather than on any clock, and each row already carries the
         # only fact a reader wants from it — "read 4m ago", off the reading itself.
+        _subs = [r for r in rows if r.get("kind") != KIND_API_KEY]
         head.append(
-            "<p class=\"note\">" + esc(f"{len(rows)} key{'' if len(rows) == 1 else 's'}") +
-            " in the pool.</p>")
+            "<p class=\"note\">"
+            + esc(f"{len(_subs)} subscription{'' if len(_subs) == 1 else 's'}")
+            + (", one per operator who claims one. " if _subs else ". ")
+            + ("Everything no operator asked for is billed to "
+               + esc(CLAUDE_API_KEY_NAME) + "."
+               if len(_subs) != len(rows) else
+               "There is no " + esc(CLAUDE_API_KEY_NAME) + ", so nothing that is not an "
+               "operator's request can run.")
+            + "</p>")
 
         body = []
         for rec in rows:
-            # THE DECLARED NAME WINS. CLAUDE_CODE_NAME_TOKEN<n> exists so a row can say whose
-            # account it is; the variable name is the fallback for every slot nobody named.
-            meta = [esc(rec.get("label") or rec["name"])]
-            if rec["active"]:
-                meta.append(str(pill("active")))
+            api_key_row = rec.get("kind") == KIND_API_KEY
+            # WHOSE ACCOUNT THIS IS, and the operator who claims it wins over everything else: a
+            # row that reads "lothsahn" says who runs out when it runs out, where the declared
+            # name says only which line of secrets.env it came from and the variable name says
+            # only where in the file it sits.
+            if api_key_row:
+                meta = [esc(rec["name"]), str(pill("default"))]
+            elif claims.get(rec["name"]):
+                meta = [esc(claims[rec["name"]])]
+                if rec.get("label"):
+                    meta.append("declared " + esc(short(rec["label"], 40)))
+            else:
+                # NOBODY HAS CLAIMED THIS ONE, which is worth saying rather than leaving to be
+                # inferred from a missing name: a subscription no operator claims is a token
+                # nothing on this box can spend.
+                meta = [esc(rec.get("label") or rec["name"]), str(pill("unclaimed"))]
             meta.append("key " + esc(rec["fingerprint"]))
             if rec["account"]:
                 meta.append(esc(short(rec["account"], 80)))
-            # THE DECLARED PLAN IS ON EVERY ROW, including a revoked key's and one that timed
-            # out, because it is read from secrets.env rather than from Anthropic and is
-            # therefore the one thing about a key that is known whatever the network did.
-            meta.append(esc(claude_plan(rec.get("rate"))))
+            # THE DECLARED PLAN IS ON EVERY SUBSCRIPTION ROW, including a revoked key's and one
+            # that timed out, because it is read from secrets.env rather than from Anthropic and
+            # is therefore the one thing about a key that is known whatever the network did. An
+            # API key has no plan in this sense — it is metered — and says so instead.
+            meta.append("metered" if api_key_row else esc(claude_plan(rec.get("rate"))))
             if rec["plan"]:
                 # What Anthropic says, when it will say anything — a different source from the
                 # line above, so both stand rather than one quietly overwriting the other.
@@ -2810,6 +2843,13 @@ class App:
                 trows.append([w["label"], usage_bar(w["percent"]), note])
             if trows:
                 body.append(str(table(["window", "used", "resets"], trows)))
+            elif api_key_row:
+                # NOT A GAP IN THE READING, THE ANSWER. A console key is billed per token and has
+                # no rolling window to be part way through, so there is nothing to draw and
+                # nothing the holds could hold on. What it costs is on the conversations page.
+                body.append("<p class=\"note\">Metered, so there is no window to run out of. "
+                            "It pays for every request no operator asked for, and what it has "
+                            "cost is on the conversations page.</p>")
             else:
                 body.append("<p class=\"empty\">Anthropic reported no windows for this "
                             "key.</p>")
@@ -3771,6 +3811,41 @@ def _config_block():
     block = dict(ffbox_raw)
     block.update(ffbox_raw.get("ffwatch") or {})
     return block
+
+
+def claude_claims(rows):
+    """{variable name: operator} — who claims each subscription, out of config.json.
+
+    THE PAGE'S HALF OF THE ROUTING TABLE. ffwatch decides what a request is billed to; this only
+    needs to head each row with the person it belongs to, which is the same lookup run backwards:
+    `operators.<who>.claude` is a subscription id, and `slot_ids` says which slot answers to it.
+
+    OVER THE ROWS THE PAGE ALREADY HAS, rather than a second read of secrets.env. The records
+    carry the variable name and the declared name, which is everything an id can match on, and
+    reading the file again would be a second answer to a question already answered — one this
+    page could disagree with itself about.
+
+    An id claimed by two slots, or by two operators, is dropped rather than shown against
+    either: that is the answer ffwatch gives too, and a page that picked one would be the only
+    thing on the box claiming to know which account somebody meant.
+    """
+    ops = _config_block().get("operators")
+    if not isinstance(ops, dict):
+        return {}
+    out, seen = {}, {}
+    for who, entry in ops.items():
+        wanted = str((entry or {}).get("claude") or "").strip().casefold() \
+            if isinstance(entry, dict) else ""
+        if not wanted:
+            continue
+        hits = [rec["name"] for rec in rows
+                if rec.get("kind") != KIND_API_KEY
+                and wanted in slot_ids(rec["name"], rec.get("label") or "")]
+        if len(hits) != 1:
+            continue
+        seen[hits[0]] = seen.get(hits[0], 0) + 1
+        out[hits[0]] = str(who)
+    return {name: who for name, who in out.items() if seen.get(name) == 1}
 
 
 def github_repo():

@@ -323,3 +323,29 @@ unwanted pull request or check run is a real object somebody has to go and delet
 write is proven by the job it exists for actually landing: a pull request appearing on the
 repository, a branch appearing on origin, a check run appearing on a PR. Watch for that the
 first time after minting or rotating one, because every failure mode here is silent.
+
+## Not GitHub: the two Claude credentials
+
+They belong in the same head as the four above, because the reason to keep them apart is the
+same: a leak of one must not carry the other's capabilities, and a box that muddles them spends
+the wrong person's money.
+
+**`CLAUDE_CODE_OAUTH_TOKEN<n>` — one operator's subscription.** Minted by that person with
+`claude setup-token`, on their own account, and claimed by them in `config.json` as
+`operators.<them>.claude`. It bills their Claude plan, and since 2026-09-10 it pays for exactly
+one thing: requests that person makes. Nobody else's work can reach it — not a player's bug
+report, not the engagement gate, not another operator's directive — because the route is a lookup
+of an authenticated id rather than a choice the box makes. Its blast radius is one subscription's
+rolling window and whatever that account can be used for; it carries no repository access.
+
+**`ANTHROPIC_API_KEY` — the metered default.** Minted at console.anthropic.com against the org.
+It pays for everything no operator asked for: every player in every forum thread, the gate that
+reads their messages, the selector that files them. Its blast radius is **money** — there is no
+window to run out of, so a leaked or misused key costs until somebody notices. Bound it the way
+the box bounds everything else: `max_budget_usd` per agent class caps one run, and
+`classifier_budget_usd` caps one gate call. Neither knows what the month has cost; if this box
+ever needs a real cap, that is a feature to build rather than a setting to find.
+
+Both reach a container the same way every other credential here does — as a variable NAME on
+ffbox's command line, resolved out of `secrets.env` inside ffbox, forwarded to docker by name so
+the value never enters argv. A container is handed exactly one of them and never both.

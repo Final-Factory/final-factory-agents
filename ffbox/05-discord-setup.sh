@@ -151,6 +151,15 @@ if not any(str(v or "").strip().isdigit() for v in _discord_ids):
                    f"edit ~/.config/ffbox/config.json   (present: {named}; ids only, never "
                    f"usernames)")
 
+# WHOSE SUBSCRIPTION PAYS FOR EACH OF THEM, and this one IS counted as missing: an operator
+# with no `claude` id has every request refused, which is a box that looks alive and does
+# nothing for the person it trusts most.
+_claude_ids = [e.get("claude") for e in operators.values() if isinstance(e, dict)]
+if operators and not any(str(v or "").strip() for v in _claude_ids):
+    missing += out("operators.<name>.claude",
+                   "edit ~/.config/ffbox/config.json   (the CLAUDE_CODE_NAME_TOKEN<n> declared "
+                   "beside that person's token in secrets.env)")
+
 # THE GITHUB HALF OF THE SAME TABLE, and not counted as missing: a box that never wants
 # #codereview is a box that leaves this empty, and saying "you are not done" about a feature
 # nobody asked for is how MANUAL STEPS stops being read. Listed so it is discoverable.
@@ -665,7 +674,16 @@ if legacy:
     if not discord["trust"]:
         discord.pop("trust", None)
 if not shared:
-    shared[EXAMPLE_OPERATOR] = {"discord": "", "github": ""}
+    shared[EXAMPLE_OPERATOR] = {"discord": "", "github": "", "shell": "", "claude": ""}
+# AND THE TWO FIELDS THAT ARRIVED LATER, on every entry that predates them. `shell` is the unix
+# account name a terminal or web prompt arrives under; `claude` is the subscription id from
+# secrets.env that this person's requests are billed to. An entry with no `claude` has every
+# request refused rather than billed to somebody else's plan, so an empty key in the file is a
+# great deal more discoverable than a missing one.
+for _entry in shared.values():
+    if isinstance(_entry, dict):
+        _entry.setdefault("shell", "")
+        _entry.setdefault("claude", "")
 if not discord["mentions"]:
     discord["mentions"].setdefault(EXAMPLE_OPERATOR, "")
 

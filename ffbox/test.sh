@@ -40,6 +40,11 @@ run "runners/test_pool.sh"  sh  "$HERE/runners/test_pool.sh"
 run "runners/test_reap.sh"  sh  "$HERE/runners/test_reap.sh"
 run "runners/test_pin.sh"   sh  "$HERE/runners/test_pin.sh"
 run "test_ci_lane.py"       python3 "$HERE/test_ci_lane.py"
+# THE ONE SUITE THAT DRIVES THE REAL ffbox, against a stub docker and its own secrets file. It
+# was not in this runner until 2026-09-10, which meant the properties it holds -- no credential
+# in argv, one Claude credential per container and never two -- were checked only when somebody
+# remembered to run it by hand. That is the state this file exists to end.
+run "test_container_credential.sh" sh "$HERE/test_container_credential.sh"
 run "test_update_drain.sh"  sh  "$HERE/test_update_drain.sh"
 # THE TWO BIG PYTHON SUITES BELONG HERE TOO, and leaving them out was the same mistake this file
 # was written to stop. I built a single entry point for the shell suites and then went on running

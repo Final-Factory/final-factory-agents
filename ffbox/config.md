@@ -277,118 +277,124 @@ would spray a thread no matter how few turns it took.
 
 ## `claude`
 
-**Which Claude subscription pays for each turn.** The tokens are *not* here — they live in
-`~/.config/ffbox/secrets.env` as `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3`, with the plan each one
-is on declared beside it as `CLAUDE_CODE_RATE_TOKEN<n>`. This block only says how to choose
-between them.
+**Which Claude account pays for what.** The credentials are *not* here — they live in
+`~/.config/ffbox/secrets.env` as `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` (one subscription per
+operator, with its id declared beside it as `CLAUDE_CODE_NAME_TOKEN<n>`) and `ANTHROPIC_API_KEY`
+(the metered default). **Which one pays is not configured here either**: it is decided by who
+asked, from the [`operators`](#operators) block. This block only says how the windows are read
+and when a request waits for one to refill.
 
 ```json
-"claude": { "spread": true, "five_hour_cap": 0.6, "refresh_secs": 900, "timeout_secs": 10,
+"claude": { "refresh_secs": 900, "timeout_secs": 10,
             "review_hold_pct": 0.75, "new_conversation_hold_pct": 0.9 }
 ```
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `spread` | `true` | Off spends the first non-empty slot for everything, which is what this box did before 2026-09-04. |
-| `five_hour_cap` | `0.6` | The share of the **five-hour session** past which an account stops being offered work. |
 | `refresh_secs` | `900` | How often every account's windows are re-read when nobody asks for a fresh one. |
 | `timeout_secs` | `10` | How long one account's reading may take before it is written off for that refresh. |
-| `review_hold_pct` | `0.75` | Above this, a `#codereview` trigger waits for the window to refill instead of starting. |
+| `review_hold_pct` | `0.75` | Above this share of the account that would pay, a `#codereview` trigger — or a ripe batch of pull-request feedback — waits for the window to refill instead of starting. Asked per pull request, since the account that pays is per operator. |
 | `new_conversation_hold_pct` | `0.9` | Above this, a brand-new conversation waits for its first turn. |
 
-Not seeded — a box with no `claude` block gets exactly the defaults above.
+Not seeded — a box with no `claude` block gets exactly the defaults above. `spread` and
+`five_hour_cap` were here until 2026-09-10 and are gone with the chooser; a box whose file still
+carries them keeps working and the daemon says once, at startup, that nothing reads them.
 
-**The rule is not "whoever has used least".** An account 75% through a window that refills in
-five minutes has a quarter of a plan that is about to be thrown away, because unspent window is
-not carried over; an account 50% through a window with five days left has half a plan that has
-to last five days. So each account is scored on the allowance it can still give **per second**
-before it refills — `rate × remaining ÷ seconds-to-reset`, where `rate` is the plan multiplier —
-and the largest wins. Equal reset times cancel the time term and it reduces to "the emptiest
-week", which is what this was before resets were taken into account.
+### Whose account pays
 
-Two rules sit around the score:
+| request | tier | id space | billed to |
+| --- | --- | --- | --- |
+| forum thread, mention, player DM | player | discord | `ANTHROPIC_API_KEY` |
+| operator message, directive, DM | operator | discord | that operator's slot |
+| `#codereview` on a pull request | operator | github | that operator's slot |
+| shell or web prompt | operator | unix account | that operator's slot |
+| the engagement gate and the selector | — | — | `ANTHROPIC_API_KEY` |
 
-1. An account at or above `five_hour_cap` of its **five-hour** session is not offered work at
-   all, whatever its week says. That is a gate rather than a term in the score so that a very
-   empty week cannot outweigh it, and it is the headroom a human at a terminal needs on the same
-   account. It un-gates itself when that session turns over.
-2. When every account is over the cap there is no good choice, only the one that comes back
-   first: the same score on the five-hour window instead of the week. `ffwatch` logs a line when
-   it lands here, because that state is the box running out of subscription rather than out of
-   work.
+The route is a lookup of an **authenticated id** and never a thing message text can ask for. It
+reads the same `operators` block the trust tier reads, through the same function, so the person
+trusted to command this box is the person whose subscription pays for it and the two cannot
+drift. The three id spaces never mix: a Discord snowflake that happened to collide with a GitHub
+user id is not a way into somebody's account, because an actor is only ever tested against the
+table for the surface it arrived on.
 
-Ties fall to the lower slot, so the answer is stable rather than dependent on dict order.
+Two cases follow from rules that were already there. A turn batches messages and operator tier
+requires that **every** message in the batch came from one, so a mixed batch is a player's turn
+and goes to the API key. And a fix leg a triage verdict spawned inherits the conversation it
+belongs to, so work the box went looking for off a player's bug report stays on the API key for
+its whole life.
 
-**Why 0.6 and not 1.0.** A session run to its ceiling stops a turn mid-flight, and the turn is
-lost rather than queued. The 40% left over also absorbs the age of the reading, which is up to
-`refresh_secs` old by construction.
+**An operator with nothing to bill is refused, not rehomed.** No `claude` id, an id naming no
+token, or an id two slots both answer to: all three are configuration errors, and falling back
+to the API key would be the box deciding to spend money nobody budgeted while falling back to
+another operator's subscription is the behaviour this replaced. The refusal is said once in the
+venue the request came from and the request itself **waits** — messages stay unclaimed and
+ungated — so the pass after somebody fixes the config runs it. `#codereview` refuses on the pull
+request instead, because that path consumes its trigger and the operator can comment again; a
+shell prompt's refusal lands on `turn.error`, which is what the person at the terminal is
+already looking at.
+
+**What the metered key changes.** An API key has no five-hour or seven-day window to be part way
+through — it has per-minute org rate limits and a bill — so the holds below do not apply to it,
+`/claude` draws no bars for it, and player traffic never waits for a refill. What bounds one
+player-facing run is `max_budget_usd`, which since 2026-09-10 can be set per agent class (see
+[pools](#pools)) and should be: it is the real ceiling on a metered run rather than a number that
+only mattered if something went badly wrong.
+
+**A warm spare can only serve a turn billed to the credential it was staged with.** A
+container's environment is fixed when docker creates it, so `pool_claim_for` matches on the
+recorded credential as well as on class and branch; a miss is a cold launch, which is what a pool
+miss has always cost. The ffagent pool stages on the API key, so every ffagent spare matches
+every ffagent turn. The ffdev pool stages for whichever operator has run something most recently,
+skipping anyone who already has a spare waiting — a guess, made out of what this box has actually
+run, and a wrong one costs one cold launch and ages out.
 
 **Where the numbers come from.** Anthropic, through `ffbox/claude_keys.py` — the same module
-that draws ffweb's `/claude` page, so the page and the chooser cannot disagree. A key from
+that draws ffweb's `/claude` page, so the page and the daemon cannot disagree. A key from
 `claude setup-token` has no `user:profile` scope and so cannot read its own usage document; such
 a key is asked one token of Haiku instead and its windows are read off the reply's rate-limit
 headers. That is why `refresh_secs` is a quarter of an hour and not a minute: the refresh is not
-free, and the windows it measures are five hours and seven days long. The page's own interval
-is separate and is now an hour; see below.
+free, and the windows it measures are five hours and seven days long.
 
-**A spawn decision asks Anthropic; everything else takes the cached answer.** Whether a new
-conversation or a `#codereview` trigger starts now or waits for the window is the one decision
-on this box that a stale reading gets wrong in a way nothing later corrects: a conversation held
-on a window that has since refilled sits there until something else wakes it, and one started on
-a window that has since filled up runs into a mid-flight cutoff. So both of those force a
-reading before deciding. Choosing *which* account pays does not, and should not — the next turn
-re-chooses, and a round trip there would land on every launch, every staging and every gate
-call. A forced reading is floored at 30 seconds rather than unlimited, so one `claim_turns` pass
-over ten new conversations still makes one round of requests.
+**A hold decision asks Anthropic; nothing else reads a window at all.** Whether a new
+conversation or a `#codereview` trigger starts now or waits is the one decision on this box that
+a stale reading gets wrong in a way nothing later corrects: a conversation held on a window that
+has since refilled sits there until something else wakes it, and one started on a window that has
+since filled up runs into a mid-flight cutoff. So both of those force a reading, floored at 30
+seconds so one `claim_turns` pass over ten new conversations still makes one round of requests.
+Routing a turn, staging a spare and running the gate read nothing — they are lookups.
 
-**And for six weeks that sentence was wrong, because `claim_turns` asked a different question
-from the one that builds a turn.** `pending_messages` selects `gate IS NULL`; `claim_turns`
-selected on `turn_id IS NULL` alone. So every conversation holding nothing but gated
-messages — pre-attach backlog, a system event, a refused directive — was offered to
-`create_turn` on every tick of the daemon loop, and `new_conversation_held` (which sits above
-the `pending_messages` call deliberately, so no work is done for a turn that will not happen)
-asked Anthropic how full the subscription was before finding out there was nothing to build.
-Measured on the build server 2026-09-08: 76 conversations selected, **none** of them holding a
-claimable message, 50 of them reaching the read — one billed Haiku probe every 31 seconds on a
-box with nothing to do, about 2,800 a day. The two queries now ask the same question. If this
-box ever starts reading Anthropic on a clock again, that is the shape of the bug: something is
-entering `create_turn` for a conversation with no claimable message.
+**And for six weeks a version of that sentence was wrong, because `claim_turns` asked a
+different question from the one that builds a turn.** `pending_messages` selects `gate IS NULL`;
+`claim_turns` selected on `turn_id IS NULL` alone. So every conversation holding nothing but
+gated messages — pre-attach backlog, a system event, a refused directive — was offered to
+`create_turn` on every tick, and the hold (which sits above the `pending_messages` call
+deliberately, so no work is done for a turn that will not happen) asked Anthropic how full the
+subscription was before finding out there was nothing to build. Measured on the build server
+2026-09-08: 76 conversations selected, **none** holding a claimable message, 50 of them reaching
+the read — one billed Haiku probe every 31 seconds on a box with nothing to do, about 2,800 a
+day. The two queries now ask the same question. If this box ever starts reading Anthropic on a
+clock again, that is the shape of the bug.
 
 **One store, two processes.** `ffwatch` and `ffweb` used to keep their readings in their own
 memory, so each paid its own way to Anthropic and the page could say 40% while the daemon was
 holding work at 91%. Both now read and write `<state-dir>/claude-usage.json` (mode `0600` — a
 record carries the account email), newest reading wins, merged rather than overwritten so
-neither deletes the other's keys. Since the daemon reads far more often than the page does, it
-is the page that gains — on a box with work on it. `CLAUDE_USAGE_TTL_SECS` is an hour, and
-since the gate fix above it is the real interval on an idle box rather than a floor nobody
-reaches: a daemon with nothing to answer now asks Anthropic nothing at all, so `/claude` on a
-quiet box shows its own hourly reading. Each row says `read Nm ago`, which is the only honest
-version of "how current is this" — the page used to print a sentence about its own TTL and no
-longer does, because that number described a ceiling rather than what actually happens. The file is a cache and nothing more
-— anything unreadable, malformed or from a version this build does not know is treated as
-absent, because the fallback is one HTTP call and a cache that can break a start-up is worse
-than no cache.
+neither deletes the other's keys. Since the daemon reads more often than the page does, it is the
+page that gains — on a box with work on it. `CLAUDE_USAGE_TTL_SECS` is an hour, and since the
+gate fix above it is the real interval on an idle box rather than a floor nobody reaches: a
+daemon with nothing to answer asks Anthropic nothing at all, so `/claude` on a quiet box shows
+its own hourly reading. Each row says `read Nm ago`, which is the only honest version of "how
+current is this". The file is a cache and nothing more — anything unreadable, malformed or from a
+version this build does not know is treated as absent, because the fallback is one HTTP call and
+a cache that can break a start-up is worse than no cache.
 
-**The reading is asked for when it is needed, and a stale one is fine.** `ClaudeKeys` caches per
-account for `refresh_secs`, so a launch, a gate call and a staging inside the same quarter-hour
-cost one round of requests between them and dictionary lookups after that. That does mean one
-launch per window pays a couple of HTTP calls; on a box choosing between subscriptions that is
-not a cost worth building machinery to avoid, and the earlier version — a background thread, a
-lock and four fields of cached state on the daemon — bought nothing else. An account that cannot
-be read is set aside rather than treated as empty, and if every account is unreadable the pool's
-own order stands.
-
-**A pooled run does not get a fresh choice at all.** A container's environment is fixed when
-docker creates it, so a warm spare is staged with an account and bills that account whenever its
-turn arrives, which may be hours later. `ffwatch` records the account the container actually
-holds, not the one the current reading would prefer.
-
-`ffwatch status` prints a line per account, what is left in each window and when it refills, and
-which account the next turn is going to.
+`ffwatch status` prints a line per operator: who, which variable their id resolved to, both
+windows and whether either is over a hold — plus a line for the metered default and one for any
+subscription nobody claims.
 
 ### The holds — what waits instead of running
 
-`five_hour_cap` decides *which account* pays for a turn. The two `_hold_pct` keys decide whether
+The route decides *which account* pays for a turn. The two `_hold_pct` keys decide whether
 the turn happens **now at all**, and above them the request is deferred rather than refused: it
 is left exactly where it arrived and the ordinary poll picks it up on the pass after the window
 turns over. Nobody is told no, nothing is dropped, and nobody has to come back and ask again.
@@ -459,23 +465,24 @@ session. A window Anthropic has *locked* counts as full whatever percentage is p
 The per-model weekly caps are left out: reading Opus's cap as the account's usage would hold
 every request on a box that had merely stopped being able to reach for one model.
 
-**The emptiest account decides, not the first.** The question is whether *any* subscription can
-take this, so on a box spreading over three the hold only lands once all three are over the line.
+**The account that would pay is the one that is asked.** Until 2026-09-10 this asked whether
+*any* subscription on the box had room, which is the question a pool has and a routed box does
+not: one operator's spent week now holds their own work and nobody else's, and a box whose
+operators are all spent still answers players.
 
 **Two numbers, because the two requests are not worth the same.** A review is work the box went
 looking for and can do just as well in four hours; somebody typing in a thread is waiting for an
 answer. So reviews stand down first and by a wide margin.
 
-**A box that cannot read its windows runs everything.** An unreadable account, an empty pool, a
-reader that raises — all of them run the work. An outage at Anthropic must not be able to
-silently stop every review and every new report on the box. `null` or `0` on either key turns
-that hold off, and turning **both** off is what restores the pre-2026-09-07 behaviour of a
-one-account box making no outbound request at all: spreading needs the numbers to choose between
-accounts and a box with one has nothing to choose, but the holds need them to answer "is there
-room", which a single subscription has just as much as three do.
+**A box that cannot read its windows runs everything.** An unreadable account, a name nothing
+reported on, a reader that raises — all of them run the work. An outage at Anthropic must not be
+able to silently stop every review and every new report on the box. So does the metered key, for
+a different reason: it has no window, so there is nothing a reading could put it over. `null` or
+`0` on either key turns that hold off, and turning **both** off means this box never reads a
+window at all — which is the right setting for a box whose only credential is the API key.
 
-`ffwatch status` prints a `claude holds:` block — each hold, its threshold, and whether it is
-clear or waiting with the sentence naming the account and the refill time. Both lines are
+`ffwatch status` prints a `claude holds:` block — each hold, its threshold, and which operators
+are waiting, with the sentence naming the account and the refill time. Both lines are
 printed even when neither is biting, because "nothing has started for two hours" is exactly the
 moment somebody goes looking for it and an absent line answers nothing. The journal gets one
 line when a hold goes on and one when it lifts, never one per poll.
@@ -558,12 +565,11 @@ subscription holds are *below* all of them:
 | --- | --- | --- |
 | the **selector** | `resettle()` → `model_selection` | decides which conversation a message belongs to; the answer keeps until morning |
 | the **engagement gate** | `should_engage_for` | one classifier call per candidate message, all night, to decide not to work |
-| the **window reading** | `pick_claude_key` → `ClaudeKeys.read` | for a `claude setup-token` key the usage document is closed, so this is a real one-token Haiku request against `/v1/messages`, not a lookup |
+| the **window reading** | `claude_hold` → `ClaudeKeys.read` | for a `claude setup-token` key the usage document is closed, so this is a real one-token Haiku request against `/v1/messages`, not a lookup |
 
 So `create_turn` asks `quiet_hours_hold` **first**, above `resettle` and above the gate, and
-`keep_pool` stops topping the warm pool up — staging picks the account a spare will bill, which
-reads the windows, which is that third call about thirty-six times a night per account to keep
-containers warm for turns that cannot start. Pool **expiry and reaping still run**, above the
+`keep_pool` stops topping the warm pool up — a staging that cannot serve a turn tonight is 22 GiB
+of extraction for nothing, twice or three times over as the spares age out. Pool **expiry and reaping still run**, above the
 hold and for the same reason they run in the config failsafe: a pool held warm all night would
 be reaped at `idle_agent_ttl_secs` and re-staged two or three times over. The first turn after
 the hours lift runs cold, which is the ordinary fallback, and the pass that starts it tops the
@@ -720,6 +726,7 @@ Each class is staged into a pool of its own and neither can take the other's war
 | `warm_branches.count` | `1` | `1` | Evictable spares this class keeps on recently-used branches. `0` is off. See below. |
 | `warm_branches.window_secs` | `3600` | `3600` | How recently a turn must have wanted a branch for it to be a candidate. |
 | `warm_branches.ttl_secs` | `3600` | `3600` | How long an evictable spare waits before retiring. |
+| `max_budget_usd` | `null` | `null` | What one run of this class may cost. `null` is the box-wide `max_budget_usd`. It stopped being a formality on 2026-09-10: an ffagent run is billed to the metered `ANTHROPIC_API_KEY`, so this is the real ceiling on it. |
 | `network` | `"limited"` | `"full"` | The fence. See below. |
 | `github.pr_token` | `null` | `null` | The key in `secrets.env` holding the token this pool opens pull requests with. `null` uses the box-wide `GH_PR_TOKEN`. See below. |
 | `github.container_token` | `null` | `null` | The key in `secrets.env` holding a git credential put INSIDE this pool's containers. `null` means none, which is what ffagent must stay. See below. |
@@ -983,8 +990,9 @@ one only when you mean to.
 
 ```jsonc
 "operators": {
-  "lothsahn": { "discord": "193210319093497857", "github": 10092359 },
-  "ben":      { "discord": "226422780445458432" }
+  "lothsahn": { "discord": "193210319093497857", "github": 10092359,
+                "shell": "lothsahn", "claude": "Loth" },
+  "ben":      { "discord": "226422780445458432", "shell": "ben", "claude": "Ben" }
 }
 ```
 
@@ -993,9 +1001,20 @@ when ffwatch started asking the same question about GitHub for [`#codereview`](#
 tables of the same people is two things to keep in step, and whether somebody may command this
 box is a fact about the person rather than about Discord.
 
-**Ids only, never usernames**, per service. A handle is renameable, so a trust key somebody else
-can claim by renaming is not a trust key; a non-numeric value is dropped for that service while
-the person's other ids still count.
+**Numeric ids only for `discord` and `github`, never usernames.** A handle is renameable, so a
+trust key somebody else can claim by renaming is not a trust key; a non-numeric value is dropped
+for that service while the person's other ids still count.
+
+**`shell` is the exception, and it is a name.** A prompt from `ffwatch submit` or the web page
+arrives under the unix account that typed it, which is the only id that surface has — and the
+renaming argument does not carry over, since renaming a local account takes root and anybody
+with root can read `secrets.env` directly.
+
+**`claude` is the subscription that person's requests are billed to**: the
+`CLAUDE_CODE_NAME_TOKEN<n>` declared beside their token in `secrets.env`, matched
+case-insensitively, or the slot number as a weaker fallback. An operator with no `claude` has
+every request refused rather than billed to somebody else's plan — see
+[`claude`](#claude) for the whole routing table and what a refusal looks like.
 
 **Sharing the block is not sharing the ids.** `ffwatch` reads the `discord` field for Discord
 and the `github` field for `#codereview`, and `ffdiscord` folds only the `discord` field back
@@ -1004,8 +1023,9 @@ against a Discord author, and a snowflake is never matched against a GitHub one 
 because the two id spaces are unrelated and a collision would otherwise be a way in.
 
 Somebody with no `github` id cannot start a review. Somebody with no `discord` id fires no
-operator directive and no operator DM. Empty means nobody is an operator anywhere, which is what
-a fresh box gets and the right default.
+operator directive and no operator DM. Somebody with no `claude` id can do neither, because
+nothing on this box can pay for it. Empty means nobody is an operator anywhere, which is what a
+fresh box gets and the right default.
 
 The Discord id is also what `@name` expands to in a post, so `mentions` wants the same row.
 
@@ -1114,7 +1134,7 @@ because a box normally wants one.
 | `model` | `"opus"` |
 | `fallback_model` | `"sonnet"` |
 | `effort` | `null` |
-| `max_budget_usd` | `10` — bounds one container run |
+| `max_budget_usd` | `10` — bounds one container run. A class block may set its own (`pools.<class>.max_budget_usd`, `null` for the box's); it is the real ceiling on a run billed to the metered key |
 | `classifier_model` | `"haiku"` |
 | `classifier_secs` | `120` |
 | `classifier_thinking_tokens` | `1024` — `0` turns thinking off and measurably changes what the selector decides |

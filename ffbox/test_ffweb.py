@@ -81,6 +81,10 @@ atexit.register(_drop_scratch)
 for _name in list(os.environ):
     if _name.startswith(("CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_RATE_TOKEN")):
         del os.environ[_name]
+# AND THE API KEY, for the same reason and more urgently: a developer with ANTHROPIC_API_KEY
+# exported would have every ClaudeKeys.read() in this suite probing /v1/messages for real, and
+# that one is a live billable call rather than a refusal.
+os.environ.pop("ANTHROPIC_API_KEY", None)
 
 
 sys.path.insert(0, HERE)
@@ -717,9 +721,19 @@ def claude_probe(token):
     return {}, "401 — this key was refused"
 
 
-def claude_keys_stub(pool=None, fetch=None, probe=None, **kw):
+# THE FIXTURE API KEY, and it is opt-in rather than on by default. Most of these cases are
+# about subscriptions and an extra row would shift every `blocks[n]` index in the page checks;
+# the cases that are about the default key pass `api=CLAUDE_API` explicitly.
+CLAUDE_API = ("ANTHROPIC_API_KEY", "sk-ant-api03-the-default-key")
+
+
+def claude_keys_stub(pool=None, fetch=None, probe=None, api=None, api_probe=None, **kw):
     return ffweb.ClaudeKeys(tokens=list(CLAUDE_POOL if pool is None else pool),
-                            fetch=fetch or claude_fetch, probe=probe or claude_probe, **kw)
+                            fetch=fetch or claude_fetch, probe=probe or claude_probe,
+                            # `lambda: None` and not None: None would mean "read the real
+                            # environment", which is a live call out of an offline suite.
+                            api=api or (lambda: None),
+                            api_probe=api_probe or (lambda _t: (True, "")), **kw)
 
 
 # The real thing, for the one case that has to prove the whole chain writes a row. Everywhere
@@ -1845,14 +1859,15 @@ def test_the_claude_page_reports_every_key_in_the_pool():
               [n for n, tok, _r, _l in CLAUDE_POOL if tok[8:] in text])
         check("a key is identified by a digest of itself instead",
               all(ffweb.token_fingerprint(tok) in text for _n, tok, _r, _l in CLAUDE_POOL))
-        # Split per key, because "active" and a percentage both appear more than once on the
-        # page and a document-wide search would pass on the wrong row.
+        # Split per key, because a percentage appears more than once on the page and a
+        # document-wide search would pass on the wrong row.
         blocks = text.split('<div class="item key">')[1:]
         check("one block per key", len(blocks) == 4, len(blocks))
-        check("the first key is the one marked as spent",
-              'class="pill active"' in blocks[0], blocks[0][:200])
-        check("and the others are not, because nothing spends them",
-              'class="pill active"' not in "".join(blocks[1:]))
+        # NOBODY CLAIMS THESE, because this fixture has no operators block. A subscription no
+        # operator claims is a token nothing on this box can spend, and the page says so rather
+        # than leaving it to be inferred from a missing name.
+        check("a subscription nobody claims is marked unclaimed",
+              all('class="pill unclaimed"' in b for b in blocks), blocks[0][:300])
         check("the account behind a key is named, so two keys are told apart by more than a hash",
               "ben@example.com" in blocks[0] and "loth@example.com" in blocks[1], blocks[0][:400])
         check("the five-hour and weekly windows are both reported",
@@ -1917,8 +1932,13 @@ def test_the_claude_page_reports_every_key_in_the_pool():
         # row's own "read Nm ago" is the honest version of the same fact.
         check("the note does not advertise a refresh interval",
               "once every" not in text, text[text.find("<p class=\"note\">"):][:400])
-        check("but it still says how big the pool is",
-              "4 keys in the pool." in text, text[text.find("<p class=\"note\">"):][:200])
+        check("but it still says how many subscriptions there are",
+              "4 subscriptions" in text, text[text.find("<p class=\"note\">"):][:200])
+        # AND THAT THIS BOX CANNOT ANSWER A PLAYER. The fixture has no API key, which is a real
+        # state a box can be in and the one that stops every non-operator request.
+        check("and says so when there is no metered default to answer anybody else with",
+              "nothing that is not an operator's request can run" in text,
+              text[text.find("<p class=\"note\">"):][:400])
         check("the per-row essay about the missing scope is gone",
               "usage document is closed to us" not in text, blocks[3][-500:])
         check("and the sentence about which key is spent is gone from it",
@@ -1956,24 +1976,24 @@ def test_the_pool_is_numbered_and_a_gap_is_not_the_end():
     """
     print("the key pool is numbered, and a gap is not the end of it")
     one = ffweb.CLAUDE_DEFAULT_RATE
-    pool = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN1": "one",
+    pool = ffweb.claude_subscriptions({"CLAUDE_CODE_OAUTH_TOKEN1": "one",
                                     "CLAUDE_CODE_OAUTH_TOKEN2": "two"})
     check("the numbered slots come back in order",
           pool == [("CLAUDE_CODE_OAUTH_TOKEN1", "one", one, ""),
                    ("CLAUDE_CODE_OAUTH_TOKEN2", "two", one, "")], pool)
-    gapped = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN1": "  ",
+    gapped = ffweb.claude_subscriptions({"CLAUDE_CODE_OAUTH_TOKEN1": "  ",
                                       "CLAUDE_CODE_OAUTH_TOKEN3": "three"})
     check("a blank slot is skipped rather than ending the scan",
           gapped == [("CLAUDE_CODE_OAUTH_TOKEN3", "three", one, "")], gapped)
-    legacy = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN": "old"})
+    legacy = ffweb.claude_subscriptions({"CLAUDE_CODE_OAUTH_TOKEN": "old"})
     check("the unnumbered spelling still reads as a pool of one",
           legacy == [("CLAUDE_CODE_OAUTH_TOKEN", "old", one, "")], legacy)
-    both = ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN": "old",
+    both = ffweb.claude_subscriptions({"CLAUDE_CODE_OAUTH_TOKEN": "old",
                                     "CLAUDE_CODE_OAUTH_TOKEN1": "one"})
     check("and it steps aside the moment a numbered slot exists, rather than being spent first",
           both == [("CLAUDE_CODE_OAUTH_TOKEN1", "one", one, "")], both)
     check("an environment with nothing in it is an empty pool, not an error",
-          ffweb.claude_token_pool({}, secrets_path=os.path.join(TMPROOT, "no-such-secrets")) == [])
+          ffweb.claude_subscriptions({}, secrets_path=os.path.join(TMPROOT, "no-such-secrets")) == [])
 
     # THE FILE FALLBACK. Under systemd the tokens are in the environment already
     # (EnvironmentFile=), so this leg only runs for `python3 ffbox/ffweb.py` in a terminal --
@@ -1987,7 +2007,7 @@ def test_the_pool_is_numbered_and_a_gap_is_not_the_end():
                  "export CLAUDE_CODE_OAUTH_TOKEN2=\"sk-ant-oat01-quoted\"\n"
                  "UNITY_PASSWORD=hunter2\n"
                  "GH_PR_TOKEN=ghp_nope\n")
-    from_file = ffweb.claude_token_pool({}, secrets_path=path)
+    from_file = ffweb.claude_subscriptions({}, secrets_path=path)
     check("a hand-run reads the tokens out of secrets.env",
           from_file == [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-from-the-file", 5, "Ben"),
                         ("CLAUDE_CODE_OAUTH_TOKEN2", "sk-ant-oat01-quoted", one, "")],
@@ -2011,7 +2031,7 @@ def test_the_plan_beside_a_token_is_declared_because_the_token_cannot_say():
     print("the plan beside a token is declared, because the token cannot say")
 
     def rate(**env):
-        return ffweb.claude_token_pool(dict({"CLAUDE_CODE_OAUTH_TOKEN1": "t"}, **env))[0][2]
+        return ffweb.claude_subscriptions(dict({"CLAUDE_CODE_OAUTH_TOKEN1": "t"}, **env))[0][2]
 
     check("a declared multiplier is read as a number",
           rate(CLAUDE_CODE_RATE_TOKEN1="5") == 5, rate(CLAUDE_CODE_RATE_TOKEN1="5"))
@@ -2028,7 +2048,7 @@ def test_the_plan_beside_a_token_is_declared_because_the_token_cannot_say():
               rate(CLAUDE_CODE_RATE_TOKEN1=junk) == ffweb.CLAUDE_DEFAULT_RATE,
               (junk, rate(CLAUDE_CODE_RATE_TOKEN1=junk)))
     check("the legacy unnumbered token takes an unnumbered declaration",
-          ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN": "old",
+          ffweb.claude_subscriptions({"CLAUDE_CODE_OAUTH_TOKEN": "old",
                                    "CLAUDE_CODE_RATE_TOKEN": "20"})[0][2] == 20)
     # The names people actually use, and a general answer for a plan that does not exist yet.
     check("1 is Pro", ffweb.claude_plan(1) == "Pro", ffweb.claude_plan(1))
@@ -2050,7 +2070,7 @@ def test_a_key_can_be_given_a_name_and_the_page_prints_it_instead_of_the_slot():
     print("a key can be given a name, and the page prints it instead of the slot")
 
     def label(**env):
-        return ffweb.claude_token_pool(dict({"CLAUDE_CODE_OAUTH_TOKEN1": "t"}, **env))[0][3]
+        return ffweb.claude_subscriptions(dict({"CLAUDE_CODE_OAUTH_TOKEN1": "t"}, **env))[0][3]
 
     check("a declared name comes back with its token",
           label(CLAUDE_CODE_NAME_TOKEN1="Loth") == "Loth", label(CLAUDE_CODE_NAME_TOKEN1="Loth"))
@@ -2061,10 +2081,10 @@ def test_a_key_can_be_given_a_name_and_the_page_prints_it_instead_of_the_slot():
     check("an undeclared slot has no name, and so keeps the variable name",
           label() == "" and label(CLAUDE_CODE_NAME_TOKEN1="   ") == "", label())
     check("the legacy unnumbered token takes an unnumbered name too",
-          ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN": "old",
+          ffweb.claude_subscriptions({"CLAUDE_CODE_OAUTH_TOKEN": "old",
                                    "CLAUDE_CODE_NAME_TOKEN": "Ben"})[0][3] == "Ben")
     check("a name declared for one slot does not leak onto another",
-          ffweb.claude_token_pool({"CLAUDE_CODE_OAUTH_TOKEN1": "one",
+          ffweb.claude_subscriptions({"CLAUDE_CODE_OAUTH_TOKEN1": "one",
                                    "CLAUDE_CODE_OAUTH_TOKEN2": "two",
                                    "CLAUDE_CODE_NAME_TOKEN2": "Loth"})[0][3] == "")
 
@@ -2078,10 +2098,89 @@ def test_a_key_can_be_given_a_name_and_the_page_prints_it_instead_of_the_slot():
               "Loth" in blocks[1], blocks[1][:300])
         check("and the variable name it replaces is nowhere on that row",
               "CLAUDE_CODE_OAUTH_TOKEN2" not in blocks[1], blocks[1][:300])
+        # AND THE NAME IS NOW THE SUBSCRIPTION ID, not only a label: it is what an operator
+        # writes in config.json to claim the account. test_a_subscription_is_claimed_by_the_
+        # operator_who_named_it covers that half.
         check("an unnamed key still says which slot it is, since nothing else would",
               "CLAUDE_CODE_OAUTH_TOKEN1" in blocks[0], blocks[0][:300])
     finally:
         srv.stop()
+
+
+def test_the_metered_default_is_a_row_with_no_windows_to_draw():
+    """ANTHROPIC_API_KEY on /claude: live or not, and nothing else.
+
+    A console key is billed per token and has no rolling window to be part way through, so a
+    page that drew two empty bars for it would be inventing a measurement. What it CAN say is
+    whether the key answers at all, which is worth saying: the other way to discover a revoked
+    one is a player's bug report failing.
+    """
+    print("the metered default is a row with no windows to draw")
+    keys = claude_keys_stub(pool=[CLAUDE_POOL[0]], api=CLAUDE_API)
+    srv = serve(claude_keys=keys)
+    try:
+        _c, _h, body = srv.get("/claude")
+        text = text_of(body)
+        blocks = text.split('<div class="item key">')[1:]
+        check("the API key gets a row of its own, after the subscriptions", len(blocks) == 2,
+              len(blocks))
+        check("headed by the variable it came from and marked as the default",
+              "ANTHROPIC_API_KEY" in blocks[1] and 'class="pill default"' in blocks[1],
+              blocks[1][:300])
+        check("it is called metered rather than given a plan it does not have",
+              "metered" in blocks[1] and "Pro" not in blocks[1], blocks[1][:400])
+        check("no window table is drawn for it",
+              "5-hour session" not in blocks[1] and "no window to run out of" in blocks[1],
+              blocks[1][:600])
+        check("and the subscription beside it still has its windows",
+              "5-hour session" in blocks[0], blocks[0][:400])
+        # THE TOKEN ITSELF, on the row that is easiest to get wrong: this one takes a different
+        # code path from the subscriptions and had to be given its own probe.
+        check("no part of the key is on the page",
+              CLAUDE_API[1][8:] not in text, text[:0])
+        check("the page says what pays for everybody else",
+              "no operator asked for" in text, text[:0])
+    finally:
+        srv.stop()
+
+
+def test_a_subscription_is_headed_by_the_operator_who_claimed_it():
+    """`operators.<who>.claude` is a subscription id, and the page reads it backwards.
+
+    The declared name says which line of secrets.env a key came from. Who it BELONGS to is the
+    question somebody opens this page with, and it lives in config.json rather than beside the
+    token — so the page joins the two and heads the row with the person.
+    """
+    print("a subscription is headed by the operator who claimed it")
+    cfg_path = os.path.join(os.environ["FFBOX_CONFIG_DIR"], "config.json")
+    with open(cfg_path, "w", encoding="utf-8") as fh:
+        json.dump({"operators": {
+            "lothsahn": {"discord": "1", "claude": "loth"},
+            # A CLAIM ON A SLOT THAT DOES NOT EXIST resolves to nothing rather than to the
+            # nearest thing; the page shows the slot as unclaimed and the operator's own row is
+            # `ffwatch status`'s business, not this page's.
+            "nobody": {"discord": "2", "claude": "no-such-account"},
+        }}, fh)
+    try:
+        srv = serve(claude_keys=claude_keys_stub())
+        try:
+            _c, _h, body = srv.get("/claude")
+            blocks = text_of(body).split('<div class="item key">')[1:]
+            # Slot 2 of the fixture is the one declaring CLAUDE_CODE_NAME_TOKEN2=Loth, and the
+            # claim is written lower-cased on purpose: "Loth" in one file and "loth" in the
+            # other is not a mistake anybody should have to debug.
+            check("the claimed row is headed by the operator, case-insensitively",
+                  "lothsahn" in blocks[1], blocks[1][:300])
+            check("and is not marked unclaimed",
+                  'class="pill unclaimed"' not in blocks[1], blocks[1][:300])
+            check("the declared name is still shown beside it, since that is what was claimed",
+                  "Loth" in blocks[1], blocks[1][:300])
+            check("a slot nobody claimed is still marked unclaimed",
+                  'class="pill unclaimed"' in blocks[0], blocks[0][:300])
+        finally:
+            srv.stop()
+    finally:
+        os.remove(cfg_path)
 
 
 def test_a_usage_reading_is_cached_rather_than_fetched_per_reload():
@@ -3773,6 +3872,8 @@ def main():
         test_the_pool_is_numbered_and_a_gap_is_not_the_end,
         test_the_plan_beside_a_token_is_declared_because_the_token_cannot_say,
         test_a_key_can_be_given_a_name_and_the_page_prints_it_instead_of_the_slot,
+        test_the_metered_default_is_a_row_with_no_windows_to_draw,
+        test_a_subscription_is_headed_by_the_operator_who_claimed_it,
         test_a_usage_reading_is_cached_rather_than_fetched_per_reload,
         test_two_processes_share_one_reading_through_the_state_directory,
         test_a_key_that_cannot_read_its_usage_is_asked_the_other_way_once,
