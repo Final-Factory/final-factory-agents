@@ -2247,7 +2247,7 @@ def test_the_metered_default_is_a_row_with_no_windows_to_draw():
 
 
 def test_a_subscription_is_headed_by_the_operator_who_claimed_it():
-    """`operators.<who>.claude` is a subscription id, and the page reads it backwards.
+    """`operators.<who>.model` is a credential id, and the page reads it backwards.
 
     The declared name says which line of secrets.env a key came from. Who it BELONGS to is the
     question somebody opens this page with, and it lives in config.json rather than beside the
@@ -2257,11 +2257,11 @@ def test_a_subscription_is_headed_by_the_operator_who_claimed_it():
     cfg_path = os.path.join(os.environ["FFBOX_CONFIG_DIR"], "config.json")
     with open(cfg_path, "w", encoding="utf-8") as fh:
         json.dump({"operators": {
-            "lothsahn": {"discord": "1", "claude": "loth"},
+            "lothsahn": {"discord": "1", "model": "loth"},
             # A CLAIM ON A SLOT THAT DOES NOT EXIST resolves to nothing rather than to the
             # nearest thing; the page shows the slot as unclaimed and the operator's own row is
             # `ffwatch status`'s business, not this page's.
-            "nobody": {"discord": "2", "claude": "no-such-account"},
+            "nobody": {"discord": "2", "model": "no-such-account"},
         }}, fh)
     try:
         srv = serve(claude_keys=claude_keys_stub())
@@ -2293,7 +2293,7 @@ def test_an_openrouter_credential_has_a_row_with_its_model_budget_and_health():
     print("an OpenRouter credential on /claude")
     cfg_path = os.path.join(os.environ["FFBOX_CONFIG_DIR"], "config.json")
     with open(cfg_path, "w", encoding="utf-8") as fh:
-        json.dump({"operators": {"ben": {"discord": "1", "claude": "Ben-glm"}},
+        json.dump({"operators": {"ben": {"discord": "1", "model": "Ben-glm"}},
                    "claude": {"default": "Players"}}, fh)
     creds = [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-first-account-token",
               ffweb.KIND_SUBSCRIPTION, "", 5, "", ""),

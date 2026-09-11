@@ -4011,7 +4011,7 @@ def claude_claims(rows):
 
     THE PAGE'S HALF OF THE ROUTING TABLE. ffwatch decides what a request is billed to; this only
     needs to head each row with the person it belongs to, which is the same lookup run backwards:
-    `operators.<who>.claude` is a subscription id, and `slot_ids` says which slot answers to it.
+    `operators.<who>.model` is a credential id, and `slot_ids` says which slot answers to it.
 
     OVER THE ROWS THE PAGE ALREADY HAS, rather than a second read of secrets.env. The records
     carry the variable name and the declared name, which is everything an id can match on, and
@@ -4027,7 +4027,7 @@ def claude_claims(rows):
         return {}
     out, seen = {}, {}
     for who, entry in ops.items():
-        wanted = str((entry or {}).get("claude") or "").strip().casefold() \
+        wanted = str((entry or {}).get("model") or "").strip().casefold() \
             if isinstance(entry, dict) else ""
         if not wanted:
             continue

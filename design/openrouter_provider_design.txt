@@ -1,6 +1,9 @@
 OpenRouter as a credential type, and GLM-5.3 Flash for the work nobody's subscription pays for
 ============================================================================================
 Revision 6, 2026-09-10. Revisions 1-5, 2026-09-10. Tasks: design/openrouter_provider_tasks.md.
+2026-09-11: the operator field that names a credential was renamed from `claude` to `model`, in
+config.json and in the code, and this file says `model` throughout. The top-level `claude` block
+(`claude.default`, `claude.classifier`, the holds) keeps its name.
 
 Section 13's measurements run before phases C onward are deployed. Phases A and B (sections 7 and
 14) rest on failure shapes the code already recognises (`result_failure_detail`,
@@ -99,7 +102,7 @@ credential of every type. An id two credentials answer to is refused, whether th
 type or not: "Loth" on a subscription and "Loth" on an OpenRouter key is somebody mid-edit, and
 guessing which they meant is the decision eb4cfaa removed. The bare slot number stays a
 subscription-only alias, because "2" across three families would be ambiguous by construction.
-Every credential also answers to its own variable name, which is unique, so `"claude":
+Every credential also answers to its own variable name, which is unique, so `"model":
 "OPENROUTER_API_KEY2"` works on a box whose keys were never named.
 
 **What each type brings.**
@@ -137,7 +140,7 @@ over all three types, and the default is resolved from `claude.default` instead 
 constant `ANTHROPIC_API_KEY`. Its four callers move together: `claude_route_for`,
 `claude_route_for_turn`, `claude_routes` and `claude_route_for_comment`.
 
-**An operator may claim any type.** `"claude": "Ben-glm"` beside `OPENROUTER_NAME_KEY2=Ben-glm` puts
+**An operator may claim any type.** `"model": "Ben-glm"` beside `OPENROUTER_NAME_KEY2=Ben-glm` puts
 everything Ben asks for on that OpenRouter key and its model. Nobody else's request can reach it,
 for the same reason nobody else's could reach his subscription.
 
@@ -278,8 +281,8 @@ secrets.env on a box with two operators, one of them on OpenRouter, and players 
 config.json:
 
     "operators": {
-      "lothsahn": { "discord": "801...", "github": 10092359, "shell": "lothsahn", "claude": "Loth" },
-      "ben":      { "discord": "800...", "github": 10092360, "shell": "ben",      "claude": "Ben-glm" }
+      "lothsahn": { "discord": "801...", "github": 10092359, "shell": "lothsahn", "model": "Loth" },
+      "ben":      { "discord": "800...", "github": 10092360, "shell": "ben",      "model": "Ben-glm" }
     },
     "claude": { "refresh_secs": 900, "timeout_secs": 10,
                 "review_hold_pct": 0.75, "new_conversation_hold_pct": 0.9,
@@ -680,7 +683,7 @@ week and compare the gate's decline rate with the week before.
 on for the trial. It is box-wide (ffwatch.py:1297), so operators' replies wait for approval too.
 Accept that for a week, or make it per route first, which is a small change at `_send_row`.
 
-**Operators opt in whenever they like after phase 2**, by pointing their `claude` id at an OpenRouter
+**Operators opt in whenever they like after phase 2**, by pointing their `model` id at an OpenRouter
 credential. Section 13g first.
 
 **Rollback** is config. Unset `claude.default` and `claude.classifier`, and point operator ids back.

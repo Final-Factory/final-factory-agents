@@ -152,11 +152,11 @@ if not any(str(v or "").strip().isdigit() for v in _discord_ids):
                    f"usernames)")
 
 # WHOSE SUBSCRIPTION PAYS FOR EACH OF THEM, and this one IS counted as missing: an operator
-# with no `claude` id has every request refused, which is a box that looks alive and does
+# with no `model` id has every request refused, which is a box that looks alive and does
 # nothing for the person it trusts most.
-_claude_ids = [e.get("claude") for e in operators.values() if isinstance(e, dict)]
+_claude_ids = [e.get("model") for e in operators.values() if isinstance(e, dict)]
 if operators and not any(str(v or "").strip() for v in _claude_ids):
-    missing += out("operators.<name>.claude",
+    missing += out("operators.<name>.model",
                    "edit ~/.config/ffbox/config.json   (the CLAUDE_CODE_NAME_TOKEN<n>, "
                    "ANTHROPIC_NAME_KEY<n> or OPENROUTER_NAME_KEY<n> declared beside that "
                    "person's key in secrets.env)")
@@ -675,16 +675,16 @@ if legacy:
     if not discord["trust"]:
         discord.pop("trust", None)
 if not shared:
-    shared[EXAMPLE_OPERATOR] = {"discord": "", "github": "", "shell": "", "claude": ""}
+    shared[EXAMPLE_OPERATOR] = {"discord": "", "github": "", "shell": "", "model": ""}
 # AND THE TWO FIELDS THAT ARRIVED LATER, on every entry that predates them. `shell` is the unix
-# account name a terminal or web prompt arrives under; `claude` is the subscription id from
-# secrets.env that this person's requests are billed to. An entry with no `claude` has every
+# account name a terminal or web prompt arrives under; `model` is the credential id from
+# secrets.env that this person's requests are billed to. An entry with no `model` has every
 # request refused rather than billed to somebody else's plan, so an empty key in the file is a
 # great deal more discoverable than a missing one.
 for _entry in shared.values():
     if isinstance(_entry, dict):
         _entry.setdefault("shell", "")
-        _entry.setdefault("claude", "")
+        _entry.setdefault("model", "")
 if not discord["mentions"]:
     discord["mentions"].setdefault(EXAMPLE_OPERATOR, "")
 

@@ -723,7 +723,7 @@ DEFAULTS = {
     # and WHOSE SUBSCRIPTION PAYS FOR WHAT THEY ASK FOR.
     #
     #     "operators": { "lothsahn": {"discord": "8000...", "github": 10092359,
-    #                                 "shell": "lothsahn", "claude": "Loth"} }
+    #                                 "shell": "lothsahn", "model": "Loth"} }
     #
     # `claude` IS THE SUBSCRIPTION ID: the CLAUDE_CODE_NAME_TOKEN<n> declared beside that
     # person's token in secrets.env, or the slot number as a weaker fallback. An operator with
@@ -1950,7 +1950,7 @@ def is_github_operator(cfg, user_id):
 # ==========================================================================================
 #
 # An operator's request is billed to that operator's own Claude subscription, named by them in
-# `operators.<them>.claude`. Everything else -- a player in a forum thread, the engagement gate,
+# `operators.<them>.model`. Everything else -- a player in a forum thread, the engagement gate,
 # the selector, a fix leg a triage verdict spawned off somebody's bug report -- is billed to
 # ANTHROPIC_API_KEY, which is metered rather than windowed.
 #
@@ -1965,9 +1965,13 @@ def is_github_operator(cfg, user_id):
 
 
 def claude_key_id(cfg, name):
-    """The subscription id one operator declared, or "" for an operator who declared none."""
+    """The credential id one operator declared as `model`, or "" for an operator with none.
+
+    `operators.<them>.model` since 2026-09-11; it was `claude` until a credential could be an
+    OpenRouter key as easily as a Claude subscription.
+    """
     entry = (cfg.get("operators") or {}).get(name)
-    return str((entry or {}).get("claude") or "").strip() if isinstance(entry, dict) else ""
+    return str((entry or {}).get("model") or "").strip() if isinstance(entry, dict) else ""
 
 
 def operator_for(cfg, service, actor):
@@ -2002,7 +2006,7 @@ def claude_route(cfg, tier, actor, kind, keys):
     the caller. `tier` and `actor` are turn_trust's answer, which is a dictionary lookup over
     authenticated ids and never a model.
 
-    ANY KIND OF CREDENTIAL CAN BE CLAIMED, since 2026-09-10: an operator's `claude` id may name a
+    ANY KIND OF CREDENTIAL CAN BE CLAIMED, since 2026-09-10: an operator's `model` id may name a
     subscription, an API key or an OpenRouter key, and the default is whatever metered credential
     claude.default names (design/openrouter_provider_design.txt section 3).
 
@@ -2034,7 +2038,7 @@ def claude_route(cfg, tier, actor, kind, keys):
             None, f"no operator owns {service} id {actor or '?'}, and {dflt_why}")
     key_id = claude_key_id(cfg, who)
     if not key_id:
-        return None, (f"{who} has no `claude` id in the operators block, so there is no account "
+        return None, (f"{who} has no `model` id in the operators block, so there is no account "
                       f"to bill this to")
     name, why = claude_keys.credential_named(key_id, creds)
     if name:
@@ -9495,7 +9499,7 @@ class Watcher:
         routed = {name for _who, _id, name, _why in self.claude_routes() if name}
         if not routed:
             return (f"no operator on this box has a Claude credential ffwatch can bill a "
-                    f"{agent_class} turn to: every `claude` id in the trust table is missing, or "
+                    f"{agent_class} turn to: every `model` id in the trust table is missing, or "
                     f"names a credential that is not in secrets.env")
         if routed.issubset(self.pool_spare_keys(agent_class)):
             return (f"every account that could pay for a {agent_class} turn already has a spare "
@@ -11999,7 +12003,7 @@ class Watcher:
     def claude_routes(self):
         """[(operator, id they declared, key name or None, why)] -- the whole table, resolved.
 
-        For the startup check and for `ffwatch status`. An operator with no `claude` id is in
+        For the startup check and for `ffwatch status`. An operator with no `model` id is in
         here too, with None: a person who cannot have their work billed is exactly who somebody
         reading this is looking for.
         """
@@ -12008,7 +12012,7 @@ class Watcher:
         for who in sorted((self.cfg.get("operators") or {})):
             key_id = claude_key_id(self.cfg, who)
             if not key_id:
-                out.append((who, "", None, "declares no `claude` id"))
+                out.append((who, "", None, "declares no `model` id"))
                 continue
             name, why = claude_keys.credential_named(key_id, creds)
             # THE SAME SENTENCES claude_route SAYS, because this is the same answer read from
@@ -12058,7 +12062,7 @@ class Watcher:
         if stale:
             log(f"claude: config.json still sets claude.{', claude.'.join(stale)}; nothing "
                 f"reads {'them' if len(stale) > 1 else 'it'} any more — which account pays is "
-                f"decided by who asked (operators.<name>.claude)")
+                f"decided by who asked (operators.<name>.model)")
 
     def claude_hold_pct(self, what):
         """The configured share for one hold, or None when that hold is off.
