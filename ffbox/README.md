@@ -289,7 +289,21 @@ Eight things worth knowing:
   stopped every container on the box.
 
   The run also reads *copies* of the task script, `ffverify` and its class's plugin trees, taken
-  into its own directory at launch, so the merge has nothing to reach.
+  into its own directory at launch, so the merge has nothing to reach. A CI job is insulated the
+  same way by construction: its runner scripts come from the image, and what it mounts off the
+  host is the cache (read-only) and its own drop box.
+
+  **An adopted CI job keeps one log, not two.** The slot log is written by a `docker logs -f`
+  child of the daemon, and `docker logs` replays a container's whole history before it follows,
+  so a restart under a running job used to append that job's output a second time from the top —
+  the first half of a forty-minute Unity build, twice, with nothing to say which copy was which.
+  The replacement follower now resumes from the log file's own last write (`follow_since` in
+  `ci_lane.py`), with a couple of seconds of deliberate overlap: repeating a line is cheap and
+  dropping one loses output that exists nowhere else. Everything else that job needs across the
+  gap is already a file — its busy clock and watchdog deadline, its cache decision, the requests
+  in its drop box — and the container waits out a short restart inside its 600-second mirror and
+  artifact budgets. A job that *ends* while the daemon is away is found on the next pass by its
+  staging directory, which is the record of what the host still owes it.
 
 - **What it does still wait for is the host.** A container is where the agent works, but the
   branch push, the pull request and the Discord reply happen on the host after it exits, in a

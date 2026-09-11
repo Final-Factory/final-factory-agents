@@ -260,7 +260,10 @@ is_(_body.count("ffghr job ffghr-h-3-aaa started"), 1, "without touching the fir
 # it: _start_follower takes no `mark` any more, so there is no path by which adoption can claim a
 # job started.
 import inspect as _inspect                                        # noqa: E402
-is_(list(_inspect.signature(ci._start_follower).parameters), ["name", "path"],
+# `since` joined it on 2026-09-11 so a follower replacing a dead one resumes instead of replaying
+# the container's whole history; what this check is about is what is NOT there, which is any way
+# for this function to write a banner.
+is_(list(_inspect.signature(ci._start_follower).parameters), ["name", "path", "since"],
     "starting a follower cannot write a banner: it is not given the option")
 
 print("\nwhat stops the lane entirely, and what only stops it minting")
@@ -325,6 +328,142 @@ try:
         if lane.hold and "satisfied" in lane.hold[1] else bad(f"got {lane.hold!r}")
 finally:
     ci.runners = _real_runners
+
+# The three this section needs and the file does not import at the top: it grew its imports where
+# they are used, which is the local habit here.
+import re                                                         # noqa: E402
+import time                                                       # noqa: E402
+from datetime import datetime as _dt, timezone as _tz             # noqa: E402
+
+print("\nwhat a drain destroys, and what it must never touch")
+
+# THE RULE AN UPDATE RESTS ON, and until 2026-09-11 it had no test at all. Every five minutes the
+# updater drains both lanes before it stops the target; if this sweep ever took a container with a
+# job in it, an ordinary self-update would kill somebody's CI build and GitHub would show it as a
+# failed check on their pull request rather than as a cancellation.
+_seen = {"destroyed": [], "busy": {}}
+_real = (ci.runners, ci.is_busy, ci.staging_dir, ci.teardown)
+
+
+def _fake_teardown(name, runner_id, stage):
+    _seen["destroyed"].append(name)
+    return [f"registration {runner_id} released"]
+
+
+ci.staging_dir = lambda name: ""
+ci.teardown = _fake_teardown
+ci.is_busy = lambda name: _seen["busy"].get(name, False)
+ci.runners = lambda include_stopped=False: [runner("idle-one"), runner("with-a-job"),
+                                            runner("already-exited", running=False)]
+_seen["busy"]["with-a-job"] = True
+lane.cfg.error = None
+try:
+    gone = lane.drop_idle()
+    is_(gone, 1, "a drain destroys the idle runner")
+    is_(_seen["destroyed"], ["idle-one"], "and only the idle one")
+    ok("a container with a job in it is left alone") if "with-a-job" not in _seen["destroyed"] \
+        else bad("a drain must never destroy a runner that is serving a job")
+    ok("and so is one that has already exited, which teardown owns") \
+        if "already-exited" not in _seen["destroyed"] else bad("an exited runner is not drop_idle's")
+
+    # THE RACE, WHICH IS THE WHOLE REASON THERE ARE TWO CHECKS. GitHub can hand an idle runner a
+    # job at any moment, including between the sweep deciding it is idle and the call that
+    # destroys it. The second look happens immediately before that call, so a runner that wins the
+    # race is left to finish like any other busy one.
+    _seen["destroyed"].clear()
+    _seen["busy"].clear()
+    _races = {"n": 0}
+
+    def _busy_on_second_look(name):
+        _races["n"] += 1
+        return _races["n"] > 1                 # idle when the sweep asks, busy by the time it acts
+
+    ci.is_busy = _busy_on_second_look
+    ci.runners = lambda include_stopped=False: [runner("took-one-just-now")]
+    is_(lane.drop_idle(), 0, "a runner that takes a job mid-sweep is not destroyed")
+    is_(_seen["destroyed"], [], "and nothing was torn down for it")
+finally:
+    ci.runners, ci.is_busy, ci.staging_dir, ci.teardown = _real
+
+print("\nwhat a restart does to a running job's log")
+
+# `docker logs -f` REPLAYS A CONTAINER'S WHOLE HISTORY before it follows, and the daemon's
+# followers die with it. So every ffwatch restart under a running job appended that job's output
+# to the slot log a second time from the top: an update in the middle of a forty-minute Unity
+# build left the first half of the build in the file twice, with nothing to say which copy was
+# which. The job itself was never touched -- only the record of it.
+_log = os.path.join(tmp, "slot-7.log")
+is_(ci.follow_since(_log), None, "a slot log that does not exist yet is followed from the start")
+io.open(_log, "w").close()
+is_(ci.follow_since(_log), None, "and so is an empty one, which has nothing to duplicate")
+
+io.open(_log, "w", encoding="utf-8").write("===== ffghr job started =====\n")
+_since = ci.follow_since(_log)
+ok("a log with output in it is resumed from, not replayed") if _since else \
+    bad("a non-empty log must produce a resume point")
+ok("as an RFC3339 instant, which is the spelling docker documents") \
+    if _since and re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$", _since) else \
+    bad(f"not an RFC3339 instant: {_since!r}")
+# JUST BEHIND the last byte written, never ahead of it: overlapping repeats a line, being short
+# drops output that exists nowhere else.
+_gap = time.time() - _dt.strptime(_since, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+    tzinfo=_tz.utc).timestamp()
+ok("and it looks back rather than forward") if 0 <= _gap <= 30 else \
+    bad(f"the resume point is {_gap:.1f}s from now")
+
+_popen = {}
+
+
+class _FakeProc:
+    def poll(self):
+        return None
+
+
+def _fake_popen(argv, **kw):
+    _popen["argv"] = argv
+    return _FakeProc()
+
+
+_real_popen, ci.subprocess.Popen = ci.subprocess.Popen, _fake_popen
+try:
+    ci._start_follower("ffghr-h-7-abcd", _log, since=_since)
+    ok("the follower is told where to resume") if "--since" in _popen["argv"] \
+        and _since in _popen["argv"] else bad(f"--since is missing: {_popen.get('argv')}")
+    ci._start_follower("ffghr-h-7-abcd", _log, since=None)
+    ok("and a first attach asks for the whole container, as it always did") \
+        if "--since" not in _popen["argv"] else bad(f"unexpected --since: {_popen['argv']}")
+finally:
+    ci.subprocess.Popen = _real_popen
+
+print("\nwhat a restart picks up, and what it still owes")
+
+# A JOB THAT ENDED WHILE THE DAEMON WAS AWAY is the one state transition an update can land on
+# top of: the container exits during the window between `systemctl stop` and the new process
+# adopting what it finds, so nothing is watching at the moment the job finishes. The host still
+# owes it a check run, a cache promotion and its registration -- and the record of that owing is
+# the staging directory, on disk, precisely so a daemon that did not see the exit can still find
+# it. This is the other half of "continues as if the update had not happened".
+_owed = {"torn": []}
+_stage = os.path.join(tmp, "stage-restart")
+os.makedirs(_stage, exist_ok=True)
+_real2 = (ci.runners, ci.staging_dir, ci.teardown, ci.is_busy)
+ci.staging_dir = lambda name: _stage
+ci.teardown = lambda name, rid, stage: _owed["torn"].append(name) or ["registration released"]
+ci.is_busy = lambda name: False
+# include_stopped is what the serving pass asks for, and the exited container comes back only
+# because of it -- a pass that looked at running containers alone would never see this one.
+ci.runners = lambda include_stopped=False: (
+    [runner("ended-while-we-were-down", running=False)] if include_stopped else [])
+try:
+    ok("a container that exited unattended is still owed a teardown") \
+        if ci.teardown_owed("ended-while-we-were-down") or os.path.isdir(_stage) else \
+        bad("the staging directory is the record of what is owed")
+    lane.serve()
+    is_(_owed["torn"], ["ended-while-we-were-down"],
+        "and the first pass after the restart tears it down")
+    is_(lane.publishing(), 1, "which is also what the updater counts before it stops the target")
+finally:
+    ci.runners, ci.staging_dir, ci.teardown, ci.is_busy = _real2
 
 print("\nthe launch argument list, rendered rather than run")
 settings = {

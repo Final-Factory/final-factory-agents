@@ -43,6 +43,7 @@ import re
 import shlex
 import subprocess
 import time
+from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUNNERS = os.path.join(HERE, "runners")
@@ -683,8 +684,48 @@ def mark_log_start(settings, slot, name):
     return True
 
 
-def _start_follower(name, path):
-    """`docker logs -f` into `path`, detached. Returns the Popen, or None."""
+# HOW LONG A REPLACEMENT FOLLOWER LOOKS BACK, in seconds, past the last byte in the log file.
+#
+# THE MARGIN IS DELIBERATELY ON THE SIDE OF SAYING A LINE TWICE. `docker logs --since` filters on
+# the timestamp docker recorded for each line, and the log file's mtime is when the HOST wrote the
+# line it had just read; the two are the same clock but not the same instant, and a buffered write
+# can land a moment late. Overlapping by a couple of seconds repeats at most a line or two of a
+# build; being a moment short drops output that only existed in that stream.
+FOLLOW_OVERLAP_SECS = 2
+
+
+def follow_since(path):
+    """Where a follower for this slot should resume from: an RFC3339 instant, or None for the start.
+
+    THE LOG FILE IS THE RECORD OF WHAT WAS ALREADY COPIED, and its mtime is therefore the boundary
+    between what the file has and what a new follower must fetch. None means the file is empty or
+    unreadable, which is a fresh slot log: there is nothing to duplicate, so the follower takes the
+    container from the beginning.
+
+    WHY THIS EXISTS. `docker logs -f` replays a container's whole history before it follows, and
+    the daemon's followers die with it -- so every ffwatch restart under a running job appended
+    that job's output to the slot log a second time from the top. An update in the middle of a
+    forty-minute Unity build left a log with the first half of the build in it twice and no mark
+    saying which copy was which. The job was never interrupted; only the record of it was.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    if st.st_size == 0:
+        return None
+    at = datetime.fromtimestamp(max(0.0, st.st_mtime - FOLLOW_OVERLAP_SECS), timezone.utc)
+    # RFC3339 with a Z, which is the one spelling docker's parser documents.
+    return at.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _start_follower(name, path, since=None):
+    """`docker logs -f` into `path`, detached. Returns the Popen, or None.
+
+    `since` is what keeps a replacement from copying the container's whole history in again --
+    see follow_since. None follows from the container's first line, which is right for a log
+    file that does not have any of them yet.
+    """
     try:
         fh = open(path, "a", encoding="utf-8", errors="replace")
     except OSError:
@@ -692,7 +733,8 @@ def _start_follower(name, path):
     sock = os.environ.get("FFGHR_DOCKER_SOCK") or "/run/ffbox-container/docker.sock"
     try:
         proc = subprocess.Popen(
-            ["docker", "logs", "-f", name], stdout=fh, stderr=subprocess.STDOUT,
+            ["docker", "logs", "-f"] + (["--since", since] if since else []) + [name],
+            stdout=fh, stderr=subprocess.STDOUT,
             env={**os.environ, "DOCKER_HOST": f"unix://{sock}"},
             start_new_session=True)
     except OSError:
@@ -992,7 +1034,11 @@ class Lane:
         except (ShellError, subprocess.TimeoutExpired):
             return
         path = log_file(settings, r.slot)
-        started = _start_follower(r.name, path)
+        # WHERE TO RESUME FROM, asked on every attach and not only on a replacement. The case that
+        # matters most is neither: a daemon that RESTARTED under a running job has no follower to
+        # replace and no memory of having followed this container, and attaching from the top is
+        # exactly what put the first half of a build into the log twice.
+        started = _start_follower(r.name, path, since=follow_since(path))
         if started is None:
             self._say(f"log:{r.name}", f"could not follow {r.name} into {path}")
             return
@@ -1149,11 +1195,18 @@ class Lane:
         for r in runners():
             if not r.running or is_busy(r.name):
                 continue
-            if is_busy(r.name):                 # the race: asked again, deliberately
-                continue
-            self.log(f"ci: draining: destroying idle runner {r.name}")
             try:
                 stage = staging_dir(r.name)
+                # THE RE-CHECK BELONGS HERE, against the DESTRUCTIVE call, and not one line under
+                # the first one where it used to sit. What it has to cover is the window in which
+                # GitHub can hand this runner a job, and the widest part of that window is
+                # staging_dir -- a shell round trip, in the middle of it. Asked again immediately
+                # above teardown, which is what runs `docker rm -f`.
+                if is_busy(r.name):
+                    self.log(f"ci: draining: {r.name} took a job as we were about to destroy it; "
+                             f"leaving it to finish")
+                    continue
+                self.log(f"ci: draining: destroying idle runner {r.name}")
                 # TEARDOWN'S OWN REPORT IS LOGGED, NOT DISCARDED. It was thrown away here, and the
                 # line that matters most in it is "registration N could not be deleted; the reaper
                 # will get it" -- so a drain that leaked a registration said nothing at all, and
