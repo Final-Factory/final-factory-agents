@@ -2,7 +2,9 @@ Pull request feedback: a review comment starts a fix run
 ========================================================
 
 2026-09-09.
-Revision 3, 2026-09-10: a run resolves the review threads it addressed. Section 8 says how,
+Revision 4, 2026-09-11: the box was reading its own comments. Section 3a is the loop and
+the fix, and it is the most important section in this file. Revision 3, 2026-09-10: a run
+resolves the review threads it addressed. Section 8 says how,
 and it turns section 1's first non-goal into a goal. Revision 2, 2026-09-10: the gate is gone. Section 4 was a haiku call deciding whether each
 comment asked for anything, so that "merging this" cost nothing. Lothsahn removed it the day it
 shipped, and section 4 now says why and what it costs instead.
@@ -148,6 +150,56 @@ untrusted input. An operator's comment is an instruction, exactly as their Disco
 (`DIRECT_KINDS` already contains `github_pr`), and the container acts on it. The whole protection
 is that the set of people who can put a sentence in there is the set of people who can already
 type into `ffbox` at a shell on this machine.
+
+
+3a. The box has no identity of its own here
+--------------------------------------------
+
+Section 3 is about keeping a stranger's words out of a container. It does that. What neither it
+nor anything else in revision 3 covered is the box's own words, and the day the lane went live
+that is what broke.
+
+On 2026-09-11, a `#codereview` run on pull request 516 failed. The harness posted what it always
+posts -- "the run failed / no branch: the run changed no files" -- and the feedback poller read
+that comment back on its next pass. Every check said yes. The author id was Lothsahn's, because
+`GH_PR_TOKEN` **is** Lothsahn's account, and Lothsahn is in `operators` because the whole purpose
+of that table is to name the people who may command this box. So the harness put 👀 on its own
+status line and started a run against it. That run would have ended, posted a comment, and been
+read again: one container per lap, for as long as nobody was watching.
+
+**Discord cannot reach this state and that is why nothing here anticipated it.** There the bot
+has an identity of its own: `bot_id()` answers "that was me", `insert_message` records `is_bot`,
+and `pending_messages` selects `is_bot=0`. Three layers, all resting on the bot and the operator
+being different accounts. On GitHub they are the same account. Identity cannot answer the
+question, so something else has to.
+
+Two things, because neither covers the whole of it:
+
+  * **A marker.** `create_issue_comment` appends an HTML comment to everything it writes --
+    invisible on GitHub, no extra request to check. That is the one place this box turns text
+    into a pull request comment, so the run's reply, a `#codereview` refusal and a feedback
+    refusal all get it without any composer having to remember.
+  * **The outbound record.** `send_github` already stores the id GitHub gave every comment the
+    queue sent. A comment whose id is in that table was written here, marker or no marker --
+    which covers everything posted before the marker existed, including the comment that was
+    sitting on 516 when the fix shipped and would have been re-read the moment the box came back.
+
+A refusal is why the marker is needed and not just the record: refusals are posted straight
+through the client and never become outbound rows. And `refuse_review`'s text contains the word
+`#codereview`, so the trigger lane had the same loop available to it, latent since it shipped --
+refuse a review on a closed pull request, read the refusal, refuse again. Both lanes skip their
+own voice now, before any other check looks at the comment.
+
+**And a cap underneath both,** because the failure this bounds is unbounded spend rather than a
+wrong answer: `feedback_max_turns_per_hour`, six by default, stops a pull request releasing more
+batches once it has had that many turns in an hour. It is not the fix and it does not know what a
+loop is. It is the number that ends the next one, whatever causes it. A throttle rather than a
+drop -- the comments stay gated and go when the hour clears, so a reviewer working fast waits and
+is never ignored.
+
+The general rule, worth more than the fix: **an ingress that reads a surface its own output
+lands on has to be able to recognise its own output there.** Discord got that for free from a
+separate identity. Nothing else will.
 
 
 4. Every comment is acted on

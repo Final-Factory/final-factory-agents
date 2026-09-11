@@ -286,6 +286,27 @@ All in `test_ffwatch.py`, beside the `#codereview` block, using its `Case`, `git
 - **H15 (S). DONE.** The release cap: with `feedback_max_comments` set to 2 and three ripe comments, the
   turn carries two and the third is still gated; it becomes the next turn once the first ends.
 
+## K. The self-trigger loop (2026-09-11) — SHIPPED BROKEN, FIXED
+
+Design section 3a. The lane went live and read its own comment back as an instruction. This is
+the defect this file exists to stop anybody repeating.
+
+- **K1 (S). DONE.** `HARNESS_COMMENT_MARKER`, appended by `GitHub.create_issue_comment`. One
+  choke point, so every composer is covered: the run's reply, a `#codereview` refusal, a feedback
+  refusal.
+- **K2 (S). DONE.** `own_github_comment(id, body)` — the marker, OR the id in `outbound` joined
+  to a `github_pr` conversation. Two checks because a refusal never becomes an outbound row, and
+  a comment posted before the marker existed carries none.
+- **K3 (S). DONE.** All three pollers skip their own comments before any other check, and record
+  them as seen.
+- **K4 (S). DONE.** `feedback_max_turns_per_hour` (6) and `feedback_running_hot()`: a throttle
+  under the fix, so the NEXT loop of this shape is bounded. Held, not dropped.
+- **K5 (S). DONE.** Three tests: the 516 loop rebuilt end to end, the `#codereview` refusal loop
+  (latent since that lane shipped), and the cap. Plus the client test now pins that the marker is
+  applied at the choke point.
+- **K6 (S). DONE.** Live: kill switch on and `github.feedback` false the moment it was found, to
+  stop the run in flight from posting the next lap. Both reversed after deploying.
+
 ## J. Resolving what was addressed (2026-09-10)
 
 Design section 8. Added after the lane shipped, on Lothsahn's ask: once the fix is on the branch,
