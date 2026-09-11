@@ -1284,6 +1284,7 @@ because a moderation queue nobody can see is not a moderation queue.
 | `~/ffbox-state/conversations/<id>/claude/` | `CLAUDE_CONFIG_DIR` for that conversation — the session transcript lives here |
 | `~/ffbox-state/conversations/<id>/runs/<run>/` | `job.json`, `stream.jsonl`, `result.json`, `verification.json`, `summary.md` |
 | `~/ffbox-state/outbound/<row>.md` | the overflow of a reply too long for one Discord message, attached to it |
+| `~/ffbox-state/pool-hold.json` | why each pool is not being topped up, rewritten in place by the keeper: one entry per class with the condition, the sentence and when it started, plus a `checked_at` for the file as a whole. `ffstatus` reads it so `below target` can say what it is waiting on; nothing schedules off it, and an absent file costs a sentence on a page |
 | `~/.config/ffbox/discord.disabled` | kill switch. While it exists, ffwatch neither launches a run nor sends a reply. Ingest keeps running, so nothing is lost. |
 | `~/.config/ffbox/draining` | drain flag. Launches pause; replies still go out. Written by the updater, lifted when it finishes. See "Staying current". |
 | `~/.config/ffbox/update.stop-running` | armed by hand. Makes the next update wait for running containers and then stop them, instead of leaving them working. For a fix that has to apply to what is running now. |
@@ -1843,9 +1844,20 @@ worse than saying nothing. Both lanes are reported in one
 vocabulary — WAITING is a container holding a workspace with no work in it, which is an agent
 spare or an idle registered CI runner — so for CI it reads ffgithubrunners' busy markers rather
 than counting every `ffghr-*` container as a job in flight. It reads `docker ps`,
-`~/.config/ffbox/config.json` and those markers, and writes nothing, so it is safe to run at any
-time; `--watch` refreshes it every five seconds and `--json` prints the same reading as one
-document, which is what the web page renders.
+`~/.config/ffbox/config.json`, those markers and `~/ffbox-state/pool-hold.json`, and writes
+nothing, so it is safe to run at any time; `--watch` refreshes it every five seconds and `--json`
+prints the same reading as one document, which is what the web page renders.
+
+**A pool below its target says why.** `docker ps` can see that a class is short of spares and has
+no way to see what is holding it — that decision is made in the keeper, in memory, on a loop — so
+the keeper writes its answer to `pool-hold.json` on every pass that declines to stage: nothing to
+bill, a ceiling, a memory squeeze, a staging that failed with what ffbox said, quiet hours, a
+drain. `ffstatus` prints it under the POOLS table for each short row, and the box page turns the
+`below target` mark into a link to `/pool?class=…`. Both carry the two clocks with it — how long
+the condition has held, and how long ago the keeper last looked — because a keeper that has
+stopped looking leaves its last reason in the file, still confident and no longer true, and that
+is itself the likeliest reason a pool is empty. Past five minutes the reading is reported as
+stale rather than as the answer.
 
 **Stopping one of them:** `ffwatch stop <name>`, with a name from that first table. The stop is
 soft — `docker stop` with a grace floored at the licence round trip, so PID 1's traps harvest the
@@ -2546,7 +2558,8 @@ somebody is looking at it.
 | `/lanes` | cost, tokens and durations per TRUST TIER — player against operator. The path kept its name; the grouping is what the page was really answering |
 | `/outbound` | the queue, filterable by status; the moderation queue when `approve_before_send` is on |
 | `/claude` | **the subscriptions**: every Claude account in the `secrets.env` pool, which one is actually spent, which plan its slot declares, and how much of each account's five-hour and weekly windows is gone, with the per-model weekly cap beside them where the token's scope allows it. Read from Anthropic over the network and cached for 15 minutes; no token appears on it |
-| `/status` | **the box**, and one of two pages here that read no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch, tier (`warm` or `warm-evictable`) and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back. A `running` state is a link to `/stop?name=…`, which confirms and then stops that container |
+| `/status` | **the box**, and one of two pages here that read no database: whether it is `running`, `checking`, `updating`, `drained` or `misconfigured` and why, when it last took new code and how long until it looks again, the load average and memory (with the share held by container workspaces, which are tmpfs), every container holding a workspace — agent runs, staged spares and CI jobs in one table, with each spare's slot, branch, tier (`warm` or `warm-evictable`) and remaining TTL — and what each pool was asked to hold. It runs `ffbox/ffstatus.sh --json` and renders what comes back. A `running` state is a link to `/stop?name=…`, which confirms and then stops that container; a **`below target`** pool is a link to `/pool?class=…`, which says why |
+| `/pool?class=<class>` | why one pool is short: the keeper's own sentence, how long it has been saying it, and how long ago it last looked — with a pool that has filled in the meantime, a class this box does not have, and a reason nobody has refreshed each answered in words rather than by a 404 |
 | `/blob/<sha256>` | one content-addressed attachment |
 | `/login` | served without a session, along with `/steam_background.jpg` behind it; `POST /logout` ends one |
 

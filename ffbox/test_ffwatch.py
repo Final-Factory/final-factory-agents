@@ -9034,6 +9034,181 @@ def test_the_keeper_backs_off_a_class_whose_staging_failed():
           w.keep_pool() == ["p1"] and tried == ["ffdev"], tried)
 
 
+def test_the_keeper_writes_down_why_a_pool_is_short():
+    """Every reason the keeper declines to stage is recorded where a reader outside this process
+    can find it, and the reasons it no longer has are dropped.
+
+    THE JOURNAL WAS NOT ENOUGH, and that is the whole point of this file. The box page renders
+    `below target` off `docker ps` -- it can see that a pool is short and has no way to see why,
+    because the why is a decision this daemon makes in memory. On 2026-09-10 an ffagent pool sat
+    empty for days behind a missing ANTHROPIC_API_KEY, and answering "why" meant an ssh session
+    and `journalctl`. It is one file, rewritten in place, and nothing schedules off it.
+
+    THE KEY DATES THE HOLD AND THE MESSAGE DOES NOT. Reasons carry counts that move between
+    passes, so latching `since` on the message would make a condition that has held for hours
+    read as new every few seconds -- which is exactly the number an operator uses to decide
+    whether this is the thing that broke.
+    """
+    print("pool: why it is short")
+    case = Case("poolwhy", base_fixture())
+    w = case.watcher
+    for cls in ffwatch.AGENT_CLASSES:
+        w.cfg["agent_classes"][cls].update({"idle_agents": 1, "agent_pool_max": 4})
+        # The held tier only; the evictable one stages on its own rules and would put a second
+        # set of decisions through this same pass.
+        w.cfg["agent_classes"][cls]["warm_branches"]["count"] = 0
+    w.cfg["max_concurrent_runs"] = 4
+    w.pool_has_room = lambda for_containers=1: True
+    w.pool_reap = lambda: 0
+    w.pool_containers = lambda: []
+    w.pool_stage_key = lambda cls=None: "CLAUDE_CODE_OAUTH_TOKEN1"
+
+    def held():
+        """What the file says right now — read back off disk, not out of the daemon."""
+        with open(w.pool_hold_path(), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    # --- a staging that failed ---------------------------------------------------------
+    w.pool_stage = lambda cls=None, **kw: None
+    w._pool_stage_error["ffagent"] = "ffbox exited 78: no such credential"
+    w.keep_pool()
+    doc = held()
+    check("the file names each class that is short",
+          sorted(doc["pools"]) == ["ffagent", "ffdev"], doc)
+    check("and says why, in the words of the thing that failed",
+          "exited 78" in doc["pools"]["ffagent"]["reason"], doc["pools"]["ffagent"])
+    check("a class whose failure said nothing still gets a sentence",
+          "journalctl" in doc["pools"]["ffdev"]["reason"], doc["pools"]["ffdev"])
+    check("the file dates itself, so a reader can tell a standing reason from a dead daemon",
+          abs(doc["checked_at"] - int(time.time())) < 5, doc.get("checked_at"))
+    check("and dates the hold, which is a different clock and the one that says how long",
+          abs(doc["pools"]["ffagent"]["since"] - int(time.time())) < 5, doc["pools"]["ffagent"])
+
+    # THE COOLDOWN IS NOT THE REASON. A second pass finds the class inside its backoff and must
+    # still say what the failure was, because "waiting to try again" answers nothing.
+    #
+    # AGED BY HAND FIRST, because every pass in this test happens inside one second and `since`
+    # is an epoch: without this, "the clock was not restarted" would pass on a clock that WAS
+    # restarted, to the same value.
+    w._pool_hold["ffagent"]["since"] -= 600
+    w.pool_hold_flush()
+    since = held()["pools"]["ffagent"]["since"]
+    w.keep_pool()
+    doc = held()
+    check("the next pass is inside the backoff and still carries the failure",
+          "exited 78" in doc["pools"]["ffagent"]["reason"], doc["pools"]["ffagent"])
+    check("and says how often it will try again, as a rate rather than a countdown that would "
+          "rewrite the file every pass",
+          "retries every" in doc["pools"]["ffagent"]["reason"], doc["pools"]["ffagent"])
+    check("without restarting the clock, because a failure and its cooldown are one condition",
+          doc["pools"]["ffagent"]["since"] == since, (since, doc["pools"]["ffagent"]))
+
+    # --- nothing to bill ---------------------------------------------------------------
+    w._pool_stage_after.clear()
+    w.pool_stage_key = lambda cls=None: None
+    w.keep_pool()
+    doc = held()
+    check("a class nothing can pay for says so, and says which file to look in",
+          doc["pools"]["ffagent"]["key"] == "keyless"
+          and "secrets.env" in doc["pools"]["ffagent"]["reason"], doc["pools"]["ffagent"])
+    check("and a different condition restarts the clock the old one was carrying",
+          doc["pools"]["ffagent"]["since"] >= since + 500, (since, doc["pools"]["ffagent"]))
+
+    # --- the ceilings and the squeeze ---------------------------------------------------
+    w.pool_stage_key = lambda cls=None: "CLAUDE_CODE_OAUTH_TOKEN1"
+    w.workload_room = lambda: 0
+    w.keep_pool()
+    doc = held()
+    check("a box at its container ceiling says which ceiling, and what the number is",
+          doc["pools"]["ffagent"]["key"] == "ceiling"
+          and "4" in doc["pools"]["ffagent"]["reason"], doc["pools"]["ffagent"])
+
+    w.workload_room = lambda: 4
+    w.agent_room = lambda cls=None: 0
+    w.keep_pool()
+    check("and a class at its own ceiling says that instead",
+          "its own ceiling" in held()["pools"]["ffagent"]["reason"], held()["pools"]["ffagent"])
+
+    w.agent_room = lambda cls=None: 4
+    w.pool_has_room = lambda for_containers=1: False
+    w.keep_pool()
+    check("a memory squeeze is named as one",
+          held()["pools"]["ffagent"]["key"] == "squeeze", held()["pools"]["ffagent"])
+
+    # --- a box-wide hold ----------------------------------------------------------------
+    w.pool_has_room = lambda for_containers=1: True
+    open(case.drain_switch, "w").close()
+    try:
+        w.keep_pool()
+        doc = held()
+        check("a drain is recorded against both pools, since it holds both",
+              all(doc["pools"][c]["key"] == "draining" for c in ffwatch.AGENT_CLASSES), doc)
+        check("and it names the flag, which is the thing to remove",
+              case.drain_switch in doc["pools"]["ffagent"]["reason"], doc["pools"]["ffagent"])
+    finally:
+        os.unlink(case.drain_switch)
+
+    # --- and the reasons it no longer has -----------------------------------------------
+    staged = []
+    w.pool_stage = lambda cls=None, **kw: (staged.append(cls) or f"p{len(staged)}")
+    w._pool_stage_after.clear()
+    w.keep_pool()
+    check("a pass that staged one clears that class's reason", held()["pools"] == {}, held())
+
+    w.pool_containers = lambda: [
+        {"name": "c1", "id": "a1", "branch": "master", "class": c, "tier": "held"}
+        for c in ffwatch.AGENT_CLASSES]
+    w.keep_pool()
+    check("and a pool holding what it was asked to has nothing to explain",
+          held()["pools"] == {}, held())
+    check("while the file keeps saying when it last looked",
+          abs(held()["checked_at"] - int(time.time())) < 5, held())
+
+
+def test_the_box_page_reads_the_keepers_reasons_off_the_same_path():
+    """ffwatch writes the file and ffstatus.sh reads it — in two languages, with two copies of
+    the path, and nothing but this to keep them pointing at the same place.
+
+    THE PATH IS THE INTERFACE and it is spelled twice: `os.path.join(state_dir, POOL_HOLD_FILE)`
+    here, and `$(dirname "$POOL_DIR")/pool-hold.json` there. Neither can import the other -- one
+    is bash -- so what is checked is the only thing that matters to an operator: a reason this
+    daemon wrote reaches the document the web page renders, at the paths both would use on a real
+    box.
+    """
+    print("pool: the reason reaches the page")
+    case = Case("poolwhyread", base_fixture())
+    w = case.watcher
+    w.pool_hold_note("ffagent", "keyless", "no Claude account can pay for a turn it would serve")
+
+    # A docker that answers nothing: every container table comes back empty, which is what makes
+    # this runnable off the box. The pools table is read from the config file and the hold file,
+    # and neither needs a daemon.
+    docker = write_stub(os.path.join(case.root, "docker_empty.sh"), "#!/bin/sh\nexit 0\n")
+    config = os.path.join(case.root, "ffstatus-config.json")
+    with open(config, "w", encoding="utf-8") as fh:
+        json.dump({"max_concurrent_runs": 4,
+                   "pools": {"ffagent": {"pool": {"idle": 1, "max": 4}}}}, fh)
+    env = dict(os.environ, FFBOX_DOCKER=docker, FFBOX_CONFIG_JSON=config,
+               # THE DEFAULT PATH, DELIBERATELY NOT OVERRIDDEN. ffstatus derives the hold file
+               # from the pool directory, so pointing that at this case's state dir is what
+               # proves the two spellings land on one file.
+               FFBOX_POOL_DIR=os.path.join(case.state_dir, "pool"))
+    env.pop("FFBOX_POOL_HOLD", None)
+    proc = subprocess.run(["bash", os.path.join(HERE, "ffstatus.sh"), "--json"],
+                          capture_output=True, text=True, env=env, timeout=60)
+    check("ffstatus answers", proc.returncode == 0, proc.stderr[-400:])
+    doc = json.loads(proc.stdout)
+    row = next(p for p in doc["pools"] if p["class"] == "ffagent")
+    check("the pool it reports is the one that is short", row["waiting"] < row["idle"], row)
+    check("and it carries the reason ffwatch wrote, at the path ffwatch wrote it to",
+          (row.get("hold") or {}).get("reason", "").startswith("no Claude account"), row)
+    check("with the key and both clocks, which is what the page renders",
+          (row["hold"]["key"] == "keyless" and isinstance(row["hold"]["since"], int)
+           and isinstance(row["hold"]["checked_at"], int)), row["hold"])
+    check("a pool with nothing recorded carries no hold at all",
+          next(p for p in doc["pools"] if p["class"] == "ffdev")["hold"] is None, doc["pools"])
+
+
 def test_the_finish_handler_reaches_the_agent_and_its_work():
     """The three things a run's ending has to do, and the bash rule that decides whether any of
     them happen.
@@ -17811,6 +17986,8 @@ def main():
         test_memory_is_read_from_meminfo_not_from_dev_shm,
         test_the_admission_lock_does_not_ride_into_the_run,
         test_the_keeper_backs_off_a_class_whose_staging_failed,
+        test_the_keeper_writes_down_why_a_pool_is_short,
+        test_the_box_page_reads_the_keepers_reasons_off_the_same_path,
         test_the_finish_handler_reaches_the_agent_and_its_work,
         test_a_run_that_ran_out_of_time_still_says_so,
         test_a_verification_that_never_ran_does_not_read_as_one_that_failed,

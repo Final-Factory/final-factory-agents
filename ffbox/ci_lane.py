@@ -814,6 +814,11 @@ class Lane:
         self._followers = {}                  # container name -> the `docker logs -f` child
         self._adopted_quietly = set()         # names first followed by THIS daemon, not launched
         self._announced = {}                  # name -> last message, so a poll does not repeat
+        # WHY THIS LANE LAST DECLINED TO MINT, as (key, sentence), or None when it minted or had
+        # no reason to. The daemon reads it after every keep() and writes it where ffstatus.sh
+        # can find it, so `below target` on the box page carries its reason for this lane the
+        # same way it does for the agent pools. Nothing here schedules off it.
+        self.hold = None
 
     # -- the interlock ---------------------------------------------------------------------
     def blocked(self):
@@ -825,6 +830,10 @@ class Lane:
         if self.cfg.error:
             return f"config.json is unreadable ({self.cfg.error})"
         return ""
+
+    def _hold(self, key, message=""):
+        """Record why the pool is not being topped up. `key=None` clears it. See `hold`."""
+        self.hold = (key, message) if key else None
 
     def _say(self, key, message):
         """Log a line once until it changes. A pass runs every few seconds and most of what it
@@ -878,9 +887,15 @@ class Lane:
         """
         reason = self.blocked()
         if reason:
+            self._hold("blocked", reason)
             return None
         if host_drained or drained():
             self._say("drain", "drained; serving what is running, minting nothing")
+            self._hold("drained",
+                       ("ffbox itself is drained — its drain flag, its kill switch or its config "
+                        "failsafe" if host_drained else
+                        "this lane's own drain flag is set")
+                       + ": jobs already in a runner finish, and no new runner is minted")
             return None
         self._announced.pop("drain", None)
         self.cfg.reload()
@@ -888,8 +903,13 @@ class Lane:
         ok, why = may_admit(self.cfg, live, box_room)
         if not ok:
             self._say("admit", why)
+            # THE SATISFIED CASE COMES THROUGH HERE TOO, and that is harmless rather than sloppy:
+            # a satisfied pool is not below its target, so nothing renders the reason. What the
+            # page needs is the other two -- a lane at its ceiling and a box at its own.
+            self._hold("admit", why)
             return None
         self._announced.pop("admit", None)
+        self._hold(None)
 
         slot = self._free_slot(live)
         name = f"ffghr-{_hostname()}-{slot}-{os.urandom(4).hex()}"
@@ -911,6 +931,9 @@ class Lane:
             # that never ran is an orphan on the org page and a runner an operator can see and
             # cannot explain; a staging directory with no container is 16G nothing will claim.
             self.log(f"ci: could not start {name}: {type(exc).__name__}: {exc}; cleaning up")
+            self._hold("launch", f"the last runner could not be started: {type(exc).__name__}: "
+                                 f"{exc}. The registration and the staging directory it had "
+                                 f"already taken were cleaned up; the next pass tries again")
             if runner_id:
                 delete_registration(runner_id)
             _docker(["rm", "-f", name])

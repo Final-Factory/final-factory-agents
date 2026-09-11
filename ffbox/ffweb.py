@@ -180,6 +180,17 @@ LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
 AGENT_CLASSES = ("ffagent", "ffdev")
 DEFAULT_AGENT_CLASS = "ffagent"
 
+# PAST THIS MANY SECONDS, a reason ffwatch recorded for a short pool is shown as stale rather than
+# as the answer. Mirrors POOL_HOLD_STALE_SECS in ffwatch.py, which is the copy that decides how
+# often the keeper refreshes the file; ffstatus.sh carries it too, for the terminal tables. A copy
+# that drifted would change one sentence on one page, which is what makes the duplication safe --
+# the same argument as AGENT_CLASSES above.
+#
+# A KEEPER THAT HAS STOPPED LOOKING IS ITSELF THE REASON, and the commonest one: ffwatch dead or
+# wedged empties both pools and leaves whatever it last said sitting in the file, confidently
+# naming something else. So the page says how old the answer is rather than only what it says.
+POOL_HOLD_STALE_SECS = 300
+
 # Conversation kinds with no Discord side: a prompt typed at this box's shell, or into the
 # prompt box on this page. Their message ids are synthetic — minted by ffwatch to keep ordering
 # working — so this page must not label one "discord <id>". Mirrors LOCAL_KINDS in ffwatch.py,
@@ -1146,6 +1157,13 @@ form.mark button:hover { color: #d7dae0; border-color: #4a5261; }
 a.stop { color: inherit; cursor: pointer; }
 a.stop:hover { text-decoration: none; }
 a.stop:hover .pill { border-color: #a55; color: #e99; }
+/* And the box page's other clickable pill, on a pool that is not holding what it was asked to.
+   Same trick and the same reason -- the operator is already looking at the word -- but NOT the
+   red: this one opens a page that explains, and nothing on the other side of it changes the box.
+   Grey-going-bright is the site's ordinary "there is more here" and is all this needs. */
+a.why { color: inherit; cursor: pointer; }
+a.why:hover { text-decoration: none; }
+a.why:hover .pill { border-color: #8f98a6; color: #d7dae0; }
 /* And the button on that page. Red rather than the default grey, because it is the only control
    on this site that destroys work in flight; everything else either queues something or ticks a
    column. */
@@ -1816,6 +1834,12 @@ class FFWebHandler(BaseHTTPRequestHandler):
             return self._send(200, app.page_outbound(query))
         if path == "/status":
             return self._send(200, app.page_status(query))
+        if path == "/pool":
+            # A GET that changes nothing and reads the same document the box page does: it
+            # explains one row of the pools table. The class is not validated here — page_pool
+            # re-reads the box and names the pools it found, which covers a typo and a class that
+            # has been renamed in one place.
+            return self._send(200, app.page_pool((query.get("class") or [""])[0]))
         if path == "/stop":
             # A GET that changes nothing: it renders the confirmation, and the POST it carries
             # is the thing that acts. The name is not validated here — page_stop re-reads the
@@ -2580,6 +2604,7 @@ class App:
                         "licence back.</p>")
 
         prows = []
+        short_pools = 0
         for pool in doc.get("pools") or []:
             waiting, want = pool.get("waiting"), pool.get("idle")
             # THE EVICTABLE TIER IN A COLUMN OF ITS OWN, never folded into `waiting`. Those spares
@@ -2589,13 +2614,33 @@ class App:
             loose = pool.get("warm_branches")
             cell = str(waiting)
             if isinstance(waiting, int) and isinstance(want, int) and waiting < want:
-                cell = Raw(esc(str(waiting)) +
-                           " <span class=\"pill filling\">below target</span>")
+                # THE PILL IS A LINK, for the same reason the container table's `running` pill is
+                # one: the operator is already looking at the word when the question occurs to
+                # them. The question here is "why", and the answer is a sentence the keeper wrote
+                # -- too long for a column and the wrong thing to print on every row of a table
+                # that is otherwise six numbers. So it goes behind the word, on a page of its own.
+                #
+                # THE LINK IS OFFERED WHETHER OR NOT A REASON WAS RECORDED. A pool that is short
+                # with nothing written down is its own finding -- a keeper that has not run, most
+                # likely -- and a pill that is only sometimes clickable teaches an operator that
+                # the absence of a link means there is nothing to know.
+                short_pools += 1
+                cell = Raw("<a class=\"why\" title=\"why this pool is below its target\" href="
+                           + attr("/pool?class=" + urllib.parse.quote(str(pool.get("class") or "")))
+                           + ">" + esc(str(waiting))
+                           + " <span class=\"pill filling\">below target</span></a>")
             prows.append([pool.get("class") or "—", want, cell,
                           "—" if loose is None else loose,
                           pool.get("busy"), pool.get("max")])
         body += ["<h2>pools</h2>",
                  table(["class", "idle", "waiting", "branch", "busy", "max"], prows)]
+        # SAID ONCE, UNDER THE TABLE, and only when a row is short -- the same rule as the stop
+        # legend above it, and for the same reason: a legend about a control that is not on the
+        # page is a line every reader has to discard.
+        if short_pools:
+            body.append("<p class=\"note\">A <span class=\"pill filling\">below target</span> "
+                        "pool is a link: it says what the keeper is waiting on, and when it last "
+                        "looked.</p>")
 
         infra = doc.get("infrastructure") or []
         if infra:
@@ -2611,6 +2656,102 @@ class App:
         return page("Box", head + body, refresh=True)
 
     # -- stopping one container ---------------------------------------------------------------
+
+    def page_pool(self, agent_class):
+        """Why one pool is not holding the spares it was asked to.
+
+        A PAGE RATHER THAN A COLUMN. The answer is a sentence with numbers in it -- which ceiling,
+        whose credential, how much memory -- and the pools table is six narrow numbers that an
+        operator reads in one glance. Putting the reason in the table would cost that glance on
+        every box, including the ones where nothing is wrong.
+
+        IT RE-READS THE BOX, exactly as page_stop does. The link was rendered from a document that
+        may be a minute old, and a pool that has filled in between deserves to be told so rather
+        than handed a stale explanation for a state it is no longer in.
+
+        WHAT IT CANNOT DO IS ANSWER FOR ITSELF. Everything here was written down by ffwatch's
+        keeper at the moment it declined to stage -- see pool_hold_note -- and this page only
+        renders it, with one thing added that the keeper cannot say: how long ago that was. A
+        keeper that has stopped looking leaves its last reason behind in the file, still confident
+        and no longer true, and that is the failure most worth catching on the way past.
+        """
+        doc, err = self.box.read()
+        head = ["<h1>pool " + esc(short(agent_class, 60) or "—") + "</h1>"]
+        back = "<p class=\"note\"><a href=\"/status\">back to the box</a></p>"
+        if err:
+            return page("Pool", head + ["<p class=\"note\">" + esc(err) + "</p>", back])
+
+        pools = doc.get("pools") or []
+        row = next((p for p in pools if p.get("class") == agent_class), None)
+        if row is None:
+            # A hand-typed name, or a link from a page old enough that the classes have changed
+            # under it. Naming the ones this box does have costs a line and saves a second guess.
+            names = ", ".join(str(p.get("class")) for p in pools if p.get("class"))
+            return page("Pool", head + [
+                "<p class=\"note\">This box reports no pool by that name" +
+                (". The pools it reports are " + esc(names) if names else "") + ".</p>", back])
+
+        waiting, want, loose = row.get("waiting"), row.get("idle"), row.get("warm_branches")
+        body = [table(["class", "idle", "waiting", "branch", "busy", "max"],
+                      [[row.get("class") or "—", want, waiting,
+                        "—" if loose is None else loose, row.get("busy"), row.get("max")]])]
+
+        hold = row.get("hold") or {}
+        now = int(time.time())
+        if not (isinstance(waiting, int) and isinstance(want, int) and waiting < want):
+            # The ordinary race, and the good one: it filled between the page being drawn and the
+            # click. Said plainly rather than 404, the same as a container that has already gone.
+            body.append("<p class=\"note\">This pool is holding what it was asked to as of this "
+                        "reading, so there is nothing to explain. Whatever it was waiting on has "
+                        "cleared.</p>")
+            return page("Pool", head + body + [back])
+
+        body.append("<h2>why</h2>")
+        if hold.get("reason"):
+            body.append("<p>" + esc(short(str(hold["reason"]), 400)) + "</p>")
+            since = hold.get("since")
+            said = []
+            if isinstance(since, int):
+                said.append("the keeper has been saying this for " +
+                            esc(fmt_ttl(max(0, now - since))))
+            checked = hold.get("checked_at")
+            if isinstance(checked, int):
+                said.append("it last looked " + esc(fmt_ttl(max(0, now - checked))) + " ago")
+            if said:
+                body.append("<p class=\"note\">" + " · ".join(said) + "</p>")
+            # AND THE ONE THING THE SENTENCE ABOVE CANNOT BE TRUSTED ABOUT. A dead or wedged
+            # ffwatch empties both pools and leaves its last reason in the file, so an old
+            # `checked_at` is not a stale detail on a true answer — it is a different answer, and
+            # it is louder than whatever is written above it.
+            if isinstance(checked, int) and now - checked > POOL_HOLD_STALE_SECS:
+                body.append("<p class=\"alert\">ffwatch has not looked at the pools for " +
+                            esc(fmt_ttl(now - checked)) + ", so the reason above is what it "
+                            "thought last time rather than what it thinks now. A keeper that has "
+                            "stopped running is itself the reason a pool stays empty: "
+                            "<code>systemctl status ffwatch</code> is the thing to read next.</p>")
+        else:
+            # NO REASON IS ALSO A FINDING. The keeper writes one every pass it declines to stage,
+            # so a short pool with nothing written down is either a box whose keeper has not
+            # finished its first pass, or one whose keeper is not running at all.
+            body.append(
+                "<p>Nothing was written down. The keeper records a reason on every pass it "
+                "declines to stage a spare, so an empty answer means it has not reached one: "
+                "either it has just started, or it is inside a staging that has not come back, "
+                "or it is not running. <code>systemctl status ffwatch</code> and "
+                "<code>journalctl -u ffwatch</code> answer all three.</p>")
+
+        # WHAT IT COSTS, LAST, because it is what decides whether this is worth acting on now. The
+        # two lanes pay differently for an empty pool and the difference is the whole of it: an
+        # agent turn that finds no spare runs cold and is slower, a CI job that finds no runner
+        # waits for one to be minted.
+        body.append("<p class=\"note\">" + (
+            "A CI job that arrives with no idle runner waits while one is minted and registered, "
+            "which is under a minute on this box."
+            if agent_class == "ci" else
+            "A turn that finds no spare still runs: it launches a container cold and pays the "
+            "clone and the workspace extraction itself, which is minutes rather than seconds. An "
+            "empty pool makes turns slow, not impossible.") + "</p>")
+        return page("Pool", head + body + [back])
 
     def page_stop(self, name):
         """The confirmation in front of stopping a container. A GET; it changes nothing.
