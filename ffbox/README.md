@@ -1608,9 +1608,10 @@ The second line lists every conversation that owns that branch or has pushed to 
 link into Discord.
 
 **Before it owns one, and only then.** A conversation keeps its branch for life, so adoption is
-refused once the thread has published; it is also refused for a name git would not take, for
-`master`/`develop`/`main`, for a branch the remote does not have, and for one another
-conversation has a turn in flight on. A thread that merely worked on the branch and finished
+refused once the thread has published; it is also refused for a name git would not take, for a
+branch the remote does not have, and for one another conversation has a turn in flight on. A
+base name — `master`, `develop`, `main` — is not refused; it means something else, described
+under "Naming a base instead of a branch" below. A thread that merely worked on the branch and finished
 does not hold it — that is the case adoption exists for — and the acknowledgement names it, so
 you know a new message in that thread would put another turn on the same branch. Every refusal happens at the adopt rather than at the far end of a
 twenty-minute run.
@@ -1643,6 +1644,35 @@ a branch that moved underneath it is a non-fast-forward, and the turn loses its 
 
 The page says `adopted by <who>` beside the branch, and labels the file count as that turn's,
 because on an adopted branch it is no longer the branch's total.
+
+#### Naming a base instead of a branch
+
+`!branch develop` does not adopt develop, because this pipeline never pushes to a base. It
+means "do this work on develop", and `!branch master` means the same for master. `!branch main`
+means master, on a repository that has no `main` of its own. `ffwatch adopt --branch develop`
+takes the same names.
+
+```
+ok — this conversation's work is based on `develop`: its next turn starts on `origin/develop`, and a pull request from it targets `develop`.
+```
+
+The conversation records the base, and from then on:
+
+- **the next turn's clone starts on it** rather than on the class's `base_ref`, so the agent does
+  not pay a cross-base checkout and a Unity reimport to get there;
+- **the container is told the base was chosen**, instead of being asked to choose one;
+- **the harvest lists that base first**, so on the day master and develop are the same commit
+  the work still comes back named for the base that was asked for;
+- **the pull request targets that base and nothing else.** Work the agent moved onto the other
+  base is still pushed, but gets no pull request, and the reason says why.
+
+The branch is still minted under `ffbox/` at the first publish and later turns continue on it,
+exactly as for any other conversation. Like adoption, a base can only be named before the
+conversation owns a branch. It is also refused while a turn of that conversation is queued or
+running, because that turn publishes against the base it started on. Adopting a branch
+afterwards drops the request, since an adopted branch's base is whatever it already descends
+from. A fork keeps its source's base. The `#codereview` path still refuses a base outright: a
+release pull request's head is `develop`, and reviewing that is not a request to work on it.
 
 ### Forking a conversation into somewhere quieter
 

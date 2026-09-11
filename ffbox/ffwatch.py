@@ -82,7 +82,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 20
 
 # THE ONE MODULE THIS DAEMON IMPORTS FROM BESIDE IT, and it is deliberately not ffweb: the
 # Claude subscription pool moved into claude_keys.py on 2026-09-04 precisely so that the
@@ -512,6 +512,15 @@ ADDED_COLUMNS = [
     # not `direct` is never direct, wherever it lands -- including in an operator's DM or on the
     # web page, both of which are direct kinds. See is_direct_conversation.
     ("conversation", "fenced_history", "INTEGER NOT NULL DEFAULT 0"),
+    # -- v20, a base named instead of a branch ------------------------------------------------
+    # WHICH BASE AN OPERATOR ASKED THIS CONVERSATION'S WORK TO BE ON, with `!branch develop` or
+    # `ffwatch adopt --branch develop`, and when and by whom. NULL is "the agent chooses", which
+    # is every conversation that existed before these columns. Read by run_ref (where the clone
+    # starts), build_job (what the preamble says), launch (the harvest's base order) and pr_base
+    # (which branch the pull request may target). See request_base.
+    ("conversation", "requested_base", "TEXT"),
+    ("conversation", "requested_base_at", "TEXT"),
+    ("conversation", "requested_base_by", "TEXT"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -559,6 +568,12 @@ FFBOX_NS = uuid.UUID("2f0d4ec6-0e2a-5b8c-9a71-6d3f4c8b1e05")
 # the two lists equal; a name in one and not the other is a refusal that arrives at the wrong
 # end of a twenty-minute run.
 PROTECTED_BRANCHES = ("develop", "master", "main")
+
+# WHAT AN OPERATOR MEANS BY A BASE THIS REPOSITORY CALLS SOMETHING ELSE. GitHub's default branch
+# is `main` and Final Factory's is `master`, so `!branch main` means the released build. Applied
+# only while the alias is not itself a configured base and its target is -- see
+# publish_base_named.
+BASE_ALIASES = {"main": "master"}
 
 # ------------------------------------------------------------------------------------------
 # Defaults in code, overlaid with ~/.config/ffbox/config.json, then env overrides. The file may
@@ -3446,6 +3461,9 @@ class Db:
             # answer for all of them — every branch any conversation owns today was claimed by
             # a push, which is what NULL means. Written down so the next reader does not go
             # looking for the rewrite that is missing.
+            #
+            # v20 (2026-09-10): requested bases. No statement either, for the same reason: NULL
+            # means "the agent chooses", which is what every existing conversation did.
             have = self.conn.execute(
                 "SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
             if have < SCHEMA_VERSION:
@@ -5587,7 +5605,14 @@ class Watcher:
             log(f"conversation {conv_id}: ignoring a !branch line from {author_id or '?'}, who "
                 f"is not in discord.trust.operators")
             return None
-        ok, reason = self.adopt_branch(conv_id, branch, by=author_id)
+        # A BASE IS NOT A BRANCH TO ADOPT. `!branch develop` used to be refused as protected,
+        # which was true and useless: what an operator means by it is "do this work on develop".
+        # A name that is one of publish_bases -- or `main`, meaning master -- asks for that
+        # instead, and every other name adopts as before. See request_base.
+        if self.publish_base_named(branch):
+            ok, reason = self.request_base(conv_id, branch, by=author_id)
+        else:
+            ok, reason = self.adopt_branch(conv_id, branch, by=author_id)
         alone = is_only_branch_directive(content)
         # NO BRANCH, NO TURN — and that is two rules, not one. A directive on its own has no
         # question in it to answer. A REFUSED directive has one and must still not run it: the
@@ -8923,7 +8948,8 @@ class Watcher:
         # run on ffagent's numbers for every turn and disagree with what launch() then does.
         queued = self.db.query(
             "SELECT t.*, c.state AS conv_state, c.base_sha AS conv_base_sha,"
-            " c.agent_class AS conv_agent_class, c.branch AS conv_branch FROM turn t"
+            " c.agent_class AS conv_agent_class, c.branch AS conv_branch,"
+            " c.requested_base AS conv_requested_base FROM turn t"
             " JOIN conversation c ON c.id=t.conversation_id"
             " WHERE t.status='queued' ORDER BY t.queued_at, t.id")
         for turn in queued:
@@ -8949,11 +8975,12 @@ class Watcher:
             # pinned sha, looks_like_sha is true, and pool_would_serve said yes for any warm
             # container of the class — while launch() went on to ask pool_claim_for about the
             # BRANCH, missed, and cold-launched. On a full box that is a run started past a
-            # ceiling that had no room for it. run_ref reads only these three fields off the
+            # ceiling that had no room for it. run_ref reads only these four fields off the
             # conversation, so the JOINed row stands in for one.
             ref = self.run_ref(turn, {"id": turn["conversation_id"],
                                       "branch": turn["conv_branch"],
                                       "base_sha": turn["conv_base_sha"],
+                                      "requested_base": turn["conv_requested_base"],
                                       "agent_class": turn_class}, log_override=False)
             if ((self.workload_room() <= 0 or self.agent_room(turn_class) <= 0)
                     and not self.pool_would_serve(ref, turn_class)):
@@ -9293,6 +9320,11 @@ class Watcher:
                       # somebody else's, and the difference decides whether the agent may treat
                       # what is there as its own working state or has to read it first.
                       "branch_adopted": self.conversation_adopted(conv),
+                      # THE BASE AN OPERATOR CHOSE, when one did. The preamble swaps "choose
+                      # what you branch from" for "this was chosen", because pr_base will open
+                      # a pull request against that base and no other. Ignored by the preamble
+                      # once the conversation owns a branch, which has settled its base already.
+                      "requested_base": self.conversation_requested_base(conv),
                       # AND WHAT IS ALREADY PROPOSED WITH IT, when the harness knows. An
                       # adopted branch is usually already under review, and an agent that does
                       # not know that reads "a pull request may be open" and has no way to find
@@ -9942,6 +9974,19 @@ class Watcher:
             return False
 
     @staticmethod
+    def conversation_requested_base(conv):
+        """The base an operator asked this conversation's work to be on, or None.
+
+        Guarded like conversation_branch above: the columns are v20, a caller can be holding a
+        row read before the migration ran, and schedule() hands run_ref a dict built from a
+        JOINed turn row rather than the conversation itself.
+        """
+        try:
+            return (conv["requested_base"] or None) if conv is not None else None
+        except (IndexError, KeyError):
+            return None
+
+    @staticmethod
     def review_facts(conv):
         """{number, base, url} for a #codereview conversation, or None for anything else.
 
@@ -10009,9 +10054,10 @@ class Watcher:
         which loses the turn's work. The override survives for a conversation that owns no
         branch yet, which is every first turn and every shell prompt.
 
-        `conv` is a conversation row or ANYTHING THAT ANSWERS THE SAME THREE KEYS — branch,
-        base_sha, agent_class. schedule() holds a JOINed turn row rather than a conversation
-        and hands over a dict built from it, because the pre-check that decides whether a turn
+        `conv` is a conversation row or ANYTHING THAT ANSWERS THE SAME FOUR KEYS — branch,
+        base_sha, requested_base, agent_class. schedule() holds a JOINed turn row rather than a
+        conversation and hands over a dict built from it, because the pre-check that decides
+        whether a turn
         may start has to ask about the ref this will return and not about one of its own.
         `log_override=False` is for that caller: it asks on every pass while a turn is queued,
         and the note below would otherwise be repeated all day.
@@ -10027,7 +10073,12 @@ class Watcher:
             return conv_branch
         # THE CLASS'S base_ref, not the flat one: the day ffdev moves to develop, an ffdev
         # conversation with no branch and no pinned sha has to start there.
-        return (override or conv["base_sha"]
+        #
+        # AN OPERATOR'S BASE sits between the two: under the pin, over the class default.
+        # request_base clears the pin when it records the base, so the first turn after it starts
+        # on the base and pins a commit of it, and later turns of a conversation that has not
+        # published keep reasoning about that one tree -- exactly what base_ref gets.
+        return (override or conv["base_sha"] or self.conversation_requested_base(conv)
                 or class_cfg(self.cfg, self.conversation_class(conv))["base_ref"])
 
     def mirror_carries(self, branch):
@@ -10316,9 +10367,14 @@ class Watcher:
         # GUARDED ON branch IS NULL, so two ingresses racing cannot both claim. A rowcount of
         # zero here means somebody else got there between the read above and this write, which
         # is a refusal and not a success.
+        #
+        # AND ANY BASE THIS CONVERSATION ASKED FOR IS DROPPED. An adopted branch's base is
+        # whatever it already descends from; keeping a request for another one would have
+        # pr_base refuse every pull request the branch could make.
         done = self.db.execute(
-            "UPDATE conversation SET branch=?, branch_adopted_at=?, branch_adopted_by=?"
-            " WHERE id=? AND branch IS NULL", (branch, now_iso(), str(by or "?"), conv_id))
+            "UPDATE conversation SET branch=?, branch_adopted_at=?, branch_adopted_by=?,"
+            " requested_base=NULL WHERE id=? AND branch IS NULL",
+            (branch, now_iso(), str(by or "?"), conv_id))
         if not done.rowcount:
             return False, "something else claimed this conversation's branch first"
         log(f"conversation {conv_id}: adopted {branch} (by {by})")
@@ -10359,6 +10415,88 @@ class Watcher:
         # without it the post read "...on branch `ffbox/inventory-window-drag-clamp-d44t1-
         # e4c99e4c Conversation 44 has worked on this branch before".
         return True, f"this conversation is now on branch `{branch}`." + note + shared
+
+    def publish_base_named(self, name):
+        """The publish base `name` means, or None.
+
+        One of publish_bases by its own name, or through BASE_ALIASES -- `main` for `master` --
+        while the alias is not itself a configured base and its target is. A repository that
+        does have a `main` base gets exactly that.
+        """
+        bases = list(self.cfg.get("publish_bases") or {})
+        name = (name or "").strip()
+        if name in bases:
+            return name
+        target = BASE_ALIASES.get(name)
+        return target if target in bases else None
+
+    def request_base(self, conv_id, name, by):
+        """Tell a conversation which base its work is for. Returns (ok, reason).
+
+        WHAT `!branch develop` MEANS. A base is not a branch a conversation can own -- this
+        pipeline never pushes to one -- and adopt_branch refuses it. But which base the work is
+        for is a question the harness already asks the agent and reads back out of the commit
+        graph, so this answers it in advance: the next turn's clone starts on the base
+        (run_ref), the preamble says the choice is made (preamble_bases in discord-task.sh), the
+        harvest lists it first so a tie goes its way (launch), and pr_base opens the pull request
+        against it and nothing else. The branch the work lands on is still minted under the
+        prefix at the first publish, exactly as for any other conversation.
+
+        ONE WRITER for `!branch`, `ffwatch adopt` and a fork, the way adopt_branch is. Never
+        reached from a #codereview conversation: a release pull request's head is `develop`, and
+        the review ingress calls adopt_branch, which still refuses it.
+
+        IT REFUSES RATHER THAN ADAPTS, with a sentence fit to post, cheapest check first.
+        """
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+        if conv is None:
+            return False, f"there is no conversation {conv_id}"
+        asked = (name or "").strip()
+        base = self.publish_base_named(asked)
+        if base is None:
+            names = ", ".join(f"`{b}`" for b in (self.cfg.get("publish_bases") or {}))
+            return False, (f"`{asked}` is not a base work can be put on here; the bases are "
+                           f"{names or 'not configured'}")
+        owned = self.conversation_branch(conv)
+        if owned:
+            return False, (f"this conversation is already on branch `{owned}`, and a "
+                           f"conversation keeps its branch for life. Open a new thread for work "
+                           f"based on `{base}`.")
+        pushed = self.db.scalar(
+            "SELECT COUNT(*) FROM run r JOIN turn t ON t.id=r.turn_id"
+            " WHERE t.conversation_id=? AND r.pushed=1", (conv_id,), 0)
+        if pushed:
+            return False, ("this conversation has already published work, so it cannot be "
+                           "moved to another base")
+        # A TURN OF THIS CONVERSATION IN FLIGHT, which adoption lets through and this does not.
+        # That turn started on the old base and publishes against it; the conversation would
+        # then own a branch off the old base while asking for the new one, and pr_base would
+        # refuse every later pull request for descending from the wrong branch. Waiting costs
+        # the operator one retyped line.
+        running = self.db.scalar("SELECT COUNT(*) FROM turn WHERE conversation_id=?"
+                                 " AND status IN ('running','queued')", (conv_id,), 0)
+        if running:
+            return False, ("this conversation has a turn in flight, and that turn publishes "
+                           "against the base it started on. Send it again once it has finished.")
+        remote = self.cfg["push_remote"]
+        self.git_here("fetch", "--quiet", remote)
+        if self.git_here("rev-parse", "--verify", "--quiet",
+                         f"refs/remotes/{remote}/{base}^{{commit}}").returncode != 0:
+            return False, f"`{base}` is not on {remote}, so there is nothing to start the work on"
+        # THE PIN GOES, because it is a commit of whichever base the conversation was reasoning
+        # about before, and run_ref prefers it to the request. The next turn pins a commit of the
+        # new base in its place. GUARDED ON branch IS NULL like adopt_branch's claim, so a push
+        # that lands between the checks above and this write is not overridden.
+        done = self.db.execute(
+            "UPDATE conversation SET requested_base=?, requested_base_at=?, requested_base_by=?,"
+            " base_sha=NULL WHERE id=? AND branch IS NULL",
+            (base, now_iso(), str(by or "?"), conv_id))
+        if not done.rowcount:
+            return False, "something else claimed this conversation's branch first"
+        log(f"conversation {conv_id}: work based on {base} (by {by})")
+        alias = f" (`{asked}` is `{base}` on this repository)" if asked != base else ""
+        return True, (f"this conversation's work is based on `{base}`{alias}: its next turn "
+                      f"starts on `origin/{base}`, and a pull request from it targets `{base}`.")
 
     def fork_conversation(self, fork_id, source_id, by):
         """Make conversation `fork_id` a fork of `source_id`. Returns (ok, reason).
@@ -10443,12 +10581,19 @@ class Watcher:
         done = self.db.execute(
             "UPDATE conversation SET forked_from=?, forked_at=?, forked_by=?,"
             " fork_source_watermark=?, fenced_history=?,"
-            " base_sha=COALESCE(base_sha, ?), title=COALESCE(title, ?)"
+            " base_sha=COALESCE(base_sha, ?), title=COALESCE(title, ?),"
+            " requested_base=COALESCE(requested_base, ?),"
+            " requested_base_at=COALESCE(requested_base_at, ?),"
+            " requested_base_by=COALESCE(requested_base_by, ?)"
             " WHERE id=? AND forked_from IS NULL",
             (source["id"], now_iso(), str(by or "?"),
              str(watermark) if watermark is not None else None,
              0 if is_direct_conversation(source) else 1,
-             source["base_sha"], source["title"], fork_id))
+             source["base_sha"], source["title"],
+             # THE BASE A SOURCE ASKED FOR comes along with its pin, which is a commit of it. A
+             # source that owns a branch loses it again in adopt_branch below, as it should.
+             self.conversation_requested_base(source), source["requested_base_at"],
+             source["requested_base_by"], fork_id))
         if not done.rowcount:
             return False, "something else forked this conversation first"
         log(f"conversation {fork_id}: forked from {source['id']} (by {by}), "
@@ -10468,6 +10613,9 @@ class Watcher:
             # now on branch `x`." reads as a typo rather than as two sentences.
             reason += " " + (why[:1].upper() + why[1:] if ok
                              else f"The branch could not be taken: {why}")
+        elif self.conversation_requested_base(source):
+            reason += (f" Its work is based on `{self.conversation_requested_base(source)}`, as "
+                       "the original's was.")
         fork = self.db.one("SELECT * FROM conversation WHERE id=?", (fork_id,))
         grafted = self.graft_transcript(source, fork)
         reason += (" It has the session from that conversation, so it starts where the last "
@@ -11162,7 +11310,16 @@ class Watcher:
                 cmd += ["--branch-prefix", self.cfg["branch_prefix"]]
             # Most-preferred first, which is also how ffbox breaks a tie between two branches
             # sitting on the same commit.
-            cmd += ["--base-refs", " ".join(self.cfg.get("publish_bases") or {})]
+            #
+            # AN OPERATOR'S BASE GOES TO THE FRONT. The moment after a release merge master and
+            # develop are one commit, and work asked for on develop must not come back named
+            # master -- pr_base would then refuse it the pull request it was asked for.
+            base_refs = list(self.cfg.get("publish_bases") or {})
+            requested = self.conversation_requested_base(conv)
+            if requested in base_refs:
+                base_refs.remove(requested)
+                base_refs.insert(0, requested)
+            cmd += ["--base-refs", " ".join(base_refs)]
             # AN ADOPTED BRANCH PUBLISHES ONLY WHAT THIS CONVERSATION ADDED. The line above
             # still decides which base the pull request targets; this decides where the
             # published range begins, and on a branch somebody else pushed those are different
@@ -12327,7 +12484,8 @@ class Watcher:
         # AFTER the push, because it is checked against the pushed commits. Recorded whether or
         # not a PR follows: which branch the work is for is a fact about the work, and the
         # verification gate below can withhold the PR without making that fact unavailable.
-        base, base_reason = self.pr_base(run_row_id, run_dir, branch)
+        base, base_reason = self.pr_base(run_row_id, run_dir, branch,
+                                         required=self.conversation_requested_base(conv))
         # `existed` IS THE ANSWER TO "did this run make the branch or add to one", and it comes
         # from what push_bundle looked up on the remote a moment before pushing. It used to be
         # derived from whether the conversation already owned a name, which was a good proxy
@@ -12484,7 +12642,7 @@ class Watcher:
                 return best
         return None
 
-    def pr_base(self, run_row_id, run_dir, branch):
+    def pr_base(self, run_row_id, run_dir, branch, required=None):
         """(base branch, reason it could not be decided). Which branch this work is for.
 
         The agent chooses by choosing what it branches from — origin/master for a fix to the
@@ -12508,6 +12666,10 @@ class Watcher:
         A missing or unusable name falls back to the configured default, and only if that
         default passes the same checks. Nothing else is a safe guess: a pull request into the
         wrong branch is a proposal to ship unreleased work to players.
+
+        AN OPERATOR'S BASE, when `required` names one (request_base), is the only candidate:
+        neither the container's claim nor the default may stand in for it, and work that does
+        not qualify gets no pull request rather than one into the branch the operator ruled out.
         """
         allowed = list(self.cfg.get("publish_bases") or {}) or [self.cfg["github"]["base"]]
         claimed = (_read_text(os.path.join(run_dir, "publish_base.txt")) or "").strip()
@@ -12515,6 +12677,8 @@ class Watcher:
         default = self.cfg["github"]["base"]
         if default not in candidates:
             candidates.append(default)
+        if required in allowed:
+            candidates = [required]
         if claimed and claimed not in allowed:
             log(f"run {run_row_id}: ignoring a publish base of {claimed!r}, which is not one of "
                 f"{allowed}")
@@ -12577,6 +12741,9 @@ class Watcher:
                 return name, None
             log(f"run {run_row_id}: not proposing into {name} -- this work descends from "
                 f"{intruder}, which {name} does not carry")
+        if required in allowed:
+            return None, (f"this work was asked to be based on `{required}` and is not, so no "
+                          f"pull request was opened against another branch")
         return None, ("the harness could not tell which branch this work is based on: it does "
                       f"not descend from {' or '.join(candidates)}")
 
@@ -12757,7 +12924,8 @@ class Watcher:
                 log(f"reconcile: {branch} still could not be pushed: {err}")
                 self.db.execute("UPDATE run SET no_branch_reason=? WHERE id=?", (err, run["id"]))
                 return None
-            base, _ = self.pr_base(run["id"], run_dir, branch)
+            base, _ = self.pr_base(run["id"], run_dir, branch,
+                                   required=self.conversation_requested_base(conv))
             # `existed` carries the same meaning here as in publish(): what the remote said a
             # moment before the push, which is the difference between a reply that says a fix
             # was created and one that says it was updated.
@@ -12786,7 +12954,8 @@ class Watcher:
         # as long as it stays inside the window.
         base = run["pr_base"]
         if base is None:
-            base, base_reason = self.pr_base(run["id"], run_dir, branch)
+            base, base_reason = self.pr_base(run["id"], run_dir, branch,
+                                             required=self.conversation_requested_base(conv))
             if base is None:
                 return self._still_no_pr(run, branch, base_reason)
             self.db.execute("UPDATE run SET pr_base=? WHERE id=?", (base, run["id"]))
@@ -17195,7 +17364,10 @@ def build_parser():
                          "it had pushed the branch itself. Only before it owns one: a "
                          "conversation keeps its branch for life. Outside the ffbox/ prefix "
                          "the harness may add commits to the branch but will never create it, "
-                         "so a branch deleted from the remote stops being publishable.")
+                         "so a branch deleted from the remote stops being publishable. A base "
+                         "name (master, develop, or main for master) adopts nothing: it bases "
+                         "the conversation's work there, and its branch is still made under "
+                         "ffbox/.")
     sp.add_argument("--json", action="store_true", help="print the result as JSON")
 
     sp = sub.add_parser("fork", help="continue another conversation here, on this box")
@@ -17342,11 +17514,18 @@ def main(argv=None):
         # by=the unix login, which is what a local ingress can honestly say about who asked.
         # The directive path passes a Discord snowflake instead; branch_adopted_by holds
         # whichever, because the question it answers is "who do I go and ask about this".
-        ok, reason = watcher.adopt_branch(args.conversation, args.branch,
-                                          by=getpass.getuser())
+        # A BASE NAME ASKS FOR A BASE, exactly as `!branch develop` does. See request_base.
+        base = watcher.publish_base_named(args.branch)
+        if base:
+            ok, reason = watcher.request_base(args.conversation, args.branch,
+                                              by=getpass.getuser())
+        else:
+            ok, reason = watcher.adopt_branch(args.conversation, args.branch,
+                                              by=getpass.getuser())
         if args.json:
             print(json.dumps({"ok": ok, "conversation": args.conversation,
-                              "branch": args.branch if ok else None, "reason": reason}))
+                              "branch": args.branch if ok and not base else None,
+                              "base": base if ok else None, "reason": reason}))
         else:
             print(reason if ok else f"refused: {reason}", file=sys.stdout if ok else sys.stderr)
         return 0 if ok else 1
