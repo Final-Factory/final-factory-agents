@@ -21,11 +21,15 @@ answer "whose subscription paid for that". Now each request has exactly one acco
 billed to, decided by who asked, so `pick` and `emptiest` are gone and what is left is the
 reading they were built on.
 
-TWO KINDS OF CREDENTIAL, and the difference runs through the whole file. A SUBSCRIPTION is a
-`claude setup-token` token, one per operator, with the five-hour and seven-day rolling windows
-this file measures. The DEFAULT is `ANTHROPIC_API_KEY`, a console key that pays for everything
-no operator asked for; it is metered rather than windowed, so it reports as reachable or not and
-has no bars to draw. `kind` on every record says which one it is.
+THREE KINDS OF CREDENTIAL, and the difference runs through the whole file. A SUBSCRIPTION is a
+`claude setup-token` token, with the five-hour and seven-day rolling windows this file measures.
+An API KEY (`ANTHROPIC_API_KEY`, and numbered ones beside it) is a console key, metered rather
+than windowed, so it reports as reachable or not and has no bars to draw. An OPENROUTER key
+(`OPENROUTER_API_KEY<n>`) is metered too, serves the one model its slot declares, and reports a
+budget instead of a window. `kind` on every record says which one it is, and a variable's prefix
+is what decides it (design/openrouter_provider_design.txt section 2). All three share one
+namespace of ids: an operator's `claude` id, and config.json's `claude.default` and
+`claude.classifier`, can each name a credential of any kind.
 
 NO TOKEN IS EVER RETURNED TO A CALLER THAT DID NOT ALREADY HAVE ONE. `claude_subscriptions` and
 `default_api_key` read them because somebody has to make the request, and everything downstream
@@ -142,6 +146,45 @@ RATELIMIT_PREFIX = "anthropic-ratelimit-unified-"
 # page -- reads `kind`; a caller that only wants a credential's name does not care.
 KIND_SUBSCRIPTION = "subscription"
 KIND_API_KEY = "api_key"
+# THE THIRD KIND, since 2026-09-10: an OpenRouter key, metered like an API key and serving whichever
+# model its slot declares. design/openrouter_provider_design.txt section 2.
+KIND_OPENROUTER = "openrouter"
+METERED_KINDS = (KIND_API_KEY, KIND_OPENROUTER)
+
+# THE OTHER TWO FAMILIES, numbered like the subscriptions and read by the same rule: a gap is not
+# the end of the list. The unnumbered ANTHROPIC_API_KEY is read beside its numbered siblings and is
+# the default when config.json names none. OpenRouter has no unnumbered spelling, because it has
+# no history to be compatible with.
+ANTHROPIC_NAME_PREFIX = "ANTHROPIC_NAME_KEY"
+OPENROUTER_KEY_PREFIX = "OPENROUTER_API_KEY"
+OPENROUTER_NAME_PREFIX = "OPENROUTER_NAME_KEY"
+OPENROUTER_MODEL_PREFIX = "OPENROUTER_MODEL_KEY"
+OPENROUTER_URL_PREFIX = "OPENROUTER_URL_KEY"
+# What a slot uses when it declares no model or no endpoint. Flash rather than GLM-5.3 because it
+# reads images, and player bug reports carry screenshots. ffbox mirrors both.
+OPENROUTER_DEFAULT_MODEL = "z-ai/glm-5.3-flash"
+OPENROUTER_DEFAULT_URL = "https://openrouter.ai/api"
+# How many tokens the reachability probe asks an OpenRouter model for. One is enough for a model
+# that answers at once; one that reasons before its first token may need more to answer at all,
+# and the design's measurement 13d is what sets this.
+OPENROUTER_PROBE_MAX_TOKENS = 1
+
+
+def metered(kind):
+    """Is a credential of this kind billed per token, with no rolling window to hold on?"""
+    return kind in METERED_KINDS
+
+
+def credential_kind(name):
+    """Which kind a secrets.env variable name is, from its prefix, or None for anything else."""
+    name = str(name or "")
+    if name.startswith(CLAUDE_TOKEN_PREFIX):
+        return KIND_SUBSCRIPTION
+    if name.startswith(CLAUDE_API_KEY_NAME):
+        return KIND_API_KEY
+    if name.startswith(OPENROUTER_KEY_PREFIX):
+        return KIND_OPENROUTER
+    return None
 
 
 def claude_subscriptions(env=None, secrets_path=None):
@@ -185,6 +228,109 @@ def default_api_key(env=None, secrets_path=None):
     return (CLAUDE_API_KEY_NAME, token) if token else None
 
 
+def claude_credentials(env=None, secrets_path=None):
+    """[(name, token, kind, label, rate, model, url)]: every credential this box holds, of every kind.
+
+    Subscriptions first in slot order, then Anthropic API keys (the unnumbered one first), then
+    OpenRouter keys. `rate` means something only for a subscription and `model` and `url` only for
+    an OpenRouter key; each is filled either way, so every tuple unpacks the same.
+
+    EACH FAMILY IS READ ON ITS OWN TERMS: the environment first, and secrets.env only when the
+    environment holds none of that family. That is what claude_subscriptions and default_api_key
+    each did for theirs, and doing it per family keeps a terminal that exported one API key from
+    hiding every OpenRouter key in the file.
+    """
+    env = os.environ if env is None else env
+    cached = {}
+
+    def from_file(name):
+        if "get" not in cached:
+            cached["get"] = _claude_secrets_file(_secrets_path(secrets_path)).get
+        return cached["get"](name)
+
+    out = []
+    for family in (_subscriptions_from, _api_keys_from, _openrouter_from):
+        found = family(env.get)
+        out.extend(found if found else family(from_file))
+    return out
+
+
+def _subscriptions_from(get):
+    return [(name, token, KIND_SUBSCRIPTION, label, rate, "", "")
+            for name, token, rate, label in _claude_tokens_from(get)]
+
+
+def _api_keys_from(get):
+    """The unnumbered ANTHROPIC_API_KEY and ANTHROPIC_API_KEY1..16, each with its declared name."""
+    out = []
+    for slot in [""] + [str(n) for n in range(1, CLAUDE_TOKEN_MAX + 1)]:
+        token = (get(CLAUDE_API_KEY_NAME + slot) or "").strip()
+        if token:
+            out.append((CLAUDE_API_KEY_NAME + slot, token, KIND_API_KEY,
+                        (get(ANTHROPIC_NAME_PREFIX + slot) or "").strip(), CLAUDE_DEFAULT_RATE,
+                        "", ""))
+    return out
+
+
+def _openrouter_from(get):
+    """OPENROUTER_API_KEY1..16, each with its declared name, model and base URL."""
+    out = []
+    for n in range(1, CLAUDE_TOKEN_MAX + 1):
+        slot = str(n)
+        token = (get(OPENROUTER_KEY_PREFIX + slot) or "").strip()
+        if token:
+            out.append((OPENROUTER_KEY_PREFIX + slot, token, KIND_OPENROUTER,
+                        (get(OPENROUTER_NAME_PREFIX + slot) or "").strip(), CLAUDE_DEFAULT_RATE,
+                        (get(OPENROUTER_MODEL_PREFIX + slot) or "").strip()
+                        or OPENROUTER_DEFAULT_MODEL,
+                        ((get(OPENROUTER_URL_PREFIX + slot) or "").strip()
+                         or OPENROUTER_DEFAULT_URL).rstrip("/")))
+    return out
+
+
+def credential_for(name, creds):
+    """One credential's (name, token, kind, label, rate, model, url), by variable name, or None."""
+    for cred in creds or []:
+        if cred[0] == name:
+            return cred
+    return None
+
+
+def budget_spent(budget):
+    """Has an OpenRouter key's own limit run out? False when it has no limit or said nothing."""
+    budget = budget or {}
+    remaining = budget.get("limit_remaining")
+    return (budget.get("limit") is not None and isinstance(remaining, (int, float))
+            and not isinstance(remaining, bool) and remaining <= 0)
+
+
+def budget_reset_at(budget, now=None):
+    """When an OpenRouter key's limit next refills, as epoch seconds, or None when nobody can say.
+
+    `limit_reset` is a period (daily, weekly or monthly, each rolling over at 00:00 UTC, weeks on
+    a Monday) or a timestamp. Anything else, including no value at all, is None: a hold with no
+    known end, which is probed rather than counted down.
+    """
+    raw = str((budget or {}).get("limit_reset") or "").strip().lower()
+    if not raw:
+        return None
+    now = time.time() if now is None else now
+    today = datetime.fromtimestamp(now, timezone.utc).replace(hour=0, minute=0, second=0,
+                                                              microsecond=0)
+    if raw == "daily":
+        return today.timestamp() + 86400
+    if raw == "weekly":
+        return today.timestamp() + 86400 * (7 - today.weekday())
+    if raw == "monthly":
+        year, month = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+        return today.replace(year=year, month=month, day=1).timestamp()
+    try:
+        when = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("z") else raw)
+    except ValueError:
+        return None
+    return (when if when.tzinfo else when.replace(tzinfo=timezone.utc)).timestamp()
+
+
 def _secrets_path(secrets_path):
     """Where secrets.env is, with the same override ffbox and ffwatch both honour."""
     if secrets_path is None:
@@ -206,6 +352,11 @@ def slot_ids(name, label):
     out = set()
     if label and label.strip():
         out.add(label.strip().casefold())
+    # EVERY CREDENTIAL ALSO ANSWERS TO ITS OWN VARIABLE NAME, which is unique, so a box whose keys
+    # were never named can still point an id at one. The bare number stays a subscription-only
+    # alias: "2" across three families would be ambiguous by construction.
+    if name:
+        out.add(str(name).casefold())
     digits = name[len(CLAUDE_TOKEN_PREFIX):] if name.startswith(CLAUDE_TOKEN_PREFIX) else ""
     if digits.isdigit():
         out.add(digits)
@@ -231,6 +382,15 @@ def subscription_named(key_id, subs):
     if len(hits) > 1:
         return None, "ambiguous: " + ", ".join(hits)
     return hits[0], ""
+
+
+def credential_named(key_id, creds):
+    """(variable name, why) for the credential an id names, across every kind.
+
+    The same three answers as subscription_named, over claude_credentials' tuples, whose label sits
+    at the same index. An id two credentials answer to is ambiguous whatever kinds they are.
+    """
+    return subscription_named(key_id, creds)
 
 
 def _claude_tokens_from(get):
@@ -302,9 +462,11 @@ def _claude_secrets_file(path):
     an empty answer — the page says "no keys" and that is a true sentence about what ffweb can
     see.
     """
-    prefixes = (CLAUDE_TOKEN_PREFIX, CLAUDE_RATE_PREFIX, CLAUDE_NAME_PREFIX)
-    wanted = set(prefixes) | {CLAUDE_API_KEY_NAME} | {prefix + str(n) for prefix in prefixes
-                                                      for n in range(1, CLAUDE_TOKEN_MAX + 1)}
+    prefixes = (CLAUDE_TOKEN_PREFIX, CLAUDE_RATE_PREFIX, CLAUDE_NAME_PREFIX, CLAUDE_API_KEY_NAME,
+                ANTHROPIC_NAME_PREFIX, OPENROUTER_KEY_PREFIX, OPENROUTER_NAME_PREFIX,
+                OPENROUTER_MODEL_PREFIX, OPENROUTER_URL_PREFIX)
+    wanted = set(prefixes) | {prefix + str(n) for prefix in prefixes
+                              for n in range(1, CLAUDE_TOKEN_MAX + 1)}
     out = {}
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
@@ -398,7 +560,8 @@ class ClaudeKeys:
     TIGHT_PCT = 80.0
 
     def __init__(self, tokens=None, ttl=CLAUDE_USAGE_TTL_SECS, timeout=10, fetch=None,
-                 probe=None, store=None, api=None, api_probe=None):
+                 probe=None, store=None, api=None, api_probe=None, credentials=None,
+                 openrouter_fetch=None, openrouter_probe=None):
         # A callable rather than a list, because the accounts are read out of the environment
         # and a value captured at construction would be a snapshot of the moment the server
         # started.
@@ -409,6 +572,17 @@ class ClaudeKeys:
         # that wants a box with no API key passes `lambda: None`.
         self._api = api if callable(api) else (
             (lambda: tuple(api)) if api is not None else default_api_key)
+        # EVERY KIND AT ONCE, which is what both services want and what they get by passing
+        # nothing. `tokens` and `api` are the older pair of seams, kept for the offline suites that
+        # hand the reader a fixture of one kind at a time; passing either keeps this reader on
+        # exactly the list those two describe.
+        if credentials is not None:
+            self._credentials = (credentials if callable(credentials)
+                                 else (lambda: list(credentials)))
+        elif tokens is None and api is None:
+            self._credentials = claude_credentials
+        else:
+            self._credentials = None
         self.ttl = ttl
         self.timeout = timeout
         # The seams the offline tests use. `fetch` takes (url, token) and returns
@@ -420,6 +594,11 @@ class ClaudeKeys:
         # THE THIRD SEAM, because an API key is asked a different question over a different
         # header. It takes (token) and returns (ok, error).
         self.api_probe = api_probe or self._probe_api
+        # AND TWO FOR AN OPENROUTER KEY: `openrouter_fetch` takes (base url, token) and returns
+        # (key fields, error), `openrouter_probe` takes (base url, token, model) and returns
+        # (ok, error).
+        self.openrouter_fetch = openrouter_fetch or self._openrouter_key
+        self.openrouter_probe = openrouter_probe or self._openrouter_message
         self._cache = {}
         # Fingerprints whose usage document answered 403. A `claude setup-token` token will
         # answer that EVERY time, for the life of the token, so asking again on each refresh is
@@ -631,7 +810,7 @@ class ClaudeKeys:
             return False, f"{type(exc).__name__}: {_short(str(reason), 160)}"
         return True, ""
 
-    def probe_one(self, name, token, kind=KIND_SUBSCRIPTION):
+    def probe_one(self, name, token, kind=KIND_SUBSCRIPTION, model="", url=""):
         """(ok, error): does this one credential answer, asked now?
 
         NO CACHE, NO STORE, AND NO DEPENDENCE ON A HOLD BEING CONFIGURED, which is the whole
@@ -646,10 +825,84 @@ class ClaudeKeys:
             return False, f"{name} holds no credential"
         if kind == KIND_API_KEY:
             return self.api_probe(token)
+        if kind == KIND_OPENROUTER:
+            # THE KEY FIRST, because it is free and says the most: revoked, or a budget spent.
+            # Then one real request, because a live key on a model nobody serves is still down.
+            base = url or OPENROUTER_DEFAULT_URL
+            _info, err = self.openrouter_fetch(base, token)
+            if err:
+                return False, err
+            return self.openrouter_probe(base, token, model or OPENROUTER_DEFAULT_MODEL)
         _headers, err = self.probe(token)
         return (not err), err
 
-    def _load(self, name, token, rate=CLAUDE_DEFAULT_RATE, label="", kind=KIND_SUBSCRIPTION):
+    def openrouter_budget(self, url, token):
+        """({limit, limit_remaining, limit_reset, usage, usage_daily}, error) for an OpenRouter key."""
+        info, err = self.openrouter_fetch(url or OPENROUTER_DEFAULT_URL, token)
+        if err or not isinstance(info, dict):
+            return None, err or "OpenRouter said nothing about this key"
+        return {k: info.get(k) for k in
+                ("limit", "limit_remaining", "limit_reset", "usage", "usage_daily")}, ""
+
+    def _openrouter_key(self, url, token):
+        """(key fields, error): GET <url>/v1/key, which costs nothing.
+
+        OpenRouter answers {"data": {...}} with the key's limit, what is left of it, when it resets
+        and what it has spent. A 401 is a revoked key or not an OpenRouter one.
+        """
+        req = urllib.request.Request(url.rstrip("/") + "/v1/key", headers={
+            "Authorization": "Bearer " + token, "User-Agent": USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                raw = resp.read(1 << 16)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                return None, ("401 — OpenRouter refused this key. Either it was revoked, or it is "
+                              "not an OpenRouter key")
+            return None, f"HTTP {exc.code} asking OpenRouter about this key"
+        except (urllib.error.URLError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            return None, f"{type(exc).__name__}: {_short(str(reason), 160)}"
+        try:
+            doc = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            return None, "OpenRouter answered with something that is not JSON"
+        data = doc.get("data") if isinstance(doc, dict) and isinstance(doc.get("data"), dict) \
+            else doc
+        return (data, "") if isinstance(data, dict) else (None, "unexpected shape from OpenRouter")
+
+    def _openrouter_message(self, url, token, model):
+        """(ok, error): one OPENROUTER_PROBE_MAX_TOKENS request to this key's model.
+
+        A 429 IS A LIVE KEY, as it is for an API key: it is about this second, not the credential.
+        A 402 is a spent budget, which ffwatch's budget hold waits on rather than probes.
+        """
+        body = json.dumps({"model": model, "max_tokens": OPENROUTER_PROBE_MAX_TOKENS,
+                           "messages": [{"role": "user", "content": "."}]}).encode("utf-8")
+        req = urllib.request.Request(url.rstrip("/") + "/v1/messages", data=body, headers={
+            "Authorization": "Bearer " + token,
+            "anthropic-version": self.ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                resp.read(1 << 16)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                return True, ""
+            if exc.code == 402:
+                return False, "402 — this key's OpenRouter budget is spent"
+            if exc.code == 401:
+                return False, "401 — OpenRouter refused this key"
+            return False, f"HTTP {exc.code} from OpenRouter asking {model}"
+        except (urllib.error.URLError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            return False, f"{type(exc).__name__}: {_short(str(reason), 160)}"
+        return True, ""
+
+    def _load(self, name, token, rate=CLAUDE_DEFAULT_RATE, label="", kind=KIND_SUBSCRIPTION,
+              model="", url=""):
         """One key, fetched. The cache is not consulted here — see read().
 
         `rate` and `label` ride along rather than being looked up here because they are facts
@@ -660,6 +913,22 @@ class ClaudeKeys:
         rec = {"name": name, "label": label, "fingerprint": fingerprint, "rate": rate,
                "kind": kind, "account": "", "plan": "", "windows": [], "source": "",
                "error": ""}
+        if kind == KIND_OPENROUTER:
+            # A BUDGET, NOT A WINDOW. GET /api/v1/key costs nothing and says whether the key is
+            # live and how much of its own limit is left, which is everything this row reports.
+            # The paid request to the model is probe_one's, for a hold that needs it, and never
+            # this page's hourly refresh.
+            rec["model"] = model or OPENROUTER_DEFAULT_MODEL
+            rec["source"] = "openrouter key"
+            info, err = self.openrouter_fetch(url or OPENROUTER_DEFAULT_URL, token)
+            if err:
+                rec["error"] = err
+                rec["state"] = "unreachable"
+                return rec
+            rec["budget"] = {k: info.get(k) for k in
+                             ("limit", "limit_remaining", "limit_reset", "usage", "usage_daily")}
+            rec["state"] = "spent" if budget_spent(rec["budget"]) else "available"
+            return rec
         if kind == KIND_API_KEY:
             # NO WINDOWS, AND THAT IS THE ANSWER RATHER THAN A GAP IN IT. A console key is
             # metered: there is no rolling window to be 91% through, so the hold has nothing to
@@ -885,16 +1154,19 @@ class ClaudeKeys:
         # identically — the same threads, the same cache, the same store — and `kind` is what
         # `_load` and the callers branch on. The API key goes last because it is the fallback
         # rather than anybody's account, and the page reads in that order.
-        pool = [entry + (KIND_SUBSCRIPTION,) for entry in self._tokens()]
-        api = self._api()
-        if api:
-            pool.append((api[0], api[1], CLAUDE_DEFAULT_RATE, "", KIND_API_KEY))
+        if self._credentials is not None:
+            pool = [(c[0], c[1], c[4], c[3], c[2], c[5], c[6]) for c in self._credentials()]
+        else:
+            pool = [tuple(entry) + (KIND_SUBSCRIPTION, "", "") for entry in self._tokens()]
+            api = self._api()
+            if api:
+                pool.append((api[0], api[1], CLAUDE_DEFAULT_RATE, "", KIND_API_KEY, "", ""))
         shared = self._store_read()
         records = [None] * len(pool)
         minted = {}
         threads = []
 
-        def work(slot, name, token, rate, label, kind):
+        def work(slot, name, token, rate, label, kind, model, url):
             key = token_fingerprint(token)
             with self._lock:
                 hit = self._cache.get(key)
@@ -914,7 +1186,7 @@ class ClaudeKeys:
                 records[slot] = dict(hit[1], age=int(now - hit[0]), rate=rate, label=label,
                                      kind=kind)
                 return
-            rec = self._load(name, token, rate, label, kind)
+            rec = self._load(name, token, rate, label, kind, model, url)
             with self._lock:
                 self._cache[key] = (now, rec)
                 minted[key] = (now, rec)
@@ -928,12 +1200,13 @@ class ClaudeKeys:
         for t in threads:
             t.join(max(0.0, deadline - time.time()))
         out = []
-        for slot, (name, token, rate, label, kind) in enumerate(pool):
+        for slot, (name, token, rate, label, kind, model, url) in enumerate(pool):
             rec = records[slot]
             if rec is None:
                 # The join gave up. Not a cache entry: a fetch that is still in flight will
                 # write one of its own when it lands, and the next reload picks it up.
                 rec = {"name": name, "label": label, "rate": rate, "kind": kind,
+                       "model": model,
                        "fingerprint": token_fingerprint(token),
                        "account": "", "plan": "", "windows": [], "source": "",
                        "state": "unreachable", "age": 0,

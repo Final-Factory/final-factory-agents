@@ -2285,6 +2285,72 @@ def test_a_subscription_is_headed_by_the_operator_who_claimed_it():
         os.remove(cfg_path)
 
 
+def test_an_openrouter_credential_has_a_row_with_its_model_budget_and_health():
+    """An OpenRouter key is a row like any other credential: headed by whoever claims it, or marked
+    as the default, with the model it serves, what is left of its own budget, and whether ffwatch
+    has it down. A conversation that will not classify is listed with the command that releases
+    it. design/openrouter_provider_design.txt sections 7 and 9."""
+    print("an OpenRouter credential on /claude")
+    cfg_path = os.path.join(os.environ["FFBOX_CONFIG_DIR"], "config.json")
+    with open(cfg_path, "w", encoding="utf-8") as fh:
+        json.dump({"operators": {"ben": {"discord": "1", "claude": "Ben-glm"}},
+                   "claude": {"default": "Players"}}, fh)
+    creds = [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-first-account-token",
+              ffweb.KIND_SUBSCRIPTION, "", 5, "", ""),
+             ("OPENROUTER_API_KEY1", "sk-or-v1-players", ffweb.KIND_OPENROUTER, "Players", 1,
+              "z-ai/glm-5.3-flash", "https://openrouter.ai/api"),
+             ("OPENROUTER_API_KEY2", "sk-or-v1-bens", ffweb.KIND_OPENROUTER, "Ben-glm", 1,
+              "vendor/other-model", "https://openrouter.ai/api")]
+    keys = ffweb.ClaudeKeys(
+        credentials=creds, fetch=claude_fetch, probe=claude_probe,
+        openrouter_fetch=lambda url, token: ({"limit": 10.0, "limit_remaining": 7.5,
+                                              "limit_reset": "daily", "usage_daily": 2.5}, ""))
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("INSERT OR REPLACE INTO credential_health(name, state, failures, down_since,"
+                     " last_error, updated_at) VALUES('OPENROUTER_API_KEY2', 'down', 2,"
+                     " '2026-09-10T00:00:00Z', 'HTTP 503', '2026-09-10T00:00:00Z')")
+        conn.execute("UPDATE conversation SET classify_failures=5, classify_error='gate exited 1',"
+                     " classify_flagged_at='2026-09-10T00:00:00Z' WHERE id=2")
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        srv = serve(claude_keys=keys)
+        try:
+            _c, _h, body = srv.get("/claude")
+            page = text_of(body)
+            blocks = page.split('<div class="item key">')[1:]
+            players = next((b for b in blocks if "OPENROUTER_API_KEY1" in b), "")
+            bens = next((b for b in blocks if "OPENROUTER_API_KEY2" in b or "Ben-glm" in b), "")
+            check("the header names the OpenRouter default",
+                  "billed to OPENROUTER_API_KEY1" in page, page[:1200])
+            check("its row is marked as the default and shows the model it serves",
+                  'class="pill default"' in players and "z-ai/glm-5.3-flash" in players,
+                  players[:500])
+            check("and what is left of its own budget", "$7.50 of $10.00 left" in players,
+                  players[:800])
+            check("an operator's OpenRouter key is headed by that operator",
+                  "ben" in bens and 'class="pill unclaimed"' not in bens, bens[:500])
+            check("with its own model", "vendor/other-model" in bens, bens[:500])
+            check("and says ffwatch has it down", 'class="pill down"' in bens, bens[:500])
+            check("a conversation that will not classify is listed with its release command",
+                  "conversation 2: 5 failures" in page and "ffwatch release 2" in page,
+                  page[-1200:])
+        finally:
+            srv.stop()
+    finally:
+        os.remove(cfg_path)
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            conn.execute("DELETE FROM credential_health WHERE name='OPENROUTER_API_KEY2'")
+            conn.execute("UPDATE conversation SET classify_failures=0, classify_error=NULL,"
+                         " classify_flagged_at=NULL WHERE id=2")
+            conn.commit()
+        finally:
+            conn.close()
+
+
 def test_a_usage_reading_is_cached_rather_than_fetched_per_reload():
     """The page reloads itself on the minute and several people have it open.
 
@@ -3977,6 +4043,7 @@ def main():
         test_a_key_can_be_given_a_name_and_the_page_prints_it_instead_of_the_slot,
         test_the_metered_default_is_a_row_with_no_windows_to_draw,
         test_a_subscription_is_headed_by_the_operator_who_claimed_it,
+        test_an_openrouter_credential_has_a_row_with_its_model_budget_and_health,
         test_a_usage_reading_is_cached_rather_than_fetched_per_reload,
         test_two_processes_share_one_reading_through_the_state_directory,
         test_a_key_that_cannot_read_its_usage_is_asked_the_other_way_once,

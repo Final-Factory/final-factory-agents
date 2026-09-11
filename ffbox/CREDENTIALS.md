@@ -324,7 +324,7 @@ write is proven by the job it exists for actually landing: a pull request appear
 repository, a branch appearing on origin, a check run appearing on a PR. Watch for that the
 first time after minting or rotating one, because every failure mode here is silent.
 
-## Not GitHub: the two Claude credentials
+## Not GitHub: the model credentials
 
 They belong in the same head as the four above, because the reason to keep them apart is the
 same: a leak of one must not carry the other's capabilities, and a box that muddles them spends
@@ -346,6 +346,15 @@ the box bounds everything else: `max_budget_usd` per agent class caps one run, a
 `classifier_budget_usd` caps one gate call. Neither knows what the month has cost; if this box
 ever needs a real cap, that is a feature to build rather than a setting to find.
 
-Both reach a container the same way every other credential here does — as a variable NAME on
+**`OPENROUTER_API_KEY<n>` — an OpenRouter key.** Minted at openrouter.ai, named beside it as
+`OPENROUTER_NAME_KEY<n>`, and serving the one model its slot declares as `OPENROUTER_MODEL_KEY<n>`
+(GLM-5.3 Flash when it declares none). An operator can claim it, or `claude.default` and
+`claude.classifier` can name it to pay for everything no operator asked for. Its blast radius is
+money, like an API key's, but it can be bounded where an API key cannot. In OpenRouter's console,
+give it a daily budget limit and a model allowlist holding its one model. The limit is the real
+ceiling, because Claude Code prices `max_budget_usd` for Anthropic's models. The allowlist is what
+refuses an agent that names a full Anthropic model id to get past the alias mapping.
+
+All three reach a container the same way every other credential here does — as a variable NAME on
 ffbox's command line, resolved out of `secrets.env` inside ffbox, forwarded to docker by name so
-the value never enters argv. A container is handed exactly one of them and never both.
+the value never enters argv. A container is handed exactly one of them, and only the variables its kind needs.

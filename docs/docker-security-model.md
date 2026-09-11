@@ -95,7 +95,12 @@ a git one; see the last section.
 
 | variable | what it is |
 |---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Anthropic API access |
+| `CLAUDE_CODE_OAUTH_TOKEN` | an operator's Anthropic subscription, for a turn that operator asked for |
+| or `ANTHROPIC_API_KEY` | an Anthropic API key, metered |
+| or `ANTHROPIC_AUTH_TOKEN`, with `ANTHROPIC_BASE_URL` | an OpenRouter key, metered, with the one model it serves in `ANTHROPIC_DEFAULT_*_MODEL` and `ANTHROPIC_API_KEY` passed empty |
+
+Exactly one of those three kinds goes in, chosen host-side by who asked
+(design/operator_subscriptions_design.txt, design/openrouter_provider_design.txt).
 
 That is the list, and "exactly one" is still exactly one now that `secrets.env` holds a POOL of
 Claude tokens (`CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, one per account). `ffbox` resolves the pool
@@ -233,10 +238,11 @@ and it warns.
 
 ### What the allowlist cannot do
 
-**It cannot exclude Anthropic.** The container runs `claude -p`, so `api.anthropic.com` has to be
-on the list. An agent that wants to smuggle the workspace out can write it into a prompt to its
-own account. The allowlist narrows exfiltration from anywhere to two vendors; it does not close
-it, and no arrangement that runs the model from inside the container can.
+**It cannot exclude the model's vendors.** The container runs `claude -p`, so `api.anthropic.com`
+has to be on the list, and so does `openrouter.ai`, because a credential in a fenced container may
+be an OpenRouter key. An agent that wants to smuggle the workspace out can write it into a prompt
+to its own account at either. The allowlist narrows exfiltration from anywhere to three vendors;
+it does not close it, and no arrangement that runs the model from inside the container can.
 
 **It is a name list, not an authorisation list.** Anything reachable at an allowlisted name is
 reachable. Both credentials in the container are for services on that list, which is precisely

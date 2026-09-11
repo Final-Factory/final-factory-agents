@@ -356,10 +356,11 @@ Options:
                        conversation was opened with. It does NOT pick the network — that comes
                        from --network, which ffwatch also passes, resolved from that pool's
                        "network" mode; see there.
-  --claude-key NAME    Which Claude credential pays for the container this creates, named as the
-                       secrets.env variable holding it: CLAUDE_CODE_OAUTH_TOKEN2 for an
-                       operator's subscription, or ANTHROPIC_API_KEY for the metered default
-                       that pays for everything no operator asked for. A NAME, never a token —
+  --claude-key NAME    Which credential pays for the container this creates, named as the
+                       secrets.env variable holding it: CLAUDE_CODE_OAUTH_TOKEN2 (an Anthropic
+                       subscription), ANTHROPIC_API_KEY or ANTHROPIC_API_KEY2 (an Anthropic API
+                       key), or OPENROUTER_API_KEY1 (an OpenRouter key, with the model and base
+                       URL declared beside it in secrets.env). A NAME, never a token —
                        the value is resolved here, so no credential reaches argv. ffwatch
                        decides it from who asked; left off, the first non-empty subscription
                        slot is used, which is what a run typed by hand gets. A name that is not
@@ -579,8 +580,16 @@ fi
 # GH_PR_TOKEN` would hand a container the GitHub token as its Claude one. Anything else is
 # refused rather than quietly falling back, because a caller asking for an account that is not
 # there has a wrong idea about this box and running the turn on another account would hide that.
+# THE OPENROUTER DEFAULTS, MIRRORED FROM claude_keys.py (OPENROUTER_DEFAULT_MODEL and
+# OPENROUTER_DEFAULT_URL), which is the original: this is shell and cannot import it. A slot that
+# declares OPENROUTER_MODEL_KEY<n> or OPENROUTER_URL_KEY<n> in secrets.env uses its own.
+FFBOX_OPENROUTER_DEFAULT_MODEL=z-ai/glm-5.3-flash
+FFBOX_OPENROUTER_DEFAULT_URL=https://openrouter.ai/api
+
 _ff_active_token=""
 _ff_active_name=""
+_ff_active_kind=""
+_ff_active_slot=""
 _ff_v=""
 _ff_wanted_ok=0
 for ((_ff_n = 1; _ff_n <= ${FFBOX_CLAUDE_TOKEN_MAX:-16}; _ff_n++)); do
@@ -593,32 +602,46 @@ for ((_ff_n = 1; _ff_n <= ${FFBOX_CLAUDE_TOKEN_MAX:-16}; _ff_n++)); do
     if [ -z "$_ff_active_token" ]; then
         _ff_active_token=$_ff_v
         _ff_active_name=$_ff_name
+        _ff_active_kind=subscription
     fi
     if [ -n "$CLAUDE_KEY" ] && [ "$_ff_name" = "$CLAUDE_KEY" ]; then
         _ff_active_token=$_ff_v
         _ff_active_name=$_ff_name
+        _ff_active_kind=subscription
         _ff_wanted_ok=1
     fi
 done
 if [ -z "$_ff_active_token" ] && [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
     _ff_active_token=${CLAUDE_CODE_OAUTH_TOKEN:-}
     _ff_active_name=CLAUDE_CODE_OAUTH_TOKEN
+    _ff_active_kind=subscription
     [ "$CLAUDE_KEY" = "CLAUDE_CODE_OAUTH_TOKEN" ] && _ff_wanted_ok=1
 fi
-# THE API KEY IS A LEGAL --claude-key VALUE and is never the unasked-for fallback. A run that
-# names it gets it or gets nothing: falling through to a subscription slot here would be a
-# player's turn silently billed to somebody's personal plan, which is the exact failure the
-# routing exists to prevent.
-if [ "$CLAUDE_KEY" = "ANTHROPIC_API_KEY" ]; then
-    if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-        _ff_active_token=${ANTHROPIC_API_KEY}
-        _ff_active_name=ANTHROPIC_API_KEY
+# THE METERED KINDS ARE LEGAL --claude-key VALUES and are never the unasked-for fallback: an
+# Anthropic API key (the unnumbered ANTHROPIC_API_KEY or ANTHROPIC_API_KEY1..16) and an OpenRouter
+# key (OPENROUTER_API_KEY1..16). The kind is the prefix, and a run that names one gets it or gets
+# nothing: falling through to a subscription slot here would be a player's turn silently billed to
+# somebody's personal plan, which is the exact failure the routing exists to prevent.
+case "$CLAUDE_KEY" in
+    ANTHROPIC_API_KEY|ANTHROPIC_API_KEY[1-9]|ANTHROPIC_API_KEY1[0-6])
+        _ff_kind=api_key;    _ff_slot=${CLAUDE_KEY#ANTHROPIC_API_KEY} ;;
+    OPENROUTER_API_KEY[1-9]|OPENROUTER_API_KEY1[0-6])
+        _ff_kind=openrouter; _ff_slot=${CLAUDE_KEY#OPENROUTER_API_KEY} ;;
+    *)  _ff_kind="";         _ff_slot="" ;;
+esac
+if [ -n "$_ff_kind" ]; then
+    _ff_v=${!CLAUDE_KEY:-}
+    if [ -n "$_ff_v" ]; then
+        _ff_active_token=$_ff_v
+        _ff_active_name=$CLAUDE_KEY
+        _ff_active_kind=$_ff_kind
+        _ff_active_slot=$_ff_slot
         _ff_wanted_ok=1
     else
-        echo "ffbox: --claude-key ANTHROPIC_API_KEY, but that variable is empty or absent in" >&2
-        echo "       $SECRETS. It pays for every request no operator made — a player in a" >&2
-        echo "       forum thread, the engagement gate, the selector — so without it this box" >&2
-        echo "       can only answer its operators." >&2
+        echo "ffbox: --claude-key $CLAUDE_KEY, but that variable is empty or absent in" >&2
+        echo "       $SECRETS. A metered credential pays for requests no operator made — a" >&2
+        echo "       player in a forum thread, the engagement gate, the selector — and naming one" >&2
+        echo "       that is not there never falls back to somebody's subscription." >&2
         exit 78
     fi
 fi
@@ -628,31 +651,55 @@ if [ -z "$_ff_active_token" ]; then
     echo "       'claude setup-token' and put it in $SECRETS as CLAUDE_CODE_OAUTH_TOKEN1 — it" >&2
     echo "       bills against that subscription. Further operators go in as" >&2
     echo "       CLAUDE_CODE_OAUTH_TOKEN2 and up, each claimed in config.json by the operator" >&2
-    echo "       it belongs to; ANTHROPIC_API_KEY beside them pays for everything else." >&2
+    echo "       it belongs to; ANTHROPIC_API_KEY or an OPENROUTER_API_KEY<n> beside them pays" >&2
+    echo "       for everything else." >&2
     exit 78
 fi
 if [ -n "$CLAUDE_KEY" ] && [ "$_ff_wanted_ok" != 1 ]; then
     echo "ffbox: --claude-key ${CLAUDE_KEY} names no Claude credential in $SECRETS" >&2
     exit 78
 fi
-# ONE NAME, ONE VALUE, AND NEVER BOTH KINDS. Claude Code reads both variables and has its own
-# precedence between them; a container that held an API key and a subscription token would be
-# billing whichever one that precedence happens to prefer, which is a fact about a version of
-# `claude` rather than a decision this box made. A subscription goes in under the UNNUMBERED
-# name, which is what `claude` reads.
+# ONE CREDENTIAL, AND ONLY WHAT ITS KIND NEEDS. Claude Code reads several variables and has its own
+# precedence between them; a container holding two kinds would be billing whichever one that
+# precedence happens to prefer, which is a fact about a version of `claude` rather than a decision
+# this box made. A subscription goes in under the UNNUMBERED name, which is what `claude` reads; an
+# API key under ANTHROPIC_API_KEY whatever its slot; an OpenRouter key as the bearer token beside
+# its base URL, with ANTHROPIC_API_KEY set EMPTY as OpenRouter asks and every model alias pointed at
+# the one model its slot declares (design/openrouter_provider_design.txt section 5).
 #
 # FORWARDED BY NAME, NEVER AS `-e NAME=VALUE`. docker's argv is world-readable through /proc for
 # the life of the call; the bare form takes the value out of this process's environment instead,
-# which is the same rule that keeps the GitHub token off the command line.
-if [ "$_ff_active_name" = "ANTHROPIC_API_KEY" ]; then
-    export ANTHROPIC_API_KEY="$_ff_active_token"
-    CLAUDE_ENV_ARGS=(-e ANTHROPIC_API_KEY)
-else
-    export CLAUDE_CODE_OAUTH_TOKEN="$_ff_active_token"
-    CLAUDE_ENV_ARGS=(-e CLAUDE_CODE_OAUTH_TOKEN)
-fi
+# which is the same rule that keeps the GitHub token off the command line. The one `-e NAME=` is
+# the empty ANTHROPIC_API_KEY, which carries no value to leak.
+case "$_ff_active_kind" in
+    api_key)
+        export ANTHROPIC_API_KEY="$_ff_active_token"
+        CLAUDE_ENV_ARGS=(-e ANTHROPIC_API_KEY)
+        ;;
+    openrouter)
+        _ff_model_var="OPENROUTER_MODEL_KEY${_ff_active_slot}"
+        _ff_url_var="OPENROUTER_URL_KEY${_ff_active_slot}"
+        _ff_model=${!_ff_model_var:-}
+        _ff_url=${!_ff_url_var:-}
+        export ANTHROPIC_AUTH_TOKEN="$_ff_active_token"
+        export ANTHROPIC_BASE_URL="${_ff_url:-$FFBOX_OPENROUTER_DEFAULT_URL}"
+        export ANTHROPIC_DEFAULT_FABLE_MODEL="${_ff_model:-$FFBOX_OPENROUTER_DEFAULT_MODEL}"
+        export ANTHROPIC_DEFAULT_OPUS_MODEL="$ANTHROPIC_DEFAULT_FABLE_MODEL"
+        export ANTHROPIC_DEFAULT_SONNET_MODEL="$ANTHROPIC_DEFAULT_FABLE_MODEL"
+        export ANTHROPIC_DEFAULT_HAIKU_MODEL="$ANTHROPIC_DEFAULT_FABLE_MODEL"
+        CLAUDE_ENV_ARGS=(-e ANTHROPIC_AUTH_TOKEN -e ANTHROPIC_BASE_URL -e ANTHROPIC_API_KEY=
+                         -e ANTHROPIC_DEFAULT_FABLE_MODEL -e ANTHROPIC_DEFAULT_OPUS_MODEL
+                         -e ANTHROPIC_DEFAULT_SONNET_MODEL -e ANTHROPIC_DEFAULT_HAIKU_MODEL)
+        unset _ff_model_var _ff_url_var _ff_model _ff_url
+        ;;
+    *)
+        export CLAUDE_CODE_OAUTH_TOKEN="$_ff_active_token"
+        CLAUDE_ENV_ARGS=(-e CLAUDE_CODE_OAUTH_TOKEN)
+        ;;
+esac
 CLAUDE_KEY=$_ff_active_name
-unset _ff_active_token _ff_active_name _ff_v _ff_n _ff_name _ff_wanted_ok
+unset _ff_active_token _ff_active_name _ff_active_kind _ff_active_slot _ff_v _ff_n _ff_name \
+      _ff_wanted_ok _ff_kind _ff_slot
 
 # --- the Unity licence ---------------------------------------------------------------------------
 #

@@ -268,8 +268,11 @@ from claude_keys import (                                    # noqa: E402  (see 
     CLAUDE_USAGE_STORE,
     CLAUDE_USAGE_TTL_SECS,
     KIND_API_KEY,
+    KIND_OPENROUTER,
+    KIND_SUBSCRIPTION,
     RATELIMIT_PREFIX,
     ClaudeKeys,
+    metered,
     claude_plan,
     # Not used by this page: `claude_claims` reads the records ClaudeKeys already returned.
     # Re-exported because `python3 ffbox/ffweb.py` in a terminal and the offline suite both
@@ -2907,27 +2910,54 @@ class App:
         # one: the daemon's forced readings are what actually keep the store current, they
         # happen when work arrives rather than on any clock, and each row already carries the
         # only fact a reader wants from it — "read 4m ago", off the reading itself.
-        _subs = [r for r in rows if r.get("kind") != KIND_API_KEY]
+        _subs = [r for r in rows if r.get("kind", KIND_SUBSCRIPTION) == KIND_SUBSCRIPTION]
+        (dflt, dwhy), (clf, cwhy) = claude_defaults(rows)
+        if dflt:
+            said = "Everything no operator asked for is billed to " + esc(dflt) + "."
+        elif not (_config_block().get("claude") or {}).get("default"):
+            said = ("There is no " + esc(CLAUDE_API_KEY_NAME) + ", so nothing that is not an "
+                    "operator's request can run.")
+        else:
+            said = esc(f"Nothing that is not an operator's request can run: {dwhy}.")
+        if clf and clf != dflt:
+            said += " The gate and the selector bill " + esc(clf) + "."
+        elif not clf and dflt:
+            said += " " + esc(f"The gate and the selector have nothing to bill: {cwhy}.")
         head.append(
             "<p class=\"note\">"
             + esc(f"{len(_subs)} subscription{'' if len(_subs) == 1 else 's'}")
             + (", one per operator who claims one. " if _subs else ". ")
-            + ("Everything no operator asked for is billed to "
-               + esc(CLAUDE_API_KEY_NAME) + "."
-               if len(_subs) != len(rows) else
-               "There is no " + esc(CLAUDE_API_KEY_NAME) + ", so nothing that is not an "
-               "operator's request can run.")
-            + "</p>")
+            + said + "</p>")
+        # WHICH CREDENTIALS ARE DOWN, out of the table ffwatch writes. A database from before the
+        # table existed has none, which is also the truth.
+        try:
+            # dict(), because ReadOnlyDb hands back sqlite3.Row and a Row has no .get.
+            health = {r["name"]: dict(r)
+                      for r in self.db.query("SELECT * FROM credential_health")}
+        except sqlite3.Error:
+            health = {}
 
         body = []
         for rec in rows:
             api_key_row = rec.get("kind") == KIND_API_KEY
+            openrouter_row = rec.get("kind") == KIND_OPENROUTER
+            metered_row = metered(rec.get("kind"))
             # WHOSE ACCOUNT THIS IS, and the operator who claims it wins over everything else: a
             # row that reads "lothsahn" says who runs out when it runs out, where the declared
             # name says only which line of secrets.env it came from and the variable name says
             # only where in the file it sits.
-            if api_key_row:
-                meta = [esc(rec["name"]), str(pill("default"))]
+            if metered_row and not claims.get(rec["name"]):
+                # A METERED CREDENTIAL NOBODY CLAIMS is the default, the classifier's, or a key
+                # nothing on this box can spend, and the row says which.
+                meta = [esc(rec.get("label") or rec["name"])]
+                if rec.get("label"):
+                    meta.append(esc(rec["name"]))
+                if rec["name"] == dflt:
+                    meta.append(str(pill("default")))
+                if clf and rec["name"] == clf and clf != dflt:
+                    meta.append(str(pill("classifier")))
+                if rec["name"] not in (dflt, clf):
+                    meta.append(str(pill("unclaimed")))
             elif claims.get(rec["name"]):
                 meta = [esc(claims[rec["name"]])]
                 if rec.get("label"):
@@ -2944,7 +2974,11 @@ class App:
             # that timed out, because it is read from secrets.env rather than from Anthropic and
             # is therefore the one thing about a key that is known whatever the network did. An
             # API key has no plan in this sense — it is metered — and says so instead.
-            meta.append("metered" if api_key_row else esc(claude_plan(rec.get("rate"))))
+            meta.append("metered" if metered_row else esc(claude_plan(rec.get("rate"))))
+            if openrouter_row and rec.get("model"):
+                meta.append("model " + esc(short(rec["model"], 60)))
+            if (health.get(rec["name"]) or {}).get("state") == "down":
+                meta.append(str(pill("down")))
             if rec["plan"]:
                 # What Anthropic says, when it will say anything — a different source from the
                 # line above, so both stand rather than one quietly overwriting the other.
@@ -2984,6 +3018,9 @@ class App:
                 trows.append([w["label"], usage_bar(w["percent"]), note])
             if trows:
                 body.append(str(table(["window", "used", "resets"], trows)))
+            elif openrouter_row:
+                body.append("<p class=\"note\">" + esc(openrouter_budget_line(rec.get("budget")))
+                            + "</p>")
             elif api_key_row:
                 # NOT A GAP IN THE READING, THE ANSWER. A console key is billed per token and has
                 # no rolling window to be part way through, so there is nothing to draw and
@@ -2995,6 +3032,21 @@ class App:
                 body.append("<p class=\"empty\">Anthropic reported no windows for this "
                             "key.</p>")
             body.append("</div>")
+        # CONVERSATIONS THAT WILL NOT CLASSIFY, flagged by ffwatch after classify_retry.flag_after
+        # failures. They wait; a person releases one, and this is where that person looks.
+        try:
+            flagged = self.db.query(
+                "SELECT id, classify_failures, classify_error FROM conversation"
+                " WHERE classify_flagged_at IS NOT NULL AND gate_released_by IS NULL ORDER BY id")
+        except sqlite3.Error:
+            flagged = []
+        if flagged:
+            body.append("<h2>conversations that will not classify</h2>")
+            for row in flagged:
+                body.append("<p class=\"note\">" + esc(
+                    f"conversation {row['id']}: {row['classify_failures']} failures, last: "
+                    f"{row['classify_error'] or 'no detail'}. It waits; "
+                    f"`ffwatch release {row['id']}` runs it without the gate.") + "</p>")
         return page("Claude", head + body, refresh=True)
 
     # -- one conversation -------------------------------------------------------------------
@@ -3979,14 +4031,64 @@ def claude_claims(rows):
             if isinstance(entry, dict) else ""
         if not wanted:
             continue
+        # ANY KIND, since 2026-09-10: an operator may claim an API key or an OpenRouter key as
+        # well as a subscription.
         hits = [rec["name"] for rec in rows
-                if rec.get("kind") != KIND_API_KEY
-                and wanted in slot_ids(rec["name"], rec.get("label") or "")]
+                if wanted in slot_ids(rec["name"], rec.get("label") or "")]
         if len(hits) != 1:
             continue
         seen[hits[0]] = seen.get(hits[0], 0) + 1
         out[hits[0]] = str(who)
     return {name: who for name, who in out.items() if seen.get(name) == 1}
+
+
+def claude_defaults(rows):
+    """((default name, why), (classifier name, why)): what claude.default and claude.classifier
+    resolve to, over the rows this page already has.
+
+    The same rules ffwatch applies in default_credential and classifier_credential, restated here
+    because this page imports nothing from ffwatch: an id matched as an operator's is, it must name
+    exactly one credential, and that credential must be metered. Unset default is the unnumbered
+    ANTHROPIC_API_KEY; unset classifier is whatever the default resolved to.
+    """
+    block = _config_block().get("claude")
+    block = block if isinstance(block, dict) else {}
+
+    def resolve(key, unset):
+        wanted = str(block.get(key) or "").strip()
+        if not wanted:
+            return unset
+        hits = [rec for rec in rows
+                if wanted.casefold() in slot_ids(rec["name"], rec.get("label") or "")]
+        if not hits:
+            return None, f"claude.{key} is {wanted!r}, which names nothing in secrets.env"
+        if len(hits) > 1:
+            return None, f"claude.{key} is {wanted!r}, which more than one credential answers to"
+        if not metered(hits[0].get("kind")):
+            return None, (f"claude.{key} is {wanted!r}, which is a subscription, and it must name "
+                          f"a metered credential")
+        return hits[0]["name"], ""
+
+    api = any(rec["name"] == CLAUDE_API_KEY_NAME for rec in rows)
+    dflt = resolve("default", (CLAUDE_API_KEY_NAME, "") if api
+                   else (None, f"there is no {CLAUDE_API_KEY_NAME}"))
+    return dflt, resolve("classifier", dflt)
+
+
+def openrouter_budget_line(budget):
+    """One sentence about an OpenRouter key's own budget, from GET /api/v1/key's fields."""
+    budget = budget or {}
+
+    def usd(value):
+        return f"${value:,.2f}" if isinstance(value, (int, float)) else "?"
+
+    spent_today = budget.get("usage_daily")
+    today = f" {usd(spent_today)} spent today." if spent_today is not None else ""
+    if budget.get("limit") is None:
+        return "Metered, with no limit set on the key." + today
+    reset = budget.get("limit_reset")
+    return (f"Metered: {usd(budget.get('limit_remaining'))} of {usd(budget.get('limit'))} left"
+            + (f", resets {reset}" if reset else "") + "." + today)
 
 
 def github_repo():

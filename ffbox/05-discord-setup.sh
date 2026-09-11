@@ -157,8 +157,9 @@ if not any(str(v or "").strip().isdigit() for v in _discord_ids):
 _claude_ids = [e.get("claude") for e in operators.values() if isinstance(e, dict)]
 if operators and not any(str(v or "").strip() for v in _claude_ids):
     missing += out("operators.<name>.claude",
-                   "edit ~/.config/ffbox/config.json   (the CLAUDE_CODE_NAME_TOKEN<n> declared "
-                   "beside that person's token in secrets.env)")
+                   "edit ~/.config/ffbox/config.json   (the CLAUDE_CODE_NAME_TOKEN<n>, "
+                   "ANTHROPIC_NAME_KEY<n> or OPENROUTER_NAME_KEY<n> declared beside that "
+                   "person's key in secrets.env)")
 
 # THE GITHUB HALF OF THE SAME TABLE, and not counted as missing: a box that never wants
 # #codereview is a box that leaves this empty, and saying "you are not done" about a feature

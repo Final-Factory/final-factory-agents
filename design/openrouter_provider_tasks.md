@@ -34,8 +34,41 @@ Effort: **S** under an hour, **M** an afternoon, **L** a day or more.
 
 ## Status, 2026-09-10
 
-**Not started.** Phases A and B ship first and alone, and do not depend on Phase 0. Phase 0 is by
-hand and gates the deploy of phases C onward.
+**Phases A-J implemented and green, offline; Phase 0 not run; G3 not built.** `sh ffbox/test.sh`
+passes end to end. Two local commits: phases A and B with their docs and tests, then phases C-J.
+Nothing here has run against a real OpenRouter key, a real Anthropic outage or a real container,
+so Phase 0 still gates deploy steps 3 onward. G3 waits on 0e, as decision 9 says.
+
+Deviations from the tasks below, all deliberate:
+
+1. **`claude_subscriptions()` and `default_api_key()` stay** (C3, C7). No ffwatch caller uses either
+   now. Both still back `ClaudeKeys`' older `tokens=` and `api=` seams, which the ffweb suite's
+   fixtures use. `ClaudeKeys()` with neither argument reads `claude_credentials()`, which is what
+   both services construct.
+2. **An OpenRouter row on `/claude` reads only `GET /api/v1/key`** (C6). The paid request to the
+   model happens only in `probe_one`, for a health hold that needs it. The page's hourly refresh
+   costs nothing.
+3. **A classifier credential that does not resolve gets its own verdict, `unclassifiable`** (B3).
+   It is not `refused`, because `refused` is handled below the gate and this has to return above
+   it. It says `say_route_refused`'s sentence where `always_a_turn` says a turn was coming.
+4. **Two failure kinds are narrower than A1 lists.** A missing `claude` binary is `refused`, not
+   `outage`: probing a credential cannot fix a PATH. An API error with a 4xx status other than
+   401, 402, 403 or 429 is `unusable`: a prompt too long is about that request, not the credential.
+5. **An `unusable` answer resets a credential's failure count** (B1). The credential answered; the
+   model did not follow the contract.
+6. **The outage notice has real wording, not a placeholder** (B8). `WAITING_NOTE` is written to
+   max-voice. The wording is still the design's open decision, and this is a starting point for it.
+7. **The suite's default classifier stub changed** (J2). A case with no verdict now gets a stub
+   that engages at the gate and names an unoffered id at the selector. Those are the outcomes the
+   failing stub produced while failures failed open. Cases about failure ask for it with
+   `classifier_fails=True`. This replaced editing dozens of unrelated cases.
+8. **`_deep_merge` shares `DEFAULTS`' nested dicts.** A test that sets `case.cfg["claude"][k]` in
+   place changes the default for every later case. The new tests replace the dict instead.
+   Production never mutates the config, so the merge itself is unchanged.
+9. **J19 checks the refusal, not G3.** A turn with nothing to bill fails with no `job.json`; the
+   crossing comparison waits for G3.
+10. **ffbox's docker stub also records the model environment by value** (J21). A forwarded-by-name
+    variable is not in argv, and the declared model and URL are what the check is about.
 
 ## What already exists
 
