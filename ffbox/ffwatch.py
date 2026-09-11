@@ -9013,6 +9013,34 @@ class Watcher:
             f"{' billing ' + _staged_key if _staged_key else ''}")
         return pool_id
 
+    def pool_spare_keys(self, agent_class):
+        """Which credentials already have a spare of this class WAITING for a turn.
+
+        THE SAME THREE TESTS keep_pool's `warm` count makes, and they have to be the same three
+        or the keeper contradicts itself: the containers that count towards a class's `idle` must
+        be exactly the containers that count as an account being covered. Until 2026-09-11 this
+        was one test -- the class -- and both halves of the difference were bugs.
+
+        `out/owner` IS THE FIRST ONE. A dispatched spare is RENAMED and keeps its `ffbox.pool`
+        label and its `claude-key` file, by design, so `docker ps` shows an operator's running
+        turn as something indistinguishable from their waiting spare. The keeper therefore
+        believed that operator was covered for as long as their turn ran, refused to stage
+        behind it, and the pool they had just emptied stayed empty -- so their NEXT turn ran
+        cold, in the one case the warm pool exists for. Found on the box within a minute of the
+        page starting to say why a pool was short: ffdev, three turns in flight, `waiting` 0, and
+        the reason reading "every account that could pay already has a spare waiting (1 of them)".
+        The same file covers a spare being retired, which is equally not a spare anybody can have.
+
+        THE TIER IS THE SECOND. An evictable spare is a guess on a recently-used branch and
+        carries a credential like any other container, so counting it here would let a guess
+        report an account as covered and leave the promise that account's `idle` made unkept --
+        which is the same thing the `warm` count refuses for the same reason.
+        """
+        return {self.pool_claude_key(c["id"]) for c in self.pool_containers()
+                if c["class"] == agent_class
+                and self.effective_pool_tier(c) == POOL_TIER_HELD
+                and not os.path.exists(self.pool_owner_path(c["id"]))}
+
     def pool_stage_key(self, agent_class):
         """Which credential the next spare of this class should be created with, or None.
 
@@ -9026,9 +9054,11 @@ class Watcher:
 
         ffdev serves operators, and which operator asks next is a GUESS. It is made the way
         `pool_branch_activity` guesses at branches: out of what this box has actually run, most
-        recent first, skipping any operator who already has a spare waiting. A wrong guess costs
-        one cold launch and the spare ages out at `idle_agent_ttl_secs`, the same as a spare on a
-        branch nobody asks for; correcting it would mean destroying a filled workspace.
+        recent first, skipping any operator who already has a spare waiting -- which is
+        pool_spare_keys, and is narrower than "has a container": a turn IN one is not a spare.
+        A wrong guess costs one cold launch and the spare ages out at `idle_agent_ttl_secs`, the
+        same as a spare on a branch nobody asks for; correcting it would mean destroying a filled
+        workspace.
 
         A BOX WITH ONE ACTIVE OPERATOR GETS THEIR KEY EVERY TIME, which is the common case and
         the one worth being right about.
@@ -9039,8 +9069,7 @@ class Watcher:
         routed = {name for _who, _id, name, _why in self.claude_routes() if name}
         if not routed:
             return None
-        staged = {self.pool_claude_key(c["id"]) for c in self.pool_containers()
-                  if c["class"] == agent_class}
+        staged = self.pool_spare_keys(agent_class)
         # MOST RECENTLY SPENT FIRST. `run.claude_key` is what the turn was actually billed to,
         # which is the only record of demand this box keeps, and a key that is not in `routed`
         # any more (an operator who left, or renamed their id) is ignored rather than staged for.
@@ -9468,9 +9497,7 @@ class Watcher:
             return (f"no operator on this box has a Claude credential ffwatch can bill a "
                     f"{agent_class} turn to: every `claude` id in the trust table is missing, or "
                     f"names a credential that is not in secrets.env")
-        staged = {self.pool_claude_key(c["id"]) for c in self.pool_containers()
-                  if c["class"] == agent_class}
-        if routed.issubset(staged):
+        if routed.issubset(self.pool_spare_keys(agent_class)):
             return (f"every account that could pay for a {agent_class} turn already has a spare "
                     f"waiting ({len(routed)} of them). The rest of this class's `idle` can only "
                     f"be filled by staging a second spare for somebody who has not asked for "

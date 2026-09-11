@@ -17049,9 +17049,42 @@ def test_a_spare_is_staged_for_whoever_is_likely_to_want_it():
           == SUITE_CLAUDE_SLOT, w.pool_stage_key("ffdev"))
     # AND A BOX THAT CANNOT BILL ANYBODY STAGES NOTHING, rather than asking ffbox for a
     # container it would refuse to create.
+    ops = w.cfg["operators"]
     w.cfg["operators"] = {}
     check("with no operator able to pay, the dev pool is not staged",
           w.pool_stage_key("ffdev") is None)
+
+    # A CONTAINER IS NOT A SPARE, and the difference is `out/owner`. A dispatched spare is renamed
+    # and keeps its `ffbox.pool` label and its `claude-key`, so this used to read an operator's
+    # RUNNING TURN as their waiting spare -- and refuse to stage behind it, leaving the pool they
+    # had just emptied empty until their turn ended. Their next turn then ran cold, which is the
+    # one case the warm pool exists for. Live on the box on 2026-09-11: ffdev with turns in
+    # flight, `waiting` 0, and the keeper reporting every account as covered.
+    w.cfg["operators"] = ops
+    held = {"id": "held1", "branch": "master", "class": "ffdev", "tier": "held"}
+    w.pool_containers = lambda: [held]
+    os.makedirs(w.pool_dir("held1"), exist_ok=True)
+    with open(os.path.join(w.pool_dir("held1"), "claude-key"), "w", encoding="utf-8") as fh:
+        fh.write(SUITE_CLAUDE_SLOT + "\n")
+    check("an operator with a spare waiting is not given a second one",
+          w.pool_stage_key("ffdev") is None, w.pool_spare_keys("ffdev"))
+
+    os.makedirs(os.path.join(w.pool_dir("held1"), "out"), exist_ok=True)
+    open(w.pool_owner_path("held1"), "w").close()
+    check("but the moment that spare is dispatched it stops covering them",
+          w.pool_stage_key("ffdev") == SUITE_CLAUDE_SLOT, w.pool_spare_keys("ffdev"))
+    os.unlink(w.pool_owner_path("held1"))
+
+    # AND A GUESS DOES NOT COVER A PROMISE. An evictable spare sits on a branch somebody used
+    # recently and carries a credential like any other container; counting it here would report
+    # the account as covered while the `idle` it promised stayed unfilled on the class's own
+    # branch -- which is exactly what keep_pool's `warm` count refuses, and this is the same
+    # three tests so the two cannot disagree.
+    w.pool_containers = lambda: [dict(held, tier="evictable")]
+    check("nor does an evictable guess, which no turn of this class's branch can claim",
+          w.pool_stage_key("ffdev") == SUITE_CLAUDE_SLOT, w.pool_spare_keys("ffdev"))
+    w.pool_containers = lambda: []
+
 
 
 def test_a_box_that_cannot_bill_anybody_says_so_at_startup():
