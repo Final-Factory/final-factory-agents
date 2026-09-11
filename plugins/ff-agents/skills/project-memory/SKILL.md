@@ -52,6 +52,7 @@ worktrees and apply to ALL branches.
 - [Unity keyword-remap shader crash](memories/unity-keyword-remap-shader-crash.md) — known Unity engine bug crashing import worker on ParticlesUnlit fallback keyword remap
 - [wsay voice notifications](memories/wsay-voice-notifications.md) — global hooks speak via wsay when Claude finishes (Stop) or needs input (Notification); don't disable
 - [Profiling ECS + fork pin bumps](memories/knn-profiling-and-fork-pin-gotchas.md) — Unity 6000.3.19f1/game revision `7d696256c` can record exact main-thread system markers with a qualified `ProfilerRecorder` recipe; samples are inclusive diagnostics, not additive production budgets; preserve the `ProfilerDriver` fallback; clone Packages/ can be a real dir: copy manifests + Client.Resolve() on the clone, verify PackageCache sha + fresh assembly mtime before trusting any run
+- [Paired-leg preflight and editor wedges](memories/paired-leg-preflight-and-editor-wedges.md) — both editors must pass editor-preflight.sh (Burst enabled+drained, re-enable it first: the launcher leaves it off) before any leg; the SIGBUS crash, the no-live-World wedge, the scene-changed-on-disk modal after a pull, the fresh-mtime rule for writing the client config, OutlivePairBreak + reclaim-identity files for rejoin legs
 
 ## ECS / Burst / baking
 
@@ -93,6 +94,7 @@ worktrees and apply to ALL branches.
 - [Cross-machine built-player gameplay acceptance](memories/cross-machine-built-player-gameplay-acceptance.md) — a multiplayer gameplay fix requires matching current built players on two physical machines, Windows/macOS when affected, the reported sequence through real inputs, both-peer screenshots actually inspected, temporal evidence for motion, and an unweakened all-25-field typed comparison over the whole shared heartbeat window; direct IP does not prove Steam paths, and Windows GUI players launched over SSH may need a task-scoped launch into the logged-in desktop session.
 - [Live tutorial evidence and producer tests](memories/live-tutorial-evidence-and-producer-tests.md) — run the tutorial to completion without a fixed time cutoff, retain continuous and live evidence, test actual scheduled producers, and preserve reports through atomic verified transfer.
 - [Built-player screenshot and pointer coordinates](memories/built-player-screenshot-coordinate-scale.md) — screenshot response dimensions can be downscaled and are not raw pointer coordinates; read the live native view before driving UI, and clear both preview entities and native blueprint allocations (live-verified fix).
+- [Built-player boot hang and harness waiters](memories/built-player-hang-and-harness-waiters.md) — a shell-launched player can stall at waiting-title-menu at 0.2% CPU (kill the path-verified PID, relaunch); the Claude harness kills run_in_background sleep-pollers under memory pressure, so long waits go through Monitor
 
 ## Gameplay diagnosis & live-test recipes
 
@@ -102,6 +104,8 @@ worktrees and apply to ALL branches.
 - [Cargo ship teleport diagnosis](memories/cargo-ship-teleport-diagnosis.md) — camera-gated presentation sync over ungated simulation = ghost-then-snap artifact (InserterRenderSystem); plus the live-probe/A-B methodology via execute_code (onBeforeRender probes, GravityForces mover, Error-Pause gotcha)
 - [Mobile station merge bug](memories/mobile-station-merge-bug.md) — why stations merged on landing (overlap-only checks vs EntityMap, flying stations absent from the map); fixed via landing-footprint claims (TryClaimLandingZone, landed on master); bug-report saves load by filename via SaveGameManager.LoadGame
 - [Black hole visual test recipe](memories/blackhole-visual-test-recipe.md) — "BlackHole" save + teleport coords, 200u death radius, swirl = rotating skybox (the shader never animates), fixed-res Game view screenshot workaround
+- [Tutorial objectives 76–78 from the harness](memories/tutorial-map-fleet-complete-automation.md) — ui.open|map then ui.close|map (MapUsed ticks on CLOSE), ui.open|fleet, and the final Complete button is a LOCAL click on every peer (pointer coords inside)
+- [MoversDetail group diffs and the float mirror flicker](memories/movers-detail-group-diff-and-float-mirror-flicker.md) — diff v/h/d/f/m/p/r + raw vel/hd by key first; the cross-platform movers flicker is float ULP noise CombatMoverRailMirrorSystem quantizes from LinearMotion.Velocity into the compared rail; BEAST-host + M5-editor-client leg recipe
 
 ## Modding
 
