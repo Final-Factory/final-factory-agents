@@ -780,6 +780,17 @@ local git mirror at `/opt/ffcache/mirror/FinalFactory.git`.
 /opt/ffcache/mirror/FinalFactory.git                 every branch, plus its LFS objects
 ```
 
+**LFS comes out of the mirror, not out of GitHub.** A reset onto the turn's branch runs the Git
+LFS smudge filter over every tracked file it rewrites, and git-lfs resolves what it cannot find
+locally by asking the origin remote the cache entry carries — `https://github.com/…`, which the
+container can neither reach nor authenticate to. So `restore-workspace.sh` copies the objects the
+target needs out of the mirror's store first. An object that is in neither the workspace nor the
+mirror is not fatal: that reset runs with the smudge off, the file lands as its pointer text, and
+the count goes into the log and into `lfs_pointers.txt` under the run's output. Until 2026-09-11
+it was fatal — the reset failed, the restore died, and the container was gone two minutes in
+having written nothing, which the harness reported as "the run failed / no branch: the run changed
+no files".
+
 Nothing on the run path reads `/opt/FinalFactory`. It stays on the box as a checkout to edit
 Final Factory by hand, and updating it is now an ordinary `git pull` — followed by `git lfs pull`,
 which is not optional here: a tracked binary left as an LFS pointer makes Unity register the DLL

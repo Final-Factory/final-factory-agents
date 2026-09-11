@@ -110,6 +110,86 @@ if [ -n "$MIRROR" ] && [ -d "$MIRROR" ]; then
         || die "could not fetch from the mirror at $MIRROR"
 fi
 
+# --- Git LFS: the objects come from the mirror, and never from GitHub --------------------------
+#
+# THE SMUDGE FILTER IS A NETWORK CALL, AND THIS CONTAINER HAS NO CREDENTIAL. `git reset --hard`
+# runs git-lfs over every LFS-tracked file it rewrites, and git-lfs answers what it cannot find in
+# .git/lfs/objects by asking the ORIGIN REMOTE -- which the cache entry carries as
+# https://github.com/Final-Factory/FinalFactory, because CI cloned it that way.
+#
+# So a workspace restored from MASTER's entry and reset onto a develop-based branch went looking
+# for the objects develop added. On the dev lane that failed in about a second ("could not read
+# Username for 'https://github.com'"), the reset failed, this script died, and the container was
+# gone roughly two minutes in having written NOTHING -- no base_sha.txt, no claude.log, not even
+# the .container-rc its own trap writes. Three runs went that way on 2026-09-11, each reported
+# into Discord as "the run failed / no branch: the run changed no files", which is what a run that
+# never started looks like from the outside. Measured on the FENCED lane the same smudge does not
+# fail at all: it hangs until something kills it, which is worse.
+#
+# THE OBJECTS ARE ALREADY HERE. The mirror is mounted read-only at /ffmirror and CI's own fetches
+# leave its LFS store populated -- 3044 objects, 4.3 GB when this was written, including every
+# object that failing reset wanted. So seed the ones this target needs into the workspace's store
+# first, and the smudge that follows is a local read of a file we just put there.
+#
+# WHAT CANNOT BE SEEDED IS NOT FATAL. An object the mirror does not carry would send git-lfs back
+# to the network, so that reset runs with GIT_LFS_SKIP_SMUDGE=1 instead and those files land as
+# their pointer text. Pointer text is worse than the real thing and far better than a container
+# that dies before the agent starts -- and it is recorded, in the log and in lfs_pointers.txt
+# under the run's output, rather than being silently wrong.
+#
+# ONE PASS OVER THE TARGET'S LFS FILES, in the shell, with no process per object: `git lfs
+# ls-files --long` names every oid at that ref and the rest is file tests against two directories.
+LFS_UNSEEDABLE=0
+
+lfs_seed_from_mirror() {
+    _ref=$1
+    LFS_UNSEEDABLE=0
+    [ -n "$MIRROR" ] && [ -d "$MIRROR/lfs/objects" ] || return 0
+    git -C "$WORKSPACE" lfs version >/dev/null 2>&1 || return 0
+    _list=$(mktemp 2>/dev/null) || return 0
+    if ! git -C "$WORKSPACE" lfs ls-files --long "$_ref" > "$_list" 2>/dev/null; then
+        rm -f "$_list"
+        return 0
+    fi
+    _seeded=0
+    _absent=0
+    # `read` takes the path as the remainder, so a name with spaces in it cannot split the line.
+    while read -r _oid _mark _path; do
+        case "$_oid" in
+            '' | *[!0-9a-f]*) continue ;;
+        esac
+        _rest=${_oid#??}
+        _d1=${_oid%"$_rest"}
+        _d2=${_rest%"${_rest#??}"}
+        _dst="$WORKSPACE/.git/lfs/objects/$_d1/$_d2/$_oid"
+        if [ -f "$_dst" ]; then
+            continue
+        fi
+        _src="$MIRROR/lfs/objects/$_d1/$_d2/$_oid"
+        if [ ! -f "$_src" ]; then
+            _absent=$((_absent + 1))
+            continue
+        fi
+        # Copied to a scratch name and renamed, so a copy interrupted half way cannot leave
+        # something that LOOKS like an object: git-lfs verifies size and hash, but only after it
+        # has decided the file is there.
+        mkdir -p "$WORKSPACE/.git/lfs/objects/$_d1/$_d2"
+        if cp "$_src" "$_dst.part" 2>/dev/null && mv "$_dst.part" "$_dst" 2>/dev/null; then
+            _seeded=$((_seeded + 1))
+        else
+            rm -f "$_dst.part"
+            _absent=$((_absent + 1))
+        fi
+    done < "$_list"
+    rm -f "$_list"
+    LFS_UNSEEDABLE=$_absent
+    [ "$_seeded" -eq 0 ] || log "seeded $_seeded LFS object(s) from the mirror"
+    [ "$_absent" -eq 0 ] \
+        || log "WARNING: $_absent LFS object(s) are in neither the workspace nor the mirror"
+    unset _ref _list _seeded _absent _oid _mark _path _rest _d1 _d2 _dst _src
+    return 0
+}
+
 # Resolve what to land on: an explicit commit, else a ref via the mirror's refs.
 _target=$TARGET
 if [ -z "$_target" ] && [ -n "$REF" ]; then
@@ -124,7 +204,16 @@ fi
 if [ -n "$_target" ]; then
     git -C "$WORKSPACE" rev-parse --verify --quiet "${_target}^{commit}" >/dev/null 2>&1 \
         || die "target $_target is not in the workspace after restore (mirror missing or wrong)"
-    git -C "$WORKSPACE" reset --hard --quiet "$_target" || die "could not reset to $_target"
+    lfs_seed_from_mirror "$_target"
+    if [ "$LFS_UNSEEDABLE" -gt 0 ]; then
+        log "resetting with the LFS smudge off; $LFS_UNSEEDABLE file(s) will be pointer text"
+        GIT_LFS_SKIP_SMUDGE=1 git -C "$WORKSPACE" reset --hard --quiet "$_target" \
+            || die "could not reset to $_target"
+        printf '%s\n' "$LFS_UNSEEDABLE" \
+            > "${FFBOX_OUT:-/ffbox/out}/lfs_pointers.txt" 2>/dev/null || true
+    else
+        git -C "$WORKSPACE" reset --hard --quiet "$_target" || die "could not reset to $_target"
+    fi
     log "workspace at $(git -C "$WORKSPACE" rev-parse --short HEAD)"
 fi
 
@@ -134,6 +223,20 @@ for _k in core.fsmonitor core.pager core.hooksPath diff.external \
           filter.lfs.process filter.lfs.smudge filter.lfs.clean; do
     git -C "$WORKSPACE" config --local --unset-all "$_k" 2>/dev/null || true
 done
+
+# AND THE RUN INHERITS THE SAME DECISION THE RESET MADE. The keys just unset are the ENTRY's; the
+# image sets filter.lfs.* in SYSTEM config, so unsetting a local key does not stop the smudge --
+# it only removes whatever a CI job left. When an object is missing from both the workspace and
+# the mirror, every later `git checkout` in this run would go to GitHub for it and hang on the
+# fenced lane, long after this script is done and with nothing to say why. `--skip` is what
+# `git lfs install --skip-smudge` writes: the clean side still works, so the agent can commit,
+# and the smudge writes pointer text instead of asking anybody.
+if [ "$LFS_UNSEEDABLE" -gt 0 ]; then
+    git -C "$WORKSPACE" config --local filter.lfs.smudge "git-lfs smudge --skip -- %f" \
+        2>/dev/null || true
+    git -C "$WORKSPACE" config --local filter.lfs.process "git-lfs filter-process --skip" \
+        2>/dev/null || true
+fi
 
 # tar gives every restored file a new inode and ctime, so git's index cannot trust any of it and
 # re-hashes the whole worktree on the first command that touches it -- measured at two minutes in

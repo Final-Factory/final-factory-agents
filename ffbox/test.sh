@@ -46,6 +46,11 @@ run "test_ci_lane.py"       python3 "$HERE/test_ci_lane.py"
 # remembered to run it by hand. That is the state this file exists to end.
 run "test_container_credential.sh" sh "$HERE/test_container_credential.sh"
 run "test_update_drain.sh"  sh  "$HERE/test_update_drain.sh"
+# THE RESTORE, which is the one script that decides whether a container gets as far as the agent
+# at all. Its suite needs git-lfs and skips itself without one, because the property it holds --
+# that a reset onto a branch resolves LFS from the mirror rather than from GitHub -- cannot be
+# checked with LFS absent.
+run "test_restore_workspace.sh" sh "$HERE/test_restore_workspace.sh"
 # THE TWO BIG PYTHON SUITES BELONG HERE TOO, and leaving them out was the same mistake this file
 # was written to stop. I built a single entry point for the shell suites and then went on running
 # test_ffwatch.py and test_ffweb.py by hand -- which meant reading their output rather than their
