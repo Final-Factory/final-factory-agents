@@ -1252,13 +1252,18 @@ answered by the run's own comment instead. `resolve_threads` false leaves them a
 costs nothing but clicking. This is the one thing here GitHub has no REST endpoint for, so it is
 also the only reason the client speaks GraphQL at all.
 
-**It does not work with the token this box holds, and that is a fact about the token's TYPE.**
-`GH_PR_TOKEN` is a fine-grained PAT; it already has `pull_requests=write` and it still cannot run
-`resolveReviewThread`, so there is no permission to add. A classic token with `repo` would run it
-and would also carry `contents=write` — which is what merging a pull request actually accepts,
-and what this credential deliberately lacks. A GitHub App installation token is the way to get
-one without the other. Until then every resolve fails safe: the fix lands, the run comments, and
-the thread stays open for a person to close.
+**It does not work with the token this box holds, and there is no permission that fixes it.**
+`GH_PR_TOKEN` already has `pull_requests=write` — the reactions endpoint accepts exactly that and
+answers 200, and the GraphQL `addReaction` mutation under the same permission goes through. The
+`resolveReviewThread` and `unresolveReviewThread` mutations still answer `FORBIDDEN: Resource not
+accessible by personal access token`. GitHub names the credential class, not a scope: a PAT does
+not get that pair. A **GitHub App installation token** is the documented route. Until there is
+one, every resolve fails safe: the fix lands, the run comments, and the thread stays open for a
+person to close.
+
+Separately, and because the names mislead: merging a pull request accepts `contents=write`, not
+`pull_requests=write`. This token does not have `contents=write`, so it can neither merge nor
+push — see `CREDENTIALS.md`, which is where that was decided.
 
 **Nothing is posted back except the run's own answer**, and one refusal: a branch this box cannot
 adopt. A closed pull request, a fork's head and a comment the gate declined are all handled in

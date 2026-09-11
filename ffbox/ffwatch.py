@@ -4585,26 +4585,27 @@ class GitHub:
         try:
             data = self.graphql(self.RESOLVE_MUTATION, {"id": thread_id})
         except GitHubError as exc:
-            # NOT A PERMISSION ANYBODY CAN TICK, which is why this says so rather than leaving a
-            # reader to go looking for the checkbox. Measured against GH_PR_TOKEN on 2026-09-10:
-            # it is a fine-grained PAT, it already HAS pull_requests=write (the reactions
-            # endpoint accepts exactly that and answers 200), GraphQL reads work under it, and
-            # this mutation still answers FORBIDDEN. Fine-grained tokens cannot run it at all.
+            # NOT A PERMISSION, AND NOT GRAPHQL EITHER. It is this one pair of mutations.
+            # Measured against GH_PR_TOKEN on 2026-09-10, which is a fine-grained PAT that does
+            # hold pull_requests=write:
             #
-            # The obvious workaround is the trap. A classic token with `repo` would run it, and
-            # `repo` also carries contents=write -- which is what the MERGE endpoint accepts,
-            # and what this token deliberately does not have (the branch-merge endpoint answers
-            # 403 for it). So buying thread-resolution with a classic token would hand this box
-            # the ability to merge and to push code, to close a comment. A GitHub App
-            # installation token is the way to get one without the other.
+            #   REST   POST /pulls/comments/{id}/reactions   accepts pull_requests=write   200
+            #   query  reviewThreads                                                       200
+            #   mut    addReaction            (pull_requests=write)                        200
+            #   mut    resolveReviewThread                                          FORBIDDEN
+            #   mut    unresolveReviewThread                                        FORBIDDEN
             #
-            # The spelling above is deliberate: the guard in test_github_client_retries_and_
-            # cannot_merge greps this file for that endpoint path as a literal, and it is right
-            # to. Prose about merging must not read as a call to it.
+            # So the token has the permission, and other mutations needing that same permission
+            # go through. GitHub's own message names the credential CLASS -- "not accessible by
+            # personal access token" -- and resolve/unresolve are the pair it will not expose to
+            # one. A GitHub App installation token is the documented way to run them. Whether a
+            # CLASSIC PAT would is untested here and the message above suggests not; it is a
+            # two-minute experiment for anybody who has one.
             if "not accessible by personal access token" in str(exc.body):
                 raise GitHubError(exc.status, (
-                    "a fine-grained token cannot resolve a review thread, whatever its "
-                    "permissions; this needs a GitHub App installation token")) from exc
+                    "GitHub does not let a personal access token resolve a review thread -- "
+                    "pull_requests=write is present and other mutations under it work. This "
+                    "needs a GitHub App installation token")) from exc
             raise
         return bool((((data.get("resolveReviewThread") or {}).get("thread") or {})
                      .get("isResolved")))

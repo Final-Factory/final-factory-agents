@@ -319,34 +319,38 @@ the comment's thread should close.
   only the named diff comment is queued, the thread the run argued against stays open, a replay
   queues nothing, an invented id resolves nothing, and `record_reply` is the call site. The mock
   grew a `/graphql` route and `GH_STATE["threads"]`.
-- **J9 (S). BLOCKED ON THE TOKEN TYPE, not on a permission.** Run live against pull request 512
+- **J9 (S). BLOCKED ON WHAT GITHUB WILL NOT LET A PAT DO.** Run live against pull request 512
   on 2026-09-10, whose comment had just been fixed and pushed. `review_threads` answered
   correctly -- `{"3972318844": ("PRRT_kwDOJSvcWs6gzn5c", False)}` -- and `resolveReviewThread`
   came back `FORBIDDEN: Resource not accessible by personal access token`.
 
-  The first write-up of this said the fix was to widen `GH_PR_TOKEN` to Pull requests: Read and
-  write. **That was wrong and is corrected here.** Measured the same day, by reading
-  `X-Accepted-Github-Permissions` off live responses:
+  This took three passes to diagnose and the first two write-ups were wrong. What was measured
+  in the end:
 
-  | probe | accepted permission | result |
+  | probe | accepts | result |
   | --- | --- | --- |
   | `GET /pulls/512` | `pull_requests=read; contents=read` | 200 |
   | `POST /pulls/comments/{id}/reactions` | `pull_requests=write` | 200 |
+  | GraphQL `reviewThreads` query | — | 200 |
+  | GraphQL `addReaction` mutation | `pull_requests=write` | 200 |
+  | GraphQL `resolveReviewThread` | — | **FORBIDDEN** |
+  | GraphQL `unresolveReviewThread` | — | **FORBIDDEN** |
   | `PUT /pulls/{n}/merge` (nonexistent repo) | `contents=write` | 404 |
   | `POST /repos/{repo}/merges` (nonexistent branches) | `contents=write` | **403** |
 
-  So the token already holds `pull_requests=write`, which is why there is nothing to widen; and
-  it does not hold `contents=write`, which is why it cannot merge a pull request or push code.
-  It is a fine-grained PAT, and a fine-grained PAT cannot run this mutation at any permission
-  level.
+  Read down it: the token HAS `pull_requests=write`, GraphQL works, and another mutation under
+  that same permission succeeds. So it is not the permission (first write-up), and not
+  fine-grained GraphQL support in general (second). It is resolve/unresolve specifically, and
+  GitHub's message names the credential class: a personal access token does not get them. A
+  **GitHub App installation token** is the documented route. A classic PAT is untested and the
+  message suggests it would be refused too.
 
-  **The workaround is the trap.** A classic token with `repo` runs it and also carries
-  `contents=write` -- the merge permission. Buying thread-resolution that way would put the
-  ability to merge and to push on this box for the first time, to close a comment. A GitHub App
-  installation token is the way to have the mutation without the rest. Until somebody wants to
-  set one up, the lane runs with `resolve_threads` on and every resolve failing safe: the fix
-  lands, the run comments, the thread stays open for a person. **Re-run this against a real
-  thread the day an App token exists.**
+  The last two rows are the separate finding that came out of the same session: merging accepts
+  `contents=write`, not `pull_requests=write`, and this token does not hold it -- so it cannot
+  merge or push, which is what `CREDENTIALS.md` intended.
+
+  Nothing else waits on this. Every resolve fails safe: the fix lands, the run comments, the
+  thread stays open for a person. **Re-run against a real thread the day an App token exists.**
 
 ## I. Live verification
 
