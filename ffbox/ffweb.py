@@ -2892,10 +2892,10 @@ class App:
         """
         rows = self.keys.read()
         claims = claude_claims(rows)
-        head = ["<h1>claude keys</h1>"]
+        head = ["<h1>model credentials</h1>"]
         if not rows:
             return page("Claude", head + [
-                "<p class=\"note\">No Claude credential in this process's environment, and none "
+                "<p class=\"note\">No model credential in this process's environment, and none "
                 "in " + esc(os.environ.get("FFBOX_SECRETS") or "~/.config/ffbox/secrets.env") +
                 ". Put one subscription token per operator in that file as " +
                 esc(CLAUDE_TOKEN_PREFIX) + "1, " + esc(CLAUDE_TOKEN_PREFIX) + "2, … "
@@ -2914,7 +2914,7 @@ class App:
         (dflt, dwhy), (clf, cwhy) = claude_defaults(rows)
         if dflt:
             said = "Everything no operator asked for is billed to " + esc(dflt) + "."
-        elif not (_config_block().get("claude") or {}).get("default"):
+        elif not _model_config().get("default"):
             said = ("There is no " + esc(CLAUDE_API_KEY_NAME) + ", so nothing that is not an "
                     "operator's request can run.")
         else:
@@ -3032,7 +3032,7 @@ class App:
                 body.append("<p class=\"empty\">Anthropic reported no windows for this "
                             "key.</p>")
             body.append("</div>")
-        # CONVERSATIONS THAT WILL NOT CLASSIFY, flagged by ffwatch after classify_retry.flag_after
+        # CONVERSATIONS THAT WILL NOT CLASSIFY, flagged by ffwatch after model.classify_retry.flag_after
         # failures. They wait; a person releases one, and this is where that person looks.
         try:
             flagged = self.db.query(
@@ -4042,8 +4042,14 @@ def claude_claims(rows):
     return {name: who for name, who in out.items() if seen.get(name) == 1}
 
 
+def _model_config():
+    """config.json's `model` block, or {} for a file that has none or holds something else there."""
+    block = _config_block().get("model")
+    return block if isinstance(block, dict) else {}
+
+
 def claude_defaults(rows):
-    """((default name, why), (classifier name, why)): what claude.default and claude.classifier
+    """((default name, why), (classifier name, why)): what model.default and model.classifier
     resolve to, over the rows this page already has.
 
     The same rules ffwatch applies in default_credential and classifier_credential, restated here
@@ -4051,8 +4057,7 @@ def claude_defaults(rows):
     exactly one credential, and that credential must be metered. Unset default is the unnumbered
     ANTHROPIC_API_KEY; unset classifier is whatever the default resolved to.
     """
-    block = _config_block().get("claude")
-    block = block if isinstance(block, dict) else {}
+    block = _model_config()
 
     def resolve(key, unset):
         wanted = str(block.get(key) or "").strip()
@@ -4061,11 +4066,11 @@ def claude_defaults(rows):
         hits = [rec for rec in rows
                 if wanted.casefold() in slot_ids(rec["name"], rec.get("label") or "")]
         if not hits:
-            return None, f"claude.{key} is {wanted!r}, which names nothing in secrets.env"
+            return None, f"model.{key} is {wanted!r}, which names nothing in secrets.env"
         if len(hits) > 1:
-            return None, f"claude.{key} is {wanted!r}, which more than one credential answers to"
+            return None, f"model.{key} is {wanted!r}, which more than one credential answers to"
         if not metered(hits[0].get("kind")):
-            return None, (f"claude.{key} is {wanted!r}, which is a subscription, and it must name "
+            return None, (f"model.{key} is {wanted!r}, which is a subscription, and it must name "
                           f"a metered credential")
         return hits[0]["name"], ""
 

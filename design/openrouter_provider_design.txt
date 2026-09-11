@@ -2,8 +2,12 @@ OpenRouter as a credential type, and GLM-5.3 Flash for the work nobody's subscri
 ============================================================================================
 Revision 6, 2026-09-10. Revisions 1-5, 2026-09-10. Tasks: design/openrouter_provider_tasks.md.
 2026-09-11: the operator field that names a credential was renamed from `claude` to `model`, in
-config.json and in the code, and this file says `model` throughout. The top-level `claude` block
-(`claude.default`, `claude.classifier`, the holds) keeps its name.
+config.json and in the code, and this file says `model` throughout. Later the same day the
+top-level `claude` block was split: `default`, `classifier`, `health` and `classify_retry` moved to
+a top-level `model` block beside the model aliases (the old top-level `model`, `fallback_model` and
+`classifier_model`, now `model.container`, `model.container_fallback` and `model.classifier_model`),
+and the window reading and the holds became `subscription`. This file still says `claude.default`,
+`claude.classifier` and so on; read them as `model.*`, and the holds as `subscription.*`.
 
 Section 13's measurements run before phases C onward are deployed. Phases A and B (sections 7 and
 14) rest on failure shapes the code already recognises (`result_failure_detail`,

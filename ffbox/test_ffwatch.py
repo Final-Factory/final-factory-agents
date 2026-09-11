@@ -2435,7 +2435,7 @@ def test_any_kind_can_be_claimed_and_the_default_must_be_metered():
               "z-ai/glm-5.3-flash", "https://openrouter.ai/api")]
     ops = {"ben": {"discord": "800000000000000001", "github": "11", "model": "Ben"},
            "lothsahn": {"discord": "800000000000000002", "github": "22", "model": "loth-glm"}}
-    cfg = {"operators": ops, "claude": {"default": "Players"}}
+    cfg = {"operators": ops, "model": {"default": "Players"}}
     keys = (creds, ffwatch.default_credential(cfg, creds))
     name, why = ffwatch.claude_route(cfg, "operator", "800000000000000002", "ask", keys)
     check("an operator can claim an OpenRouter key", name == "OPENROUTER_API_KEY2"
@@ -2443,19 +2443,19 @@ def test_any_kind_can_be_claimed_and_the_default_must_be_metered():
     check("and a review reads the same claim",
           ffwatch.claude_route(cfg, "operator", "22", ffwatch.GITHUB_KIND, keys)[0]
           == "OPENROUTER_API_KEY2")
-    check("a player bills what claude.default names",
+    check("a player bills what model.default names",
           ffwatch.claude_route(cfg, "player", "9", "ask", keys)[0] == "OPENROUTER_API_KEY1")
     check("and so do the gate and the selector when no classifier is set",
           ffwatch.classifier_credential(cfg, creds)[0][0] == "OPENROUTER_API_KEY1")
-    split = {"operators": ops, "claude": {"default": "Players", "classifier": "ANTHROPIC_API_KEY"}}
-    check("claude.classifier bills the classifications somewhere else",
+    split = {"operators": ops, "model": {"default": "Players", "classifier": "ANTHROPIC_API_KEY"}}
+    check("model.classifier bills the classifications somewhere else",
           ffwatch.classifier_credential(split, creds)[0][0] == "ANTHROPIC_API_KEY")
     for key, resolve in (("default", ffwatch.default_credential),
                          ("classifier", ffwatch.classifier_credential)):
-        cred, why = resolve({"operators": ops, "claude": {key: "Ben"}}, creds)
-        check(f"claude.{key} naming a subscription is refused, and says so",
+        cred, why = resolve({"operators": ops, "model": {key: "Ben"}}, creds)
+        check(f"model.{key} naming a subscription is refused, and says so",
               cred is None and "subscription" in why and "Ben" in why, why)
-    nothing = {"operators": ops, "claude": {"default": "no-such-id"}}
+    nothing = {"operators": ops, "model": {"default": "no-such-id"}}
     keys2 = (creds, ffwatch.default_credential(nothing, creds))
     name, why = ffwatch.claude_route(nothing, "player", "9", "ask", keys2)
     check("a default naming nothing refuses players and quotes what it named",
@@ -2471,7 +2471,7 @@ def test_the_classifier_is_handed_exactly_what_its_credentials_kind_needs():
     print("the classifier environment follows its credential's kind")
     with credential_env(OPENROUTER_API_KEY7="sk-or-v1-classifier", OPENROUTER_NAME_KEY7="Gate"):
         cfg = ffwatch.load_config()
-        cfg["claude"] = dict(cfg.get("claude") or {}, classifier="Gate")
+        cfg["model"] = dict(cfg["model"], classifier="Gate")
         argv, env, _cwd, _stdin = ffwatch.classifier_invocation(cfg, "text",
                                                                 ffwatch.CLASSIFIER_SCHEMA)
         check("the OpenRouter key goes in as the bearer token",
@@ -2492,8 +2492,8 @@ def test_the_classifier_is_handed_exactly_what_its_credentials_kind_needs():
                            "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"},
               sorted(env))
         check("--model stays the alias the environment resolves",
-              argv[argv.index("--model") + 1] == cfg["classifier_model"], argv)
-        cfg["claude"]["classifier"] = SUITE_CLAUDE_SLOT
+              argv[argv.index("--model") + 1] == cfg["model"]["classifier_model"], argv)
+        cfg["model"]["classifier"] = SUITE_CLAUDE_SLOT
         _, err = ffwatch.classifier_attempt(cfg, "p", ffwatch.CLASSIFIER_SCHEMA, structured=False,
                                             what="gate")
         check("a classifier naming a subscription is refused before anything runs",
@@ -2564,9 +2564,9 @@ def test_a_spent_openrouter_budget_holds_until_it_refills_and_says_when():
         fixture["messages"][ASK_CHANNEL] = [message(mid, "hey @max the merger is broken")]
         fixture["messages"][ASK_CHANNEL][0]["mentions"] = [{"id": BOT}]
         case = Case("health-budget", fixture)
-        # REPLACED, NOT MUTATED: cfg["claude"] can be the very dict DEFAULTS holds, and a key set
+        # REPLACED, NOT MUTATED: cfg["model"] can be the very dict DEFAULTS holds, and a key set
         # on it in place would be the default for every case after this one.
-        case.cfg["claude"] = dict(case.cfg["claude"], default="Players6")
+        case.cfg["model"] = dict(case.cfg["model"], default="Players6")
         w = case.watcher
         check("a player-pool spare is staged on the OpenRouter default",
               w.pool_stage_key("ffagent") == "OPENROUTER_API_KEY6", w.pool_stage_key("ffagent"))
@@ -2603,11 +2603,11 @@ def test_a_turn_with_nothing_to_bill_writes_no_job():
     case.watcher.drain_events()
     case.watcher.claim_turns()
     check("a turn is queued while the default resolves", len(case.rows("SELECT * FROM turn")) == 1)
-    case.cfg["claude"] = dict(case.cfg["claude"], default="no-such-credential")
+    case.cfg["model"] = dict(case.cfg["model"], default="no-such-credential")
     case.watcher.once()
     turn = case.rows("SELECT * FROM turn")[0]
     check("the turn fails", turn["status"] == "failed", turn["status"])
-    check("saying there is nothing to bill", "no Claude account to bill" in (turn["error"] or ""),
+    check("saying there is nothing to bill", "no credential to bill" in (turn["error"] or ""),
           turn["error"])
     jobs = [os.path.join(d, f) for d, _, fs in os.walk(case.state_dir) for f in fs
             if f == "job.json"]
@@ -7000,8 +7000,8 @@ def test_the_selector_narrows_a_choice_it_cannot_widen():
     # tool-less haiku call; the full split is pinned in
     # test_the_cheap_model_routes_and_the_good_one_answers.
     check("and on the classifier model, which is not the model that answers the player",
-          argv[argv.index("--model") + 1] == case.cfg["classifier_model"] == "haiku",
-          (argv[argv.index("--model") + 1], case.cfg["model"]))
+          argv[argv.index("--model") + 1] == case.cfg["model"]["classifier_model"] == "haiku",
+          (argv[argv.index("--model") + 1], case.cfg["model"]["container"]))
 
 
 def test_the_cheap_model_routes_and_the_good_one_answers():
@@ -7018,19 +7018,18 @@ def test_the_cheap_model_routes_and_the_good_one_answers():
     """
     print("which model does what")
 
+    shipped = ffwatch.DEFAULTS["model"]
     check("the shipped classifier model is haiku",
-          ffwatch.DEFAULTS["classifier_model"] == "haiku",
-          ffwatch.DEFAULTS["classifier_model"])
+          shipped["classifier_model"] == "haiku", shipped["classifier_model"])
     check("and the shipped answering model is opus, with sonnet behind it",
-          ffwatch.DEFAULTS["model"] == "opus" and ffwatch.DEFAULTS["fallback_model"] == "sonnet",
-          (ffwatch.DEFAULTS["model"], ffwatch.DEFAULTS["fallback_model"]))
+          shipped["container"] == "opus" and shipped["container_fallback"] == "sonnet",
+          (shipped["container"], shipped["container_fallback"]))
 
     fixture = base_fixture()
     fixture["messages"][ASK_CHANNEL] = [message(7101, "what does the splitter do?")]
     case = Case("models", fixture)
-    for key, value in (("classifier_model", "haiku"), ("model", "opus"),
-                       ("fallback_model", "sonnet")):
-        case.cfg[key] = value
+    case.cfg["model"] = dict(case.cfg["model"], classifier_model="haiku", container="opus",
+                             container_fallback="sonnet")
 
     # BOTH host-side calls, because there is one builder and the point of one builder is that
     # neither caller can reach for a different model on its own.
@@ -7042,11 +7041,11 @@ def test_the_cheap_model_routes_and_the_good_one_answers():
 
     # And it is honoured as CONFIG, not hardcoded — a box that wants a different small model
     # says so in one place and both calls follow.
-    case.cfg["classifier_model"] = "some-other-small-model"
+    case.cfg["model"] = dict(case.cfg["model"], classifier_model="some-other-small-model")
     argv, _, _, _ = ffwatch.classifier_invocation(case.cfg, "p", ffwatch.SELECTOR_SCHEMA)
     check("and it comes from config rather than from a literal in the builder",
           argv[argv.index("--model") + 1] == "some-other-small-model", argv)
-    case.cfg["classifier_model"] = "haiku"
+    case.cfg["model"] = dict(case.cfg["model"], classifier_model="haiku")
 
     case.events(ask_event(7101))
     case.watcher.once()
@@ -9845,7 +9844,7 @@ def test_the_box_page_reads_the_keepers_reasons_off_the_same_path():
     print("pool: the reason reaches the page")
     case = Case("poolwhyread", base_fixture())
     w = case.watcher
-    w.pool_hold_note("ffagent", "keyless", "no Claude account can pay for a turn it would serve")
+    w.pool_hold_note("ffagent", "keyless", "no credential can pay for a turn it would serve")
 
     # A docker that answers nothing: every container table comes back empty, which is what makes
     # this runnable off the box. The pools table is read from the config file and the hold file,
@@ -9868,7 +9867,7 @@ def test_the_box_page_reads_the_keepers_reasons_off_the_same_path():
     row = next(p for p in doc["pools"] if p["class"] == "ffagent")
     check("the pool it reports is the one that is short", row["waiting"] < row["idle"], row)
     check("and it carries the reason ffwatch wrote, at the path ffwatch wrote it to",
-          (row.get("hold") or {}).get("reason", "").startswith("no Claude account"), row)
+          (row.get("hold") or {}).get("reason", "").startswith("no credential"), row)
     check("with the key and both clocks, which is what the page renders",
           (row["hold"]["key"] == "keyless" and isinstance(row["hold"]["since"], int)
            and isinstance(row["hold"]["checked_at"], int)), row["hold"])
@@ -17580,7 +17579,7 @@ def test_a_hold_that_cannot_read_the_windows_runs_the_work():
     # TURNING THE HOLD OFF PUTS THE BOX BACK to never reading the windows at all, which is what
     # a one-account box did before any of this existed.
     case.watcher._claude = StubClaudeKeys([key_record(SUITE_CLAUDE_SLOT, five=99.0, seven=99.0)])
-    case.watcher.cfg["claude"] = {"new_conversation_hold_pct": None, "review_hold_pct": None}
+    case.watcher.cfg["subscription"] = {"new_conversation_hold_pct": None, "review_hold_pct": None}
     check("a null threshold is no hold", held_secs(case, conv) == 0)
     check("and nothing was read to find that out", case.watcher._claude.reads == 0)
 

@@ -28,8 +28,8 @@ than windowed, so it reports as reachable or not and has no bars to draw. An OPE
 (`OPENROUTER_API_KEY<n>`) is metered too, serves the one model its slot declares, and reports a
 budget instead of a window. `kind` on every record says which one it is, and a variable's prefix
 is what decides it (design/openrouter_provider_design.txt section 2). All three share one
-namespace of ids: an operator's `model` id, and config.json's `claude.default` and
-`claude.classifier`, can each name a credential of any kind.
+namespace of ids: an operator's `model` id, and config.json's `model.default` and
+`model.classifier`, can each name a credential of any kind.
 
 NO TOKEN IS EVER RETURNED TO A CALLER THAT DID NOT ALREADY HAVE ONE. `claude_subscriptions` and
 `default_api_key` read them because somebody has to make the request, and everything downstream

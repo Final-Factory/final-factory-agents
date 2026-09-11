@@ -275,31 +275,29 @@ moment.
 `send` is separate because it caps what reaches the wire. One run that loops writing intents
 would spray a thread no matter how few turns it took.
 
-## `claude`
+## `model`
 
-**Which Claude account pays for what.** The credentials are *not* here — they live in
-`~/.config/ffbox/secrets.env` as `CLAUDE_CODE_OAUTH_TOKEN1`, `…2`, `…3` (one subscription per
-operator, with its id declared beside it as `CLAUDE_CODE_NAME_TOKEN<n>`) and `ANTHROPIC_API_KEY`
-(the metered default). **Which one pays is not configured here either**: it is decided by who
-asked, from the [`operators`](#operators) block. This block says how the windows are read, when
-a request waits for one to refill, and which metered credential pays for everything no operator
-asked for (`default`, `classifier`). Since 2026-09-10 `secrets.env` can also hold numbered API keys
-and OpenRouter keys; see [Credential kinds](#credential-kinds).
+**Which model a call asks for, and which credential pays for work nobody's own credential covers.**
+The credentials themselves are not here. They live in `~/.config/ffbox/secrets.env`: subscriptions
+as `CLAUDE_CODE_OAUTH_TOKEN<n>`, API keys as `ANTHROPIC_API_KEY` and `ANTHROPIC_API_KEY<n>`, and
+OpenRouter keys as `OPENROUTER_API_KEY<n>` (see [Credential kinds](#credential-kinds)). An
+operator's request is billed to the credential they claim in the [`operators`](#operators) block.
+This block names the metered credential that pays for everything else, the model aliases each call
+asks for, and what happens when a credential stops answering. A subscription's windows and the
+holds on them are in [`subscription`](#subscription).
 
 ```json
-"claude": { "refresh_secs": 900, "timeout_secs": 10,
-            "review_hold_pct": 0.75, "new_conversation_hold_pct": 0.9,
-            "default": null, "classifier": null,
-            "health": { "after_failures": 2, "probe_secs": 60, "notice_after_secs": 600 },
-            "classify_retry": { "first_secs": 60, "max_secs": 1800, "flag_after": 5 } }
+"model": { "container": "opus", "container_fallback": "sonnet", "classifier_model": "haiku",
+           "default": null, "classifier": null,
+           "health": { "after_failures": 2, "probe_secs": 60, "notice_after_secs": 600 },
+           "classify_retry": { "first_secs": 60, "max_secs": 1800, "flag_after": 5 } }
 ```
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `refresh_secs` | `900` | How often every account's windows are re-read when nobody asks for a fresh one. |
-| `timeout_secs` | `10` | How long one account's reading may take before it is written off for that refresh. |
-| `review_hold_pct` | `0.75` | Above this share of the account that would pay, a `#codereview` trigger — or a ripe batch of pull-request feedback — waits for the window to refill instead of starting. Asked per pull request, since the account that pays is per operator. |
-| `new_conversation_hold_pct` | `0.9` | Above this, a brand-new conversation waits for its first turn. |
+| `container` | `"opus"` | The model alias a turn's container asks for (`--model`), and the `/compact` pass before a resumed turn with it. |
+| `container_fallback` | `"sonnet"` | The alias Claude Code falls back to when `container` is overloaded (`--fallback-model`). |
+| `classifier_model` | `"haiku"` | The alias the engagement gate and the selector ask for. |
 | `default` | `null` | The credential that pays for every request no operator made: players, a fix leg spawned off a player's report, and the gate and the selector unless `classifier` says otherwise. An id, matched the way an operator's `model` is. It must name a metered credential (an API key or an OpenRouter key); a subscription is refused, and so is an id nothing or two things answer to. `null` is the unnumbered `ANTHROPIC_API_KEY`. |
 | `classifier` | `null` | The credential the engagement gate and the selector bill, when it should not be `default`'s. The same rules. `null` follows `default`. |
 | `health.after_failures` | `2` | Outages in a row (a timeout, no answer at all, a 401, 403 or 5xx) that take a credential down. A 402 takes it down at once. A 429 never counts. See [When a credential or a classification does not answer](#when-a-credential-or-a-classification-does-not-answer). |
@@ -309,19 +307,34 @@ and OpenRouter keys; see [Credential kinds](#credential-kinds).
 | `classify_retry.max_secs` | `1800` | The longest that wait gets. |
 | `classify_retry.flag_after` | `5` | Failures before the conversation is flagged for a person in `ffwatch status`. It keeps waiting either way. |
 
-Not seeded — a box with no `claude` block gets exactly the defaults above. `spread` and
-`five_hour_cap` were here until 2026-09-10 and are gone with the chooser; a box whose file still
-carries them keeps working and the daemon says once, at startup, that nothing reads them.
+**The aliases choose a model only on an Anthropic credential.** A subscription or an API key sends
+the alias to Anthropic, which resolves it. An OpenRouter key points every alias (`opus`, `sonnet`,
+`haiku`, `fable`) at the one model its slot declares, so a call billed to one runs that model
+whatever the alias says. Which model each route runs is in the first lines `ffwatch` logs:
+
+```
+model: requests no operator made bill OPENROUTER_API_KEY1 (OpenRouter key) on z-ai/glm-5.3-flash:nitro
+model: the gate and the selector bill OPENROUTER_API_KEY1 (OpenRouter key) on z-ai/glm-5.3-flash:nitro
+model: lothsahn bills CLAUDE_CODE_OAUTH_TOKEN1 (subscription, declared as Loth) on opus
+```
+
+`ffwatch status` opens its credential lines the same way, with the default's and the classifier's
+model.
+
+Not seeded. A box with no `model` block gets exactly the defaults above. Until 2026-09-11,
+`default`, `classifier`, `health` and `classify_retry` were in a `claude` block, and the three
+aliases were the top-level keys `model`, `fallback_model` and `classifier_model`. Nothing reads
+those names now.
 
 ### Whose account pays
 
 | request | tier | id space | billed to |
 | --- | --- | --- | --- |
-| forum thread, mention, player DM | player | discord | what `claude.default` names (`ANTHROPIC_API_KEY` when unset) |
+| forum thread, mention, player DM | player | discord | what `model.default` names (`ANTHROPIC_API_KEY` when unset) |
 | operator message, directive, DM | operator | discord | the credential that operator claims |
 | `#codereview` on a pull request | operator | github | the credential that operator claims |
 | shell or web prompt | operator | unix account | the credential that operator claims |
-| the engagement gate and the selector | — | — | `claude.classifier`, else `claude.default` |
+| the engagement gate and the selector | — | — | `model.classifier`, else `model.default` |
 
 The route is a lookup of an **authenticated id** and never a thing message text can ask for. It
 reads the same `operators` block the trust tier reads, through the same function, so the person
@@ -362,8 +375,8 @@ refused whatever kinds they are. The bare slot number is a subscription-only ali
 
 An operator's `model` id can name **any** kind, and every request they make is billed to it. An
 OpenRouter key puts that person's turns on the one model its slot declares: every model alias
-(`opus`, `sonnet`, `haiku`, `fable`) resolves to it inside the container. `claude.default` and
-`claude.classifier` can name any **metered** kind. So player traffic can move to OpenRouter by
+(`opus`, `sonnet`, `haiku`, `fable`) resolves to it inside the container. `model.default` and
+`model.classifier` can name any **metered** kind. So player traffic can move to OpenRouter by
 declaring `OPENROUTER_API_KEY1` with `OPENROUTER_NAME_KEY1=Players` and setting
 `"default": "Players"`.
 
@@ -383,7 +396,7 @@ answer](#when-a-credential-or-a-classification-does-not-answer)). `/claude` show
 key's model and what is left of its budget.
 
 **What the metered key changes.** An API key has no five-hour or seven-day window to be part way
-through — it has per-minute org rate limits and a bill — so the holds below do not apply to it,
+through — it has per-minute org rate limits and a bill — so the holds in [`subscription`](#subscription) do not apply to it,
 `/claude` draws no bars for it, and player traffic never waits for a refill. What bounds one
 player-facing run is `max_budget_usd`, which since 2026-09-10 can be set per agent class (see
 [pools](#pools)) and should be: it is the real ceiling on a metered run rather than a number that
@@ -396,6 +409,81 @@ miss has always cost. The ffagent pool stages on the API key, so every ffagent s
 every ffagent turn. The ffdev pool stages for whichever operator has run something most recently,
 skipping anyone who already has a spare waiting — a guess, made out of what this box has actually
 run, and a wrong one costs one cold launch and ages out.
+
+### When a credential or a classification does not answer
+
+**A classification that fails waits.** Until 2026-09-10 an engagement gate that could not decide
+engaged anyway and marked the turn `failed_closed`. During an outage that claimed the messages for
+a turn that then failed in its container for the same reason the gate had. Now, when the gate or
+the selector does not produce a usable answer, nothing is decided: the messages stay unclaimed and
+ungated, no turn row is written, and the conversation is classified again later. Historical turns
+keep their `failed_closed` marks and still render them.
+
+**Five kinds of failure**, read off the CLI's `is_error`, `terminal_reason` and `api_error_status`:
+
+| Kind | What it is | Counts toward the credential's health |
+| --- | --- | --- |
+| `refused` | nothing to make the call with (no `claude` binary) | no |
+| `outage` | no answer, a timeout, no envelope, or an API error of 401, 403, 5xx or no status | yes |
+| `budget` | an API error of 402 | yes, at once |
+| `limited` | an API error of 429: a rate limit, or a subscription's session limit | **no** |
+| `unusable` | it answered, and the answer did not validate even under `--json-schema` | no |
+
+The `--json-schema` retry only runs after an `unusable` first attempt, because it fixes the shape
+of an answer and nothing else. A 429 never counts toward health: a subscription past its session
+limit answers 429, the window holds above already cover that, and the probe reads a 429 as a live
+key, so counting it would lift the hold into the same failure on every run.
+
+A selector answer that validates but names a conversation nobody offered is **not** a failure. The
+model answered and the harness refused the content, so the deterministic answer stands.
+
+**Two scopes of waiting**, both in the database so `ffwatch status` and ffweb read what the daemon
+wrote and a restart does not forget them:
+
+- **A credential that is down** (`credential_health`). `health.after_failures` outages in a row, or
+  one `budget`, from a classification or from a container run billed to it. While it is down,
+  nothing billed to it starts:
+  - A conversation whose turn would bill it waits, above the selector and the gate, so a down
+    credential costs no model calls.
+  - A conversation that *could* need a classification billed to it waits too.
+  - A queued turn on it stays queued.
+  - A `#codereview` trigger on it stays in the cursor.
+  - It is probed on its own every `health.probe_secs` and comes back up the moment the probe or
+    any real call answers. A window reading that fails is not a failure here; that rule is
+    unchanged.
+- **One conversation whose classification keeps failing** while its credential is answering. It
+  waits `classify_retry.first_secs`, doubling up to `classify_retry.max_secs`. After
+  `classify_retry.flag_after` failures it is flagged in `ffwatch status`, and it keeps waiting.
+  Nothing releases it but a person: `ffwatch release <conversation>` runs its next turn without the
+  gate, and an operator @-mentioning the bot in that thread also gets a turn, because an addressed
+  message never reaches the gate.
+
+**Max says so only where a turn was coming.** A conversation waiting on a down credential is told,
+once, after `health.notice_after_secs`, and only when the harness would have answered it without
+asking the gate: an addressed message, one with evidence attached, or a new forum thread. The
+notice has its own `down:<conversation>:<turns>` marker, so an earlier break notice in the same wait
+does not silence it.
+
+## `subscription`
+
+**How a subscription's windows are read, and when a request waits for one to refill.** A
+subscription has a five-hour and a seven-day window. An API key and an OpenRouter key have neither,
+so nothing in this block applies to them. Until 2026-09-11 these four keys were in a `claude`
+block.
+
+```json
+"subscription": { "refresh_secs": 900, "timeout_secs": 10,
+                  "review_hold_pct": 0.75, "new_conversation_hold_pct": 0.9 }
+```
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `refresh_secs` | `900` | How often every account's windows are re-read when nobody asks for a fresh one. |
+| `timeout_secs` | `10` | How long one account's reading may take before it is written off for that refresh. |
+| `review_hold_pct` | `0.75` | Above this share of the account that would pay, a `#codereview` trigger — or a ripe batch of pull-request feedback — waits for the window to refill instead of starting. Asked per pull request, since the account that pays is per operator. |
+| `new_conversation_hold_pct` | `0.9` | Above this, a brand-new conversation waits for its first turn. |
+
+Not seeded. A box with no `subscription` block gets exactly the defaults above.
 
 **Where the numbers come from.** Anthropic, through `ffbox/claude_keys.py` — the same module
 that draws ffweb's `/claude` page, so the page and the daemon cannot disagree. A key from
@@ -530,65 +618,11 @@ a different reason: it has no window, so there is nothing a reading could put it
 `0` on either key turns that hold off, and turning **both** off means this box never reads a
 window at all — which is the right setting for a box whose only credential is the API key.
 
-`ffwatch status` prints a `claude holds:` block — each hold, its threshold, and which operators
+`ffwatch status` prints a `subscription holds:` block — each hold, its threshold, and which operators
 are waiting, with the sentence naming the account and the refill time. Both lines are
 printed even when neither is biting, because "nothing has started for two hours" is exactly the
 moment somebody goes looking for it and an absent line answers nothing. The journal gets one
 line when a hold goes on and one when it lifts, never one per poll.
-
-### When a credential or a classification does not answer
-
-**A classification that fails waits.** Until 2026-09-10 an engagement gate that could not decide
-engaged anyway and marked the turn `failed_closed`. During an outage that claimed the messages for
-a turn that then failed in its container for the same reason the gate had. Now, when the gate or
-the selector does not produce a usable answer, nothing is decided: the messages stay unclaimed and
-ungated, no turn row is written, and the conversation is classified again later. Historical turns
-keep their `failed_closed` marks and still render them.
-
-**Five kinds of failure**, read off the CLI's `is_error`, `terminal_reason` and `api_error_status`:
-
-| Kind | What it is | Counts toward the credential's health |
-| --- | --- | --- |
-| `refused` | nothing to make the call with (no `claude` binary) | no |
-| `outage` | no answer, a timeout, no envelope, or an API error of 401, 403, 5xx or no status | yes |
-| `budget` | an API error of 402 | yes, at once |
-| `limited` | an API error of 429: a rate limit, or a subscription's session limit | **no** |
-| `unusable` | it answered, and the answer did not validate even under `--json-schema` | no |
-
-The `--json-schema` retry only runs after an `unusable` first attempt, because it fixes the shape
-of an answer and nothing else. A 429 never counts toward health: a subscription past its session
-limit answers 429, the window holds above already cover that, and the probe reads a 429 as a live
-key, so counting it would lift the hold into the same failure on every run.
-
-A selector answer that validates but names a conversation nobody offered is **not** a failure. The
-model answered and the harness refused the content, so the deterministic answer stands.
-
-**Two scopes of waiting**, both in the database so `ffwatch status` and ffweb read what the daemon
-wrote and a restart does not forget them:
-
-- **A credential that is down** (`credential_health`). `health.after_failures` outages in a row, or
-  one `budget`, from a classification or from a container run billed to it. While it is down,
-  nothing billed to it starts:
-  - A conversation whose turn would bill it waits, above the selector and the gate, so a down
-    credential costs no model calls.
-  - A conversation that *could* need a classification billed to it waits too.
-  - A queued turn on it stays queued.
-  - A `#codereview` trigger on it stays in the cursor.
-  - It is probed on its own every `health.probe_secs` and comes back up the moment the probe or
-    any real call answers. A window reading that fails is not a failure here; that rule is
-    unchanged.
-- **One conversation whose classification keeps failing** while its credential is answering. It
-  waits `classify_retry.first_secs`, doubling up to `classify_retry.max_secs`. After
-  `classify_retry.flag_after` failures it is flagged in `ffwatch status`, and it keeps waiting.
-  Nothing releases it but a person: `ffwatch release <conversation>` runs its next turn without the
-  gate, and an operator @-mentioning the bot in that thread also gets a turn, because an addressed
-  message never reaches the gate.
-
-**Max says so only where a turn was coming.** A conversation waiting on a down credential is told,
-once, after `health.notice_after_secs`, and only when the harness would have answered it without
-asking the gate: an addressed message, one with evidence attached, or a new forum thread. The
-notice has its own `down:<conversation>:<turns>` marker, so an earlier break notice in the same wait
-does not silence it.
 
 ## `quiet_hours`
 
@@ -1119,7 +1153,7 @@ matched case-insensitively, or its variable name, or for a subscription its slot
 fallback. It can be a subscription, an API key or an OpenRouter key; see
 [Credential kinds](#credential-kinds). An operator with no `model` has
 every request refused rather than billed to somebody else's plan — see
-[`claude`](#claude) for the whole routing table and what a refusal looks like.
+[`model`](#model) for the whole routing table and what a refusal looks like.
 
 **Sharing the block is not sharing the ids.** `ffwatch` reads the `discord` field for Discord
 and the `github` field for `#codereview`, and `ffdiscord` folds only the `discord` field back
@@ -1234,13 +1268,12 @@ because a box normally wants one.
 
 ## The agent and its models
 
+The model aliases a turn and a classification ask for are in [`model`](#model).
+
 | Key | Default |
 |---|---|
-| `model` | `"opus"` |
-| `fallback_model` | `"sonnet"` |
 | `effort` | `null` |
 | `max_budget_usd` | `10` — bounds one container run. A class block may set its own (`pools.<class>.max_budget_usd`, `null` for the box's); it is the real ceiling on a run billed to the metered key |
-| `classifier_model` | `"haiku"` |
 | `classifier_secs` | `120` |
 | `classifier_thinking_tokens` | `1024` — `0` turns thinking off and measurably changes what the selector decides |
 | `classifier_budget_usd` | `0.25` — a ceiling on one gate or selector call, not on a turn |

@@ -725,10 +725,10 @@ DEFAULTS = {
     #     "operators": { "lothsahn": {"discord": "8000...", "github": 10092359,
     #                                 "shell": "lothsahn", "model": "Loth"} }
     #
-    # `claude` IS THE SUBSCRIPTION ID: the CLAUDE_CODE_NAME_TOKEN<n> declared beside that
-    # person's token in secrets.env, or the slot number as a weaker fallback. An operator with
-    # no `claude` has no account to be billed and their requests are refused rather than
-    # rehomed onto somebody else's plan. See claude_route.
+    # `model` IS THE CREDENTIAL ID: the name declared beside that person's credential in
+    # secrets.env (a subscription, an API key or an OpenRouter key), or a subscription's slot
+    # number as a weaker fallback. An operator with no `model` has nothing to be billed to and
+    # their requests are refused rather than rehomed onto somebody else's. See claude_route.
     #
     # `shell` IS A UNIX ACCOUNT NAME on this box, and the only id that is not numeric. A shell
     # or web prompt opens its conversation with the account that typed it, and renaming a local
@@ -1068,10 +1068,7 @@ DEFAULTS = {
     # the floor all degrade to exactly the behaviour of the line above.
     "poll_secs": 5,
 
-    # agent
-    "model": "opus",
-    "fallback_model": "sonnet",
-    "classifier_model": "haiku",
+    # agent. Which model a turn or a classification asks for is in the `model` block below.
     "classifier_secs": 120,
     # The thinking budget for one classifier call; see classifier_invocation for the numbers
     # behind it. 0 turns thinking off entirely, which is faster still and measurably changes
@@ -1216,17 +1213,54 @@ DEFAULTS = {
         "per_author": False,
     },
 
-    # -- the Claude subscriptions ------------------------------------------------------------
+    # -- which model runs, and which credential pays for it --------------------------------------
     #
-    # WHICH ACCOUNT EACH REQUEST IS BILLED TO IS NOT CONFIGURED HERE. It is decided by who
-    # asked: an operator's request goes to the subscription they named in `operators.<them>.
-    # claude`, and everything else goes to ANTHROPIC_API_KEY. See `claude_route`, and
-    # design/operator_subscriptions_design.txt for why the chooser that used to live here is
-    # gone. NO TOKEN IS CONFIGURED HERE OR ANYWHERE ELSE IN THIS FILE: the answer is a variable
-    # NAME, handed to ffbox as --claude-key, and ffbox resolves it out of secrets.env itself.
+    # AN OPERATOR'S REQUEST IS NOT CONFIGURED HERE. It is billed to the credential they name in
+    # `operators.<them>.model`; see `claude_route`. This block says what pays for everything no
+    # operator asked for, which model alias each call asks for, and what happens when a credential
+    # stops answering. NO TOKEN IS CONFIGURED HERE OR ANYWHERE ELSE IN THIS FILE: a credential is
+    # an id out of secrets.env, it reaches ffbox as a variable NAME on --claude-key, and ffbox
+    # resolves it out of secrets.env itself.
     #
-    # WHAT IS LEFT IN THIS BLOCK IS THE READING AND THE HOLDS.
-    "claude": {
+    # Read through model_block(), which fills in whatever a hand-edited file leaves out.
+    "model": {
+        # THE ALIASES, as Claude Code takes them on --model. `container` and `container_fallback`
+        # are what a turn asks for; `classifier_model` is what the gate and the selector ask for.
+        #
+        # THEY ONLY DECIDE ANYTHING ON AN ANTHROPIC CREDENTIAL. An OpenRouter key points every
+        # alias at the one model its slot declares (credential_environment), so on one of those
+        # all three are the same model and the key's OPENROUTER_MODEL_KEY<n> is what picks it.
+        "container": "opus",
+        "container_fallback": "sonnet",
+        "classifier_model": "haiku",
+        # WHAT PAYS FOR EVERY REQUEST NO OPERATOR MADE: players, a fix leg spawned off a player's
+        # report, and the gate and the selector unless `classifier` names something else. An id
+        # out of secrets.env, matched like an operator's, that must name a metered credential
+        # (default_credential). None is the unnumbered ANTHROPIC_API_KEY, and a None classifier
+        # follows the default.
+        "default": None,
+        "classifier": None,
+
+        # -- WHEN A CREDENTIAL OR A CLASSIFICATION DOES NOT ANSWER ---------------------------
+        # design/openrouter_provider_design.txt section 7.
+        #
+        # health: `after_failures` outages in a row (a timeout, no envelope, a 401/403/5xx)
+        # take a credential down, and a 402 takes it down at once. While it is down nothing
+        # billed to it starts, and nothing that could need a classification billed to it starts
+        # either. It is probed on its own every `probe_secs`. A conversation waiting on it with
+        # no end in sight is told so after `notice_after_secs`.
+        "health": {"after_failures": 2, "probe_secs": 60, "notice_after_secs": 600},
+        # classify_retry: a conversation whose classification failed while its credential was
+        # answering backs off `first_secs`, doubling to `max_secs`, and after `flag_after`
+        # failures is flagged for a person, who runs it with `ffwatch release`.
+        "classify_retry": {"first_secs": 60, "max_secs": 1800, "flag_after": 5},
+    },
+
+    # -- the subscriptions' windows --------------------------------------------------------------
+    #
+    # THE READING AND THE HOLDS, and nothing else. They are about the five-hour and seven-day
+    # windows a subscription has, so none of this applies to an API key or an OpenRouter key.
+    "subscription": {
         # HOW OFTEN THE WINDOWS ARE RE-READ WHEN NOBODY ASKS FOR A FRESH ONE. A quarter of an
         # hour: the windows being measured are five hours and seven days long, so a reading
         # that old answers this question exactly as well as a fresh one, and the reading is not
@@ -1261,8 +1295,8 @@ DEFAULTS = {
         #
         # AND IT IS THE ACCOUNT THAT WOULD PAY THAT DECIDES, nobody else's. An operator who has
         # spent their week holds their own work and no one else's, and a box whose operators are
-        # all spent still answers players — because player work is billed to the API key, which
-        # is metered and has no window to be over. That is also why these holds do not touch it.
+        # all spent still answers players — because player work is billed to the metered default,
+        # which has no window to be over. That is also why these holds do not touch it.
         #
         # TWO NUMBERS, BECAUSE THE TWO REQUESTS ARE NOT WORTH THE SAME. A review is work this
         # box went looking for and can do just as well in four hours; somebody typing in a
@@ -1274,23 +1308,9 @@ DEFAULTS = {
         # an outage at Anthropic, a revoked scope or a network fault must not be able to
         # silently stop every review and every new report on the box. null (or 0) on either
         # key turns that hold off, and turning BOTH off means the box never reads a window at
-        # all — which is the right answer for a box whose only credential is the API key.
+        # all — which is the right answer for a box with no subscription on it.
         "review_hold_pct": 0.75,
         "new_conversation_hold_pct": 0.9,
-
-        # -- WHEN A CREDENTIAL OR A CLASSIFICATION DOES NOT ANSWER ---------------------------
-        # design/openrouter_provider_design.txt section 7.
-        #
-        # health: `after_failures` outages in a row (a timeout, no envelope, a 401/403/5xx)
-        # take a credential down, and a 402 takes it down at once. While it is down nothing
-        # billed to it starts, and nothing that could need a classification billed to it starts
-        # either. It is probed on its own every `probe_secs`. A conversation waiting on it with
-        # no end in sight is told so after `notice_after_secs`.
-        "health": {"after_failures": 2, "probe_secs": 60, "notice_after_secs": 600},
-        # classify_retry: a conversation whose classification failed while its credential was
-        # answering backs off `first_secs`, doubling to `max_secs`, and after `flag_after`
-        # failures is flagged for a person, who runs it with `ffwatch release`.
-        "classify_retry": {"first_secs": 60, "max_secs": 1800, "flag_after": 5},
     },
 
     # -- THE BOX'S OWN NIGHT ----------------------------------------------------------------
@@ -2008,7 +2028,7 @@ def claude_route(cfg, tier, actor, kind, keys):
 
     ANY KIND OF CREDENTIAL CAN BE CLAIMED, since 2026-09-10: an operator's `model` id may name a
     subscription, an API key or an OpenRouter key, and the default is whatever metered credential
-    claude.default names (design/openrouter_provider_design.txt section 3).
+    model.default names (design/openrouter_provider_design.txt section 3).
 
     A PLAYER, OR ANYBODY IN NO OPERATOR TABLE, GETS THE API KEY. That is the whole of the
     default: work this box does for people who are not operating it is metered, and no
@@ -2057,23 +2077,40 @@ KIND_NOUNS = {claude_keys.KIND_SUBSCRIPTION: "subscription",
               claude_keys.KIND_OPENROUTER: "OpenRouter key"}
 
 
-def _resolve_metered(cfg, creds, key, unset):
-    """(credential, "") or (None, refusal) for claude.<key>, which must name one metered credential.
+def model_block(cfg):
+    """The `model` block, every key present. Never raises on a hand-edited config."""
+    block = cfg.get("model")
+    return _deep_merge(DEFAULTS["model"], block if isinstance(block, dict) else {})
 
-    `unset` is what an empty claude.<key> means, called only when it is empty.
+
+def model_for(cfg, cred, alias):
+    """The model a call billed to `cred` runs, as somebody reading the journal would name it.
+
+    An OpenRouter key runs the one model its slot declares, whatever alias the call asked for.
+    Anything else runs the alias `model.<alias>` names, which Anthropic resolves.
     """
-    wanted = str((cfg.get("claude") or {}).get(key) or "").strip()
+    if cred and cred[2] == claude_keys.KIND_OPENROUTER:
+        return cred[5] or claude_keys.OPENROUTER_DEFAULT_MODEL
+    return str(model_block(cfg).get(alias) or DEFAULTS["model"][alias])
+
+
+def _resolve_metered(cfg, creds, key, unset):
+    """(credential, "") or (None, refusal) for model.<key>, which must name one metered credential.
+
+    `unset` is what an empty model.<key> means, called only when it is empty.
+    """
+    wanted = str(model_block(cfg).get(key) or "").strip()
     if not wanted:
         return unset()
     name, why = claude_keys.credential_named(wanted, creds)
     if not name:
         if why.startswith("ambiguous"):
-            return None, (f"claude.{key} is {wanted!r}, which more than one credential in "
+            return None, (f"model.{key} is {wanted!r}, which more than one credential in "
                           f"secrets.env answers to ({why.split(': ', 1)[1]})")
-        return None, f"claude.{key} is {wanted!r}, which names nothing in secrets.env"
+        return None, f"model.{key} is {wanted!r}, which names nothing in secrets.env"
     cred = claude_keys.credential_for(name, creds)
     if cred is None or not claude_keys.metered(cred[2]):
-        return None, (f"claude.{key} is {wanted!r}, which is {name}, an operator's subscription. "
+        return None, (f"model.{key} is {wanted!r}, which is {name}, an operator's subscription. "
                       f"It must name an API key or an OpenRouter key, because a request nobody's "
                       f"subscription pays for must not spend anybody's window")
     return cred, ""
@@ -2082,7 +2119,7 @@ def _resolve_metered(cfg, creds, key, unset):
 def default_credential(cfg, creds):
     """(credential, "") or (None, refusal): what pays for every request no operator made.
 
-    claude.default names it by id, and it must be metered. Unset is the unnumbered
+    model.default names it by id, and it must be metered. Unset is the unnumbered
     ANTHROPIC_API_KEY, which is what every box did before the setting existed.
     """
     def unset():
@@ -2095,7 +2132,7 @@ def default_credential(cfg, creds):
 def classifier_credential(cfg, creds=None):
     """(credential, "") or (None, refusal): what the gate and the selector are billed to.
 
-    claude.classifier, else whatever claude.default resolves to. Module-level, so the classifier
+    model.classifier, else whatever model.default resolves to. Module-level, so the classifier
     functions keep taking only `cfg`, and the Watcher asks the same function to know whose health
     a classification reports to.
     """
@@ -3987,7 +4024,7 @@ CLAUDE_API_KEY_NAME = claude_keys.CLAUDE_API_KEY_NAME
 def classifier_invocation(cfg, prompt, schema, structured=True):
     """(argv, env, cwd, stdin) for one sandboxed model call.
 
-    ALWAYS ON A METERED CREDENTIAL, the one claude.classifier names or else claude.default's, and
+    ALWAYS ON A METERED CREDENTIAL, the one model.classifier names or else model.default's, and
     it takes no argument saying so. The gate and the selector are the box reading text strangers
     wrote, once per candidate message whether or not a turn follows; that is work nobody asked an
     operator to pay for, so it is billed like every other request no operator made.
@@ -4002,7 +4039,7 @@ def classifier_invocation(cfg, prompt, schema, structured=True):
     second call site that can quietly forget --safe-mode.
     """
     argv = [classifier_bin(cfg), "-p",
-            "--model", cfg["classifier_model"],
+            "--model", model_for(cfg, None, "classifier_model"),
             "--output-format", "json",
             "--system-prompt", CLASSIFIER_SYSTEM_PROMPT]
     if structured:
@@ -5228,13 +5265,13 @@ class Watcher:
         # alias that cannot be resolved would otherwise write the same line to the journal four
         # times an hour forever.
         self._sweep_warned = set()
-        # THE CLAUDE ACCOUNT READER. It caches each key's windows for `refresh_secs`, which is
-        # the whole of the rate-limiting on this: callers ask whenever they need an answer and
+        # THE SUBSCRIPTION WINDOW READER. It caches each key's windows for `refresh_secs`, which
+        # is the whole of the rate-limiting on this: callers ask whenever they need an answer and
         # the requests happen a quarter-hour apart.
-        _claude_block = self.cfg.get("claude") or {}
+        _sub_block = self.subscription_cfg()
         self._claude = claude_keys.ClaudeKeys(
-            ttl=int(_claude_block.get("refresh_secs") or claude_keys.CLAUDE_USAGE_TTL_SECS),
-            timeout=int(_claude_block.get("timeout_secs") or 10),
+            ttl=int(_sub_block.get("refresh_secs") or claude_keys.CLAUDE_USAGE_TTL_SECS),
+            timeout=int(_sub_block.get("timeout_secs") or 10),
             # SHARED WITH ffweb, which reads the same file rather than asking Anthropic again.
             # This daemon reads far more often than the page does — once before every spawn
             # decision — so the page is the one that gains.
@@ -7539,7 +7576,7 @@ class Watcher:
         if msgs and self.could_need_classification(conv, msgs):
             classifier, cwhy = classifier_credential(self.cfg)
             if classifier is None:
-                # NOTHING CAN PAY FOR THE GATE OR THE SELECTOR: claude.classifier or claude.default
+                # NOTHING CAN PAY FOR THE GATE OR THE SELECTOR: model.classifier or model.default
                 # names nothing, or names a subscription. A configuration error, not a wait.
                 self.log_hold(f"conversation {conv['id']}", cwhy)
                 return "unclassifiable", 0, cwhy, None
@@ -7689,10 +7726,10 @@ class Watcher:
         cred, _why = classifier_credential(self.cfg)
         return cred[0] if cred else None
 
-    def _claude_number(self, section, key):
-        """One positive number out of claude.<section>, or its default for anything else."""
-        block = self.claude_cfg().get(section)
-        default = DEFAULTS["claude"][section][key]
+    def _model_number(self, section, key):
+        """One positive number out of model.<section>, or its default for anything else."""
+        block = model_block(self.cfg).get(section)
+        default = DEFAULTS["model"][section][key]
         try:
             value = float((block if isinstance(block, dict) else {}).get(key, default))
         except (TypeError, ValueError):
@@ -7737,7 +7774,7 @@ class Watcher:
         failures = (int(row["failures"] or 0) if row is not None else 0) + 1
         was_down = row is not None and row["state"] == "down"
         down = (was_down or kind == FAILURE_BUDGET
-                or failures >= int(self._claude_number("health", "after_failures")))
+                or failures >= int(self._model_number("health", "after_failures")))
         until = (self.budget_until(name) if kind == FAILURE_BUDGET
                  else (row["until"] if was_down else None))
         self.db.execute("INSERT OR IGNORE INTO credential_health(name, updated_at) VALUES(?,?)",
@@ -7748,7 +7785,7 @@ class Watcher:
             ("down" if down else "up", failures,
              (row["down_since"] if was_down else now) if down else None,
              until if down else None,
-             iso_at(time.time() + self._claude_number("health", "probe_secs")) if down else None,
+             iso_at(time.time() + self._model_number("health", "probe_secs")) if down else None,
              str(failure)[:300], now, name))
         if down and not was_down:
             log(f"WARNING: credential {name} is not answering ({kind}: {failure}); nothing "
@@ -7846,11 +7883,11 @@ class Watcher:
         if row is None:
             return None
         failures = int(row["classify_failures"] or 0) + 1
-        wait = min(self._claude_number("classify_retry", "first_secs") * (2 ** min(failures - 1,
+        wait = min(self._model_number("classify_retry", "first_secs") * (2 ** min(failures - 1,
                                                                                    20)),
-                   self._claude_number("classify_retry", "max_secs"))
+                   self._model_number("classify_retry", "max_secs"))
         flagged = row["classify_flagged_at"] or (
-            now_iso() if failures >= int(self._claude_number("classify_retry", "flag_after"))
+            now_iso() if failures >= int(self._model_number("classify_retry", "flag_after"))
             else None)
         self.db.execute(
             "UPDATE conversation SET classify_failures=?, classify_retry_at=?, classify_error=?,"
@@ -7892,7 +7929,7 @@ class Watcher:
         row = self.credential_health(name)
         since = iso_secs(row["down_since"]) if row is not None else None
         if (since is not None
-                and time.time() - since >= self._claude_number("health", "notice_after_secs")):
+                and time.time() - since >= self._model_number("health", "notice_after_secs")):
             self.say_waiting(conv, msgs)
         return None
 
@@ -7955,7 +7992,7 @@ class Watcher:
                 self.db.execute(
                     "UPDATE credential_health SET next_probe_at=?, last_error=?, updated_at=?"
                     " WHERE name=?",
-                    (iso_at(now + self._claude_number("health", "probe_secs")),
+                    (iso_at(now + self._model_number("health", "probe_secs")),
                      (err or row["last_error"] or "")[:300], now_iso(), row["name"]))
             return
 
@@ -8978,7 +9015,7 @@ class Watcher:
             # NOTHING CAN PAY FOR WHAT THIS WOULD SERVE, so it is not staged. ffbox would refuse
             # to create it anyway (exit 78 on a name it cannot resolve); this is that refusal
             # arriving before a 180-second subprocess rather than after one.
-            log(f"pool: not staging {agent_class} — no Claude account can pay for a turn it "
+            log(f"pool: not staging {agent_class} — no credential can pay for a turn it "
                 f"would serve")
             self._pool_stage_error[agent_class] = self.pool_keyless_why(agent_class)
             shutil.rmtree(d, ignore_errors=True)
@@ -9012,7 +9049,7 @@ class Watcher:
             with open(os.path.join(d, "claude-key"), "w", encoding="utf-8") as fh:
                 fh.write((_staged_key or "") + "\n")
         except OSError as exc:  # noqa: BLE001 — bookkeeping must not fail a staging
-            log(f"pool: could not record {pool_id}'s Claude account: {exc}")
+            log(f"pool: could not record {pool_id}'s credential: {exc}")
         log(f"pool: staging {tier} {agent_class} {pool_id} on {ref}"
             f"{' billing ' + _staged_key if _staged_key else ''}")
         return pool_id
@@ -9489,7 +9526,7 @@ class Watcher:
         """
         if discord_pool(self.cfg, "user_pool") == agent_class:
             # THE DEFAULT'S OWN REFUSAL, because since 2026-09-10 the metered default is whatever
-            # claude.default names, and "no ANTHROPIC_API_KEY" is only one of the ways it can fail
+            # model.default names, and "no ANTHROPIC_API_KEY" is only one of the ways it can fail
             # to resolve (design/openrouter_provider_design.txt section 3).
             _dflt, dwhy = self.claude_keys_now()[1]
             return (f"{agent_class} serves players, whose turns bill the metered default, and it "
@@ -9498,7 +9535,7 @@ class Watcher:
                     f"container nothing could be dispatched into")
         routed = {name for _who, _id, name, _why in self.claude_routes() if name}
         if not routed:
-            return (f"no operator on this box has a Claude credential ffwatch can bill a "
+            return (f"no operator on this box has a credential ffwatch can bill a "
                     f"{agent_class} turn to: every `model` id in the trust table is missing, or "
                     f"names a credential that is not in secrets.env")
         if routed.issubset(self.pool_spare_keys(agent_class)):
@@ -9506,7 +9543,7 @@ class Watcher:
                     f"waiting ({len(routed)} of them). The rest of this class's `idle` can only "
                     f"be filled by staging a second spare for somebody who has not asked for "
                     f"one, which the keeper will not do")
-        return "no Claude account can pay for a turn it would serve"
+        return "no credential can pay for a turn it would serve"
 
     def pool_hold_path(self):
         """The file the keeper writes its reasons to. See POOL_HOLD_FILE."""
@@ -9686,7 +9723,7 @@ class Watcher:
             stage_key = self.pool_stage_key(agent_class)
             if not stage_key:
                 if not self._pool_keyless_logged.get(agent_class):
-                    log(f"pool: not staging {agent_class} — no Claude account can pay for a "
+                    log(f"pool: not staging {agent_class} — no credential can pay for a "
                         f"turn it would serve")
                     self._pool_keyless_logged[agent_class] = True
                 self.pool_hold_note(agent_class, "keyless", self.pool_keyless_why(agent_class))
@@ -10517,7 +10554,8 @@ class Watcher:
             "messages": [self.job_message(m, att_dir) for m in msgs],
             "history": [self.job_message(m, att_dir) for m in reversed(history)],
             "resume_summary": summary,
-            "model": {"model": self.cfg["model"], "fallback_model": self.cfg["fallback_model"],
+            "model": {"model": model_block(self.cfg)["container"],
+                      "fallback_model": model_block(self.cfg)["container_fallback"],
                       # THE CLASS'S CEILING, FALLING BACK TO THE BOX'S. A class that declares
                       # none wants whatever the box says; see _class_blocks.
                       "max_budget_usd": (ccfg.get("max_budget_usd")
@@ -11939,7 +11977,7 @@ class Watcher:
         return pull
 
     # ======================================================================================
-    # the Claude subscriptions
+    # the credentials, and the subscriptions' windows
     # ======================================================================================
     #
     # WHICH ACCOUNT PAYS IS A ROUTING QUESTION, answered by `claude_route` from who asked; what
@@ -11957,10 +11995,10 @@ class Watcher:
     # couple of calls, and the decisions that cannot afford a stale answer ask for a fresh one
     # explicitly (see `claude_hold`'s `fresh`).
 
-    def claude_cfg(self):
-        """The `claude` block, every key present. Never raises on a hand-edited config."""
-        block = self.cfg.get("claude")
-        return _deep_merge(DEFAULTS["claude"], block if isinstance(block, dict) else {})
+    def subscription_cfg(self):
+        """The `subscription` block, every key present. Never raises on a hand-edited config."""
+        block = self.cfg.get("subscription")
+        return _deep_merge(DEFAULTS["subscription"], block if isinstance(block, dict) else {})
 
     def claude_keys_now(self):
         """(credentials, default, classifier) out of secrets.env and config.json, for one decision.
@@ -12025,7 +12063,7 @@ class Watcher:
         return out
 
     def say_claude_routes(self):
-        """Log what each operator's subscription id resolved to. ONCE, at the first pass.
+        """Log what pays for each kind of request, and on which model. ONCE, at the first pass.
 
         A BOX THAT CANNOT BILL SOMEBODY SAYS SO BEFORE THEY ASK. The alternative is an operator
         typing into Discord, getting a refusal they have to read carefully, and coming here
@@ -12035,34 +12073,30 @@ class Watcher:
         if self._claude_routes_said:
             return
         self._claude_routes_said = True
-        _creds, (dflt, dwhy), (clf, cwhy) = self.claude_keys_now()
+        creds, (dflt, dwhy), (clf, cwhy) = self.claude_keys_now()
         if dflt is None:
-            log(f"WARNING: claude: {dwhy}; every request that is not an operator's will be "
-                f"refused until claude.default resolves")
+            log(f"WARNING: model: {dwhy}; every request that is not an operator's will be "
+                f"refused until model.default resolves")
         else:
-            log(f"claude: requests no operator made bill {dflt[0]} "
-                f"({KIND_NOUNS.get(dflt[2], 'credential')})")
+            log(f"model: requests no operator made bill {dflt[0]} "
+                f"({KIND_NOUNS.get(dflt[2], 'credential')}) on "
+                f"{model_for(self.cfg, dflt, 'container')}")
         if clf is None:
-            log(f"WARNING: claude: the gate and the selector have nothing to bill: {cwhy}")
-        elif dflt is None or clf[0] != dflt[0]:
-            log(f"claude: the gate and the selector bill {clf[0]} "
-                f"({KIND_NOUNS.get(clf[2], 'credential')})")
+            log(f"WARNING: model: the gate and the selector have nothing to bill: {cwhy}")
+        else:
+            # SAID EVEN WHEN IT IS THE DEFAULT'S CREDENTIAL, because on an Anthropic one the
+            # classifications run a different model from the turns.
+            log(f"model: the gate and the selector bill {clf[0]} "
+                f"({KIND_NOUNS.get(clf[2], 'credential')}) on "
+                f"{model_for(self.cfg, clf, 'classifier_model')}")
         for who, key_id, name, why in self.claude_routes():
             if name:
-                log(f"claude: {who} bills {name} "
+                cred = claude_keys.credential_for(name, creds)
+                log(f"model: {who} bills {name} "
                     f"({KIND_NOUNS.get(claude_keys.credential_kind(name), 'credential')}, "
-                    f"declared as {key_id})")
+                    f"declared as {key_id}) on {model_for(self.cfg, cred, 'container')}")
             else:
-                log(f"WARNING: claude: {who} has nothing to bill — {why}")
-        # A CONFIG KEY NOTHING READS IS MERGED IN AND FORGOTTEN, and that silence is how
-        # somebody comes to believe this box still spreads work over its accounts. Said once,
-        # here, because this is where the rest of the billing picture is said.
-        stale = [k for k in ("spread", "five_hour_cap")
-                 if k in (self.cfg.get("claude") or {})]
-        if stale:
-            log(f"claude: config.json still sets claude.{', claude.'.join(stale)}; nothing "
-                f"reads {'them' if len(stale) > 1 else 'it'} any more — which account pays is "
-                f"decided by who asked (operators.<name>.model)")
+                log(f"WARNING: model: {who} has nothing to bill — {why}")
 
     def claude_hold_pct(self, what):
         """The configured share for one hold, or None when that hold is off.
@@ -12074,7 +12108,7 @@ class Watcher:
         """
         key = {"review": "review_hold_pct", "new": "new_conversation_hold_pct"}[what]
         try:
-            pct = float(self.claude_cfg().get(key))
+            pct = float(self.subscription_cfg().get(key))
         except (TypeError, ValueError):
             return None
         return pct if pct > 0.0 else None
@@ -12180,21 +12214,21 @@ class Watcher:
         try:
             return self._claude.read(force=fresh)
         except Exception as exc:  # noqa: BLE001 — a reading must not take down a launch
-            log(f"WARNING: could not read the Claude accounts: {type(exc).__name__}: {exc}")
+            log(f"WARNING: could not read the subscription windows: {type(exc).__name__}: {exc}")
             return []
 
     def claude_status(self):
-        """The subscription lines for `ffwatch status`."""
+        """The credential lines for `ffwatch status`: what pays, on which model, and the windows."""
         quiet = self.quiet_hold_status()
         creds, (dflt, dwhy), (clf, cwhy) = self.claude_keys_now()
         subs = [c for c in creds if c[2] == claude_keys.KIND_SUBSCRIPTION]
-        out = quiet + [f"claude: {len(subs)} subscription{'' if len(subs) == 1 else 's'}, "
-                       + (f"default {dflt[0]}" if dflt
+        out = quiet + [f"model: {len(creds)} credential{'' if len(creds) == 1 else 's'} "
+                       f"({len(subs)} subscription{'' if len(subs) == 1 else 's'}), "
+                       + (f"default {dflt[0]} on {model_for(self.cfg, dflt, 'container')}" if dflt
                           else f"NO DEFAULT ({dwhy}) — nothing that is not an operator's request "
                                f"can run")
-                       + ("" if clf is not None and dflt is not None and clf[0] == dflt[0]
-                          else f", classifier {clf[0]}" if clf is not None
-                          else f", NO CLASSIFIER ({cwhy})")]
+                       + (f", classifier {clf[0]} on {model_for(self.cfg, clf, 'classifier_model')}"
+                          if clf is not None else f", NO CLASSIFIER ({cwhy})")]
         # WHO PAYS FOR WHAT, which is the question this command is asked. One line per operator,
         # including the ones who cannot be billed at all: an operator with nothing to bill is
         # who somebody is looking for when they run this.
@@ -12203,7 +12237,7 @@ class Watcher:
             by_name[rec["name"]] = rec
         for who, key_id, name, why in self.claude_routes():
             if not name:
-                out.append(f"  {who:<16} NO ACCOUNT — {why}")
+                out.append(f"  {who:<16} NO CREDENTIAL — {why}")
                 continue
             rec = by_name.get(name)
             kind = claude_keys.credential_kind(name)
@@ -12280,7 +12314,7 @@ class Watcher:
                   if self.claude_hold_pct(what) is not None]
         if not wanted:
             return []
-        out = ["claude holds: a request over the line waits for the window to refill "
+        out = ["subscription holds: a request over the line waits for the window to refill "
                "rather than being refused; each operator's own account decides"]
         for what, label in wanted:
             cap = self.claude_hold_pct(what)
@@ -12369,7 +12403,7 @@ class Watcher:
             # by design -- and BranchUnavailable's shape is exactly right: the turn fails, the
             # sentence lands on turn.error, and nothing was started.
             raise BranchUnavailable(
-                f"this turn has no Claude account to bill: {claude_why}. Nothing was run.")
+                f"this turn has no credential to bill: {claude_why}. Nothing was run.")
         job = self.build_job(turn, conv, run_id, att_dir, ccfg=ccfg, agent_class=cls)
         job_path = os.path.join(run_dir, "job.json")
         with open(job_path, "w", encoding="utf-8") as fh:
@@ -12635,7 +12669,7 @@ class Watcher:
         log(f"run {run_id}: agent={cls} lane={turn['lane']} tools={cap['tools']} "
             f"resume={job['session']['resume']} "
             f"{'pooled' if pool_id else 'cold'}"
-            f"{' claude=' + claude_key if claude_key else ''}")
+            f"{' credential=' + claude_key if claude_key else ''}")
         if claude_key and claude_why:
             log(f"run {run_id}: billed to {claude_key} — {claude_why}")
         started = time.monotonic()
@@ -18379,7 +18413,7 @@ WAITING_NOTE = ("My brain's not answering right now, so I can't get to this yet.
 # a refusal nobody can act on is worth nothing, and the one person who can act on this is a
 # developer reading the same thread. The reason itself names the operator and the id, so the
 # sentence stays short and the detail lands in the journal and on /claude with it.
-ROUTE_REFUSED_NOTE = ("I can't run this: there's no Claude account configured to bill it to "
+ROUTE_REFUSED_NOTE = ("I can't run this: there's no model credential configured to bill it to "
                       "({why}). Nothing is lost — fix the config and I'll pick this up on the "
                       "next pass.")
 
