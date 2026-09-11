@@ -40,6 +40,18 @@ export DOCKER_HOST
 DOCKER=${FFBOX_DOCKER:-docker}
 CONFIG=${FFBOX_CONFIG_JSON:-${FFBOX_CONFIG_DIR:-$HOME/.config/ffbox}/config.json}
 POOL_DIR=${FFBOX_POOL_DIR:-$HOME/ffbox-state/pool}
+# WHY A POOL IS SHORT, WHEN THE KEEPER KNOWS. Written by ffwatch's keep_pool (POOL_HOLD_FILE in
+# ffwatch.py) beside the spool directories, because the answer lives in that daemon's memory and
+# every reading of this box comes through this script instead. `docker ps` can say a pool is below
+# its target; only the keeper knows whether that is a missing credential, a ceiling, a memory
+# squeeze or a staging that failed -- and until this file existed, finding out meant logging into
+# the box and reading the journal.
+POOL_HOLD=${FFBOX_POOL_HOLD:-$(dirname -- "$POOL_DIR")/pool-hold.json}
+# PAST THIS MANY SECONDS a recorded reason is reported as stale rather than as the answer, because
+# a keeper that has stopped looking is itself the likeliest reason a pool is empty. Mirrors
+# POOL_HOLD_STALE_SECS in ffwatch.py, which is the copy that decides how often the file is
+# refreshed; ffweb.py carries the same number for the same reason.
+POOL_HOLD_STALE_SECS=${FFBOX_POOL_HOLD_STALE_SECS:-300}
 # WHERE THE CI LANE SAYS A RUNNER IS BUSY. ffwatch mints a CI container only when the pool
 # needs one -- pool.idle runners registered and waiting, plus one per job in flight -- so an
 # idle CI runner is a running container in exactly the way an agent spare is, and `docker ps`
@@ -233,6 +245,59 @@ human_kb() {
     else
         printf '%dK' "$kb"
     fi
+}
+
+# --- why a pool is short ------------------------------------------------------------------------
+#
+# INTO AN ASSOCIATIVE ARRAY, keyed `<class>.key`, `<class>.reason` and `<class>.since`, plus one
+# `checked_at` for the file as a whole. The python does the parsing and the flattening for the
+# same reason render_json hands it the quoting: a reason is a sentence somebody else wrote, and a
+# newline in one would break the `key=value` loop below into records this script would then read
+# as class names.
+#
+# A MISSING FILE IS AN ORDINARY STATE, not an error. A box whose ffwatch predates this, or whose
+# keeper has not finished a pass yet, has no reasons to show -- and every consumer below then
+# renders exactly what it rendered before this file existed.
+declare -A HOLD=()
+
+read_pool_holds() {
+    HOLD=()
+    [ -r "$POOL_HOLD" ] || return 0
+    while IFS='=' read -r _k _v; do
+        [ -n "$_k" ] && HOLD["$_k"]=$_v
+    done < <(python3 - "$POOL_HOLD" <<'PY' 2>/dev/null
+import json, re, sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        doc = json.load(fh)
+except (OSError, ValueError):
+    raise SystemExit(0)
+if not isinstance(doc, dict):
+    raise SystemExit(0)
+
+def flat(value, limit=300):
+    return " ".join(str(value).split())[:limit]
+
+checked = doc.get("checked_at")
+if isinstance(checked, (int, float)):
+    print("checked_at=%d" % int(checked))
+pools = doc.get("pools")
+if isinstance(pools, dict):
+    for cls, hold in pools.items():
+        # THE CLASS NAME BECOMES A SHELL ARRAY KEY, so it is checked rather than trusted. Nothing
+        # but ffwatch writes this file, and that is an argument for it being well formed -- not
+        # an argument for this script being where a file that is not gets to say anything it
+        # likes.
+        if not isinstance(hold, dict) or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", str(cls)):
+            continue
+        print("%s.key=%s" % (cls, flat(hold.get("key") or "", 40)))
+        print("%s.reason=%s" % (cls, flat(hold.get("reason") or "")))
+        since = hold.get("since")
+        if isinstance(since, (int, float)):
+            print("%s.since=%d" % (cls, int(since)))
+PY
+)
 }
 
 # --- what the machine itself has left -----------------------------------------------------------
@@ -523,6 +588,7 @@ gather() {
     read_machine
     read_maintenance
     read_update
+    read_pool_holds
     ROWS=(); INFRA=(); SPARES=(); LOOSE=(); RUNS=()
     CI_BUSY=0; CI_WAITING=0; WORKLOADS=0; WIDEST=4; GATHER_ERR=
 
@@ -648,6 +714,28 @@ gather() {
     return 0
 }
 
+# One pool's reason, dim, under the table -- or nothing at all when it is holding what it was
+# asked to, when the keeper recorded no reason, or when this checkout has no such file.
+#
+# A STALE READING IS SAID AS STALE. The file carries the time of the keeper's last pass rather
+# than the time the reason started, precisely so this can tell a standing reason from a daemon
+# that has stopped looking -- and the second is a bigger problem than whatever the sentence says.
+pool_hold_line() {
+    local cls=$1 want have reason age
+    case "$cls" in
+        ci) want=${CFG[ci_idle]}; have=$CI_WAITING ;;
+        *)  want=${CFG[${cls}_idle]}; have=${SPARES[$cls]:-0} ;;
+    esac
+    [ "$have" -lt "$want" ] || return 0
+    reason=${HOLD[$cls.reason]:-}
+    [ -n "$reason" ] || return 0
+    age=$(( $(date +%s) - ${HOLD[checked_at]:-0} ))
+    if [ -n "${HOLD[checked_at]:-}" ] && [ "$age" -gt "$POOL_HOLD_STALE_SECS" ]; then
+        reason="$reason  [last looked $(human_secs "$age") ago -- ffwatch may have stopped]"
+    fi
+    printf '  %s%-10s %s%s\n' "$DIM" "$cls" "$reason" "$N"
+}
+
 # --- the terminal reading -------------------------------------------------------------------
 render_text() {
     # AMBER FOR THE TWO STATES THAT CHANGE WHAT THE TABLES BELOW MEAN, green for the two that do
@@ -769,6 +857,22 @@ render_text() {
     printf '  %-10s %-6s %s%-9s%s %-8s %-6s %s\n' \
         ci "${CFG[ci_idle]}" "$ci_mark" "$CI_WAITING" "$N" "-" "$CI_BUSY" "${CFG[ci_max]}"
 
+    # AND WHY, FOR EVERY ROW THAT IS SHORT. The amber number says a pool is not holding what it
+    # was asked to; this says what the keeper is waiting on, which is the question the colour
+    # provokes and could not answer. Under the table rather than in a column, because a reason is
+    # a sentence and the table is six narrow numbers -- and only for the rows that are short, so
+    # a box doing what it should still prints five lines here.
+    local hold_cls hold_line hold_said=
+    for hold_cls in ffagent ffdev ci; do
+        hold_line=$(pool_hold_line "$hold_cls")
+        [ -n "$hold_line" ] || continue
+        # The blank line only when there is something to separate, so a box with every pool full
+        # ends the section exactly where it always did.
+        [ -n "$hold_said" ] || printf '\n'
+        hold_said=1
+        printf '%s\n' "$hold_line"
+    done
+
     if [ ${#INFRA[@]} -gt 0 ]; then
         printf '\n%sINFRASTRUCTURE%s %s(holds no workspace, counts against nothing)%s\n\n' \
             "$B" "$N" "$DIM" "$N"
@@ -777,6 +881,17 @@ render_text() {
         done
     fi
     printf '\n'
+}
+
+# One pool's record: the numbers, then what the keeper last said about that class. The three hold
+# fields are empty when it said nothing, which is the ordinary state of a pool holding what it was
+# asked to -- and the reason goes LAST because it is the only free text in the document, so a
+# consumer reading fields positionally cannot be pushed off the end by a long sentence.
+pool_record() {
+    printf 'P%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+        "$SEP" "$1" "$SEP" "$2" "$SEP" "$3" "$SEP" "$4" "$SEP" "$5" "$SEP" "$6" \
+        "$SEP" "${HOLD[$1.key]:-}" "$SEP" "${HOLD[$1.since]:-}" \
+        "$SEP" "${HOLD[checked_at]:-}" "$SEP" "${HOLD[$1.reason]:-}"
 }
 
 # --- the same reading, as a document ----------------------------------------------------------
@@ -796,18 +911,20 @@ render_json() {
             "$SEP" "$MEM_TOTAL_KB" "$SEP" "$MEM_USED_KB" "$SEP" "$SHMEM_KB"
         local cls
         for cls in ffagent ffdev; do
-            printf 'P%s%s%s%s%s%s%s%s%s%s%s%s\n' "$SEP" "$cls" \
-                "$SEP" "${CFG[${cls}_idle]}" "$SEP" "${SPARES[$cls]:-0}" \
-                "$SEP" "${RUNS[$cls]:-0}" "$SEP" "${CFG[${cls}_max]}" \
-                "$SEP" "${LOOSE[$cls]:-0}"
+            pool_record "$cls" "${CFG[${cls}_idle]}" "${SPARES[$cls]:-0}" "${RUNS[$cls]:-0}" \
+                        "${CFG[${cls}_max]}" "${LOOSE[$cls]:-0}"
         done
         # CI has no such tier, and an empty field is how this record says so -- num() reads it as
         # null, which a page can tell apart from a zero.
-        printf 'P%s%s%s%s%s%s%s%s%s%s%s%s\n' "$SEP" ci \
-            "$SEP" "${CFG[ci_idle]}" "$SEP" "$CI_WAITING" \
-            "$SEP" "$CI_BUSY" "$SEP" "${CFG[ci_max]}" "$SEP" ""
+        pool_record ci "${CFG[ci_idle]}" "$CI_WAITING" "$CI_BUSY" "${CFG[ci_max]}" ""
         [ ${#ROWS[@]} -gt 0 ] && printf "C$SEP%s\n" "${ROWS[@]}"
         [ ${#INFRA[@]} -gt 0 ] && printf "I$SEP%s\n" "${INFRA[@]}"
+        # AND THE BLOCK MUST NOT END ON A TEST. `set -o pipefail` takes a pipeline's status from
+        # the rightmost command that failed, and on a box with no infrastructure containers this
+        # block ended on a false `[ ... ]` -- so `ffstatus.sh --json` exited 1 while printing a
+        # perfectly good document. ffweb reads stdout and never noticed; anything that checked the
+        # status read an idle box as a broken one.
+        :
     # THE PROGRAM COMES IN AS AN ARGUMENT, NOT ON STDIN. `python3 - <<PY` puts the heredoc on
     # stdin, which is where the interpreter reads the program from -- so the records piped in
     # from the block above were thrown away and this rendered an empty document that looked
@@ -856,9 +973,18 @@ for line in sys.stdin.read().splitlines():
                           "cores": num(f[3]), "mem_total_kb": num(f[4]),
                           "mem_used_kb": num(f[5]), "shmem_kb": num(f[6])}
     elif tag == "P":
+        # WHY THIS POOL IS SHORT, when ffwatch wrote a reason down -- null when it did not, which
+        # is what every pool says on a box whose keeper is satisfied. `checked_at` dates the
+        # keeper pass that last confirmed it, NOT the moment the reason began: that is what lets
+        # a page tell a standing reason from a daemon that has stopped looking.
+        hold = None
+        if len(f) > 9 and (f[6] or f[9]):
+            hold = {"key": f[6] or None, "since": num(f[7]), "checked_at": num(f[8]),
+                    "reason": f[9]}
         doc["pools"].append({"class": f[0], "idle": num(f[1]), "waiting": num(f[2]),
                              "busy": num(f[3]), "max": num(f[4]),
-                             "warm_branches": num(f[5]) if len(f) > 5 else None})
+                             "warm_branches": num(f[5]) if len(f) > 5 else None,
+                             "hold": hold})
     elif tag == "C":
         doc["containers"].append({
             "lane": f[0], "class": f[1] or None, "name": f[2], "slot": f[3] or None,

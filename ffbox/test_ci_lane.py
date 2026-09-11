@@ -283,6 +283,49 @@ lane.cfg.error = None
 # for a mirror answer that never comes.
 is_(lane.blocked(), "", "a drain does not go through blocked() — see the drain section above")
 
+print("\nand why it declined, in a form something other than the journal can read")
+
+# THE LANE SAYS WHY IT DID NOT MINT, and ffwatch writes that where ffstatus.sh can find it -- so
+# the `below target` mark on the box page carries its reason for the CI row the same way it does
+# for the two agent pools. Until this existed the CI lane's reasons were _say() lines in the
+# journal and nothing else, which meant the one row of that table an operator could not explain
+# was the one whose lane had the most ways to be short.
+#
+# NOTHING SCHEDULES OFF IT. `hold` is set on the paths that return without minting and cleared on
+# the one that does not; every admission decision above is unchanged.
+write_config(cfg_path, max=5, idle=1, box=12)
+lane.cfg.reload()
+lane.cfg.error = "config.json is unreadable"
+lane.keep()
+ok("a blocked lane records why") if (lane.hold or ("", ""))[0] == "blocked" else \
+    bad(f"a blocked lane must record why, got {lane.hold!r}")
+lane.cfg.error = None
+
+lane.keep(host_drained=True)
+is_((lane.hold or ("", ""))[0], "drained", "a drained lane records that it is drained")
+ok("and says whose drain it is, since ffbox has one and so does this lane") \
+    if "ffbox itself" in lane.hold[1] else bad(f"the reason must name the drain: {lane.hold!r}")
+
+# THE BOX'S CEILING, THROUGH THE SAME PATH AN ADMISSION REFUSAL TAKES. `runners()` shells out, so
+# it is replaced for the two calls below -- what is under test is what the lane RECORDS, not how
+# it counts.
+_real_runners, ci.runners = ci.runners, lambda include_stopped=False: []
+try:
+    lane.keep(box_room=0)
+    is_((lane.hold or ("", ""))[0], "admit", "a lane with no room on the box records that too")
+    ok("and keeps the sentence that names which ceiling") \
+        if "box" in lane.hold[1] else bad(f"the reason must survive: {lane.hold!r}")
+
+    # AND A SATISFIED POOL COMES THROUGH THE SAME DOOR, which is harmless: a satisfied pool is not
+    # below its target, so nothing renders the reason. Asserted so that stays true by accident
+    # rather than by nobody having looked.
+    ci.runners = lambda include_stopped=False: [runner("idle-one")]
+    lane.keep()
+    ok("a satisfied pool says so rather than claiming a problem") \
+        if lane.hold and "satisfied" in lane.hold[1] else bad(f"got {lane.hold!r}")
+finally:
+    ci.runners = _real_runners
+
 print("\nthe launch argument list, rendered rather than run")
 settings = {
     "IMAGE": "ffbox:latest", "EGRESS_NET": "ffghr-net", "EGRESS_IP": "10.81.0.2",

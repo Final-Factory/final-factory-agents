@@ -529,11 +529,21 @@ FFSTATUS_DOC = {
                "last_applied_sha": "f2c72ecedede9a11", "next_check_secs": 214},
     # `warm_branches` is the EVICTABLE tier, counted apart from `waiting` so a guess cannot make
     # an unfilled held pool look full. null is CI, which has no such tier.
+    # `hold` is WHY a pool is short, written down by ffwatch's keeper and carried through
+    # ffstatus.sh -- null on a pool holding what it was asked to. The two short pools here are
+    # deliberately different: ffagent has a reason and ci has none, which is the state of a box
+    # whose keeper has not run a pass, and both have to render.
     "pools": [
         {"class": "ffagent", "idle": 2, "waiting": 1, "busy": 0, "max": 10,
-         "warm_branches": 1},
-        {"class": "ffdev", "idle": 1, "waiting": 1, "busy": 0, "max": 3, "warm_branches": 0},
-        {"class": "ci", "idle": 1, "waiting": 0, "busy": 1, "max": 3, "warm_branches": None},
+         "warm_branches": 1,
+         "hold": {"key": "keyless", "since": int(time.time()) - 3600,
+                  "checked_at": int(time.time()) - 4,
+                  "reason": "ffagent serves players, whose turns bill the metered "
+                            "ANTHROPIC_API_KEY, and this box has none"}},
+        {"class": "ffdev", "idle": 1, "waiting": 1, "busy": 0, "max": 3, "warm_branches": 0,
+         "hold": None},
+        {"class": "ci", "idle": 1, "waiting": 0, "busy": 1, "max": 3, "warm_branches": None,
+         "hold": None},
     ],
     "containers": [
         {"lane": "spare", "class": "ffagent", "name": "ffbox-agent-pool-deadbeef",
@@ -747,6 +757,9 @@ ROUTES = ["/", "/lanes", "/outbound", "/status", "/claude", "/outbound?status=pe
           # The stop confirmation, for a container the stub document has running and for one
           # nothing has ever heard of. Both are pages, which is the point of putting them here.
           "/stop?name=ffbox-dev-t1-99aa", "/stop?name=nothing-by-that-name", "/stop",
+          # And the pools' equivalent: a class the document has, one it does not, and no class
+          # at all. Every one of the three is a page.
+          "/pool?class=ffagent", "/pool?class=nosuchclass", "/pool",
           "/?kind=bug_report", "/?state=closed", "/?verdict=ANSWERED", "/?lane=answer",
           "/?read=all", "/?read=read", "/?read=unread",
           "/conversation/1", "/conversation/2", "/conversation/3", "/conversation/4",
@@ -1483,6 +1496,17 @@ def test_the_box_page_reports_what_the_status_script_said():
               "below target" in prow["ffagent"] and "below target" in prow["ci"], prow)
         check("and one holding what it was asked to is not",
               "below target" not in prow["ffdev"], prow["ffdev"])
+        # THE MARK IS A LINK, on every short row and not only on the ones with a reason
+        # recorded: a pool that is short with nothing written down is its own finding, and a
+        # pill that is sometimes clickable teaches an operator that a plain one means there is
+        # nothing to know.
+        check("the mark is a link to the reason",
+              '/pool?class=ffagent"' in prow["ffagent"]
+              and '/pool?class=ci"' in prow["ci"], prow)
+        check("and the reason itself is not in the table",
+              "ANTHROPIC_API_KEY" not in pools, pools[:0])
+        check("the page says once what the link does",
+              "says what the keeper is waiting on" in text, None)
         check("infrastructure is listed apart from the workspace containers",
               "ffbox-egress" in text)
         check("an ordinary box says so rather than saying nothing",
@@ -1658,6 +1682,84 @@ def test_the_box_page_reports_what_the_status_script_said():
               "<form" not in text_of(body).replace('<form class="logout"', ""),
               text_of(body).count("<form"))
     finally:
+        srv.stop()
+
+
+def test_a_pool_below_target_says_why_when_you_ask():
+    """The reason a pool is short reaches the operator, and so does the age of that reason.
+
+    The keeper knows why it did not stage a spare and the page renders `below target`; before
+    this those were two facts in two places, and joining them meant an ssh session and
+    `journalctl`. What is checked here is the whole of the join: the reason the document carried
+    is on the page, a reason nobody refreshed is called stale rather than repeated as the answer,
+    and a pool that is short with NOTHING written down says that too -- because a keeper that is
+    not running is the likeliest cause of exactly that shape.
+    """
+    print("box: why a pool is below target")
+    write_status_doc(FFSTATUS_DOC)
+    srv = serve()
+    try:
+        code, _h, body = srv.get("/pool?class=ffagent")
+        text = text_of(body)
+        check("the reason is a page", code == 200, code)
+        check("it carries the keeper's own sentence",
+              "ANTHROPIC_API_KEY" in text and "bill the metered" in text, text[:0])
+        check("and the numbers the box page showed, so the two can be compared",
+              "<td>ffagent</td>" in text and "<td>2</td>" in text, text[:0])
+        check("it says how long the keeper has been saying it", "1h00m" in text, text[:0])
+        check("and how long ago it last looked", "last looked" in text, text[:0])
+        check("a fresh answer is not called stale", "has not looked" not in text, text[:0])
+        check("it says what an empty pool costs a turn",
+              "runs cold" in text or "cold" in text, text[:0])
+        check("and it leads back to the box", "/status" in text)
+
+        # A REASON NOBODY HAS REFRESHED IS A DIFFERENT ANSWER. ffwatch rewrites `checked_at`
+        # every half minute whether or not the reason changed, precisely so this is detectable:
+        # a dead keeper empties both pools and leaves its last sentence behind, still confident.
+        stale = json.loads(json.dumps(FFSTATUS_DOC))
+        stale["pools"][0]["hold"]["checked_at"] = int(time.time()) - 4000
+        write_status_doc(stale)
+        text = text_of(srv.get("/pool?class=ffagent")[2])
+        check("a reason the keeper has not refreshed is called out as stale",
+              "has not looked at the pools" in text, text[:0])
+        check("and it names the thing to read next", "systemctl status ffwatch" in text)
+        check("in the loud colour, because it outranks the sentence above it",
+              'class="alert"' in text)
+
+        # SHORT WITH NOTHING WRITTEN DOWN. The keeper records a reason on every pass it declines
+        # to stage, so this shape means it has not reached one -- which is a finding, not a gap.
+        text = text_of(srv.get("/pool?class=ci")[2])
+        check("a short pool with no recorded reason says so rather than saying nothing",
+              "Nothing was written down" in text, text[:0])
+        check("and sends the reader to the keeper itself",
+              "journalctl -u ffwatch" in text, text[:0])
+        check("CI is told what IT pays for an empty pool, which is not what a turn pays",
+              "waits while one is minted" in text, text[:0])
+
+        # A POOL THAT FILLED BETWEEN THE PAGE AND THE CLICK. The same race page_stop handles for
+        # a container that finished, and the same answer: a sentence, not a 404.
+        text = text_of(srv.get("/pool?class=ffdev")[2])
+        check("a pool holding what it was asked to says there is nothing to explain",
+              "holding what it was asked to" in text, text[:0])
+        check("and does not print a reason it no longer has", "<h2>why</h2>" not in text)
+
+        text = text_of(srv.get("/pool?class=nosuchclass")[2])
+        check("a class this box does not have is a sentence, not a 404",
+              "no pool by that name" in text, text[:0])
+        check("and it names the ones it does have",
+              "ffagent" in text and "ffdev" in text and "ci" in text, text[:0])
+
+        # The document is what this page renders and nothing else, so a script that cannot
+        # answer must leave a page here exactly as it does on /status.
+        os.environ["FFWEB_TEST_STATUS_RC"] = "3"
+        try:
+            code, _h, body = srv.get("/pool?class=ffagent")
+        finally:
+            os.environ.pop("FFWEB_TEST_STATUS_RC", None)
+        check("and a status script that cannot answer still leaves a page",
+              code == 200 and "<h1>" in text_of(body), code)
+    finally:
+        write_status_doc(FFSTATUS_DOC)
         srv.stop()
 
 
@@ -3866,6 +3968,7 @@ def main():
         test_transcript_tree_nests_and_terminates,
         test_a_long_subagent_chain_is_not_truncated,
         test_the_box_page_reports_what_the_status_script_said,
+        test_a_pool_below_target_says_why_when_you_ask,
         test_a_running_container_can_be_stopped_from_the_box_page,
         test_the_claude_page_reports_every_key_in_the_pool,
         test_a_box_with_no_keys_says_what_to_write_and_where,

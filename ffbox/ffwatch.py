@@ -321,6 +321,35 @@ POOL_TIER_EVICTABLE = "evictable"
 POOL_TIERS = (POOL_TIER_HELD, POOL_TIER_EVICTABLE)
 
 
+# WHERE THE KEEPER WRITES DOWN WHY A POOL IS SHORT, under the state directory beside the spools.
+#
+# IT IS A FILE BECAUSE THE READER IS NOT THIS PROCESS. Every reading of this box goes through
+# ffstatus.sh -- the terminal tables and the web page alike -- and that script reads `docker ps`
+# and the filesystem on purpose, so that there is ONE counter of containers rather than two that
+# can disagree. Docker can say a pool is short; only the keeper knows why it did not fill it, and
+# a decision made in this process's memory reaches nobody. Until this existed the answer lived in
+# the journal, which means an operator who could see `below target` on the page had to log into
+# the box to find out what it meant.
+#
+# WHAT IT IS NOT: a queue, a log, or anything anybody may act on. It is the last thing the keeper
+# said about each class, rewritten in place, and a consumer that cannot read it shows a pool with
+# no explanation -- which is exactly what every consumer showed before it.
+POOL_HOLD_FILE = "pool-hold.json"
+
+# HOW OFTEN THE FILE IS REWRITTEN WHEN NOTHING HAS CHANGED, in seconds. The keeper runs every few
+# seconds and its answer is usually the same one as last pass, so the write is gated on the
+# CONTENT changing -- but `checked_at` has to keep moving anyway, because a reason nobody has
+# refreshed and a daemon that has stopped looking are the same file otherwise, and the second is
+# itself the most important reason a pool stays empty. See ffstatus.sh, which turns a stale
+# `checked_at` into a sentence.
+POOL_HOLD_REFRESH_SECS = 30
+
+# PAST THIS, A RECORDED REASON IS REPORTED AS STALE rather than as the answer. Generous against
+# POOL_HOLD_REFRESH_SECS: a keeper pass can block for as long as `pool_stage` takes, which is a
+# 22 GiB extraction, and calling that daemon dead would be worse than saying nothing.
+POOL_HOLD_STALE_SECS = 300
+
+
 # HOW LONG ffbox MAY TAKE TO CREATE A CONTAINER, in seconds. Not how long a run may take: the
 # run is bounded by the clock file it is created with (design section 6), and ffbox returns as
 # soon as the container exists. What this catches is ffbox itself wedging -- a `docker run` that
@@ -4877,6 +4906,17 @@ class Watcher:
         # box can pay for a turn it would serve. Latched for the same reason and dropped the
         # moment a credential appears. See keep_pool.
         self._pool_keyless_logged = {}
+        # AND THE SAME ANSWERS AGAIN, FOR SOMEBODY WHO IS NOT READING THE JOURNAL. The two
+        # latches above keep the log readable; this keeps the last reason per class so
+        # pool_hold_note can put it on disk for ffstatus.sh, which is what the box page renders.
+        # Nothing schedules off it -- it is a record of a decision already made.
+        self._pool_hold = {}
+        self._pool_hold_body = None     # the last payload written, so an unchanged pass is free
+        self._pool_hold_at = 0.0        # and when it was written, monotonic
+        self._pool_hold_warned = False  # a failed write is said once, not once per pass
+        # WHY THE LAST STAGING ATTEMPT FAILED, per class, so the keeper can say more than "it
+        # failed" on the page. pool_stage logs the detail already; this keeps it.
+        self._pool_stage_error = {}
         # WHAT IS CURRENTLY WAITING ON A REFILL, subject -> the sentence last logged for it, so
         # a hold that lasts four hours costs one line going in and one coming out rather than
         # one per poll. See log_hold.
@@ -8307,6 +8347,7 @@ class Watcher:
             # arriving before a 180-second subprocess rather than after one.
             log(f"pool: not staging {agent_class} — no Claude account can pay for a turn it "
                 f"would serve")
+            self._pool_stage_error[agent_class] = self.pool_keyless_why(agent_class)
             shutil.rmtree(d, ignore_errors=True)
             return None
         cmd += ["--claude-key", _staged_key]
@@ -8315,13 +8356,20 @@ class Watcher:
                                   errors="replace", timeout=180)
         except (OSError, subprocess.SubprocessError) as exc:
             log(f"pool: staging failed: {exc}")
+            # KEPT, NOT JUST LOGGED, so the keeper can put it on the box page rather than leaving
+            # `below target` to be explained by a journal nobody outside the box can read.
+            self._pool_stage_error[agent_class] = f"ffbox could not be run: {exc}"
             shutil.rmtree(d, ignore_errors=True)
             return None
         if proc.returncode != 0:
             log(f"pool: staging failed ({proc.returncode}): "
                 f"{(proc.stderr or '').strip()[:300]}")
+            self._pool_stage_error[agent_class] = (
+                f"ffbox exited {proc.returncode}: "
+                f"{(proc.stderr or '').strip()[:300] or 'it said nothing'}")
             shutil.rmtree(d, ignore_errors=True)
             return None
+        self._pool_stage_error.pop(agent_class, None)
         # RECORDED BESIDE THE SPOOL, and it is no longer only bookkeeping: pool_claim_for reads
         # this file to decide whether a turn may have this spare at all. A NAME and not a token,
         # so there is nothing here to protect — the file sits in a directory the container can
@@ -8743,6 +8791,133 @@ class Watcher:
             return pool_id
         return None
 
+    def pool_hold_reason(self, quiet_why):
+        """The box-wide hold on ALL staging, as (key, sentence), or None. See keep_pool.
+
+        THE SAME FOUR CONDITIONS IN THE SAME ORDER as the line that returns on them, and it is
+        deliberately not a second reading: config_failsafe() writes the flag ffstatus reads, so
+        asking it twice a pass would be two decisions where there is one.
+        """
+        if quiet_why:
+            return ("quiet_hours",
+                    f"this box is inside its quiet hours, so it is not staging workspaces for "
+                    f"turns that cannot start until they lift — {quiet_why}")
+        failsafe = self.config_failsafe()
+        if failsafe:
+            return ("misconfigured", failsafe)
+        if self.killed():
+            return ("kill_switch",
+                    f"the kill switch at {self.cfg['kill_switch']} is on: nothing launches on "
+                    f"this box while it exists, spares included")
+        if self.draining():
+            return ("draining",
+                    f"the drain flag at {self.cfg['drain_switch']} is set: runs already in "
+                    f"flight finish, and nothing new is launched — most often an update on its "
+                    f"way in, which lifts it when it lands")
+        return None
+
+    def pool_keyless_why(self, agent_class):
+        """Why pool_stage_key had nobody to stage for. The three cases it can return None from.
+
+        WORTH THE THREE SENTENCES, because they send an operator to three different files. A
+        player pool with no API key is secrets.env; an operator pool with no routes is the trust
+        table in config.json; and a pool whose accounts all HAVE a spare is neither -- it is
+        `idle` asking for more spares than there are accounts to bill them to, which is a number
+        somebody chose and which no amount of looking at the journal explains.
+        """
+        if discord_pool(self.cfg, "user_pool") == agent_class:
+            return (f"{agent_class} serves players, whose turns bill the metered "
+                    f"{claude_keys.CLAUDE_API_KEY_NAME}, and this box has none — not in "
+                    f"ffwatch's environment and not in secrets.env. No turn of this class can "
+                    f"run either, so a spare would be a container nothing could be dispatched "
+                    f"into")
+        routed = {name for _who, _id, name, _why in self.claude_routes() if name}
+        if not routed:
+            return (f"no operator on this box has a Claude subscription ffwatch can bill a "
+                    f"{agent_class} turn to: every `claude` id in the trust table is missing, or "
+                    f"names a credential that is not in secrets.env")
+        staged = {self.pool_claude_key(c["id"]) for c in self.pool_containers()
+                  if c["class"] == agent_class}
+        if routed.issubset(staged):
+            return (f"every account that could pay for a {agent_class} turn already has a spare "
+                    f"waiting ({len(routed)} of them). The rest of this class's `idle` can only "
+                    f"be filled by staging a second spare for somebody who has not asked for "
+                    f"one, which the keeper will not do")
+        return "no Claude account can pay for a turn it would serve"
+
+    def pool_hold_path(self):
+        """The file the keeper writes its reasons to. See POOL_HOLD_FILE."""
+        return os.path.join(self.state_dir, POOL_HOLD_FILE)
+
+    def pool_hold_note(self, agent_class, key, reason=""):
+        """Say why `agent_class` is not being topped up, for a reader who is not in the journal.
+
+        `key` is the CONDITION -- `keyless`, `ceiling`, `squeeze`, `failed`, and the box-wide
+        `draining`, `kill_switch`, `misconfigured`, `quiet_hours`, `shedding` -- and `reason` is
+        the sentence with whatever numbers make it actionable. `key=None` clears the class, which
+        is what a pass that staged something, or found the pool full, says.
+
+        THE KEY IS WHAT DATES THE HOLD, not the message. A reason carries counts that move
+        between passes ("2 places free", then "3"), and restarting the clock on those would make
+        a condition that has held for four hours read as new every few seconds -- so `since`
+        survives as long as the key does. Same rule, and the same reason, as warm_branch_note
+        latching on the key rather than on the line.
+
+        EVERY DECLINE CALLS THIS, including the ones that were already logged. The journal keeps
+        one line per transition on purpose; a page cannot render a transition, it renders what is
+        true now, and the two needs are different enough that trying to serve both from the log
+        latches is what left `below target` unexplained on the box page for as long as it existed.
+        """
+        now = int(time.time())
+        if key is None:
+            self._pool_hold.pop(agent_class, None)
+        else:
+            was = self._pool_hold.get(agent_class) or {}
+            self._pool_hold[agent_class] = {
+                "key": str(key),
+                # FLATTENED AND CAPPED HERE, at the writer. ffstatus.sh reads this back through
+                # a line-oriented `key=value` loop and then through a separator-delimited record,
+                # so a newline in a reason is a mangled document rather than a long sentence. The
+                # readers flatten too; doing it at both ends is cheap and the failure is silent.
+                "reason": " ".join(str(reason).split())[:300],
+                "since": was["since"] if was.get("key") == str(key) else now,
+            }
+        self.pool_hold_flush()
+
+    def pool_hold_flush(self):
+        """Write the reasons out, when there is a reason to write.
+
+        TWO TRIGGERS: the answer changed, or the last write is old enough that a reader could not
+        tell a standing reason from a daemon that has stopped looking. Nothing else -- the keeper
+        runs every few seconds and this would otherwise be a file rewritten twenty thousand times
+        a day to say what it already said.
+
+        A FAILED WRITE COSTS A SENTENCE ON A PAGE and nothing else, so it is logged once and
+        swallowed. The pool itself is kept by what keep_pool returns, not by this.
+        """
+        body = json.dumps(self._pool_hold, sort_keys=True)
+        now = time.monotonic()
+        if body == self._pool_hold_body and now < self._pool_hold_at + POOL_HOLD_REFRESH_SECS:
+            return
+        path = self.pool_hold_path()
+        tmp = f"{path}.{os.getpid()}.tmp"
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"checked_at": int(time.time()), "pools": self._pool_hold}, fh)
+            os.replace(tmp, path)
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            if not self._pool_hold_warned:
+                self._pool_hold_warned = True
+                log(f"WARNING: could not write {path}: {exc} — the box page will show pools "
+                    f"below target with no reason attached")
+            return
+        self._pool_hold_warned = False
+        self._pool_hold_body = body
+        self._pool_hold_at = now
+
     def keep_pool(self):
         """Top EACH class's pool up to its own `idle_agents`. Returns the ids staged, [] for none.
 
@@ -8794,19 +8969,35 @@ class Watcher:
         # pool up again behind it.
         _, quiet_why = quiet_hours_hold(self.cfg)
         self.log_hold("the warm pool", quiet_why)
-        if quiet_why or self.config_failsafe() or self.killed() or self.draining():
+        # THE SAME FOUR ANSWERS, WRITTEN DOWN. A box-wide hold is the commonest reason both pools
+        # sit empty at once and the hardest to see from the page, because the container tables
+        # under it are empty too and an empty box looks the same whatever emptied it. The header
+        # already carries `drained` and `misconfigured`; the pill now carries them per pool, and
+        # quiet hours and the kill switch have never been anywhere but the journal.
+        hold = self.pool_hold_reason(quiet_why)
+        if hold:
+            for cls in AGENT_CLASSES:
+                self.pool_hold_note(cls, *hold)
             return []
         # THE RESERVE, BEFORE ANY STAGING. Giving a place back is more urgent than taking one, and
         # a pass that shed something has already changed the numbers every decision below reads --
         # so it returns rather than staging against a count it has just invalidated. A pass never
         # sheds and stages in the same breath.
         if self.pool_shed():
+            for cls in AGENT_CLASSES:
+                self.pool_hold_note(cls, "shedding",
+                                    "the box dropped below its container reserve, so this pass "
+                                    "gave a place back instead of taking one; topping up resumes "
+                                    "on the next pass")
             return []
         staged = []
         containers = self.pool_containers()
         for agent_class in AGENT_CLASSES:
             want = int(class_cfg(self.cfg, agent_class).get("idle_agents") or 0)
             if want <= 0:
+                # Nothing is promised, so nothing can be short. Cleared rather than left: a class
+                # whose `idle` was just turned down would otherwise keep yesterday's reason.
+                self.pool_hold_note(agent_class, None)
                 continue
             # COUNTS "WILL BE WARM", not "is warm", and the difference is deliberate: a container
             # still extracting its tar has no owner file and belongs in this count, or a pass
@@ -8822,6 +9013,7 @@ class Watcher:
                     and self.effective_pool_tier(c) == POOL_TIER_HELD
                     and not os.path.exists(self.pool_owner_path(c["id"]))]
             if len(warm) >= want:
+                self.pool_hold_note(agent_class, None)
                 continue
             # AND WHICH CREDENTIAL THE NEXT ONE CARRIES, asked before the room checks because a
             # class that has nobody to stage for is not a class that is short of spares — it is
@@ -8834,6 +9026,7 @@ class Watcher:
                     log(f"pool: not staging {agent_class} — no Claude account can pay for a "
                         f"turn it would serve")
                     self._pool_keyless_logged[agent_class] = True
+                self.pool_hold_note(agent_class, "keyless", self.pool_keyless_why(agent_class))
                 continue
             self._pool_keyless_logged[agent_class] = False
             # A STAGING THAT FAILED IS LEFT ALONE FOR A WHILE. This loop runs on the daemon's own
@@ -8847,11 +9040,41 @@ class Watcher:
             # and a check above this line could not tell the two apart.
             if time.monotonic() < self._pool_stage_after.get(
                     (agent_class, self.pool_branch(agent_class), stage_key), 0.0):
+                # THE FAILURE IS THE ANSWER, NOT THE COOLDOWN, and it keeps the failure's own
+                # key. `pool_stage` said what went wrong when it went wrong, and an operator
+                # looking at a pool that has been empty for an hour needs that sentence rather
+                # than "it is waiting to try again" -- while a key of its own would restart the
+                # clock a second after every failure, so a pool that had been unable to stage for
+                # three hours would report having been that way for four seconds.
+                # A RATE AND NOT A COUNTDOWN. The deadline moves every second, and a reason
+                # that moves every second is a file rewritten on every pass of a loop that runs
+                # every two -- for a number the reader does not need, since the page already says
+                # how long the condition has held.
+                self.pool_hold_note(
+                    agent_class, "failed",
+                    (self._pool_stage_error.get(agent_class)
+                     or "the last staging attempt failed; see journalctl -u ffwatch")
+                    + f" — the keeper retries every "
+                    + f"{int(float(self.cfg['pool_stage_backoff_secs']))}s")
                 continue
             # THE BOX AND THEN THIS CLASS. workload_room() is re-read per class rather than
             # hoisted, because a container staged for the class before this one has just taken
             # one of its places and the next class must see that.
-            if self.workload_room() <= 0 or self.agent_room(agent_class) <= 0:
+            box_room, class_room = self.workload_room(), self.agent_room(agent_class)
+            if box_room <= 0 or class_room <= 0:
+                # WHICH CEILING, because the two are fixed in different files by different
+                # numbers: the box's is `max_concurrent_runs` and the class's is its own
+                # `pool.max`. A page that said only "no room" would send an operator to the wrong
+                # one half the time.
+                self.pool_hold_note(
+                    agent_class, "ceiling",
+                    (f"the box is at its container ceiling of "
+                     f"{int(self.cfg['max_concurrent_runs'])}: a run, a spare or a CI job would "
+                     f"have to end before a spare could be staged"
+                     if box_room <= 0 else
+                     f"{agent_class} is at its own ceiling of "
+                     f"{int(class_cfg(self.cfg, agent_class)['agent_pool_max'])} containers, "
+                     f"counting its runs and its spares together"))
                 continue
             if not self.pool_has_room():
                 # PER CLASS, so a squeeze that stops one does not silence the message for the
@@ -8861,6 +9084,12 @@ class Watcher:
                     log(f"pool: not staging {agent_class} — too little memory free to hold "
                         f"another workspace without eating into what the runs need")
                     self._pool_squeeze_logged[agent_class] = True
+                self.pool_hold_note(
+                    agent_class, "squeeze",
+                    "too little memory free to hold another workspace without eating into what "
+                    "the runs need: a spare is about "
+                    f"{POOL_WORKSPACE_BYTES // (1024 ** 3)} GiB of tmpfs, and the keeper also "
+                    "keeps back a workspace for every run that could still legitimately start")
                 continue
             self._pool_squeeze_logged[agent_class] = False
             pool_id = self.pool_stage(agent_class, claude_key=stage_key)
@@ -8872,7 +9101,12 @@ class Watcher:
                 self._pool_stage_after[(agent_class, self.pool_branch(agent_class),
                                         stage_key)] = (
                     time.monotonic() + float(self.cfg["pool_stage_backoff_secs"]))
+                self.pool_hold_note(
+                    agent_class, "failed",
+                    self._pool_stage_error.get(agent_class)
+                    or "the staging attempt failed; see journalctl -u ffwatch")
             if pool_id:
+                self.pool_hold_note(agent_class, None)
                 staged.append(pool_id)
                 # So the next class in the loop counts the one just started. It is not in
                 # `containers` -- that list was read before this pass staged anything.
@@ -16951,6 +17185,11 @@ class Watcher:
             self._ci.keep(box_room=self.workload_room(),
                           host_drained=(self.draining() or self.killed()
                                         or bool(self.config_failsafe())))
+            # AND WHAT IT SAID, WHERE THE PAGE CAN READ IT. The CI pool shows up in the same
+            # table as the two agent pools and goes below target for its own set of reasons; a
+            # pill that explains itself for two of the three rows would be worse than one that
+            # explains none of them, because the gap reads as "there is nothing to say".
+            self.pool_hold_note("ci", *(self._ci.hold or (None,)))
         except Exception as exc:                    # noqa: BLE001 — a daemon must survive anything
             log(f"ERROR in the CI pass: {type(exc).__name__}: {exc}")
 
