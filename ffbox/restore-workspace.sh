@@ -217,6 +217,26 @@ if [ -n "$_target" ]; then
     log "workspace at $(git -C "$WORKSPACE" rev-parse --short HEAD)"
 fi
 
+# THE WORKSPACE IS THE BRANCH, NOT WHAT CI LEFT BESIDE IT. A cache entry is a CI job's workspace as
+# the job finished it, and `reset --hard` puts tracked files back without touching untracked ones.
+# So report files a test run had written were still in the tree when the agent started, and the
+# harvest's `git add -A` published them as the run's work: d133t5 pushed two of them
+# (specs/055-combat-mover-vision/reports/t004-proxy-*.json) onto a map-generation fix, after the
+# agent had noticed them, said they were not its own, and left them alone.
+#
+# -fd AND NOT -x: ignored paths stay. Library/, Temp/, Logs/ and obj/ are what make a cached
+# workspace worth restoring instead of cloning, and every one of them is in the project's
+# .gitignore.
+_stray=$(git -C "$WORKSPACE" clean -fdn 2>/dev/null | wc -l)
+if [ "$_stray" -gt 0 ]; then
+    if git -C "$WORKSPACE" clean -fdq 2>/dev/null; then
+        log "removed $_stray untracked path(s) the cache entry carried"
+    else
+        log "WARNING: could not remove the $_stray untracked path(s) the cache entry carried"
+    fi
+fi
+unset _stray
+
 # THE ENTRY'S CONFIG IS A CI JOB'S CONFIG. Hooks are already gone above; these keys name commands
 # that ordinary git operations fire, so they are a persistence channel in the same way.
 for _k in core.fsmonitor core.pager core.hooksPath diff.external \

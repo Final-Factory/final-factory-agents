@@ -14150,10 +14150,27 @@ class Watcher:
         """
         allowed = list(self.cfg.get("publish_bases") or {}) or [self.cfg["github"]["base"]]
         claimed = (_read_text(os.path.join(run_dir, "publish_base.txt")) or "").strip()
-        candidates = [claimed] if claimed in allowed else []
         default = self.cfg["github"]["base"]
-        if default not in candidates:
-            candidates.append(default)
+        if claimed in allowed:
+            candidates = [claimed] + ([default] if default != claimed else [])
+        else:
+            # A CONTAINER THAT NAMED NOTHING USABLE GETS EVERY ALLOWED BASE TRIED, not just the
+            # default. "Nothing else is a safe guess" was true when the check below was a
+            # fast-forward test; it is not a guess any more. The loop takes the point the work
+            # left EVERY allowed base and refuses a name that does not carry all of them, so
+            # develop-based work is still refused master.
+            #
+            # IN publish_bases ORDER, NOT DEFAULT FIRST. Master-based work carries nothing develop
+            # lacks, so develop passes the check too; the order is what keeps a hotfix pointed at
+            # the released build -- the same first-listed-wins rule the harvest breaks ties with.
+            #
+            # What an empty claim actually means on this box is a SHALLOW workspace. A cache entry
+            # CI wrote carries CI's depth-limited clone, `git merge-base` finds no fork point
+            # inside it, and the harvest writes no publish_base.txt at all. Conversation 133's
+            # fifth turn came back that way: suite green, 3929 tests, and refused the one base it
+            # was tried against -- master -- for descending from develop. This checkout has the
+            # full history the container did not, so the answer is here.
+            candidates = allowed + ([default] if default not in allowed else [])
         if required in allowed:
             candidates = [required]
         if claimed and claimed not in allowed:

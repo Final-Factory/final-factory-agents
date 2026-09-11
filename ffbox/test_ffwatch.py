@@ -9485,6 +9485,202 @@ def test_the_container_obeys_the_host_about_an_untouched_tree():
               < block.index("VERIFY_ENABLED=0"), block)
 
 
+def test_the_agents_work_is_committed_before_verification_opens_the_project():
+    """discord-task.sh's half: commit what the agent left, then name the commit that was.
+
+    Read out of the shipped script and run over a real repo, because the order IS the behaviour:
+    after the agent is gone, or it races the agent; before ffverify, or it commits whatever the
+    editor reserializes along with the agent's work. d133t5's branch gained exactly that commit.
+    """
+    print("verification: the agent's work is committed before the editor opens the project")
+    task = io.open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
+    opener = 'if [ -n "$PRE_AGENT_HEAD" ]; then\n    rm -f "$FFBOX_OUT/.agent-work-committed"'
+    at = task.index(opener)
+    check("it runs after the agent is gone", task.index("\nlift_result\n") < at)
+    check("and before the harness's own verification", at < task.index("ffverify --out"))
+    block = task[at:task.index("\nfi\n", at) + 4]
+    harvest = io.open(os.path.join(HERE, "harvest-workspace.sh"), encoding="utf-8").read()
+    check("the harvest reads the same marker, and believes it only for the commit it names",
+          ".agent-work-committed" in harvest
+          and '"$AGENT_COMMITTED" = "$(g rev-parse HEAD' in harvest)
+
+    root = os.path.join(TMPROOT, "commit-before-verify")
+    repo, out = os.path.join(root, "repo"), os.path.join(root, "out")
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(repo)
+    os.makedirs(out)
+    git_run("init", "-q", repo)
+    git_run("-C", repo, "config", "user.email", "t@t.invalid")
+    git_run("-C", repo, "config", "user.name", "t")
+    with io.open(os.path.join(repo, "Belt.cs"), "w", encoding="utf-8") as fh:
+        fh.write("base\n")
+    git_run("-C", repo, "add", "-A")
+    git_run("-C", repo, "commit", "-qm", "base")
+    pre = git_run("-C", repo, "rev-parse", "HEAD").stdout.strip()
+
+    def run_block():
+        script = "\n".join(['log() { printf "%s\\n" "$*"; }', 'WORKSPACE="$1"',
+                            'PRE_AGENT_HEAD="$2"', 'FFBOX_OUT="$3"', "FFBOX_RUN_ID=d1t1-test",
+                            "FFBOX_GIT_NAME=ffbox", "FFBOX_GIT_EMAIL=ffbox@final-factory.invalid",
+                            block])
+        done = subprocess.run(["bash", "-c", script, "task", repo, pre, out],
+                              capture_output=True, text=True)
+        if done.returncode != 0:
+            raise AssertionError(done.stderr[-300:])
+        return done.stdout
+
+    def marker():
+        return io.open(os.path.join(out, ".agent-work-committed"), encoding="utf-8").read().strip()
+
+    with io.open(os.path.join(repo, "Belt.cs"), "a", encoding="utf-8") as fh:
+        fh.write("the agent's edit, never committed\n")
+    os.makedirs(os.path.join(repo, ".github"))
+    with io.open(os.path.join(repo, ".github", "ci.yml"), "w", encoding="utf-8") as fh:
+        fh.write("on: push\n")
+    said = run_block()
+    head = git_run("-C", repo, "rev-parse", "HEAD").stdout.strip()
+    shown = git_run("-C", repo, "show", "--name-only", "--format=%s%n%ae", head).stdout
+    check("the agent's edit is committed", head != pre and "Belt.cs" in shown, shown)
+    check("under the harvest's own message for a run that made no commits of its own",
+          shown.splitlines()[0] == "ffbox d1t1-test: agent work", shown)
+    check("and as the run's identity, which the harvest's identity check holds it to",
+          "ffbox@final-factory.invalid" in shown.splitlines()[1], shown)
+    check("the marker names that commit", marker() == head, (marker(), head))
+    check(".github stays out of it, as it does in the harvest",
+          ".github/ci.yml" in git_run("-C", repo, "ls-files", "-o").stdout)
+    check("and the log says it happened",
+          "committed the agent's uncommitted work before verification" in said, said)
+
+    run_block()
+    check("a second pass over a clean tree commits nothing",
+          git_run("-C", repo, "rev-parse", "HEAD").stdout.strip() == head)
+    check("and still vouches for the commit HEAD is on", marker() == head, marker())
+
+
+def test_the_harvest_leaves_out_what_verification_changed():
+    """The agent's work is in the range; what the editor changed afterwards is not.
+
+    d133t5's harvest swept the tree after the harness's own Unity run had been in it, and the
+    branch gained a commit the agent never made: DysonPlatformPowerBeam.mat, render queue 3000
+    to 2000, plus a report a test run wrote. With the marker naming HEAD, the harvest commits
+    nothing on the agent's behalf. A marker naming any other commit is not believed, which is
+    what keeps a run killed before verification harvested exactly as it always was.
+    """
+    print("harvest: what verification changed is not the run's work")
+
+    def workspace(root):
+        origin, repo, seed = (os.path.join(root, n) for n in ("origin.git", "repo", "seed"))
+        shutil.rmtree(root, ignore_errors=True)
+        os.makedirs(root)
+        git_run("init", "-q", "--bare", "-b", "master", origin)
+        git_run("clone", "-q", origin, seed)
+        git_run("-C", seed, "config", "user.email", "t@t.invalid")
+        git_run("-C", seed, "config", "user.name", "test")
+        with io.open(os.path.join(seed, "Beam.mat"), "w", encoding="utf-8") as fh:
+            fh.write("m_CustomRenderQueue: 3000\n")
+        git_run("-C", seed, "add", "-A")
+        git_run("-C", seed, "commit", "-qm", "released")
+        git_run("-C", seed, "push", "-q", "origin", "HEAD:refs/heads/master")
+        git_run("-C", seed, "push", "-q", "origin", "HEAD:refs/heads/develop")
+        git_run("clone", "-q", origin, repo)
+        git_run("-C", repo, "config", "user.email", "ffbox@final-factory.invalid")
+        git_run("-C", repo, "config", "user.name", "ffbox")
+        git_run("-C", repo, "checkout", "-q", "-b", "the-agents-branch", "origin/develop")
+        start = git_run("-C", repo, "rev-parse", "HEAD").stdout.strip()
+        with io.open(os.path.join(repo, "Belt.cs"), "w", encoding="utf-8") as fh:
+            fh.write("the agent's fix\n")
+        git_run("-C", repo, "add", "-A")
+        git_run("-C", repo, "commit", "-qm", "the agent's fix")
+        out = os.path.join(root, "out")
+        os.makedirs(out)
+        return repo, out, start
+
+    def verification_was_here(repo):
+        with io.open(os.path.join(repo, "Beam.mat"), "w", encoding="utf-8") as fh:
+            fh.write("m_CustomRenderQueue: 2000\n")
+        os.makedirs(os.path.join(repo, "reports"), exist_ok=True)
+        with io.open(os.path.join(repo, "reports", "t004-proxy.json"), "w", encoding="utf-8") as fh:
+            fh.write("{}\n")
+
+    def changed(out):
+        path = os.path.join(out, "changed_files.txt")
+        return (io.open(path, encoding="utf-8").read().split()
+                if os.path.exists(path) else [])
+
+    repo, out, start = workspace(os.path.join(TMPROOT, "harvest-marker"))
+    head = git_run("-C", repo, "rev-parse", "HEAD").stdout.strip()
+    with io.open(os.path.join(out, ".agent-work-committed"), "w", encoding="utf-8") as fh:
+        fh.write(head + "\n")
+    verification_was_here(repo)
+    ok, branch, error = run_harvest(repo, out, branch="ffbox/marker-test",
+                                    base_refs="master develop", base_sha=start)
+    check("the run still publishes", ok and branch == "ffbox/marker-test", (ok, branch, error))
+    check("with the agent's file in it", "Belt.cs" in changed(out), changed(out))
+    check("and neither the asset the editor reserialized nor the report a test wrote",
+          "Beam.mat" not in changed(out) and "reports/t004-proxy.json" not in changed(out),
+          changed(out))
+    check("no commit was made on the agent's behalf",
+          git_run("-C", repo, "rev-parse", "ffbox/marker-test").stdout.strip() == head)
+
+    repo2, out2, start2 = workspace(os.path.join(TMPROOT, "harvest-stale-marker"))
+    with io.open(os.path.join(out2, ".agent-work-committed"), "w", encoding="utf-8") as fh:
+        fh.write(start2 + "\n")
+    verification_was_here(repo2)
+    ok2, _, error2 = run_harvest(repo2, out2, branch="ffbox/marker-test",
+                                 base_refs="master develop", base_sha=start2)
+    check("a marker naming some other commit is ignored, and the tree is swept as before",
+          ok2 and "Beam.mat" in changed(out2) and "reports/t004-proxy.json" in changed(out2),
+          (ok2, changed(out2), error2))
+
+
+def test_a_base_the_container_could_not_name_is_found_on_the_host():
+    """A shallow workspace names no base; the host has the history to find the right one.
+
+    CI's cache entries are depth-limited clones, `git merge-base` finds no fork point inside one,
+    and the harvest then writes no publish_base.txt. pr_base used to try the default and nothing
+    else, so conversation 133's fifth turn -- develop-based, suite green -- was refused master and
+    never offered develop. Every allowed base is tried now, in publish_bases order, under the same
+    check that refuses a base which does not carry the work's fork points.
+    """
+    print("publication: a base the container could not name is found on the host")
+
+    def published(name, base):
+        case = bug_case(name)
+        git_origin(case)
+        os.environ["FFBOX_STUB_BASE"] = base
+        try:
+            escalate(case, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+        finally:
+            os.environ.pop("FFBOX_STUB_BASE", None)
+        run = case.rows("SELECT r.* FROM run r JOIN turn t ON t.id=r.turn_id"
+                        " ORDER BY r.id DESC")[0]
+        run_dir = os.path.dirname(run["stream_path"])
+        os.remove(os.path.join(run_dir, "publish_base.txt"))
+        return case, run, run_dir
+
+    case, run, run_dir = published("prbaseshallow", "develop")
+    # The build server's shape: master is both the default and the first key.
+    case.watcher.cfg["github"]["base"] = "master"
+    base, reason = case.watcher.pr_base(run["id"], run_dir, run["branch"])
+    check("develop-based work that names no base is proposed into develop, not refused",
+          base == "develop", (base, reason))
+    with io.open(os.path.join(run_dir, "publish_base.txt"), "w", encoding="utf-8") as fh:
+        fh.write("refs/heads/../../evil\n")
+    base, reason = case.watcher.pr_base(run["id"], run_dir, run["branch"])
+    check("and so is the same work naming a base outside the configured set",
+          base == "develop", (base, reason))
+    base, reason = case.watcher.pr_base(run["id"], run_dir, run["branch"], required="master")
+    check("an operator's base is still the only candidate",
+          base is None and "asked to be based on `master`" in (reason or ""), (base, reason))
+
+    case2, run2, run_dir2 = published("prbaseshallowmaster", "master")
+    check("the test box's default is develop, which master-based work also passes the check for",
+          case2.watcher.cfg["github"]["base"] == "develop", case2.watcher.cfg["github"])
+    base, reason = case2.watcher.pr_base(run2["id"], run_dir2, run2["branch"])
+    check("so master-based work that names no base still goes to master, in publish_bases order",
+          base == "master", (base, reason))
+
+
 def run_base_resolution(root, *, base_refs, ending):
     """Which branch the work is for, from the real harvest, over a repo with a real
     origin/master and origin/develop.
@@ -19040,6 +19236,9 @@ def main():
         test_a_run_that_changed_nothing_is_not_verified,
         test_an_unverified_branch_is_what_the_next_turn_tests,
         test_the_container_obeys_the_host_about_an_untouched_tree,
+        test_the_agents_work_is_committed_before_verification_opens_the_project,
+        test_the_harvest_leaves_out_what_verification_changed,
+        test_a_base_the_container_could_not_name_is_found_on_the_host,
         test_the_agent_picks_the_branch_its_work_is_for,
         test_the_pull_request_targets_the_branch_the_work_is_based_on,
         test_every_lane_agrees_on_the_workspace_path,

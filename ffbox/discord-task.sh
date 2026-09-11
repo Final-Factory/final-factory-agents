@@ -1159,6 +1159,44 @@ _ffbox_stop_sharer
 lift_result
 
 # ------------------------------------------------------------------------------------------
+# the agent's uncommitted work, committed before anything else touches the tree
+# ------------------------------------------------------------------------------------------
+# THE HARNESS'S OWN UNITY RUN WRITES INTO THE WORKSPACE. Opening the project reserializes assets
+# and some suites leave report files behind, and the harvest used to run AFTER all of that, in
+# the EXIT trap, with `git add -A`. So whatever the editor changed was committed as the run's
+# work under the run's identity. d133t5 is the worked example: the agent edited nothing, the
+# suite went green, and the branch gained a commit changing DysonPlatformPowerBeam.mat's
+# m_CustomRenderQueue from 3000 to 2000 -- timestamped the second ffverify exited.
+#
+# So what the agent left is committed HERE, the moment it is gone and before verification, and
+# the marker tells harvest-workspace.sh not to sweep the tree a second time. The marker holds
+# the commit it vouches for: harvest honours it only while HEAD is still that commit, so a marker
+# the agent wrote into /ffbox/out itself can at worst cost the agent its own uncommitted edits,
+# and a run killed before this line has no marker and is harvested exactly as before.
+#
+# Same pathspec and same message rule as the harvest's own commit, so the two paths produce the
+# same commit for the same tree.
+if [ -n "$PRE_AGENT_HEAD" ]; then
+    rm -f "$FFBOX_OUT/.agent-work-committed"
+    git -C "$WORKSPACE" add -A -- . ':(exclude).github' 2>/dev/null || true
+    if ! git -C "$WORKSPACE" diff --cached --quiet 2>/dev/null; then
+        if [ "$(git -C "$WORKSPACE" rev-list --count "${PRE_AGENT_HEAD}..HEAD" 2>/dev/null || echo 0)" = "0" ]; then
+            _work_msg="ffbox ${FFBOX_RUN_ID:-unknown}: agent work"
+        else
+            _work_msg="ffbox ${FFBOX_RUN_ID:-unknown}: uncommitted work at exit"
+        fi
+        git -C "$WORKSPACE" -c user.name="${FFBOX_GIT_NAME:-ffbox}" \
+            -c user.email="${FFBOX_GIT_EMAIL:-ffbox@final-factory.invalid}" \
+            commit --quiet --no-verify -m "$_work_msg" 2>/dev/null \
+            && log "committed the agent's uncommitted work before verification" \
+            || log "WARNING: could not commit the agent's uncommitted work; the harvest will try"
+        unset _work_msg
+    fi
+    git -C "$WORKSPACE" rev-parse HEAD > "$FFBOX_OUT/.agent-work-committed" 2>/dev/null \
+        || rm -f "$FFBOX_OUT/.agent-work-committed"
+fi
+
+# ------------------------------------------------------------------------------------------
 # harness-owned verification  (design section 14)
 # ------------------------------------------------------------------------------------------
 # The agent process is GONE by this point. That is the whole mechanism: verification is its own

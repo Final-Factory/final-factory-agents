@@ -175,5 +175,52 @@ else
     bad "filter.lfs.smudge is '$(git -C "$TMP/ws" config --local --get filter.lfs.smudge)'"
 fi
 
+# --- what the entry carried untracked ---------------------------------------------------------
+#
+# A cache entry is a CI job's workspace as the job left it, and `reset --hard` does not touch
+# untracked files. The harvest's `git add -A` then published them as the run's work: d133t5 pushed
+# two report files a test run had left in specs/ onto an unrelated fix. Ignored paths are the
+# opposite case -- Library/ is the reason a cached workspace is worth restoring at all -- so the
+# same restore has to keep those.
+printf '\nrestore: what the entry left untracked goes, what the project ignores stays\n'
+fresh_workspace
+printf 'Library/\n' >> "$TMP/ws/.git/info/exclude"
+mkdir -p "$TMP/ws/Library" "$TMP/ws/specs/reports"
+printf 'imported asset cache\n' > "$TMP/ws/Library/cache.bin"
+printf '{"left by": "a test run"}\n' > "$TMP/ws/specs/reports/t004-proxy.json"
+if restore; then
+    ok "the restore succeeds over a tree with leftovers in it"
+else
+    bad "the restore failed: $(tail -3 "$TMP/log" | tr '\n' ' ')"
+fi
+if [ -e "$TMP/ws/specs/reports/t004-proxy.json" ]; then
+    bad "the untracked report file is still there"
+else
+    ok "an untracked file the entry carried is gone"
+fi
+if [ "$(cat "$TMP/ws/Library/cache.bin" 2>/dev/null)" = "imported asset cache" ]; then
+    ok "and Library/, which the project ignores, is untouched"
+else
+    bad "Library/cache.bin is '$(cat "$TMP/ws/Library/cache.bin" 2>/dev/null)'"
+fi
+if [ -z "$(git -C "$TMP/ws" ls-files -o --exclude-standard 2>/dev/null)" ]; then
+    ok "so the agent starts with nothing untracked that the harvest could sweep up"
+else
+    bad "still untracked: $(git -C "$TMP/ws" ls-files -o --exclude-standard | tr '\n' ' ')"
+fi
+if grep -q 'removed [0-9][0-9]* untracked path' "$TMP/log"; then
+    ok "and the log says it removed them"
+else
+    bad "no removal line in the log: $(tr '\n' ' ' < "$TMP/log")"
+fi
+
+# A tree with nothing to remove says nothing about removing.
+fresh_workspace
+if restore && ! grep -q 'untracked path' "$TMP/log"; then
+    ok "a clean entry gets no removal line"
+else
+    bad "a clean restore logged: $(grep 'untracked path' "$TMP/log")"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

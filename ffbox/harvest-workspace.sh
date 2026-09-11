@@ -178,7 +178,20 @@ if [ "$RANGE_FROM_START" = "1" ]; then
     log "the range starts at the commit this run began on ($BASE_SHA)"
 fi
 
+# NOT A SECOND SWEEP OF A TREE UNITY HAS BEEN IN. discord-task.sh commits what the agent left the
+# moment the agent is gone, before the harness's own verification run opens the project -- which
+# reserializes assets and leaves report files, none of it the agent's. Its marker names the commit
+# it made; while HEAD is still that commit the agent's work is already in the range and anything
+# uncommitted now is the editor's, so it stays out. A missing or stale marker -- a run killed
+# before verification, or one the agent wrote itself -- gets the sweep below, as it always did.
+AGENT_COMMITTED=$(head -1 "$OUT/.agent-work-committed" 2>/dev/null | tr -d ' \r\n' || true)
+if [ -n "$AGENT_COMMITTED" ] && [ "$AGENT_COMMITTED" = "$(g rev-parse HEAD 2>/dev/null)" ]; then
+    _left=$(g status --porcelain 2>/dev/null | wc -l)
+    [ "$_left" -eq 0 ] \
+        || log "leaving $_left path(s) out: changed after the agent's work was committed"
+else
 g add -A -- . ':(exclude).github' 2>/dev/null || true
+fi
 if ! g diff --cached --quiet 2>/dev/null; then
     if [ "$(g rev-list --count "${PUBLISH_BASE_SHA}..HEAD" 2>/dev/null || echo 0)" = "0" ]; then
         MSG="ffbox ${RUN_ID}: agent work"
