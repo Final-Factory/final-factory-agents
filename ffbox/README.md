@@ -1505,6 +1505,14 @@ and the agent cannot touch:
   pushes it, and leaves the published branch checkoutable there with its upstream set, so
   `git checkout ffbox/belt-merger-priority-<id>` in `/opt/FinalFactory` works with no further
   ceremony.
+
+  **Only the agent's work is committed** (2026-09-11). A cache entry is a CI job's workspace as
+  the job left it, so `restore-workspace.sh` removes the untracked files it carries with
+  `git clean -fd`, which keeps ignored paths like `Library/`. What the agent leaves uncommitted
+  is committed the moment the agent exits, before the harness's verification opens the project,
+  and the harvest does not sweep the tree a second time after the editor has been in it. Both
+  exist because d133t5 published a commit the agent never made: two report files a test run had
+  left in the entry, and a `.mat` Unity reserialized during verification.
 - **One branch per conversation** (2026-09-01). The first run of a conversation that pushes
   claims that branch name in `conversation.branch`, and every later turn of the same
   conversation *continues* it: the clone starts at the branch's head rather than at the
@@ -1558,6 +1566,13 @@ and the agent cannot touch:
   commits before aiming anything. Branch, base, PR number and PR url are recorded from git and
   the API response, never parsed from the agent's summary, and stay correct when the summary
   contradicts them.
+
+  When the container names no usable base, every base in `publish_bases` is tried in that order
+  against the host checkout's full history, with the same check. A shallow workspace is what
+  produces that: CI's cache entries are depth-limited clones, `git merge-base` finds no fork
+  point in them, and the harvest writes no `publish_base.txt`. Until 2026-09-11 only the default
+  was tried, so develop-based work from a shallow workspace was refused master and never offered
+  develop.
 - **The second look** (2026-09-02). `publish()` runs once, inside the turn that produced the
   commits, and every way it can stop short used to strand a branch with nobody scheduled to come
   back to it: a push that failed left `bundle_path` in the run row and nothing on the box ever
