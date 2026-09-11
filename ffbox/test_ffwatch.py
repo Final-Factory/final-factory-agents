@@ -12050,15 +12050,17 @@ def test_a_directive_only_message_adopts_and_asks_for_no_turn():
 
     # A REFUSAL IS ANSWERED TOO. Somebody who typed a branch name and heard nothing would
     # reasonably assume it worked.
-    case2, _ = branch_directive_case("directive-refused", "!branch develop",
+    # A branch origin does not have, because a base name is no longer a refusal: it is a base
+    # request, and has its own test.
+    case2, _ = branch_directive_case("directive-refused", "!branch loth/nowhere",
                                      author=LOTHSAHN)
     git_origin(case2)
     msg2 = case2.rows("SELECT * FROM message ORDER BY id")[0]
-    case2.watcher.take_branch_directive(1, msg2["id"], {"id": LOTHSAHN}, "!branch develop")
+    case2.watcher.take_branch_directive(1, msg2["id"], {"id": LOTHSAHN}, "!branch loth/nowhere")
     posted2 = [json.loads(r["payload_json"])["text"]
                for r in case2.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
-    check("a protected branch is refused, out loud",
-          posted2 and posted2[-1].startswith("no — ") and "protected" in posted2[-1], posted2)
+    check("a branch origin does not have is refused, out loud",
+          posted2 and posted2[-1].startswith("no — ") and "is not on" in posted2[-1], posted2)
     check("and nothing was adopted",
           case2.rows("SELECT * FROM conversation")[0]["branch"] is None)
 
@@ -12082,6 +12084,133 @@ def test_a_directive_beside_a_question_keeps_its_turn():
     check("and the message is NOT gated, so the question still gets answered",
           msg["gate"] is None, msg["gate"])
     check("a turn is made for it", case.watcher.create_turn(conv) is not None)
+
+
+def test_naming_a_base_bases_the_work_there_instead_of_adopting_it():
+    """`!branch develop` means "do this work on develop", never "push to develop".
+
+    It used to be refused as a protected branch, which was true and useless: the pipeline never
+    pushes to a base, and that is not what the operator was asking for. A base name is now a
+    request. The clone starts on that base, the container is told the choice is made, the
+    harvest lists it first, and the pull request targets it and nothing else. The branch the
+    work lands on is still minted under ffbox/ at the first publish.
+    """
+    print("adoption: a base name asks for a base")
+    case, _ = branch_directive_case("directive-base", "!branch develop", author=LOTHSAHN)
+    origin, host = git_origin(case)
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    case.watcher.take_branch_directive(1, msg["id"], {"id": LOTHSAHN}, "!branch develop")
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("nothing was adopted: the conversation owns no branch", conv["branch"] is None,
+          conv["branch"])
+    check("the base is recorded, against the operator who asked",
+          conv["requested_base"] == "develop" and conv["requested_base_by"] == LOTHSAHN,
+          (conv["requested_base"], conv["requested_base_by"]))
+    posted = [json.loads(r["payload_json"])["text"]
+              for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+    check("the operator is told where the work starts and where its pull request goes",
+          posted and posted[-1].startswith("ok — ") and "`origin/develop`" in posted[-1]
+          and "targets `develop`" in posted[-1], posted)
+    msg = case.rows("SELECT * FROM message ORDER BY id")[0]
+    check("a directive on its own is still gated, so it spends no turn",
+          msg["gate"] == "branch_directive", msg["gate"])
+
+    # `main` IS `master` on a repository that has no main, which this one does not.
+    ok, reason = case.watcher.request_base(1, "main", by=LOTHSAHN)
+    check("`main` asks for master",
+          ok and case.rows("SELECT * FROM conversation")[0]["requested_base"] == "master",
+          reason)
+    check("and says that is what it took it to mean", "`main` is `master`" in reason, reason)
+
+    # THE REVIEW INGRESS STILL REFUSES A BASE. adopt_branch is what a #codereview trigger calls
+    # with a pull request's head, and a release pull request's head is develop.
+    ok, reason = case.watcher.adopt_branch(1, "develop", by=LOTHSAHN)
+    check("adopting a base outright is still refused as protected",
+          not ok and "protected" in reason, reason)
+
+    # ADOPTING A BRANCH DROPS THE REQUEST. The adopted branch's base is what it descends from.
+    push_a_stranger_branch(host, "loth/after-base")
+    ok, reason = case.watcher.adopt_branch(1, "loth/after-base", by=LOTHSAHN)
+    conv = case.rows("SELECT * FROM conversation")[0]
+    check("a branch can still be adopted after a base was named", ok, reason)
+    check("and the base request goes with it", conv["requested_base"] is None,
+          conv["requested_base"])
+    ok, reason = case.watcher.request_base(1, "develop", by=LOTHSAHN)
+    check("once the conversation owns a branch, a base is refused",
+          not ok and "keeps its branch for life" in reason, reason)
+
+    # AND THE WORK FOLLOWS IT, end to end.
+    case2 = bug_case("basedevelop", venue="private")
+    git_origin(case2)
+    conv2 = case2.rows("SELECT * FROM conversation")[0]
+    ok, reason = case2.watcher.request_base(conv2["id"], "develop", by=LOTHSAHN)
+    check("a conversation with no branch may name a base", ok, reason)
+    os.environ["FFBOX_STUB_BASE"] = "develop"
+    try:
+        escalate(case2, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    finally:
+        os.environ.pop("FFBOX_STUB_BASE", None)
+    run = _latest_run(case2)
+    run_dir = os.path.dirname(run["stream_path"])
+    argv = json.load(open(os.path.join(run_dir, "ffbox-argv.json"), encoding="utf-8"))
+    job = json.load(open(os.path.join(run_dir, "job.json"), encoding="utf-8"))
+    check("the clone starts on the base", argv[argv.index("--ref") + 1] == "develop", argv)
+    check("the harvest lists it first, so a tie after a release merge goes its way",
+          argv[argv.index("--base-refs") + 1] == "develop master", argv)
+    check("and the harvest may still name the branch, under the prefix",
+          "--branch-prefix" in argv, argv)
+    check("the work is published on a branch of its own, not on the base",
+          run["pushed"] == 1 and (run["branch"] or "").startswith("ffbox/"), run["branch"])
+    check("and its pull request targets the base",
+          run["pr_base"] == "develop" and run["pr_number"], (run["pr_base"], run["pr_number"]))
+    pre = preamble_for(job, "basedpre")
+    check("the container is told the base was chosen for it",
+          "AN OPERATOR CHOSE THE BASE" in pre and "origin/develop" in pre, pre[-900:])
+    check("and is not asked to choose one", "CHOOSE WHAT YOU BRANCH FROM" not in pre,
+          pre[-900:])
+
+    # WORK ON THE OTHER BASE IS PUSHED AND NOT PROPOSED. The stub ignores --ref on a first turn,
+    # which is an agent that checked out develop regardless of being told master.
+    case3 = bug_case("basewrong", venue="private")
+    git_origin(case3)
+    conv3 = case3.rows("SELECT * FROM conversation")[0]
+    case3.watcher.request_base(conv3["id"], "master", by=LOTHSAHN)
+    os.environ["FFBOX_STUB_BASE"] = "develop"
+    try:
+        escalate(case3, changed=["Assets/Belt.cs"], verify=PASSING_VERIFY)
+    finally:
+        os.environ.pop("FFBOX_STUB_BASE", None)
+    run3 = _latest_run(case3)
+    check("develop-based work asked for on master is still pushed", run3["pushed"] == 1,
+          run3["pushed"])
+    check("but gets no pull request into develop instead",
+          run3["pr_base"] is None and not run3["pr_number"], (run3["pr_base"], run3["pr_number"]))
+    check("and the reason names the base it was asked for",
+          "`master`" in (run3["no_pr_reason"] or ""), run3["no_pr_reason"])
+
+    # A TURN IN FLIGHT publishes against the base it started on, so a request then is refused.
+    case4 = bug_case("basebusy")
+    git_origin(case4)
+    conv4 = case4.rows("SELECT * FROM conversation")[0]
+    queue_follow_up(case4, conv4)
+    ok, reason = case4.watcher.request_base(conv4["id"], "develop", by=LOTHSAHN)
+    check("a base is refused while a turn of the conversation is in flight",
+          not ok and "in flight" in reason, reason)
+    check("and nothing was recorded",
+          case4.rows("SELECT * FROM conversation")[0]["requested_base"] is None)
+
+    # UNDER THE PIN, OVER THE DEFAULT, and under the conversation's own branch above both.
+    turn = case2.rows("SELECT * FROM turn ORDER BY id DESC")[0]
+    ladder = {"id": conv2["id"], "branch": None, "base_sha": None, "agent_class": "ffagent",
+              "requested_base": "develop"}
+    check("with no pin, a turn starts on the requested base",
+          case2.watcher.run_ref(turn, ladder, log_override=False) == "develop")
+    check("a pinned commit still wins, since request_base clears it when the base changes",
+          case2.watcher.run_ref(turn, dict(ladder, base_sha="abc123"),
+                                log_override=False) == "abc123")
+    check("and the conversation's branch wins over everything",
+          case2.watcher.run_ref(turn, dict(ladder, branch="ffbox/x"),
+                                log_override=False) == "ffbox/x")
 
 
 def test_a_refused_directive_links_the_thread_holding_it_and_spends_no_turn():
@@ -17532,6 +17661,7 @@ def main():
         test_a_directive_nobody_may_act_on_is_left_an_ordinary_message,
         test_a_directive_only_message_adopts_and_asks_for_no_turn,
         test_a_directive_beside_a_question_keeps_its_turn,
+        test_naming_a_base_bases_the_work_there_instead_of_adopting_it,
         test_a_refused_directive_links_the_thread_holding_it_and_spends_no_turn,
         test_the_comment_poll_is_not_the_discord_sweeps_passenger,
         test_a_first_poll_answers_nothing_that_predates_it,

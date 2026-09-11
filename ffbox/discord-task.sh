@@ -678,6 +678,22 @@ def preamble_bases(bases):
                 "Do not check out another base — between master and develop that is thousands "
                 "of files and a full Unity reimport charged to your clock, and it would move "
                 "you off the very commits you were started on." if on else "")
+    # AN OPERATOR ALREADY CHOSE, with `!branch develop` or `ffwatch adopt --branch develop`, so
+    # there is nothing to choose and the block says so instead. The clone starts on that base,
+    # the harvest lists it first, and pr_base() on the host opens the pull request against it
+    # and nothing else — so work moved onto the other base is published with no pull request at
+    # all. The consequence is spelled out because it is what stops the agent "correcting" the
+    # choice. No description from `choices` here: those are written to help an agent decide,
+    # and develop's asks it to justify a decision it did not make.
+    requested = (bases or {}).get("requested_base") or ""
+    if requested:
+        return (f" AN OPERATOR CHOSE THE BASE FOR THIS WORK: `origin/{requested}`, and this "
+                "clone is already on it. If you change anything, branch from it — "
+                f"`git checkout -b <name> origin/{requested}` — and stay on it. The pull "
+                f"request is opened against `{requested}` and only `{requested}`: work based on "
+                "any other branch is pushed with no pull request at all, and checking out "
+                "another base costs a full Unity reimport besides. If you think the change "
+                "belongs somewhere else, do it on this base anyway and say why in your summary.")
     checked_out = (bases or {}).get("checked_out") or ""
     # WHICH BASE THAT SHA IS, when the host could tell. A resumed turn starts at a pinned commit,
     # and without this line the agent reads forty hex characters, cannot tell which release they
