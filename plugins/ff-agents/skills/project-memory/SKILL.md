@@ -11,6 +11,7 @@ worktrees and apply to ALL branches.
 
 ## Standing user feedback (always applies)
 
+- [Context relay at ~65% and the network-tutorial goal](memories/feedback-context-relay-and-network-tutorial-goal.md) — Ben 2026-09-11: at ~65% context run /ff-agents:handoff then open a FRESH Claude Code instance on the same Mac (osascript Terminal + `claude "/ff-agents:resumeFromHandoff"`), never compact; standing goal = the Hand-Hold tutorial across the network with two agents as real players, zero desyncs, fix as you go; no Lothsahn FYI needed
 - [Prove multiplayer work over live networked machines](memories/feedback-prove-over-live-networked-machines.md) — Ben 2026-09-11: a determinism/MP fix is proven only by a live networked leg between machines on his network (BEAST Windows host / Mac peer), never by an editor pair on one box; put the cross-machine leg in the plan before claiming proven
 - [Use standard test commands](memories/feedback_test_command.md) — run tests via MCP `run_tests`/`get_test_job` (pinned instance); for remote Pipeline access, use the public MCPForUnity API through project-scoped `eval_file` for exact assembly filtering; the file-trigger channel is retired for routine runs
 - [MCP bridge unavailable = report and recover](memories/feedback_mcp_bridge_down_stop.md) — discover Unity MCP in either runtime and pin by project path; if unavailable, report the gap and recover only the exact project-owned editor per editor-ops, never silently substitute file evidence or kill broad Unity process groups
