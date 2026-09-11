@@ -13786,6 +13786,45 @@ exit 0
           "workspace restore failed" in body, body)
 
 
+def test_a_detached_run_that_wrote_nothing_still_leaves_its_log():
+    """ffbox keeps a container's log in cleanup(), and cleanup() returns at its first line when
+    DETACHED_OK is set -- which every run this daemon launches is. So the one path that produces
+    containers nobody is watching was the one path that kept nothing.
+
+    Measured on 2026-09-11: three runs exited 1 about two minutes in having written nothing at
+    all, and the only account of why was a stdout that had already been swept. It was Git LFS
+    reaching for GitHub during the restore, and it took reproducing the restore by hand to find
+    out. The finish pass is where a detached run's container is last alive to be asked.
+    """
+    print("evidence: the detached path keeps the log too")
+    src = inspect.getsource(ffwatch.Watcher._finish_guarded)
+    check("the finish pass keeps the container's log", "keep_run_container_log" in src, src)
+    check("before the harvest validation, which is what removes the container",
+          src.index("keep_run_container_log") < src.index("validate_harvest"), src)
+
+    case = Case("detachedlog")
+    case.watcher.cfg["docker"] = write_stub(
+        os.path.join(case.root, "docker_talks.sh"), """#!/bin/sh
+echo "asked for $*"
+echo "[restore] ERROR: could not reset to origin/ffbox/d132t1-c910e465" >&2
+exit 0
+""")
+    run_dir = os.path.join(case.root, "runs", "d132t2-5a06b434")
+    os.makedirs(run_dir, exist_ok=True)
+    run = {"container_id": "9fcc431bd4dd", "container_name": "ffbox-dev-d132t2-5a06b434"}
+    check("a run whose container left nothing still leaves its log",
+          case.watcher.keep_run_container_log(run, run_dir) is True, run_dir)
+    body = open(os.path.join(run_dir, "container.log"), encoding="utf-8").read()
+    check("carrying the reason the container died",
+          "could not reset to origin/ffbox/d132t1-c910e465" in body, body)
+    # BY ID, not by name: a name is only true between two renames, and the run row carries both.
+    check("asked for by container id", "9fcc431bd4dd" in body, body)
+
+    # ffbox's own copy was written while the container was still talking. This is the fallback.
+    check("and a log ffbox already wrote is not overwritten",
+          case.watcher.keep_run_container_log(run, run_dir) is False, body)
+
+
 def test_the_review_workflow_is_taken_from_the_base_and_not_from_the_branch():
     """The container copies code-review-sonnet.js out of the BASE ref.
 
