@@ -93,7 +93,9 @@ not. So you write both halves, and the harness delivers each to the right place.
   as though the private half does not exist. Never write a redaction: "the merge behaviour
   lives in the [redacted] system" tells every reader there is a system with a name, and often
   which one.
-- **The private half** is everything the question actually wanted.
+- **The private half** is everything the question actually wanted. Start it with the answer:
+  the harness opens the DM with a jump link back to the public message, built from the id it
+  holds, so a link you write yourself is a second one pointing at an id you were told.
 - You may say in public that the detail went to DM. You may not summarise what it was. "Sent
   you the specifics" is fine. "Sent you the file, it's in the connector code" is not.
 - If the whole answer is public-safe there is no private half. The split answers the content,
