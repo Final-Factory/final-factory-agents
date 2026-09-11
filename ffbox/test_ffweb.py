@@ -2294,7 +2294,7 @@ def test_an_openrouter_credential_has_a_row_with_its_model_budget_and_health():
     cfg_path = os.path.join(os.environ["FFBOX_CONFIG_DIR"], "config.json")
     with open(cfg_path, "w", encoding="utf-8") as fh:
         json.dump({"operators": {"ben": {"discord": "1", "model": "Ben-glm"}},
-                   "claude": {"default": "Players"}}, fh)
+                   "model": {"default": "Players"}}, fh)
     creds = [("CLAUDE_CODE_OAUTH_TOKEN1", "sk-ant-oat01-first-account-token",
               ffweb.KIND_SUBSCRIPTION, "", 5, "", ""),
              ("OPENROUTER_API_KEY1", "sk-or-v1-players", ffweb.KIND_OPENROUTER, "Players", 1,

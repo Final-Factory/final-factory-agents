@@ -647,7 +647,7 @@ if [ -n "$_ff_kind" ]; then
 fi
 
 if [ -z "$_ff_active_token" ]; then
-    echo "ffbox: no Claude credential. Generate a subscription token with" >&2
+    echo "ffbox: no model credential. Generate a subscription token with" >&2
     echo "       'claude setup-token' and put it in $SECRETS as CLAUDE_CODE_OAUTH_TOKEN1 — it" >&2
     echo "       bills against that subscription. Further operators go in as" >&2
     echo "       CLAUDE_CODE_OAUTH_TOKEN2 and up, each claimed in config.json by the operator" >&2
@@ -656,7 +656,7 @@ if [ -z "$_ff_active_token" ]; then
     exit 78
 fi
 if [ -n "$CLAUDE_KEY" ] && [ "$_ff_wanted_ok" != 1 ]; then
-    echo "ffbox: --claude-key ${CLAUDE_KEY} names no Claude credential in $SECRETS" >&2
+    echo "ffbox: --claude-key ${CLAUDE_KEY} names no credential in $SECRETS" >&2
     exit 78
 fi
 # ONE CREDENTIAL, AND ONLY WHAT ITS KIND NEEDS. Claude Code reads several variables and has its own

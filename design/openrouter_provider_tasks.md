@@ -70,6 +70,11 @@ Deviations from the tasks below, all deliberate:
 10. **ffbox's docker stub also records the model environment by value** (J21). A forwarded-by-name
     variable is not in argv, and the declared model and URL are what the check is about.
 
+**2026-09-11, config renamed.** The tasks below say `claude.default`, `claude.classifier`,
+`claude.health` and `claude.classify_retry`. Those now live in a top-level `model` block, with the
+model aliases as `model.container`, `model.container_fallback` and `model.classifier_model`. The
+window reading and the holds are the `subscription` block. `ffbox/config.md` has both.
+
 ## What already exists
 
 - **Every request already has one payer.** `claude_route(cfg, tier, actor, kind, keys)`

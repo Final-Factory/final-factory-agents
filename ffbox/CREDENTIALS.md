@@ -348,8 +348,8 @@ ever needs a real cap, that is a feature to build rather than a setting to find.
 
 **`OPENROUTER_API_KEY<n>` — an OpenRouter key.** Minted at openrouter.ai, named beside it as
 `OPENROUTER_NAME_KEY<n>`, and serving the one model its slot declares as `OPENROUTER_MODEL_KEY<n>`
-(GLM-5.3 Flash when it declares none). An operator can claim it, or `claude.default` and
-`claude.classifier` can name it to pay for everything no operator asked for. Its blast radius is
+(GLM-5.3 Flash when it declares none). An operator can claim it, or `model.default` and
+`model.classifier` can name it to pay for everything no operator asked for. Its blast radius is
 money, like an API key's, but it can be bounded where an API key cannot. In OpenRouter's console,
 give it a daily budget limit and a model allowlist holding its one model. The limit is the real
 ceiling, because Claude Code prices `max_budget_usd` for Anthropic's models. The allowlist is what
