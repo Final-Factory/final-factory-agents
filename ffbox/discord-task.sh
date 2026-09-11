@@ -875,6 +875,12 @@ PREAMBLE_SPLIT = (
     "directly. You may say in the public half that you sent them the detail; do not summarise "
     "what it was. Leave `private_summary` empty when the whole answer is public-safe, and at a "
     "private venue, where your one reply already goes somewhere internals may be said."
+    # The DM lands in a different channel from the exchange that caused it, so the harness opens
+    # it with a link to the message being answered. Said here because a model that does not know
+    # the link is coming writes its own -- out of an id it was told rather than Discord's, which
+    # is how a DM ends up carrying a link to nowhere.
+    " Do not write a link to the Discord message yourself: the harness puts one at the top of "
+    "the DM, built from the message id it holds. Start `private_summary` with the answer."
     # THE TWO HALVES ARE NOT WRITTEN IN THE SAME VOICE, and that follows from the same rule that
     # decides the voice everywhere else on this box: the venue does, and these two halves have
     # different ones. The public half is posted where players read it and is Max. The private

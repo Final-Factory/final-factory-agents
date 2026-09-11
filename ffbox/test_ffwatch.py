@@ -792,7 +792,11 @@ class Case:
         cfg["mirror_repo"] = os.path.join(self.root, "no-such-mirror")
         # No sleeping in the suite: a failed row must be retryable on the very next pass.
         cfg["send_backoff_secs"] = 0
-        cfg["_discord"] = {"channels": {"dev_chat": DEVCHAT}}
+        # ONE SERVER, NAMED IN CONFIG, like every real box. It is what a link into a reply
+        # chain is built from: Discord puts `guild_id` on the gateway's MESSAGE_CREATE and not
+        # on the message a REST read returns, so a conversation opened in a text channel
+        # records none of its own.
+        cfg["_discord"] = {"channels": {"dev_chat": DEVCHAT}, "server_id": GUILD}
         # WHO MAY COMMAND THIS BOX, AND WHOSE ACCOUNT PAYS WHEN THEY DO. Every case gets the
         # same one operator, claiming the suite's one subscription slot by the name declared
         # beside it. Cases that are about trust still say so for themselves -- this is here so
@@ -939,10 +943,59 @@ def test_an_operator_in_public_gets_a_split_reply():
           priv["dm_to"] == LOTHSAHN and priv.get("channel") != ASK_CHANNEL, priv)
     check("and carries what the question actually wanted",
           "PerpendicularConnectorTransferSystem.cs:88" in priv["text"], priv["text"])
+    # THE DM SAYS WHERE THE OTHER HALF IS. It arrives in a different channel, minutes later,
+    # and by then the public half has scrolled; without this the operator has a file path and
+    # no way back to the question. The link is to the MESSAGE, not the channel, and its id is
+    # the message row's -- Discord's own -- rather than anything the run wrote.
+    check("the private half opens with a link back to the public message",
+          priv["text"].startswith(
+              f"Re: [this Discord message](https://discord.com/channels/{GUILD}"
+              f"/{ASK_CHANNEL}/6001)\n\n"), priv["text"])
+    check("and the link is the first thing in it, so a long answer cannot push it into a file",
+          priv["text"].index("https://") < priv["text"].index("Perpendicular"), priv["text"])
+    check("the public half is not given one: the channel is already there",
+          "discord.com/channels" not in pub["text"], pub["text"])
     check("the private half was sent to a DM channel opened for that user",
           any(c[:2] == ["dm", LOTHSAHN] for c in case.calls()), case.calls()[-4:])
     check("both halves went out", all(p["status"] == "sent" for p in
                                       case.rows("SELECT * FROM outbound WHERE action='post'")))
+
+
+def test_a_message_link_points_at_the_message_and_not_the_top_of_the_channel():
+    """`message_link` builds the jump link the private half opens with.
+
+    A thread IS a channel in Discord's API and a reply chain in a text channel is not, which is
+    the same distinction `reply_channel` exists for; the middle segment comes from there so the
+    two cannot drift. Everything else here is a case with no link that would resolve, and each
+    one has to come back None rather than half a URL: a link into a blank channel is worse than
+    a DM that simply does not carry one.
+    """
+    print("message links")
+    chain = {"kind": "ask", "guild_id": GUILD, "channel_id": ASK_CHANNEL,
+             "thread_id": "6001", "is_thread": 0}
+    thread = {"kind": "bug_report", "guild_id": GUILD, "channel_id": BUG_FORUM,
+              "thread_id": "30000", "is_thread": 1}
+    check("a reply chain links through the channel it was said in",
+          ffwatch.message_link(chain, "6002")
+          == f"https://discord.com/channels/{GUILD}/{ASK_CHANNEL}/6002", None)
+    check("a thread links through the thread, which is its own channel",
+          ffwatch.message_link(thread, "30007")
+          == f"https://discord.com/channels/{GUILD}/{thread['thread_id']}/30007", None)
+    check("a shell or web conversation has no Discord side to link to",
+          ffwatch.message_link(dict(chain, kind="shell"), "6002") is None, None)
+    check("a row with no guild of its own has no link without the config to name one",
+          ffwatch.message_link(dict(chain, guild_id=None), "6002") is None, None)
+    # WHICH IS EVERY REPLY CHAIN, so this is the case the private half actually runs in: the
+    # guild comes off config, where one server is named, and the link resolves.
+    check("and with it, the box's own server supplies the missing segment",
+          ffwatch.message_link(dict(chain, guild_id=None), "6002",
+                               {"_discord": {"server_id": GUILD}})
+          == f"https://discord.com/channels/{GUILD}/{ASK_CHANNEL}/6002", None)
+    check("a GitHub comment's namespaced id is not a message anybody can jump to",
+          ffwatch.message_link(chain, "rc:900123") is None, None)
+    check("and neither is no id at all",
+          ffwatch.message_link(chain, None) is None
+          and ffwatch.message_link(None, "6002") is None, None)
 
 
 def test_a_player_never_gets_a_private_half():
@@ -1075,6 +1128,10 @@ def test_the_two_halves_of_a_split_reply_are_not_in_one_voice():
     check("the public half is Max", "The public half is Max" in pre, pre[-900:])
     check("and the private half is not",
           "The private half is not" in pre and "none of Max's mannerisms" in pre, pre[-900:])
+    # The harness opens the DM with the jump link, built from the message id it holds. A model
+    # that does not know that writes its own, out of an id it was told rather than Discord's.
+    check("and the run is told the harness writes the link back to Discord",
+          "Do not write a link to the Discord message yourself" in pre, pre[-900:])
 
     # NOT ON A TURN WITH NO SECOND HALF. A player's turn never gets the split preamble, so it
     # never gets this either -- there is one reply, it is public, and it is Max.
@@ -18857,6 +18914,7 @@ def main():
         test_a_channel_put_back_after_a_break_joins_as_a_new_one,
         test_a_comment_on_a_pre_attach_thread_does_not_reopen_the_whole_report,
         test_an_operator_in_public_gets_a_split_reply,
+        test_a_message_link_points_at_the_message_and_not_the_top_of_the_channel,
         test_the_two_halves_of_a_split_reply_are_not_in_one_voice,
         test_a_player_never_gets_a_private_half,
         test_an_undeliverable_private_half_never_becomes_public,

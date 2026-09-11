@@ -473,6 +473,20 @@ Rules that make this safe rather than a leak with extra steps:
   g. There is no split in a private venue. An operator asking in #dev-chat or in a DM gets one
      reply, in place, with everything in it.
 
+  h. The private half OPENS WITH A JUMP LINK to the public message it answers, written by the
+     host. A DM arrives in a different channel from the exchange that caused it, often minutes
+     later and by then scrolled past, so without the link the operator holds an answer and no
+     way back to the question. It is the host's line and not the model's: the id comes from the
+     message row, which is Discord's own, and a run asked to reproduce an id it was told writes
+     a link to nowhere. It goes FIRST, because a long private half is cut into a file and the
+     last line is the one that goes over the side.
+
+     The guild segment of that link comes from config, not from the conversation row, whenever
+     the row has none. Discord puts `guild_id` on the gateway's MESSAGE_CREATE and not on the
+     message object a REST read returns, so a conversation opened in a text channel — every
+     reply chain, which is every #ask-assistant conversation — has no guild of its own. A box
+     watches one server and names it in config; that is where the missing segment is from.
+
 Mechanically this is one more field on the structured verdict. The verdict already carries the
 summary the host composes a reply from; it grows a second, optional field for the private half.
 The host sends both, from the host, composed on the host, exactly as section 11 of the main

@@ -2972,7 +2972,7 @@ def is_only_fork_directive(content):
     return len(lines) == 1 and FORK_DIRECTIVE_RE.fullmatch(lines[0].strip()) is not None
 
 
-def discord_link(conv):
+def discord_link(conv, cfg=None):
     """A jump link to where this conversation lives, or None when it has no Discord side.
 
     A THREAD IS A CHANNEL everywhere in Discord's API, so a thread conversation links to its own
@@ -2984,11 +2984,14 @@ def discord_link(conv):
     Guarded for the columns being absent, like every other reader of a row this daemon may have
     read before a migration: a link nobody can build is a name without a link, not an exception
     in the middle of composing a reply.
+
+    `cfg`, where the caller has it, supplies the guild a reply chain's row does not carry; see
+    configured_guild.
     """
     if conv is None or is_local_conversation(conv):
         return None
     try:
-        guild = str(conv["guild_id"] or "").strip()
+        guild = conversation_guild(cfg, conv)
         thread = str(conv["thread_id"] or "").strip()
         channel = str(conv["channel_id"] or "").strip()
         threaded = conv["is_thread"]
@@ -3446,6 +3449,64 @@ def reply_channel(conv):
     if conv["is_thread"]:
         return str(conv["thread_id"])
     return str(conv["channel_id"] or conv["thread_id"])
+
+
+def configured_guild(cfg):
+    """The server this box watches, off config: `server_id`, or `guild_id` on an older file.
+
+    THE CONVERSATION ROW IS NOT A RELIABLE SOURCE FOR A REPLY CHAIN, and that is Discord's
+    shape rather than an omission here: `guild_id` rides on the gateway's MESSAGE_CREATE and
+    not on the message object a REST read returns, so a conversation opened in a text channel
+    records none. On the build server on 2026-09-11 that was 65 of 135 rows -- every reply
+    chain, which is every conversation in #ask-assistant. A thread has it because a thread
+    object carries it.
+
+    One server per box, named in config and used by ffdiscord for every call it makes, so a row
+    with no guild of its own is in THIS one; nothing here is guessed from message text.
+    """
+    d = (cfg or {}).get("_discord") or {}
+    return str(d.get("server_id") or d.get("guild_id") or "").strip()
+
+
+def conversation_guild(cfg, conv):
+    """Which server this conversation is in: the row's own answer, else the configured one."""
+    try:
+        guild = str(conv["guild_id"] or "").strip()
+    except (IndexError, KeyError, TypeError):
+        guild = ""
+    return guild or configured_guild(cfg)
+
+
+def message_link(conv, message_id, cfg=None):
+    """A jump link to ONE message in this conversation, or None when there is nowhere to point.
+
+    `discord_link` answers "where does this conversation live"; this answers "where was this
+    said", and the difference matters to somebody reading about a public exchange from
+    somewhere else: a channel link opens at the top, and the message being discussed may be a
+    long way down it.
+
+    The middle segment is `reply_channel`'s answer, for the reason that function exists -- a
+    thread IS a channel and a reply chain in a text channel is not -- and the id has to be
+    Discord's own: a GitHub-sourced row carries a namespaced `rc:`/`rv:` id, which is not a
+    message anybody can jump to.
+
+    `cfg` is optional and is the difference between a link and no link for a reply chain: see
+    configured_guild. A caller that has the config passes it; one that does not gets the old
+    behaviour, which is the row's guild or nothing.
+    """
+    if conv is None or is_local_conversation(conv):
+        return None
+    mid = str(message_id or "").strip()
+    if not mid.isdigit():
+        return None
+    guild = conversation_guild(cfg, conv)
+    try:
+        channel = reply_channel(conv)
+    except (IndexError, KeyError):
+        return None
+    if not guild or not channel:
+        return None
+    return f"https://discord.com/channels/{guild}/{channel}/{mid}"
 
 
 # ------------------------------------------------------------------------------------------
@@ -12926,7 +12987,7 @@ class Watcher:
                 f"run's own account of what it addressed")
         return queued
 
-    def record_private_half(self, run_row_id, conv, turn, verdict):
+    def record_private_half(self, run_row_id, conv, turn, verdict, last=None):
         """The second destination of a split reply (design section 7).
 
         An operator asked in a channel players read. They are entitled to the answer and the
@@ -12941,6 +13002,16 @@ class Watcher:
 
         The recipient is the ASKER, resolved at send time from their user id, never a broadcast
         to every operator: whoever else wants it can read the run on the web page.
+
+        IT OPENS WITH A LINK BACK TO THE PUBLIC MESSAGE IT IS ABOUT. A DM arrives detached from
+        the exchange that caused it -- a different channel, often minutes later, and by then the
+        public half has scrolled -- so without the link the operator has to go and find the
+        conversation the answer is half of. The harness writes that line, not the model: the id
+        it points at is the message row's, which is Discord's own, and the run is not asked to
+        reproduce an id it was told. `last` is the message that triggered the turn, so the link
+        lands on what was actually asked rather than at the top of the channel; where there is
+        no message id to point at it falls back to the conversation, and where even that has
+        nowhere to resolve the private half goes out on its own, which is what used to be sent.
         """
         if (turn["trust_tier"] or "player") != "operator" or (turn["venue"] or "public") != "public":
             return 0
@@ -12952,6 +13023,17 @@ class Watcher:
             log(f"WARNING: turn {turn['id']} produced a private half but its actor {actor!r} "
                 f"is not a Discord id, so there is nobody to send it to")
             return 0
+        # The link FIRST, then a blank line: split_for_discord cuts a long private half into a
+        # file, and a line at the bottom is the line that goes over the side. The exact message
+        # where it can be had, and the conversation where it cannot -- a turn that batched
+        # several messages, or a row from before `guild_id` was recorded.
+        link = message_link(conv, last["discord_id"] if last else None, self.cfg)
+        what = "message"
+        if not link:
+            link = discord_link(conv, self.cfg)
+            what = "thread" if link and conv["is_thread"] else "message"
+        if link:
+            private = f"Re: [this Discord {what}]({link})\n\n{private}"
         payload = {"dm_to": actor, "text": private, "silent": True, "private_half": True}
         return 1 if self.record_outbound(run_row_id, conv["id"], "post", payload) else 0
 
@@ -13238,7 +13320,7 @@ class Watcher:
         if self.record_outbound(run_row_id, conv["id"], "post", payload):
             recorded += 1
 
-        recorded += self.record_private_half(run_row_id, conv, turn, verdict)
+        recorded += self.record_private_half(run_row_id, conv, turn, verdict, last)
         return recorded
 
 
