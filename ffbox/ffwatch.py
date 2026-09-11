@@ -15417,6 +15417,7 @@ class Watcher:
             # Re-read: collect_run_output rewrites out_dir when it moves a pooled run's output.
             run = self.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
             run_dir = self.run_dir_for(run)
+            self.keep_run_container_log(run, run_dir)
             if run_dir and not self.run_contract_ok(run_dir):
                 # A directory a newer ffbox wrote. Say so, close the row, and leave the files
                 # alone: the build that understands them is the one that should finish them, and
@@ -15522,6 +15523,43 @@ class Watcher:
             log(f"run {run['ffbox_run_id']}: harvest validation said: "
                 f"{proc.stderr.strip()[:300]}")
         return True
+
+    def keep_run_container_log(self, run, run_dir):
+        """Save what a finished run's container said, while the container still exists.
+
+        THE DETACHED PATH HAD NOBODY DOING THIS. ffbox keeps a container's log in cleanup(), and
+        cleanup() returns at its first line when DETACHED_OK is set -- which every run this daemon
+        launches is, deliberately, so that a `systemctl stop` cannot take a working container with
+        it. The container is then removed by ffbox --finish or by the exited-container sweep, and
+        `docker logs` goes with it.
+
+        WHAT THAT COST, on 2026-09-11: three runs exited 1 about two minutes in having written
+        nothing at all -- no base_sha.txt, no claude.log, not even the .container-rc their own trap
+        writes -- and the only account of why was the container's stdout. All three were the
+        workspace restore reaching GitHub for a Git LFS object it could not find locally, and it
+        took reproducing the restore by hand to learn that, because every run that could have said
+        so had already been swept. See restore-workspace.sh, the Git LFS section.
+
+        BEFORE THE HARVEST VALIDATION, because that is what removes the container on the cold
+        path. A run that already has a log keeps it: ffbox wrote that one while the container was
+        still talking, and this is the fallback, not a second opinion.
+
+        Never fatal, and worth nothing on a healthy run -- which is the point. A run that produced
+        a transcript has its own account of itself; this is for the ones that produced none.
+        """
+        if not run_dir:
+            return False
+        path = os.path.join(run_dir, "container.log")
+        try:
+            if os.path.getsize(path) > 0:
+                return False
+        except OSError:
+            pass
+        ref = (run["container_id"] if "container_id" in run.keys() else None) \
+            or run["container_name"]
+        if not ref:
+            return False
+        return self.capture_container_log(ref, path)
 
     def capture_container_log(self, name, path, tail=2000):
         """Write what a container said into `path`, before something removes it. True if written.
