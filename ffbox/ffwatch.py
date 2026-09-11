@@ -12202,10 +12202,17 @@ class Watcher:
         verdict = _parse_verdict(result.get("result") if isinstance(result, dict) else None)
         verification = self.db.one("SELECT * FROM verification WHERE run_id=?",
                                    (run_row_id,))
+        last = job["messages"][-1] if job["messages"] else None
+        # WHO GETS PINGED IS SETTLED BEFORE THE REPLY IS COMPOSED, because the mention is
+        # prefixed to the text below and Discord counts it against the same 2000 characters the
+        # answer does. The composer is handed the room it takes, so the message it fits is the
+        # message that actually gets posted rather than one that fits until the prefix lands on
+        # it. A review answers on a pull request, where there is no mention to reserve for.
+        asker = None if conv["kind"] == GITHUB_KIND else reply_mention(conv, last)
         head = compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
                             verification=verification, publish=self.publish_facts(run_row_id),
-                            stopped=stopped)
-        last = job["messages"][-1] if job["messages"] else None
+                            stopped=stopped, measure=self.expanded_len,
+                            reserve=len(f"<@{asker}> ") if asker else 0)
         # A REVIEW ANSWERS ON THE PULL REQUEST. compose_head is deliberately the same composer
         # every other lane uses -- what the turn wants said, plus the harness's own facts about
         # verification and publication -- because the question "what happened to this run" has
@@ -12222,22 +12229,26 @@ class Watcher:
                                               self.publish_facts(run_row_id))
         payload = {"channel": reply_channel(conv), "text": head, "silent": True,
                    "reply_to": last["discord_id"] if last else None}
-        asker = reply_mention(conv, last)
         if asker:
             # The reply opens by @-mentioning whoever raised the turn, and the sender is told
             # which id may ping so --silent still holds for every other name in the text. The
             # id comes from the message row — Discord's own authenticated author.id — never
             # from anything the container wrote, so a run cannot talk the harness into pinging
-            # somebody else. Prefixed HERE rather than left to the CLI so that split_for_discord
-            # measures the message that actually gets posted.
+            # somebody else. Prefixed HERE rather than left to the CLI so that the fitter above
+            # and split_for_discord below both measure the message that actually gets posted.
             payload["mention"] = asker
             payload["text"] = f"<@{asker}> {head}" if head else f"<@{asker}>"
         summary = (verdict.get("summary") or "").strip()
-        if len(summary) > HEAD_CAP and answer_is_publishable(turn, terminal):
-            # check_length DIES above 2000 characters rather than truncating, so the overflow
-            # is attached as a file instead of being allowed to fail the post. The same gate as
-            # the head: withholding a failed run's output from the text and then attaching the
-            # whole of it as a file would have been no protection at all.
+        if head.truncated:
+            # ONE GATE FOR THE HEAD AND THE FILE, and compose_head holds it. check_length dies
+            # above 2000 characters rather than truncating, so a summary that will not fit is
+            # attached instead of being allowed to fail the post — but only what would not fit
+            # earns a file. A reply that got the whole summary out reports no truncation and
+            # gets none, which is the point: an attachment beside a complete answer is noise,
+            # and for three months every answer over 1500 characters had one. The same gate
+            # also covers the venue rule, because compose_head reports no truncation for a
+            # public run whose body it withheld: withholding a failed run's output from the
+            # text and then attaching the whole of it as a file would be no protection at all.
             spath = os.path.join(run_dir, "summary.md")
             try:
                 with open(spath, "w", encoding="utf-8") as fh:
@@ -14128,9 +14139,14 @@ class Watcher:
         would otherwise be a FAILED post — the worst of the three outcomes. The head goes out
         under HEAD_CAP and the whole text is attached, so nothing is lost and nothing is
         halved.
+
+        THE BLIND CUT, for text nobody measured. A reply composed by compose_head arrives here
+        already fitted to the limit and passes straight through; this is the backstop for the
+        payloads that are not composed at all — a private half, an ask, anything a caller hands
+        over as finished prose.
         """
         text = text or ""
-        if self.expanded_len(text) <= 2000:
+        if self.expanded_len(text) <= DISCORD_LIMIT:
             return text, None
         overflow_dir = os.path.join(self.state_dir, "outbound")
         os.makedirs(overflow_dir, exist_ok=True)
@@ -14154,7 +14170,7 @@ class Watcher:
         cut = HEAD_CAP
         while cut > 0:
             head = text[:cut].rstrip() + footer
-            if self.expanded_len(head) <= 2000:
+            if self.expanded_len(head) <= DISCORD_LIMIT:
                 return head
             cut -= 200
         return footer.strip()
@@ -17200,7 +17216,70 @@ class Watcher:
 # reply composition  (059 report.compose_head, minus the phase-3 branch/PR lines)
 # ------------------------------------------------------------------------------------------
 
-HEAD_CAP = 1500        # leaves room for the framing lines under Discord's 2000-char limit
+DISCORD_LIMIT = 2000   # Discord's own hard cap on a message; check_length dies above it
+HEAD_CAP = 1500        # the SENDER's blind cut, for text nobody measured against the limit
+
+# What the reader is told when the post could not carry the whole summary. One string, because
+# compose_head writes it and record_reply's attachment is what it promises.
+SUMMARY_CUT_NOTE = "\n…(full summary attached)"
+
+
+class Head(str):
+    """The composed reply, plus whether the summary in it was cut short.
+
+    A str subclass so every caller and every test that treats compose_head's return value as
+    text keeps working, while record_reply can ask the one question only the composer can
+    answer: did the whole of the agent's summary go out in this message, or is the rest owed to
+    an attachment? Deciding it at the composer is what keeps the head and the file on exactly
+    the same condition, which is the gate they have to share.
+    """
+
+    truncated = False
+
+    def __new__(cls, text, truncated=False):
+        head = super().__new__(cls, text)
+        head.truncated = bool(truncated)
+        return head
+
+
+def fit_summary(summary, assemble, measure, budget):
+    """The reply with as much of `summary` in it as fits, and whether any was left out.
+
+    ONLY WHAT DOES NOT FIT IS CUT. The rule used to be a flat cut at HEAD_CAP with the rest
+    attached, which reserved 500 characters for framing that is, in a Discord reply, one
+    @-mention and one branch line — so a 1700-character answer that would have posted whole was
+    stopped mid-sentence next to a file nobody opens. The reply is therefore assembled around
+    the WHOLE summary first and measured as the thing Discord will actually receive; the cut
+    happens only when that measurement says it must, and takes only the overflow.
+
+    `measure` is the sender's expanded_len at the live call site, because @name becomes <@id>
+    before the CLI checks the length, and a cut measured on the raw string would still die
+    there. `budget` is already net of the mention record_reply prefixes afterwards.
+    """
+    text = assemble(summary)
+    over = measure(text) - budget
+    if over <= 0 or not summary:
+        # NOTHING TO CUT is not the same as nothing to say. A reply with no summary in it can
+        # still run over on its framing alone — a long correction under a long branch line —
+        # and that is the sender's blind cut to make, not this one's. What it must not do is
+        # report a truncation, because the file that promise owes would hold nothing.
+        return Head(text, False)
+    # Each pass drops at least the overflow it just measured. Expanding a mention only ever
+    # makes text longer, so that overflow is a FLOOR on what has to go and no step can cut past
+    # what is needed; it re-measures because dropping the tail may also drop a mention that was
+    # paying for itself, and the next pass has to see that.
+    cut = len(summary) - over - len(SUMMARY_CUT_NOTE)
+    while cut > 0:
+        text = assemble(summary[:cut].rstrip() + SUMMARY_CUT_NOTE)
+        over = measure(text) - budget
+        if over <= 0:
+            return Head(text, True)
+        cut -= max(over, 1)
+    # The framing alone is over budget. That is split_for_discord's problem and not this
+    # function's — it cuts whatever it is handed — but none of the summary went out, so the
+    # attachment is owed either way.
+    return Head(assemble(""), True)
+
 
 # What a PUBLIC venue is told when the run produced no answer at all: a crashed container, or a
 # launcher that never started one. The alternative is an empty post, which the sender refuses,
@@ -17281,9 +17360,10 @@ def answer_is_publishable(turn, terminal):
     the error string. A private venue takes it anyway, under a state line that says what it is.
     A public one must not: it would put a stack-shaped line in a player's thread as the reply.
 
-    Its own function because record_reply asks the same question about the ATTACHMENT. A
-    summary over HEAD_CAP is uploaded as summary.md, and gating the head without gating the
-    file would have withheld the text and attached it in the same message.
+    Its own function because compose_head asks it about the ATTACHMENT too. An overflowing
+    summary is uploaded as summary.md, and a shape that withholds the body has to report itself
+    as withholding rather than as truncating — gating the head without gating the file would
+    withhold the text and attach it in the same message.
     """
     return terminal == "done" or (turn["venue"] or "public") == "private"
 
@@ -17416,7 +17496,8 @@ def publish_footer(publish, correction):
 
 
 def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
-                 verification=None, publish=None, stopped=False):
+                 verification=None, publish=None, stopped=False,
+                 measure=len, limit=DISCORD_LIMIT, reserve=0):
     """The reply body. TWO SHAPES, chosen by the turn's venue.
 
     A PUBLIC reply is the agent's answer, and the only thing that may lead it is the one
@@ -17435,21 +17516,31 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
 
     An unset venue reads as public. That is the safe direction for the one thing this function
     can leak: a row written before the column existed gets the answer and none of the internals.
+
+    EITHER SHAPE IS FITTED TO THE LIMIT, not cut to a fixed width: both build the reply around
+    the whole summary and hand it to fit_summary, which cuts only if the assembled post — the
+    correction, the footer, the harness's own rows, all of it — measures over `limit` minus the
+    `reserve` record_reply keeps for the @-mention it prefixes afterwards. The Head that comes
+    back says whether anything was left out, and that is the flag the attachment rides on.
     """
     summary = (verdict.get("summary") or "").strip()
-    # Cut to HEAD_CAP in BOTH shapes, because record_reply attaches summary.md on exactly this
-    # condition. Returning the whole thing here instead would send the full text AND the file,
-    # and past 2000 characters split_for_discord would attach a second copy of the same words.
-    body = summary[:HEAD_CAP] + ("\n…(full summary attached)" if len(summary) > HEAD_CAP
-                                 else "")
     if (turn["venue"] or "public") != "private":
+        correction = public_correction(turn, verification, publish or {})
+        footer = publish_footer(publish or {}, correction)
+
+        def frame(answer):
+            out = f"{correction}\n\n{answer}" if correction else answer
+            # UNDER the answer, and under the correction when there is one. A run that pushed
+            # nothing is unchanged: this is the only line of the public shape that comes from
+            # the harness rather than from the agent, and it appears only where there is a
+            # branch.
+            return f"{out}\n\n{footer}" if footer else out
+
         # ONLY a run that ended `done` has an answer to give. On any other ending `summary` is
         # whatever _parse_verdict could make of the result, and for the commonest failure — an
         # API error, where result.json is {"is_error": true, "result": "API Error: 500 ..."} —
         # that IS the error string. Posting it would put a stack-shaped line in a player's
         # thread as though it were the reply.
-        correction = public_correction(turn, verification, publish or {})
-        footer = publish_footer(publish or {}, correction)
         if not answer_is_publishable(turn, terminal):
             # THREE ENDINGS AND THREE SENTENCES, because the advice differs every time. A run
             # stopped by its own ceiling is not a run that broke; a run a person stopped is
@@ -17459,13 +17550,13 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
                 answer = PUBLIC_STOPPED
             else:
                 answer = PUBLIC_TIMED_OUT if terminal == "timed_out" else PUBLIC_NO_ANSWER
-        else:
-            answer = body or PUBLIC_NOTHING_TO_SAY
-        out = f"{correction}\n\n{answer}" if correction else answer
-        # UNDER the answer, and under the correction when there is one. A run that pushed
-        # nothing is unchanged: this is the only line of the public shape that comes from the
-        # harness rather than from the agent, and it appears only where there is a branch.
-        return f"{out}\n\n{footer}" if footer else out
+            # NOT TRUNCATED — withheld. None of the agent's words are in this reply, so there
+            # is nothing owed to an attachment, and saying otherwise here would hand
+            # record_reply the whole withheld summary to upload beside the sentence that exists
+            # to keep it out.
+            return Head(frame(answer), False)
+        return fit_summary(summary, lambda body: frame(body or PUBLIC_NOTHING_TO_SAY),
+                           measure, limit - reserve)
 
     publish = publish or {}
     # A RUN THAT CHANGED NOTHING OWES NO PROVENANCE. The container skips the suite exactly when
@@ -17572,23 +17663,30 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # something nobody asked it to do.
         lines.append(f"no branch: {publish['no_branch_reason']}")
 
-    if not body and not lines:
-        # A clean run that produced no summary at all, on a lane with nothing to verify and
-        # nothing to publish. Every conditional above it is skipped and the state line does not
-        # fire, so without this the reply is empty — and an empty reply is not a report that
-        # the run had nothing to say, it is no report at all.
-        lines.append("the run finished without saying anything")
-    if body:
-        # The ANSWER leads; the harness's own rows follow it. Whoever opens the reply came for
-        # what the run found, and whether the suite passed and where the branch went is
-        # provenance FOR that answer — it belongs under the thing it backs, not stacked on top
-        # of it where the first screen is status and the summary starts below the fold.
-        lines = ([body, ""] + lines) if lines else [body]
-    # No session id here. It is only usable at a machine holding the box's state directory,
-    # which Discord is not, and it rode on every private reply whether or not anyone would ever
-    # take that session over. It is on the conversation page now, under the branch, where
-    # somebody who has decided to take one over is already standing.
-    return "\n".join(lines)
+    def assemble(body):
+        # The harness's rows are FIXED COST — they are built once, above, and every pass of the
+        # fitter pays for them. Only the body varies, which is the whole point: the summary is
+        # cut to what is left after the provenance, never the other way round.
+        rows = list(lines)
+        if not body and not rows:
+            # A clean run that produced no summary at all, on a lane with nothing to verify and
+            # nothing to publish. Every conditional above it is skipped and the state line does
+            # not fire, so without this the reply is empty — and an empty reply is not a report
+            # that the run had nothing to say, it is no report at all.
+            rows.append("the run finished without saying anything")
+        if body:
+            # The ANSWER leads; the harness's own rows follow it. Whoever opens the reply came
+            # for what the run found, and whether the suite passed and where the branch went is
+            # provenance FOR that answer — it belongs under the thing it backs, not stacked on
+            # top of it where the first screen is status and the summary starts below the fold.
+            rows = ([body, ""] + rows) if rows else [body]
+        # No session id here. It is only usable at a machine holding the box's state directory,
+        # which Discord is not, and it rode on every private reply whether or not anyone would
+        # ever take that session over. It is on the conversation page now, under the branch,
+        # where somebody who has decided to take one over is already standing.
+        return "\n".join(rows)
+
+    return fit_summary(summary, assemble, measure, limit - reserve)
 
 
 def _unconfident_reason(verdict):
