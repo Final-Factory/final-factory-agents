@@ -849,27 +849,70 @@ top-level `operators` block the account that opened it falls on — and a Discor
 an unfenced class is demoted to `user_pool` for good if anybody outside that table posts in it.
 Each class is staged into a pool of its own and neither can take the other's warm container.
 
+### Two halves, answered by different questions
+
+A class block carries two unrelated kinds of setting, and since 2026-09-11 they are read off
+different things:
+
+| | Keys | Read from | Moves |
+|---|---|---|---|
+| **Resource budget** | the four clocks, `max_budget_usd` | the **turn's** trust tier | either way, every turn |
+| **Security boundary** | `network`, `github.container_token`, `plugins` | the **conversation's** class | downwards only, never back |
+
+The budget is about *who asked*. `discord.operator_pool`'s numbers bound a turn whose every
+message came from an account in `operators`; `discord.user_pool`'s bound every other turn. Those
+are the same two keys, read against the same table, that decide the opening class — so a box that
+points both at one class has one budget and can stop reading here.
+
+**Why the budget could not stay on the conversation.** A bug-report thread belongs to the player
+who opened it, so an operator asking in that thread for real work was held to the player's clock.
+Conversation 133 was killed on it with a fix half written. Nothing about who opened a thread says
+how long a developer's request inside it should take.
+
+**Why the fence could not move to the turn.** A conversation has ONE Claude session and every turn
+resumes it — the transcript is mounted into the container on every launch — so a player's words
+from turn 2 are in front of the model on turn 9. Letting an operator's message pick the container
+would mean that session resuming on the open internet holding the container git credential, with
+a stranger's text already in it. That is why `demote_for_stranger` only ever moves a conversation
+downwards and has no promotion path at all. The agent's deny list does not hold this line; the
+absent credential and the absent network do. See `CREDENTIALS.md` section 4 on why
+`Bash(git push*)` is a tripwire rather than a fence.
+
+So an operator's request in a player's thread gets the long clocks and the fenced container.
+`ffwatch`'s journal names the budget only when the two differ: `agent=ffagent budget=ffdev`.
+
+If a turn genuinely needs the unfenced container, **fork it** — `!conv <id>` in a new thread, or
+`ffwatch fork`. That is the one sanctioned promotion path: operator-only, explicit, it says which
+class it landed in, and it leaves the original thread fenced.
+
+**The pool is unaffected by any of it.** `ffbox` writes `<out>/clock` at **dispatch** rather than
+when a spare is staged, so one warm container of the right class serves either budget and
+`pool.idle` does not have to be split.
+
+Rows below are tagged **(budget)** where the value is read from the turn's tier and **(fence)**
+where it is read from the conversation's class. Everything untagged is a property of the pool.
+
 | Key | ffagent | ffdev | What it is |
 |---|---|---|---|
 | `base_ref` | `"master"` | `"master"` | Where a run's clone starts. Keep it equal to the first key of `publish_bases`, which is what the agent is told to branch from by default; disagreeing costs a cross-base checkout and a full Unity reimport inside every container. |
-| `agent_secs` | `2400` | `14400` | The model's working time, measured from the `.agent-started` marker. ffdev carries four hours because a dev turn is expected to be the long one, and a workflow-backed code review plus the fixes it leads to does not fit in forty minutes. |
-| `warmup_secs` | `3600` | `3600` | Everything before that marker: clone, restore, Unity import. |
-| `verify_secs` | `1800` | `1800` | The harness's own EditMode run after the agent exits, measured from the `.verify-started` marker. |
-| `kill_grace_secs` | `10` | `10` | How long a container gets to finish after it is told to stop. Floored at 120 wherever a Unity seat may be held. |
+| `agent_secs` (budget) | `2400` | `14400` | The model's working time, measured from the `.agent-started` marker. ffdev carries four hours because a dev turn is expected to be the long one, and a workflow-backed code review plus the fixes it leads to does not fit in forty minutes. |
+| `warmup_secs` (budget) | `3600` | `3600` | Everything before that marker: clone, restore, Unity import. |
+| `verify_secs` (budget) | `1800` | `1800` | The harness's own EditMode run after the agent exits, measured from the `.verify-started` marker. |
+| `kill_grace_secs` (budget) | `10` | `10` | How long a container gets to finish after it is told to stop. Floored at 120 wherever a Unity seat may be held. |
 | `pool.idle` | `1` | `1` | Containers staged warm before any request exists. |
 | `pool.max` | `-1` | `3` | This class's own ceiling on containers, runs and staged ones together. |
 | `idle_agent_ttl_secs` | `14400` | `14400` | How long a staged container waits before retiring. |
 | `pool_ref` | `null` | `null` | Which branch the pool stages. `null` follows `base_ref`. |
-| `unity_mcp.enabled` | `false` | `false` | THE LIVE EDITOR. On, a turn of this class gets a headless Unity editor booted before the agent starts (`ffmcp`) and the curated `mcp__UnityMCP__*` tools on its tool list, so it can read live state, recompile and run the suite in one editor instead of booting one per question. Off, it has `ffverify` and `ffplaytest` exactly as before and pays nothing. Off by default because the bridge was proven against a BLANK project on 2026-09-11 and the real workspace's boot cost is still unmeasured — see `design/unitymcp_container_design.txt`. Leave ffagent off regardless: the class that runs text strangers wrote is not the one to hand `execute_code` to first. |
-| `unity_mcp.ready_timeout_secs` | `600` | `600` | How long `ffmcp start` waits for the log line `StdioBridgeHost started on port N` before giving up, stopping the editor and letting the turn run DEGRADED (no MCP tools, a prompt that says so, `ffverify` unaffected). It bounds the wait only; the boot itself is inside `warmup_secs`, which is why no new clock exists. |
+| `unity_mcp.enabled` (fence) | `false` | `false` | THE LIVE EDITOR. On, a turn of this class gets a headless Unity editor booted before the agent starts (`ffmcp`) and the curated `mcp__UnityMCP__*` tools on its tool list, so it can read live state, recompile and run the suite in one editor instead of booting one per question. Off, it has `ffverify` and `ffplaytest` exactly as before and pays nothing. Off by default because the bridge was proven against a BLANK project on 2026-09-11 and the real workspace's boot cost is still unmeasured — see `design/unitymcp_container_design.txt`. Leave ffagent off regardless: the class that runs text strangers wrote is not the one to hand `execute_code` to first. |
+| `unity_mcp.ready_timeout_secs` (fence) | `600` | `600` | How long `ffmcp start` waits for the log line `StdioBridgeHost started on port N` before giving up, stopping the editor and letting the turn run DEGRADED (no MCP tools, a prompt that says so, `ffverify` unaffected). It bounds the wait only; the boot itself is inside `warmup_secs`, which is why no new clock exists. Tagged with `enabled` rather than as a budget: it rides with the decision to boot an editor at all, and it would make no sense for the wait to come from a different class than that. |
 | `warm_branches.count` | `1` | `1` | Evictable spares this class keeps on recently-used branches. `0` is off. See below. |
 | `warm_branches.window_secs` | `3600` | `3600` | How recently a turn must have wanted a branch for it to be a candidate. |
 | `warm_branches.ttl_secs` | `3600` | `3600` | How long an evictable spare waits before retiring. |
-| `max_budget_usd` | `null` | `null` | What one run of this class may cost. `null` is the box-wide `max_budget_usd`. It stopped being a formality on 2026-09-10: an ffagent run is billed to the metered `ANTHROPIC_API_KEY`, so this is the real ceiling on it. |
-| `network` | `"limited"` | `"full"` | The fence. See below. |
-| `github.pr_token` | `null` | `null` | The key in `secrets.env` holding the token this pool opens pull requests with. `null` uses the box-wide `GH_PR_TOKEN`. See below. |
-| `github.container_token` | `null` | `null` | The key in `secrets.env` holding a git credential put INSIDE this pool's containers. `null` means none, which is what ffagent must stay. See below. |
-| `plugins` | `["ff-discord"]` | `["ff-discord", "ff-agents"]` | Which plugin trees this class's containers get, by directory name under `plugins_dir`. See below. |
+| `max_budget_usd` (budget) | `null` | `null` | What one run on this budget may cost. `null` is the box-wide `max_budget_usd`. It stopped being a formality on 2026-09-10: an ffagent run is billed to the metered `ANTHROPIC_API_KEY`, so this is the real ceiling on it. |
+| `network` (fence) | `"limited"` | `"full"` | The fence. See below. |
+| `github.pr_token` (fence) | `null` | `null` | The key in `secrets.env` holding the token this pool opens pull requests with. `null` uses the box-wide `GH_PR_TOKEN`. See below. |
+| `github.container_token` (fence) | `null` | `null` | The key in `secrets.env` holding a git credential put INSIDE this pool's containers. `null` means none, which is what ffagent must stay. See below. |
+| `plugins` (fence) | `["ff-discord"]` | `["ff-discord", "ff-agents"]` | Which plugin trees this class's containers get, by directory name under `plugins_dir`. See below. |
 
 **Four clocks, not one.** They run in order — warm-up, then the agent, then verification — and
 each is measured from its own marker, so a run can spend all of every one of them. Conflating
@@ -881,9 +924,14 @@ Exceeding one exits **123**, **124** or **125** respectively, and writes `warmup
 
 `verify_secs` was box-wide until 2026-09-03, on the argument that the EditMode suite is the same
 whichever container ran the turn. That is true of the suite and is not what the clock asks: what
-it bounds is how long **this lane** may spend verifying, and a dev turn touching half the
+it bounds is how long **this request** may spend verifying, and a dev turn touching half the
 assemblies does not cost what a player-facing fix costs. Set the same number in both blocks if
 you want one answer.
+
+**All four are read from the turn, not from the container** — see "Two halves" above. They are
+written into `<out>/clock` when the run is created and that file is what the host compares
+against for the life of the run, so editing a number here moves the next turn and never one that
+is already working.
 
 **`kill_grace_secs` has a floor of 120 and it is not this number.** PID 1's trap runs
 `unity-editor -quit -returnlicense`, which is an editor launch, so every stop of a container that

@@ -2235,6 +2235,34 @@ def discord_agent_class(cfg, author_id):
     return discord_pool(cfg, "operator_pool" if is_operator(cfg, author_id) else "user_pool")
 
 
+# WHICH CLASS'S RESOURCE BLOCK BOUNDS A TURN, and it is a DIFFERENT QUESTION from which
+# container the turn runs in. The class blocks carry two unrelated kinds of setting and used to
+# be read as one indivisible bundle:
+#
+#   a RESOURCE BUDGET  the four clocks and max_budget_usd -- how long this request may take and
+#                      what it may cost. It is a fact about WHO ASKED.
+#   a SECURITY BOUNDARY  network, github.container_token, plugins -- what the container may
+#                      reach. It is a fact about WHOSE WORDS ARE IN THE SESSION.
+#
+# Reading both off the conversation meant an operator's request in a thread a player opened was
+# held to the player's thirty (now forty) minutes, because the conversation's class is the
+# opener's. Reading both off the turn instead would be far worse: see demote_for_stranger, and
+# the note on the security half in launch().
+#
+# THE BUDGET COMES OFF THE TURN, through the same two config keys that decide the opening class,
+# so a box that points both Discord pools at one class gets one budget and never has to think
+# about this. The tier is turn_trust's answer -- a dictionary lookup over authenticated ids,
+# never a model, and conservative across a batch: one player in it makes the whole turn a
+# player's.
+#
+# IT CAN ONLY MOVE THE CLOCK, NEVER THE FENCE. Nothing this returns is read for a network, a
+# credential or a plugin list; launch() takes those from the conversation and says so.
+def budget_class(cfg, tier):
+    """Which class's clocks and cost ceiling bound a turn at this trust tier."""
+    return discord_pool(cfg, "operator_pool" if (tier or "player") == "operator"
+                        else "user_pool")
+
+
 def stranger_downgrade_class(cfg, agent_class):
     """Where a conversation running in `agent_class` goes when a stranger speaks in it.
 
@@ -10509,16 +10537,23 @@ class Watcher:
     # launch
     # ======================================================================================
 
-    def build_job(self, turn, conv, run_id, att_dir, ccfg=None, agent_class=None):
+    def build_job(self, turn, conv, run_id, att_dir, ccfg=None, agent_class=None, bcfg=None):
         """The job.json a container is handed.
 
-        `ccfg` and `agent_class` are this conversation's class and its config block. They are
-        passed in rather than re-derived so that the job and the ffbox argv launch() builds
-        beside it cannot disagree about which clocks this run is under. Defaulted for the tests
-        and any caller that has no conversation in hand.
+        `ccfg` and `agent_class` are this CONVERSATION's class and its config block -- the
+        security half: the plugin list and the class the record is filed under. `bcfg` is the
+        BUDGET block, which comes from the TURN and is not always the same one; see
+        budget_class. All three are passed in rather than re-derived so that the job and the
+        ffbox argv launch() builds beside it cannot disagree about what this run is held to.
+        Defaulted for the tests and any caller that has no conversation in hand.
         """
         agent_class = agent_class or self.conversation_class(conv)
         ccfg = ccfg or class_cfg(self.cfg, agent_class)
+        # THE BUDGET BLOCK, WHICH IS NOT ALWAYS THE CONTAINER'S. Defaulted from the turn for the
+        # same reason the other two are defaulted: a caller with nothing to say still gets the
+        # answer launch() would have computed, so a job written by a test and a job written by a
+        # launch describe the same run.
+        bcfg = bcfg or self.turn_budget(turn)[1]
         cap = capabilities_for(conv, ccfg)
         msgs = self.db.query(
             f"SELECT * FROM message WHERE turn_id=? ORDER BY {MESSAGE_ORDER}",
@@ -10736,10 +10771,13 @@ class Watcher:
             "resume_summary": summary,
             "model": {"model": model_block(self.cfg)["container"],
                       "fallback_model": model_block(self.cfg)["container_fallback"],
-                      # THE CLASS'S CEILING, FALLING BACK TO THE BOX'S. A class that declares
-                      # none wants whatever the box says; see _class_blocks.
-                      "max_budget_usd": (ccfg.get("max_budget_usd")
-                                         if ccfg.get("max_budget_usd") is not None
+                      # THE BUDGET CLASS'S CEILING, FALLING BACK TO THE BOX'S. A class that
+                      # declares none wants whatever the box says; see _class_blocks. Off the
+                      # BUDGET block and not the container's: what one request may cost is the
+                      # same kind of question as how long it may take, and an operator's turn
+                      # bills an operator's credential wherever it runs (see claude_route).
+                      "max_budget_usd": (bcfg.get("max_budget_usd")
+                                         if bcfg.get("max_budget_usd") is not None
                                          else self.cfg["max_budget_usd"]),
                       "effort": self.cfg["effort"]},
             # Mounted on EVERY lane. It used to be withheld from local runs, because with the
@@ -10768,19 +10806,22 @@ class Watcher:
                       "actor": turn["trust_actor"] or "",
                       "why": turn["trust_reason"] or ""},
             "venue": {"kind": turn["venue"] or "public"},
-            # THIS CLASS's clocks, the same four launch() puts on the ffbox argv. job.json is
-            # what a run directory is read back from months later, and a record that disagrees
-            # with what happened is worse than no record.
+            # THIS TURN's clocks, the same four launch() puts on the ffbox argv, off the same
+            # block. job.json is what a run directory is read back from months later, and a
+            # record that disagrees with what happened is worse than no record -- which is why
+            # these follow the budget rather than the container. A turn killed on the agent
+            # clock is read back here, and `limits` naming the container's class instead would
+            # state a ceiling the run was never held to.
             #
             # Read from the flat config until 2026-09-01, which was right while there was one
             # class and would now make an ffdev run RECORD ffagent's numbers while running under
             # its own. verify_secs joined them on 2026-09-03, when it stopped being box-wide:
             # exit 125 is a run killed by the verification ceiling, and a record that does not
             # say what that ceiling was is missing the one number the reader came for.
-            "limits": {"agent_secs": ccfg["agent_secs"],
-                       "warmup_secs": ccfg["warmup_secs"],
-                       "verify_secs": ccfg["verify_secs"],
-                       "kill_grace_secs": ccfg["kill_grace_secs"]},
+            "limits": {"agent_secs": bcfg["agent_secs"],
+                       "warmup_secs": bcfg["warmup_secs"],
+                       "verify_secs": bcfg["verify_secs"],
+                       "kill_grace_secs": bcfg["kill_grace_secs"]},
             "out_dir": "/ffbox/out",
             "dry_run": self.dry_run,
         }
@@ -11408,6 +11449,28 @@ class Watcher:
         if number is None:
             return None
         return {"number": number, "base": base, "url": url, "branch": branch}
+
+    def turn_budget(self, turn):
+        """(class name, config block) for the RESOURCE budget this turn is held to.
+
+        THE OTHER HALF OF conversation_class, and the pair is the whole of the split: this
+        answers "how long may this request take and what may it cost", that one answers "what
+        may the container reach". See budget_class for why they are different questions.
+
+        OFF THE TURN ROW, never off the messages, for the same reason claude_route_for_turn is:
+        trust_tier and trust_actor were settled when the turn was created, by turn_trust, from
+        Discord's authenticated author ids. A turn row read here cannot be talked into another
+        tier by anything in the text it carries.
+
+        A row with no tier reads as a player's, which is the conservative direction and the one
+        every pre-v14 turn actually is.
+        """
+        try:
+            tier = turn["trust_tier"] if turn is not None else None
+        except (IndexError, KeyError):
+            tier = None
+        name = budget_class(self.cfg, tier)
+        return name, class_cfg(self.cfg, name)
 
     @staticmethod
     def conversation_class(conv, column="agent_class"):
@@ -12509,8 +12572,16 @@ class Watcher:
         return out
 
     @staticmethod
-    def launch_ceiling(ccfg):
-        """How long to wait on `ffbox` itself, in seconds. DERIVED FROM ITS OWN CLOCKS.
+    def launch_ceiling(bcfg):
+        """How long to wait on `ffbox` itself, in seconds. DERIVED FROM THE TURN'S OWN CLOCKS.
+
+        `bcfg` is the BUDGET block -- the same four numbers launch() puts on the argv -- and not
+        the container's class block, for the reason budget_class gives.
+
+        NOT ON THE LAUNCH PATH SINCE --detach: ffbox returns as soon as the container is up and
+        LAUNCH_CREATE_TIMEOUT bounds that, so nothing calls this today. Kept because the sum it
+        states is the honest worst case of a run and is what any future outer ceiling has to
+        clear; the test that guards it is guarding the arithmetic, not a live code path.
 
         ffbox enforces the phase ceilings; this one exists only for ffbox wedging, and it has to
         sit ABOVE anything ffbox may legitimately do or it stops being that and starts killing
@@ -12531,26 +12602,45 @@ class Watcher:
         The margin covers ffbox's own work either side of the container: the golden fetch, the
         harvest, and a stop that overruns the grace it was given.
         """
-        return (int(ccfg["warmup_secs"])
-                + int(ccfg["agent_secs"])
-                + int(ccfg["verify_secs"])
-                + max(int(ccfg["kill_grace_secs"]), LICENCE_STOP_FLOOR)
+        return (int(bcfg["warmup_secs"])
+                + int(bcfg["agent_secs"])
+                + int(bcfg["verify_secs"])
+                + max(int(bcfg["kill_grace_secs"]), LICENCE_STOP_FLOOR)
                 + 300)
 
     def launch(self, turn_id):
         turn = self.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (turn["conversation_id"],))
-        # WHICH KIND OF CONTAINER, settled when this conversation was opened. Everything below
-        # that is a clock, a base branch or a pool comes from `ccfg` rather than `self.cfg`;
-        # anything that is about the pipeline rather than the container still comes from the
-        # flat config. `verify_secs` was the one clock on the wrong side of that line and moved
-        # into the class blocks on 2026-09-03; `verify_assemblies` stayed, because WHICH suite
-        # runs is a property of the repo and not of the lane.
+        # TWO CLASSES, AND THE SPLIT IS THE POINT. They are usually the same name and the code
+        # reads as it always did when they are; when they differ, each half is taken from the
+        # question it actually answers.
+        #
+        # `cls`/`ccfg` -- THE SECURITY BOUNDARY, settled when this conversation was opened and
+        # only ever moved DOWNWARDS afterwards, by demote_for_stranger. Everything a container
+        # can REACH comes from here: --agent-class (the container's name, label and which pool
+        # may serve it), --network, the plugin mounts, the container git credential and the
+        # token that opens its pull request. It is a fact about whose words are in the session
+        # this run resumes, and a session is a property of the conversation: the transcript is
+        # mounted in on every launch, so a stranger's text from turn 2 is in front of the model
+        # on turn 9. That is why there is no promotion path here and why this half must never
+        # be taken from the turn.
+        #
+        # `bcls`/`bcfg` -- THE RESOURCE BUDGET, taken from THIS TURN's trust tier. The four
+        # clocks and the cost ceiling: how long this request may take and what it may cost,
+        # which is a fact about who asked rather than about what the container may touch. An
+        # operator asking for real work in a thread a player opened gets the operator clocks and
+        # still gets the fenced container.
+        #
+        # A POOLED RUN NEEDS NOTHING FROM THE POOL FOR THIS. ffbox writes <out>/clock at
+        # DISPATCH rather than at staging, off the four arguments below, so one warm spare of
+        # the right class serves either budget and pool_claim_for is untouched.
         cls = self.conversation_class(conv)
         ccfg = class_cfg(self.cfg, cls)
+        bcls, bcfg = self.turn_budget(turn)
         # AFTER ccfg, and that order is load-bearing since 2026-09-11: the class block decides
         # whether this run gets the live editor's tools, and the run row below records the tool
-        # list the container is actually given.
+        # list the container is actually given. Note it is ccfg and NOT bcfg -- a capability is
+        # something the container may reach, so it belongs to the fence half.
         cap = capabilities_for(conv, ccfg)
 
         run_id = f"d{conv['id']}t{turn['seq']}-{uuid.uuid4().hex[:8]}"
@@ -12587,7 +12677,8 @@ class Watcher:
             # sentence lands on turn.error, and nothing was started.
             raise BranchUnavailable(
                 f"this turn has no credential to bill: {claude_why}. Nothing was run.")
-        job = self.build_job(turn, conv, run_id, att_dir, ccfg=ccfg, agent_class=cls)
+        job = self.build_job(turn, conv, run_id, att_dir, ccfg=ccfg, agent_class=cls,
+                             bcfg=bcfg)
         job_path = os.path.join(run_dir, "job.json")
         with open(job_path, "w", encoding="utf-8") as fh:
             json.dump(job, fh, indent=2, ensure_ascii=False)
@@ -12782,14 +12873,18 @@ class Watcher:
             # phase-2 outbox shim (it would let the container author a message). The ff-discord
             # skills invoke the CLI by name, so leaving PATH empty of it is exactly what makes
             # that skill text inert in here; both preambles tell the lane so up front.
-            "--agent-timeout", str(ccfg["agent_secs"]),
-            "--warmup-timeout", str(ccfg["warmup_secs"]),
-            # PER CLASS SINCE 2026-09-03, like the three above it. It bounds the harness's own
-            # verification after the agent has exited; the SUITE is the same whichever container
-            # ran the turn, but how long this lane may spend in it is that lane's decision, and
-            # both pools carry the number in config.json now.
-            "--verify-timeout", str(ccfg["verify_secs"]),
-            "--kill-grace", str(ccfg["kill_grace_secs"]),
+            # ALL FOUR COME OFF THE TURN'S BUDGET CLASS, not off the container's. Per class
+            # since 2026-09-03 and per TURN since this note: what they bound is how long this
+            # request may take, which is a fact about who asked. The container this run lands in
+            # is `cls` and is decided a few lines up, for entirely separate reasons.
+            #
+            # verify_secs is in here with the other three because the question is the same one:
+            # the SUITE is the same whichever container ran the turn, but how long a request may
+            # spend being verified belongs with the rest of its budget.
+            "--agent-timeout", str(bcfg["agent_secs"]),
+            "--warmup-timeout", str(bcfg["warmup_secs"]),
+            "--verify-timeout", str(bcfg["verify_secs"]),
+            "--kill-grace", str(bcfg["kill_grace_secs"]),
         ]
         # THE SAME LIST THE JOB NAMES, built from the same class block through the same helper,
         # so the paths the prompt tells the agent about are the paths that got mounted. On the
@@ -12860,7 +12955,11 @@ class Watcher:
         env = dict(os.environ)
         env["FFBOX_RESULTS"] = runs_dir          # so ffbox's OUT is exactly our run_dir
 
-        log(f"run {run_id}: agent={cls} lane={turn['lane']} tools={cap['tools']} "
+        # THE BUDGET IS NAMED ONLY WHEN IT IS NOT THE CONTAINER'S, which is the uncommon case
+        # and the one somebody reading the journal needs told. `agent=ffagent budget=ffdev` is an
+        # operator's request inside a fenced conversation: the long clocks, the short leash.
+        log(f"run {run_id}: agent={cls}{'' if bcls == cls else f' budget={bcls}'} "
+            f"lane={turn['lane']} tools={cap['tools']} "
             f"resume={job['session']['resume']} "
             f"{'pooled' if pool_id else 'cold'}"
             f"{' credential=' + claude_key if claude_key else ''}")

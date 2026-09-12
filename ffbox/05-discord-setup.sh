@@ -332,6 +332,16 @@ for key, value in (
         # is carried across an update keeps everything it started with. This is deliberate: a
         # clock that could be shortened underneath a working run would be a way to kill it by
         # editing a file.
+        #
+        # AND ALL FOUR ARE READ FROM THE TURN, NOT FROM THE CONTAINER, since 2026-09-11. A class
+        # block carries a RESOURCE BUDGET (these four and max_budget_usd) and a SECURITY BOUNDARY
+        # (network, github.container_token, plugins), and they answer different questions. The
+        # budget is about who asked: an operator's turn takes operator_pool's numbers even in a
+        # conversation a player opened, which is what stops a developer's request in a bug thread
+        # being held to the player's clock. The boundary stays on the CONVERSATION and only ever
+        # moves downwards, because every turn resumes one session and a player's words are still
+        # in the transcript when the operator's turn runs. ffbox/config.md, "Two halves", has the
+        # argument in full.
         "agent_secs": 2400,
         "warmup_secs": 3600,
         "verify_secs": 1800,
