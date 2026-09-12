@@ -98,7 +98,12 @@ below and marked REVIEW. Two of them changed the implementation rather than only
   never gets the mount and has to age out.
 - **C2** DONE. `unity_mcp: {"enabled": false, "ready_timeout_secs": 600}` per agent class, with the
   per-class merge behaving like the existing clocks (`agent_secs` and friends) rather than as a
-  flat box-wide key.
+  flat box-wide key. **The file's section is `pools`, not `agent_classes`** — F7 found this by being
+  unable to turn the switch on: `_class_blocks` rebuilds each class from `_pool_section(ffbox_raw,
+  name)` AFTER the deep merge, so an `agent_classes` block in config.json is read by nothing. The
+  internal DEFAULTS dict is what carries the `agent_classes` name. Also filled in rather than copied
+  (like `pool`, `github`, `warm_branches`): a section saying only `{"enabled": true}` must still
+  arrive with a numeric `ready_timeout_secs`, and `"unity_mcp": true` must not arrive as a bool.
 - **C3** DONE, and deliberately NOT by editing the box-wide constants — REVIEW caught that
   `CAPABILITY_TOOLS`/`CAPABILITY_ALLOWED` are box-wide and `capabilities_for` varied only by
   conversation KIND, so adding the tools there would have handed them to `ffagent` too.

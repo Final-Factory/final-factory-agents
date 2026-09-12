@@ -1565,6 +1565,19 @@ def _class_blocks(ffbox_raw, max_runs, to_int):
         # ffbox argv, resolved here so exactly one place knows that "limited" means ffbox-net.
         # A value that is neither mode falls back to THIS class's default (see
         # resolve_network_mode), never to empty and never to the other class's.
+        # THE LIVE EDITOR'S TWO KEYS, FILLED IN RATHER THAN COPIED, for the same reason as `pool`
+        # above and `github` below: the update() copied whatever the file holds, so a section that
+        # says only {"enabled": true} -- which is what an operator naturally writes -- would arrive
+        # with no ready_timeout_secs at all, and `"unity_mcp": true` would arrive as a bool where
+        # every reader expects a mapping. Both come back complete and numeric here, so no caller has
+        # to guard. Found the hard way on 2026-09-11 turning the switch on for the first time.
+        _mcp = block.get("unity_mcp")
+        _mcp = _mcp if isinstance(_mcp, dict) else {}
+        block["unity_mcp"] = {
+            "enabled": bool(_mcp.get("enabled", fallback["unity_mcp"]["enabled"])),
+            "ready_timeout_secs": max(1, to_int(_mcp.get("ready_timeout_secs"),
+                                                fallback["unity_mcp"]["ready_timeout_secs"])),
+        }
         block["network"] = resolve_network_mode(block.get("network"), fallback["network"])
         block["docker_network"] = NETWORK_MODES[block["network"]]
         # THE PLUGIN NAMES, COERCED THE SAME WAY AND FOR THE SAME REASON as `network` above: the
