@@ -10807,10 +10807,10 @@ def test_the_outer_launch_ceiling_clears_every_phase_clock():
     take, or it stops catching a wedged ffbox and starts killing healthy runs.
 
     THE BUG IT GUARDS. The ceiling was `warmup + agent + 300` and left verification out entirely,
-    so at the shipped numbers ffbox could honestly run 3600 + 1800 + 1800 + 120 = 7320 seconds
-    against a ceiling of 5700. It never fired, because warm-up is seconds in practice and the gap
-    only opens on a slow cold import followed by a long agent and a long verify -- which is a
-    coincidence holding it up, not a design.
+    so at the numbers shipped then ffbox could honestly run 3600 + 1800 + 1800 + 120 = 7320
+    seconds against a ceiling of 5700. It never fired, because warm-up is seconds in practice
+    and the gap only opens on a slow cold import followed by a long agent and a long verify --
+    which is a coincidence holding it up, not a design.
 
     WHAT FIRING IT COSTS is why this is worth a test of its own: subprocess kills the ffbox SHELL
     and not the container, so the run keeps going unwatched, holding a slot and a Unity seat,
@@ -10862,7 +10862,7 @@ def test_the_two_agent_classes_are_configured_independently():
                 "pools": {"ffagent": {"agent_secs": 999, "base_ref": "develop",
                                       "pool": {"idle": 2, "max": -1}}}})
     check("ffdev does not inherit ffagent's clocks",
-          ffwatch.class_cfg(cfg, "ffdev")["agent_secs"] == 7200, None)
+          ffwatch.class_cfg(cfg, "ffdev")["agent_secs"] == 14400, None)
     check("nor its base branch",
           ffwatch.class_cfg(cfg, "ffdev")["base_ref"] == "master", None)
     check("and gets its own pool defaults, 1 idle and a ceiling of 3",
@@ -10935,7 +10935,7 @@ def test_the_two_agent_classes_are_configured_independently():
     cfg = load({"max_concurrent_runs": 6,
                 "ffagent": {"agent_secs": 777, "pool": {"idle": 2, "max": 5}}})
     check("a block at the top level is not read",
-          ffwatch.class_cfg(cfg, "ffagent")["agent_secs"] == 1800, None)
+          ffwatch.class_cfg(cfg, "ffagent")["agent_secs"] == 2400, None)
     check("nor is its pool", ffwatch.class_cfg(cfg, "ffagent")["idle_agents"] == 1, None)
 
     # An unknown name is a bug upstream, not an operator's typo: every caller gets its name from

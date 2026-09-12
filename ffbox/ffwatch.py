@@ -868,7 +868,7 @@ DEFAULTS = {
     # design/ffbox_idle_agents_design.txt section 8. It bounds the AGENT PHASE and not the
     # request: warm-up and verification have their own clocks, deliberately, because a slow
     # Unity import and a hung agent are indistinguishable under one timer.
-    "agent_secs": 1800,
+    "agent_secs": 2400,
     "warmup_secs": 3600,
     "kill_grace_secs": 10,
 
@@ -978,7 +978,7 @@ DEFAULTS = {
             # because the two lanes are not worth the same -- a stranger's bug report is not a
             # dev task, and ffdev's runs are billed to an operator's own subscription anyway.
             "max_budget_usd": None,
-            "agent_secs": 1800,
+            "agent_secs": 2400,
             "warmup_secs": 3600,
             "verify_secs": 1800,
             "kill_grace_secs": 10,
@@ -1023,7 +1023,7 @@ DEFAULTS = {
         },
         "ffdev": {
             "base_ref": "master",
-            "agent_secs": 7200,
+            "agent_secs": 14400,
             "warmup_secs": 3600,
             "verify_secs": 1800,
             "kill_grace_secs": 10,
@@ -9235,9 +9235,9 @@ class Watcher:
         when it finished, else when it began, else when it was queued -- and a queued turn counts
         as an access because it is one, since that turn is about to want this branch.
 
-        WHY THE START WAS WRONG. ffdev's `agent_secs` is two hours, and warm-up and verification
-        sit either side of it. A long dev turn that started three hours ago and finished a minute
-        ago would be dated three hours ago, so its branch fell outside a one-hour window at the
+        WHY THE START WAS WRONG. ffdev's `agent_secs` is four hours, and warm-up and verification
+        sit either side of it. A long dev turn that started five hours ago and finished a minute
+        ago would be dated five hours ago, so its branch fell outside a one-hour window at the
         very moment the run ended -- the moment the follow-up message is most likely to arrive,
         and the whole reason the branch was worth warming. Measured against the shipped default it
         meant the tier served short turns and silently skipped every long one.
