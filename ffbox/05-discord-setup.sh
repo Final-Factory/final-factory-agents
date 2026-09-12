@@ -527,9 +527,16 @@ for key, value in (
     # design/trusted_ingress_design.txt sections 4 and 5. The example is deliberately the
     # QUIET, CAUTIOUS pair — public withholds internals, mention wakes nothing unless the bot
     # is addressed — so a half-finished config errs the safe way.
+    #
+    # thread_per_message is seeded FALSE for the same reason the pair above is the cautious
+    # one: it makes a channel answer every message posted in it, which is the right shape for a
+    # bug-report channel and the wrong one for anywhere people are talking to each other. It is
+    # shown rather than left out so the shape is on the page -- a forum already behaves this way
+    # and needs nothing; this is how a plain text channel is given the same behaviour.
     ("watch", {
         "example_channel": {"kind": "ask", "forum": False, "venue": "public",
-                            "engage": "mention", "ping": False},
+                            "engage": "mention", "ping": False,
+                            "thread_per_message": False},
     }),
     # ONE FILE FOR THE BOX. ffgithubrunners used to keep its own config.json beside its secrets,
     # which meant two templates, two sets of defaults to keep in step, and they had drifted --

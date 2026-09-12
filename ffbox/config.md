@@ -177,9 +177,11 @@ purpose — so this box reads exactly what is listed here and nothing else. A ma
 
 ```json
 "watch": {
-  "bug_reports":   { "kind": "bug_report", "forum": true,  "venue": "public",  "engage": "mention", "ping": false },
-  "agent_testing": { "kind": "ask",        "forum": false, "venue": "private", "engage": "mention", "ping": false },
-  "dev_chat":      { "kind": "ask",        "forum": false, "venue": "private", "engage": "all",     "ping": true }
+  "bug_reports":     { "kind": "bug_report", "forum": true,  "venue": "public",  "engage": "mention", "ping": false },
+  "dev_bug_reports": { "kind": "bug_report", "forum": false, "venue": "private", "engage": "all",     "ping": false,
+                       "thread_per_message": true },
+  "agent_testing":   { "kind": "ask",        "forum": false, "venue": "private", "engage": "mention", "ping": false },
+  "dev_chat":        { "kind": "ask",        "forum": false, "venue": "private", "engage": "all",     "ping": true }
 }
 ```
 
@@ -195,6 +197,7 @@ it cannot resolve to a snowflake.
 | `venue` | `public`, `private` | `public` | Whether internals may be said out loud there. It also tells the engagement gate who is in the room: in a private channel the developers are talking *to* the bot even when they do not name it, and in a public one they are usually talking to a player. |
 | `engage` | `all`, `mention` | `mention` | Whether every human message is considered, or only one that @-mentions the bot or replies to it. |
 | `ping` | `true`, `false` | `false` | Whether a reply there may @-mention a human. |
+| `thread_per_message` | `true`, `false` | `false` | Whether every message here is its own report, answered in a thread the harness opens under it. The forum's shape, given to a text channel. Does nothing on a forum, which already has it. |
 
 `engage: all` means every message a PERSON wrote. Discord's own events in a channel — somebody
 started a thread, somebody pinned something, somebody joined — are messages in the API and are
@@ -211,6 +214,35 @@ logs which entry made it choose.
 
 `ping` is the only thing that lets an escalation pull somebody out of their evening. Mark
 your escalation channel `true` and nothing else.
+
+### `thread_per_message`
+
+**A forum is a channel where every top-level thing somebody writes is a post, and a post IS a
+thread.** It is its own conversation, it is never merged with the one above it, and everything
+written inside it continues it. That is the shape a bug-report channel wants, and on a forum —
+`forum: true`, like `#bug-reports` — the harness has always had it for free.
+
+A plain text channel has none of it. Messages there are a *window of activity*
+([`cluster`](#cluster)): two reports typed a minute apart become one conversation, and the
+answer goes back into the channel as a reply. Set this and the channel behaves like the forum:
+
+- **Every message opens its own conversation.** Nothing clusters, and that includes a Discord
+  reply typed in the channel — normally the strongest continuation signal there is. Here it is
+  somebody filing another report, and it is anchored on itself. The place to continue a report
+  is its thread.
+- **Every message gets an answer.** A message here is the opening of a report exactly as a
+  forum post is, so it is on the harness's own always-answer list and never goes to the
+  engagement gate. A gate that declined would drop the one message that mattered.
+- **The answer goes in a thread** the harness opens under the message, named after it. Discord
+  gives a message-started thread the same id as its message, so that thread is the conversation
+  that was already there — every reply in it files back into the report it belongs to.
+
+`engage` still governs what happens INSIDE the thread, exactly as it does inside a forum post:
+`all` considers every follow-up, `mention` waits to be addressed. The flag is about opening
+reports, not about answering everything in them forever.
+
+How long those threads stay out of Discord's archive is
+[`report_thread_archive_mins`](#report_thread_archive_mins).
 
 **An alias added here is watched from now.** Appearing in this block stamps an attach
 watermark, and nothing posted before that instant can produce a reply. The backlog is still
@@ -1575,6 +1607,7 @@ asked for; in `watch` the keys are channel identities, and inheriting four of th
 | `poll_secs` | `5` | The fallback, not the path a Discord message takes: the listener pokes the daemon's doorbell the moment it appends to `events.jsonl`. A lost poke costs this many seconds and nothing else. |
 | `pool_stage_backoff_secs` | `300` | How long the keeper leaves a class alone after a staging attempt failed. Retrying every two seconds turns one stuck staging into a daemon that never does anything else. |
 | `send_backoff_secs` | `60` | |
+| `report_thread_archive_mins` | `10080` | How long a report thread stays out of Discord's archive with nobody posting in it, in minutes — the threads the harness opens under a [`thread_per_message`](#watch) channel. Discord accepts **60, 1440, 4320 or 10080 and nothing else** and rejects anything else outright, which here would fail the create and with it the answer to a bug report, so another number is snapped to the nearest it will take (ties to the longer window: two days gets three). A week, where Discord's own default is a day, because these threads are *worked* rather than chatted in — the report is answered in minutes and then waits for somebody to read it, try the fix and come back. Archiving is soft either way: posting in an archived thread revives it, and the sweep reads archived threads too. |
 | `sweep_limit` | `25` | |
 | `history_messages` | `40` | How much prior conversation goes into `job.json`. |
 | `attachment_max_bytes` | `1073741824` | Ceiling on ONE stored upload, and deliberately above what Discord itself will accept: it is a guard against a runaway upload filling the state disk, not a second opinion on what a player may send. It was 32 MiB until 2026-09-09, which sat *below* the boosted-server upload limit — a file Discord took could still be dropped here. An attachment over it is still recorded against the message, with `attachment.skip_reason` saying so, and both the agent's prompt and the conversation page name it as NOT AVAILABLE. |
