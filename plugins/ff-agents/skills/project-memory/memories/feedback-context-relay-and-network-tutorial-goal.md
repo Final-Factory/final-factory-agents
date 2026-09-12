@@ -45,3 +45,11 @@ a `desync-verdict` lifecycle record stops play; diagnose from the verification-p
 (`ffauto:game.save|…` on the host every few objectives). Objectives 76–78 recipe:
 [[tutorial-map-fleet-complete-automation]]. Infrastructure and roles for the first run are in the
 069 plan handoff (2026-09-11 22:00 UTC).
+
+**Addendum (Ben, 2026-09-12).** While Ben and Loth were being kicked in a live Steam playtest: "we
+aren't using loth's machine to diagnose this stuff, you have to do it on your own" — never plan on
+the other player's logs/builds; triage from our side ([[steam-desync-triage-from-the-client-side-only]]).
+"you can use this computer again we are done with our playtest on this machine, so use the full
+fleet" — the M5 is back in the fleet after his playtest; his earlier "delegate actual unity and
+playing tasks to the other machines" applies only while he is playtesting on it. Desync fix first,
+tutorial goal after.
