@@ -640,6 +640,11 @@ DEFAULTS = {
     # what the container gets
     "task_script": os.path.join(HERE, "discord-task.sh"),
     "ffverify": os.path.join(HERE, "ffverify.sh"),
+    # ffverify's sibling: ONE PLAY-MODE session, for the bug class an EditMode suite cannot see --
+    # an op silently dropped, a null thrown mid-frame, a state machine that ends up wrong. It needs
+    # the automation harness, which is on develop and not on master, and it says so and exits 3
+    # when the workspace does not have it.
+    "ffplaytest": os.path.join(HERE, "ffplaytest.sh"),
     # WHERE the plugin trees are read from. WHICH of them a container gets is per agent class --
     # see `plugins` in agent_classes below. It was one box-wide name until 2026-09-05, which
     # could not say "the dev lane gets the engineering skills and the lane running text written
@@ -1407,6 +1412,7 @@ ENV_OVERRIDES = {
     "FFWATCH_WEB_PORT": ("web_port", int),
     "FFWATCH_CATCHUP_SECS": ("catchup_secs", int),
     "FFWATCH_VERIFY": ("ffverify", str),
+    "FFWATCH_PLAYTEST": ("ffplaytest", str),
     "FFWATCH_VERIFY_SECS": ("verify_secs", int),
     "FFWATCH_GIT_DIR": ("git_dir", str),
 }
@@ -5543,7 +5549,8 @@ class Watcher:
         launching for, and this does not, which is why the list is passed rather than read from
         config here.
 
-        WHY A COPY RATHER THAN AN ARGUMENT ABOUT INODES. The task script, ffverify and the plugin
+        WHY A COPY RATHER THAN AN ARGUMENT ABOUT INODES. The task script, ffverify, ffplaytest
+        and the plugin
         trees live in this checkout, and the updater fast-forwards it while containers are
         running. A bind mount of a FILE pins the inode, so git replacing the path leaves the
         container reading the bytes it started with -- measured on the build server 2026-09-03,
@@ -5567,7 +5574,8 @@ class Watcher:
         """
         os.makedirs(dest, exist_ok=True)
         frozen = {}
-        for key, name in (("task_script", "task.sh"), ("ffverify", "ffverify")):
+        for key, name in (("task_script", "task.sh"), ("ffverify", "ffverify"),
+                          ("ffplaytest", "ffplaytest")):
             src = self.cfg[key]
             if not src or not os.path.isfile(src):
                 continue
@@ -9053,6 +9061,9 @@ class Watcher:
             "--mount", f"{os.path.join(d, 'claude')}:/ffbox/claude",
             "--mount",
             f"{frozen.get('ffverify', self.cfg['ffverify'])}:/usr/local/bin/ffverify:ro",
+            "--mount",
+            f"{frozen.get('ffplaytest', self.cfg['ffplaytest'])}"
+            ":/usr/local/bin/ffplaytest:ro",
         ]
         # THIS CLASS'S PLUGINS, MOUNTED AT STAGE TIME because a mount cannot be added to a
         # container that already exists. A spare therefore carries the plugin set its class was
@@ -12636,8 +12647,8 @@ class Watcher:
             cmd += ["--claude-key", claude_key]
         if pool_id:
             # Everything above that is a MOUNT is already on the staged container; what is left
-            # is the job, and --dispatch is how it gets in. The turn task, ffverify and the
-            # plugin directory were mounted at stage time from the same config values.
+            # is the job, and --dispatch is how it gets in. The turn task, ffverify, ffplaytest
+            # and the plugin directory were mounted at stage time from the same config values.
             #
             # The attachments are the exception: a mount cannot be added to a running container,
             # so what a player uploaded is COPIED into the spool the container is already
@@ -12682,11 +12693,20 @@ class Watcher:
         # when it was created -- which is why a config change reaches the pool only as spares
         # turn over.
         cmd += self.plugin_mounts(ccfg["plugins"], frozen)
-        # ffverify is mounted onto PATH because the container task and the lane's Bash allow
-        # list both name it, and neither knows a host path. It is the only Unity entry point
-        # either of them gets, and the only thing on that PATH we put there.
+        # ffverify and ffplaytest are mounted onto PATH because the container task and the
+        # prompt both name them, and neither knows a host path. They are the only things we put
+        # on that PATH.
+        #
+        # THEY ARE NOT A FENCE AROUND UNITY, and the comment here said they were until
+        # 2026-09-11. The allow list has been bare `Bash` since the lanes went away on
+        # 2026-08-25, so `unity-editor` was already reachable; what these two carry is the
+        # per-invocation results path, the cleanup and the licence handling that a hand-rolled
+        # editor launch gets wrong -- see the header of each script.
         cmd += ["--mount",
-                f"{frozen.get('ffverify', self.cfg['ffverify'])}:/usr/local/bin/ffverify:ro"]
+                f"{frozen.get('ffverify', self.cfg['ffverify'])}:/usr/local/bin/ffverify:ro",
+                "--mount",
+                f"{frozen.get('ffplaytest', self.cfg['ffplaytest'])}"
+                ":/usr/local/bin/ffplaytest:ro"]
         if branch:
             # --branch is where the run STARTS; --branch-prefix is what lets it end somewhere
             # better. When the agent makes its own branch, ffbox publishes that name under this
@@ -18193,7 +18213,8 @@ class Watcher:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(f"{now_iso()} pid {os.getpid()}\n")
         # THE IDLE STAGED CONTAINERS GO NOW, and this is not housekeeping. pool-task.sh, the
-        # turn task and ffverify are bind-mounted from the working copy, live, and the updater
+        # turn task, ffverify and ffplaytest are bind-mounted from the working copy, live, and the
+        # updater
         # fast-forwards that copy immediately after draining — so a container staged before the
         # merge would dispatch into code that changed under it. An unclaimed one holds no turn,
         # so destroying it costs nothing but the tar it extracts again afterwards.

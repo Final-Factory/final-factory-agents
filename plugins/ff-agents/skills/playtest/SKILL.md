@@ -66,6 +66,19 @@ plus `Seed` or `SaveName` (a COPY of any dev save, or a `claude_*` save) and opt
 auto-enters play and the session starts/stops itself. **Delete the config file when done — a
 leftover auto-plays on the next editor boot.**
 
+## On the ffbox build server there is no editor — use `ffplaytest`
+
+A Discord `fix`/`dev` turn runs in a container with no editor open and no MCP bridge, so none of
+the pump-and-poll flow above applies. What it has is `ffplaytest --chain 'ffauto:...;ffauto:...'`
+on its PATH: one host session, the chain run as `PreConnectCommand` (a solo host never reaches the
+post-join chain — it clamps `TargetClientCount` to 1 and then waits 900s for a peer), the journal
+reported as JSON, and the automation config deleted on every exit path. Two limits: the automation
+harness is on **develop, not master**, so a master-based run gets exit 3 and a message saying so;
+and there is **no GPU** in that container (software GL under Xvfb), so functional repro is sound
+and frame timings are meaningless. `unity-editor` is also directly runnable there — the allow list
+is bare `Bash` — but prefer the wrapper, which owns the cleanup, the licence seat and the
+per-invocation paths. See `ffbox/README.md` in the final-factory-agents repo.
+
 ## Attach to a BUILT PLAYER instead — no pumping at all (feature 068)
 
 **Prefer this whenever the hypothesis does not need editor internals.** The occlusion tax above is

@@ -20,10 +20,10 @@ set -uo pipefail
 
 : "${HOME:=/home/ffbox}"
 export HOME
-# /usr/local/bin first, because that is where ffwatch bind-mounts ffverify — the one command
-# we add. What is NOT there matters as much: there is no `ffdiscord` of any kind in this
-# container (see the check below), so the ff-discord skill text that invokes it by name simply
-# finds nothing, which is the intended outcome rather than a missing mount.
+# /usr/local/bin first, because that is where ffwatch bind-mounts ffverify and ffplaytest — the
+# two commands we add. What is NOT there matters as much: there is no `ffdiscord` of any kind
+# in this container (see the check below), so the ff-discord skill text that invokes it by name
+# simply finds nothing, which is the intended outcome rather than a missing mount.
 export PATH="/usr/local/bin:${PATH}"
 
 WORKSPACE=${FFBOX_WORKSPACE:-/opt/actions-runner/_work/FinalFactory/FinalFactory}
@@ -735,9 +735,20 @@ PREAMBLE_VERIFY = (
     "container — whenever the run changed anything — and records the result where you "
     "cannot write it, so do not claim a verification you did not perform: a claim that "
     "disagrees with the harness's own run loses. The pull request opens only if that run "
-    "compiles and passes, so a change you never built is a change that stops here. You may run "
-    "`ffverify` yourself to check your work; it is the only Unity command available to you and "
-    "it writes to its own per-invocation results path."
+    "compiles and passes, so a change you never built is a change that stops here. "
+    "Two wrappers are on your PATH and you should reach for them first: `ffverify` compiles "
+    "and runs the fast EditMode suite, and `ffplaytest --chain 'ffauto:...'` runs ONE play-mode "
+    "session for a functional repro an EditMode test cannot see. Both write per-invocation "
+    "results paths, and ffplaytest also deletes the automation config it writes — a leftover one "
+    "auto-plays on the next editor boot and would corrupt the harness's own verification. "
+    "`ffplaytest` needs the automation harness, which is on develop and not on master; on a "
+    "master-based workspace it exits 3 and says so. You are NOT restricted to these two: "
+    "`unity-editor` and any other command are on your allow list, so run one directly when the "
+    "wrappers genuinely do not cover what you need. Prefer the wrappers, because a hand-rolled "
+    "editor launch is what gets the results path, the cleanup and the licence seat wrong — and "
+    "never read Unity's shared results file under "
+    "`$HOME/.config/unity3d/Never Games/finalfactory/`, which every copy of the project "
+    "clobbers. No GPU here: frame timings from this container are meaningless."
 )
 
 # WHAT THE HARNESS ALREADY KNOWS IS NOT AN ANSWER. preamble_bases hands the agent the commit
@@ -1310,6 +1321,22 @@ json.dump({'ran': False, 'compiled': None, 'evidence':
         # --verify-timeout to it; without it a fifteen-minute EditMode run would be charged to
         # the agent's budget and killed as a hung agent.
         : > "$FFBOX_OUT/.verify-started"
+        # A LEFTOVER PLAY-MODE CONFIG WOULD HIJACK THIS RUN. `.ff-local-automation.json` at the
+        # project root makes the editor's poller enter PLAY MODE on boot, and this is the run whose
+        # result decides whether a pull request opens. ffplaytest deletes its own config on every
+        # exit path, so reaching this is either a killed session or a config the agent wrote by
+        # hand -- and the harness's gate is not the place to find out which.
+        #
+        # The file is gitignored on develop, so removing it cannot discard work: nothing that
+        # matters is ever kept there. Belt and braces on purpose -- the cost is one `rm` and the
+        # failure it prevents is a verification that reports the wrong thing entirely.
+        for stray in "$WORKSPACE/.ff-local-automation.json" \
+                     "$WORKSPACE/.ff-local-automation-status.json"; do
+            if [ -e "$stray" ]; then
+                log "clearing leftover automation config before verification: $stray"
+                rm -f "$stray"
+            fi
+        done
         VERIFY_START=$(date +%s)
         log "verifying: unity-editor -runTests -testPlatform EditMode (harness-owned)"
         ffverify --out "$FFBOX_OUT/verification" --tag harness \

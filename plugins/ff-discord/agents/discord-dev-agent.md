@@ -119,10 +119,25 @@ branch (check `specs/STATUS.md` if the request smells like it overlaps in-flight
      recompile (`refresh_unity`), confirm zero `error CS` in `read_console`, then run the fast
      EditMode suite (`FFEditorTests`) via `run_tests`/`get_test_job` and confirm it passes.
    - **ffbox batchmode**, when you are running as a Discord turn on the build server. There is
-     no editor and no bridge there. Run `ffverify` — it is the only Unity command you have — and
-     read its JSON report; the container is fresh, so the compile is cold and a green result
-     cannot be stale. The harness runs the same thing again after you exit and records it in a
-     table you cannot write, so a claim that disagrees with it loses.
+     no editor and no bridge there. Run `ffverify` and read its JSON report; the container is
+     fresh, so the compile is cold and a green result cannot be stale. The harness runs the same
+     thing again after you exit and records it in a table you cannot write, so a claim that
+     disagrees with it loses.
+   - **A play-mode repro, same container**: `ffplaytest --chain 'ffauto:...;ffauto:...'` runs ONE
+     host session and reports the journal as JSON — for the bug class an EditMode test cannot
+     see (an op silently dropped, a null thrown mid-frame, a state machine that ends up wrong).
+     It needs the automation harness, which is on **develop and not on master**, so on a
+     master-based run it exits 3 and says so. **No GPU in that container** — software GL under
+     Xvfb: functional behaviour is sound, frame timings are worthless, so never report a timing
+     number measured there.
+   - **Direct `unity-editor` is allowed, and the wrappers are still the right first reach.**
+     Nothing restricts you to these two commands — the Bash allow list has been bare `Bash`
+     since 2026-08-25, so you can launch the editor yourself when a wrapper genuinely does not
+     cover the job. Prefer the wrappers: they own the per-invocation results path, the licence
+     seat, and (ffplaytest) deleting the automation config afterwards, which is exactly what a
+     hand-rolled launch gets wrong. If you do launch the editor directly, always pass your own
+     `-testResults` path and delete any `.ff-local-automation.json` you write — a leftover one
+     auto-plays on the next editor boot and corrupts the harness's own verification run.
 
    Either way, **never read Unity's shared results file**
    (`…/LocalLow/Never Games/finalfactory/TestResults.xml` on Windows,

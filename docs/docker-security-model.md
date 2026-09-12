@@ -335,6 +335,18 @@ Assume arbitrary shell in the container and reason from there.
 
 **`--disallowed-tools` is a tripwire.** `sh -c '...'` walks straight through it.
 
+**The Unity wrappers are not one either, and the prose said they were.** `ffverify` and
+`ffplaytest` are mounted onto the container's PATH, and their own headers used to call ffverify
+"the ONLY Unity entry point on the lane's Bash allow list". That was true while the lanes existed;
+once the allow list became bare `Bash` on 2026-08-25, `unity-editor` was directly reachable and
+the sentence was only a habit. It outlived the fact by two weeks and was believed: on 2026-09-11 a
+dev run reported to the owner that it *could not* start the game, citing its own prompt. What the
+wrappers actually buy is the per-invocation `-testResults` path, the licence seat, and deleting the
+`.ff-local-automation.json` that would otherwise auto-play on the next editor boot — a correctness
+convenience, and the reason to prefer them is that a hand-rolled launch gets those three wrong.
+Fixed in both directions: the prompt now says the wrappers are preferred AND that direct
+`unity-editor` is available.
+
 **The preamble is advice.** Everything the container is told not to do must also be something it
 cannot do, or must be checked by the host afterwards.
 

@@ -42,6 +42,7 @@ import socket
 import sqlite3
 import shutil
 import time
+import signal
 import subprocess
 import sys
 import tempfile
@@ -5685,6 +5686,8 @@ def test_fix_lane_launches_with_write_capabilities():
           "--verify-timeout" in argv, argv)
     check("ffverify is mounted onto the container's PATH",
           any(a.endswith(":/usr/local/bin/ffverify:ro") for a in argv), argv)
+    check("and so is ffplaytest, its play-mode sibling",
+          any(a.endswith(":/usr/local/bin/ffplaytest:ro") for a in argv), argv)
     job = json.load(open(os.path.join(run_dir, "job.json"), encoding="utf-8"))
     check("the job asks for harness verification and names the fast suite",
           job["verify"]["enabled"] and job["verify"]["assemblies"] == "FFEditorTests",
@@ -7739,7 +7742,8 @@ def test_destructive_docker_calls_name_the_container():
     guessing eventually kills a developer's own editor."""
     print("named-container discipline")
     sources = {name: open(os.path.join(HERE, name), encoding="utf-8").read()
-               for name in ("ffbox", "ffwatch.py", "discord-task.sh", "ffverify.sh")}
+               for name in ("ffbox", "ffwatch.py", "discord-task.sh", "ffverify.sh",
+                            "ffplaytest.sh")}
     # Comment lines are dropped first: several of these files say "never `docker kill`" in
     # prose, and a check that cannot tell that from a call would forbid explaining the rule.
     code = {name: "\n".join(
@@ -7826,6 +7830,147 @@ with open(results, "w", encoding="utf-8") as fh:
 print("Batchmode run complete")
 sys.exit(2)
 '''
+PLAYTEST_EDITOR_STUB = r"""#!/bin/sh
+# Stub unity-editor for ffplaytest: a WRAPPER, like the real one (which execs xvfb-run), so the
+# test can prove the whole process group dies rather than just the wrapper.
+#
+# It asserts the config is there, emits the phase lines the real bootstrap logs, and writes a
+# label-scoped journal where the real session writes one.
+PROJ=""
+while [ $# -gt 0 ]; do
+  case "$1" in -projectPath) PROJ=$2; shift 2 ;; *) shift ;; esac
+done
+CFG="$PROJ/.ff-local-automation.json"
+[ -f "$CFG" ] || { echo "STUB: launched with no automation config"; exit 9; }
+cp "$CFG" "$STUB_CONFIG_COPY"
+LABEL=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['Label'])" "$CFG")
+echo "[LocalMultiplayerAutomation] status host-listening: port=7777"
+echo "[LocalMultiplayerAutomation] status pre-connect-command-start: chain"
+D="$FFPLAYTEST_PDP/PlaytestSessions/$LABEL"
+mkdir -p "$D"
+printf '%s\n%s\n' \
+  '{"seq":1,"event":"commandIssued","cmd":"ffauto:blueprint.place"}' \
+  '{"seq":2,"event":"commandResult","ok":true}' > "$D/journal.jsonl"
+printf '{"label":"%s"}\n' "$LABEL" > "$D/session.json"
+# A grandchild that outlives a naive kill of this wrapper, recorded so the test can check it.
+sh -c 'sleep 120' &
+echo "$!" >> "$STUB_PIDS"
+echo "$$" >> "$STUB_PIDS"
+echo "[LocalMultiplayerAutomation] status pre-connect-command-complete: chain"
+wait
+"""
+
+
+def test_ffplaytest_never_leaves_a_config_or_an_editor_behind():
+    """The three things a play-mode run can do to the NEXT run, checked against the real script.
+
+    A leftover `.ff-local-automation.json` auto-starts play mode on the next editor boot, and the
+    next boot in a container is the harness's own ffverify — the run that decides whether a pull
+    request opens. A leaked editor holds the Unity licence seat. A shared session label makes two
+    runs read each other's journal. So: the config goes on every exit path, the editor dies as a
+    GROUP (the real `unity-editor` is an xvfb-run wrapper whose children otherwise survive), and
+    the journal is label-scoped.
+
+    Also the base-ref gate: the automation harness is on develop, not on master, and a master-based
+    workspace must be told that instead of paying minutes for an editor that ignores its config.
+    """
+    print("ffplaytest: cleanup, the process group, and the base-ref gate")
+    root = os.path.join(TMPROOT, "ffplaytest")
+    proj = os.path.join(root, "project")
+    out = os.path.join(root, "out")
+    bindir = os.path.join(root, "bin")
+    pdp = os.path.join(root, "pdp")
+    for d in (os.path.join(proj, "Assets"), out, bindir, pdp):
+        os.makedirs(d, exist_ok=True)
+    script = os.path.join(HERE, "ffplaytest.sh")
+    config = os.path.join(proj, ".ff-local-automation.json")
+    pids_file = os.path.join(root, "stub-pids")
+    config_copy = os.path.join(root, "config-as-launched.json")
+    stub = write_stub(os.path.join(bindir, "unity-editor"), PLAYTEST_EDITOR_STUB)
+
+    def run(*extra, **kw):
+        env = dict(os.environ, FFPLAYTEST_UNITY=stub, FFPLAYTEST_PDP=pdp,
+                   FFPLAYTEST_SETTLE="1", STUB_PIDS=pids_file,
+                   STUB_CONFIG_COPY=config_copy)
+        env.update(kw.pop("env", {}))
+        return subprocess.run(["bash", script, "--project", proj, "--out", out, *extra],
+                              capture_output=True, text=True, env=env, timeout=180, **kw)
+
+    # A master-shaped workspace: Assets, but no automation bootstrap anywhere in it.
+    gate = run("--chain", "ffauto:wait|1", "--tag", "gate")
+    check("a workspace with no automation harness is refused, not launched",
+          gate.returncode == 3, (gate.returncode, gate.stderr[-300:]))
+    check("and the refusal names develop, so the reader knows what to do",
+          "develop" in gate.stderr and "master" in gate.stderr, gate.stderr[-300:])
+    check("nothing was written into the project to clean up later",
+          not os.path.exists(config), None)
+
+    # Now a develop-shaped one.
+    bootstrap = os.path.join(proj, "Assets", "Scripts", "Behaviours", "Multiplayer",
+                             "LocalMultiplayerAutomationBootstrap.cs")
+    os.makedirs(os.path.dirname(bootstrap), exist_ok=True)
+    with open(bootstrap, "w", encoding="utf-8") as fh:
+        fh.write("// the harness the config needs\n")
+
+    ok = run("--chain", "ffauto:blueprint.place|BP|0|0", "--tag", "ok")
+    check("a session whose chain completes exits 0", ok.returncode == 0,
+          (ok.returncode, ok.stdout[-400:], ok.stderr[-400:]))
+    check("THE CONFIG IS GONE afterwards — the next editor boot must not auto-play",
+          not os.path.exists(config), None)
+    report = json.load(open(os.path.join(out, "playtest-ok.json"), encoding="utf-8"))
+    check("the report says the chain completed and the session entered play",
+          report["chain_complete"] and report["entered_play"], report)
+    check("the journal came back with it", report["events"] == 2, report)
+    check("and it is label-scoped, so two runs cannot read each other's",
+          report["label"] == "ffplaytest-ok"
+          and os.path.isdir(os.path.join(pdp, "PlaytestSessions", "ffplaytest-ok")), report)
+    check("the report refuses to be read as a timing measurement",
+          report["timing_valid"] is False and "no GPU" in report["timing_note"], report)
+    launched = json.load(open(config_copy, encoding="utf-8"))
+    check("the chain is handed over as PreConnectCommand — a solo host never reaches post-join",
+          launched["PreConnectCommand"] == "ffauto:blueprint.place|BP|0|0"
+          and not launched.get("PostReadyCommand"), launched)
+    check("the session quits itself rather than holding the editor open",
+          launched["AutoQuit"] and launched["ExitPlayModeOnComplete"], launched)
+    check("no determinism report is asked for, which would need a peer and a policy",
+          launched["EnableDeterminismAudit"] is False and launched["WriteReport"] is False,
+          launched)
+    stub_pids = [int(x) for x in open(pids_file, encoding="utf-8").read().split()]
+    alive = [pid for pid in stub_pids if _pid_alive(pid)]
+    for pid in alive:                      # never leave the suite's own mess behind
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    check("the whole editor process group is dead, grandchildren included",
+          not alive, alive)
+
+    # An existing config is somebody else's session or the wreckage of one: refuse it.
+    with open(config, "w", encoding="utf-8") as fh:
+        fh.write('{"Label":"somebody-elses"}\n')
+    clash = run("--chain", "ffauto:wait|1", "--tag", "clash")
+    check("an existing config is refused rather than overwritten", clash.returncode == 2,
+          (clash.returncode, clash.stderr[-200:]))
+    check("and it is left exactly as it was",
+          json.load(open(config, encoding="utf-8"))["Label"] == "somebody-elses", None)
+    os.unlink(config)
+
+    # A chain is the point of the run.
+    empty = run("--tag", "nochain")
+    check("a session with no chain is refused — it would prove nothing",
+          empty.returncode == 2, (empty.returncode, empty.stderr[-200:]))
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def test_shell_is_an_ingress_not_a_second_pipeline():
     """`ffbox "prompt"` produces the SAME rows a Discord message does.
 
@@ -12533,6 +12678,9 @@ def test_every_lane_agrees_on_the_workspace_path():
     verify = io.open(os.path.join(HERE, "ffverify.sh"), encoding="utf-8").read()
     check("ffverify.sh defaults to the runner path",
           "PROJECT=${FFVERIFY_PROJECT:-${FFBOX_WORKSPACE:-%s}}" % ws in verify, None)
+    playtest = io.open(os.path.join(HERE, "ffplaytest.sh"), encoding="utf-8").read()
+    check("ffplaytest.sh defaults to the runner path",
+          "PROJECT=${FFPLAYTEST_PROJECT:-${FFBOX_WORKSPACE:-%s}}" % ws in playtest, None)
 
     # The transcript slug is Claude Code's, derived from that cwd: everything outside
     # [A-Za-z0-9-] becomes a dash, which doubles it where the path has /_. Measured against
@@ -12544,7 +12692,8 @@ def test_every_lane_agrees_on_the_workspace_path():
 
     # Nothing anywhere still says /workspace, in a default or in a prompt the agent reads.
     for name in ("ffbox", "entrypoint.sh", "restore-workspace.sh", "harvest-workspace.sh",
-                 "run-as-user.sh", "pool-task.sh", "discord-task.sh", "ffverify.sh"):
+                 "run-as-user.sh", "pool-task.sh", "discord-task.sh", "ffverify.sh",
+                 "ffplaytest.sh"):
         body = io.open(os.path.join(HERE, name), encoding="utf-8").read()
         stale = [ln for ln in body.splitlines()
                  if "/workspace" in ln and not ln.lstrip().startswith("#")]
@@ -19359,6 +19508,7 @@ def main():
         test_a_fork_of_somebody_elses_words_is_never_direct,
         test_a_refused_local_fork_leaves_nothing_behind,
         test_a_conversation_is_forked_once_and_never_into_itself,
+        test_ffplaytest_never_leaves_a_config_or_an_editor_behind,
     ]
     for fn in tests:
         try:

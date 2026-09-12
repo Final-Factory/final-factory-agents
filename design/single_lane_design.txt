@@ -508,7 +508,18 @@ THE PLUGIN — and note which consumer needs what
 
   skills/discord-triage/reference.md  "it is the only Unity command the lane has" (56) stays
                                       true in spirit — ffverify is still the only Unity entry
-                                      point — but loses the word lane. "ffwatch caps the `fix`
+                                      point — but loses the word lane.
+                                      WRONG, AND CORRECTED 2026-09-11. It was not true in
+                                      spirit: with bare `Bash` the allow list stopped
+                                      containing Unity at all, and keeping the sentence taught
+                                      an ffdev run that it could not start the game — which it
+                                      reported to Ben as a fact about the container. A
+                                      capability that changes has to be corrected in every
+                                      prompt that describes it, not softened. The wrappers
+                                      (ffverify, and ffplaytest since the same day) are
+                                      conveniences that own the results path, the licence seat
+                                      and the automation-config cleanup; they are preferred,
+                                      not mandatory, and the prompts now say both halves. "ffwatch caps the `fix`
                                       lane at three turns per rolling day" (66) becomes five per
                                       rolling 24 hours for player-tier turns.
 
