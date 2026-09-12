@@ -7864,15 +7864,26 @@ wait
 
 
 FFMCP_EDITOR_STUB = """#!/bin/sh
-# Stub unity-editor for ffmcp: a WRAPPER that holds the socket in a CHILD, like the real one, so
-# the test can prove the whole process group dies rather than only the process ffmcp signalled.
-python3 -c "
+# Stub unity-editor for ffmcp, in the shape the REAL one has -- measured in a container on
+# 2026-09-11 and not what the first version of this stub assumed:
+#
+#     wrapper (bash /usr/bin/unity-editor)   pgid = ours
+#       xvfb-run                             pgid = ours
+#         Xvfb                               pgid = ours
+#         /opt/unity/Editor/Unity            pgid = ITS OWN      <- escapes
+#           AssetImportWorkerN               pgid = ITS OWN      <- and its workers
+#
+# So the editor is NOT in the process group ffmcp created, and a group kill never signals it. The
+# `setsid` below reproduces exactly that, which is what makes this test worth having: without the
+# descendant walk in ffmcp, the escaped child survives `ffmcp stop` and holds the licence seat.
+# It carries -projectPath because that is what proves the process is ours to kill.
+setsid python3 -c "
 import socket, time
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(('127.0.0.1', PORT_PLACEHOLDER)); s.listen(5)
 print('MCP-FOR-UNITY: StdioBridgeHost started on port PORT_PLACEHOLDER. (OS=LinuxEditor)', flush=True)
 time.sleep(300)
-" &
+" -projectPath "$FFMCP_PROJECT" &
 echo "$!" >> "$STUB_PIDS"
 echo "$$" >> "$STUB_PIDS"
 wait
@@ -8032,7 +8043,7 @@ def test_ffmcp_owns_the_editor_it_starts():
             os.kill(pid, signal.SIGKILL)
         except OSError:
             pass
-    check("the editor's whole process group is gone, the socket-holding child included",
+    check("the ESCAPED editor is gone too -- the real one is not in the group ffmcp made",
           not alive, alive)
     check("and status now says down", run("status").returncode == 1, None)
 

@@ -186,30 +186,96 @@ covers B8 (a forged pid in the state file is refused rather than signalled) and 
 
 ## Phase F — on the box (cannot be automated; record the evidence here)
 
-- **F1** The **real FinalFactory boot time** to a live bridge. Design 2.1 — this is the number that
-  decides whether `warmup_secs` is right, and nothing before this task knows it.
-- **F2** A real tool call against a real world: `read_console`, then `execute_code` reading a
-  singleton.
-- **F3** A **recompile through the bridge** — does the domain reload keep the bridge, and does it
-  keep the PORT (design 2.2 and 13.3)? If the port moves, the registry file becomes load-bearing
-  after all and B2 needs a second signal.
-- **F4** `run_tests` through the bridge on the real project, compared against `ffverify` on the
-  same tree: same verdict, one editor instead of two.
-- **F5** A turn that ends cleanly: no editor, no Xvfb, no licence seat held, no stale lock, and the
-  harness's own verification ran normally afterwards.
-- **F6** Memory with one editor per container held for a long turn (design 2.4).
+**How to run these without a live turn, and the trap that costs the first attempt.** A hand-run
+`ffbox --task <script>` gives a container with a real restored workspace and a task of your own,
+which covers everything here except F5 and F7. But **a hand-run `ffbox` mounts NONE of the Unity
+wrappers** — ffverify, ffplaytest and ffmcp are mounted by `ffwatch`, not by `ffbox`, so C1's "both
+launch paths" means ffwatch's two and not this one. Without the mounts the task dies instantly on
+`ffmcp: command not found`, which reads exactly like a bridge that failed to start. Pass them:
+
+    bash ffbox/ffbox --direct --no-fetch --ref master --task /opt/ffcache/phasef-task.sh \
+      --run-id phasefN --warmup-timeout 7200 \
+      --mount /opt/final-factory-agents-3/ffbox/ffmcp.sh:/usr/local/bin/ffmcp:ro \
+      --mount /opt/final-factory-agents-3/ffbox/ffverify.sh:/usr/local/bin/ffverify:ro
+
+The task script must live somewhere the ROOTLESS daemon can traverse (`/opt/ffcache` works); a
+scratch directory under `/tmp` with a mode-700 parent cannot be mounted and fails at container
+creation. Results land in `~/ffbox-runs/<run id>/`.
+
+**RESULTS, 2026-09-11 (runs `phasef2` and `phasef3`, real workspace, master @ ca313607f).** Eight of
+the ten are answered; F7 needs the switch on. The headline is that phase F earned its keep: it found
+a real bug in `ffmcp` that every offline test had passed (F5/F6 below), and it invalidated two of its
+own verdicts through bugs in the probe rather than in the feature — both worth knowing before anyone
+writes another MCP client here:
+
+- **Match response ids and skip notifications.** The first probe read the next JSON line as the
+  answer to what it had just asked, so an unprompted `notifications/tools/list_changed` was consumed
+  as `refresh_unity`'s reply and every verdict after it was one response out of step. It reported
+  the bridge LOST when the bridge was fine.
+- **Read each tool's `inputSchema`; do not guess arguments.** `execute_code` requires `action`
+  alongside `code`, and `get_test_job` requires `job_id` (not `action`). Both were in the schema the
+  probe had just printed and ignored. A real turn is unaffected — the model is given the schema.
+- **The server finds the editor through `$HOME`.** Run as root, `mcp-for-unity` answers "No Unity
+  Editor instances found" against a perfectly live bridge, because the registry it reads is
+  `$HOME/.unity-mcp`. It must run as the same user as the editor. In production it does: claude
+  spawns it as the run user.
+
+- **F1** DONE. **80s** (`phasef2`) and **83s** (`phasef3`) from `ffmcp start` to a live bridge on the
+  real 22 GiB workspace with a warm `Library/`. Comfortably inside `ready_timeout_secs` of 600, and
+  a small fraction of `warmup_secs` 3600 — so the default stands and design section 8's provisional
+  mark comes off. Design 2.1 is answered.
+- **F2** DONE. `read_console` returned real content from the live project (compile warnings out of
+  `ProductionStats.cs`). `execute_code` with `{action, code}` returned
+  `{"success": true, "data": {"result": "no world", "compiler": "roslyn"}}` — honest, not a failure:
+  an Edit-mode editor has no ECS world until play mode, and the tool said so.
+- **F3** DONE. `refresh_unity`, then a 60s wait, then `read_console`: **the bridge SURVIVED** and the
+  port stayed **6400**. So design 2.2 is answered and B9's port re-read is prudence rather than
+  necessity — kept, because it costs one `grep` and the alternative is a wrong cached number.
+- **F4** DONE, and this is the case for the whole feature. Through the bridge, in the editor that
+  was already up: `status succeeded, 906 tests, 903 passed, 0 failed, 3 skipped, ~170s`. `ffverify`
+  on the same tree: `compiled=true, 859/859, 0 failed, 226s`. Same verdict. **Not the same suite** —
+  ffverify filters to `FFEditorTests` and the bridge call passed no `assembly_names`, so the bridge
+  ran MORE tests in LESS time purely by not paying for a second editor boot and cold compile. Note
+  `run_tests` returns a `job_id` and the verdict comes from `get_test_job`, which needs that id.
+- **F5** MOSTLY DONE, and it **found the bug this phase existed for**. After `ffmcp stop`: 0 unity
+  processes, no `Temp/UnityLockfile`, and `ffverify` then ran normally on the same tree (exit 0,
+  859/859, 226s) — so stopping the bridge really does hand the project back.
+
+  **But the editor was never being signalled.** `ps` inside the live container:
+
+        288 pgid=288  /bin/bash /usr/bin/unity-editor -projectPath <WS> -executeMethod ...
+        292 pgid=288  /bin/sh /usr/bin/xvfb-run -ae /dev/stdout /opt/unity/Editor/Unity ...
+        302 pgid=288  Xvfb :99
+        305 pgid=305  /opt/unity/Editor/Unity -batchmode -projectPath <WS>     <- ITS OWN GROUP
+       4510 pgid=4510 Unity ... AssetImportWorker14 -projectPath <WS>          <- and its workers
+
+  Unity puts itself in its own process group, so `kill -- -288` hit the wrapper and Xvfb and never
+  touched the 7.8 GiB editor. It exited anyway — because Xvfb went out from under it — and that
+  ACCIDENT was doing the work the code claimed a group kill was doing. An editor that does not
+  notice its display vanish keeps the licence seat and the lock, which is the precise failure ffmcp
+  exists to prevent. **Fixed**: ffmcp now walks the tree down from the pid it started and signals
+  what is under it, cross-checked against the project path, editors first so they can exit cleanly;
+  `editor_alive` likewise stopped meaning "the wrapper is alive", which would have reported
+  "stopped" with an editor still running. The E4 stub was rewritten to escape its group the way the
+  real editor does, so this cannot regress.
+- **F6** DONE. **Unity 7.8 GiB RSS**, plus ~1.1 GiB per `AssetImportWorker` (two were up during the
+  test run) and 46 MiB of Xvfb — call it 8–10 GiB per container holding an editor mid-suite. The box
+  has 755 GiB, so one editor per concurrent run is affordable; a first attempt at this number
+  reported 2 MB because it measured the recorded pid, which is the WRAPPER. Measure the tree.
 - **F7** Only then: `unity_mcp.enabled` true for ffdev in the live config, and one real dev turn
   watched end to end. ffagent stays off.
-- **F8** REVIEW, and the one that could still change the design's shape: **what does merely OPENING
-  the real project dirty?** Boot FinalFactory through `ffmcp` on a clean tree, wait for idle, then
-  `git status --porcelain`. C6 stops the editor before anything is staged, but if a boot dirties the
-  tree every time, the turn's diff carries it anyway and the harvest needs a baseline taken after
-  the boot rather than before the agent. Neither document has an answer for that yet.
-- **F9** REVIEW: does the server need a writable `$HOME` when `claude` spawns it as the run user?
-  `--help` does not exercise the `~/.unity-mcp` reads. Send it an `initialize` as uid 1000 with
-  `HOME=/home/ffbox`.
-- **F10** B4's leftover: `ls -la <projectPath>/Temp/` from inside a container with an editor up, to
-  settle where the project lock actually lives.
+- **F8** DONE, and the answer is the good one: **0 dirty files**. Baseline 0 on a fresh restore, 0
+  after the editor opened the project and settled, and still 0 after a full `ffverify` run on top.
+  So the design's shape holds and no post-boot baseline is needed. Stated honestly: the d133t5
+  material change did NOT reproduce here, which is "not reproduced in this run" rather than "cannot
+  happen" — C6 still stops the editor before anything is staged, which costs nothing and removes the
+  question.
+- **F9** DONE. `initialize` OK as uid 1000 with `HOME=/home/ffbox`, in the real image. And the
+  stronger finding above: `$HOME` is how the server FINDS the editor, so it must run as the same
+  user — as root it reports "No Unity Editor instances found" against a live bridge.
+- **F10** DONE. The lock is **`Temp/UnityLockfile`** — 0 bytes, created at boot, and GONE after a
+  clean `ffmcp stop`. So B4 is settled and B5's conditional removal targets the right path; it stays
+  conditional because a SIGKILL path may not be as tidy as the SIGTERM one measured here.
 
 ## Not in scope
 
