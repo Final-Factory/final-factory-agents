@@ -1,7 +1,12 @@
-# Notify Lothsahn when a repository task finishes
+# Notify Lothsahn when a repository task finishes (ffbox runs only)
 
 Standing user feedback (Ben, 2026-08-02): when an agent finishes a Final Factory repository
 development task, keep Lothsahn in the loop with an **extremely brief** Discord update.
+
+**Scope (Ben, 2026-09-12): this applies ONLY when the agent is running in ffbox.** In an
+interactive session on a developer machine (e.g. Ben's own desktop, talking to him directly),
+do NOT post. He is already reading the result, and those machines have no Discord bot token
+configured anyway. Don't try to set one up or ask for one.
 
 ## Completion rule
 
