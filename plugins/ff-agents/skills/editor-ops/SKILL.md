@@ -79,6 +79,62 @@ FinalFactory2_clone_0, FinalFactory3, FinalFactory4, …). Do NOT hardcode a pro
 matching instance differs per working copy. An unpinned run can execute against — and report
 results from — the *wrong* project. Alternatively pass `unity_instance` per call.
 
+### "No Unity Editor instances found" mid-session — transient, re-pin by PORT
+
+Discovery drops a perfectly healthy editor for a fraction of a second around domain reloads and
+test-run boundaries, and the failure then sticks for up to 5 s. Measured on Windows /
+FinalFactory2, 2026-09-12, mcpforunityserver 10.0.0 + com.coplaydev.unity-mcp v10.0.0.
+
+Recovery, in this order:
+
+1. Wait ~2 s and retry the same call. Every drop window measured was sub-second; the error
+   outlives it only because the empty result is cached (`unity_connection.py:487`, 5 s TTL).
+2. Still failing → `set_active_instance` with the editor's PORT NUMBER (usually 6400; confirm
+   with `Get-NetTCPConnection -State Listen -OwningProcess <unity pid>`). The port form calls
+   `discover_all_instances(force_refresh=True)`, which busts that cache. That is why re-pinning
+   works — it is NOT bypassing a staleness filter.
+3. Expect to repeat step 2 after EVERY domain reload and test run in a long session.
+
+Why: discovery requires `~/.unity-mcp/unity-mcp-status-<sha1(dataPath)[:8]>.json`
+(`port_discovery.py:237`) — a port file alone never registers an instance. Three transient
+windows make that file or its socket unusable, and in each the resolver hard-fails on the empty
+list (`unity_connection.py:544`) BEFORE it looks at your pinned instance, so a pin cannot save
+the call:
+
+| Window | Measured | Covered by the 60 s `reloading` grace? |
+|---|---|---|
+| `Stop()` deletes the status file; the `reloading` heartbeat is written after | 6 ms | No — no file left to grace |
+| Listener aborts connections while tearing down, before `reloading` is set | one isolated sample, <500 ms | No — `reloading` still false |
+| Listener down during the reload itself | ~8 s | **Yes** — this one works correctly |
+
+**Do NOT chase `PortDiscovery.CONNECT_TIMEOUT`** (`port_discovery.py:32`, 0.3 s). It looks like
+the culprit and is not. Across 809 samples spanning a full `FFEditorTests` run and two reloads,
+every probe while the listener was up answered in **1–26 ms, p50 2 ms** — the ping is served
+inline on the listener's async path (`StdioBridgeHost.cs:584-591`), never queued to the main
+thread, so a saturated editor does not slow it. Every failure was a REFUSED or ABORTED
+connection, which no timeout value can fix. Nor is there a knob: that timeout, the 60 s grace,
+the 5 s cache and the 0.5 s heartbeat cadence are all hardcoded literals — no env var (30
+`UNITY_MCP_*` checked), no config file, no EditorPrefs key (63 checked) — and upstream `beta`
+10.0.1-beta.3 is byte-identical. A real fix means patching the Unity C# package, which is not
+ours to modify.
+
+Two things that look like this bug and are not:
+
+- `Timeout receiving Unity response` / `Command TCS timed out` in Editor.log is main-thread
+  starvation. Real commands queue and drain only in `ProcessCommands` on
+  `EditorApplication.update` (`StdioBridgeHost.cs:357`), so a busy editor stops servicing them
+  while still answering pings. Wait for idle; re-pinning changes nothing.
+- `editor/state` reporting `blocking_reasons: ["stale_status"]` under load is NORMAL. The
+  heartbeat writer sits on that same update tick and went **56.5 s** stale during one EditMode
+  suite. Harmless while the port answers — but that is only 3.5 s from the 60 s cliff above, so
+  a slower suite can turn a clean reload into a real drop.
+
+At session start, `instance_count: 0` usually means the editor is still BOOTING, not that the
+bridge is broken: the host does not start until project load completes, and no status file
+exists before that (`Stop()` deletes it on clean quit, so between sessions there is none).
+FinalFactory2 measured a 208 s boot — 191 s of it AssetDatabase refresh — after a large merge.
+Confirm the process and whether it is listening before starting any recovery.
+
 ## Cross-machine runs and implementor legs contend for the same pinned editor
 
 A cross-machine determinism run and an `implementor`/`build-verifier` leg on the same machine
