@@ -1193,6 +1193,18 @@ DEFAULTS = {
     "web_host": "127.0.0.1",
     "web_port": 8787,
 
+    # HOW LONG A REPORT THREAD STAYS OUT OF THE ARCHIVE without anybody posting in it, in
+    # minutes, for the threads open_report_thread opens under a thread_per_message channel.
+    # Discord accepts 60, 1440, 4320 or 10080 and nothing else.
+    #
+    # A WEEK, where Discord's own default is a day, because these threads are worked rather
+    # than chatted in: the report is answered in minutes and then waits for a person to read
+    # it, try the fix and come back. A day puts most of that on the far side of an archive.
+    # Archiving is soft either way -- posting in an archived thread revives it, and ffwatch
+    # sweeps archived threads too (`ffdiscord threads` lists both) -- so this decides how
+    # visible a live report is, not whether it can be continued.
+    "report_thread_archive_mins": 10080,
+
     # -- clustering (design/conversation_clustering_design.txt section 4) -------------------
     # A conversation in a plain text channel is a WINDOW OF ACTIVITY, not a reply chain. It
     # used to be the latter, which is why every message opened its own: thread_id is UNIQUE and
@@ -2318,6 +2330,56 @@ def engage_for(cfg, alias):
     return engage if engage in ENGAGEMENTS else "mention"
 
 
+def thread_per_message_for(cfg, alias):
+    """THE FORUM'S SHAPE, IN A TEXT CHANNEL. False unless the entry says so.
+
+    A Discord forum is a channel where every top-level thing somebody writes is a POST, and a
+    post IS a thread: it is its own conversation, two posts are never the same one, and every
+    reply inside it continues it. That shape is what a bug-report channel wants, and for a
+    forum the harness gets all of it for free — ingest_thread files each post as its own
+    conversation and clustering never looks at a thread at all.
+
+    An ordinary text channel gets none of it. Messages there are a WINDOW OF ACTIVITY
+    (cluster_candidates), so two reports typed a minute apart are one conversation, and the
+    answer goes back into the channel as a reply rather than into a thread.
+
+    This flag makes a text channel behave like the forum: every message opens its own
+    conversation and is answered in a thread the harness opens under it. The three places that
+    implement it are select_conversation (nothing clusters), always_a_turn (a message here
+    OPENS something, the way a forum post does) and record_reply (the thread).
+
+    WHAT IT DOES NOT CHANGE is what happens INSIDE the thread. A follow-up there is an ordinary
+    message in an ordinary conversation and obeys the channel's `engage`, exactly as a reply
+    inside a forum post does. The flag is about opening reports, not about answering everything
+    forever.
+    """
+    return watch_entry(cfg, alias).get("thread_per_message") is True
+
+
+#  Discord accepts these four and 400s anything else, which here would fail the CREATE and so
+#  the whole reply to a bug report. Read off the config through report_thread_archive_mins.
+THREAD_ARCHIVE_MINS = (60, 1440, 4320, 10080)
+
+
+def report_thread_archive_mins(cfg):
+    """`report_thread_archive_mins`, snapped to a value Discord will accept.
+
+    NEAREST RATHER THAN REFUSED, and nearest by how far off it is rather than rounded up: a
+    config asking for two days means "a couple of days" and gets three, one asking for 30
+    minutes gets an hour. The alternative is a 400 from Discord at the moment a report is being
+    answered, which loses the answer over a number nobody thought was load-bearing.
+    """
+    try:
+        want = int(cfg.get("report_thread_archive_mins"))
+    except (TypeError, ValueError):
+        return DEFAULTS["report_thread_archive_mins"]
+    # A TIE GOES TO THE LONGER WINDOW -- two days is equidistant between one and three -- because
+    # somebody who asked for more time than Discord offers meant more, and the cost of the two
+    # mistakes is not symmetric: too long leaves a quiet thread in the sidebar, too short
+    # archives one somebody is still working in.
+    return min(THREAD_ARCHIVE_MINS, key=lambda m: (abs(m - want), -m))
+
+
 def ping_for(cfg, alias):
     """May a reply into this channel @-mention a human? False unless the entry says so.
 
@@ -2543,6 +2605,16 @@ def config_warnings(cfg):
         if entry.get("engage") not in ENGAGEMENTS:
             out.append(f"watch.{alias} declares no valid engage (got {entry.get('engage')!r}); "
                        f"waking only on a direct MENTION")
+        # A FLAG THAT READS AS DOING SOMETHING AND DOES NOTHING. thread_per_message gives a
+        # TEXT channel the shape a forum already has, and a forum has no top-level messages for
+        # it to act on -- sweep() reads those only when `forum` is false, and every post
+        # arrives through ingest_thread already wearing its own conversation. Set on a forum it
+        # is not wrong so much as answered, and saying so is the difference between "this is
+        # already how it works" and a week of wondering why the flag changed nothing.
+        if entry.get("thread_per_message") is True and entry.get("forum"):
+            out.append(f"watch.{alias} sets thread_per_message on a FORUM, where it does "
+                       f"nothing: a forum post is already its own thread and its own "
+                       f"conversation. The flag is for giving a text channel that same shape")
     # The clustering knobs are the other thing a channel runs on silently. Unlike venue and
     # engage these have a safe default rather than a fail-closed one, so this is information
     # and not a warning about a decision nobody made — but a channel clustering on numbers
@@ -6996,7 +7068,15 @@ class Watcher:
         with a stub that agrees — it is the part that can corrupt state, and it was proven with
         one before a model was allowed to drive it (design 4.3).
         """
-        if is_local_conversation(conv) or conv["is_thread"]:
+        # A THREAD HAS NOWHERE TO MOVE MESSAGES TO, and neither has a report in a
+        # thread_per_message channel: one message, one conversation, settled at ingest by a rule
+        # with no model in it. Both are here for the same reason and the second is not merely an
+        # optimisation. select_for_turn would in fact return None for these anyway -- it re-opens
+        # only what ingest routed as `recent`, and nothing in such a channel ever is -- but that
+        # is an invariant two screens away in another method, and what it is protecting is the
+        # channel's whole contract. Said here, where the moving happens.
+        if (is_local_conversation(conv) or conv["is_thread"]
+                or thread_per_message_for(self.cfg, conv["watch_alias"])):
             return 0
         pending = self.db.query(
             "SELECT * FROM message WHERE conversation_id=? AND turn_id IS NULL"
@@ -7270,6 +7350,19 @@ class Watcher:
         at ingest takes the most recent candidate and records 'recent'. No model is called here
         or anywhere below it: ingest must not block on one, and must not fail when one is down.
         """
+        # A CHANNEL WHERE EVERY MESSAGE IS A POST NEVER CLUSTERS, and this sits above S1 rather
+        # than beside S4 because S1 is the rule it has to beat. A Discord reply is the strongest
+        # continuation signal there is and it ignores every window -- but in a channel whose
+        # whole contract is "one message, one report", a reply typed in the PARENT channel is
+        # still somebody opening a report, and filing it into the report above would merge two
+        # of them. The place to continue a report is its thread, and a message in the thread
+        # does not come through here at all: ingest_thread files it by thread id.
+        #
+        # The clustering knobs cannot express this. idle_secs and friends bound the S2-S4 window
+        # and S1 is outside all of them, and zeroing max_candidate_secs would close every
+        # conversation in the channel as `stale` on every pass rather than decline to offer one.
+        if thread_per_message_for(self.cfg, alias):
+            return None, "new", f"{alias} opens a conversation per message"
         cc = cluster_cfg(self.cfg, alias)
         ref = (msg.get("referenced_message") or {}).get("id")
         if ref:
@@ -7399,7 +7492,21 @@ class Watcher:
 
         # Nothing to join, so this message opens a conversation. The chain walk is what gives
         # it a root when the message is a reply to something we have never seen.
-        root, chain = self.walk_to_root(channel_id, msg)
+        #
+        # AND IT IS SKIPPED WHERE EVERY MESSAGE IS ITS OWN POST, which is the same rule
+        # select_conversation just applied one layer up, finishing the job. The walk would
+        # anchor this conversation on the message it replies TO, and that message is another
+        # report: its id would become root_message_id, so record_reply would open this report's
+        # thread underneath the previous one -- on a message that already has a thread of its
+        # own, which Discord refuses outright. The reply's own text would also arrive in the
+        # prompt underneath somebody else's report as though the two were one.
+        #
+        # A report is anchored on ITSELF here. The message it replied to is a click away in
+        # Discord for anybody reading the thread.
+        if thread_per_message_for(self.cfg, alias):
+            root, chain = msg, [msg]
+        else:
+            root, chain = self.walk_to_root(channel_id, msg)
         title = (root.get("content") or "").strip().splitlines()
         conv_id = self.upsert_conversation(
             root.get("id"),
@@ -7718,7 +7825,21 @@ class Watcher:
         # to prevent, arriving a week late. A pre-attach thread falls through to the channel's
         # engagement policy instead, so in a mention-only channel it takes a ping or a fresh
         # attachment — both of which are rules above this one — to wake it.
-        if conv["is_thread"] and not self.db.scalar(
+        #
+        # A thread_per_message CHANNEL OPENS ITS REPORTS THE SAME WAY, and gets the same rule
+        # for the same reason. Its conversations are not threads YET -- the harness opens the
+        # thread when it answers (record_reply), so at this point is_thread is still 0 -- but
+        # the message is the opening of a report exactly as a forum post is, and the whole
+        # contract of such a channel is that posting in it gets an answer. Routing that through
+        # the engagement gate would put a model between somebody and a bug report they filed in
+        # the channel built for filing them, and a gate that declines drops the one message
+        # that mattered.
+        #
+        # ONLY THE OPENING. A follow-up lands in the thread by then, so it arrives here on a
+        # conversation that HAS a turn, falls through, and is judged by the channel's `engage`
+        # like any other message -- which is precisely what happens inside a forum post.
+        opens = conv["is_thread"] or thread_per_message_for(self.cfg, conv["watch_alias"])
+        if opens and not self.db.scalar(
                 "SELECT COUNT(*) FROM turn WHERE conversation_id=?", (conv["id"],), 0):
             if not self.before_attach(conv["watch_alias"], conv["thread_id"]):
                 return "it opens a thread"
@@ -13621,6 +13742,61 @@ class Watcher:
              "dry" if self.dry_run else "pending", now_iso(), payload.get("local_id")))
         return nonce
 
+    def open_report_thread(self, run_row_id, conv):
+        """Open the thread a thread_per_message report is answered in. (conv, opened).
+
+        DISCORD GIVES A MESSAGE-STARTED THREAD THE SAME ID AS THE MESSAGE, which is what makes
+        this cost one call and no new columns. conversation.thread_id already holds that
+        message's id -- select_conversation opens one conversation per message and the ingest
+        anchors it on itself -- so the row is ALREADY keyed on the id the thread is about to
+        have. Flipping is_thread is the whole of the bookkeeping:
+
+          reply_channel   starts returning the thread instead of the parent channel
+          ingest_thread   finds THIS row by thread_id, so every message posted in the thread
+                          files into the report it belongs to rather than opening a second one
+          discord_link    points at the thread
+          session_id_for  unchanged, because it was always derived from this same id
+
+        It is the shape a forum post has from birth, reached one step late.
+
+        THE FLIP IS WRITTEN WHATEVER THE SEND DOES, and that is deliberate. The outbound row is
+        queued, not sent, and send_pending may hold it (approval), retry it or fail it; what the
+        row cannot do is make the thread exist under a different id. If the create fails the
+        post fails with it and both stay retryable, and the conversation is still correctly
+        described as living in a thread with that id. Recording is_thread only after a
+        successful send would mean reading it back out of the sender, which is the coupling
+        SENDABLE_ACTIONS exists to avoid.
+
+        Idempotent by the same column: a second run in this conversation finds is_thread set
+        and asks for nothing. thread-create is in NON_RETRYABLE_ACTIONS for the other half of
+        that -- a retried create would be a second thread, or a 400 on a message that has one.
+        """
+        if not thread_per_message_for(self.cfg, conv["watch_alias"]) or conv["is_thread"]:
+            return conv, False
+        # The message the thread hangs off. root_message_id is what the ingest anchored this
+        # report on; thread_id is the same id and is the fallback for a row written before
+        # that column was filled in.
+        message_id = str(conv["root_message_id"] or conv["thread_id"] or "").strip()
+        if not message_id:
+            log(f"conversation {conv['id']}: no message to open a thread on; answering in "
+                f"{reply_channel(conv)}")
+            return conv, False
+        # NAMED FOR THE REPORT. The title is the first line of the message that opened it,
+        # already cut to 100 by upsert_conversation and cut again by the action builder. A
+        # message with no first line -- an attachment on its own, which in a bug channel is a
+        # screenshot and nothing else -- still has to produce a name, because Discord refuses a
+        # blank one and the report would then have nowhere to be answered.
+        name = (conv["title"] or "").strip().splitlines()
+        name = name[0].strip() if name else ""
+        self.record_outbound(run_row_id, conv["id"], "thread-create", {
+            "channel": str(conv["channel_id"] or ""),
+            "message": message_id,
+            "name": name or f"report {message_id}",
+            "auto_archive": report_thread_archive_mins(self.cfg)})
+        self.db.execute("UPDATE conversation SET is_thread=1 WHERE id=?", (conv["id"],))
+        log(f"conversation {conv['id']}: answering in a thread on message {message_id}")
+        return self.db.one("SELECT * FROM conversation WHERE id=?", (conv["id"],)), True
+
     def record_reply(self, run_row_id, conv, turn, run_dir, terminal, result, timeout_kind, job,
                      stopped=False):
         """Turn the run's outcome into outbound rows. Nothing is sent here — see send_pending.
@@ -13679,8 +13855,17 @@ class Watcher:
                                  {"pr": review["number"], "text": head})
             return 1 + self.resolve_addressed(run_row_id, conv, review, job, verdict,
                                               self.publish_facts(run_row_id))
+        # THE THREAD THE ANSWER GOES IN, opened before the post that goes into it. Returns the
+        # conversation as it now stands, so reply_channel below reads the thread rather than
+        # the channel it hangs off.
+        conv, opened = self.open_report_thread(run_row_id, conv)
         payload = {"channel": reply_channel(conv), "text": head, "silent": True,
-                   "reply_to": last["discord_id"] if last else None}
+                   # NOTHING TO REPLY TO IN A THREAD NOBODY HAS POSTED IN. `last` is the
+                   # message in the PARENT channel that started the report, and Discord will
+                   # not accept a message_reference pointing out of the channel being posted
+                   # to. The thread hangs off that message already, which is the same statement
+                   # a reply arrow would have made.
+                   "reply_to": None if opened else (last["discord_id"] if last else None)}
         if asker:
             # The reply opens by @-mentioning whoever raised the turn, and the sender is told
             # which id may ping so --silent still holds for every other name in the text. The
@@ -15571,8 +15756,20 @@ class Watcher:
             name = (payload.get("name") or "").strip()
             if not payload.get("message") or not name:
                 raise SendRejected("thread-create needs a message id and a name")
+            # wants_id FALSE, for the reason `close` above spells out and one of its own. What
+            # `thread-create --json` prints is the CHANNEL object, whose id is the THREAD's --
+            # and send_one writes whatever it reads back into the row's discord_id and then
+            # into conversation.out_watermark_id, which is a MESSAGE id. Here the two are the
+            # same number (Discord gives a message-started thread its message's id), so this
+            # would not park a stranger there the way `close` would; it would park the OLDEST
+            # message in the conversation. out_watermark_id would walk backwards to the report
+            # that opened the thread, and every reply the harness had already sent would read
+            # as unsent.
+            #
+            # Nothing needs the id anyway. open_report_thread knew it before the call: it is
+            # the message id it is passing in.
             return ["thread-create", channel, str(payload["message"]), "--name", name[:100],
-                    "--auto-archive", str(payload.get("auto_archive") or 1440), "--json"], True
+                    "--auto-archive", str(payload.get("auto_archive") or 1440), "--json"], False
 
         head, overflow = self.split_for_discord(row["id"], payload.get("text") or "")
         files = [f for f in (payload.get("files") or []) if f and os.path.exists(str(f))]

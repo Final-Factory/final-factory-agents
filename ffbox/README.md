@@ -151,7 +151,16 @@ also swept `#dev-chat` every `catchup_secs` with no way to say "not that one". E
 the capabilities; `forum` is true for a forum channel;
 `venue` says whether internals may be spoken there; `engage` is `all` (consider every human
 message) or `mention` (only when the bot is addressed); `ping` allows a reply there to
-@-mention a human. All four fall closed when omitted. ffwatch logs each entry that made it
+@-mention a human. All four fall closed when omitted.
+
+`thread_per_message` gives a plain text channel the shape a **forum** already has, which is
+what a bug-report channel wants: every message posted in it is its own report — nothing
+clusters, not even a Discord reply — it is answered whatever the engagement gate would have
+said, and the answer goes into a thread the harness opens under it, named after the message.
+Discord gives a message-started thread the same id as its message, so that thread *is* the
+conversation that was already there, and every reply inside it files back into the report it
+belongs to. `engage` still governs the follow-ups inside the thread, exactly as it does inside
+a forum post. On a forum the flag does nothing and says so, because a post is already a thread. ffwatch logs each entry that made it
 choose a `venue` or an `engage`, and logs when the whole block is empty; `ping` is deliberately
 not logged, because "cannot pull a person out of their evening" is what nearly every channel
 wants and warning about it everywhere would bury the two that matter.

@@ -255,6 +255,14 @@ elif cmd in ("post", "react", "edit", "ask", "thread-create", "close"):
         # The real CLI prints the CHANNEL object here, whose id is the thread. It is printed
         # for the same reason: a sender that mistook it for a message id would be caught.
         print(json.dumps({"id": argv[1], "archived": True}))
+    elif cmd == "thread-create":
+        # Also the CHANNEL object, and DISCORD GIVES A MESSAGE-STARTED THREAD THE MESSAGE'S OWN
+        # ID -- which is the fact open_report_thread is built on, so the stub has to have it or
+        # the suite would be proving the design against a friendlier Discord than the real one.
+        # Printed rather than swallowed so that a sender which went back to recording this id
+        # is caught by the watermark walking backwards to the report that opened the thread.
+        print(json.dumps({"id": argv[2], "parent_id": argv[1], "name": opt("--name", ""),
+                          "type": 11}))
     else:
         print(json.dumps({"id": mid, "content": opt("--text", "")}))
 else:
@@ -6816,6 +6824,132 @@ def test_the_run_is_on_the_filtered_network():
     worse, _, _ = generate("api.anthropic.com\nevil;rm.com\n")
     check("and so is one that is not a hostname",
           worse.returncode == 2 and "bad allowlist entry" in worse.stderr, worse.stderr)
+
+
+def test_a_report_channel_answers_every_message_in_a_thread_of_its_own():
+    """thread_per_message: the forum's shape, given to an ordinary text channel.
+
+    A Discord forum is a channel where every top-level thing written is a POST, and a post IS a
+    thread — its own conversation, never merged with the one above it, continued by everything
+    written inside it. #bug-reports is one, which is why the harness has always got that shape
+    there for free.
+
+    A text channel gets none of it: messages are a WINDOW OF ACTIVITY, so two reports typed a
+    minute apart are one conversation, and the answer goes back into the channel. This flag is
+    the other half — the harness opens the thread Discord would have opened for a post.
+    """
+    print("report channels: one message, one report, one thread")
+
+    # Three messages a clustering channel would certainly have merged: two twenty seconds apart
+    # with nothing in between (S3, the `certain` rule, no model involved), and a third that is a
+    # Discord REPLY to the first — which is S1, the rule that beats every window there is.
+    first, second, third = sflake(0, 1), sflake(20, 2), sflake(40, 3)
+    fixture = base_fixture()
+    fixture["messages"][RANDOM_CHANNEL] = [
+        message(first, "conveyors drop items at the corner", channel=RANDOM_CHANNEL),
+        message(second, "also the map legend is unreadable at 4k", channel=RANDOM_CHANNEL),
+        message(third, "more on the first one: only when they are full",
+                channel=RANDOM_CHANNEL, ref={"id": first}),
+    ]
+    # THE GATE SAYS NO TO ALL OF IT, on purpose. Every message here has to produce a turn
+    # whatever a classifier thinks, so the only honest way to test that is with a classifier
+    # that declines: a suite whose gate says yes cannot tell "forced" from "agreed with".
+    case = Case("report-thread", fixture, venue="private",
+                verdict={"engage": False, "reason": "the gate saw no ask"})
+    case.cfg["watch"]["dev_bugs"] = {"kind": "bug_report", "forum": False, "venue": "private",
+                                     "engage": "all", "thread_per_message": True}
+    case.cfg["_discord"]["channels"]["dev_bugs"] = RANDOM_CHANNEL
+    for mid in (first, second, third):
+        case.events(ask_event(mid, channel="dev_bugs", channel_id=RANDOM_CHANNEL))
+    case.watcher.drain_events()
+
+    convs = case.rows("SELECT * FROM conversation ORDER BY id")
+    check("three messages are three reports, not one conversation", len(convs) == 3, convs)
+    routed = [m["routed_by"] for m in case.rows(
+        "SELECT * FROM message ORDER BY CAST(discord_id AS INTEGER)")]
+    check("every one of them opens its own, the reply included",
+          routed == ["new", "new", "new"], routed)
+    # The reply must be anchored on ITSELF. Anchored on the message it answers, the thread would
+    # be opened under the previous report — on a message that already has one, which Discord
+    # refuses — and its text would arrive in that report's prompt.
+    replied = [c for c in convs if c["thread_id"] == third][0]
+    check("a reply in the channel is a report anchored on itself, not on what it replied to",
+          replied["root_message_id"] == third, replied)
+    check("and none of them is a thread yet — the harness opens that when it answers",
+          not any(c["is_thread"] for c in convs), convs)
+
+    # --- every message is a turn, over the gate's objection --------------------------------
+    case.watcher.claim_turns()
+    turns = case.rows("SELECT * FROM turn ORDER BY id")
+    check("all three get a turn even though the gate declined", len(turns) == 3, turns)
+    gated = [m["gate"] for m in case.rows("SELECT * FROM message")]
+    check("and none of them was gated", not any(gated), gated)
+
+    # --- the answer goes into a thread the harness opens -----------------------------------
+    case.watcher.launch(turns[0]["id"])
+    case.watcher.join_launches(timeout=120)
+    case.watcher.finish_runs()
+    case.watcher.join_finishes(timeout=120)
+    queued = [(r["action"], json.loads(r["payload_json"])) for r in
+              case.rows("SELECT * FROM outbound WHERE conversation_id=? ORDER BY id",
+                        (turns[0]["conversation_id"],))]
+    actions = [a for a, _ in queued]
+    check("the thread is created before the post that goes in it",
+          actions.index("thread-create") < actions.index("post"), actions)
+    created = [p for a, p in queued if a == "thread-create"][0]
+    check("opened on the message that was the report, in the channel it was posted in",
+          (created["message"], created["channel"]) == (first, RANDOM_CHANNEL), created)
+    check("and named for it", created["name"] == "conveyors drop items at the corner", created)
+    said = [p for a, p in queued if a == "post"][-1]
+    # THE ID IS THE SAME NUMBER, which is the whole reason this costs no extra bookkeeping:
+    # Discord names a message-started thread after its message.
+    check("the answer is posted INTO the thread, not into the channel",
+          said["channel"] == first, said)
+    check("with no reply arrow — there is nothing in the thread to reply to",
+          said["reply_to"] is None, said)
+    conv = case.rows("SELECT * FROM conversation WHERE id=?",
+                     (turns[0]["conversation_id"],))[0]
+    check("and the conversation now says it lives in a thread", conv["is_thread"] == 1, conv)
+
+    # --- what actually reached Discord, and what it must not have recorded ------------------
+    case.watcher.send_pending()
+    made = sent_calls(case, "thread-create")
+    check("exactly one thread was created", len(made) == 1, made)
+    check("for as long as Discord allows, because a report is read days later",
+          made[0][made[0].index("--auto-archive") + 1] == "10080", made[0])
+    conv = case.rows("SELECT * FROM conversation WHERE id=?", (conv["id"],))[0]
+    # `thread-create --json` prints the CHANNEL object, whose id is the thread's — the same
+    # number as the message. Recorded as a sent MESSAGE id it would drag out_watermark_id back
+    # to the report that opened the thread, and every reply already sent would read as unsent.
+    check("the created thread's id is not mistaken for a message the harness sent",
+          conv["out_watermark_id"] != first, conv)
+
+    # --- a second run in the same report does not open a second thread ---------------------
+    before = len(case.rows("SELECT * FROM outbound WHERE action='thread-create'"))
+    again, opened = case.watcher.open_report_thread(None, conv)
+    check("a report already answered in a thread asks for no other one",
+          opened is False
+          and len(case.rows("SELECT * FROM outbound WHERE action='thread-create'")) == before)
+
+    # --- and the thread files back into the report it belongs to ---------------------------
+    #
+    # Nothing new is needed for this: ingest_thread finds a conversation BY THREAD ID, and the
+    # row has held that id since the message opened it.
+    follow = sflake(600, 4)
+    fixture = case.read_fixture()
+    fixture["threads"][first] = {
+        "thread": {"id": first, "parent_id": RANDOM_CHANNEL, "guild_id": GUILD,
+                   "name": "conveyors drop items at the corner", "owner_id": PLAYER},
+        "messages": [message(follow, "here is the save that does it", channel=first)]}
+    fixture["thread_lists"][RANDOM_CHANNEL] = [{"id": first, "parent_id": RANDOM_CHANNEL}]
+    case.write_fixture(fixture)
+    case.watcher.ingest_thread(first, alias="dev_bugs")
+    check("a follow-up in the thread joins the report rather than opening another",
+          len(case.rows("SELECT * FROM conversation")) == 3,
+          case.rows("SELECT id, thread_id FROM conversation"))
+    landed = case.rows("SELECT * FROM message WHERE discord_id=?", (follow,))
+    check("and it is filed in that very conversation",
+          landed and landed[0]["conversation_id"] == conv["id"], landed)
 
 
 def test_messages_cluster_into_one_conversation():
@@ -19985,6 +20119,7 @@ def main():
         test_the_github_client_reads_comments_and_says_things_back,
         test_github_client_retries_and_cannot_merge,
         test_verification_results_path_is_per_invocation,
+        test_a_report_channel_answers_every_message_in_a_thread_of_its_own,
         test_messages_cluster_into_one_conversation,
         test_the_dev_chat_exchange_that_started_this,
         test_a_message_stops_moving_once_a_session_has_seen_it,
