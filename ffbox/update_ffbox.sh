@@ -466,8 +466,72 @@ if [ "$CONFIG_CHANGED" = 1 ]; then
 fi
 
 if [ "$DRY_RUN" = 1 ]; then
-    log "--dry-run: stopping here. Would drain, stop, merge anything new, re-run setup and restart."
+    log "--dry-run: stopping here. Would pre-build the image, drain, stop, merge anything new, re-run setup and restart."
     exit 0
+fi
+
+# ------------------------------------------------------------------------------------------
+# 2b. pre-build the image, while ffbox is still serving
+# ------------------------------------------------------------------------------------------
+# WHY. setup.sh in section 5 builds ffbox:latest, and it runs with ffbox STOPPED -- ffweb
+# included, which needs no container at all. A pass that changed the image paid for the whole
+# build inside that window: on 2026-09-12 a Dockerfile change kept ffwatch and ffweb down for
+# 110s, where an ordinary pass is 8s. Building the same tree here first fills docker's build
+# cache, so section 5's build is a cache hit and the window is back to setup and the restart.
+#
+# UNDER A SCRATCH TAG, NEVER ffbox:latest, and that is what makes this safe without a drain.
+# ffwatch is still starting containers from ffbox:latest while this runs, with the task script
+# and ffverify bind-mounted from the checkout that has NOT been merged yet. Retagging here would
+# hand those containers the new image over the old scripts. Only section 5 moves ffbox:latest,
+# after the stop, exactly as before. (Draining for the build instead would also close that gap,
+# and would refuse work for as long as the build takes -- the cost this section exists to remove.)
+#
+# THE CACHE HIT DEPENDS ON FILE MODES, NOT JUST CONTENTS. BuildKit keys a COPY on both. The export
+# is extracted with --no-same-permissions so it takes this process's umask -- the umask the merge
+# writes the checkout with -- rather than git archive's tar.umask 0002, or the archive's modes
+# preserved verbatim by a root tar. Measured: two exports of one commit in different directories,
+# 12 of 12 steps cached; the same commit built from a checkout written under umask 0002, 3 misses.
+#
+# ONE CLAUDE VERSION FOR BOTH BUILDS. Looked up once here and exported, so setup.sh's build asks
+# for the same release even if a new one ships in between (claude-version.sh honours
+# FFBOX_CLAUDE_VERSION). A lookup that yields no concrete version exports nothing.
+#
+# NEVER FATAL. Every failure here leaves section 5 to build inside the window, which is simply
+# the behaviour before this section existed.
+PREBUILD_TAG=ffbox:prebuild
+prebuild_image() {   # $1 = the commit about to be deployed
+    _pb_tree=$(mktemp -d) \
+        || { log "WARNING: no temp dir to pre-build in; the image builds while ffbox is down"; return 0; }
+    if ! git_ archive "$1" ffbox | tar -x --no-same-permissions -C "$_pb_tree" 2>/dev/null \
+            || [ ! -r "$_pb_tree/ffbox/03-build.sh" ]; then
+        log "WARNING: could not export ffbox/ at $(printf %.12s "$1") to pre-build; the image builds while ffbox is down"
+        rm -rf "$_pb_tree"
+        return 0
+    fi
+    if [ -z "${FFBOX_CLAUDE_VERSION:-}" ] && [ -r "$_pb_tree/ffbox/claude-version.sh" ]; then
+        _pb_claude=$(sh "$_pb_tree/ffbox/claude-version.sh" "${FFBOX_IMAGE:-ffbox:latest}" 2>/dev/null || :)
+        case "$_pb_claude" in
+            [0-9]*) FFBOX_CLAUDE_VERSION=$_pb_claude; export FFBOX_CLAUDE_VERSION ;;
+        esac
+    fi
+    _pb_out=$(mktemp) \
+        || { rm -rf "$_pb_tree"; log "WARNING: no temp file for the pre-build log; the image builds while ffbox is down"; return 0; }
+    _pb_t0=$(date +%s)
+    log "pre-building $(printf %.12s "$1") as $PREBUILD_TAG (claude ${FFBOX_CLAUDE_VERSION:-unpinned}); ffbox keeps serving"
+    if FFBOX_IMAGE=$PREBUILD_TAG sh "$_pb_tree/ffbox/03-build.sh" > "$_pb_out" 2>&1; then
+        log "pre-built in $(( $(date +%s) - _pb_t0 ))s; the build inside the window should be a cache hit"
+    else
+        tail -n 20 "$_pb_out" | sed 's/^/    /'
+        log "WARNING: the pre-build failed after $(( $(date +%s) - _pb_t0 ))s; the image builds while ffbox is down"
+    fi
+    rm -f "$_pb_out"
+    rm -rf "$_pb_tree"
+    return 0
+}
+if [ "$CODE_UPDATE" = 1 ]; then
+    prebuild_image "$NEW_SHA"
+else
+    prebuild_image "$OLD_SHA"
 fi
 
 # ------------------------------------------------------------------------------------------
@@ -674,7 +738,9 @@ unset _c _started _age _epoch
 # MEASURED FROM THE JOURNAL BEFORE THIS EXISTED, over 227 real updates: median 6s, p90 77s, max
 # 247s. The long ones are all the same thing -- setup.sh's stage 3 rebuilding the container image
 # while ffbox is down. The median is short because most passes have nothing to build.
-# design/ffbox_ci_in_ffwatch_design.txt section 5c and open question (b).
+# design/ffbox_ci_in_ffwatch_design.txt section 5c and open question (b). Since 2026-09-12 section
+# 2b pays for that build before this line, so a long window now means its pre-build failed or
+# missed the cache -- its log lines say which.
 WINDOW_OPENED=$(date +%s)
 log "stopping ffbox.target"
 sudo_systemctl stop ffbox.target || log "WARNING: stop reported a failure; continuing"
@@ -731,6 +797,10 @@ else
     log "WARNING: setup.sh exited non-zero; continuing into the restart"
 fi
 rm -f "$_setup_out"
+# Section 2b's scratch tag. Untags only: ffbox:latest now carries the same layers, and the build
+# cache that made setup.sh's build fast is not an image and is not touched. Through the same
+# inherited DOCKER_HOST setup.sh just built with, so it is the same daemon.
+docker image rm "$PREBUILD_TAG" >/dev/null 2>&1 || :
 
 # THE RUNNERS' SETUP IS A SECOND REAL THING, and it is here for the same reason the first one is:
 # ffgithubrunners lives in this tree, its non-root stages are idempotent, and without this call a
@@ -812,7 +882,7 @@ if [ -n "${WINDOW_OPENED:-}" ]; then
         # this long means any job that hit its mirror-fetch step during it has already given up.
         log "WARNING: ffbox was down for ${_win}s, at or past the ${_budget}s a CI job will wait."
         log "WARNING: raise githubrunner.mirror_wait_secs, or find out what made this pass slow"
-        log "WARNING: (the usual answer is setup.sh rebuilding the container image while down)"
+        log "WARNING: (the usual answer is an image build inside the window: check the pre-build lines above)"
     else
         log "ffbox was down for ${_win}s (a CI job would wait ${_budget}s)"
     fi
