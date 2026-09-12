@@ -46,6 +46,7 @@ run "test_ci_lane.py"       python3 "$HERE/test_ci_lane.py"
 # remembered to run it by hand. That is the state this file exists to end.
 run "test_container_credential.sh" sh "$HERE/test_container_credential.sh"
 run "test_update_drain.sh"  sh  "$HERE/test_update_drain.sh"
+run "test_update_prebuild.sh" sh "$HERE/test_update_prebuild.sh"
 # THE OTHER SUITE THAT DRIVES THE REAL ffbox, for the four lines that decide which cache entry a
 # run restores from. Nothing it can get wrong FAILS a run -- every answer is a real tar -- so the
 # only way a regression here shows up is as runs that got slower, which is why it wants a test.

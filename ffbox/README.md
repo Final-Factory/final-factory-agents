@@ -283,7 +283,21 @@ journalctl -u ffbox-update -f               # what it did
 touch ~/.config/ffbox/update.disabled       # pause updates while you work on the box
 ```
 
-Eight things worth knowing:
+Nine things worth knowing:
+
+- **The image is built before anything stops.** `setup.sh` rebuilds `ffbox:latest` inside the
+  window, with ffwatch and ffweb both down, so a pass that changed the image used to be down for
+  as long as the build took: 110s on 2026-09-12, against 8s for an ordinary pass. The updater now
+  exports the commit it is about to deploy and builds it first, as `ffbox:prebuild`, while ffbox
+  keeps serving. That fills docker's build cache, and `setup.sh`'s build inside the window is a
+  cache hit. The journal says `pre-built in Ns` when it worked.
+
+  **A scratch tag, not `ffbox:latest`, and that is why it needs no drain.** ffwatch is still
+  starting containers from `ffbox:latest` during the pre-build, with the not-yet-merged checkout
+  mounted into them; retagging early would pair the new image with the old scripts. Only the build
+  after the stop moves the tag, as before. The cache hit depends on file modes as well as contents,
+  so the export takes the updater's umask, the same one its merge writes the checkout with. A failed
+  pre-build is a warning, and the build falls back to happening inside the window.
 
 - **A container that is working is not touched.** An update destroys the idle staged spares and
   the idle CI runners, leaves everything that has a job in it running, and does not wait for any
@@ -801,7 +815,8 @@ explicitly when moving to a new Unity version.
 `downloads.claude.ai/claude-code-releases/latest` and the build passes it as
 `--build-arg CLAUDE_VERSION`, so the install layer rebuilds when a release is new and is a cache hit
 otherwise. The self-updater runs this stage on every pass, so a push or a config edit also brings
-the image's Claude Code up to date. A release on a day with neither waits for the next pass.
+the image's Claude Code up to date. It pre-builds before stopping ffbox and passes the version it
+looked up to both builds, so a new release costs no extra downtime. A release on a day with neither waits for the next pass.
 `docker image inspect ffbox:latest --format '{{index .Config.Labels "org.finalfactory.claude-version"}}'`
 says what is baked in. Set `FFBOX_CLAUDE_VERSION=X.Y.Z` to pin one by hand; if the lookup fails,
 the build keeps the version the current image has.
