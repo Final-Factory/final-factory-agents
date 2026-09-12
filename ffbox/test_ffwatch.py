@@ -7929,6 +7929,44 @@ def test_the_live_editor_is_off_until_a_class_asks_for_it():
     check("and so are the generation/import tools, which would reach outside the fence",
           not any("generate_" in n or "import_model" in n for n in names), names)
 
+    # THE SWITCH HAS TO BE REACHABLE FROM THE FILE, and for a while it was not: the DEFAULTS dict
+    # is called `agent_classes` but the CONFIG FILE's per-class section is `pools`, and
+    # _class_blocks rebuilds every class from _pool_section AFTER the deep merge -- so an
+    # `agent_classes` block in config.json is read by nothing at all. Phase F found that by being
+    # unable to turn the feature on; this is the check that keeps it found.
+    def to_int(value, fallback):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    blocks = ffwatch._class_blocks(
+        {"pools": {"ffdev": {"unity_mcp": {"enabled": True, "ready_timeout_secs": 900}}}},
+        6, to_int)
+    check("a pools.<class>.unity_mcp block in the FILE reaches the class config",
+          blocks["ffdev"]["unity_mcp"] == {"enabled": True, "ready_timeout_secs": 900},
+          blocks["ffdev"]["unity_mcp"])
+    check("and one class asking for it does not turn it on for the other",
+          blocks["ffagent"]["unity_mcp"]["enabled"] is False, blocks["ffagent"]["unity_mcp"])
+
+    # FILLED IN, NOT COPIED, like pool/github/warm_branches: an operator writes {"enabled": true}
+    # and every reader must still find a numeric timeout; a bool where a mapping belongs must not
+    # reach a reader either.
+    partial = ffwatch._class_blocks({"pools": {"ffdev": {"unity_mcp": {"enabled": True}}}},
+                                    6, to_int)["ffdev"]["unity_mcp"]
+    check("a partial unity_mcp still comes back with a numeric ready_timeout_secs",
+          partial["enabled"] is True and isinstance(partial["ready_timeout_secs"], int)
+          and partial["ready_timeout_secs"] == 600, partial)
+    garbage = ffwatch._class_blocks({"pools": {"ffdev": {"unity_mcp": True}}},
+                                    6, to_int)["ffdev"]["unity_mcp"]
+    check("and a non-mapping unity_mcp falls back to this class's default rather than crashing",
+          garbage == {"enabled": False, "ready_timeout_secs": 600}, garbage)
+    bad_secs = ffwatch._class_blocks(
+        {"pools": {"ffdev": {"unity_mcp": {"enabled": True, "ready_timeout_secs": "soon"}}}},
+        6, to_int)["ffdev"]["unity_mcp"]
+    check("a non-numeric readiness ceiling falls back instead of taking the daemon down",
+          bad_secs == {"enabled": True, "ready_timeout_secs": 600}, bad_secs)
+
     # The review lane's extra tool and the editor's must coexist rather than replace each other.
     both = ffwatch.capabilities_for(ffwatch.GITHUB_KIND, {"unity_mcp": {"enabled": True}})
     check("a review lane with a live editor keeps Workflow AND gains the editor",

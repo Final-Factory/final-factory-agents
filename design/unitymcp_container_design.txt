@@ -333,9 +333,15 @@ part.
 ---------
 
 Per agent class, in ~/.config/ffbox/config.json, read at TURN START (not at container creation --
-nothing about it is baked into a container):
+nothing about it is baked into a container).
 
-    "agent_classes": {
+IN THE `pools` SECTION, and this document said `agent_classes` until F7 tried to turn the switch on
+and could not. Both names are real and that is the trap: the DEFAULTS dict inside ffwatch is called
+`agent_classes`, but the FILE's per-class section is `pools` -- `_class_blocks` rebuilds every class
+block from `_pool_section(ffbox_raw, name)` after the deep merge, so an `agent_classes` block in the
+config file is read by nothing and silently does nothing.
+
+    "pools": {
       "ffdev": {
         "unity_mcp": {
           "enabled": false,
