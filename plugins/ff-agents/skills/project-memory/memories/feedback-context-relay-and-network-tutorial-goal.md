@@ -18,8 +18,13 @@ session; err early), do not let it compact and do not hand off by chat. Run `/ff
 push, then open a fresh Claude Code instance on the same Mac that resumes it:
 
 ```
-osascript -e 'tell application "Terminal" to do script "cd /Users/benryding/nevergames/FinalFactory && claude \"/ff-agents:resumeFromHandoff\""'
+osascript -e 'tell application "Terminal" to do script "cd /Users/benryding/nevergames/FinalFactory && claude --remote-control \"M5 FF<n>\" \"/ff-agents:resumeFromHandoff\""'
 ```
+
+**Terminal naming (Ben, 2026-09-12 01:20 UTC).** Every relayed instance starts with Remote Control
+named `M5 FF<n>` — the `--remote-control [name]` flag of the interactive CLI, numbered in relay
+order (FF1 → FF2 → FF3 …). `claude remote-control` is a different subcommand; do not use it. Carry
+the next number in every handoff so the chain never repeats a name.
 
 Dry-tested on the M5 (opens a Terminal window and runs the command); `orca-cli` is not installed
 there. The old session ends its turn after launching the new one; the new one reads
@@ -28,9 +33,9 @@ lost baton costs nothing.
 
 **The standing goal — how to apply.** Play the Hand-Hold tutorial (78 objectives,
 `docs/HowToPlay.md` §2a) in a live networked session between machines on Ben's network
-([[feedback-prove-over-live-networked-machines]]): BEAST Windows built host launched in the
-logged-in desktop session through a uniquely named scheduled task (`-ffAgentControl true
--ffAgentControlDev true`, windowed), M5 Mac built client, both driven through the agent-control
+([[feedback-prove-over-live-networked-machines]]): **HOST = the M5 Mac windowed built player, CLIENT = the BEAST Windows player run HEADLESS over SSH**
+(BEAST has no logged-in desktop; roles were swapped 2026-09-11 — see
+[[headless-windows-player-over-ssh-and-placement-route]]), both driven through the agent-control
 HTTP harness (`agent_http.py` / `agent_http_win.py`, `run-chain.py`, `checkpoint.py`). Two agents
 play: the driver plays the host (every verifier reads the host's state), a background player
 agent plays the client and must contribute like a real player (mine, hand items over, fight the
