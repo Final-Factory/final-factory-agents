@@ -1150,9 +1150,18 @@ the seam is the model's own account of its own work rather than a list of Discor
 used to ROTATE there instead, taking the recovery path deliberately, which kept every word a
 person wrote and threw away what the model had read, ruled out and already tried.
 
-Rotation is now recovery alone: a transcript that is GONE rolls the session to a new generation
-seeded from `render_summary` (the database, not the lost transcript). Either way the conversation
-stays open and keeps its id and its Discord anchor, and `ffweb` shows the seam.
+Rotation happens for two reasons, neither of them size. A transcript that is GONE rolls the
+session to a new generation seeded from `render_summary` (the database, not the lost transcript).
+A transcript written by a DIFFERENT PROVIDER than the one this turn is billed to also rolls it:
+Claude Code resumes by sending the transcript back, Anthropic refuses OpenRouter's message ids and
+unsigned thinking, and the turn would die on a 400. That seam still has the transcript, so the new
+generation is seeded with all of it — prompts, reasoning, tool calls and results, answers — by
+`render_transcript`. The provider is read from the last real assistant entry (`msg_` ids are
+Anthropic's), so OpenRouter → Claude → Claude seams once and the third turn resumes. Every seam
+keeps the conversation open with its id and its Discord anchor, and `ffweb` shows it.
+
+The container hands the prompt to `claude -p` on stdin, not as an argument: a seeded prompt can
+be past Linux's 128KB limit on a single argv string.
 
 Config lives under `cluster` in `~/.config/ffbox/config.json`, overridable per watch entry:
 
