@@ -136,9 +136,13 @@ print(d.get('phase') or '', d.get('pid') or 0, d.get('pgid') or 0, d.get('port')
     return 0
 }
 
+# ANY OF OURS, not just the wrapper. The wrapper exits first when a run is torn down, and an
+# `editor_alive` that only watched it would report "stopped" with a 7.8 GiB editor still holding the
+# licence seat -- the worst possible answer, because it is a confident wrong one.
 editor_alive() {
     [ -n "${ST_PID:-}" ] && [ "${ST_PID:-0}" -gt 0 ] 2>/dev/null || return 1
-    kill -0 "$ST_PID" 2>/dev/null
+    kill -0 "$ST_PID" 2>/dev/null && return 0
+    [ -n "$(our_pids)" ]
 }
 
 # THE PORT CAN MOVE, so a cached one is a guess. PortManager keeps the port it was using and only
@@ -198,16 +202,88 @@ pid_is_our_editor() {   # <pid>
     esac
 }
 
+# THE EDITOR IS NOT IN THE GROUP WE MADE, and the group kill alone does not touch it. Measured in
+# a real container on 2026-09-11, phase F:
+#
+#     288 pgid=288  /bin/bash /usr/bin/unity-editor -projectPath <WS> -executeMethod ...   <- ours
+#     292 pgid=288  /bin/sh /usr/bin/xvfb-run -ae /dev/stdout /opt/unity/Editor/Unity ...
+#     302 pgid=288  Xvfb :99
+#     305 pgid=305  /opt/unity/Editor/Unity -batchmode -projectPath <WS> ...   <- ITS OWN GROUP
+#    4510 pgid=4510 Unity ... AssetImportWorker14 -projectPath <WS>            <- and its workers
+#
+# So `kill -- -288` reaches the wrapper and Xvfb and never signals the 7.8 GiB editor. It died
+# anyway in the first probe -- because Xvfb went out from under it -- and that accident was doing
+# the work the comment in this script claimed the group kill was doing. An editor that does not
+# notice its display vanish keeps the LICENCE SEAT and the project lock, which is the exact failure
+# this script exists to prevent.
+#
+# WHAT MAKES THEM OURS IS DESCENT, NOT A GUESS. We walk the tree down from the pid we started and
+# take what is under it, cross-checked against our own project path. That is not the "find stray
+# Unity processes" path design/discord_persistent_design.txt section 14 rule 2 forbids: we are not
+# asking which editors exist, we are asking what our own process started.
+our_pids() {   # prints the pids to signal, editors first
+    python3 - "${ST_PID:-0}" "${ST_PGID:-0}" "$WS" <<'PYEOF'
+import os, sys
+
+root_pid, pgid, ws = int(sys.argv[1] or 0), int(sys.argv[2] or 0), sys.argv[3]
+procs = {}
+for entry in os.listdir("/proc"):
+    if not entry.isdigit():
+        continue
+    pid = int(entry)
+    try:
+        with open(f"/proc/{pid}/stat") as fh:
+            after = fh.read().rsplit(")", 1)[1].split()
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            cmd = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
+    except (OSError, IndexError):
+        continue
+    procs[pid] = {"ppid": int(after[1]), "pgid": int(after[2]), "cmd": cmd}
+
+children = {}
+for pid, info in procs.items():
+    children.setdefault(info["ppid"], []).append(pid)
+
+# every descendant of the pid we started, transitively
+tree, stack = set(), [root_pid] if root_pid else []
+while stack:
+    pid = stack.pop()
+    if pid in tree or pid not in procs:
+        continue
+    tree.add(pid)
+    stack.extend(children.get(pid, []))
+
+chosen = []
+for pid, info in procs.items():
+    if pid == os.getpid():
+        continue
+    in_group = pgid and info["pgid"] == pgid          # the group we created with setsid
+    descendant = pid in tree and ws and ws in info["cmd"]   # ours by descent, and our project
+    if in_group or descendant:
+        chosen.append((0 if "Unity" in info["cmd"] or "unity" in info["cmd"] else 1, pid))
+
+# Editors first: an editor told to go while its Xvfb is still up can exit properly, which is how
+# the licence comes back and the lockfile goes.
+for _, pid in sorted(chosen):
+    print(pid)
+PYEOF
+}
+
 stop_group() {   # <signal>
     if [ -n "${ST_PID:-}" ] && [ "${ST_PID:-0}" -gt 0 ] 2>/dev/null \
-       && ! pid_is_our_editor "$ST_PID"; then
+       && kill -0 "$ST_PID" 2>/dev/null && ! pid_is_our_editor "$ST_PID"; then
         err "pid $ST_PID is not an editor on $WS; refusing to signal it"
         return 1
     fi
-    [ -n "${ST_PGID:-}" ] && [ "${ST_PGID:-0}" -gt 0 ] 2>/dev/null \
-        && kill "-$1" -- "-$ST_PGID" 2>/dev/null && return 0
-    [ -n "${ST_PID:-}" ] && [ "${ST_PID:-0}" -gt 0 ] 2>/dev/null \
-        && kill "-$1" "$ST_PID" 2>/dev/null
+    local pid signalled=0
+    for pid in $(our_pids); do
+        kill "-$1" "$pid" 2>/dev/null && signalled=$(( signalled + 1 ))
+    done
+    # The group as well, for anything that appeared between the walk and now.
+    if [ -n "${ST_PGID:-}" ] && [ "${ST_PGID:-0}" -gt 0 ] 2>/dev/null; then
+        kill "-$1" -- "-$ST_PGID" 2>/dev/null && signalled=$(( signalled + 1 ))
+    fi
+    [ "$signalled" -gt 0 ]
 }
 
 cmd_stop() {

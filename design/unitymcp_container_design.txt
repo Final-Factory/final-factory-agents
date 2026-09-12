@@ -1,8 +1,17 @@
 ffbox: a live editor in the container, driven over the MCP bridge
 ================================================================
 
-Status: DESIGNED AND IMPLEMENTED 2026-09-11, phases A to E; phase F (the on-the-box checks) is
-outstanding and the feature is OFF in config until it passes. The feasibility question was MEASURED
+Status: DESIGNED, IMPLEMENTED AND MEASURED ON THE BOX, 2026-09-11. Phases A to E are in; phase F
+answered eight of its ten checks against the real workspace and found one real bug doing it (the
+editor is not in the process group ffmcp created -- section 5, rule 1, and the tasks file's F5). What
+is left is F7: the switch on for ffdev and one real dev turn watched end to end. The feature is OFF
+in config until that happens.
+
+THE NUMBERS, so nobody has to guess at them again: 80s from `ffmcp start` to a live bridge on the
+real 22 GiB workspace; the bridge survives a recompile and keeps its port; `run_tests` through it
+gave 903/906 passed in ~170s against ffverify's 859/859 in 226s on the same tree, running MORE tests
+in LESS time by not booting a second editor; 7.8 GiB RSS for the editor plus ~1.1 GiB per import
+worker; and opening the project dirtied NOTHING (section 2.5). The feasibility question was MEASURED
 first, before any of this was written -- section 1 is the measurement and section 2 is what it did
 not cover. design/unitymcp_container_tasks.md carries the phases, the acceptance checks and the
 corrections an adversarial review of this document produced before implementation started.
@@ -102,14 +111,22 @@ So, established as fact rather than as expectation:
 
 Named here because a design that hides its unknowns is worse than one with fewer of them.
 
+ALL BUT ONE OF THESE IS NOW ANSWERED -- see design/unitymcp_container_tasks.md phase F for the
+evidence. They are kept as written, with the answers appended, because what a design did not know is
+part of how it should be read.
+
   1. THE REAL WORKSPACE. The probe used a blank project: 78s to load, 70s of it asset-database
      refresh. FinalFactory is 2401 scripts, Burst, a real domain reload and a 22 GiB workspace.
      The boot cost there is UNKNOWN and it is the number that decides whether section 7's clock
      is right.
+     ANSWERED: 80s and 83s across two runs, with a warm Library restored from the cache tar. Inside
+     the 600s readiness default with room to spare, and 2% of warmup_secs.
 
   2. DOMAIN RELOAD. A turn that edits code and recompiles reloads the domain under the bridge.
      The package has EnsureStartedOnEditorIdle hooks for exactly this and they are installed when
      (b) holds, but nobody has watched a reload happen in a container.
+     ANSWERED: refresh_unity, then read_console sixty seconds later -- the bridge answered and the
+     port had not moved.
 
   3. THE STALE LOCKFILE. The REFUSAL is measured (1f); what a KILLED editor leaves behind is not.
      The probe could not stat Temp/UnityLockfile while editor A was up, but that is weak evidence:
@@ -121,6 +138,17 @@ Named here because a design that hides its unknowns is worse than one with fewer
 
   4. MEMORY UNDER LOAD. One editor is affordable (this box has 755 GiB and ~510 free), but
      several turns each holding an editor is not something anyone has watched.
+     PARTLY ANSWERED: one editor is 7.8 GiB plus ~1.1 GiB per import worker, so 8-10 GiB per
+     container mid-suite. Several at once is still unwatched, and now has a number to multiply.
+
+  5. WHAT A BOOT DIRTIES. Not in the original list, and it should have been -- the adversarial
+     review put it there. ANSWERED: nothing. Zero dirty files after a boot, and still zero after a
+     full EditMode suite on top. The d133t5 material change did not reproduce, so section 6a's stop
+     stays where it is on the strength of the argument rather than of a repro.
+
+  6. THE PROCESS GROUP, which this document asserted and got WRONG. See section 5 rule 1: the
+     editor is not in the group ffmcp creates, and only died because its Xvfb did. Found by F5,
+     fixed, and now covered by a stub that escapes its group the way the real editor does.
 
 
 3. Where the editor comes from -- and why NOT pool staging
@@ -208,10 +236,26 @@ One script, mounted onto PATH beside ffverify and ffplaytest, owning the editor'
 WHY A SCRIPT AND NOT A LINE OF THE TASK. Three traps, every one of them mechanical, and the same
 argument that produced ffplaytest yesterday:
 
-  1. THE PROCESS GROUP. `unity-editor` is a wrapper that RUNS xvfb-run as a child (not an exec --
-     the shape matters only in that there are two processes above the editor, not one). SIGTERM to
-     the wrapper pid leaves the real editor reparented to init, holding the licence seat and the
-     project lock. Launch under setsid, kill `-- -PGID`. Measured with a stub on 2026-09-11.
+  1. THE PROCESS GROUP, AND THE GROUP IS NOT ENOUGH -- CORRECTED 2026-09-11 by phase F, after this
+     section claimed otherwise. `unity-editor` is a wrapper that runs xvfb-run, which runs Xvfb and
+     the editor. Measured in a real container:
+
+         288 pgid=288  /bin/bash /usr/bin/unity-editor -projectPath <WS> ...   <- what ffmcp started
+         292 pgid=288  /bin/sh /usr/bin/xvfb-run ... /opt/unity/Editor/Unity ...
+         302 pgid=288  Xvfb :99
+         305 pgid=305  /opt/unity/Editor/Unity -batchmode -projectPath <WS>    <- ITS OWN GROUP
+        4510 pgid=4510 Unity ... AssetImportWorker14 -projectPath <WS>
+
+     UNITY PUTS ITSELF IN ITS OWN PROCESS GROUP. `kill -- -288` reaches the wrapper and Xvfb and
+     never signals the 7.8 GiB editor, which then exits only because its display vanished. That
+     accident was doing the work this design credited to the group kill, and an editor that does not
+     notice would keep the licence seat and the project lock.
+
+     So ffmcp WALKS THE TREE down from the pid it started, signals every descendant whose command
+     line carries this project (editors first, so they can exit cleanly), and signals the group as
+     well for anything created between the walk and the kill. Descent is what makes them ours; that
+     is not the "find stray Unity processes" path section 9.6 forbids, which is about GUESSING which
+     editor belongs to whom.
 
   2. THE READINESS SIGNAL. Section 1d. A caller that waits for the registry file waits forever on
      a healthy bridge.
