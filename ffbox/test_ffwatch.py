@@ -678,14 +678,19 @@ def sflake(offset_secs=0, seq=0):
 
 
 def message(mid, content, *, channel=ASK_CHANNEL, author=PLAYER, name="player",
-            ref=None, attachments=None, bot=False, mtype=0):
+            ref=None, attachments=None, bot=False, mtype=0, embeds=None):
     """`mtype` is Discord's message type. 0 is somebody talking and it is what almost every
     test wants; the system events (18 THREAD_CREATED, 6 CHANNEL_PINNED_MESSAGE) arrive through
-    the same read wearing the author of whoever triggered them, which is the whole problem."""
+    the same read wearing the author of whoever triggered them, which is the whole problem.
+
+    `embeds` is what a RELAY posts. A bot may put everything it has to say in one, leaving
+    `content` an empty string -- which is the shape the in-game bug reporter arrives in."""
     m = {"id": str(mid), "channel_id": channel, "type": mtype,
          "timestamp": "2026-08-21T00:00:00.000000+00:00",
          "author": {"id": author, "username": name, "global_name": name, "bot": bot},
          "content": content, "attachments": attachments or []}
+    if embeds:
+        m["embeds"] = embeds
     if ref:
         m["referenced_message"] = ref
     return m
@@ -2712,6 +2717,154 @@ def test_evidence_and_thread_openings_never_reach_the_gate():
           len(turns) == 1, turns)
     check("and it is triage, not the answer lane the gate would have implied",
           turns[0]["lane"] == "dev", turns[0])
+
+
+# The in-game bug reporter's account. Not a person, not this box -- a relay, which is the whole
+# distinction the tests below exist to pin.
+RELAY = "1374974531147403397"
+
+BUG_EMBED = [{
+    "type": "rich",
+    "title": "\U0001f41b Tech-Tree-Wrong Order",
+    "description": ("some buildings can be researched but have missing components like "
+                    "lasers, which should be a dependency for the research too"),
+    "fields": [{"name": "Game Version", "value": "0.21.0.23", "inline": True},
+               {"name": "Platform", "value": "WindowsPlayer", "inline": True},
+               {"name": "Discord", "value": "reteoteigam", "inline": True}],
+    "footer": {"text": "Submitted on 2026-09-12 05:31:30 UTC"},
+}]
+
+
+def test_a_report_relayed_by_a_bot_is_a_report():
+    """Conversation 141: a bug report filed from inside the game, ingested and then ignored.
+
+    The in-game reporter posts through a relay bot, and every turn-selection query in this file
+    used to spell "not me" as `is_bot=0`. So the thread was created, the runtime log and the
+    save zip were downloaded, the row was written -- and no pass ever offered it, because the
+    relay was filed under the harness talking to itself. always_a_turn would have forced a turn
+    twice over, for the attachments and for the thread opening, and was never reached.
+
+    The reports that DID get answered before this were answered because a human happened to
+    reply in the thread. 141 was the first where nobody did, and it sat idle.
+    """
+    print("a relayed bug report")
+    att = {"id": "9", "filename": "FinalFactory_RuntimeLog.txt", "size": 11,
+           "content_type": "text/plain", "url": "https://cdn.example/log.txt?ex=signed"}
+    fixture = base_fixture()
+    bug_thread(fixture, "31410", "Tech-Tree-Wrong Order",
+               [message("31410", "", channel="31410", author=RELAY, name="Bug Bot",
+                        bot=True, embeds=BUG_EMBED, attachments=[att])])
+    case = Case("relayed-report", fixture,
+                verdict={"engage": False, "type": "question",
+                         "reason": "the model would have declined this too"})
+    case.events(thread_event("31410", kind="thread"))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+
+    turns = case.rows("SELECT * FROM turn")
+    check("a report nobody replied to still becomes a turn", len(turns) == 1,
+          case.rows("SELECT id, is_bot, gate, gate_reason, content FROM message"))
+    check("and it is triage, like any other report", turns and turns[0]["lane"] == "dev", turns)
+
+    # AND THE REPORT IS IN IT. The relay wrote nothing in `content`; everything the player
+    # typed was in the embed, and until this it was dropped at ingest.
+    row = case.rows("SELECT * FROM message")[0]
+    check("the message is stored as the relay's, not as the box's own",
+          row["is_bot"] == 1 and row["author_id"] == RELAY, dict(row))
+    for wanted in ("Tech-Tree-Wrong Order", "missing components", "Game Version: 0.21.0.23",
+                   "Platform: WindowsPlayer", "Submitted on 2026-09-12"):
+        check(f"the embed's {wanted!r} survived ingest", wanted in (row["content"] or ""),
+              row["content"])
+    check("and the attachment came with it",
+          case.rows("SELECT * FROM attachment WHERE message_id=?", (row["id"],)) != [],
+          case.rows("SELECT * FROM attachment"))
+
+
+def test_the_box_still_never_answers_itself():
+    """The one bot whose messages must never become a turn, and the reason the rule exists.
+
+    Max's own replies come back through the Gateway and through the sweep like everything else
+    in a thread. Answering them is a container per lap, forever, and no rate limit is a design.
+    So the filter is "not THIS id" rather than "no bots at all", and the id is the one
+    `ffdiscord whoami` reports.
+    """
+    print("the box does not answer itself")
+    fixture = base_fixture()
+    bug_thread(fixture, "31420", "belt merger drops items",
+               [message("31420", "the box's own answer from an earlier turn", channel="31420",
+                        author=BOT, name="Max", bot=True)])
+    case = Case("no-self-answer", fixture)
+    case.events(thread_event("31420", kind="thread"))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    check("its own post opens no turn, thread or no thread",
+          case.rows("SELECT * FROM turn") == [], case.rows("SELECT * FROM turn"))
+    check("but it is still stored, because it is what the thread looks like",
+          len(case.rows("SELECT * FROM message")) == 1, case.rows("SELECT * FROM message"))
+    check("and the conversation is not claimed as in flight by it",
+          not case.watcher.conversation_in_flight(
+              case.rows("SELECT * FROM conversation")[0]["id"]))
+
+    # AND IF THE BOX CANNOT NAME ITSELF IT GOES BACK TO THE OLD, NARROW READING rather than
+    # into the loop. A missed report waits for somebody to speak; a box answering itself does
+    # not stop.
+    case.watcher._bot_id = None
+    check("a degraded whoami excludes every bot rather than none",
+          case.watcher.not_the_bot_itself() == "is_bot=0",
+          case.watcher.not_the_bot_itself())
+    case.watcher._bot_id = BOT
+    check("and with an id it excludes exactly one",
+          case.watcher.not_the_bot_itself("m.") == f"m.author_id <> '{BOT}'",
+          case.watcher.not_the_bot_itself("m."))
+
+
+def test_embed_text_is_the_message_when_there_is_no_body():
+    """message_text, the whole of it, without a Discord in the way."""
+    print("embed text")
+    check("an embed-only message reads as its embed",
+          ffwatch.message_text({"content": "", "embeds": [{"description": "it drops items"}]})
+          == "it drops items", None)
+    check("a body and an embed keep both, body first",
+          ffwatch.message_text({"content": "see below", "embeds": [{"description": "why"}]})
+          == "see below\n\nwhy", None)
+    check("fields read as name: value",
+          ffwatch.message_text({"content": "", "embeds": [
+              {"fields": [{"name": "Platform", "value": "WindowsPlayer"}]}]})
+          == "Platform: WindowsPlayer", None)
+    check("a message with no embeds is its content, untouched",
+          ffwatch.message_text({"content": "plain"}) == "plain", None)
+    check("and an empty payload is an empty string rather than a None",
+          ffwatch.message_text({}) == "", None)
+    check("a malformed embed list cannot take an ingest down",
+          ffwatch.message_text({"content": "x", "embeds": ["not a dict", None]}) == "x", None)
+    check("the flattened text is bounded by Discord's own ceiling",
+          len(ffwatch.message_text(
+              {"content": "", "embeds": [{"description": "y" * 20000}]})) == 6000, None)
+
+
+def test_the_gate_tells_its_own_earlier_answer_from_a_relay():
+    """Both are bots; only one of them is this box.
+
+    Labelling the in-game reporter "the bot itself, answering in an earlier turn" told the
+    gate the thread had already been handled -- the last thing to say about a report nobody
+    has looked at yet.
+    """
+    print("who is speaking, to the gate")
+    cfg = {"operators": {"lothsahn": {"discord": LOTHSAHN}}}
+    mine = {"author_name": "Max", "author_id": BOT, "is_bot": 1}
+    relay = {"author_name": "Bug Bot", "author_id": RELAY, "is_bot": 1}
+    human = {"author_name": "reteoteigam", "author_id": PLAYER, "is_bot": 0}
+    dev = {"author_name": "Lothsahn", "author_id": LOTHSAHN, "is_bot": 0}
+    check("its own earlier answer is named as that",
+          "the bot itself" in ffwatch.gate_speaker(cfg, mine, me=BOT), None)
+    check("a relay is named as a relay, not as the box",
+          ffwatch.gate_speaker(cfg, relay, me=BOT)
+          == "Bug Bot (a bot, relaying what somebody else wrote)", None)
+    check("a player is still a player", "(a player)" in ffwatch.gate_speaker(cfg, human, me=BOT))
+    check("a developer is still a developer",
+          "(a developer of the game)" in ffwatch.gate_speaker(cfg, dev, me=BOT))
+    check("and with no id to compare against, every bot reads as this one",
+          "the bot itself" in ffwatch.gate_speaker(cfg, relay), None)
 
 
 def test_a_newly_attached_channel_answers_none_of_its_backlog():
@@ -19716,6 +19869,10 @@ def main():
         test_a_selector_that_cannot_answer_moves_nothing_and_waits,
         test_a_conversation_that_will_not_classify_backs_off_and_is_flagged_until_released,
         test_evidence_and_thread_openings_never_reach_the_gate,
+        test_a_report_relayed_by_a_bot_is_a_report,
+        test_the_box_still_never_answers_itself,
+        test_embed_text_is_the_message_when_there_is_no_body,
+        test_the_gate_tells_its_own_earlier_answer_from_a_relay,
         test_a_newly_attached_channel_answers_none_of_its_backlog,
         test_a_channel_already_in_use_is_not_cut_off,
         test_status_says_what_this_box_is_attached_to,

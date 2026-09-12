@@ -82,7 +82,7 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 SCHEMA_PATH = os.path.join(HERE, "ffwatch_schema.sql")
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 # THE ONE MODULE THIS DAEMON IMPORTS FROM BESIDE IT, and it is deliberately not ffweb: the
 # Claude subscription pool moved into claude_keys.py on 2026-09-04 precisely so that the
@@ -2944,10 +2944,12 @@ REVIEW_TOOL = "Workflow"
 
 # WHAT THIS BOX SIGNS ITS OWN COMMENTS WITH, and why one is needed at all.
 #
-# On Discord the harness has an identity of its own: bot_id() answers "that was me", every
-# message row carries is_bot, and pending_messages selects is_bot=0. Nothing the bot says can
-# become a turn. On GitHub there is no such identity -- the harness posts with GH_PR_TOKEN,
-# which is an OPERATOR'S OWN ACCOUNT, and that operator is in the trust table because the whole
+# On Discord the harness has an identity of its own: bot_id() answers "that was me", and the
+# turn-selection queries exclude that one id (not_the_bot_itself). Nothing THIS bot says can
+# become a turn; what any OTHER bot says can, because a relay bot is a person talking.
+#
+# On GitHub there is no such identity -- the harness posts with GH_PR_TOKEN, which is an
+# OPERATOR'S OWN ACCOUNT, and that operator is in the trust table because the whole
 # point of the table is that they may command this box. So "who wrote it" cannot tell the box
 # apart from the person: is_github_operator answers YES to the harness's own comments.
 #
@@ -3557,6 +3559,74 @@ def system_message_reason(msg):
     return f"a Discord system message (type {kind}), not something a person said"
 
 
+# EMBED TEXT, BECAUSE A RELAYED REPORT HAS NO `content` AT ALL.
+#
+# The in-game bug reporter posts through a relay bot, and a bot may put its text in an embed
+# instead of in the message body. Discord then returns `content: ""` and everything the player
+# wrote -- the report, the game version, the platform -- sits in `embeds[0]`. ffwatch stored
+# `content` alone until 2026-09-12, so conversation 141's only message was an empty string with
+# two attachments hanging off it: the thread was ingested, the log and the save came down, and
+# the one thing a triage turn needed to read was dropped on the floor.
+#
+# FLATTENED AT INGEST rather than at render time, so every reader gets it -- the turn prompt,
+# the engagement gate, the thread history a later turn is given, and `ffwatch show`. There is
+# one message.content column and this is what belongs in it.
+#
+# NOT FOR DIRECTIVES. `!branch` and `!conv` are still parsed out of the RAW content, so an
+# embed cannot carry one. Embeds come only from bots and webhooks, a directive is an operator's
+# command, and the narrower reading is the one with nothing behind it.
+EMBED_CHARS = 6000               # Discord's own ceiling on the embed text of one message
+EMBED_MAX = 10                   # and on how many embeds it may carry
+EMBED_FIELDS_MAX = 25            # and on the fields in one embed
+
+
+def _embed_str(block, key):
+    """One string out of an embed, stripped. "" for anything that is not one.
+
+    Every read of a Discord payload in this file is this defensive, and an embed earns it
+    twice over: it is the one part of a message whose shape a THIRD-PARTY bot chooses, and an
+    ingest that raises takes the doorbell down with it.
+    """
+    val = block.get(key) if isinstance(block, dict) else None
+    return val.strip() if isinstance(val, str) else ""
+
+
+def embed_text(msg):
+    """Everything a message's embeds SAY, flattened to text. "" when it has none.
+
+    Title, description, then each field as `name: value`, then the footer -- reading order, so
+    a relayed report comes out in the shape the person filling the form typed it. The author
+    block is deliberately left out: it is branding ("Final Factory Bug Reporter"), not content.
+    """
+    blocks = []
+    for emb in (msg.get("embeds") or [])[:EMBED_MAX]:
+        if not isinstance(emb, dict):
+            continue
+        parts = [_embed_str(emb, "title"), _embed_str(emb, "description")]
+        for field in (emb.get("fields") or [])[:EMBED_FIELDS_MAX]:
+            name, val = _embed_str(field, "name"), _embed_str(field, "value")
+            parts.append(f"{name}: {val}" if name and val else (name or val))
+        parts.append(_embed_str(emb.get("footer"), "text"))
+        parts = [p for p in parts if p]
+        if parts:
+            blocks.append("\n".join(parts))
+    return "\n\n".join(blocks)[:EMBED_CHARS]
+
+
+def message_text(msg):
+    """What this message says: its `content`, plus whatever its embeds say.
+
+    Both, in that order, and never one instead of the other -- a relay that writes a one-line
+    body and puts the report in an embed is the common shape, and dropping either half loses
+    something somebody wrote.
+    """
+    content = msg.get("content") or ""
+    embeds = embed_text(msg)
+    if not embeds:
+        return content
+    return f"{content.rstrip()}\n\n{embeds}" if content.strip() else embeds
+
+
 def reply_mention(conv, message):
     """The user id a reply should open by @-mentioning, or None.
 
@@ -3884,6 +3954,12 @@ class Db:
             script = fh.read()
         with self.conn:
             self.conn.executescript(script)
+            # WHAT VERSION THIS DATABASE WAS LAST WRITTEN AT, read before anything below can
+            # move it. Almost every statement in this method is idempotent and runs on every
+            # start; a ONE-SHOT one has to be able to tell whether it has already run, and the
+            # stamp at the bottom is the only record of that.
+            have = self.conn.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
             # v17 (2026-09-03): `rotated_at_seq` became `compacted_at_seq` when reaching
             # cluster.compact_turns started compacting the session instead of rotating it. The
             # RENAME has to run before the ADDED_COLUMNS loop below, or the loop adds an empty
@@ -3984,8 +4060,32 @@ class Db:
             #
             # v21 (2026-09-10): credential_health (in the schema file) and the classify_*
             # columns. No statement: nothing is down and nothing has failed to classify yet.
-            have = self.conn.execute(
-                "SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
+            #
+            # v22 (2026-09-12): a bot stops meaning this bot, and the backlog that uncovers.
+            #
+            # THE ONLY ONE-SHOT STATEMENT IN THIS METHOD, and it has to be one. Until today
+            # every turn-selection query excluded every bot, so a report relayed by the in-game
+            # reporter was ingested, its log and save downloaded, and then never offered to a
+            # pass (see Watcher.not_the_bot_itself). Lifting that makes every one of those rows
+            # claimable -- including the ones sitting in threads this box has already answered
+            # several turns of, which would come back as fresh triage on settled reports in the
+            # first minute after the update. Run on every start it would do worse: a relayed
+            # follow-up posted NEXT week into an answered thread is real work, and this would
+            # gate it.
+            #
+            # THE BACKLOG SPLITS ON WHETHER THE THREAD WAS EVER ANSWERED. A bot's message in a
+            # conversation that has a turn is history -- those threads got handled because a
+            # person spoke after the relay and the box replied to them. One in a conversation
+            # with NO turn is the report that was missed, and it is deliberately left claimable:
+            # it is the whole reason for the change.
+            if (have < 22 and self._has_column("message", "gate")
+                    and self._has_column("message", "is_bot")):
+                self.conn.execute(
+                    "UPDATE message SET gate='none', gate_reason="
+                    "'a bot wrote it, in a thread this box had already answered (schema 22)'"
+                    " WHERE gate IS NULL AND turn_id IS NULL AND direction='in' AND is_bot=1"
+                    "   AND EXISTS (SELECT 1 FROM turn t"
+                    "                WHERE t.conversation_id = message.conversation_id)")
             if have < SCHEMA_VERSION:
                 self.conn.execute("INSERT INTO schema_version(version, applied_at) VALUES (?,?)",
                                   (SCHEMA_VERSION, now_iso()))
@@ -4033,7 +4133,7 @@ GATE_NOWHERE = ("The message was posted in a Discord channel the game's players 
                 "in.")
 
 
-def gate_speaker(cfg, row):
+def gate_speaker(cfg, row, me=None):
     """Who wrote this message, in three words, for the gate to read.
 
     FROM THE STORED AUTHOR ID AND THE OPERATOR TABLE, never from the text. This label is the
@@ -4041,16 +4141,26 @@ def gate_speaker(cfg, row):
     into a developer answering a player -- so it is derived exactly the way turn_trust derives
     its tier: a dictionary lookup on the id Discord authenticated. A message SAYING it is from a
     developer is worth nothing, here as everywhere else in this file.
+
+    `me` IS THE BOX'S OWN BOT ID, and it is the difference between "I said that last turn" and
+    "a relay is quoting a player at me". Both are bots; only one of them is this one. Reading
+    the in-game bug reporter as the bot's own earlier answer told the gate the thread had
+    already been handled, which is the last thing to tell it about a report nobody has looked
+    at. A missing `me` reads every bot as this one, for the same reason not_the_bot_itself
+    falls back the way it does: it is the quiet direction.
     """
     name = (row["author_name"] or "").strip() or "someone"
+    author = str(row["author_id"] or "")
     if row["is_bot"]:
-        return f"{name} (the bot itself, answering in an earlier turn)"
-    if str(row["author_id"] or "") in set(operators(cfg).values()):
+        if me is None or author == str(me):
+            return f"{name} (the bot itself, answering in an earlier turn)"
+        return f"{name} (a bot, relaying what somebody else wrote)"
+    if author in set(operators(cfg).values()):
         return f"{name} (a developer of the game)"
     return f"{name} (a player)"
 
 
-def render_gate_messages(cfg, rows, at=None):
+def render_gate_messages(cfg, rows, at=None, me=None):
     """Message rows as labelled, dated, length-capped lines. Oldest first.
 
     `at` is the instant the new message was written, so every older line carries how long
@@ -4065,7 +4175,7 @@ def render_gate_messages(cfg, rows, at=None):
         body = (row["content"] or "").strip()
         if len(body) > GATE_MESSAGE_CHARS:
             body = body[:GATE_MESSAGE_CHARS].rstrip() + " ...[trimmed]"
-        out.append(f"{age}{gate_speaker(cfg, row)}: {body}")
+        out.append(f"{age}{gate_speaker(cfg, row, me)}: {body}")
     return "\n\n".join(out)
 
 
@@ -6068,6 +6178,40 @@ class Watcher:
                 f"treated as addressed to it, so mention-only channels will wake for everything")
         return self._bot_id
 
+    # WHAT `is_bot=0` USED TO MEAN IN THE TURN-SELECTION QUERIES, AND WHY IT NO LONGER
+    # SAYS IT. Exactly ONE bot's messages must never become a turn: this one's. Max's own
+    # replies come back through the Gateway and through the sweep like every other message in
+    # a thread, and a box that answered them would answer itself, forever, one container per
+    # lap.
+    #
+    # EVERY OTHER BOT IS SOMEBODY RELAYING A PERSON. The in-game bug reporter posts through a
+    # relay bot, so from the day this box was attached to #bug-reports until 2026-09-12 every
+    # report filed from inside the game was ingested, its runtime log and save zip downloaded
+    # -- and then never read, because `is_bot=0` filed the relay under "the harness talking to
+    # itself". The ones that got answered got answered because a human happened to reply in
+    # the thread afterwards. Conversation 141 was the first where nobody did: it sat `idle`
+    # with one unclaimed message, and always_a_turn -- which would have forced a turn twice
+    # over, once for the attachments and once for the thread opening -- was never reached,
+    # because selection had already dropped the conversation.
+    #
+    # IT FALLS BACK TO `is_bot=0` WHEN THE BOX CANNOT NAME ITSELF. bot_id() caches None when
+    # `ffdiscord whoami` fails, and the two ways of being wrong here are not the same size: a
+    # missed report waits for the next person to speak in the thread, while a box that cannot
+    # recognise its own posts replies to them until somebody stops it. So a degraded whoami
+    # degrades into the OLD, narrow reading rather than into the loop.
+    def not_the_bot_itself(self, prefix=""):
+        """SQL for "the harness did not write this message". `prefix` is the table alias.
+
+        A string rather than a clause-and-params pair because it is spliced into the middle of
+        six queries, where an extra bound parameter would have to be threaded into six
+        different argument tuples in the right order. The only value it can interpolate is a
+        Discord snowflake this box read off its own `whoami` and checked with isdigit().
+        """
+        me = self.bot_id()
+        if me and str(me).isdigit():
+            return f"{prefix}author_id <> '{me}'"
+        return f"{prefix}is_bot=0"
+
     def is_addressed(self, msg):
         """Was the bot @-mentioned, or is this a reply to one of its messages?
 
@@ -6155,7 +6299,7 @@ class Watcher:
             " VALUES(?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?,?)",
             (conv_id, discord_id, "in", str(author.get("id") or ""),
              author.get("global_name") or author.get("username") or "?",
-             1 if author.get("bot") else 0, msg.get("content") or "",
+             1 if author.get("bot") else 0, message_text(msg),
              str(ref.get("id")) if ref.get("id") else None,
              msg.get("timestamp") or now_iso(),
              # Computed HERE, while the raw Discord payload is still in hand. By the time the
@@ -6728,6 +6872,10 @@ class Watcher:
         by timestamp, because snowflakes are monotonic and the two timestamp formats in this
         database (Discord's, and now_iso's) do not compare as strings.
         """
+        # THE ONE PLACE `is_bot=0` STILL MEANS WHAT IT SAYS, and it is not a turn-selection
+        # query (see not_the_bot_itself). The question here is how much of the CHANNEL a
+        # reader scrolled past, and a bot's line in a text channel is furniture rather than
+        # somebody else's conversation getting between two halves of this one.
         low = row["in_watermark_id"]
         if not low or not message_id:
             return 0
@@ -6852,7 +7000,7 @@ class Watcher:
             return 0
         pending = self.db.query(
             "SELECT * FROM message WHERE conversation_id=? AND turn_id IS NULL"
-            " AND direction='in' AND is_bot=0 AND gate IS NULL"
+            f" AND direction='in' AND {self.not_the_bot_itself()} AND gate IS NULL"
             f" ORDER BY {MESSAGE_ORDER}", (conv["id"],))
         if not pending:
             return 0
@@ -7096,7 +7244,8 @@ class Watcher:
         # closes on the pass after the gate has spoken.
         pending = self.db.scalar(
             "SELECT COUNT(*) FROM message WHERE conversation_id=? AND turn_id IS NULL"
-            " AND direction='in' AND is_bot=0 AND gate IS NULL", (conv_id,), 0)
+            f" AND direction='in' AND {self.not_the_bot_itself()} AND gate IS NULL",
+            (conv_id,), 0)
         if pending:
             return
         self.db.execute(
@@ -7481,7 +7630,7 @@ class Watcher:
         rows = self.db.query(
             "SELECT DISTINCT m.conversation_id AS cid FROM message m"
             " JOIN conversation c ON c.id = m.conversation_id"
-            " WHERE m.turn_id IS NULL AND m.direction='in' AND m.is_bot=0"
+            f" WHERE m.turn_id IS NULL AND m.direction='in' AND {self.not_the_bot_itself('m.')}"
             "   AND m.gate IS NULL"
             f" AND (c.kind NOT IN ({','.join('?' * len(LOCAL_KINDS))})"
             "      OR EXISTS (SELECT 1 FROM turn t WHERE t.conversation_id = c.id))",
@@ -7716,7 +7865,7 @@ class Watcher:
         """This conversation's unclaimed inbound messages, oldest first."""
         return self.db.query(
             "SELECT * FROM message WHERE conversation_id=? AND turn_id IS NULL"
-            " AND direction='in' AND is_bot=0 AND gate IS NULL"
+            f" AND direction='in' AND {self.not_the_bot_itself()} AND gate IS NULL"
             f" ORDER BY {MESSAGE_ORDER}",
             (conv_id,))
 
@@ -8286,11 +8435,12 @@ class Watcher:
                 " AND CAST(discord_id AS INTEGER) < ?"
                 f" ORDER BY {MESSAGE_ORDER_DESC} LIMIT ?",
                 (conv["id"], first, GATE_HISTORY_MESSAGES))))
-        body = render_gate_messages(self.cfg, rows, at=at)
+        me = self.bot_id()
+        body = render_gate_messages(self.cfg, rows, at=at, me=me)
         dropped = 0
         while rows and len(body) > GATE_HISTORY_CHARS:
             rows, dropped = rows[1:], dropped + 1
-            body = render_gate_messages(self.cfg, rows, at=at)
+            body = render_gate_messages(self.cfg, rows, at=at, me=me)
         lines = []
         if conv["title"]:
             lines.append(f"thread title: {(conv['title'] or '')[:200]}")
@@ -8457,7 +8607,8 @@ class Watcher:
         # THE GATE READS THE CONVERSATION, NOT ONE MESSAGE. Built only when the gate is going to
         # run: it is two SQL reads and a render, and every other path here has already decided.
         context = self.gate_context(conv, msgs, alias) if gate else {}
-        request = render_gate_messages(self.cfg, msgs, at=context.get("at")) if gate else text
+        request = (render_gate_messages(self.cfg, msgs, at=context.get("at"), me=self.bot_id())
+                   if gate else text)
         if gate and not text:
             # Nothing but attachments or an empty body. The title is all there is to judge,
             # which is what this call has always fallen back to.
@@ -11741,7 +11892,8 @@ class Watcher:
             "  FROM conversation c WHERE c.branch=? AND c.id<>?"
             "   AND (c.state IN ('queued','running')"
             "        OR EXISTS (SELECT 1 FROM message m WHERE m.conversation_id=c.id"
-            "                    AND m.turn_id IS NULL AND m.direction='in' AND m.is_bot=0"
+            "                    AND m.turn_id IS NULL AND m.direction='in'"
+            f"                    AND {self.not_the_bot_itself('m.')}"
             "                    AND m.gate IS NULL))"
             " LIMIT 1", (branch, exclude if exclude is not None else -1))
 
@@ -11766,7 +11918,8 @@ class Watcher:
             return True
         return bool(self.db.scalar(
             "SELECT COUNT(*) FROM message WHERE conversation_id=? AND turn_id IS NULL"
-            " AND direction='in' AND is_bot=0 AND gate IS NULL", (conv_id,), 0))
+            f" AND direction='in' AND {self.not_the_bot_itself()} AND gate IS NULL",
+            (conv_id,), 0))
 
     def adopt_branch(self, conv_id, branch, by):
         """Tell a conversation which branch it owns. Returns (ok, reason).
