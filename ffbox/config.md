@@ -198,6 +198,7 @@ it cannot resolve to a snowflake.
 | `engage` | `all`, `mention` | `mention` | Whether every human message is considered, or only one that @-mentions the bot or replies to it. |
 | `ping` | `true`, `false` | `false` | Whether a reply there may @-mention a human. |
 | `thread_per_message` | `true`, `false` | `false` | Whether every message here is its own report, answered in a thread the harness opens under it. The forum's shape, given to a text channel. Does nothing on a forum, which already has it. |
+| `details_to` | an alias | none | Where a player's private half from this channel goes. See [`details_to`](#details_to). |
 
 `engage: all` means every message a PERSON wrote. Discord's own events in a channel — somebody
 started a thread, somebody pinned something, somebody joined — are messages in the API and are
@@ -252,6 +253,38 @@ from the first time it was ever listed.
 
 Every `cluster` value below can be overridden per entry, for a channel that moves differently
 from the rest.
+
+### `details_to`
+
+```json
+"bug_reports":     { "kind": "bug_report", "forum": true,  "venue": "public",  "engage": "all", "ping": false,
+                     "details_to": "dev_bug_reports" },
+"dev_bug_reports": { "kind": "bug_report", "forum": false, "venue": "private", "engage": "all", "ping": false,
+                     "thread_per_message": true }
+```
+
+**Where a player's private half goes.** A turn in a public channel writes its reply under the
+player rules. When a run finds something the developers need that the thread cannot hold, such
+as file paths, the full list behind a count or the change it would make, it can put that in a
+second, private half. An operator who asked in public gets that half by DM, whether or not this
+field is set. A player gets one only from a channel with `details_to`, and it goes to the channel
+named here, not to the player. Without the field a player's turn is never offered a private
+half, which is what every channel did before 2026-09-12.
+
+The post opens with the same `Re: [this Discord message](…)` link an operator's DM does, built
+by the harness from the message id, and always goes out silent: no text from a player's turn
+may ping anybody, whatever the target's `ping` says. It counts against the conversation's
+`rate_limits.send.per_conversation_hour` like any other post.
+
+**The target has to be declared private.** It needs its own `watch` entry saying
+`"venue": "private"` and an id in `discord.channels`. A target that fails either check is
+ignored, as if the field were absent, and `ffwatch` names the entry at startup. It is checked
+again when the post is queued, so a channel reclassified mid-run never receives one. On a
+channel that is itself private the field does nothing, because the whole answer goes out in
+place there.
+
+Replies to that post start their own conversation in the target channel. They are not tied back
+to the report the detail came from.
 
 ## `max_concurrent_runs`
 
