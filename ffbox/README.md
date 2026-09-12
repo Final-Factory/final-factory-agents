@@ -391,6 +391,24 @@ That checkout still exists, on its own ZFS dataset — ZFS cannot snapshot a sub
 Nothing else reads it. See "The workspace: CI's cache, not a golden clone" under Host setup, and
 `design/ffcache_design.txt` for how the entries and the mirror are built.
 
+**Which entry, and why the branch's base is a rung.** The ladder is: the ref's own entry, then the
+entry of the base branch it descends from, then `master`, then the newest tar at this editor
+version. CI's own restore in `main.yml` has every rung but the second, because CI restores onto
+branches it pushed itself; ffbox restores onto branches nobody has built yet, and that is where
+the second rung earns its place. A run's branch has no entry until CI writes one, so a
+develop-based `ffbox/*` branch used to fall straight through to MASTER's tar — and the restore
+then reset the worktree across everything develop had changed since, 4,094 files on 2026-09-11,
+every one of them re-imported before Unity could compile a line, with develop's own entry sitting
+unread in the same directory. The rule for picking between the bases is harvest's rule, for the
+same reason: the most specific base the work descends from. Ties go by distance rather than by the
+order `--base-refs` lists — a branch off master forks develop at the very commit it forks master
+at, because develop carries master's head, so only "how far has that base run on since" separates
+them, and ffwatch puts an operator's requested base at the front of the list where "first listed
+wins" would then hand every master-based branch develop's tar. The mirror answers all of it in
+milliseconds and no tar is opened. `ffbox/test_entry_ladder.sh` holds the ladder, including the
+three cases that look like details and are not: the tie both ways up, and a base with no tar of
+its own never shadowing one that has it.
+
 ### The base is refreshed before every run
 
 Every launch fetches the tip from the local mirror before the container starts, so a run's base is
@@ -2880,7 +2898,10 @@ what would fail if the SAN were ever dropped.
 
 - **A run's `Library/` is only as fresh as the last CI cache entry.** CI writes one per branch at
   most hourly, so a run can inherit an import a little behind the tip and pay for the delta. That
-  is the same trade golden made, without the host-side Unity.
+  is the same trade golden made, without the host-side Unity. Since 2026-09-11 the delta is at
+  least the SMALL one — a branch with no entry restores from the base it descends from rather than
+  from master — but a branch whose base has not been built at this editor version still pays the
+  whole difference.
 - **`ffghr-gitmirror` is load-bearing for runs too.** With no golden to fall back on, a run whose
   mirror fetch fails refuses to start rather than working from a stale tar.
 - **A run's Claude gets the plugins its class is configured with, and nothing installs any in

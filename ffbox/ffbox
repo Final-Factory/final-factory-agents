@@ -317,6 +317,9 @@ Options:
                        for not descending from the ref the run was checked out at. The name is
                        written to <results>/publish_base.txt, which is what the pull request
                        ends up targeting. Empty means the checked-out commit is the only base.
+                       These names are also the cache-entry ladder's middle rung: a branch with
+                       no entry of its own restores from the tar of whichever of them it descends
+                       from, rather than from master's and a re-import of the difference.
   --range-from-start   Harvest the range from the commit the run STARTED at rather than from
                        the base under --base-refs. For a run continuing a branch somebody else
                        pushed: without it the range begins at origin/develop and carries their
@@ -1256,16 +1259,90 @@ echo "[ffbox] run $RUN_ID"
 #
 # THE AGENT ONLY EVER READS THE CACHE. Extraction happens here, on the host, from a directory the
 # container never sees; the run cannot write back into an entry that later runs restore from.
-# Which entry. The branch asked for, then the default branch, then whatever ran most recently at
-# this editor version -- the same ladder main.yml's restore uses, so both modes agree on what a
-# usable entry is.
+# Which entry. The branch asked for, then the base branch that branch came off, then master, then
+# whatever ran most recently at this editor version. main.yml's restore has the first, third and
+# fourth rungs and not the second, and that divergence is deliberate: CI restores onto branches it
+# pushed itself, while ffbox restores onto branches nobody has built yet.
+#
+# WHAT THE BASE RUNG IS FOR. A run's own branch has no entry until CI writes one, so a
+# develop-based ffbox/* branch fell straight through to MASTER's tar -- and the restore then reset
+# the worktree across everything develop had changed since, 4,094 files on 2026-09-11, every one of
+# which Unity re-imports before it can compile a line. develop's own entry was sitting unread in
+# the same directory. Conversation 133 has both halves an hour apart: turn 4 restored master's tar
+# onto a develop-based branch and its ffverify took 432s, turn 5 restored the branch's own entry --
+# CI had written one by then -- and the same suite took 273s. The import is not all of that gap,
+# but it is in it, and it is the half this rung removes.
 [ -n "$UNITY_SCOPE" ] || UNITY_SCOPE=$(
     git -C "$MIRROR_REPO_PATH" show "refs/heads/master:ProjectSettings/ProjectVersion.txt" 2>/dev/null \
       | sed -n 's/^m_EditorVersion: *//p' | tr -d ' \r')
+
+# _mirror_sha <name> -> the commit, or nothing and status 1.
+#
+# The mirror is BARE, so it has refs/heads and no remotes at all, and the harness says
+# "origin/develop" about as often as it says "develop". A sha is taken as itself.
+_mirror_sha() {
+    git -C "$MIRROR_REPO_PATH" rev-parse --verify --quiet "refs/heads/${1#origin/}^{commit}" 2>/dev/null \
+      || git -C "$MIRROR_REPO_PATH" rev-parse --verify --quiet "${1}^{commit}" 2>/dev/null
+}
+
+# _entry_base <ref> -> the most specific of $BASE_REFS that ref descends from, or nothing.
+#
+# THE RULE IS HARVEST'S RULE, for the same reason it is harvest's: the fork point answers "where
+# did this branch leave that base" whenever the two share any history, which two branches of one
+# repository always do. The most specific base wins -- a branch off develop has master behind it as
+# well, so develop's fork point is the descendant of the two and names the closer tar.
+#
+# AND TIES GO BY DISTANCE, NOT BY ORDER, which is the half harvest had to learn twice. With fork
+# points a tie is the COMMON case rather than the rare one: a branch off master forks develop at
+# the very commit it forks master at, because develop carries master's head. Reading "first listed
+# wins" onto that would answer develop for every master-based branch the moment an operator's
+# requested base moved develop to the front of --base-refs (ffwatch does exactly that), and
+# develop's tar is the farther one. `rev-list --count` says how far the base has run on since the
+# work left it, which is the question actually being asked here: which tar is nearest. Order is
+# only the last resort, when even the distances tie.
+#
+# NO --base-refs MEANS TRY BOTH ANYWAY. Empty is a statement about PUBLISHING -- that the run may
+# base work on nothing but the commit it started at -- and which tar is closest to that commit is
+# not a policy question. A hand-run ffbox gets the fast entry too.
+#
+# IT ONLY EVER NARROWS. A name the mirror cannot resolve, a ref nothing on the box has, no mirror
+# at all: every candidate fails, nothing is printed, and the ladder is the one it always was.
+_entry_base() {
+    [ -d "$MIRROR_REPO_PATH" ] || return 0
+    _eb_ref=$(_mirror_sha "$1") || return 0
+    _eb_pick= _eb_fork= _eb_dist=
+    for _eb_name in ${BASE_REFS:-master develop}; do
+        _eb_sha=$(_mirror_sha "$_eb_name") || continue
+        _eb_at=$(git -C "$MIRROR_REPO_PATH" merge-base "$_eb_sha" "$_eb_ref" 2>/dev/null) || continue
+        [ -n "$_eb_at" ] || continue
+        _eb_n=$(git -C "$MIRROR_REPO_PATH" rev-list --count "${_eb_at}..${_eb_sha}" 2>/dev/null) || _eb_n=0
+        [ -n "$_eb_n" ] || _eb_n=0
+        _eb_better=0
+        if [ -z "$_eb_fork" ]; then
+            _eb_better=1
+        elif [ "$_eb_at" = "$_eb_fork" ]; then
+            # An `&& _eb_better=1` here would be a whole command that FAILS on the common path,
+            # and this script runs under set -e inside a command substitution -- the subshell
+            # would exit, the answer would come back empty, and the ladder would quietly be the
+            # old one. It has to be an if.
+            if [ "$_eb_n" -lt "$_eb_dist" ]; then _eb_better=1; fi
+        elif git -C "$MIRROR_REPO_PATH" merge-base --is-ancestor "$_eb_fork" "$_eb_at" 2>/dev/null; then
+            _eb_better=1
+        fi
+        if [ "$_eb_better" = 1 ]; then
+            _eb_pick=$_eb_name; _eb_fork=$_eb_at; _eb_dist=$_eb_n
+        fi
+    done
+    printf '%s' "$_eb_pick"
+}
+
 ENTRY=
 _want_branch=${REF:-master}
-_safe_branch=$(printf '%s' "$_want_branch" | sed 's|^origin/||; s/[^a-zA-Z0-9._-]/-/g')
-for _cand in "$_safe_branch" master; do
+_safe() { printf '%s' "$1" | sed 's|^origin/||; s/[^a-zA-Z0-9._-]/-/g'; }
+_safe_branch=$(_safe "$_want_branch")
+# Unquoted on purpose: empty has to disappear from the list rather than become an empty rung.
+_base_branch=$(_safe "$(_entry_base "$_want_branch")")
+for _cand in "$_safe_branch" $_base_branch master; do
     [ -n "$_cand" ] || continue
     if [ -f "$CACHE_ENTRIES/$_cand@$UNITY_SCOPE.tar" ]; then
         ENTRY="$CACHE_ENTRIES/$_cand@$UNITY_SCOPE.tar"; break
