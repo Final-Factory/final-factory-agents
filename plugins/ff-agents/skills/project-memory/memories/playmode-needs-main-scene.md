@@ -22,7 +22,7 @@ the active scene first**.
 **Why:** cost me multiple 6+ minute hung boots before the user pointed out main.unity wasn't
 selected. **How to apply:** verify/load `main.unity` before `manage_editor play`; a healthy
 boot logs `System Start Controller finished loading...` and `ItemConfig` becomes queryable
-across `World.All`. Now also documented in the [[drive-game]] skill's Standard workflow.
+across `World.All`. Also documented in the `drive-game` skill's Standard workflow.
 
 **A different-looking symptom, same root cause**: a FRESHLY LAUNCHED editor (via
 `launch-editor.sh`, which deliberately deletes `Library/LastSceneManagerSetup.txt` so it boots

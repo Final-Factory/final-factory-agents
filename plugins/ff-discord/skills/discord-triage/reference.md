@@ -71,12 +71,12 @@ Second, triage-specific zones:
   Trust the MCP job result, or the results file `ffverify` was told to write, and nothing else.
 - **Max 3 autofixes per pass, and check what is left of the day's budget.** Beyond that,
   ESCALATE the remainder. Bounded blast radius matters more than throughput. On the build
-  server there is a harder ceiling underneath this one, enforced rather than advised: since
-  2026-08-25 ffwatch allows **five turns per rolling 24 hours for anything a player caused**,
-  counted across every kind of turn rather than per lane, and blocks the sixth with a reason on
-  the record. The triage turn you are running now spent one of those five. So three autofixes
-  is the ceiling on a quiet day and may be more than the budget has left; an AUTOFIX that gets
-  blocked helps nobody, so prefer ESCALATE for the marginal ones when the day has been busy.
+  server there is a harder ceiling underneath this one, enforced rather than advised: ffwatch
+  allows **five turns per rolling 24 hours for anything a player caused**, counted across every
+  kind of turn rather than per lane, and blocks the sixth with a reason on the record. The
+  triage turn you are running now spent one of those five. So three autofixes is the ceiling on
+  a quiet day and may be more than the budget has left; an AUTOFIX that gets blocked helps
+  nobody, so prefer ESCALATE for the marginal ones when the day has been busy.
   Operator-caused turns are uncapped.
 
 ## AUTOFIX flow — agent steps + close-the-loop templates {#autofix-flow}
@@ -98,11 +98,14 @@ Give the agent the complete report text, the log excerpt, your root-cause analys
    - *ffbox batchmode*: run `ffverify` and read its JSON report. The container is fresh, so the
      compile is cold and a `PASSED` cannot be stale. The harness re-runs it after you exit
      regardless, and its result — not your claim — is what gates the PR.
-5. Commit, push the branch, open a PR against the branch you based the work on: `develop` for
-   anything that can wait for the next version, `master` only when the bug is in the build
-   players are running and the fix is small and low-risk. An AUTOFIX reached this point because
-   a stranger's bug report said so, so when the call is not obvious it is `develop`.
-6. Merge the PR to `develop` once tests are green. A PR into `master` is never yours to merge.
+5. Commit, push the branch, open a PR against the branch you based the work on: `master` when
+   the bug is in the build players are running and the fix is small and low-risk, `develop` for
+   anything that can wait for the next version, is large, or wants soak time. An AUTOFIX reached
+   this point because a stranger's bug report said so, so when the call is not obvious take the
+   more conservative branch and say in your summary which you picked and why.
+6. **Never merge it.** Opening the PR is where your work ends, on either base — a human decides
+   what lands. Say in the thread and in your summary that the fix is up for review, never that
+   it shipped.
 
 **On the build server, steps 5 and 6 are not yours.** A Discord `fix` or `dev` turn holds no
 GitHub token and no push credential, and the image has no `gh` — so `git push` and `gh pr
@@ -115,8 +118,8 @@ Then close the loop with the reporter and the team. The templates below are *con
 checklists, not wording to copy — the voice is [the `max-voice` skill](../max-voice/SKILL.md):
 
 ```bash
-ffdiscord post <thread_id> --mention <reporter_id> --text "Fixed and merged to develop, so this one's done. <what was wrong, in one plain sentence>. It'll be in the next build. (PR #123)"
-ffdiscord post dev_chat --text "🤖 Auto-fixed a bug report: <title> → PR #123 merged to develop. Root cause: <one line>. Thread: <link>"
+ffdiscord post <thread_id> --mention <reporter_id> --text "Found it, fix is up for review. <what was wrong, in one plain sentence>. It'll be in a build once someone merges it. (PR #123)"
+ffdiscord post dev_chat --text "🤖 Auto-fix for a bug report: <title> → PR #123 against <base>, needs a merge. Root cause: <one line>. Thread: <link>"
 ```
 
 Post the dev-chat note **without** a ping for autofixes — it is an FYI, not an escalation.

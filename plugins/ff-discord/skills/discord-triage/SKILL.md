@@ -15,21 +15,19 @@ On a machine with ffbox, **ffwatch does**, exactly as it does for `ask-claude`. 
 becomes one multi-turn conversation with a resumed session rather than a series of unrelated
 one-shots, and the harness verifies, pushes and proposes whatever the turn changed.
 
-**AUTOFIX is now your own instruction, not a handoff.** It used to enqueue a separate `fix`
-turn, because the triage turn was read-only and could not make the change itself. Since
-2026-08-25 there is one capability set: the turn that reaches an AUTOFIX verdict has the tools
-to make the fix, and is expected to make it in that same run. There is no second turn coming.
-Set the verdict AND do the work. Nothing else about the gates changes — if any gate in
-`reference.md` fails, the verdict is ESCALATE and you leave the code alone.
+**AUTOFIX is your own instruction, not a handoff.** Every turn gets one capability set —
+reads, edits and shell — so the turn that reaches an AUTOFIX verdict has the tools to make the
+fix and is expected to make it in that same run. There is no second turn coming: set the
+verdict AND do the work. The gates are unchanged by that — if any gate in `reference.md`
+fails, the verdict is ESCALATE and you leave the code alone.
 
 ffwatch loads these same skills and roles through `--plugin-dir`, so this is the policy its
 containers follow. See "On the build server" in `reference.md` §AUTOFIX flow.
 
 Running a pass by hand is the fallback, for a machine with no ffbox (BEAST, Windows) or a box
-where ffwatch is stopped. `/loop 15m /discord-triage` still works and is the same thing on a
-timer, but it is a convenience rather than the design: it re-queries Discord on a fixed
-interval whether or not anything happened, and every pass starts cold. Check whether ffwatch
-is already running first — `python3 ffbox/ffwatch.py status`, or
+where ffwatch is stopped. `/loop 15m /discord-triage` is the same thing on a timer, and a
+convenience rather than the design: it re-queries Discord on a fixed interval whether or not
+anything happened, and every pass starts cold. Check whether ffwatch is already running first — `python3 ffbox/ffwatch.py status`, or
 `systemctl --user status ffwatch` — because two things triaging the same forum will both
 triage every report.
 
@@ -111,9 +109,10 @@ the `discord-triager` agent for the investigation, then an implementing agent fo
 the Agent tool isn't available in this session, do the same work inline in a worktree
 (`EnterWorktree`), one bug at a time — never in the shared checkout. The agent runs the
 speckit flow, implements fix + regression test, verifies through the bridge, and opens a PR
-targeting `develop` — full step list and the close-the-loop message templates:
-`reference.md` §AUTOFIX flow. **Never merge to `master`** — `develop` is the integration
-branch; `master` is release-controlled and reaching it is always Ben's call (`CLAUDE.md`).
+against the branch it based the work on — `master` for a small, low-risk fix to a bug in the
+released build, `develop` for anything else. Full step list and the close-the-loop message
+templates: `reference.md` §AUTOFIX flow. **Never merge the PR** on either base — a human
+decides what lands, and reaching `master` is always Ben's call.
 
 If the agent's verification fails, or it discovers the fix is larger than believed, it must
 STOP and hand back — the verdict silently becomes ESCALATE, and you file the issue in §4

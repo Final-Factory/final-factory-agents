@@ -28,5 +28,4 @@ itself isn't the problem — burying the load-bearing check is.
 
 **How to apply:** after any mistake that a doc should have prevented, ask whether the doc's
 *structure* caused it, and fix that. Put the falsifying test first, make look-alike failure modes
-adjacent and contrastive, and push reference material to a companion file. Related:
-[[repo-path-trace-claims]].
+adjacent and contrastive, and push reference material to a companion file.

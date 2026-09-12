@@ -16,4 +16,4 @@ etc.) plus their source-generated `.g.cs` files.
 
 **How to apply:** when adding a system in `FFSystems/Player/`, declare `namespace FFSystems.Players`.
 Match `PlayerSimulationPositionReplicationOps.cs` (the existing file there). Same trap applies to any
-new namespace segment that shadows a widely-used component type. Related: [[remote-player-presentation-position-bug]].
+new namespace segment that shadows a widely-used component type.

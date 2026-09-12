@@ -47,8 +47,8 @@ caller authorized — on anything unexpected, STOP and report.
   enumerates the vocabulary.
 - End EVERY leg that used `ffauto:pointer.*` with `ffauto:pointer.clear` — normal end as much
   as abnormal. The position override is a static that survives play-mode cycles (domain reload
-  off), so skipping it freezes the user's mouse input in their next session (selection/hover/
-  ability indicators dead — 2026-08-04).
+  off), so skipping it freezes the user's mouse input in their next session: selection, hover
+  and ability indicators all go dead.
 
 ## Report format
 

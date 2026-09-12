@@ -28,7 +28,7 @@ the next number in every handoff so the chain never repeats a name.
 
 Dry-tested on the M5 (opens a Terminal window and runs the command); `orca-cli` is not installed
 there. The old session ends its turn after launching the new one; the new one reads
-`local-handoff.md` per [[resumeFromHandoff]]. Every relay leaves the durable record committed, so a
+`local-handoff.md` per the `resumeFromHandoff` skill. Every relay leaves the durable record committed, so a
 lost baton costs nothing.
 
 **The standing goal — how to apply.** Play the Hand-Hold tutorial (78 objectives,

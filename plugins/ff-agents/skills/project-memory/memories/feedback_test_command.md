@@ -39,7 +39,7 @@ still holds in spirit: a test path that hangs/times out usually means the editor
 wrong, not that the tooling needs replacing — surface it, don't paper over it.
 
 **How to apply:** Use `run_tests`/`get_test_job`. If the MCP bridge is unavailable, report it and
-perform the targeted recovery in [[feedback-mcp-bridge-down-recover]] and `editor-ops` rather than
+perform the targeted recovery in [[feedback_mcp_bridge_down_stop]] and `editor-ops` rather than
 falling back to the trigger. The file-trigger channel survives only inside the paired
 determinism-audit scripts; the clone recompile in those flows now goes through the bridge too
 (pin the clone instance, `refresh_unity`).

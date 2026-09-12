@@ -8,7 +8,7 @@ description: Add, edit, or fix a Claude skill / subagent role, or record a durab
 Skills and subagent roles are NOT in the game repo. They live in the
 **final-factory-agents** marketplace repo (`https://github.com/Final-Factory/final-factory-agents`)
 and are installed as Claude Code and Codex plugins at user scope. Editing anything under a game-repo
-`.claude/` directory does nothing — those copies were removed on purpose.
+`.claude/` directory reaches nobody.
 
 Live sessions read from each runtime's managed marketplace clone and per-version cache, **not**
 from any working checkout. So an edit only reaches anybody after a version bump + push + update.
@@ -46,8 +46,9 @@ Then **end your turn**. Do not work around it. Specifically, do NOT:
 - guess or search for a checkout in other directories
 - edit `~/.claude/plugins/marketplaces/final-factory-agents/` (Claude Code's managed clone —
   marketplace updates reset it, so edits there are silently lost)
-- edit any `.claude/skills/` or `.claude/agents/` directory in the game repo (those copies
-  were deliberately removed; edits there reach nobody)
+- edit any `.claude/skills/` or `.claude/agents/` directory in the game repo — there are none on
+  `develop` or `master`, and a legacy copy left on an older branch shadows the plugin locally
+  while reaching nobody else
 - make the requested change anywhere else, or hold it "for later"
 
 A broken marker means the machine's setup is wrong, and the user is the one who should decide
@@ -69,7 +70,8 @@ continue to step 2.
 
 Plugins: `ff-agents` (core roles + workflow skills), `ff-speckit` (speckit-*),
 `ff-discord` (Discord roles + skills). Skill frontmatter needs `name:` and `description:`;
-role frontmatter needs `name:`, `description:`, `model:`, `tools:`.
+role frontmatter needs `name:`, `description:`, `model:`, `effort:`, `tools:` — every existing
+role carries all five, so match them.
 
 Skills are shared by Claude Code AND Codex (same `skills/<name>/SKILL.md` layout), so keep ONE
 copy per skill — never fork a body per tool. Subagent roles under `agents/` are Claude-only;
@@ -111,9 +113,10 @@ installed runtimes:
 - If Claude Code is installed, run `claude plugin validate .`.
 - If Codex is installed, inspect `codex plugin --help`. Run its plugin validation command when
   that build exposes one. Do not invent a command from a different Codex version.
-- Codex 0.153.4 has no standalone plugin validator. For it, the mandatory JSON/version checks plus
-  the post-push registration check in step 5 are the Codex validation path. Do not describe the
-  plugin as unvalidated merely because the CLI has no separate `validate` verb.
+- Codex has no standalone plugin validator on the builds seen so far. Where it does not expose
+  one, the mandatory JSON/version checks plus the post-push registration check in step 5 ARE the
+  Codex validation path. Do not describe the plugin as unvalidated merely because the CLI has no
+  separate `validate` verb.
 
 After those checks pass, stage only the intended files, commit, and push. The driver owns the
 actual commit and push.
