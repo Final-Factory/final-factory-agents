@@ -124,6 +124,8 @@ worktrees and apply to ALL branches.
 
 - [An ffbox container CAN run Unity and play the game](memories/ffbox-containers-can-run-unity.md) — the per-lane Bash allow lists went away on 2026-08-25; every run gets bare `Bash`, so `unity-editor` is directly runnable and only the git/gh tripwire is denied. Five prompts still said ffverify was the only Unity command, and on 2026-09-11 a dev run reported to Ben that it could not start the game at all, citing its own preamble. `ffplaytest` is the play-mode wrapper (config deleted on every exit path, editor killed as a process group, label-scoped journal); it needs a DEVELOP-based workspace and its frame timings are meaningless (no GPU). When a capability changes, fix every prompt that describes it in the same commit
 
+- [UnityMCP works headless in an ffbox container](memories/unitymcp-works-headless-in-a-container.md) — proven 2026-09-11: 46 tools served to the packaged server and a live `read_console` call, from a batchmode editor. Needs four things: the PyPI `mcpforunityserver` baked into the image via uv at BUILD time (then it runs under `--network none`, so the egress fence needs nothing new), `UNITY_MCP_ALLOW_BATCH=1` (the bridge returns early in batchmode without it), `-executeMethod MCPForUnity.Editor.McpCiBoot.StartStdioForCi` with no `-quit`, and killing the editor as a PROCESS GROUP. Readiness is the log line `StdioBridgeHost started on port N`, NOT the port registry file, which is only written when the default port is taken
+
 ## Maintaining this skill
 
 New durable lessons go here (one file in `memories/`, one index line above), committed to the
