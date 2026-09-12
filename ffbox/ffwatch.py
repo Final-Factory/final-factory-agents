@@ -7507,7 +7507,15 @@ class Watcher:
             root, chain = msg, [msg]
         else:
             root, chain = self.walk_to_root(channel_id, msg)
-        title = (root.get("content") or "").strip().splitlines()
+        # THE TITLE IS READ THE WAY EVERY OTHER READER READS A MESSAGE, through message_text,
+        # because a relayed report has no `content` at all: the in-game bug reporter posts
+        # through a relay bot, which puts the whole report in an embed and leaves the body an
+        # empty string. insert_message has flattened embeds since 2026-09-12 and this line did
+        # not, so such a conversation was stored with its text intact and titled `None` --
+        # invisible on the web page, and in a thread_per_message channel it is also the name
+        # of the thread the report is answered in, where "report 1548..." is what a person
+        # would have had to click to find out what it was about.
+        title = message_text(root).strip().splitlines()
         conv_id = self.upsert_conversation(
             root.get("id"),
             kind=conv_kind,
