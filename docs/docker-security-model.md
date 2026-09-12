@@ -294,6 +294,18 @@ Three properties hold that line, and all three are worth checking before changin
   name and an empty id, and every reader filters for a numeric one, so an unconfigured box routes
   every Discord conversation to `user_pool`.
 
+**The clocks are not part of this line, and since 2026-09-11 they are not read from here.** A
+class block carries two unrelated things: what a container may REACH — `network`,
+`github.container_token`, `plugins`, everything argued above — and what a request may SPEND, which
+is the four clocks and `max_budget_usd`. The second is read from the turn's trust tier instead, so
+an operator asking for real work in a player's thread gets `operator_pool`'s clocks and still gets
+`user_pool`'s container. That half is outside this argument by construction: nothing derived from
+the turn is read for a network, a credential or a plugin list, and `launch()` takes those three
+from the conversation. `ffwatch` names the budget in the journal whenever the two differ —
+`agent=ffagent budget=ffdev`. `ffbox/config.md`, "Two halves", has the reasoning; the short
+version is that a conversation has one session and every turn resumes it, so the fence has to
+follow the transcript and the clock has no reason to.
+
 What the demotion does NOT cover is the turn already running when the stranger posts, and one
 narrower gap it cannot: an operator who quotes or pastes a stranger's text themselves is still an
 operator saying it, and no id check can see that.

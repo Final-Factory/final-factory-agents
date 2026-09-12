@@ -10995,12 +10995,183 @@ def test_an_ffdev_turn_runs_under_ffdevs_numbers():
     check("and carries only the Discord plugin, never the engineering skills",
           [m.split(":")[1] for m in mounts2 if "/ffbox/plugins/" in m]
           == ["/ffbox/plugins/ff-discord"], mounts2)
-    check("an ffagent turn on the same box is unaffected",
-          argv2[argv2.index("--agent-class") + 1] == "ffagent"
-          and argv2[argv2.index("--agent-timeout") + 1] == str(
-              w.cfg["agent_classes"]["ffagent"]["agent_secs"]), argv2)
+    check("an ffagent turn on the same box still runs in an ffagent container",
+          argv2[argv2.index("--agent-class") + 1] == "ffagent", argv2)
     check("and is still on the fenced network while ffdev is not",
           argv2[argv2.index("--network") + 1] == "ffbox-net", argv2)
+    # AND IT CARRIES THE OPERATOR BUDGET, which is the split doing its job rather than a leak.
+    # A `web` prompt is a LOCAL conversation and turn_trust makes every one of them an
+    # operator's -- somebody typed it at a page only they are signed in to -- so the clocks are
+    # ffdev's 4242 even though the container is ffagent's. That is the same rule claude_route
+    # has always applied to the money: a local ffagent prompt already bills the operator's
+    # credential rather than the metered default, and the clock now agrees with the bill.
+    #
+    # THE CONTAINER IS UNMOVED BY IT, which is the whole point: fenced network above, and the
+    # Discord plugin alone checked just before it.
+    check("but the operator who typed it gets the operator clock, not the player one",
+          argv2[argv2.index("--agent-timeout") + 1] == "4242", argv2)
+
+
+def test_an_operators_request_in_a_players_thread_gets_the_clock_and_not_the_network():
+    """Conversation 133, rebuilt: the case the split exists for.
+
+    A player opened a #bug-reports thread, so the conversation is ffagent -- the opener decides,
+    and demote_for_stranger only ever moves that downwards. Lothsahn then asked, in the thread,
+    for a fix to be written and pushed. That request ran under ffagent's thirty-minute agent
+    clock and was killed on it with the fix half written, because the clock was read off the
+    conversation and the conversation belongs to whoever opened it.
+
+    THE TWO HALVES GO SEPARATE WAYS HERE, and both directions matter:
+
+      the BUDGET follows the asker   ffdev's clocks, because an operator asked
+      the FENCE follows the thread   an ffagent container, on the fenced network, with the
+                                     Discord plugin alone and no git credential
+
+    The second half is the one with teeth. The session transcript this run resumes has the
+    player's words in it -- that is why there is no promotion path in demote_for_stranger -- so a
+    change that let an operator's message buy the open internet and the container git credential
+    would be prompt injection with a route out. Every check below the clock ones is guarding that
+    the budget did NOT drag the fence along with it.
+    """
+    print("the split: an operator's clock, a player's fence")
+    opener, ask = sflake(-9100000, 1), sflake(-9099000, 2)
+    fixture = base_fixture()
+    bug_thread(fixture, "31900", "desyncs", [
+        message(opener, "world desyncs after a load", channel="31900", name="The Meanie")])
+    fixture["thread_lists"][BUG_FORUM] = [{"id": "31900", "name": "desyncs"}]
+    # NO VERDICT SET, so the suite's default classifier engages at the gate. A case that pins
+    # one gets the answer stub, which is a run verdict and not JSON the gate can read -- and
+    # this test needs the gate to let the operator's follow-up through.
+    case = Case("budget-split", fixture)
+    w = case.watcher
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
+    # Numbers nothing else on the box uses, so a clock that came from the wrong block is
+    # unmistakable rather than coincidentally equal.
+    w.cfg["agent_classes"]["ffdev"].update({"agent_secs": 4242, "warmup_secs": 4343,
+                                            "verify_secs": 4444, "kill_grace_secs": 44})
+    w.cfg["agent_classes"]["ffagent"].update({"agent_secs": 1111, "warmup_secs": 2222,
+                                              "verify_secs": 3333, "kill_grace_secs": 11})
+    # THE OPENER IS ANSWERED FIRST, and that is not scene-setting. turn_trust needs EVERY
+    # message in a batch to be an operator's before the turn is one, so an opener still sitting
+    # unanswered would ride along in the next batch and make the operator's request a player's
+    # turn -- correctly, and not the case under test. 133 ran the same way round: two turns
+    # answered the player before Lothsahn asked for the fix.
+    #
+    # sweep() is what reads a forum thread in; once() is what runs the turn it produced through
+    # to its finish, so the operator's message below opens a second turn rather than a batch.
+    w.sweep()
+    w.once()
+    convs = case.rows("SELECT * FROM conversation")
+    check("a player's thread opens as ffagent", len(convs) == 1
+          and convs[0]["agent_class"] == "ffagent", convs)
+    first = case.rows("SELECT * FROM run ORDER BY id")[-1]
+
+    # THE OPERATOR ASKS, IN THE PLAYER'S THREAD. This does not move the conversation -- nothing
+    # moves it upwards -- so the container below is still the fenced one.
+    fixture = case.read_fixture()
+    fixture["threads"]["31900"]["messages"].append(
+        message(ask, "work out what is desyncing and push a fix to a branch",
+                channel="31900", author=LOTHSAHN, name="Lothsahn"))
+    case.write_fixture(fixture)
+    case.events(thread_event("31900", ask, kind="thread_message"))
+    w.once()
+
+    turn = case.rows("SELECT * FROM turn ORDER BY id")[-1]
+    check("the turn is recorded as an operator's", turn["trust_tier"] == "operator", dict(turn))
+    check("while the conversation is still the player's class",
+          case.rows("SELECT * FROM conversation")[0]["agent_class"] == "ffagent", convs)
+
+    run = case.rows("SELECT * FROM run ORDER BY id")[-1]
+    check("the operator's request is a run of its own", run["id"] != first["id"],
+          (dict(first), dict(run)))
+    run_dir = os.path.join(w.conv_dir(turn["conversation_id"]), "runs", run["ffbox_run_id"])
+    argv = json.load(open(os.path.join(run_dir, "ffbox-argv.json"), encoding="utf-8"))
+    job = json.load(open(os.path.join(run_dir, "job.json"), encoding="utf-8"))
+
+    # THE BUDGET HALF. All four, because they move together and a change that threaded one
+    # through and left the others reading ccfg would otherwise pass.
+    check("the operator's request gets ffdev's agent clock",
+          argv[argv.index("--agent-timeout") + 1] == "4242", argv)
+    check("and ffdev's warm-up clock",
+          argv[argv.index("--warmup-timeout") + 1] == "4343", argv)
+    check("and ffdev's verify clock",
+          argv[argv.index("--verify-timeout") + 1] == "4444", argv)
+    check("and ffdev's kill grace",
+          argv[argv.index("--kill-grace") + 1] == "44", argv)
+    # job.json is what a run directory is read back from months later, and a record that
+    # disagrees with the argv is worse than no record.
+    check("and job.json records the clocks it actually ran under",
+          job["limits"] == {"agent_secs": 4242, "warmup_secs": 4343, "verify_secs": 4444,
+                            "kill_grace_secs": 44}, job["limits"])
+
+    # THE FENCE HALF, which is the half a mistake here would be dangerous rather than annoying.
+    check("but the container is still the conversation's, not the asker's",
+          argv[argv.index("--agent-class") + 1] == "ffagent", argv)
+    check("and it is created on the fenced network",
+          argv[argv.index("--network") + 1] == "ffbox-net", argv)
+    mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "--mount"]
+    check("and carries only the Discord plugin, never the engineering skills",
+          [m.split(":")[1] for m in mounts if "/ffbox/plugins/" in m]
+          == ["/ffbox/plugins/ff-discord"], mounts)
+    check("and job.json still names the conversation's class",
+          job["turn"]["agent_class"] == "ffagent", job["turn"])
+    # THE CONTAINER GIT CREDENTIAL IS THE OTHER THING THE FENCE HOLDS, and --agent-class above
+    # is the whole of what holds it: ffbox reads container_token out of the config itself, keyed
+    # on the class it was told. There is no flag in the argv to look for, so this is asserted at
+    # ffbox's source -- a check for an absent flag would pass whatever happened, which is the
+    # kind of test that guards nothing.
+    ffbox_src = open(os.path.join(HERE, "ffbox"), encoding="utf-8").read()
+    check("and the container git credential is keyed on that class and nothing else",
+          '_ffbox_token_env=$(_ffbox_pool_cfg "$AGENT_CLASS" container_token)' in ffbox_src,
+          None)
+
+    # AND THE PLAYER'S OWN NEXT MESSAGE IS BACK ON THE PLAYER'S CLOCK. The budget is read off
+    # each turn, not latched on the conversation by the first operator to speak in it.
+    back = sflake(-9098000, 3)
+    fixture = case.read_fixture()
+    fixture["threads"]["31900"]["messages"].append(
+        message(back, "still happening on my save", channel="31900", name="The Meanie"))
+    case.write_fixture(fixture)
+    case.events(thread_event("31900", back, kind="thread_message"))
+    w.once()
+    run2 = case.rows("SELECT * FROM run ORDER BY id")[-1]
+    check("a second run happened", run2["id"] != run["id"], (dict(run), dict(run2)))
+    argv2 = json.load(open(os.path.join(w.conv_dir(turn["conversation_id"]), "runs",
+                                        run2["ffbox_run_id"], "ffbox-argv.json"),
+                           encoding="utf-8"))
+    check("the player's own turn is held to the player's clock",
+          argv2[argv2.index("--agent-timeout") + 1] == "1111", argv2)
+    check("and is still in an ffagent container",
+          argv2[argv2.index("--agent-class") + 1] == "ffagent", argv2)
+
+
+def test_the_budget_class_is_read_from_the_turns_tier():
+    """budget_class on its own: the two keys it reads and the direction it can move.
+
+    The unit half of the test above. It matters separately because the function is the one
+    place that decides the budget, and a box that points both Discord pools at one class must
+    get one budget out of it without anything else having to know.
+    """
+    print("config: the budget follows the tier")
+    cfg = ffwatch.load_config()
+    cfg["_discord"] = {"user_pool": "ffagent", "operator_pool": "ffdev"}
+    check("a player's turn is bounded by the user pool",
+          ffwatch.budget_class(cfg, "player") == "ffagent", None)
+    check("an operator's by the operator pool",
+          ffwatch.budget_class(cfg, "operator") == "ffdev", None)
+    # A ROW WITH NO TIER IS A PLAYER'S, which is what every turn written before trust_tier
+    # existed actually is, and the conservative direction besides.
+    check("and a turn with no tier recorded falls to the player's",
+          ffwatch.budget_class(cfg, None) == "ffagent", None)
+    check("as does anything that is not the operator tier",
+          ffwatch.budget_class(cfg, "nonsense") == "ffagent", None)
+
+    # A BOX THAT WANTS ONE BUDGET SAYS SO ONCE, in the same two keys that decide the opening
+    # class. Nothing else has to be touched to opt out of the split.
+    one = dict(cfg, _discord={"user_pool": "ffagent", "operator_pool": "ffagent"})
+    check("a box with both pools pointed at one class has one budget",
+          (ffwatch.budget_class(one, "player"), ffwatch.budget_class(one, "operator"))
+          == ("ffagent", "ffagent"), None)
 
 
 def test_every_agent_container_carries_its_class():
@@ -19450,6 +19621,8 @@ def main():
         test_the_reaper_says_a_held_spool_once,
         test_an_ffdev_turn_runs_under_ffdevs_numbers,
         test_the_outer_launch_ceiling_clears_every_phase_clock,
+        test_an_operators_request_in_a_players_thread_gets_the_clock_and_not_the_network,
+        test_the_budget_class_is_read_from_the_turns_tier,
         test_the_two_agent_classes_are_configured_independently,
         test_each_class_gets_its_own_plugins,
         test_each_pool_names_its_own_github_credentials,

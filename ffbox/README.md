@@ -1055,7 +1055,15 @@ All four are per pool. `agent_secs`, `warmup_secs`, `verify_secs` and `kill_grac
 each block of `pools` in `config.json`, so the two lanes can hold different numbers; `verify_secs`
 was box-wide until 2026-09-03, on the argument that the EditMode suite is the same whichever
 container ran the turn — true about the suite, and not what the clock asks. What it bounds is how
-long that lane may spend verifying.
+long that request may spend verifying.
+
+**And they are read from the TURN, not from the container it runs in.** Since 2026-09-11 a class
+block is two things: a resource budget (these four plus `max_budget_usd`) and a security boundary
+(`network`, `github.container_token`, `plugins`). The budget follows whoever asked — an operator's
+turn takes `discord.operator_pool`'s clocks even in a conversation a player opened — and the
+boundary stays on the conversation, where it can only ever be given up. `ffbox/config.md`, "Two
+halves", has the argument; the short version is that one session is resumed by every turn of a
+conversation, so a stranger's words are still in the transcript when the operator's turn runs.
 
 The clocks are enforced only when the run is a task run, or when you pass one of the flags
 explicitly. A plain interactive one-shot stays unbounded, as it always was.
@@ -2265,6 +2273,10 @@ owns the box, so it gets the class dev work runs in; everything else stays behin
 a conversation that opened unfenced is demoted to `user_pool` as soon as anybody outside the
 trust table posts in it, so the guarantee covers the whole life of a thread and not only its
 first message — see "Whoever OPENED the conversation decides" below.
+**The clocks are the one thing that does not work this way**: an operator asking for real work in
+a player's thread gets `operator_pool`'s budget and still gets `user_pool`'s container. The
+journal says so when they differ — `agent=ffagent budget=ffdev`. Only a fork moves a
+conversation's text into the other container, and only an operator can ask for one.
 `docs/docker-security-model.md` has the full argument under "The class that is not fenced".
 Putting ffdev back behind the fence is `"network": "limited"`, a restart, and `pool drop` for
 anything already staged; pointing Discord's operators back at the fenced class is
