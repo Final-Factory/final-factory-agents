@@ -830,7 +830,12 @@ PREAMBLE_MCP = (
     "project'). For the same reason `ffverify` and `ffplaytest` will refuse while the bridge is "
     "live and tell you to run `ffmcp stop` first — do that only if you genuinely need a cold "
     "compile, since you lose the editor for the rest of the turn. `ffmcp status` says what is "
-    "running. The harness stops the bridge itself after you exit and then runs its own ffverify, "
+    "running. IF A TOOL ANSWERS `No Unity Editor instances found`, DO NOT CONCLUDE THE EDITOR "
+    "DIED — measured on the first live turn, 2026-09-12: `get_test_job` returns that instantly "
+    "while the editor is mid assembly-reload after `run_tests`, and its own `wait_timeout` does "
+    "NOT absorb the reload. Check `ffmcp status`; if it says the bridge is up, wait ~60s and poll "
+    "again (that recovered the completed job intact). The harness stops the bridge itself after "
+    "you exit and then runs its own ffverify, "
     "so your last state is never what gets verified. NO GPU HERE: the editor renders through "
     "software GL, so never report a frame time or a performance number measured through it."
 )

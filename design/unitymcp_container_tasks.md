@@ -267,8 +267,38 @@ writes another MCP client here:
   test run) and 46 MiB of Xvfb — call it 8–10 GiB per container holding an editor mid-suite. The box
   has 755 GiB, so one editor per concurrent run is affordable; a first attempt at this number
   reported 2 MB because it measured the recorded pid, which is the WRAPPER. Measure the tree.
-- **F7** Only then: `unity_mcp.enabled` true for ffdev in the live config, and one real dev turn
-  watched end to end. ffagent stays off.
+- **F7** DONE 2026-09-12, and it found two more things before the turn even started plus one during
+  it. Enabling it at all was the first finding (see C2: the file's section is `pools`, not
+  `agent_classes`). Then conversation 142 / turn 165, an ffdev shell turn asked to verify the bridge
+  read-only:
+
+  * `job.json` carried `unity_mcp {enabled: true, ready_timeout_secs: 600}` and **16 MCP tools in
+    BOTH the tool list and the allow list**.
+  * `ffmcp: bridge up on port 6400 after 78s` — the third consistent boot measurement (78/80/83s).
+  * The agent used ONLY the bridge — `read_console`, `run_tests`, `get_test_job`, `execute_code`,
+    plus one `ffmcp status` — and did not run ffverify, edit a file or make a branch, which is what
+    the preamble asks of it.
+  * `FFEditorTests` through the bridge: **863/863 passed, 0 failed**, 42.4s of NUnit duration inside
+    56.7s of job wall clock. ffverify's own cold run of the same suite earlier took 226s.
+  * **0 changed files** at the end, so F8's answer holds for a full turn with an editor open
+    throughout and a test run on top — not just for a boot. The harness recorded
+    `ran=False, "the run changed no files, so the harness ran no tests"`, and published nothing.
+  * `ffmcp stop` fired, killed the editor, and **removed a stale `Temp/UnityLockfile`** — the
+    conditional B5 path, which the phase F probe had found unnecessary because that run's lock was
+    already gone. It is necessary. The second `ffmcp stop` reported "already gone", idempotent as
+    designed. Container exited 0; no editor, no Xvfb, nothing left on the box.
+  * The daemon RESTARTED mid-run (the updater picking up a push) and adopted the run:
+    `adopted run d142t1-adbad6b8: its container outlived the daemon that started it`. The live
+    update design and this feature do not interfere.
+
+  **THE FINDING WORTH THE WHOLE EXERCISE**, reported by the agent itself: after `run_tests` returns
+  a job id, `get_test_job` answers `No Unity Editor instances found` INSTANTLY while the editor
+  reloads assemblies, and its `wait_timeout` does not absorb the reload. `ffmcp status` said the
+  bridge was up throughout; a poll 60s later returned the completed job intact. The obvious reading
+  of that message is "the editor crashed" and the obvious reaction throws away a live test run, so
+  it is now in the preamble and in the dev-agent role. Same message, different cause, also seen in
+  phase F when the server ran under a different `$HOME` from the editor — it is ambiguous, and
+  `ffmcp status` is how to tell.
 - **F8** DONE, and the answer is the good one: **0 dirty files**. Baseline 0 on a fresh restore, 0
   after the editor opened the project and settled, and still 0 after a full `ffverify` run on top.
   So the design's shape holds and no post-boot baseline is needed. Stated honestly: the d133t5
