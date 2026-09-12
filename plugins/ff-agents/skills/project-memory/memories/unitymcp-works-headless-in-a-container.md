@@ -41,9 +41,33 @@ substantially slower — 2401 scripts, Burst, a real domain reload — and that 
 feasibility, is what a design has to answer for: whose clock pays for the boot, and whether the
 bridge survives a domain reload in batchmode.
 
-**Still unproven, and worth knowing before relying on it:** the same recipe against the real
-FinalFactory workspace (only a blank project was used), bridge survival across a domain reload
-(recompile mid-turn), and two editors in one container.
+**PROVEN SINCE, on the real workspace (2026-09-11/12).** 78-83s from `ffmcp start` to a live bridge
+on the 22 GiB workspace; the bridge survives a recompile and keeps its port; `FFEditorTests` through
+the bridge is 863/863 in ~57s against `ffverify`'s 226s for the same suite, because it uses the
+editor that is already up; 7.8 GiB RSS per editor plus ~1.1 GiB per import worker; and a full turn
+with an editor open throughout left **0 changed files**. Two editors in one container is still
+untried, and Unity refuses it anyway (`Multiple Unity instances cannot open the same project.`).
+
+**`No Unity Editor instances found` IS AMBIGUOUS, and usually means BUSY.** Two different causes,
+same message, both measured:
+
+  1. **The editor is mid assembly-reload.** After `run_tests` hands back a job id, `get_test_job`
+     answers this INSTANTLY and its own `wait_timeout` does NOT absorb the reload. The bridge is
+     fine — wait ~60s and poll again, which returns the completed job intact. Do NOT restart the
+     editor or fall back to a batchmode run: that discards a test run that is still going.
+  2. **The server is running under a different `$HOME` than the editor.** Discovery goes through
+     `$HOME/.unity-mcp`, so `mcp-for-unity` as root finds nothing while a live bridge answers for
+     the user that started it.
+
+Ask the supervisor (`ffmcp status` on ffbox, or check the editor process) before believing either
+reading.
+
+**Three bugs the OFFLINE tests could not catch, all found by running it for real** — worth
+remembering as an argument, not just as facts: the editor is NOT in the process group its wrapper
+creates (so a group kill never signalled it and it only died because Xvfb did), the config switch
+was documented under `agent_classes` when the file's section is `pools` (so it could not be turned
+on at all, silently), and the busy-not-dead message above. Every one of them passed a green test
+suite built on a stub that behaved better than the real thing.
 
 Related: [an ffbox container can run Unity](ffbox-containers-can-run-unity.md) for why the prompts
 used to deny this, and [two docker daemons](ffbox-two-docker-daemons.md) — the probe only works

@@ -138,6 +138,11 @@ branch (check `specs/STATUS.md` if the request smells like it overlaps in-flight
      you the editor for the rest of the turn — so only do it for a genuinely cold compile. If the
      bridge was requested and failed, your prompt says that too: it is a degraded turn, not a
      broken one, and ffverify still works.
+     **`No Unity Editor instances found` usually means BUSY, not dead** (measured 2026-09-12):
+     `get_test_job` returns it instantly while the editor reloads assemblies after `run_tests`, and
+     `wait_timeout` does not absorb that. Check `ffmcp status` — if the bridge is up, wait ~60s and
+     poll again rather than restarting anything or falling back to `ffverify`, which would discard
+     a test run that is still going.
    - **Direct `unity-editor` is allowed, and the wrappers are still the right first reach.**
      Nothing restricts you to these two commands — the Bash allow list is bare `Bash`, so you
      can launch the editor yourself when a wrapper genuinely does not cover the job. Prefer the

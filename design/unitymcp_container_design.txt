@@ -1,11 +1,12 @@
 ffbox: a live editor in the container, driven over the MCP bridge
 ================================================================
 
-Status: DESIGNED, IMPLEMENTED AND MEASURED ON THE BOX, 2026-09-11. Phases A to E are in; phase F
-answered eight of its ten checks against the real workspace and found one real bug doing it (the
-editor is not in the process group ffmcp created -- section 5, rule 1, and the tasks file's F5). What
-is left is F7: the switch on for ffdev and one real dev turn watched end to end. The feature is OFF
-in config until that happens.
+Status: LIVE ON THE BUILD SERVER for ffdev, 2026-09-12. Phases A to F are complete, including one
+real dev turn watched end to end; ffagent remains off. Phase F found three real bugs that no offline
+test could: the editor is not in the process group ffmcp created (section 5 rule 1), the config
+switch was documented under a section nothing reads (section 8), and the bridge reports itself
+missing while it is merely reloading assemblies (section 9.2b). All three are fixed or written down
+where a turn will see them.
 
 THE NUMBERS, so nobody has to guess at them again: 80s from `ffmcp start` to a live bridge on the
 real 22 GiB workspace; the bridge survives a recompile and keeps its port; `run_tests` through it
@@ -370,6 +371,17 @@ editor that was working. F1 measures it and this default follows the measurement
      ffmcp stops whatever it started, writes its state file saying so, and the turn runs DEGRADED:
      no MCP tools are offered, the preamble says the bridge is absent and why, and the reply
      records it. Not a failed run.
+
+  2b. THE BRIDGE LOOKS DEAD AND IS MERELY BUSY -- found by the first live turn, 2026-09-12, and
+     the one failure mode this design did not predict. After `run_tests` hands back a job id, the
+     editor reloads assemblies, and `get_test_job` answers `No Unity Editor instances found`
+     INSTANTLY -- its own `wait_timeout` does not absorb the reload. `ffmcp status` said the bridge
+     was up on 6400 throughout, and a poll 60s later returned the completed job intact, so nothing
+     was lost. The prompt now says so, because the obvious reading of that message is that the
+     editor crashed, and the obvious reaction -- restart it, or fall back to ffverify -- throws away
+     a test run that is still going. Note the same message also means what it says when the SERVER
+     runs under a different $HOME from the editor (phase F), so it is genuinely ambiguous: ask
+     `ffmcp status` before believing either reading.
 
   2. THE EDITOR DIES MID-TURN. Tool calls start failing. The preamble tells the agent what that
      means and to fall back to ffverify after `ffmcp stop` -- which is safe, because a dead
