@@ -6951,6 +6951,38 @@ def test_a_report_channel_answers_every_message_in_a_thread_of_its_own():
     check("and it is filed in that very conversation",
           landed and landed[0]["conversation_id"] == conv["id"], landed)
 
+    # --- a report with no body at all ------------------------------------------------------
+    #
+    # The in-game reporter posts through a RELAY BOT, which puts the whole report in an embed
+    # and leaves `content` an empty string. insert_message has flattened embeds since
+    # 2026-09-12; the conversation TITLE was still read off the raw content, so such a report
+    # was stored with its text intact and titled nothing. In a channel like this that title is
+    # also the name of the thread the report is answered in, and "report 1548..." is what
+    # somebody would have had to click to find out what it was about.
+    relayed = sflake(900, 5)
+    fixture = case.read_fixture()
+    fixture["messages"][RANDOM_CHANNEL].append(
+        message(relayed, "", channel=RANDOM_CHANNEL, author="900000000000000009",
+                name="ff-reporter", bot=True, embeds=BUG_EMBED))
+    case.write_fixture(fixture)
+    case.events(ask_event(relayed, channel="dev_bugs", channel_id=RANDOM_CHANNEL))
+    case.watcher.drain_events()
+    report = case.rows("SELECT * FROM conversation WHERE thread_id=?", (relayed,))
+    check("a relayed report opens a conversation of its own", len(report) == 1, report)
+    check("titled from the embed, because that is where the player's words are",
+          report and report[0]["title"] == "\U0001f41b Tech-Tree-Wrong Order", report)
+    turn = case.watcher.create_turn(report[0])
+    check("and it is answered like any other report here", turn is not None, turn)
+    case.watcher.launch(turn)
+    case.watcher.join_launches(timeout=120)
+    case.watcher.finish_runs()
+    case.watcher.join_finishes(timeout=120)
+    named = [json.loads(r["payload_json"]) for r in case.rows(
+        "SELECT * FROM outbound WHERE action='thread-create' AND conversation_id=?",
+        (report[0]["id"],))]
+    check("so its thread carries the report's own name, not its id",
+          named and named[0]["name"] == "\U0001f41b Tech-Tree-Wrong Order", named)
+
 
 def test_messages_cluster_into_one_conversation():
     """The bug this whole design exists to fix, and the two cases that shaped the rule.
