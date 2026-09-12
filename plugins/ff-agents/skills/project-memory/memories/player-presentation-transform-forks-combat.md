@@ -1,6 +1,6 @@
 ---
 name: player-presentation-transform-forks-combat
-description: "Any simulation decision that reads a PLAYER's LocalTransform/LocalToWorld forks per peer — that transform is the local player's own motion on one peer and a RemoteLocalTransformTarget projection on every other. OldBeamShootingSystem's beam range gate did this: BeamDamageSystem ticked 0.165 hp/s into the player on the host only → `combat` fork, re-fork at hb 8 after every recovery, Steam kick. Fixed 4aabc5d4a via DeterministicEntityPosition; the projectile-on-remote-player KNN path is the same class and still open."
+description: "Any simulation decision that reads a PLAYER's LocalTransform/LocalToWorld forks per peer — that transform is the local player's own motion on one peer and a RemoteLocalTransformTarget projection on every other. OldBeamShootingSystem's beam range gate did this: BeamDamageSystem ticked 0.165 hp/s into the player on the host only → `combat` fork, re-fork at hb 8 after every recovery, Steam kick. Fixed 4aabc5d4a via DeterministicEntityPosition. The projectile-on-remote-player KNN path is NOT in this class: the player's KNN presence is its PlayerSimulationObject, anchored at Player.SimulationPosition every heartbeat."
 ---
 
 # A player's transform is presentation; every range/hit/aggro decision about a player must resolve via DeterministicEntityPosition (2026-09-12, 069)
@@ -31,8 +31,15 @@ reloads and a host player driven to hp 21 under beam fire.
 **Rule / how to apply.** Grep any new or legacy combat decision (range, hit, LOS, aggro, aim) for
 `LocalTransforms[...target...]`, `LocalToWorldLookup[...target...]`, or KNN entries built from poses,
 and ask "can the target be a Player?" If yes, resolve through `DeterministicEntityPosition` (or
-`DeterministicRailPosition.Classify` as `ChaseSystem.cs:472-482` does). Still open in this class:
-projectile hits on a REMOTE player — `KnnProjectileCollisionSystem.cs:137-158` picks the hit target from
-KNN vision candidates whose positions come from derived poses (`KnnSystem.cs:593-642`), i.e. the remote
-player's presentation transform (Roadmap Bucket C "combat resolution determinism"). Related:
-[[steam-desync-triage-from-the-client-side-only]], [[diagnostic-profile-config-recipe]].
+`DeterministicRailPosition.Classify` as `ChaseSystem.cs:472-482` does).
+
+**Retracted 2026-09-12 (relay #5):** the earlier claim that projectile hits on a REMOTE player were the same
+open class was wrong. The player entity carries no KNN component (`PlayerAuthoring.cs:193-200`,
+`KnnChunkPoses.cs:64-69`); its KNN participation is the invisible `PlayerSimulationObject` authored with
+`KnnFleetEntity` + `KnnEnemyVision` and the redirects `ColliderParent` / `PhysicsRenderEntity { Entity = player }`
+(`PlayerSimulationObject.cs:79-93`), and `PlayerSimulationObjectPositionSystem.cs:52-53` writes that object's
+`LocalTransform.Position` from `Player.SimulationPosition` every heartbeat. So the KNN vision entries
+`KnnProjectileCollisionSystem.cs:137-158` ranks are the sim object at the replicated position, the hit redirects
+to the player at `:165-168`, and the physics path skips players outright (`ProjectilePhysicsCollisionSystem.cs:87-90`).
+Before opening a "presentation transform" lane on a KNN consumer, check whether the player is even in the tree
+as itself. Related: [[steam-desync-triage-from-the-client-side-only]], [[diagnostic-profile-config-recipe]].
