@@ -108,7 +108,7 @@ already there:
   "pools": {
     "ffagent": {
       "base_ref": "master",
-      "agent_secs": 1800,
+      "agent_secs": 2400,
       "warmup_secs": 3600,
       "verify_secs": 1800,
       "kill_grace_secs": 10,
@@ -122,7 +122,7 @@ already there:
     },
     "ffdev": {
       "base_ref": "master",
-      "agent_secs": 7200,
+      "agent_secs": 14400,
       "warmup_secs": 3600,
       "verify_secs": 1800,
       "kill_grace_secs": 10,
@@ -852,7 +852,7 @@ Each class is staged into a pool of its own and neither can take the other's war
 | Key | ffagent | ffdev | What it is |
 |---|---|---|---|
 | `base_ref` | `"master"` | `"master"` | Where a run's clone starts. Keep it equal to the first key of `publish_bases`, which is what the agent is told to branch from by default; disagreeing costs a cross-base checkout and a full Unity reimport inside every container. |
-| `agent_secs` | `1800` | `7200` | The model's working time, measured from the `.agent-started` marker. ffdev carries two hours because a dev turn is expected to be the long one, and a workflow-backed code review plus the fixes it leads to does not fit in thirty minutes. |
+| `agent_secs` | `2400` | `14400` | The model's working time, measured from the `.agent-started` marker. ffdev carries four hours because a dev turn is expected to be the long one, and a workflow-backed code review plus the fixes it leads to does not fit in forty minutes. |
 | `warmup_secs` | `3600` | `3600` | Everything before that marker: clone, restore, Unity import. |
 | `verify_secs` | `1800` | `1800` | The harness's own EditMode run after the agent exits, measured from the `.verify-started` marker. |
 | `kill_grace_secs` | `10` | `10` | How long a container gets to finish after it is told to stop. Floored at 120 wherever a Unity seat may be held. |
