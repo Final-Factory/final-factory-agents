@@ -1,0 +1,451 @@
+ffbox: a live editor in the container, driven over the MCP bridge
+================================================================
+
+Status: DESIGNED AND IMPLEMENTED 2026-09-11, phases A to E; phase F (the on-the-box checks) is
+outstanding and the feature is OFF in config until it passes. The feasibility question was MEASURED
+first, before any of this was written -- section 1 is the measurement and section 2 is what it did
+not cover. design/unitymcp_container_tasks.md carries the phases, the acceptance checks and the
+corrections an adversarial review of this document produced before implementation started.
+
+Five claims in the first draft were wrong and are corrected in place, each marked CORRECTED: the
+Dockerfile placement (section 4), what stops a stray editor (9.6), whether a run-time install could
+even reach PyPI (4.1), when the editor must be stopped (section 6), and the container's credential
+posture (section 10).
+
+Extends nothing and supersedes nothing. It sits beside the two Unity entry points a run already
+has (ffverify, and ffplaytest from 2026-09-11) and answers the thing neither can: an INTERACTIVE
+editor, where a turn looks at live state, changes something, and looks again, instead of paying a
+fresh boot per question.
+
+Why it is worth the trouble, in one line: ffverify answers "does it compile and pass", ffplaytest
+answers "does it behave once", and neither answers "what is actually going on in there" -- which
+is the question most dev turns are really asking.
+
+
+0. What this must do
+--------------------
+
+  1. A TURN THAT WANTS AN EDITOR GETS ONE, already up, with the MCP tools on its tool list and
+     the bridge answering before the model's first token.
+
+  2. A TURN THAT DOES NOT WANT ONE PAYS NOTHING. No editor, no boot, no clock, no tools it has
+     no use for. This is a per-class switch and it is OFF by default.
+
+  3. THE BRIDGE FAILING IS NOT THE TURN FAILING. No editor is a DEGRADED turn -- ffverify still
+     works, the prompt says the bridge is absent, and the reply says what was unavailable. It is
+     never a dead run and never a silent one.
+
+  4. ONE PROJECT, ONE EDITOR, ALWAYS. Unity refuses a second editor on a project it already has
+     open, so a live MCP editor and an ffverify run cannot overlap. Section 6 is the rule and it
+     is enforced by the tooling rather than by asking the agent nicely.
+
+  5. NOTHING LEAKS PAST THE RUN. Not the editor, not its Xvfb, not the licence seat, not a stale
+     lockfile. The container is destroyed at the end of a run and that is the backstop, not the
+     plan.
+
+  6. THE SECURITY POSTURE IS UNCHANGED, and section 10 argues it rather than asserting it: a
+     container that already has bare `Bash` and a full checkout gains no new reach from being
+     able to call `execute_code` in its own editor.
+
+
+1. What was measured (2026-09-11, on the build server)
+------------------------------------------------------
+
+A probe image -- ffbox:latest plus two layers -- and a blank Unity project with the
+com.coplaydev.unity-mcp 10.0.0 package embedded, in a container launched the way ffbox launches
+one (the .ulf directory mounted read-only, FFBOX_MACHINE_ID pinned, entrypoint dropping to the
+workspace uid):
+
+    PROBE: bridge up on port 6400 after ~10s
+    PROBE: TCP connect to 127.0.0.1:6400 OK
+    PROBE: initialize -> OK
+    PROBE: tools/list -> 46 tools: batch_execute, debug_request_context, execute_code,
+           execute_menu_item, find_gameobjects, find_in_file, ...
+    PROBE: tools/call read_console -> OK: {"success":true,"message":"Retrieved 1 log entries."}
+    PROBE: editor STILL ALIVE after the calls
+
+So, established as fact rather than as expectation:
+
+  a. A BATCHMODE EDITOR SERVES THE BRIDGE. `-executeMethod
+     MCPForUnity.Editor.McpCiBoot.StartStdioForCi`, no `-quit`. McpCiBoot is a public CI entry
+     point in the package; it forces HTTP transport off and calls StdioBridgeHost.StartAutoConnect.
+
+  b. UNITY_MCP_ALLOW_BATCH=1 IS REQUIRED. StdioBridgeHost's static constructor returns early in
+     batch mode without it, so the keep-alive hooks are never installed.
+
+  c. THE SERVER RUNS WITH NO NETWORK. The PyPI package `mcpforunityserver` (console scripts
+     `mcp-for-unity` and `unity-mcp`), installed with uv at image BUILD time, answered under
+     `--network none`. This is what makes section 4's decision easy and leaves the egress
+     allowlist untouched.
+
+  d. READINESS IS A LOG LINE, NOT A FILE. PortManager writes
+     ~/.unity-mcp/unity-mcp-port-<hash>.json only when it has to move off the default port, so a
+     bridge on 6400 publishes nothing. The first probe waited for that file and reported failure
+     while the editor log had said `StdioBridgeHost started on port 6400` for five minutes. The
+     signal is that line.
+
+  e. run_tests IS IN THE SERVER. So a turn with a live editor has a test channel that does not
+     start a second editor -- which section 6 turns from a nicety into the main path.
+
+  f. TWO EDITORS ON ONE PROJECT REFUSE, and this was measured in the same container shape rather
+     than taken from memory. With editor A up and holding a blank project, editor B on the same
+     --projectPath exited 1 with
+
+         Multiple Unity instances cannot open the same project.
+
+     That is section 6's whole premise, and it is why the rule is enforced by tooling: the failure
+     is real, immediate, and says nothing about which editor already has the project.
+
+
+2. What was NOT measured, and must be before this is trusted
+------------------------------------------------------------
+
+Named here because a design that hides its unknowns is worse than one with fewer of them.
+
+  1. THE REAL WORKSPACE. The probe used a blank project: 78s to load, 70s of it asset-database
+     refresh. FinalFactory is 2401 scripts, Burst, a real domain reload and a 22 GiB workspace.
+     The boot cost there is UNKNOWN and it is the number that decides whether section 7's clock
+     is right.
+
+  2. DOMAIN RELOAD. A turn that edits code and recompiles reloads the domain under the bridge.
+     The package has EnsureStartedOnEditorIdle hooks for exactly this and they are installed when
+     (b) holds, but nobody has watched a reload happen in a container.
+
+  3. THE STALE LOCKFILE. The REFUSAL is measured (1f); what a KILLED editor leaves behind is not.
+     The probe could not stat Temp/UnityLockfile while editor A was up, but that is weak evidence:
+     `UnityLockfile` and the refusal string are both literals in /opt/unity/Editor/Unity, and the
+     workspace is a tmpfs INSIDE the container, so a stat from the wrong side sees nothing. The
+     probe to run is `ls -la <projectPath>/Temp/` from inside the container while an editor is up.
+     Section 6's removal rule is conditional on having killed our own pid precisely because this is
+     unsettled: it removes the path if it is there and says nothing if it is not.
+
+  4. MEMORY UNDER LOAD. One editor is affordable (this box has 755 GiB and ~510 free), but
+     several turns each holding an editor is not something anyone has watched.
+
+
+3. Where the editor comes from -- and why NOT pool staging
+----------------------------------------------------------
+
+The obvious move is the one this design REJECTS, and the reason is worth stating because the
+licence seat went the other way on 2026-09-01 and the analogy is misleading.
+
+The seat was moved to pool staging so that no turn pays for it. A seat is STATELESS -- taking it
+early is free because nothing about the workspace is involved. AN OPEN EDITOR IS NOT. A staged
+spare's workspace is reset onto the run's base and branch at DISPATCH time
+(restore-workspace.sh), and an editor with the project open while its working tree is rewritten
+underneath it is an asset database watching files it did not change move, disappear and come
+back. That is not a performance question, it is a correctness one.
+
+So: THE EDITOR BOOTS IN THE TURN TASK, AFTER THE WORKSPACE IS PREPARED AND BEFORE THE AGENT
+STARTS. Which restore that is depends on the route, and the turn task runs after BOTH: a cold run
+is restored by entrypoint.sh as root before it ever execs the task, and a dispatched pool spare is
+re-synced by `pool-task.sh --resync`. discord-task.sh therefore only has to be after its own
+start, and the boot goes before the `.agent-started` marker it already writes -- which puts the
+whole thing inside warmup_secs, where it costs the model nothing (section 7).
+
+AND BEFORE THE ARGV IS BUILT, which is the tighter constraint and the one that actually matters.
+The argv is written once, and it carries the tool list, the --mcp-config flag and the prompt. Only
+the CONTAINER knows whether the bridge came up, so a boot after the argv would mean advertising
+tools with no server behind them -- the opposite of requirement 0.3. So the order is: restore (not
+ours), boot, build argv from what the boot achieved, mark .agent-started, run.
+
+The optimisation that staging WOULD buy is left as an open question (section 13): most runs are
+based on master and the pool stages master, so the reset is frequently close to a no-op, and a
+staged editor that survives a no-op restore would make the boot free for the common case. It
+needs a way to know the restore changed nothing, which does not exist today.
+
+
+4. The server: baked into the image, not installed at run time
+--------------------------------------------------------------
+
+Baked. Four reasons, in order of how much they matter:
+
+  1. A RUN-TIME INSTALL CANNOT REACH PYPI -- CORRECTED: only for `ffagent`. That class is
+     `network: limited`, behind the egress fence, which answers Anthropic, OpenRouter, Unity
+     licensing and the Unity package registry and nothing else. `ffdev` is `network: full`, the
+     ordinary bridge, so it COULD pip-install at run time -- and ffdev is the class this feature
+     turns on first, which makes the original argument backwards for the case that matters.
+     It still lands the same way, for reasons 2 to 4, plus one this correction adds: an install
+     that works on ffdev and cannot work on ffagent is a difference between the classes that
+     nothing else in the design has, and the day ffagent is put behind the same feature it would
+     fail in a way nobody had tested.
+
+  2. MEASURED TO BE UNNECESSARY. Section 1c: the baked server answers under --network none.
+
+  3. REPRODUCIBILITY. Same argument as DISABLE_AUTOUPDATER=1: a run should be the version the
+     image was built and tested with, not whatever PyPI served this morning.
+
+  4. COST. Every run would otherwise pay the same download.
+
+NO NEW BASE IMAGE, and no change to UNITY_IMAGE. ffbox:latest is already our own image -- the
+GameCI editor plus our layers -- and 03-build.sh is re-run by the updater on every pass, so a
+Dockerfile change propagates with no tag bookkeeping and no manual step. CORRECTED: the layers go BEFORE the
+`COPY` of the shell scripts, not at the end of the file. The scripts change most weeks, and every
+layer after a changed one rebuilds -- so "at the end" would have re-downloaded a python toolchain on
+every commit that touched entrypoint.sh. Before the COPY, the 11 GiB base and the Claude/gh layers
+stay cached and so does this one.
+
+INSTALLED TO SHARED PATHS, which is not optional: a run drops to the uid that owns the workspace
+and that user has no $HOME to install into -- the same reason install-claude.sh parks its binary
+in /usr/local/bin. So UV_INSTALL_DIR=/usr/local/bin, UV_TOOL_BIN_DIR=/usr/local/bin,
+UV_TOOL_DIR=/opt/uv/tools, UV_PYTHON_INSTALL_DIR=/opt/uv/python, and the tree left a+rX.
+
+PINNED: mcpforunityserver==<the version matching the editor package>, which is 10.0.0 today.
+The editor package version lives in the game repo's Packages/manifest.json, so the two can drift;
+section 9 gives that its failure mode.
+
+
+5. The supervisor: ffmcp
+------------------------
+
+One script, mounted onto PATH beside ffverify and ffplaytest, owning the editor's whole life:
+
+    ffmcp start    boot the editor, wait for the bridge, record the port; idempotent
+    ffmcp status   is the bridge up, on which port, how long has it been up
+    ffmcp stop     kill the editor AS A PROCESS GROUP and clear the state
+    ffmcp port     print the port, for anything that needs to talk to the bridge directly
+
+WHY A SCRIPT AND NOT A LINE OF THE TASK. Three traps, every one of them mechanical, and the same
+argument that produced ffplaytest yesterday:
+
+  1. THE PROCESS GROUP. `unity-editor` is a wrapper that RUNS xvfb-run as a child (not an exec --
+     the shape matters only in that there are two processes above the editor, not one). SIGTERM to
+     the wrapper pid leaves the real editor reparented to init, holding the licence seat and the
+     project lock. Launch under setsid, kill `-- -PGID`. Measured with a stub on 2026-09-11.
+
+  2. THE READINESS SIGNAL. Section 1d. A caller that waits for the registry file waits forever on
+     a healthy bridge.
+
+  3. THE LOCK. Section 6. Something has to be able to answer "is an editor already holding this
+     project", and every caller inventing its own answer is how two editors happen.
+
+STATE lives in /ffbox/out/mcp/ -- pid, pgid, port, the editor log, the phase. Under /ffbox/out
+because that is already the directory the host reads and the run's spool carries away, so a run
+that ended badly leaves its editor log where somebody can read it.
+
+
+6. One project, one editor: the serialisation rule
+--------------------------------------------------
+
+THE CONFLICT. Unity refuses to open a project a second editor already has open -- measured, not
+assumed: `Multiple Unity instances cannot open the same project.` and exit 1 (section 1f). So with
+a live MCP editor, `ffverify` -- which launches its own editor -- cannot run, and neither can
+`ffplaytest`. This is the one place where the new capability breaks an existing one, and it is
+NOT left to the preamble.
+
+THE RULE, in three parts:
+
+  a. THE HARNESS STOPS THE EDITOR THE MOMENT THE AGENT IS GONE -- CORRECTED, and the first
+     draft's "before its own verification" was too late by about fifty lines. Between the agent
+     exiting and ffverify running, discord-task.sh COMMITS THE TREE (`git add -A -- .` under the
+     run's identity) and asks `run_changed_anything`. Opening a Unity project reserializes assets:
+     d133t5 is the worked example, where a turn that edited nothing gained a commit changing
+     DysonPlatformPowerBeam.mat, timestamped the second ffverify exited. An editor open for the
+     WHOLE TURN is that hazard with a far longer exposure, it is mid-write while `git add -A` reads
+     the tree, and anything it touched would flip run_changed_anything into buying a fifteen-minute
+     verification for a turn that changed nothing.
+
+     So `ffmcp stop` runs immediately after the agent's `wait` returns, before anything is staged;
+     again in `_ffbox_finish` before the harvest, for the run that was killed instead of finishing;
+     and once more in the verification block, which is then a no-op and costs nothing.
+
+  b. ffverify AND ffplaytest REFUSE RATHER THAN FIGHT. Each checks for a live bridge
+     (`ffmcp status`) and, if there is one, exits 2 saying which command to run -- either
+     `ffmcp stop` first, or the MCP `run_tests` tool instead. An error naming the fix beats a
+     Unity log 4000 lines deep saying the project is locked.
+
+  c. TESTS GO THROUGH THE BRIDGE WHILE IT IS UP. `run_tests` is in the server (section 1e), so a
+     turn with a live editor has no reason to want ffverify mid-turn: it costs a full second boot
+     for a suite the editor it already has can run. The preamble says this.
+
+A STALE LOCKFILE IS A SEPARATE PROBLEM and gets a separate answer -- a CONDITIONAL one, because
+section 2.3 says we do not yet know where 6000.3 keeps the lock. IF a killed editor leaves one
+behind, every later editor in that container refuses too, so `ffmcp stop` removes it ONLY when it
+has just killed the pid it started and that pid is gone -- never as a general "clear the lock"
+step, because a lockfile whose owner is alive is telling the truth. Implementation task B4 is to
+find the lock's real path first; if a killed editor leaves nothing, that half of `ffmcp stop`
+should not exist at all rather than deleting a path on spec.
+
+
+7. Clocks
+---------
+
+The boot goes in WARMUP, not in the agent's time. discord-task.sh already marks `.agent-started`
+and the host already bounds everything before it with warmup_secs (3600 for both classes, and
+section 2.1 says the real number is unmeasured but the ceiling has room).
+
+A separate clock is NOT introduced. verify_secs exists because the harness's EditMode run happens
+AFTER the agent, outside every other clock; the MCP boot happens before the agent, inside a clock
+that already covers clone, restore and Unity import. Adding `mcp_secs` would be a third answer to
+a question warmup_secs already answers.
+
+WHAT IS BOUNDED SEPARATELY is the READINESS WAIT inside ffmcp: `unity_mcp.ready_timeout_secs`,
+default 600. Past it, ffmcp gives up, stops the editor, and the turn proceeds degraded (0.3).
+A hung editor must not consume the whole warmup budget and leave the clone looking like the slow
+part.
+
+
+8. Config
+---------
+
+Per agent class, in ~/.config/ffbox/config.json, read at TURN START (not at container creation --
+nothing about it is baked into a container):
+
+    "agent_classes": {
+      "ffdev": {
+        "unity_mcp": {
+          "enabled": false,
+          "ready_timeout_secs": 600
+        }
+      }
+    }
+
+DEFAULT OFF, EVERYWHERE, and ffagent stays off even after ffdev is proven: the class that exists
+to run text strangers wrote is not the class to hand a live editor and `execute_code` to first.
+Turning it on for ffdev is a config edit and a turn, which is the point of it being config.
+
+ffbox/config.md documents both keys in the same commit as the code -- the project's standing rule
+for anything that changes the config's shape.
+
+`ready_timeout_secs` IS PROVISIONAL UNTIL PHASE F1. It bounds the whole boot, and the real boot
+cost of the 22 GiB workspace is the number section 2.1 says nobody has. If a healthy FinalFactory
+editor takes longer than 600s to reach the bridge, every turn would be degraded by a timeout on an
+editor that was working. F1 measures it and this default follows the measurement.
+
+
+9. Failure modes, each with an answer
+-------------------------------------
+
+  1. THE BRIDGE NEVER COMES UP (timeout, a compile error in the project, a missing package).
+     ffmcp stops whatever it started, writes its state file saying so, and the turn runs DEGRADED:
+     no MCP tools are offered, the preamble says the bridge is absent and why, and the reply
+     records it. Not a failed run.
+
+  2. THE EDITOR DIES MID-TURN. Tool calls start failing. The preamble tells the agent what that
+     means and to fall back to ffverify after `ffmcp stop` -- which is safe, because a dead
+     editor's group kill plus the lockfile rule (section 6) leaves the project openable.
+
+  3. THE PACKAGE AND THE SERVER DRIFT. The editor package comes from the game repo's manifest;
+     the server is pinned in our image. A mismatch shows up as a bridge that connects and then
+     refuses tools. ffmcp records both versions in its state file so the evidence is in the spool
+     rather than in somebody's memory.
+
+  4. THE WORKSPACE HAS NO MCP PACKAGE. Possible on an old branch. `ffmcp start` checks for the
+     package in the workspace first and degrades immediately rather than booting an editor that
+     will never listen -- the same gate ffplaytest applies for its own harness.
+
+  5. THE LICENCE LAPSES DURING A LONG TURN. Already handled and not made worse: the .ulf
+     DIRECTORY is mounted, so a host refresh is visible to a running container, and
+     unity-license.sh re-copies when it sees a newer file. An editor already up keeps its
+     entitlement.
+
+  6. THE CONTAINER IS KILLED -- CORRECTED, because the first draft credited a trap that does not
+     do this. `_ffbox_finish` in discord-task.sh and the trap in run-as-user.sh kill the AGENT pid
+     and nothing else; neither signals any other process group. What actually ends a stray editor
+     today is the pid-namespace teardown when PID 1 exits, which requirement 0.5 calls the backstop
+     rather than the plan. So `ffmcp stop` is called FROM `_ffbox_finish`, before the harvest, and
+     teardown stays the backstop behind it. Nothing on the host hunts for Unity processes --
+     design/discord_persistent_design.txt section 14 rule 2, unchanged. The process group ffmcp
+     kills is one it created itself, which is not the same thing as guessing which editor is ours.
+
+  8. THE STATE FILE IS ON A MOUNT THE AGENT CAN WRITE. /ffbox/out is the same bind mount the
+     transcript goes to, so "kill this pgid" read out of a file there is taking an editable file's
+     word for what to signal. ffmcp therefore checks the recorded pid against /proc/<pid>/cmdline
+     -- it must be a Unity editor opened on THIS project -- and refuses to signal anything else.
+     One pid, looked up because we were told about it; still no searching, no pkill, no ps.
+
+  9. THE PORT MOVES. PortManager keeps the port it had and leaves 6400 only when something else
+     holds it, which is what a domain reload can look like from the inside: the pre-reload listener
+     still on the socket as the new one starts. So the port is re-read from the LAST
+     `StdioBridgeHost started on port N` line in the editor log rather than trusted from the state
+     file, and the record is corrected when it has moved.
+
+  7. TWO TURNS, TWO CONTAINERS, ONE GOLDEN. Not a conflict: every run gets its own workspace, so
+     every editor opens a different project path. This is only a problem if somebody points two
+     containers at one workspace, which nothing does.
+
+
+10. What this changes about the security posture: nothing
+---------------------------------------------------------
+
+Stated as an argument, because "an agent can now execute arbitrary C# in an editor" sounds like a
+change and is not one.
+
+  * THE CONTAINER ALREADY HAS BARE `Bash` AND THE WHOLE CHECKOUT. `execute_code` in the editor is
+    strictly less reach than `bash`, which the run has had since 2026-08-25.
+  * THE BRIDGE IS LOCALHOST-ONLY, inside one container's network namespace. It is not reachable
+    from another container, from the host, or from the LAN.
+  * THE SERVER MAKES NO OUTBOUND CALLS once telemetry is off (DISABLE_TELEMETRY,
+    UNITY_MCP_DISABLE_TELEMETRY, MCP_DISABLE_TELEMETRY -- set all three; a blocked outbound call
+    behind the fence is a stall waiting to happen), and it was measured working under
+    --network none.
+  * NOTHING ABOUT PUBLICATION MOVES. The host still owns the refspec and the token, and the
+    harvest still refuses commits this run did not author. The MCP tools can edit the workspace --
+    so can Edit and Write. (CORRECTED: "the container holds no git credential" is not true for
+    every class. A class with `github.container_token` set gets `~/.git-credentials` staged by
+    entrypoint.sh. That predates this feature and is unchanged by it, but the sentence was wrong
+    for exactly the class this feature turns on.)
+  * THE ONE REAL WIDENING is that a turn can now run code inside a process holding the Unity
+    licence and the project, which is a way to WASTE a run or corrupt its own Library. That is a
+    cost borne by the run itself, inside a container that is destroyed afterwards.
+
+docs/docker-security-model.md gets this argument in the same commit, where the other measured
+non-boundaries live.
+
+
+11. Non-goals
+-------------
+
+  * NO GPU, AND SO NO TIMING. Software GL under Xvfb. Frame numbers from this editor are as
+    meaningless as ffplaytest's, and anything that reports them must say so.
+  * NO SECOND EDITOR. Paired multiplayer / determinism audits want two, and a clone is a project
+    of its own. Out of scope; ffplaytest's solo shape and the real machines keep that work.
+  * NO REPLACEMENT FOR ffverify. The harness's own post-agent run stays exactly as it is: its own
+    editor, its own cold compile, its result recorded where the agent cannot write it. A bridge
+    the agent can reach is not a verification channel the harness trusts.
+  * NO INTERACTIVE HUMAN USE. This is for turns; a developer wanting a bridge has one on their own
+    machine.
+
+
+12. Tests
+---------
+
+OFFLINE, in ffbox/test_ffwatch.py, against the real scripts:
+
+  1. The class config carries unity_mcp with the documented defaults, and default is OFF.
+  2. With it off: no MCP tools in the recorded tool list, no --mcp-config, no ffmcp call.
+  3. With it on: the mcp config file is written with the baked server command and the server named
+     UnityMCP; the MCP tools appear in BOTH the tool list and the allow list (the Workflow
+     precedent -- naming a tool in --tools alone leaves a -p run dying at a permission prompt);
+     --strict-mcp-config is passed.
+  4. ffmcp against a STUB editor: start waits for the log line and not for a registry file, status
+     reports the port, stop kills the whole process group (a recorded grandchild must die), and a
+     second start is idempotent.
+  5. ffverify and ffplaytest refuse with exit 2 while a bridge is up, naming the fix.
+  6. discord-task.sh stops the bridge before harness verification, and says so in the log.
+  7. A workspace with no MCP package degrades instead of booting.
+
+ON THE BOX, and written down as a checklist in the tasks file because it cannot be automated:
+the real FinalFactory boot time, a tool call against a real world, a recompile through the bridge
+(section 2.2), and a turn that ends cleanly with no editor left behind.
+
+
+13. Open questions
+------------------
+
+  1. Can a staged editor survive a no-op restore (section 3)? That is the difference between a
+     turn paying minutes and paying nothing, and it needs a reliable "the restore changed
+     nothing" signal that does not exist yet.
+  2. CLOSED. `ffmcp start` refuses when the class has the bridge off: the tool list is decided by
+     the host before the turn begins, so an editor started by hand would be one the model has no
+     tools to drive. The switch is `FFBOX_UNITY_MCP`, exported by the task from job.json.
+  3. Does a domain reload keep the bridge, and the port? Answered defensively rather than
+     measured: the port is re-read from the log's last bridge-start line (9.9), so a move is
+     survivable without the registry file. Whether the bridge survives a reload AT ALL is still
+     phase F's to find out.
+
+  4. What does merely OPENING the real project dirty in the tree? d133t5 says an editor
+     reserializes assets, and section 6a now stops the editor before anything is staged -- but if a
+     boot dirties the tree every time, a turn's diff carries it regardless of when we stop. Phase F
+     measures it against a clean tree; if it is non-empty, the harvest needs a baseline taken after
+     the boot rather than before the agent.
