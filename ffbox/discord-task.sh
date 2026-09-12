@@ -1112,7 +1112,14 @@ if (job.get("conversation") or {}).get("kind") in ("bug_report", "suggestion"):
         "If any gate fails the verdict is ESCALATE and you leave the code alone."
     )
 
-argv = ["claude", "-p", job.get("prompt") or ""]
+# THE PROMPT GOES IN ON STDIN, NOT AS AN ARGUMENT. Linux caps one argv string at 128KB
+# (MAX_ARG_STRLEN), and a turn seeded with an earlier session's full transcript is routinely
+# bigger than that -- conversation 141's was about 220KB -- so exec would fail with E2BIG before
+# claude ever started. `claude -p` with no positional prompt reads the whole of stdin as the
+# prompt; verified against Claude Code 2.1.269 with a 300KB input.
+with open(argv_path + ".prompt", "w", encoding="utf-8") as fh:
+    fh.write(job.get("prompt") or "")
+argv = ["claude", "-p"]
 
 # Session continuity: turn 1 opens the session id the host derived from the thread id; every
 # later turn resumes it. The host decides which, because only the host can see whether the
@@ -1319,10 +1326,15 @@ FFBOX_SHARER_PID=$!
 #
 # `wait` on a specific pid, not a bare `wait`: the transcript sharer is a background child too,
 # and a bare wait would sit there until the sharer's infinite loop ended, which is never.
-"${ARGV[@]}" > "$FFBOX_OUT/stream.jsonl" 2> "$FFBOX_OUT/claude.log" &
+#
+# STDIN IS THE PROMPT, which the argv builder wrote beside the argv (see the note there on
+# MAX_ARG_STRLEN). Removed once the agent is done with it: job.json already records the prompt,
+# and a seeded one is too large to harvest twice.
+"${ARGV[@]}" < "$FFBOX_OUT/argv.prompt" > "$FFBOX_OUT/stream.jsonl" 2> "$FFBOX_OUT/claude.log" &
 FFBOX_AGENT_PID=$!
 wait "$FFBOX_AGENT_PID"
 rc=$?
+rm -f "$FFBOX_OUT/argv.prompt"
 # A `wait` interrupted by a signal returns 128+signo without the child having exited, so the
 # handler is what ends the run in that case and this line is never reached. Reaching it means
 # the agent finished on its own.

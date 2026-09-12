@@ -4274,6 +4274,20 @@ def test_container_argv_is_valid():
     check("the argv builder runs", argv is not None, err)
     argv = argv or []
 
+    # THE PROMPT IS STDIN, NOT AN ARGUMENT. One argv string may not pass 128KB on Linux, and a
+    # turn seeded with a previous session's transcript is routinely past that (conversation 141's
+    # was about 220KB), so exec would fail before claude started.
+    check("the prompt is not on the command line",
+          argv[:2] == ["claude", "-p"] and "why does the belt stall?" not in argv, argv[:3])
+    with open(os.path.join(TMPROOT, "argv.bin.prompt"), encoding="utf-8") as fh:
+        check("it is written beside the argv instead", fh.read() == "why does the belt stall?")
+    check("and the task feeds that file to the agent on stdin",
+          '"${ARGV[@]}" < "$FFBOX_OUT/argv.prompt"' in task, None)
+    big, err = build(dict(answer, prompt="x" * 300_000))
+    check("a prompt past MAX_ARG_STRLEN still builds, and stays off the command line",
+          big is not None and max(len(a) for a in big) < 131072
+          and os.path.getsize(os.path.join(TMPROOT, "argv.bin.prompt")) == 300_000, err)
+
     # `claude -p --output-format stream-json` REFUSES to start without --verbose. Without this
     # pairing every Discord turn dies before the model is reached.
     check("stream-json is paired with --verbose",
@@ -7843,6 +7857,239 @@ def test_a_long_conversation_compacts_its_session_not_itself():
           dict(rolled))
     check("and the fresh session counts its own turns to the next compaction",
           rolled["compacted_at_seq"] == 6, dict(rolled))
+
+
+def _write_transcript(path, records, mode="w"):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, mode, encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec) + "\n")
+
+
+def _answer(uid, text, msg_id, model, **extra):
+    rec = {"type": "assistant", "uuid": uid, "isSidechain": False,
+           "message": {"id": msg_id, "model": model, "role": "assistant",
+                       "content": [{"type": "text", "text": text}]}}
+    rec.update(extra)
+    return rec
+
+
+def _asked(uid, text):
+    return {"type": "user", "uuid": uid, "isSidechain": False,
+            "message": {"role": "user", "content": text}}
+
+
+# What an API error leaves behind: an assistant entry Claude Code wrote itself. Turn 190 of
+# conversation 141 ended its transcript with exactly this.
+SYNTHETIC_400 = {"type": "assistant", "uuid": "err", "isSidechain": False,
+                 "isApiErrorMessage": True, "requestId": "req_x",
+                 "message": {"id": "ce57a017-527d-41f8-9f44-fb93e6ccc115", "model": "<synthetic>",
+                             "content": [{"type": "text", "text": "API Error: 400 ..."}]}}
+
+
+def test_a_transcript_says_which_provider_wrote_it():
+    """A session can only be resumed on the provider that wrote it, and the transcript says which.
+
+    Claude Code sends the last real assistant id as diagnostics.previous_message_id, Anthropic
+    refuses anything that is not `msg_`, and conversation 141 lost a turn to that on 2026-09-12.
+    """
+    print("sessions: which provider wrote a transcript")
+    root = os.path.join(TMPROOT, "provider")
+    shutil.rmtree(root, ignore_errors=True)
+
+    def provider(name, records):
+        path = os.path.join(root, name + ".jsonl")
+        _write_transcript(path, records)
+        return ffwatch.transcript_provider(path)
+
+    glm = "z-ai/glm-5.3-flash"
+    check("Anthropic's `msg_` ids are Anthropic",
+          provider("a", [_asked("u1", "q"), _answer("a1", "hi", "msg_01", "claude-opus-5")])
+          == ("anthropic", None))
+    check("anything else is OpenRouter, keyed by its model",
+          provider("o", [_asked("u1", "q"), _answer("a1", "hi", "gen-1", glm)])
+          == ("openrouter", glm))
+    check("a synthetic API-error entry is not an answer: 141's transcript still reads as OpenRouter",
+          provider("141", [_asked("u1", "q"), _answer("a1", "hi", "gen-1", glm),
+                           _asked("u2", "fix them"), SYNTHETIC_400]) == ("openrouter", glm))
+    check("the LAST real answer decides, so a session that moved to Anthropic is Anthropic",
+          provider("moved", [_answer("a1", "x", "gen-1", glm),
+                             _answer("a2", "y", "msg_02", "claude-opus-5")])
+          == ("anthropic", None))
+    check("a subagent's sidechain is not the main thread's answer",
+          provider("side", [_answer("a1", "x", "msg_01", "claude-opus-5"),
+                            _answer("s1", "y", "gen-9", glm, isSidechain=True)])
+          == ("anthropic", None))
+    check("a session with no real answer has nothing foreign to send",
+          provider("none", [_asked("u1", "q"), SYNTHETIC_400]) is None)
+    check("and neither does an entry with no id",
+          provider("noid", [{"type": "assistant", "uuid": "a",
+                             "message": {"content": [{"type": "text", "text": "x"}]}}]) is None)
+    check("a missing file is no answer either",
+          ffwatch.transcript_provider(os.path.join(root, "gone.jsonl")) is None)
+
+    check("a subscription runs on Anthropic",
+          ffwatch.credential_provider("CLAUDE_CODE_OAUTH_TOKEN1") == ("anthropic", None))
+    check("so does an API key", ffwatch.credential_provider("ANTHROPIC_API_KEY") == ("anthropic", None))
+    nitro = ("OPENROUTER_API_KEY1", "sk-or", claude_keys.KIND_OPENROUTER, "ffAgent", 1,
+             "z-ai/glm-5.3-flash:nitro", "")
+    check("an OpenRouter slot's routing suffix is the same model the transcript records",
+          ffwatch.credential_provider("OPENROUTER_API_KEY1", nitro) == ("openrouter", glm))
+    check("and a slot declaring no model serves the default",
+          ffwatch.credential_provider("OPENROUTER_API_KEY4")
+          == ("openrouter", claude_keys.OPENROUTER_DEFAULT_MODEL))
+
+
+def test_a_seeded_session_carries_the_whole_transcript():
+    """What a new session is handed when the old one cannot be resumed: all of it, in order."""
+    print("sessions: rendering a transcript for a new session")
+    root = os.path.join(TMPROOT, "render")
+    shutil.rmtree(root, ignore_errors=True)
+    path = os.path.join(root, "s.jsonl")
+    records = [
+        _asked("u0", "before the compaction"),
+        _answer("a0", "an answer already summarised", "gen-0", "glm"),
+        {"type": "system", "subtype": "compact_boundary", "uuid": "b"},
+        {"type": "user", "uuid": "cs", "isCompactSummary": True,
+         "message": {"content": "SUMMARY OF EARLIER WORK"}},
+        _asked("u1", "which buildings skip a prerequisite?"),
+        {"type": "assistant", "uuid": "a1", "message": {"id": "gen-1", "model": "glm", "content": [
+            {"type": "thinking", "thinking": "the tech tree lists unlocks", "signature": ""},
+            {"type": "text", "text": "Checking the tree."},
+            {"type": "tool_use", "id": "toolu_1", "name": "Grep",
+             "input": {"pattern": "SolidStateLaser"}}]}},
+        {"type": "user", "uuid": "r1", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "toolu_1",
+             "content": [{"type": "text", "text": "Comet Harvester needs 16 lasers"}]}]}},
+        _answer("s1", "SUBAGENT CHATTER", "gen-s", "glm", isSidechain=True),
+        _answer("a2", "21 buildings, the list is below", "gen-2", "glm"),
+        SYNTHETIC_400,
+    ]
+    _write_transcript(path, records)
+    text = ffwatch.render_transcript(path)
+    order = ["SUMMARY OF EARLIER WORK", "which buildings skip a prerequisite?",
+             "the tech tree lists unlocks", "Checking the tree.", '"SolidStateLaser"',
+             "Comet Harvester needs 16 lasers", "21 buildings, the list is below"]
+    check("every prompt, reasoning, tool call, result and answer is there, in order",
+          all(s in text for s in order)
+          and [text.index(s) for s in order] == sorted(text.index(s) for s in order), text)
+    check("tool calls and results keep the id that pairs them",
+          "called Grep [toolu_1]" in text and "RESULT [toolu_1]" in text, text)
+    check("it starts where a resume would: after the last compaction boundary",
+          "before the compaction" not in text and "already summarised" not in text, text)
+    check("and leaves out sidechains and synthetic errors, which a resume never sends",
+          "SUBAGENT CHATTER" not in text and "API Error" not in text, text)
+
+    huge = "L" * 50_000
+    _write_transcript(path, [
+        _asked("u1", "read the big file"),
+        {"type": "assistant", "uuid": "a1", "message": {"id": "gen-1", "model": "glm", "content": [
+            {"type": "thinking", "thinking": "REASONING KEPT"},
+            {"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "x"}}]}},
+        {"type": "user", "uuid": "r1", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": huge}]}},
+        _answer("a2", "ANSWER KEPT", "gen-2", "glm"),
+    ])
+    cut = ffwatch.render_transcript(path, budget=20_000)
+    check("over budget, tool output is cut first and says so",
+          len(cut) <= 20_000 and "were cut to fit" in cut and huge not in cut, len(cut))
+    check("and the reasoning and the answer survive the cut",
+          "REASONING KEPT" in cut and "ANSWER KEPT" in cut, cut[-300:])
+    tiny = ffwatch.render_transcript(path, budget=1_000)
+    check("past even that, the OLDEST entries go, and the text says how many",
+          tiny.startswith("[the first ") and "ANSWER KEPT" in tiny, tiny[:200])
+
+
+def test_a_provider_switch_starts_a_new_session_seeded_with_the_old_one():
+    """Conversation 141, replayed through build_job.
+
+    Turn 1 answered on OpenRouter; turn 2 was an operator's, billed to a subscription, and
+    resuming the OpenRouter session died on a 400. The switch now rolls a new generation seeded
+    with the whole transcript, the turn after it on the same provider resumes that new session,
+    and a switch back seams again.
+    """
+    print("sessions: a provider switch")
+    fixture = base_fixture()
+    mid = sflake(0, 1)
+    fixture["messages"][ASK_CHANNEL] = [message(mid, "tech tree order is wrong")]
+    case = Case("provider-seam", fixture, verdict={"engage": True, "reason": "r"})
+    case.events(ask_event(mid))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    conv = case.rows("SELECT * FROM conversation")[0]
+    first = conv["session_id"]
+    glm = "z-ai/glm-5.3-flash"
+    _write_transcript(case.watcher.transcript_path(conv["id"], first), [
+        _asked("u1", "turn one prompt"),
+        _answer("a1", "THE LIST OF 21 BUILDINGS", "gen-1", glm),
+        _asked("u2", "turn two prompt"), SYNTHETIC_400])
+
+    def job_for(seq, key):
+        row = case.rows("SELECT * FROM conversation WHERE id=?", (conv["id"],))[0]
+        turn = dict(case.rows("SELECT * FROM turn")[0])
+        turn["seq"] = seq
+        return case.watcher.build_job(turn, row, f"r{seq}", os.path.join(case.root, "att"),
+                                      claude_key=key)
+
+    job = job_for(2, "CLAUDE_CODE_OAUTH_TOKEN1")
+    row = case.rows("SELECT * FROM conversation WHERE id=?", (conv["id"],))[0]
+    check("an OpenRouter session is not resumed on a subscription",
+          not job["session"]["resume"] and not job["session"]["compact"], job["session"])
+    check("it rolls to the next generation, derived not invented",
+          job["session"]["id"] == ffwatch.session_id_for(conv["thread_id"], 2)
+          and row["session_generation"] == 2 and row["session_id"] == job["session"]["id"],
+          dict(row))
+    check("and the seam is recorded on the conversation, for the page",
+          row["compacted_at_seq"] == 2, dict(row))
+    seam = job["session"]["seam"] or {}
+    check("the job says why, and from which session",
+          seam.get("reason") == "provider" and seam.get("previous_session") == first
+          and seam.get("from") == f"OpenRouter ({glm})" and seam.get("to") == "Anthropic", seam)
+    check("the new session is handed the old transcript, not a summary of Discord",
+          "THE LIST OF 21 BUILDINGS" in (job["resume_transcript"] or "")
+          and not job["resume_summary"], job)
+    check("and the prompt carries it, fenced, after this turn's request",
+          "<previous_session>" in job["prompt"] and "THE LIST OF 21 BUILDINGS" in job["prompt"]
+          and "transcript was lost" not in job["prompt"]
+          and job["prompt"].index("</discord>") < job["prompt"].index("<previous_session>"),
+          job["prompt"][-800:])
+
+    # launch() FAILED after build_job rolled the generation, so no run ever wrote the new
+    # session. The retry must still carry the transcript, from the generation before it.
+    retry = job_for(2, "CLAUDE_CODE_OAUTH_TOKEN1")
+    check("a seam whose run never started is re-seeded from the generation before, not Discord",
+          not retry["session"]["resume"]
+          and retry["session"]["id"] == ffwatch.session_id_for(conv["thread_id"], 3)
+          and (retry["session"]["seam"] or {}).get("previous_session") == first
+          and "THE LIST OF 21 BUILDINGS" in (retry["resume_transcript"] or "")
+          and not retry["resume_summary"], retry["session"])
+
+    # The seeded session answered on Anthropic. The next turn on a subscription resumes it.
+    _write_transcript(case.watcher.transcript_path(conv["id"], retry["session"]["id"]), [
+        _asked("u3", "seeded prompt"), _answer("a3", "BRANCH PUSHED", "msg_03", "claude-opus-5")])
+    job3 = job_for(3, "CLAUDE_CODE_OAUTH_TOKEN2")
+    check("the next turn on the same provider resumes the new session, whichever subscription",
+          job3["session"]["resume"] and job3["session"]["id"] == retry["session"]["id"]
+          and job3["session"]["seam"] is None and not job3["resume_transcript"], job3["session"])
+
+    with credential_env(OPENROUTER_API_KEY9="sk-or-v1-test",
+                        OPENROUTER_MODEL_KEY9="z-ai/glm-5.3-flash:nitro"):
+        job4 = job_for(4, "OPENROUTER_API_KEY9")
+        check("a switch back to OpenRouter seams again",
+              not job4["session"]["resume"]
+              and job4["session"]["id"] == ffwatch.session_id_for(conv["thread_id"], 4)
+              and "BRANCH PUSHED" in (job4["resume_transcript"] or ""), job4["session"])
+        _write_transcript(case.watcher.transcript_path(conv["id"], job4["session"]["id"]), [
+            _asked("u4", "p"), _answer("a4", "ok", "gen-4", glm)])
+        job5 = job_for(5, "OPENROUTER_API_KEY9")
+        check("and an OpenRouter session resumes on an OpenRouter key serving the same model",
+              job5["session"]["resume"] and job5["session"]["id"] == job4["session"]["id"],
+              job5["session"])
+    job6 = job_for(6, None)
+    check("a caller with no credential in hand resumes as it always did",
+          job6["session"]["resume"] and job6["session"]["seam"] is None, job6["session"])
+    check("launch hands build_job the credential it resolved",
+          "bcfg=bcfg, claude_key=claude_key)" in inspect.getsource(type(case.watcher).launch))
 
 
 def test_the_dev_chat_exchange_that_started_this():
@@ -20498,6 +20745,9 @@ def main():
         test_thread_triage_lane,
         test_second_turn_resumes,
         test_missing_transcript_falls_back,
+        test_a_transcript_says_which_provider_wrote_it,
+        test_a_seeded_session_carries_the_whole_transcript,
+        test_a_provider_switch_starts_a_new_session_seeded_with_the_old_one,
         test_container_argv_is_valid,
         test_allow_list_is_scope_not_a_boundary,
         test_shell_is_an_ingress_not_a_second_pipeline,

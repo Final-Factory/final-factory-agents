@@ -1624,9 +1624,11 @@ has scrolled past it.
 A compaction is bounded (`FFBOX_COMPACT_SECS` in the container, 600s) and non-fatal: if it
 times out or the model refuses, the turn answers on the session exactly as it was, and the host
 has already moved the seam so nothing retries it every turn. `--autocompact auto` on the real
-invocation is the backstop. The other seam is recovery, not this knob: a transcript that is
-GONE rolls the session to a new generation seeded from `render_summary`, which reads what people
-wrote out of the database. `ffweb` shows whichever seam was last, and which turn it fell on.
+invocation is the backstop. The other seams are not this knob: a transcript that is GONE rolls
+the session to a new generation seeded from `render_summary`, which reads what people wrote out
+of the database, and a transcript whose last answer came from a different provider than the one
+the turn is billed to (OpenRouter to a subscription, or back) rolls it to a new generation seeded
+with that whole transcript. `ffweb` shows whichever seam was last, and which turn it fell on.
 
 Unlike `watch`, this block ships non-empty on purpose. `_deep_merge` recurses into dicts, so
 a shipped default is added to whatever a config declares rather than replaced by it. Here the
