@@ -5932,14 +5932,25 @@ def git_run(*args):
     return subprocess.run(["git", *args], capture_output=True, text=True)
 
 
-def git_origin(case):
-    """A bare remote with a `develop` branch, plus the host checkout ffwatch publishes from.
+GIT_TEMPLATE = [None]
 
-    The host checkout stands in for golden. publish() must leave it exactly as it found it:
-    refs under refs/ffbox/ only, no local branch moved, no working tree touched.
+
+def build_git_universe(root):
+    """origin.git + the host checkout + the mirror, from nothing. Twelve git commands.
+
+    master is the released build and develop is ahead of it, which is the shape the base
+    decision actually has to read: work branched off master descends from master and NOT from
+    develop, so "which branch is this for" has one answer either way.
+
+    THE MIRROR IS A REAL BARE REPO, not a stub, and that is deliberate. It is what a container
+    can actually see: restore-workspace.sh fills the workspace from it and from nothing else, so
+    a branch that is not here does not exist as far as any run is concerned -- which is why
+    publish() puts what it pushes into it and launch() checks before starting a turn on one. The
+    checking and the putting are both plain git and a stub would prove neither.
     """
-    origin = os.path.join(case.root, "origin.git")
-    host = os.path.join(case.root, "host")
+    origin = os.path.join(root, "origin.git")
+    host = os.path.join(root, "host")
+    mirror = os.path.join(root, "mirror.git")
     git_run("init", "-q", "--bare", origin)
     git_run("clone", "-q", origin, host)
     git_run("-C", host, "config", "user.email", "t@t.invalid")
@@ -5949,9 +5960,6 @@ def git_origin(case):
         fh.write("// seed\n")
     git_run("-C", host, "add", "-A")
     git_run("-C", host, "commit", "-qm", "seed")
-    # master is the released build and develop is ahead of it, which is the shape the base
-    # decision actually has to read: work branched off master descends from master and NOT from
-    # develop, so "which branch is this for" has one answer either way.
     git_run("-C", host, "push", "-q", "origin", "HEAD:refs/heads/master")
     with open(os.path.join(host, "Assets", "Belt.cs"), "a", encoding="utf-8") as fh:
         fh.write("// on develop only\n")
@@ -5959,13 +5967,43 @@ def git_origin(case):
     git_run("-C", host, "commit", "-qm", "develop is ahead of the release")
     git_run("-C", host, "push", "-q", "origin", "HEAD:refs/heads/develop")
     git_run("-C", host, "fetch", "-q", "origin")
-    # THE MIRROR, which is what a container can actually see. restore-workspace.sh fills the
-    # workspace from it and from nothing else, so a branch that is not here does not exist as
-    # far as any run is concerned — which is why publish() puts what it pushes into it and
-    # launch() checks before starting a turn on one. A real bare repo rather than a stub,
-    # because the checking and the putting are both plain git and a stub would prove neither.
-    mirror = os.path.join(case.root, "mirror.git")
     git_run("clone", "-q", "--mirror", origin, mirror)
+    return origin, host, mirror
+
+
+def git_origin(case):
+    """A bare remote with a `develop` branch, plus the host checkout ffwatch publishes from.
+
+    The host checkout stands in for golden. publish() must leave it exactly as it found it:
+    refs under refs/ffbox/ only, no local branch moved, no working tree touched.
+
+    BUILT ONCE AND COPIED, because ninety-odd cases want the same three repositories and
+    build_git_universe is a tenth of a second of `git` every time -- a quarter of every git
+    command the suite runs, spent producing the identical thing. A copy of the finished tree is
+    13ms and is the same repositories: git never rewrites an object file in place, so a plain
+    file copy of a quiet repo is a repo.
+
+    THE TWO REMOTE URLS ARE THE CATCH, and getting this wrong would be invisible rather than
+    red: a copied `host` still names the TEMPLATE's origin, so every case would fetch from and
+    push into one shared remote and the isolation the suite is built on would be gone. They are
+    rewritten below, in the config files, which is all `git remote set-url` does.
+    """
+    if GIT_TEMPLATE[0] is None:
+        GIT_TEMPLATE[0] = os.path.join(TMPROOT, "_git-template")
+        os.makedirs(GIT_TEMPLATE[0], exist_ok=True)
+        build_git_universe(GIT_TEMPLATE[0])
+    origin = os.path.join(case.root, "origin.git")
+    host = os.path.join(case.root, "host")
+    mirror = os.path.join(case.root, "mirror.git")
+    for name, dest in (("origin.git", origin), ("host", host), ("mirror.git", mirror)):
+        shutil.copytree(os.path.join(GIT_TEMPLATE[0], name), dest, dirs_exist_ok=True)
+    was = os.path.join(GIT_TEMPLATE[0], "origin.git")
+    for conf in (os.path.join(host, ".git", "config"), os.path.join(mirror, "config")):
+        with io.open(conf, encoding="utf-8") as fh:
+            body = fh.read()
+        assert was in body, conf          # a template whose remote moved would isolate nothing
+        with io.open(conf, "w", encoding="utf-8") as fh:
+            fh.write(body.replace(was, origin))
     case.watcher.cfg["mirror_repo"] = mirror
     case.watcher.cfg["git_dir"] = host
     case.watcher.cfg["push_remote"] = "origin"
