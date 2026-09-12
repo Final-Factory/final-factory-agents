@@ -5688,6 +5688,8 @@ def test_fix_lane_launches_with_write_capabilities():
           any(a.endswith(":/usr/local/bin/ffverify:ro") for a in argv), argv)
     check("and so is ffplaytest, its play-mode sibling",
           any(a.endswith(":/usr/local/bin/ffplaytest:ro") for a in argv), argv)
+    check("and ffmcp, which owns the live editor when a class asks for one",
+          any(a.endswith(":/usr/local/bin/ffmcp:ro") for a in argv), argv)
     job = json.load(open(os.path.join(run_dir, "job.json"), encoding="utf-8"))
     check("the job asks for harness verification and names the fast suite",
           job["verify"]["enabled"] and job["verify"]["assemblies"] == "FFEditorTests",
@@ -7743,7 +7745,7 @@ def test_destructive_docker_calls_name_the_container():
     print("named-container discipline")
     sources = {name: open(os.path.join(HERE, name), encoding="utf-8").read()
                for name in ("ffbox", "ffwatch.py", "discord-task.sh", "ffverify.sh",
-                            "ffplaytest.sh")}
+                            "ffplaytest.sh", "ffmcp.sh")}
     # Comment lines are dropped first: several of these files say "never `docker kill`" in
     # prose, and a check that cannot tell that from a call would forbid explaining the rule.
     code = {name: "\n".join(
@@ -7859,6 +7861,245 @@ echo "$$" >> "$STUB_PIDS"
 echo "[LocalMultiplayerAutomation] status pre-connect-command-complete: chain"
 wait
 """
+
+
+FFMCP_EDITOR_STUB = """#!/bin/sh
+# Stub unity-editor for ffmcp: a WRAPPER that holds the socket in a CHILD, like the real one, so
+# the test can prove the whole process group dies rather than only the process ffmcp signalled.
+python3 -c "
+import socket, time
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', PORT_PLACEHOLDER)); s.listen(5)
+print('MCP-FOR-UNITY: StdioBridgeHost started on port PORT_PLACEHOLDER. (OS=LinuxEditor)', flush=True)
+time.sleep(300)
+" &
+echo "$!" >> "$STUB_PIDS"
+echo "$$" >> "$STUB_PIDS"
+wait
+"""
+
+
+def test_the_live_editor_is_off_until_a_class_asks_for_it():
+    """The MCP bridge is a per-class switch, and OFF is the shape that must not drift.
+
+    A class that has not asked for a live editor must see NOTHING of it. A class that HAS asked must
+    get the tools in BOTH lists -- the Workflow lesson, measured on 2026-09-06: running a tool
+    raises a permission request, and a `-p` run has nobody to answer it, so a tool named in --tools
+    alone buys a turn that dies at its first call.
+    """
+    print("the live editor: off by default, both lists when on")
+    for name, blk in ffwatch.DEFAULTS["agent_classes"].items():
+        mcp = blk.get("unity_mcp") or {}
+        check(f"{name} carries unity_mcp, off, with a readiness ceiling",
+              mcp.get("enabled") is False and int(mcp.get("ready_timeout_secs")) == 600, mcp)
+
+    off = ffwatch.capabilities_for("dev", {"unity_mcp": {"enabled": False}})
+    check("off: the tool list is exactly what it was",
+          off["tools"] == ffwatch.CAPABILITY_TOOLS, off["tools"])
+    check("off: nothing mcp-shaped on the allow list",
+          not any(a.startswith("mcp__") for a in off["allowed"]), off["allowed"])
+
+    on = ffwatch.capabilities_for("dev", {"unity_mcp": {"enabled": True}})
+    names = ffwatch.mcp_tool_names()
+    tools = on["tools"].split(",")
+    check("on: every curated tool is offered", all(n in tools for n in names),
+          [n for n in names if n not in tools])
+    check("on: and every one is ALLOWED too, or a -p run dies at its first call",
+          all(n in on["allowed"] for n in names),
+          [n for n in names if n not in on["allowed"]])
+    check("on: the base tools are still there", "Bash" in tools and "Edit" in tools, tools[:8])
+    check("the server is named UnityMCP, matching the mcp__UnityMCP__* the roles already use",
+          all(n.startswith("mcp__UnityMCP__") for n in names), names[:3])
+
+    # The curation is the point: a turn does NOT get all 46 tools the server offers.
+    check("the script-mutation tools are absent -- Edit/Write are the channel a reviewer reads",
+          not any(n.endswith(("__create_script", "__delete_script", "__script_apply_edits",
+                              "__apply_text_edits", "__validate_script")) for n in names), names)
+    check("and so are the generation/import tools, which would reach outside the fence",
+          not any("generate_" in n or "import_model" in n for n in names), names)
+
+    # The review lane's extra tool and the editor's must coexist rather than replace each other.
+    both = ffwatch.capabilities_for(ffwatch.GITHUB_KIND, {"unity_mcp": {"enabled": True}})
+    check("a review lane with a live editor keeps Workflow AND gains the editor",
+          ffwatch.REVIEW_TOOL in both["tools"] and names[0] in both["tools"],
+          both["tools"][-120:])
+
+
+def test_ffmcp_owns_the_editor_it_starts():
+    """ffmcp against a stub editor: every property here is one a caller gets wrong.
+
+    Readiness is the LOG LINE, not the port registry file -- PortManager writes that file only when
+    it has to move off the default port, so the first probe of this feature waited five minutes for
+    a file a healthy bridge never writes. The editor dies as a GROUP, because `unity-editor` is an
+    xvfb-run wrapper whose children survive a pid-targeted signal and go on holding the licence
+    seat. And a run whose class never asked for a bridge cannot start one.
+    """
+    print("ffmcp: readiness, the process group, and the gates")
+    root = os.path.join(TMPROOT, "ffmcp")
+    proj = os.path.join(root, "project")
+    state = os.path.join(root, "state")
+    bindir = os.path.join(root, "bin")
+    for d in (os.path.join(proj, "Assets"), state, bindir):
+        os.makedirs(d, exist_ok=True)
+    script = os.path.join(HERE, "ffmcp.sh")
+    pids_file = os.path.join(root, "stub-pids")
+    port = 6473
+    write_stub(os.path.join(bindir, "unity-editor"),
+               FFMCP_EDITOR_STUB.replace("PORT_PLACEHOLDER", str(port)))
+    open(pids_file, "w").close()
+
+    def run(*args, enabled=True):
+        env = dict(os.environ, FFMCP_PROJECT=proj, FFMCP_STATE=state,
+                   FFMCP_UNITY=os.path.join(bindir, "unity-editor"),
+                   FFMCP_READY_TIMEOUT="60", STUB_PIDS=pids_file)
+        if enabled:
+            env["FFBOX_UNITY_MCP"] = "1"
+        else:
+            env.pop("FFBOX_UNITY_MCP", None)
+        return subprocess.run(["bash", script, *args], capture_output=True, text=True,
+                              env=env, timeout=180)
+
+    off = run("start", enabled=False)
+    check("a run whose class did not ask for a bridge cannot start one", off.returncode == 3,
+          (off.returncode, off.stderr[-200:]))
+
+    nopkg = run("start")
+    check("a workspace with no MCP package degrades instead of booting an editor",
+          nopkg.returncode == 3, (nopkg.returncode, nopkg.stderr[-200:]))
+    check("and it names the package that is missing",
+          "com.coplaydev.unity-mcp" in nopkg.stderr, nopkg.stderr[-200:])
+
+    # The real repo resolves the package as a GIT dependency into Library/PackageCache with a hash
+    # suffix -- Packages/com.coplaydev.unity-mcp does not exist there -- so the glob is the case
+    # that matters, not the embedded copy the feasibility probe used.
+    pkg = os.path.join(proj, "Library", "PackageCache", "com.coplaydev.unity-mcp@7b7db7b31f4e")
+    os.makedirs(pkg, exist_ok=True)
+    with open(os.path.join(pkg, "package.json"), "w", encoding="utf-8") as fh:
+        fh.write('{"name":"com.coplaydev.unity-mcp","version":"10.0.0"}')
+
+    started = run("start")
+    check("start reports the port off the editor's own log line",
+          started.returncode == 0 and str(port) in started.stdout,
+          (started.returncode, started.stdout[-200:], started.stderr[-200:]))
+
+    st = json.load(open(os.path.join(state, "state.json"), encoding="utf-8"))
+    check("the state file records the bridge, the pid and the package version it found",
+          st["phase"] == "up" and st["port"] == port and st["pid"] > 0
+          and st["editor_package_version"] == "10.0.0", st)
+
+    check("status agrees while it is up", run("status").returncode == 0, None)
+    check("port prints just the port", run("port").stdout.strip() == str(port), None)
+    again = run("start")
+    check("a second start is idempotent rather than a second editor",
+          again.returncode == 0 and "already up" in again.stdout, again.stdout[-160:])
+
+    # THE GUARD THE OTHER TWO WRAPPERS CARRY: one project cannot hold two editors.
+    guard_bin = os.path.join(root, "guardbin")
+    os.makedirs(guard_bin, exist_ok=True)
+    write_stub(os.path.join(guard_bin, "ffmcp"), "#!/bin/sh\nexit 0\n")
+    for name, extra in (("ffverify.sh", []), ("ffplaytest.sh", ["--chain", "ffauto:wait|1"])):
+        res = subprocess.run(["bash", os.path.join(HERE, name), "--project", proj,
+                              "--out", os.path.join(root, "out"), *extra],
+                             capture_output=True, text=True, timeout=120,
+                             env=dict(os.environ,
+                                      PATH=guard_bin + os.pathsep + os.environ["PATH"]))
+        check(f"{name} refuses while a live bridge holds the project", res.returncode == 2,
+              (res.returncode, res.stderr[-200:]))
+        check(f"{name} names the fix rather than leaving Unity to explain it",
+              "ffmcp stop" in res.stderr and "run_tests" in res.stderr, res.stderr[-200:])
+
+    # A pid that is NOT our editor is never signalled, however the state file got that way: the
+    # file lives on a mount the agent can write.
+    forged = dict(st)
+    forged["pid"] = os.getpid()
+    forged["pgid"] = os.getpid()
+    with open(os.path.join(state, "state.json"), "w", encoding="utf-8") as fh:
+        json.dump(forged, fh)
+    refused = run("stop")
+    check("stop refuses a pid that is not an editor on this project rather than signalling it",
+          "refusing to signal" in refused.stderr, refused.stderr[-200:])
+    check("and this test process is still alive to say so", _pid_alive(os.getpid()), None)
+
+    # Put the real pid back and stop for real.
+    with open(os.path.join(state, "state.json"), "w", encoding="utf-8") as fh:
+        json.dump(st, fh)
+    stopped = run("stop")
+    check("stop reports what it stopped", stopped.returncode == 0, stopped.stdout[-160:])
+    alive = [int(x) for x in open(pids_file, encoding="utf-8").read().split()
+             if _pid_alive(int(x))]
+    for pid in alive:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    check("the editor's whole process group is gone, the socket-holding child included",
+          not alive, alive)
+    check("and status now says down", run("status").returncode == 1, None)
+
+
+def test_the_harness_stops_the_bridge_before_it_reads_the_tree():
+    """Source-level, because ORDER is the property and only production has the real order.
+
+    Opening a Unity project RESERIALIZES ASSETS, and the commit after the agent exits is
+    `git add -A` under the run's identity -- d133t5 is the worked example, a turn that edited
+    nothing gaining a commit that changed a material. An editor open for the whole turn is that
+    hazard with a much longer exposure, so it must be stopped before anything reads the tree, not
+    merely before the harness's own ffverify.
+    """
+    print("the bridge is stopped before anything reads the tree")
+    body = io.open(os.path.join(HERE, "discord-task.sh"), encoding="utf-8").read()
+
+    boot = body.find("ffmcp start")
+    argv_build = body.find('if ! python3 - "$JOB_FILE" "$FFBOX_OUT/argv"')
+    agent = body.find(': > "$FFBOX_OUT/.agent-started"')
+    check("the boot happens before the argv is built, which is what decides the tool list",
+          0 < boot < argv_build, (boot, argv_build))
+    check("and before .agent-started, so it is warm-up and not the model's clock",
+          0 < boot < agent, (boot, agent))
+
+    # CODE ONLY. Both of these strings appear in the prose that explains them as well, and a
+    # naive find lands in a comment -- which is how the first version of this test failed while
+    # the ordering it was checking was correct.
+    def code_offset(needle, after=0):
+        pos = after
+        while True:
+            pos = body.find(needle, pos)
+            if pos < 0:
+                return -1
+            line_start = body.rfind("\n", 0, pos) + 1
+            if not body[line_start:pos].lstrip().startswith("#"):
+                return pos
+            pos += len(needle)
+
+    wait_line = body.find('wait "$FFBOX_AGENT_PID"')
+    stop = code_offset("ffmcp stop", wait_line)
+    # The real spelling, not the one the comments use: `git -C "$WORKSPACE" add -A -- .` with the
+    # .github exclusion.
+    staged = code_offset('add -A -- .', wait_line)
+    verify = code_offset('ffverify --out "$FFBOX_OUT/verification"')
+    check("the editor is stopped as soon as the agent is gone",
+          0 < wait_line < stop, (wait_line, stop))
+    check("BEFORE the tree is staged, or its reserialized assets become the agent's commit",
+          stop < staged, (stop, staged))
+    check("which is necessarily before the harness's own verification too", stop < verify,
+          (stop, verify))
+
+    # The exit trap covers the run that never reaches the line above at all, and it must go before
+    # the harvest, which is the other thing that commits the tree.
+    trap = body[body.find("_ffbox_finish() {"):body.find("trap _ffbox_finish")]
+    trap_stop = trap.find("ffmcp stop")
+    trap_harvest = trap.find("/ffbox/harvest-workspace.sh")
+    check("a killed run stops the editor in the exit trap",
+          trap_stop > 0, trap[:200])
+    check("and does it before the harvest commits whatever the editor reserialized",
+          0 < trap_stop < trap_harvest, (trap_stop, trap_harvest))
+
+    check("a degraded turn drops the mcp tools from its own argv",
+          "if not MCP_PORT:" in body and 'startswith("mcp__")' in body, None)
+    check("and the prompt says the bridge is absent rather than leaving it to be inferred",
+          "PREAMBLE_MCP_DEGRADED" in body, None)
+    check("--strict-mcp-config is passed, so only the server this run wrote can load",
+          "--strict-mcp-config" in body, None)
 
 
 def test_ffplaytest_never_leaves_a_config_or_an_editor_behind():
@@ -12693,7 +12934,7 @@ def test_every_lane_agrees_on_the_workspace_path():
     # Nothing anywhere still says /workspace, in a default or in a prompt the agent reads.
     for name in ("ffbox", "entrypoint.sh", "restore-workspace.sh", "harvest-workspace.sh",
                  "run-as-user.sh", "pool-task.sh", "discord-task.sh", "ffverify.sh",
-                 "ffplaytest.sh"):
+                 "ffplaytest.sh", "ffmcp.sh"):
         body = io.open(os.path.join(HERE, name), encoding="utf-8").read()
         stale = [ln for ln in body.splitlines()
                  if "/workspace" in ln and not ln.lstrip().startswith("#")]
@@ -19509,6 +19750,9 @@ def main():
         test_a_refused_local_fork_leaves_nothing_behind,
         test_a_conversation_is_forked_once_and_never_into_itself,
         test_ffplaytest_never_leaves_a_config_or_an_editor_behind,
+        test_the_live_editor_is_off_until_a_class_asks_for_it,
+        test_ffmcp_owns_the_editor_it_starts,
+        test_the_harness_stops_the_bridge_before_it_reads_the_tree,
     ]
     for fn in tests:
         try:

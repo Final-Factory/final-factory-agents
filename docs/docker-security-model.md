@@ -347,6 +347,20 @@ convenience, and the reason to prefer them is that a hand-rolled launch gets tho
 Fixed in both directions: the prompt now says the wrappers are preferred AND that direct
 `unity-editor` is available.
 
+**A live editor is not new reach, and this is the argument rather than the assertion.** Since
+2026-09-11 a class can be configured (`unity_mcp.enabled`) to boot a headless Unity editor in the
+container and expose it to the run over MCP, `execute_code` included. That sounds like an
+escalation and is not one: the container has had bare `Bash` and the whole checkout since
+2026-08-25, and running C# inside an editor it owns is strictly less reach than running a shell.
+The bridge listens on localhost inside ONE container's network namespace — not reachable from
+another container, the host or the LAN — and the server it talks to was measured answering under
+`--network none`, so nothing new leaves. Telemetry is disabled three ways because the package reads
+three variables and a blocked outbound call behind the fence is a stall, not a leak. Publication is
+untouched: no git or GitHub credential in the container, the host owns the refspec and the token,
+and the harvest still refuses commits the run did not author. The one real widening is that a run
+can now waste itself or corrupt its own Library from inside a process holding the Unity licence —
+a cost borne by that run, in a container that is destroyed afterwards.
+
 **The preamble is advice.** Everything the container is told not to do must also be something it
 cannot do, or must be checked by the host afterwards.
 

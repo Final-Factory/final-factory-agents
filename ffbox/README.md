@@ -1524,6 +1524,35 @@ and the agent cannot touch:
   gate is not where that should be discovered. The task removes it (and its status sibling) first;
   the file is gitignored on develop, so nothing that matters is ever kept there.
 
+- **`ffmcp`, the live editor** (2026-09-11, OFF by default). The third Unity entry point, and the
+  only one that outlives its own command: it boots a headless editor with
+  `-executeMethod MCPForUnity.Editor.McpCiBoot.StartStdioForCi` and leaves it running, so a turn
+  drives it over the `mcp__UnityMCP__*` tools instead of paying a fresh boot per question —
+  `execute_code` against the live world, `read_console`, `refresh_unity`, `run_tests`.
+
+  Enabled per agent class (`unity_mcp.enabled`, see `config.md`), off everywhere until the real
+  workspace's boot cost is measured, and off for ffagent regardless. When on, the task boots the
+  bridge AFTER the workspace restore and BEFORE `.agent-started`, so the cost is warm-up rather
+  than the model's clock; the tool list is decided by the host but pruned by the container, because
+  only the container knows whether the bridge actually came up. A bridge that fails is a DEGRADED
+  turn — no MCP tools, a prompt that says so, `ffverify` unaffected — never a dead one.
+
+  **One project, one editor.** Unity refuses the second: `Multiple Unity instances cannot open the
+  same project.`, exit 1, measured. So `ffverify` and `ffplaytest` check `ffmcp status` and refuse
+  with the fix in the message, the harness stops the bridge before its own verification run, and
+  while the bridge is up the MCP `run_tests` tool is the test channel — it uses the editor that is
+  already there. Three things `ffmcp` owns for the same reason its siblings exist: the editor dies
+  as a PROCESS GROUP (`unity-editor` is an `xvfb-run` wrapper whose children otherwise survive and
+  hold the licence seat), readiness is the log line `StdioBridgeHost started on port N` and not the
+  port registry file (which is written only when the default port is taken), and
+  `UNITY_MCP_ALLOW_BATCH=1` is set — without it the bridge returns early in batch mode and serves
+  nothing.
+
+  The server half is baked into the image (`mcpforunityserver`, installed with uv at build time)
+  and was measured answering under `--network none`, so the egress allowlist needs nothing new.
+  Design: `design/unitymcp_container_design.txt`; phases and evidence:
+  `design/unitymcp_container_tasks.md`.
+
 - **`ffplaytest`, for what an EditMode suite cannot see** (2026-09-11). The sibling of `ffverify`:
   one host play-mode session, driven by an `ffauto` chain, with the session journal reported as
   JSON. It is for the bug class the EditMode suite structurally misses — an op silently dropped, a

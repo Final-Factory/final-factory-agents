@@ -137,6 +137,44 @@ RUN set -eux; \
 # environment where it belongs, scoped to one run and leaving nothing in an image layer.
 RUN git config --system --add safe.directory /ffmirror
 
+# THE MCP BRIDGE'S SERVER HALF, so a run can drive a live editor instead of paying a fresh boot
+# per question (design/unitymcp_container_design.txt).
+#
+# The Unity side of the bridge ships with the project -- com.coplaydev.unity-mcp in the game repo's
+# Packages/manifest.json. What the image has to supply is the PYTHON SERVER the editor talks to:
+# the PyPI package `mcpforunityserver`, whose console scripts are `mcp-for-unity` and `unity-mcp`.
+#
+# BAKED, NOT INSTALLED AT RUN TIME, and the egress fence is the reason. A run reaches Anthropic,
+# OpenRouter and Unity -- not PyPI, not astral.sh. Installing at run time would mean opening those
+# for every run forever to save a layer, which is the trade docs/docker-security-model.md argues
+# against. MEASURED on 2026-09-11: installed this way, the server answers under `--network none`,
+# so the allowlist needs nothing new. Build time is outside the fence, like the action cache above.
+#
+# SHARED PATHS, NOT $HOME, and this is not a style choice: at run time we drop to whatever uid owns
+# the bind-mounted workspace, and that user has no $HOME to install into -- the same reason
+# install-claude.sh parks its binary in /usr/local/bin. uv defaults to ~/.local, which would put
+# both the tool and its managed python somewhere the run user cannot read.
+#
+# PINNED, AND IT MUST MATCH THE EDITOR PACKAGE. The version below tracks
+# `com.coplaydev.unity-mcp` in the game repo's Packages/manifest.json -- 10.0.0 today. Same
+# lockstep discipline as UNITY_IMAGE and UNITY_VERSION in 03-build.sh: a server that disagrees with
+# the editor package connects and then refuses tools, which is a confusing way to fail.
+#
+# PLACED BEFORE THE SCRIPT COPY BELOW ON PURPOSE. Those scripts change most weeks; a layer after
+# them rebuilds every time one does, and this one downloads a python toolchain.
+ARG MCP_SERVER_VERSION=10.0.0
+ENV UV_INSTALL_DIR=/usr/local/bin \
+    UV_TOOL_BIN_DIR=/usr/local/bin \
+    UV_TOOL_DIR=/opt/uv/tools \
+    UV_PYTHON_INSTALL_DIR=/opt/uv/python
+RUN set -eux; \
+    curl -LsSf https://astral.sh/uv/install.sh | sh; \
+    uv --version; \
+    uv tool install --python 3.12 "mcpforunityserver==${MCP_SERVER_VERSION}"; \
+    chmod -R a+rX /opt/uv /usr/local/bin/mcp-for-unity; \
+    mcp-for-unity --help >/dev/null; \
+    echo "mcpforunityserver ${MCP_SERVER_VERSION} installed for $(uv --version)"
+
 COPY entrypoint.sh entrypoint-ci.sh run-as-user.sh unity-license.sh restore-workspace.sh harvest-workspace.sh /ffbox/
 RUN chmod +x /ffbox/entrypoint.sh /ffbox/entrypoint-ci.sh /ffbox/run-as-user.sh /ffbox/restore-workspace.sh /ffbox/harvest-workspace.sh
 
@@ -151,6 +189,7 @@ RUN mkdir -p /opt/ffghr && ln -sf /ffbox/unity-license.sh /opt/ffghr/unity-licen
 # label.
 LABEL org.finalfactory.runner-version="${RUNNER_VERSION}" \
       org.finalfactory.unity-version="${UNITY_VERSION}" \
-      org.finalfactory.gh-version="${GH_VERSION}"
+      org.finalfactory.gh-version="${GH_VERSION}" \
+      org.finalfactory.mcp-server-version="${MCP_SERVER_VERSION}"
 
 ENTRYPOINT ["/ffbox/entrypoint.sh"]

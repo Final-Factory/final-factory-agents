@@ -645,6 +645,10 @@ DEFAULTS = {
     # the automation harness, which is on develop and not on master, and it says so and exits 3
     # when the workspace does not have it.
     "ffplaytest": os.path.join(HERE, "ffplaytest.sh"),
+    # THE LIVE EDITOR, and the only one of the three that outlives its own command: ffmcp boots a
+    # headless editor, waits for the MCP bridge and leaves it running for the turn to drive.
+    # Off unless the agent class enables it -- see `unity_mcp` in agent_classes below.
+    "ffmcp": os.path.join(HERE, "ffmcp.sh"),
     # WHERE the plugin trees are read from. WHICH of them a container gets is per agent class --
     # see `plugins` in agent_classes below. It was one box-wide name until 2026-09-05, which
     # could not say "the dev lane gets the engineering skills and the lane running text written
@@ -1019,6 +1023,18 @@ DEFAULTS = {
             # sits on disk beside the channel ids and is read by ffweb, and a secret in it would
             # be in the wrong file. null means this pool has no credential of its own, which is
             # every box before 2026-09-04 and every box that never wants two. See pr_token_for.
+            # THE LIVE EDITOR, OFF BY DEFAULT. On, this class's turns get a headless editor
+            # booted before the agent starts (ffmcp) and the curated MCP tool surface on their
+            # tool list; off, they get ffverify and ffplaytest exactly as before and pay nothing.
+            #
+            # OFF IS NOT TIMIDITY, it is the order the evidence came in: the bridge was proven in
+            # a container on 2026-09-11 against a BLANK project, and the real workspace's boot
+            # cost is still unmeasured (design/unitymcp_container_design.txt section 2). Turning
+            # it on is a config edit and a turn, which is the point of it being config.
+            #
+            # ffagent stays off even after ffdev is proven: the class that exists to run text
+            # strangers wrote is not the one to hand a live editor and execute_code to first.
+            "unity_mcp": {"enabled": False, "ready_timeout_secs": 600},
             "github": {"pr_token": None, "container_token": None},
         },
         "ffdev": {
@@ -1048,6 +1064,18 @@ DEFAULTS = {
             # mounting the skills for that process would read as permission to run it.
             "warm_branches": {"count": 1, "window_secs": 3600, "ttl_secs": 3600},
             "plugins": ["ff-discord", "ff-agents"],
+            # THE LIVE EDITOR, OFF BY DEFAULT. On, this class's turns get a headless editor
+            # booted before the agent starts (ffmcp) and the curated MCP tool surface on their
+            # tool list; off, they get ffverify and ffplaytest exactly as before and pay nothing.
+            #
+            # OFF IS NOT TIMIDITY, it is the order the evidence came in: the bridge was proven in
+            # a container on 2026-09-11 against a BLANK project, and the real workspace's boot
+            # cost is still unmeasured (design/unitymcp_container_design.txt section 2). Turning
+            # it on is a config edit and a turn, which is the point of it being config.
+            #
+            # ffagent stays off even after ffdev is proven: the class that exists to run text
+            # strangers wrote is not the one to hand a live editor and execute_code to first.
+            "unity_mcp": {"enabled": False, "ready_timeout_secs": 600},
             "github": {"pr_token": None, "container_token": None},
         },
     },
@@ -1413,6 +1441,7 @@ ENV_OVERRIDES = {
     "FFWATCH_CATCHUP_SECS": ("catchup_secs", int),
     "FFWATCH_VERIFY": ("ffverify", str),
     "FFWATCH_PLAYTEST": ("ffplaytest", str),
+    "FFWATCH_MCP": ("ffmcp", str),
     "FFWATCH_VERIFY_SECS": ("verify_secs", int),
     "FFWATCH_GIT_DIR": ("git_dir", str),
 }
@@ -2790,6 +2819,57 @@ TRIPWIRE = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)", "Bash(git fetc
 # intent queued by a container is already a message. See record_reply().
 CAPABILITY_ALLOWED = ["Bash"]
 
+# THE LIVE EDITOR'S TOOL SURFACE, and it is a SUBSET of the 46 the server offers -- enumerated on
+# 2026-09-11 by asking the server itself, which lists its tools without an editor attached.
+#
+# A curated list rather than the whole server, for two reasons that are not about trust:
+#
+#   * THE SCRIPT-MUTATION TOOLS ARE A SECOND EDIT CHANNEL (create_script, delete_script,
+#     manage_script, script_apply_edits, apply_text_edits, validate_script). The run already has
+#     Edit and Write, whose changes land in the transcript where a reviewer reads them. Two ways to
+#     change the same file makes a diff harder to account for, and buys nothing.
+#   * THE GENERATION AND IMPORT TOOLS REACH OUTSIDE (generate_image, generate_model, import_model,
+#     import_model_file). A fix turn has no business generating assets, and the egress fence would
+#     refuse them anyway -- as a stall rather than as an error.
+#
+# The rest are left out for having no use in a container with no GPU and no human watching:
+# manage_graphics, manage_shader, manage_vfx, manage_texture, manage_material, manage_probuilder,
+# manage_ui, manage_profiler, manage_build, manage_packages, manage_physics, manage_animation,
+# manage_scriptable_object, manage_tools, manage_script_capabilities, unity_docs, find_in_file
+# (Grep is better), get_sha, debug_request_context, execute_menu_item.
+#
+# WHAT IS HERE IS WHAT A DEV TURN ACTUALLY DOES: look at live state, compile, run the suite, poke
+# the world, read the console.
+CAPABILITY_MCP_SERVER = "UnityMCP"
+CAPABILITY_MCP_TOOLS = [
+    "execute_code",          # the workhorse: arbitrary C# against the live world
+    "read_console",          # what the editor is complaining about
+    "refresh_unity",         # force the recompile the compile-verify ritual needs
+    "run_tests",             # the EditMode suite WITHOUT booting a second editor
+    "get_test_job",          # its result
+    "set_active_instance",   # one editor in here, but the role text pins an instance first
+    "manage_editor",         # play mode, editor state
+    "manage_scene",
+    "manage_gameobject",
+    "manage_components",
+    "find_gameobjects",
+    "manage_asset",
+    "manage_prefabs",
+    "manage_camera",         # screenshots; framing only, since nothing here judges timing
+    "batch_execute",         # several of the above in one round trip
+    "unity_reflect",         # what exists, without guessing at type names
+]
+
+
+def mcp_tool_names(server=CAPABILITY_MCP_SERVER):
+    """`mcp__<server>__<tool>`, which is how Claude Code names an MCP tool.
+
+    Enumerated rather than passed as a server-wide wildcard: the whole point of the curation above
+    is that the surface is readable in one place, and a wildcard would silently grow the next time
+    the server adds a tool.
+    """
+    return [f"mcp__{server}__{name}" for name in CAPABILITY_MCP_TOOLS]
+
 CAPABILITIES = {
     "tools": CAPABILITY_TOOLS,
     "allowed": list(CAPABILITY_ALLOWED),
@@ -2848,19 +2928,31 @@ HARNESS_COMMENT_MARKER = "<!-- ffbox: written by the harness, not to be acted on
 GITHUB_ACK_REACTION = "eyes"
 
 
-def capabilities_for(conv):
+def capabilities_for(conv, ccfg=None):
     """The capability set this conversation's container runs under.
 
     One dict for every lane but the review one, which is the shape this has always had: the
     fence is the network and the absent credential, not a per-kind tool list. What the review
     lane adds is the one tool its workflow cannot run without.
+
+    `ccfg` is the agent class's config block, and the ONE thing it decides here is the live
+    editor: a class with `unity_mcp.enabled` gets the curated MCP tool surface, in BOTH lists.
+    Both, because that is measured rather than assumed -- the Workflow tool needed the same
+    treatment on 2026-09-06, since running a tool raises a permission request and a `-p` run has
+    nobody to answer it, so a tool named in --tools alone buys a turn that dies at its first call.
     """
     kind = conv if isinstance(conv, str) else (conv["kind"] if conv is not None else None)
-    if kind != GITHUB_KIND:
-        return CAPABILITIES
-    return dict(CAPABILITIES,
-                tools=CAPABILITIES["tools"] + "," + REVIEW_TOOL,
-                allowed=list(CAPABILITIES["allowed"]) + [REVIEW_TOOL])
+    cap = CAPABILITIES
+    if kind == GITHUB_KIND:
+        cap = dict(CAPABILITIES,
+                   tools=CAPABILITIES["tools"] + "," + REVIEW_TOOL,
+                   allowed=list(CAPABILITIES["allowed"]) + [REVIEW_TOOL])
+    if ((ccfg or {}).get("unity_mcp") or {}).get("enabled"):
+        names = mcp_tool_names()
+        cap = dict(cap,
+                   tools=cap["tools"] + "," + ",".join(names),
+                   allowed=list(cap.get("allowed") or []) + names)
+    return cap
 
 
 # Kinds with NO Discord side. A prompt typed at this machine's shell, or into the web page, has
@@ -5575,7 +5667,7 @@ class Watcher:
         os.makedirs(dest, exist_ok=True)
         frozen = {}
         for key, name in (("task_script", "task.sh"), ("ffverify", "ffverify"),
-                          ("ffplaytest", "ffplaytest")):
+                          ("ffplaytest", "ffplaytest"), ("ffmcp", "ffmcp")):
             src = self.cfg[key]
             if not src or not os.path.isfile(src):
                 continue
@@ -9064,6 +9156,8 @@ class Watcher:
             "--mount",
             f"{frozen.get('ffplaytest', self.cfg['ffplaytest'])}"
             ":/usr/local/bin/ffplaytest:ro",
+            "--mount",
+            f"{frozen.get('ffmcp', self.cfg['ffmcp'])}:/usr/local/bin/ffmcp:ro",
         ]
         # THIS CLASS'S PLUGINS, MOUNTED AT STAGE TIME because a mount cannot be added to a
         # container that already exists. A spare therefore carries the plugin set its class was
@@ -10425,7 +10519,7 @@ class Watcher:
         """
         agent_class = agent_class or self.conversation_class(conv)
         ccfg = ccfg or class_cfg(self.cfg, agent_class)
-        cap = capabilities_for(conv)
+        cap = capabilities_for(conv, ccfg)
         msgs = self.db.query(
             f"SELECT * FROM message WHERE turn_id=? ORDER BY {MESSAGE_ORDER}",
             (turn["id"],))
@@ -10551,6 +10645,13 @@ class Watcher:
                              "allowed": list(cap.get("allowed") or []),
                              "permission_mode": "acceptEdits",
                              "unity": True},
+            # THE LIVE EDITOR, as an instruction to the container rather than a fact about it: the
+            # task boots the bridge before the agent starts, and whether it CAME UP is something
+            # only the container learns. A turn whose bridge failed drops the MCP tools from its
+            # own argv and says so in the prompt -- see discord-task.sh.
+            "unity_mcp": {"enabled": bool(((ccfg or {}).get("unity_mcp") or {}).get("enabled")),
+                          "ready_timeout_secs": int((((ccfg or {}).get("unity_mcp") or {})
+                                                     .get("ready_timeout_secs")) or 600)},
             "classification": json.loads(turn["classification_json"] or "{}"),
             "failed_closed": bool(turn["failed_closed"]),
             "failed_closed_reason": turn["failed_closed_reason"],
@@ -12439,7 +12540,6 @@ class Watcher:
     def launch(self, turn_id):
         turn = self.db.one("SELECT * FROM turn WHERE id=?", (turn_id,))
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (turn["conversation_id"],))
-        cap = capabilities_for(conv)
         # WHICH KIND OF CONTAINER, settled when this conversation was opened. Everything below
         # that is a clock, a base branch or a pool comes from `ccfg` rather than `self.cfg`;
         # anything that is about the pipeline rather than the container still comes from the
@@ -12448,6 +12548,10 @@ class Watcher:
         # runs is a property of the repo and not of the lane.
         cls = self.conversation_class(conv)
         ccfg = class_cfg(self.cfg, cls)
+        # AFTER ccfg, and that order is load-bearing since 2026-09-11: the class block decides
+        # whether this run gets the live editor's tools, and the run row below records the tool
+        # list the container is actually given.
+        cap = capabilities_for(conv, ccfg)
 
         run_id = f"d{conv['id']}t{turn['seq']}-{uuid.uuid4().hex[:8]}"
         conv_dir = self.conv_dir(conv["id"])
@@ -12706,7 +12810,9 @@ class Watcher:
                 f"{frozen.get('ffverify', self.cfg['ffverify'])}:/usr/local/bin/ffverify:ro",
                 "--mount",
                 f"{frozen.get('ffplaytest', self.cfg['ffplaytest'])}"
-                ":/usr/local/bin/ffplaytest:ro"]
+                ":/usr/local/bin/ffplaytest:ro",
+                "--mount",
+                f"{frozen.get('ffmcp', self.cfg['ffmcp'])}:/usr/local/bin/ffmcp:ro"]
         if branch:
             # --branch is where the run STARTS; --branch-prefix is what lets it end somewhere
             # better. When the agent makes its own branch, ffbox publishes that name under this

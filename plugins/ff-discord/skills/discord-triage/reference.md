@@ -53,7 +53,10 @@ Second, triage-specific zones:
     `unity-editor -runTests -testPlatform EditMode` in the container after the agent exits — a
     cold compile in a fresh container, so the stale-assembly trap cannot occur — and records
     the result where the agent cannot write it. You can run the same thing yourself with
-    `ffverify`, which writes to its own per-invocation results path, and reproduce a runtime bug
+    `ffverify`, which writes to its own per-invocation results path. Some runs also have a LIVE
+    editor on the MCP bridge (`ffmcp`, off by default per class) — when they do, the prompt says so
+    and `run_tests` through the bridge is the test channel, because one project cannot hold two
+    editors. You can also reproduce a runtime bug
     with `ffplaytest --chain 'ffauto:...'` (one play-mode session, journal reported as JSON;
     needs a develop-based workspace, and its frame timings mean nothing — no GPU in that
     container). Neither is a fence around Unity: the allow list is bare `Bash`, so a direct
