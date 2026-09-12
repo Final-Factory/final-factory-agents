@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Offline tests for ffwatch.py.
 
-Run: python3 ffbox/test_ffwatch.py
+Run: python3 ffbox/test_ffwatch.py            every test, fanned out over the cores
+     python3 ffbox/test_ffwatch.py -j1        one process, in order
+     python3 ffbox/test_ffwatch.py ffmcp      only the tests whose name carries that
+See `the runner` at the bottom of this file for the rest.
 
 No network, no Discord token, no docker, no ZFS. ffwatch talks to exactly three external
 surfaces, and all three are replaced with stub executables this file writes into a temp dir:
@@ -113,9 +116,27 @@ sys.path.insert(0, HERE)
 import ffwatch  # noqa: E402
 
 FAILURES = []
+CHECKS = [0]
+
+
+def real_ffdiscord():
+    """The REAL ffdiscord CLI module, out of the plugin tree beside this checkout.
+
+    A helper rather than an import at the top of each test that wants it, because the path insert
+    is what makes the import work and a test that inherited it from whichever test ran earlier
+    passed only in a full in-order run. Sharding the suite found exactly that: one of the three
+    callers did the insert, the other two relied on it, and in a worker where the first one landed
+    elsewhere the import was a ModuleNotFoundError.
+    """
+    path = os.path.join(os.path.dirname(HERE), "plugins", "ff-discord", "skills", "discord-cli")
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    import ffdiscord
+    return ffdiscord
 
 
 def check(name, ok, detail=""):
+    CHECKS[0] += 1
     print(("  ✓ " if ok else "  ✗ ") + name)
     if not ok:
         FAILURES.append(name)
@@ -715,6 +736,39 @@ def base_fixture():
     }
 
 
+class StubCiLane:
+    """The CI lane, disconnected.
+
+    ffwatch builds a real ci_lane.Lane, and ci_lane talks to the BUILD SERVER'S OWN docker daemon
+    -- not to anything this suite stubs, because it opens /run/ffbox-container/docker.sock
+    itself. That made two things true that should never be true of an offline suite: `settling()`
+    counted whatever CI containers the box happened to have stopped with teardown owed, so "the
+    machine is quiet" was decided by the machine (it flaked exactly that way on 2026-09-12), and
+    `drain()` called drop_idle(), which destroys every idle CI runner it finds and deletes its
+    GitHub registration. Running the tests is not allowed to do that to a live box.
+
+    What the lane MEANS is test_ci_lane.py's job, against its own stub docker. Here it answers
+    nothing and does nothing.
+    """
+
+    hold = None
+
+    def publishing(self):
+        return 0
+
+    def drop_idle(self):
+        return 0
+
+    def adopt(self):
+        return None
+
+    def serve(self, submit=None):
+        return None
+
+    def keep(self, box_room=0, host_drained=False):
+        return None
+
+
 class Case:
     """One isolated ffwatch installation: its own state dir, fixture, events file and stubs."""
 
@@ -821,6 +875,8 @@ class Case:
                                          "model": SUITE_CLAUDE_NAME}}
         self.cfg = cfg
         self.watcher = ffwatch.Watcher(cfg)
+        # NO CASE TOUCHES THE MACHINE'S CI CONTAINERS. See StubCiLane.
+        self.watcher._ci = StubCiLane()
         # NO CASE TALKS TO ANTHROPIC. The holds are configured by default, so claude_records()
         # would otherwise reach for the real reader with the fake credentials above in its
         # hands. An empty reading means every hold fails open, which is what an offline case
@@ -4907,9 +4963,7 @@ def test_sender_argv_is_accepted_by_the_real_cli():
     every reply. So parse it with the real parser.
     """
     print("sender argv")
-    sys.path.insert(0, os.path.join(os.path.dirname(HERE), "plugins", "ff-discord", "skills",
-                                    "discord-cli"))
-    import ffdiscord            # noqa: E402
+    ffdiscord = real_ffdiscord()
 
     case = Case("argv")
     conv = seed_conversation(case)
@@ -5271,7 +5325,7 @@ def test_a_reply_is_cut_only_where_it_does_not_fit():
     # -- what the CLI will make of it ---------------------------------------------------------
     # @ben becomes <@226...> before check_length runs, so the fitter is handed expanded_len and
     # not len. A head measured raw would pass here and die in the CLI.
-    import ffdiscord as real_cli
+    real_cli = real_ffdiscord()
     mentions = {"ben": "226000000000000001"}
     case.watcher.cfg["_discord"] = dict(case.watcher.cfg.get("_discord") or {},
                                         mentions=mentions)
@@ -5404,9 +5458,7 @@ def test_sender_accounts_for_mention_expansion():
     this discipline in the sender to prevent. Checked against the REAL expand_mentions and
     check_length, not a re-implementation of them."""
     print("sender: mention expansion")
-    sys.path.insert(0, os.path.join(os.path.dirname(HERE), "plugins", "ff-discord", "skills",
-                                    "discord-cli"))
-    import ffdiscord as real_cli
+    real_cli = real_ffdiscord()
 
     case = Case("sendexpand")
     conv = seed_conversation(case)
@@ -8317,9 +8369,15 @@ def test_ffmcp_owns_the_editor_it_starts():
     open(pids_file, "w").close()
 
     def run(*args, enabled=True):
+        # THE WAITS ARE TURNED DOWN, not removed: every path this test walks is still walked,
+        # it just does not spend the production grace period doing it. The stub editor dies on
+        # the first TERM, so a 3-second ceiling proves as much as a 20-second one -- and the
+        # refusal path spends none of it at all now that stop skips the wait for a process it
+        # deliberately did not signal.
         env = dict(os.environ, FFMCP_PROJECT=proj, FFMCP_STATE=state,
                    FFMCP_UNITY=os.path.join(bindir, "unity-editor"),
-                   FFMCP_READY_TIMEOUT="60", STUB_PIDS=pids_file)
+                   FFMCP_READY_TIMEOUT="60", FFMCP_STOP_GRACE="3", FFMCP_POLL_SECS="1",
+                   STUB_PIDS=pids_file)
         if enabled:
             env["FFBOX_UNITY_MCP"] = "1"
         else:
@@ -8499,7 +8557,7 @@ def test_ffplaytest_never_leaves_a_config_or_an_editor_behind():
 
     def run(*extra, **kw):
         env = dict(os.environ, FFPLAYTEST_UNITY=stub, FFPLAYTEST_PDP=pdp,
-                   FFPLAYTEST_SETTLE="1", STUB_PIDS=pids_file,
+                   FFPLAYTEST_SETTLE="1", FFPLAYTEST_POLL="1", STUB_PIDS=pids_file,
                    STUB_CONFIG_COPY=config_copy)
         env.update(kw.pop("env", {}))
         return subprocess.run(["bash", script, "--project", proj, "--out", out, *extra],
@@ -10697,7 +10755,7 @@ def test_the_admission_lock_does_not_ride_into_the_run():
                   f'{child}\n'
                   '_c=$!\n'
                   'ffbox_workload_lock_release\n'
-                  f'if flock -w 1 "$FFBOX_WL_LOCK" -c true; then echo FREE; else echo HELD; fi\n'
+                  f'if flock -w 0.2 "$FFBOX_WL_LOCK" -c true; then echo FREE; else echo HELD; fi\n'
                   'kill "$_c" 2>/dev/null || :\n')
         done = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
                               env={**os.environ, "FFBOX_WL_LOCK": lock}, timeout=60)
@@ -10725,7 +10783,7 @@ def test_the_admission_lock_does_not_ride_into_the_run():
         # "the box is busy" is not a reason to fail their turn.
         blocked = subprocess.Popen(["bash", "-c", f'. "{lib}"; ffbox_workload_lock_acquire'],
                                    env={**os.environ, "FFBOX_WL_LOCK": lock})
-        time.sleep(2)
+        time.sleep(0.5)
         check("an unbounded acquire is still waiting, which is what a run wants",
               blocked.poll() is None, blocked.poll())
         blocked.kill()
@@ -11004,17 +11062,20 @@ def test_the_finish_handler_reaches_the_agent_and_its_work():
         if os.path.exists(marker):
             os.remove(marker)
         proc = subprocess.Popen(["bash", script, marker])
-        time.sleep(1)
+        time.sleep(0.3)
         started = time.monotonic()
         proc.terminate()
         proc.wait(timeout=30)
         return time.monotonic() - started
 
-    foreground = handler_delay("sleep 6")
-    backgrounded = handler_delay('sleep 6 & _p=$!; wait "$_p"')
+    # TWO SECONDS, NOT SIX: the property is which side of the child's lifetime the handler runs
+    # on, and that is the same shape at any length. The margins below are what the numbers have to
+    # clear, and 0.3s in / 2s child leaves both of them wide.
+    foreground = handler_delay("sleep 2")
+    backgrounded = handler_delay('sleep 2 & _p=$!; wait "$_p"')
     check("a foreground child defers the handler until it finishes",
-          foreground > 3, foreground)
-    check("a backgrounded child lets it run at once", backgrounded < 2, backgrounded)
+          foreground > 1, foreground)
+    check("a backgrounded child lets it run at once", backgrounded < 0.5, backgrounded)
 
     # What the harvest itself does, and the trap ordering around it, is
     # test_every_task_script_harvests_its_own_workspace's job. This is only about whether that
@@ -19944,6 +20005,156 @@ def test_the_warm_branch_tier_says_why_it_is_not_staging():
     check("and the latch it cleared lets the next reason through",
           "not enough to hold another workspace" in said, said)
 
+
+# ------------------------------------------------------------------------------------------
+# the runner
+# ------------------------------------------------------------------------------------------
+# WHY THIS FORKS. The suite is ~350 tests and almost all of its clock is other processes: a
+# stubbed ffdiscord or ffbox is a python interpreter start, and a publish test drives a few
+# hundred real git commands. That is work the machine can do several at a time and this file
+# used to do one at a time, so a full run cost minutes of mostly-idle CPU.
+#
+# Each test is already self-contained -- its own Case, its own state dir, its own subtree of
+# TMPROOT -- and TMPROOT is made per PROCESS, so a worker is isolated from its siblings by
+# construction. The split is round-robin rather than contiguous so the handful of slow tests
+# (the ones that drive a real editor stub) land in different workers.
+#
+#   python3 test_ffwatch.py                 every test, fanned out over the default job count
+#   python3 test_ffwatch.py -j1             in one process, in order -- what to use when a
+#                                           failure needs a debugger or a clean transcript
+#   python3 test_ffwatch.py --only ffmcp    just the tests whose name carries that substring
+#   python3 test_ffwatch.py --list          the names, one per line
+#
+# FFWATCH_TEST_JOBS sets the default for a machine that wants a different one.
+
+
+def default_jobs():
+    """Workers for a bare run. Capped because the win flattens: the tail is subprocess-bound and
+    a laptop with four cores gains nothing from sixteen workers fighting over them."""
+    try:
+        env = int(os.environ.get("FFWATCH_TEST_JOBS", "0"))
+    except ValueError:
+        env = 0
+    if env > 0:
+        return env
+    return max(1, min(16, os.cpu_count() or 1))
+
+
+def run_in_process(tests, label=""):
+    """Every test here, in this process. The path a -j1 run and a worker both take."""
+    for fn in tests:
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001 - a crashed test is a failed test
+            import traceback
+            check(f"{fn.__name__} raised", False, traceback.format_exc())
+            del exc
+    print()
+    if FAILURES:
+        print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
+        return 1
+    if label:
+        print(f"{label}: {len(tests)} tests, {CHECKS[0]} checks, all passed.")
+        return 0
+    print(f"All ffwatch checks passed ({CHECKS[0]} checks).")
+    return 0
+
+
+def run_workers(tests, jobs, names=()):
+    """Fan the tests out over `jobs` processes and put their transcripts back in shard order.
+
+    Output goes to FILES rather than pipes the parent drains one at a time: a worker that filled
+    its pipe while the parent was reading another one would block, and with the reads in shard
+    order that deadlocks on any run where shard 1 talks more than a pipe buffer holds.
+    """
+    outdir = os.path.join(TMPROOT, "shards")
+    os.makedirs(outdir, exist_ok=True)
+    procs = []
+    for i in range(jobs):
+        handle = open(os.path.join(outdir, f"{i}.out"), "w+", encoding="utf-8")
+        argv = [sys.executable, os.path.abspath(__file__), "--shard", f"{i}/{jobs}"]
+        # THE FILTER GOES WITH IT. A worker re-reads the list from this file and shards it, so
+        # one that was not told what --only meant shards all 350 and the filter silently does
+        # nothing but change the worker count.
+        for name in names:
+            argv += ["--only", name]
+        procs.append((i, handle, subprocess.Popen(
+            argv, stdout=handle, stderr=subprocess.STDOUT)))
+    failures, crashed, checks = [], [], 0
+    try:
+        for i, handle, proc in procs:
+            rc = proc.wait()
+            handle.flush()
+            handle.seek(0)
+            text = handle.read()
+            handle.close()
+            sys.stdout.write(text)
+            said = False
+            for line in text.splitlines():
+                if line.startswith("FAILED: ") and "check(s): " in line:
+                    failures.extend(line.split("check(s): ", 1)[1].split(", "))
+                    said = True
+                elif " checks, all passed." in line:
+                    checks += int(line.split("tests, ", 1)[1].split(" checks", 1)[0])
+            if rc and not said:
+                crashed.append(f"shard {i}/{jobs} exited {rc}")
+    except KeyboardInterrupt:
+        for _, _, proc in procs:
+            proc.kill()
+        raise
+    print()
+    if failures or crashed:
+        if failures:
+            print(f"FAILED: {len(failures)} check(s): {', '.join(failures)}")
+        for line in crashed:
+            print(f"FAILED: {line} without naming a check -- see its transcript above")
+        return 1
+    print(f"All ffwatch checks passed ({checks} checks in {jobs} workers).")
+    return 0
+
+
+def dispatch(tests, argv):
+    """--shard/--only/--list/-j, and the fan-out that a bare run gets."""
+    jobs, shard, names, listing = default_jobs(), None, [], False
+    rest = list(argv)
+    while rest:
+        arg = rest.pop(0)
+        if arg == "--shard":
+            shard = rest.pop(0)
+        elif arg == "--only":
+            names.append(rest.pop(0))
+        elif arg == "--list":
+            listing = True
+        elif arg in ("--jobs", "-j"):
+            jobs = int(rest.pop(0))
+        elif arg.startswith("-j"):
+            jobs = int(arg[2:])
+        elif arg.startswith("-"):
+            print(f"unknown option {arg}", file=sys.stderr)
+            return 2
+        else:
+            names.append(arg)          # a bare word is an --only, because that is what it means
+
+    if names:
+        tests = [fn for fn in tests if any(n in fn.__name__ for n in names)]
+        if not tests:
+            print(f"no test matches {names}", file=sys.stderr)
+            return 2
+    if listing:
+        for fn in tests:
+            print(fn.__name__)
+        return 0
+    if shard:
+        index, _, count = shard.partition("/")
+        index, count = int(index), int(count)
+        return run_in_process(tests[index::count], label=f"shard {index}/{count}")
+
+    jobs = max(1, min(jobs, len(tests)))
+    if jobs == 1:
+        return run_in_process(tests)
+    return run_workers(tests, jobs, names)
+
+
 def main():
     tests = [
         test_an_operators_request_is_billed_to_the_subscription_they_claimed,
@@ -20300,19 +20511,7 @@ def main():
         test_ffmcp_owns_the_editor_it_starts,
         test_the_harness_stops_the_bridge_before_it_reads_the_tree,
     ]
-    for fn in tests:
-        try:
-            fn()
-        except Exception as exc:  # noqa: BLE001 - a crashed test is a failed test
-            import traceback
-            check(f"{fn.__name__} raised", False, traceback.format_exc())
-            del exc
-    print()
-    if FAILURES:
-        print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
-        return 1
-    print("All ffwatch checks passed.")
-    return 0
+    return dispatch(tests, sys.argv[1:])
 
 
 if __name__ == "__main__":

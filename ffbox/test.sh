@@ -62,9 +62,10 @@ run "test_restore_workspace.sh" sh "$HERE/test_restore_workspace.sh"
 # looked at the head of the output instead of the end. A runner that covers most of the suites is
 # a runner somebody will still supplement by hand.
 #
-# test_ffwatch.py IS SLOW -- minutes, against a real sqlite database and a stubbed daemon -- and
-# that is not a reason to leave it out. It is a reason to run this before pushing rather than
-# after every edit.
+# test_ffwatch.py WAS the slow one -- minutes, against a real sqlite database and a stubbed
+# daemon. It forks its ~350 tests over the cores now and costs about fifteen seconds, so this
+# whole runner is a thing to run after an edit rather than only before a push. `-j1` puts it
+# back in one process and in order when a failure wants a clean transcript.
 run "test_ffwatch.py"       python3 "$HERE/test_ffwatch.py"
 run "test_ffweb.py"         python3 "$HERE/test_ffweb.py"
 

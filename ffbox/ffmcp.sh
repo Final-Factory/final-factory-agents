@@ -47,6 +47,11 @@ WS=${FFMCP_PROJECT:-${FFBOX_WORKSPACE:-/opt/actions-runner/_work/FinalFactory/Fi
 STATE_DIR=${FFMCP_STATE:-${FFBOX_OUT:-/ffbox/out}/mcp}
 UNITY=${FFMCP_UNITY:-unity-editor}
 READY_TIMEOUT=${FFMCP_READY_TIMEOUT:-600}
+# How long `stop` gives a signalled editor to go on TERM, and how often `start` looks for the
+# bridge line. Both are seconds, both are knobs only so the offline suite can turn its waits
+# down: a test that proves the grace period exists should not spend the grace period proving it.
+STOP_GRACE=${FFMCP_STOP_GRACE:-20}
+POLL_SECS=${FFMCP_POLL_SECS:-2}
 STATE=$STATE_DIR/state.json
 LOG=$STATE_DIR/editor.log
 
@@ -69,6 +74,9 @@ Environment:
                         bridge. Without it start refuses, because an editor whose tools are not on
                         the model's tool list is worse than no editor at all.
   FFMCP_READY_TIMEOUT   seconds to wait for the bridge (default 600).
+  FFMCP_STOP_GRACE      seconds a signalled editor gets before KILL (default 20).
+  FFMCP_POLL_SECS       how often `start` looks for the bridge line, whole seconds
+                        (default 2).
   FFMCP_PROJECT         the Unity project (default: this run's workspace).
   FFMCP_STATE           where pid/port/log live (default: $FFBOX_OUT/mcp).
 
@@ -293,16 +301,22 @@ cmd_stop() {
     fi
     if editor_alive; then
         say "stopping editor pid=$ST_PID pgid=$ST_PGID"
-        stop_group TERM
-        local i
-        for i in $(seq 1 20); do
-            editor_alive || break
-            sleep 1
-        done
-        if editor_alive; then
-            say "it did not go on TERM; KILL"
-            stop_group KILL
-            sleep 2
+        # NOTHING SIGNALLED IS NOTHING TO WAIT FOR. stop_group answers false in exactly two
+        # cases: it REFUSED the recorded pid (not an editor on this project), and it found
+        # nothing of ours to signal. Waiting out the grace period afterwards is 22 seconds spent
+        # watching a process we deliberately did not touch -- and this runs on the critical path
+        # of every turn, between the agent exiting and the tree being read.
+        if stop_group TERM; then
+            local i
+            for i in $(seq 1 "$STOP_GRACE"); do
+                editor_alive || break
+                sleep 1
+            done
+            if editor_alive; then
+                say "it did not go on TERM; KILL"
+                stop_group KILL
+                sleep 2
+            fi
         fi
     else
         say "recorded editor is already gone"
@@ -412,8 +426,8 @@ cmd_start() {
             echo "$port"
             return 0
         fi
-        sleep 2
-        waited=$(( waited + 2 ))
+        sleep "$POLL_SECS"
+        waited=$(( waited + POLL_SECS ))
     done
 
     err "no bridge after ${READY_TIMEOUT}s; stopping the editor"
