@@ -25,5 +25,5 @@ is reserved for the apply leg. Tests `ObjectiveOperationsTest` (8).
 
 **How to apply.** Before adding any objective trigger/reward/verifier side effect, grep it for
 entity creation, `[Save]` component writes, or RNG draws; route them through the
-[[add-network-operation]] recipe. Audit tell: a single-heartbeat verdict on `vision`/spawner
+`add-network-operation` recipe. Audit tell: a single-heartbeat verdict on `vision`/spawner
 fields coinciding with an objective transition. Reports: 069 plan, 23:20 UTC PROGRESS block.

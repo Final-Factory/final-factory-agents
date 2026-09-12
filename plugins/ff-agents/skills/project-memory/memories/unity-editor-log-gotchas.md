@@ -47,4 +47,4 @@ while checking connector changes against the Wittlebase / MeltCPU saves):
 - **The game logs its own load timings**: `===== LOAD PROFILE: <save> =====` with a phase table —
   the authoritative source for load timing, better than wall-clock guessing.
 
-Related: [[watch-logs-without-full-scans]], [[bridge-tcp-fallback]].
+Related: [[watch-logs-without-full-scans]].

@@ -11,4 +11,4 @@ Do not prefix Bash/PowerShell commands with `cd "D:/work/FinalFactory"` (or any 
 
 **Why:** The `cd` is redundant and each one forces the user to approve a command. Removing it eliminates needless approvals.
 
-**How to apply:** Write the actual command on its own (e.g. `git status --short`, not `cd "D:/work/FinalFactory"; git status --short`). For paths, pass them directly to the command. Only `cd` when genuinely moving into a *subdirectory* the command can't address via path. Related: [[feedback-test-command]].
+**How to apply:** Write the actual command on its own (e.g. `git status --short`, not `cd "D:/work/FinalFactory"; git status --short`). For paths, pass them directly to the command. Only `cd` when genuinely moving into a *subdirectory* the command can't address via path. Related: [[feedback_test_command]].

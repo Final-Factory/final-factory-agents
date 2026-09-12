@@ -24,12 +24,12 @@ description: Verify multiplayer determinism work — the paired two-editor local
 
 Two complementary layers, plus the cross-machine harness:
 
-1. **EditMode determinism tests** (`Assets/Tests/Multiplayer/`) — e.g. `DeterminismStateFingerprintTest`, `HeartbeatCatchUpTest`, `PlayerPositionReplicationTest`. Run via the MCP bridge (the `editor-ops` skill). The paired audit below still uses filesystem channels (`.ff-local-automation.json`, the report files, the comparison scripts).
+1. **EditMode determinism tests** — `Assets/Tests/Multiplayer/` (e.g. `DeterminismStateFingerprintTest`, `HeartbeatCatchUpTest`) and `Assets/Tests/Player/PlayerSimulationPositionReplicationTest.cs`. Run via the MCP bridge (the `editor-ops` skill). The paired audit below still uses filesystem channels (`.ff-local-automation.json`, the report files, the comparison scripts).
 2. **Paired localhost audit** — runs a real host+client play session and compares per-heartbeat state:
    - Requires a sibling **ParrelSync clone**. **The clone directory is ALWAYS `<this project's folder name>_clone_0`** (ParrelSync convention), i.e. the sibling dir = base working directory + `_clone_0`. Its `Assets`/`ProjectSettings` symlink the originals, so code is shared — verify with `ls -l ../<this project's folder name>_clone_0/Assets` → must point at `…/<this project's folder name>/Assets`. The clone ALSO needs a manual `FMODProject` symlink, and a wrong-named sibling dir is a DIFFERENT project's clone — both traps in `gotchas.md` §Clone setup.
    - Write `.ff-local-automation.json` to **both** project roots (host = repo root, client = clone) with `Enabled`/`AutoStartInEditor` true, a unique `Label`, asymmetric `PostConnectDelayMs` (host longer so the client writes its report first), and an optional `PostReadyCommand` (e.g. `ffauto:movement.hold|x|z|seconds`, `ffauto:mining.startnearest`). Each open editor's 1s poller auto-starts play mode. Menu items under `Final Factory/Multiplayer/Automation/` do the same.
    - `DeterminismFingerprintSystem` writes a per-heartbeat fingerprint (station-grid, power, player inventories, player simulation position) into reports under `~/Library/Application Support/Never Games/finalfactory/DeterminismAudit/` (macOS; Windows: `~/AppData/LocalLow/Never Games/finalfactory/DeterminismAudit/`).
-   - Compare the host/client reports with `compare_determinism_reports.sh <host.log> <client.log>` → prints the first diverging heartbeat or "NO DIVERGENCE". **Never accept a verdict from a partial window** — see `gotchas.md` §Full-window rule before believing ANY diagnosis.
+   - Compare the host/client reports with `scripts/audit/compare_determinism_reports.sh <host.log> <client.log>` → prints the first diverging heartbeat or "NO DIVERGENCE". **Never accept a verdict from a partial window** — see `gotchas.md` §Full-window rule before believing ANY diagnosis.
    - `run_join_catchup_audit.sh` wraps the whole flow (recompile both editors, drive a moving-player paired session, assert per-heartbeat `playerSimPos` alignment) as a one-command regression test for the join-time heartbeat catch-up. It recompiles each editor by invoking that root's `run-tests.sh fast` (which waits via `wait_for_test_results.sh`) over the `run-tests-fast.trigger` / `test-results.txt` file-watch channel (`Assets/Editor/TestRunnerTrigger.cs`) — the one place that fallback mechanism is still required. Note: back-to-back paired runs can contaminate each other (stale play sessions) — restart both editors for a clean run.
    - `run_construction_audit.sh` is the construction-lane sibling (feature 005): by default a post-join `construction.place` task-symmetry check; `MODE=build` provisions bot+items through the deterministic queue and asserts the full place→build→finalize loop cross-peer (completion witness on cbots/grids); `MODE=build PROVISION=preconnect` provisions PRE-join so the spawned fleet bot rides the join save (the 005 R3.5 lanes). Dwell sizing (wall-clock vs shared heartbeats) and the phase-1 timeout trap: `gotchas.md` §Wrapper-script traps.
 3. **Cross-machine audit (feature 021)** — `run_cross_machine_audit.sh` runs a host on THIS machine
@@ -63,8 +63,8 @@ typed comparator. If `compare_determinism_reports.sh` says it found no fingerpri
 report, that is unsupported input, not `NO DIVERGENCE`. Preserve both raw reports and record the
 source/tree, build manifests and hashes, OS/transport/roles, scenario and actions, shared window and
 duration, lifecycle/desync/crash outcome, visual verdict, artifact paths, and gaps. Direct IP does
-not prove the Steam lobby, relay or invite path, even if Steam initialized in the players. The durable checklist and the
-2026-09-09 heartbeat-8 vision witness are in
+not prove the Steam lobby, relay or invite path, even if Steam initialized in the players. The
+durable checklist is in
 [project memory](../project-memory/memories/cross-machine-built-player-gameplay-acceptance.md).
 
 **Before any paired run after a code change**: the clone does NOT auto-recompile — force it
