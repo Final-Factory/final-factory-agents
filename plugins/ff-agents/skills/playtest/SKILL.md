@@ -68,9 +68,9 @@ leftover auto-plays on the next editor boot.**
 
 ## On the ffbox build server — `ffplaytest`, or a live bridge when the run has one
 
-A Discord `fix`/`dev` turn runs in a container. Since 2026-09-11 it MAY have a live editor on the
-MCP bridge (`ffmcp`, off by default per agent class, and the prompt says whether it is up) — in
-which case the pump-and-poll flow above applies as it does anywhere else, through
+A Discord `fix`/`dev` turn runs in a container. It MAY have a live editor on the MCP bridge
+(`ffmcp`, off by default per agent class, and the prompt says whether it is up) — in which case
+the pump-and-poll flow above applies as it does anywhere else, through
 `mcp__UnityMCP__execute_code`. Without it there is no editor and no bridge, and none of that flow
 applies. What it has is `ffplaytest --chain 'ffauto:...;ffauto:...'`
 on its PATH: one host session, the chain run as `PreConnectCommand` (a solo host never reaches the
@@ -162,9 +162,9 @@ for the full gate and Windows interactive-launch cleanup rules.
 **Built-player screenshot pixels are not native pointer coordinates.** `GET /v1/screenshot`
 defaults to a 1280-pixel maximum edge and downscales larger views; `X-FF-Width` and
 `X-FF-Height` describe that returned PNG. `ffauto:pointer.moveto|x|y|screen` instead takes raw
-bottom-left-origin pixels in the live `Screen.width` × `Screen.height` view. One witnessed
-2560×1289 view produced a 1280×644 PNG, so PNG slot `(752,50)` measured from the bottom-left mapped to roughly native
-`(1504,100)`. Read [the coordinate-scale lesson](../project-memory/memories/built-player-screenshot-coordinate-scale.md)
+bottom-left-origin pixels in the live `Screen.width` × `Screen.height` view. Scale between them:
+a 2560×1289 view returns a 1280×644 PNG, so PNG slot `(752,50)` from the bottom-left is roughly
+native `(1504,100)`. Read [the coordinate-scale lesson](../project-memory/memories/built-player-screenshot-coordinate-scale.md)
 before driving built-player UI.
 
 Do not infer the live view from launch `-screen-width`/`-screen-height` or saved display prefs:
@@ -204,37 +204,35 @@ next pointer placement, the observed slot was stale or the click did nothing. Pu
 those steps and verify the result before continuing; do not assume a same-frame chain exercised the
 interaction.
 
-**Blueprint cleanup has two parts.** `ExecuteBlueprintDrop` now calls both
+**Blueprint cleanup has two parts.** `ExecuteBlueprintDrop` calls both
 `PlayerDataController.CleanupBlueprintItems` (owned preview entities) and `ClearBlueprint`
-(buffer/native allocations), fixed in `0059658fd` and verified with inspected live two-Mac
-before/after screenshots on 2026-09-10. `ClearBlueprint` alone does not remove ghost entities.
-Use actual right-click when validating the player's input path; `blueprint.drop` is valid for
-harness cleanup. See the linked coordinate/cleanup lesson for the evidence boundary.
+(buffer/native allocations); `ClearBlueprint` alone does not remove ghost entities. Use actual
+right-click when validating the player's input path; `blueprint.drop` is valid for harness
+cleanup. See the linked coordinate/cleanup lesson for the evidence boundary.
 
 **Upgrade input requires a functional selection check.** Open `ui.open|upgrade`, select a real
-From/To pair, click Begin, and drag a visible rectangle. Reopening a panel or seeing it close
-is insufficient: `SwapStructureAction.Start` used to capture a null player controller and
-failed only when selection ran. `6778a03ab` initializes through `StartNewGame` after the base
-assignment; real selection passed join, forced recovery, and reconnect. Repeated empty row
-paths are ambiguous, so select them via observed pointer coordinates. An empty selection
-rectangle proves input lifetime, not successful replacement of an actual structure.
+From/To pair, click Begin, and drag a visible rectangle. Reopening a panel or seeing it close is
+insufficient — the failure mode this guards against is a `SwapStructureAction.Start` that holds
+a null player controller and only fails once selection actually runs. Repeated empty row paths
+are ambiguous, so select them via observed pointer coordinates. An empty selection rectangle
+proves input lifetime, not successful replacement of an actual structure.
 
 Test Begin while a placement item is still held. `PlayerDataController.UpgradeToolOnSwapsSelected`
-now invokes `RequestClearPlayerHand` before changing state (`f9189ceee`,
-`Assets/Scripts/PlayerController/PlayerDataController.cs:437-446`); otherwise
-`UnitSelector.IsReadyForSelection` rejects the nonempty hand. On two matching Mac players,
-`live-upgrade-hand-fixed011/upgrade` replaced a built Advanced Assembler at footprint (-1,14)
-with a built Hyper Assembler. Client inventory changed Advanced 1→2 and Hyper 2→1; both peers'
-structure snapshots and screenshots confirmed replacement. Reproduce this real input sequence;
-do not pre-clear the hand or substitute `construction.swap` when verifying this callback.
+invokes `RequestClearPlayerHand` before changing state
+(`Assets/Scripts/PlayerController/PlayerDataController.cs:437-446`); otherwise
+`UnitSelector.IsReadyForSelection` rejects the nonempty hand. Accept it only when a built
+structure was actually replaced on both peers: the swapped structure in each peer's snapshot,
+the matching inventory move (one of the old kind back, one of the new kind spent), and
+screenshots of both. Reproduce the real input sequence; do not pre-clear the hand or substitute
+`construction.swap` when verifying this callback.
 
 For world placement, `pointer.click|0|2` is only two rendered frames
 (`Assets/Scripts/PlayerController/AutomationPointer.cs:61-75`). Placement samples held input
 in a heartbeat group (`Assets/Scripts/ControllerSystems/BlueprintPlacementSystem.cs:212`;
 `Assets/Scripts/FFCore/Systems/FinalFactorySimulationRateManager.cs:39-72`), so the pulse can be
 missed between ticks. Move, let the preview settle and inspect it, then press, wait one second,
-release, and verify a built structure in the snapshot. This is a stable fixture recipe;
-it does not prove quick player clicks are reliable. Use separate command-array elements for
+release, and verify a built structure in the snapshot. That is a stable fixture recipe; it does
+not prove quick player clicks are reliable. Use separate command-array elements for
 AgentControl HTTP chains, as specified in its contract; do not pass a semicolon chain as one element.
 
 **A nearby asteroid's reported `tile` is its footprint anchor, not its center.**
@@ -259,9 +257,9 @@ blueprint-in-hand trap). Don't re-derive them here. Playtest-specific on top of 
 - `ui` marker → capture with a UI-inclusive channel. The composited `manage_camera` game_view
   capture (Channel A) is the safe default: no focus click, works occluded. Fall back to
   `ScreenCapture` + focused GameView (Channel B) if it comes back blank/stale.
-- `world` marker → records intent, but a genuinely UI-free capture is NOT available today
-  (T020: the camera-specified render returns BLANK), so what you get still has overlay UI. Say
-  so when a finding leans on it.
+- `world` marker → records intent, but a genuinely UI-free capture is NOT available (the
+  camera-specified render returns BLANK), so what you get still has overlay UI. Say so when a
+  finding leans on it.
 
 ## Watch motion over time — temporal visual episodes (feature 058)
 

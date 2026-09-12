@@ -92,27 +92,24 @@ ffdiscord-listener --once-ready              # connect, prove READY, exit (smoke
 **A channel is swept wholesale only if it is on the list, and no channel is built in.** The
 Gateway's `GUILD_MESSAGES` intent is guild-wide — Discord has no per-channel subscription — so
 the listener sees every channel the bot can read and filters. A channel on the list rings on
-every human message. **Everywhere else rings nothing at all, as of 2026-08-25** — an @-mention
-or a reply to the bot in an unlisted channel is logged and dropped, whoever sent it, operators
-included. DMs are unaffected, because a DM has no channel to list.
+every human message. **Everywhere else rings nothing at all** — an @-mention or a reply to the
+bot in an unlisted channel is logged and dropped, whoever sent it, operators included. DMs are
+unaffected, because a DM has no channel to list.
 
 **Omitting `--channels` reads the `watch` block** of `~/.config/ffbox/config.json`, the same
 file the CLI already reads for the token, the alias table and the operator ids. That is the one
-place a channel is named on a box running ffwatch, so adding one is an edit and a restart.
-Until 2026-09-02 the list reached the listener only as `--channels`, rendered into the systemd
-unit by `ffbox/06-services.sh` out of that very block — which made watching one more channel a
-change to a root-owned unit file, needing a password and a service reinstall to move a setting
-that lives in a user-writable config. It also let an installed unit lag a config edit silently.
-The unit is now the same on every box and carries no channel at all.
+place a channel is named on a box running ffwatch, so adding one is an edit and a restart — not
+a change to the systemd unit, which is identical on every box and names no channel at all.
 
 An alias in the block whose id is still blank is skipped with a warning rather than being
 fatal — those are normal, they fill themselves in on first use, and one of them must not take
 the whole doorbell down. An alias typed into `--channels` that resolves to nothing still exits
 2, because that one is a caller's mistake and worth seeing at once.
 
-Event kinds: `message`, `thread`, `thread_message`, `operator_dm`, `player_dm`, `catchup`. The listener no
-longer emits `player_mention` or `lothsahn_directive`/`operator_directive`; ffwatch still
-understands them so that an older listener elsewhere keeps working. The line is a **doorbell, not the mail** — it carries ids only. The listener does
+Event kinds: `message`, `thread`, `thread_message`, `operator_dm`, `player_dm`, `catchup` —
+those six and no others. (ffwatch also still understands `player_mention` and
+`operator_directive` so that an older listener on some other machine keeps working; nothing
+emits them here.) The line is a **doorbell, not the mail** — it carries ids only. The listener does
 not request the privileged MESSAGE_CONTENT intent and never sees message text, so the consumer
 still pulls through the normal cursor flow. Duplicate, late, or missed doorbells cost latency,
 never correctness.
@@ -123,10 +120,10 @@ trust off, and it is the only signal in this pipeline for which that is true. ff
 same id up again before it acts on either, so the kind on the line is a hint about work to do
 and never a grant.
 
-`player_dm` is new on 2026-09-03 and buys nobody an agent: a DM from anyone outside
-`trust.operators` opens no conversation and is answered by the harness with one fixed sentence
-pointing at the public channels. It used to be dropped here in the listener, which is the same
-policy said in the one way a person cannot tell apart from the bot being down.
+`player_dm` buys nobody an agent: a DM from anyone outside `trust.operators` opens no
+conversation and is answered by the harness with one fixed sentence pointing at the public
+channels. It rings rather than being dropped silently, because being ignored looks exactly like
+the bot being down to the person who sent it.
 
 ## Configuration
 
@@ -134,17 +131,16 @@ The `discord` section of `~/.config/ffbox/config.json`, mode 0600, never in a re
 `FFBOX_CONFIG_DIR` relocates the file, which is how a container gets its own copy.
 
 **`ffbox/config.md` is the reference for the whole file** — every section, every key, seeded
-or not, with defaults and examples. The file itself carries values only: the generated
-`_help` blocks that used to sit at the top level and inside `discord` were removed on
-2026-09-03, and `05-discord-setup.sh` deletes one it finds left over. What follows here is
-the part this CLI reads.
+or not, with defaults and examples. The file itself carries values only: there is no generated
+`_help` block in it, and `05-discord-setup.sh` deletes one it finds left over. What follows
+here is the part this CLI reads.
 
 **Changing the shape of the config means editing `ffbox/config.md` in the same commit.**
 Adding, renaming, moving or retiring a key in `ffbox/05-discord-setup.sh` (the seeded
 template), `ffbox/ffwatch.py` (`DEFAULTS`, `ENV_OVERRIDES`, `load_config`),
 `ffbox/runners/lib/config.sh`, or the `container` reads in `ffbox/ffbox` leaves that document
-saying something untrue, and there is no longer a `_help` block in the file to contradict it.
-Never put help text back into the JSON.
+saying something untrue, and nothing in the JSON will contradict it. Never put help text back
+into the JSON.
 
 ```json
 "discord": {
@@ -172,9 +168,9 @@ happens once rather than on every call. **`ffdiscord resolve-channels [--write]`
 same for every blank at once, and is what stage 5 runs once a token exists. Both write only
 unambiguous single matches; an alias that hits two channels stays blank and is reported.
 
-Renamed on 2026-08-24: `token` → `app_token`, `guild_id` → `server_id`, matching what the
-developer portal and the Discord client call them. Both old names are still read, and stage 5
-renames them in place. Discord's API still says "guild", so the URL paths are unchanged.
+The keys are `app_token` and `server_id`, matching what the developer portal and the Discord
+client call them. The older `token` / `guild_id` spellings are still read, and stage 5 renames
+them in place. Discord's API still says "guild", so the URL paths are unchanged.
 
 `FFDISCORD_APP_TOKEN` and `FFDISCORD_SERVER_ID` override the file (`FFDISCORD_TOKEN` and
 `FFDISCORD_GUILD_ID` are the older spellings, still read). Channel and mention ids come only

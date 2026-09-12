@@ -33,7 +33,7 @@ load-bearing for future runs even where the original defect is fixed.
 
 ## Full-window rule: never diagnose from a partial window {#full-window-rule}
 
-(Feature 052, 2026-07-30 — the same trap burned the lane TWICE.) The corpus comparator reports
+(This trap has burned the same lane twice.) The corpus comparator reports
 only the FIRST divergence, which can hide the real defect: the 052 hauler triage confidently
 claimed a divergence "exactly one heartbeat wide" that was actually e1 hb1 MISMATCH, hb2 MATCH,
 hb3-12 MISMATCH with the client hash FROZEN — fixing only the first-heartbeat cause would have
@@ -44,8 +44,7 @@ hashes from BOTH `*-report.log` files over the FULL window before believing any 
 and remember an epoch window in which no ops actually fired proves nothing about the surface
 ("clean" windows are only evidence when the ops that could disagree actually ran).
 
-**The same trap has a per-FIELD axis, not just per-heartbeat** (feature 055, R26/R28,
-2026-08-30). A top-line verdict like `differing fields: combined movers vision` or a bare
+**The same trap has a per-FIELD axis, not just per-heartbeat.** A top-line verdict like `differing fields: combined movers vision` or a bare
 "PASS"/"NO DIVERGENCE" does not tell you whether OTHER fields on the same surface would also
 disagree if you looked — R26 and R28 both closed their fix only after an **independent
 per-field re-fold of every surface over every shared heartbeat** (not just the one the
@@ -74,7 +73,7 @@ to suppress the evidence silently.
 
 ## A built player pair is the proof instrument for presentation leaks {#built-pair-proof}
 
-(Feature 055, R25, 2026-08-30.) The Step()-pumped editor pair advances at most one heartbeat per
+The Step()-pumped editor pair advances at most one heartbeat per
 `EditorApplication.Step()` call and therefore renders roughly one frame per heartbeat — it ran a
 2114-heartbeat CombatLifecycle scenario with a live presentation→simulation leak (a rail mirror
 reading a player's per-render-frame presentation velocity) and reported **NO DIVERGENCE**, because
@@ -90,11 +89,9 @@ editor pair cannot reproduce as confirmation of the presentation-leak class, not
 
 ## "Missing report(s)" is NOT a stuck editor {#missing-reports}
 
-(Feature 045, 2026-07-27.) A completed paired run and a genuinely stuck editor can produce
-IDENTICAL script output — historically, `ERROR: missing report(s)` after the full wait loop
-usually meant report **discovery** failed, not the run (045's `legacy-<label>` report renaming
-broke the old filename glob in 28 scripts; it cost a session three "environment non-result"
-attempts and a false written diagnosis). All `run_*_audit.sh` now discover via `da_find_report`
+A completed paired run and a genuinely stuck editor produce IDENTICAL script output, and
+`ERROR: missing report(s)` after the full wait loop usually means report **discovery** failed
+rather than the run. Every `run_*_audit.sh` discovers via `da_find_report`
 (`determinism_audit_lib.sh`), which matches LABEL + the report's own `role=` header (filenames
 lie: a `MODE=client` run's HOST report contains "client" in its name). **The diagnostic lesson
 stands for any report-discovery failure: before concluding an audit run failed for environment
@@ -105,8 +102,7 @@ editors.**
 
 ## Missing reports on BOTH sides: check for a leaked UDP port first {#port-leak}
 
-(2026-08-07, cost three audit attempts.) `ERROR: missing report(s) — host='none' client='none'`
-on a CLEAN start (phase-1 suites green on both editors) with the clone left stuck in play mode
+`ERROR: missing report(s) — host='none' client='none'` on a CLEAN start (phase-1 suites green on both editors) with the clone left stuck in play mode
 is the signature of the HOST failing to bind its transport: the client's console shows
 `Failed to connect to server` / `[MP join] ... transport failure`, and the host's shows
 `Failed to bind UDP socket ... port 7777` + `Host is shutting down due to network transport
@@ -122,14 +118,14 @@ for this signature.
 
 ## Divergence triage: check command TIMING first {#command-timing}
 
-⚠️ **A mode-3 divergence is not automatically a SIM defect — check command TIMING first**
-(feature 042, 2026-07-25). Before feature 042, `ffauto:heartbeats|N` advanced the sim one
-heartbeat per rendered **frame** but chains awaited a **wall-clock** estimate; below ~10 fps the
-next command fired mid-pump and phase-shifted otherwise identical fingerprint streams. Current
-source registers the manual pump's `ChainCompletion`
+⚠️ **A mode-3 divergence is not automatically a SIM defect — check command TIMING first.** The
+failure this guards against: a pump that advances the sim one heartbeat per rendered **frame**
+while the chain awaits a **wall-clock** estimate, so below ~10 fps the next command fires
+mid-pump and phase-shifts two otherwise identical fingerprint streams. Current source registers
+the manual pump's `ChainCompletion`
 (`LocalMultiplayerAutomationCommandRunner.cs:1017-1019`) and both chain executors claim and await
-that completion before proceeding. The check remains useful for historical reports, unmerged
-branches, and any future regression of that ordering.
+that completion before proceeding, so this should not recur — but check it anyway on reports from
+an unmerged branch, and on any suspected regression of that ordering.
 🔑 **How to check**: the Editor.log interleaves `[DeterminismAudit][Heartbeat N]` lines with
 `[determinism] setup '<cmd>'` lines, so scanning it while tracking the last-seen heartbeat gives
 **the heartbeat each command actually fired at**. Compare that against the testcase's pump
@@ -181,8 +177,8 @@ this project. (First run on stale code otherwise silently uses the old build.)
 
 ## Wrapper-script traps: dwell sizing, phase-1 timeout, detached launch {#wrapper-script-traps}
 
-- 🔑 **The dwell is WALL-CLOCK but every acceptance bar counts SHARED HEARTBEATS** (feature 039,
-  2026-07-24). Multiplayer only reaches 8 UPS if the peers keep up, so on a slow or loaded
+- 🔑 **The dwell is WALL-CLOCK but every acceptance bar counts SHARED HEARTBEATS.**
+  Multiplayer only reaches 8 UPS if the peers keep up, so on a slow or loaded
   machine the same dwell yields far fewer heartbeats: the identical `MODE=place` window produced
   **234** shared heartbeats on one session and **102** on another *with no code change between
   them*. A short window makes an audit look like it passed when it merely did not run long
@@ -193,7 +189,7 @@ this project. (First run on stale code otherwise silently uses the old build.)
   than** `HOST_DWELL_MS` (hard-enforced, exit 2) so the host outlives the client and the shared
   window is not truncated.
 - 🔑 **`timed out waiting for test-results.txt (editor closed / in play mode?)` in phase 1
-  usually means NEITHER** (feature 039, 2026-07-24). Both editors are triggered CONCURRENTLY, so
+  usually means NEITHER.** Both editors are triggered CONCURRENTLY, so
   two full EditMode suites plus domain reload and test-framework init contend for the same
   cores. **Before believing the message, `cat <root>/test-results.txt` in both roots** — if it
   says `PASSED`, the suite simply finished after the script gave up, and you only need to
@@ -244,7 +240,7 @@ fallback (`command -v sha256sum >/dev/null && sha256sum ... || shasum ...`, same
 
 ## `run_enemy_audit.sh` never builds; macOS needs Homebrew bash {#enemy-audit-build-and-bash}
 
-(Feature 055 R29, 2026-08-30.) `scripts/audit/run_enemy_audit.sh:99` (`run_player_pair`) always
+`scripts/audit/run_enemy_audit.sh:99` (`run_player_pair`) always
 calls `run_build_multiplayer_audit.sh` with `--skip-build` — this script never builds a player
 itself, and exits 2 (preflight failure) if none exists. Build one first:
 `run_build_multiplayer_audit.sh --label <x>` (editor CLOSED, `Temp/UnityLockfile` removed if the
@@ -298,18 +294,18 @@ runtime disable happens afterward and is intentional.
 
 ## Cross-machine: proven runs + known limits {#cross-machine}
 
-Proven 2026-07-11: M5 Pro 18-core vs M3 Pro 11-core, NO DIVERGENCE on movement (209 hb) + heavy
-construction (461 hb, 12 lines/8 bots). Proven 2026-07-26 on Wittlebase: 681 shared heartbeats
+Proven on M5 Pro 18-core vs M3 Pro 11-core: NO DIVERGENCE on movement (209 hb) + heavy
+construction (461 hb, 12 lines/8 bots). Proven on Wittlebase: 681 shared heartbeats
 from heartbeat 1 with zero authoritative divergence, while 668 raw float-heavy research
 diagnostics differed and their normalized non-float state had zero differences
-(`specs/038-join-desync-crafter-deploy/plan.md`, session handoff 2026-07-26k). ⚠ Known limits
+(`specs/038-join-desync-crafter-deploy/plan.md`, session handoff). ⚠ Known limits
 (021 backlog): a run that dies abnormally can strand an editor in Play mode (reset it manually —
 no remote-MCP reach); the rolling report window evicts early heartbeats on long busy runs
 (shorten `DURATION_S` to keep a burst in-window). The `.110` checkout can fail to fetch over its
 non-interactive SSH session; fast-forward it with the exact command in
 `Documentation/Two-Machine-LAN-Dev-Pair.md:34-48` when the pre-flight hashes differ.
 
-**2026-09-03/04 cross-machine earlygame legs**, four traps: (1) the M3 editor launched over SSH
+**Cross-machine earlygame legs**, four traps: (1) the M3 editor launched over SSH
 had Burst DISABLED (the one-way automation-launcher switch, see
 [Burst is OFF by design](#burst-off-by-design) — this was the PERSISTENT setting, not the
 per-session runtime disable) and the 045 preflight fails closed on it — re-enable via
@@ -330,7 +326,7 @@ captured window compared clean.
 
 ## Built-player pair harness needs role-keyed identity, not per-copy keying {#built-pair-identity}
 
-(049 T028b, 2026-08-31, `22a8c8ca4`.) A built-player pair audit runs TWO PROCESSES OF ONE BUILD on
+A built-player pair audit runs TWO PROCESSES OF ONE BUILD on
 ONE MACHINE — every per-editor-copy trick that keeps an editor pair's host and client apart
 (ParrelSync's separate `Assets`, a project-path-keyed identity file) does nothing here, because
 there is only one binary and one set of on-disk singletons. Two premise breaks surfaced this way:
@@ -392,7 +388,7 @@ as a code regression.**
 
 ## Host-frame profiling: a probe, not a determinism gate {#perf-probe}
 
-(055 flag lane 3, 2026-09-04.) `scripts/audit/run_perf_probe.sh` runs a real host+client built
+`scripts/audit/run_perf_probe.sh` runs a real host+client built
 pair and samples the HOST for N seconds with `ffauto:perf.sample|<seconds>|<topN>` (PerfProbe:
 every top-level PlayerLoop stage, every FF system group via `FFSystemGroupSampler`, heartbeats
 applied, GC allocated/frame, FrameTiming CPU times; presentation-only, zero cost when disarmed).

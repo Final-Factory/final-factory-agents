@@ -1,19 +1,19 @@
 # Final Factory — proven gameplay recipes
 
 Companion to `SKILL.md`. That file covers driving the **editor** safely (freeze diagnosis, `Step()`
-rules, boot, screenshots, compiling). This file covers **playing the game**: every recipe below was
-proven live on the dates noted.
+rules, boot, screenshots, compiling). This file covers **playing the game**: every recipe below has
+been proven live.
 
 Read `SKILL.md` first — in particular the `Time.frameCount` rule and the `Step()` cap. Recipes here
 assume you already know whether the editor is occluded or free-running.
 
 > ⚠️ **`ffauto:` availability is branch-dependent.** Several recipes below use
 > `ffauto:` commands via `LocalMultiplayerAutomationCommandRunner.TryExecute` (the feature-020
-> harness). Verified 2026-08-01 on `master`: neither `ffauto` nor `LocalMultiplayerAutomation`
-> appears anywhere under `Assets/` on that branch — the harness lives on `develop`. Grep before
-> relying on it; where it is missing, use the `execute_code` equivalents.
+> harness), which lives on `develop`: neither `ffauto` nor `LocalMultiplayerAutomation` appears
+> anywhere under `Assets/` on `master`. Grep before relying on it; where it is missing, use the
+> `execute_code` equivalents.
 
-## Driving the menus (proven 2026-07-12)
+## Driving the menus
 
 The whole menu surface is uGUI and fully drivable from `execute_code` — no mouse needed. Full flow
 proven: title menu → New Game panel → Begin Game → world-gen → in-game HUD, then in-game menu →
@@ -39,7 +39,7 @@ foreach (var b in buttons) { var l = b.GetComponentInChildren<TMPro.TMP_Text>(tr
 // then pump Steps so the panel opens/animates
 ```
 
-**⚠️ Boot gate before ANY new game (cost a stranded world, 2026-08-10):** never invoke
+**⚠️ Boot gate before ANY new game:** never invoke
 `StartNewGame` until `FFCore.Extensions.Ecs.Ready && Ecs.HasSingleton<FFCore.Config.ItemConfig>()`
 returns true (namespace is `FFCore.Config`, NOT `FFComponents`). A `TitleScreenManager.Instance != null`
 probe passes far too early (frame ~20 on a fresh boot); starting a game mid-boot strands the world —
@@ -73,7 +73,7 @@ Headless alternative without UI (what `Assets/Editor/DevLoadSave.cs` does):
 items/tech — pick a non-modded save for clean loads.
 
 ⚠️ **A loaded save can come in paused (`GameMetaState.IsPaused=true, GameStarted=false`) — never
-clear it with a raw ECS write** (proven 2026-08-04, 057 US3 probe leg). Setting the fields via
+clear it with a raw ECS write.** Setting the fields via
 `EntityManager.SetComponentData` clears the flag but leaves EVERY `FFSystems.*` system/group
 disabled at the World level (`SystemManager.PauseAllFFSystems()`'s effect persists). The decoy:
 `Heartbeat.CurrentHeartbeatFrame` keeps advancing while `FFTimeData.realElapsedTime` and all sim
@@ -87,7 +87,7 @@ unpause path is `UI.UiController.UnpauseGame()` then `FFSystems.SystemManager.Re
 channel vs `ScreenCapture` + focused GameView, and the never-`gv.Focus()`-with-a-blueprint-in-hand
 trap). Don't re-derive them here.
 
-## Session 1 (2026-07-12) — movement, mining, crafting, combat, research, placement, logistics
+## Movement, mining, crafting, combat, research, placement, logistics
 
 Proven driving the full early tutorial with the editor occluded (Step-pumped).
 
@@ -156,7 +156,9 @@ Proven driving the full early tutorial with the editor occluded (Step-pumped).
   target tech); click the `Research`-labelled button, then `Dismiss` on the unlock dialog. Research
   completes instantly if banked points ≥ cost.
 
-## Session 2 (2026-07-13) — tutorial objectives 50→63
+## Research, recipes, filters, fleet hand-off, and objective probing
+
+Proven over tutorial objectives 50→63.
 
 - **Research a SPECIFIC tech programmatically** (when the panel doesn't pre-select it): reflect
   `UI.Panels.TechnologySelectionPanel`, call private `SelectTechnology(string, bool, bool)` with the
@@ -195,7 +197,9 @@ Proven driving the full early tutorial with the editor occluded (Step-pumped).
   re-acquire `Inventory.From` after ANY pumped frames (the cached buffer invalidates on structural
   change).
 
-## Session 3 (2026-07-13) — tutorial objectives 63→78 (tutorial finished)
+## Save-loads, mass drivers, power grids, inserters, and the final tutorial cards
+
+Proven over tutorial objectives 63→78, to a finished tutorial.
 
 - **⚠️ Entity handles are NOT stable across save-loads.** A cached `Entity{Index,Version}` from a
   previous session throws `component has not been added` after reloading the same save — always

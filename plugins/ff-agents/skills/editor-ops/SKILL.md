@@ -8,8 +8,8 @@ description: Final Factory Unity editor operations via the MCP bridge — pinnin
 **Standing authorization:** Ben has authorized launching, driving, screenshotting, testing, and recovering Final Factory on his machines during development. Do not ask again for app use or routine playtest steps. Use existing project-specific tools, bounded calls, and autonomous recovery; platform permissions remain independently enforced. Read [the authorization and uninterrupted-run rule](../project-memory/memories/drive-interactive-verification.md) before handing any routine step back to Ben.
 
 
-This is the full operational detail behind the game repo CLAUDE.md's Build & Test kernel
-(moved here by feature 061 so it loads on demand). The rules below are binding, not advisory.
+This is the full operational detail behind the game repo CLAUDE.md's Build & Test kernel, kept
+here so it loads on demand. The rules below are binding, not advisory.
 
 ## Runtime translation
 
@@ -50,9 +50,9 @@ explicit workflows.
 
 ## Mechanized preflight — run the script, don't recall the prose
 
-**`scripts/editor-preflight.sh <project-path>`** (game repo, 2026-08-16 harness review G9) is
-the executable form of this skill's recurring editor-readiness traps. Run it BEFORE any task
-that needs the live editor; each failure message carries its own diagnosis and fix:
+**`scripts/editor-preflight.sh <project-path>`** (game repo) is the executable form of this
+skill's recurring editor-readiness traps. Run it BEFORE any task that needs the live editor;
+each failure message carries its own diagnosis and fix:
 
 - exit 1 — no editor process owns the project (launch via `scripts/launch-editor.sh`);
 - exit 2 — process alive but loopback silent = the NATIVE MODAL class; the message gives the
@@ -125,12 +125,12 @@ recover, and monitor readiness yourself:
    after targeted recovery has genuinely failed or an external prerequisite (licensing, OS dialog,
    missing installation) requires human action.
 
-### `busy: compiling` forever = the editor is stuck in PLAY MODE (2026-08-15, feature 064)
+### `busy: compiling` forever = the editor is stuck in PLAY MODE
 
-`run_tests` kept returning `{"error":"busy","reason":"compiling"}` on every retry, while
-`~/.unity-mcp/unity-mcp-status-<hash>.json` said `"reason":"ready"` with a fresh heartbeat and
-`refresh_unity` timed out waiting for readiness. The editor was in play mode, which blocks script
-compilation indefinitely, so it was permanently "about to compile" and never would be.
+`run_tests` returning `{"error":"busy","reason":"compiling"}` on every retry — while
+`~/.unity-mcp/unity-mcp-status-<hash>.json` says `"reason":"ready"` with a fresh heartbeat and
+`refresh_unity` times out waiting for readiness — means the editor is in play mode, which blocks
+script compilation indefinitely. It is permanently "about to compile" and never will be.
 
 Diagnose and clear it in two calls — do not restart the editor for this:
 
@@ -143,8 +143,9 @@ UnityEditor.EditorApplication.isPlaying = false;
 ```
 
 `isPlaying=True isCompiling=True` that never resolves is the signature. Note `execute_code` keeps
-working while play mode blocks compiles, so the bridge looks healthy — and a stray
-`.ff-local-automation.json` is a common cause but not the only one (there was none in this case).
+working while play mode blocks compiles, so the bridge looks healthy. A stray
+`.ff-local-automation.json` is a common cause but not the only one, so clearing play mode is the
+fix even when there is no config file to blame.
 
 ### NUnit `TestCaseSource` is enumerated at DISCOVERY, not at run
 
@@ -154,16 +155,15 @@ change the case list — the next run replays the stale cases. **Force a domain 
 (`UnityEditor.EditorUtility.RequestScriptReload()`) after changing anything a `TestCaseSource`
 reads**, or you will "verify" against the previous state and believe the result.
 
-Corollary from the same session: **`[Explicit]` does not stop such a test from running.** Invoking
-`run_tests(assembly_names: [...])` executes explicit tests — confirmed by a stack trace showing the
-body had entered. If a test is expensive enough that firing it unintentionally hurts (feature 064's
-corpus sweep: ~18 min of blocked editor), gate it on something real — an environment variable
-checked *before* it touches the filesystem. Treat `[Explicit]` as a label, not a guard.
+Corollary: **`[Explicit]` does not stop such a test from running.** Invoking
+`run_tests(assembly_names: [...])` executes explicit tests. If a test is expensive enough that
+firing it unintentionally hurts — a corpus sweep can block the editor for ~18 minutes — gate it
+on something real, an environment variable checked *before* it touches the filesystem. Treat
+`[Explicit]` as a label, not a guard.
 
 ### A hung BOOT is usually a native modal — relaunching reproduces it
 
-(2026-08-11, M3 Pro; cost ~10 min and two pointless relaunches before it was diagnosed.) An
-editor that never finishes booting is more often blocked on a modal dialog than crashed or
+An editor that never finishes booting is more often blocked on a modal dialog than crashed or
 stuck importing. Symptom triad — all three together:
 
 - `Editor.log` frozen at ~2 KB, last line `[Licensing::Module] Licensing Background thread has
@@ -191,9 +191,9 @@ Fix: kill the editor (precondition-check its `-projectPath` first), delete
 `Temp/__Backupscenes` and any stale `Temp/UnityLockfile`, then relaunch. Boot proceeds normally
 and the bridge registers.
 
-**PREVENTION IS NOW MANDATORY (2026-08-16, Ben: top priority — this modal kept recurring): on
-macOS, launch automation editors ONLY through the game repo's `scripts/launch-editor.sh`**
-(landed `d9a3dced0`). Before launching it clears all three boot-wedge hazards —
+**PREVENTION IS MANDATORY (Ben's call: on macOS, launch automation editors ONLY through the
+game repo's `scripts/launch-editor.sh`).** Before launching it clears all three boot-wedge
+hazards —
 `Temp/__Backupscenes`, stale `Temp/UnityLockfile`, `Library/LastSceneManagerSetup.txt` (the
 no-auto-scene guard) — resolves the editor version from `ProjectSettings/ProjectVersion.txt`,
 and refuses to double-launch onto a project that already has a live editor (the `open -n`
@@ -208,7 +208,7 @@ unsaved scene work, so discarding the backups is always correct on this path.
 of value there. Note `osascript`/System Events cannot enumerate the dialog (no assistive
 access), so `sample` is the tool that works headlessly.
 
-### A compile error present at BOOT lands in native Safe Mode — no automation channel can click it (2026-09-02, 055 R37g review fix)
+### A compile error present at BOOT lands in native Safe Mode — no automation channel can click it
 
 A compile error already on disk when the editor launches trips Unity's native **Safe Mode**
 dialog. Nothing can dismiss it programmatically: the MCP bridge and the `unity-cli` Pipeline
@@ -231,14 +231,14 @@ Recovery once a human has clicked **Enter Safe Mode**:
    `mcpforunity://editor/state` → `tests.current_job_id` and poll that job instead of starting a
    new one.
 
-Case that surfaced this: two `CS0052`/`CS0050` "inconsistent accessibility" errors — a helper
-struct declared `internal` while a `public` job struct held it as a field — put the relaunched
-editor into Safe Mode.
+The commonest cause is a `CS0052`/`CS0050` "inconsistent accessibility" pair — a helper struct
+declared `internal` while a `public` job struct holds it as a field — left on disk across a
+relaunch.
 
 ### A stalled RUNNING editor (Windows): system + editor modals, and FindWindow lies
 
-(2026-08-11, BEAST, 049 toggles-join harness leg; cost ~40 min.) Same symptom family as the
-boot modal but on ALREADY-RUNNING editors: process `Responding=True` at ~0% CPU, the editor
+Same symptom family as the boot modal but on ALREADY-RUNNING editors: process
+`Responding=True` at ~0% CPU, the editor
 log fills with MCP `Command TCS timed out (N consecutive)`, a requested script compilation
 never starts, and `run-tests-fast.trigger` is never picked up — the editor UPDATE LOOP is
 stalled, not the process. Two modal classes confirmed live, STACKED (dismissing the first
@@ -262,14 +262,13 @@ by ONE system modal at the same time.
 
 ### The scene-modified modal on macOS: signature, recovery, and the prevention that beats both
 
-(2026-08-14, M5+M3, 062 order-instrument cycles; the modal wedged three editors across two
-days and twice masqueraded as "slow compile".) The macOS signature of a RUNNING editor blocked
+This one routinely masquerades as a "slow compile". The macOS signature of a RUNNING editor blocked
 by the **"open scene(s) have been modified externally — Reload/Ignore"** dialog: process alive
 at ~0% CPU in state `SN`, `Editor.log` still receiving worker-thread writes — specifically the
 pipeline server logging `Main thread operation timed out after 60000ms` on every request — and
 BOTH control channels (MCP bridge `execute_code` and `unity-cli`) timing out. When things
 "take a long time", suspect this FIRST, before diagnosing compiles: look at the window (Orca
-computer-use; accessibility granted on M5 2026-08-14) and click **Reload** (correct unless the
+computer-use, where accessibility has been granted) and click **Reload** (correct unless the
 editor holds deliberate unsaved scene work). If UI automation is unavailable, kill the
 path-verified editor process and use the prevention recipe below on relaunch.
 
@@ -283,7 +282,7 @@ path-verified editor process and use the prevention recipe below on relaunch.
 3. After the editor reports ready, open the boot scene explicitly from current disk state:
    `EditorSceneManager.OpenScene("Assets/Scenes/main.unity")` via `eval_file`.
 
-Two adjacent traps from the same incident:
+Two adjacent traps:
 
 - **`open -n` double-instance:** launching over ssh with `open -n … -projectPath X` while an
   editor already runs on X silently spawns a SECOND instance that wedges on the
@@ -291,24 +290,21 @@ Two adjacent traps from the same incident:
   both. The race that keeps causing it: relaunching right after QUEUEING a quit (delayCall
   Exit or SIGTERM) without waiting for the old process to die. HARD RULE: after any quit/kill,
   POLL `ps -axo pid,command | grep -c "[M]acOS/Unity -projectPath <path>$"` until it reads
-  ZERO, and only then launch — a fixed sleep is not a substitute (bit three times 2026-08-15).
-  (And path-verify EVERY remote kill — `MacOS/Unity` also matches the licensing client.)
-- **The guard's own regex can miss a running editor** (062, fixed `ac44d6384`):
-  `scripts/launch-editor.sh`'s pre-launch check used to match
-  `MacOS/Unity -projectPath ${PROJECT}$`, anchored on end-of-string — an editor launched with
-  trailing args (e.g. `-logFile <path>`, used for a clone/second checkout) has a cmdline that
-  CONTINUES past the project path, so the anchor never matched and a second editor launched on
-  the same project. Fixed to match `-projectPath ${PROJECT}( |$)` (trailing space OR
-  end-of-string). If you ever hand-roll a similar `pgrep -f -projectPath` guard, use the same
-  pattern.
+  ZERO, and only then launch — a fixed sleep is not a substitute. (And path-verify EVERY remote
+  kill — `MacOS/Unity` also matches the licensing client.)
+- **A hand-rolled "is it already running" guard must not anchor on end-of-string.** An editor
+  launched with trailing args (e.g. `-logFile <path>`, used for a clone or a second checkout)
+  has a cmdline that CONTINUES past the project path, so `-projectPath ${PROJECT}$` never
+  matches and a second editor launches on the same project. `scripts/launch-editor.sh` matches
+  `-projectPath ${PROJECT}( |$)` (trailing space OR end-of-string); use the same pattern in any
+  `pgrep -f -projectPath` guard of your own.
 - **Post-checkout stale assemblies look "ready":** after a `git checkout <older-rev>` under an
   editor whose Library was built at tip, `editor_status` reports ready and types shared by both
   revisions resolve — proving nothing. Verify the loaded assemblies with a symbol that exists
   in ONLY one of the two revisions (e.g. a type the newer rev added must be ABSENT after an
   older-rev checkout), then force `recompile` if wrong.
 
-(Added 2026-07-21 on the Windows box; Mac shim added 2026-07-22.) The project carries
-`com.unity.pipeline` (exp), which runs a loopback HTTP server in the editor (ports 7800–7849,
+The project carries `com.unity.pipeline` (exp), which runs a loopback HTTP server in the editor (ports 7800–7849,
 auto-starts, survives domain reloads) that a standalone `unity` CLI talks to with NO MCP
 involvement. On Windows this is `%LOCALAPPDATA%\Unity\bin\unity.exe`; **on macOS there is no
 official binary, but the game repo ships a working shim at `scripts/unity-cli.sh`** (plain
@@ -333,10 +329,10 @@ state there.
 
 ⚠️ **Always target with `--project-path <abs path>`** — it is the ONLY working selector
 (routes correctly with multiple servers, hard-fails if that project isn't connected). On
-Windows, `--instance host:port` is IGNORED by command routing in 1.0.0-beta.2 (verified live
-2026-07-21, two servers up): with exactly one connected server your command runs there no
-matter what port you pass; with several, any `--instance` form — valid or bogus — refuses
-with a "multiple instances" error, as does omitting the flag (safe: it never guesses).
+Windows, `--instance host:port` is IGNORED by command routing: with exactly one connected
+server your command runs there no matter what port you pass; with several, any `--instance`
+form — valid or bogus — refuses with a "multiple instances" error, as does omitting the flag
+(safe: it never guesses).
 
 ### A long-uptime Steam client can wedge play-mode entry (~26h uptime)
 
@@ -390,11 +386,11 @@ run. Both halves are load-bearing:
   job silently runs managed, so a green suite proves nothing about whether the Burst-compiled
   code builds at all. Same false-green family as the stale-assembly and missing-`.meta` traps
   below, and it hides the exact class of error the shipped build would hit.
-- **Runtime.** Managed job execution is roughly an order of magnitude slower. Measured
-  2026-08-15: `FFPerformanceTests` took 476 s with Burst off versus ~45–60 s estimated with it
-  on — ~13x, uniformly across production `KnnSystem` and benchmark jobs alike — which blew the
-  test framework's default 180 s per-test watchdog (`UnityWorkItem.k_DefaultTimeout`) and
-  reported a timeout failure that had nothing to do with the code under test.
+- **Runtime.** Managed job execution is roughly an order of magnitude slower. `FFPerformanceTests`
+  measures ~13x, uniformly across production `KnnSystem` and benchmark jobs alike (476 s with
+  Burst off against ~45–60 s with it on), which blows the test framework's default 180 s
+  per-test watchdog (`UnityWorkItem.k_DefaultTimeout`) and reports a timeout failure that has
+  nothing to do with the code under test.
 
 Check and enable through `execute_code`:
 
@@ -434,7 +430,7 @@ copies**. Whichever copy ran last clobbers it, so it will silently report anothe
 results. The MCP job result is the only authoritative source. Trust ONLY the
 `run_tests` / `get_test_job` result for the pinned instance.
 
-### ⚠️ Long single-NUnit-test PlayMode jobs: two bridge defects (2026-08-07, M3, feature 049)
+### ⚠️ Long single-NUnit-test PlayMode jobs: two bridge defects
 
 Jobs shaped like `PlayModeTests.Runner.DeterminismTestRunner.RunDeterminismGate` — ONE NUnit
 test that internally loops many scenarios — emit no sub-test `TestStarted`/`TestFinished`
@@ -460,17 +456,17 @@ the bridge's own polling, silently killing `editor_state`/`execute_code` (a leg 
 recover the editor to get the bridge back). Subscribe with `+=`, keep the reference, remove
 with `-=` — or avoid subscribing and diff `editor_state` sequence/time across calls instead.
 
-### ⚠️ EditMode SUITE runs are also focus-throttled — different failure signature (055)
+### ⚠️ EditMode SUITE runs are also focus-throttled — different failure signature
 
 The single-long-test defects above are not the only focus-dependent bridge failure. An
 ordinary EditMode SUITE run (many small tests, not one long NUnit test) is also throttled by
 an unfocused editor — observed ~2.4s/test unfocused vs ~64s total for the whole suite
 focused — and the bridge then **aborts the job with a false `Test job failed to initialize
 (tests did not start within timeout)`**, even though the Editor.log shows the tests
-demonstrably still completing. Seen 3 consecutive times, each an aborted ~15-minute run. The
-false-init-timeout error text is the TELL for this class — do not read it as a real
-initialization/startup problem; it means the run was too slow to finish inside the bridge's
-timeout, not that it never started. Mitigation: extend the same tool used above — call
+demonstrably still completing. The false-init-timeout error text is the TELL for this class — do
+not read it as a real initialization/startup problem; it means the run was too slow to finish
+inside the bridge's timeout, not that it never started, and it aborts the whole ~15-minute run.
+Mitigation: extend the same tool used above — call
 `osascript -e 'tell application "Unity" to activate'` before `run_tests`, AND again every ~2
 minutes while polling `get_test_job`, not just once at the start.
 
@@ -501,10 +497,10 @@ alone. **Verify through the MCP bridge, not by watching files**:
    while never executing once, and the dead gate also hides downstream bugs (an unassigned
    lookup, a bad job field) until the gate opens. Probe the live world for the fix's EFFECT
    (state it should have changed, a counter, an instrumented sample), and prove the probe can
-   go positive before believing its negative. (057 round 3, 2026-08-08: the beam re-anchor
-   system's query required `WeaponOwner`, which no live beam owner carried — two shipped
-   "fixes" in it had never run, and the second bug, a never-assigned `ComponentLookup` that
-   threw on first scheduling, only surfaced when the query was fixed.)
+   go positive before believing its negative. The worked example this rule comes from: a beam
+   re-anchor system's query required `WeaponOwner`, which no live beam owner carried, so two
+   shipped "fixes" in it had never run — and a second bug, a never-assigned `ComponentLookup`
+   that threw on first scheduling, only surfaced once the query was corrected.
 
 **New `.cs` files**: an unimported script is not compiled at all — 0 errors + fresh domain
 reload + green tests can all be true while your new file is absent from the build. Confirm the
@@ -520,9 +516,9 @@ Recover MCP first. If the runtime truly has no Unity MCP tools, use the explicit
 fallback above and verify the result through MCP when a later session exposes it. If neither
 channel can produce evidence, report exactly which compile/test proof remains unavailable.
 
-**Deterministic hooks back this ritual** (feature 061; the game repo's `.claude/settings.json`
-+ `scripts/hooks/`, state under `Library/ClaudeHookState/`). What each signal means and how to
-clear it:
+**Deterministic hooks back this ritual** — the game repo's `.claude/settings.json` +
+`scripts/hooks/`, with state under `Library/ClaudeHookState/`. What each signal means and how
+to clear it:
 
 - **Stop block listing `.cs` files** = those files were edited with no `refresh_unity` since.
   Clear it by running the ritual above (refresh → fresh domain reload → `error CS` check →
@@ -539,9 +535,10 @@ clear it:
 
 **Bridge console caveat** (Windows box): `read_console` reliably returns warnings/errors/
 exceptions but generally NOT plain `Debug.Log` entries — never treat "0 log entries" as proof
-a log-line marker didn't fire. For Log-level markers, use a state probe via `execute_code`
-instead (it compiles via Roslyn on this Windows setup and works well; the old "execute_code
-is broken on Windows" claim is outdated).
+a log-line marker didn't fire. It also returns from the START of its buffer rather than the
+tail, so pass `filterText` to find recent lines instead of asking for the last N. For Log-level
+markers, use a state probe via `execute_code` instead; it compiles via Roslyn on Windows as
+well as macOS.
 
 This applies to BOTH editors in a paired run — the clone (`../<project root>_clone_0`) has the
 same stale-assembly trap (see the `determinism-audit` skill).
@@ -561,14 +558,13 @@ A completion notification alone is insufficient for long silent phases. A single
 the underlying log's last meaningful line. Silence must not be able to mean that the process
 crashed.
 
-**A timed-out synchronous `execute_code` build may still be running.** After one long call timed
-out, repeated build invocations and completion markers were observed; the mechanism was not proven.
+**A timed-out synchronous `execute_code` build may still be running.** A long call that times out
+has been seen to leave the build running and produce repeated invocations and completion markers.
 Do not assume the timeout cancelled the work. Schedule the build once from an
 `EditorApplication.update` callback instead. The callback must remove its own delegate before
 starting the build, and task-owned persistent `scheduled` and `started` guards must make a second
 submission a no-op. After a timeout, inspect those guards, the existing job state, and the build
-output or result marker before deciding what happened. The guarded follow-up completed once with
-`BuildOptions.None` and zero errors, with no repeated completion marker observed.
+output or result marker before deciding what happened.
 
 ## Building
 

@@ -27,12 +27,14 @@ Bound surfaces, all of them in this plugin beside this file:
 |---|---|
 | `agents/discord-answerer.md` | players, `#ask-assistant` and mentions |
 | `agents/discord-dev-agent.md` | Lothsahn |
+| `agents/discord-triager.md` | players, in bug threads |
 | `skills/ask-claude/SKILL.md` | players |
 | `skills/ask-dev/SKILL.md` | Ben and Lothsahn |
 | `skills/discord-triage/SKILL.md` | players, in bug threads |
 
-`agents/discord-triager.md` is deliberately absent: it is read-only and never
-posts.
+`discord-triager` is read-only towards the repo, not towards Discord: it posts its own
+explanation into a bug thread when a report turns out to be a misunderstanding, so it is bound
+here like every other player-facing surface.
 
 > **A note on this document.** The briefing prose here is written normally and does use em
 > dashes. That is instruction text, not a sample of Max's voice. The bans below apply to every

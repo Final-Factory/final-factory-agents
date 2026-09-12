@@ -8,7 +8,7 @@ description: Drive the running Final Factory game in the Unity editor via the MC
 ## ⛔ MANDATORY preflight — run BOTH checks, every time
 
 Run these **before you start driving the game** AND **before you conclude the bridge or editor is
-wedged**. No exceptions: every driving failure recorded in this project so far was one of these two
+wedged**. No exceptions: every driving failure recorded in this project has been one of these two
 checks being skipped, and each takes about ten seconds.
 
 ### Check 1 — is a scene actually open?
@@ -34,9 +34,9 @@ manage_scene(action="load", path="Assets/Scenes/main.unity")
 first. Re-read `editor/state` afterwards and confirm `active_scene.name == "main"`.)
 
 ⚠️ **The scene can vanish out from under you.** It is not enough to have checked once at session
-start: verified 2026-08-01, an editor that reported `active_scene: main` earlier was later found with
-`path: null` in Edit mode, and the play session launched from that state produced the deadlock above.
-Re-check it at the start of every driving attempt.
+start: an editor that reported `active_scene: main` earlier can later be found with `path: null` in
+Edit mode, and a play session launched from that state produces the deadlock above. Re-check it at
+the start of every driving attempt.
 
 ### Check 2 — are frames actually advancing?
 
@@ -55,9 +55,9 @@ return UnityEngine.Time.frameCount;   // call twice, a few seconds apart
 `play_mode.is_changing: true` for a long time on an unfocused editor is the **expected** signature of
 the occlusion freeze — not a wedge. The bridge, `EditorApplication.update`, and `execute_code` all
 keep answering normally while the player loop is frozen, so "the bridge responds" proves nothing
-about the game. (Occlusion freeze proven 2026-07-12 on macOS; re-confirmed on Windows 2026-08-01,
-where a play-mode transition sat at `is_changing: true` for 29 minutes purely because the window was
-behind others, and 300 `Step()` calls advanced `frameCount` by exactly 300.)
+about the game. This holds on macOS and Windows alike: a transition can sit at `is_changing: true`
+for half an hour purely because the window is behind others, while 300 `Step()` calls advance
+`frameCount` by exactly 300.
 
 ### Never report "wedged" without both
 
@@ -65,7 +65,7 @@ A missing scene and an occluded editor produce nearly identical symptoms — and
 State what the two checks returned when you report a problem. "The editor is stuck" with no
 `active_scene` value and no frameCount pair is not a diagnosis. If a bridge call errors with
 `instance not found`, re-read `mcpforunity://instances` before escalating: a domain reload drops the
-session briefly and it returns on its own (proven 2026-08-01).
+session briefly and it returns on its own.
 
 ## The three "editor looks stuck" traps — tell them apart
 
@@ -82,8 +82,8 @@ wedged editor.**
 
 The first two are the easiest pair to confuse, because **`Step()` "works" in both** — frames advance
 either way. Only `active_scene` distinguishes them, which is why Check 1 is mandatory before Check 2.
-(Proven 2026-08-01: 900 pumped frames read as "boot still in progress" when the real cause was
-`active_scene: null`; the world list — `Default World` + `LoadingWorld0..3` — was the confirming tell.)
+Nine hundred pumped frames will read as "boot still in progress" when the real cause is
+`active_scene: null`; the world list — `Default World` + `LoadingWorld0..3` — is the confirming tell.
 
 **Compile-blocked recovery order — do this BEFORE reporting a wedge or notifying the user:**
 1. `manage_editor(action=stop)` — re-issue it even if an earlier `stop` already returned
@@ -95,8 +95,8 @@ either way. Only `active_scene` distinguishes them, which is why Check 1 is mand
    re-issue `refresh_unity`.
 
 High process CPU does not rule out any of them — Unity keeps burning cores (Burst) while blocked.
-(Compile-wedge proven 2026-07-31: a 6+ minute "compile" cleared instantly on `stop`, domain reload
-finished within seconds.)
+A six-minute "compile" that clears instantly on `stop`, with the domain reload finishing seconds
+later, is the compile-wedge signature.
 
 ## Sidestep all of this: attach to a BUILT PLAYER (feature 068)
 
@@ -155,21 +155,21 @@ return "frame=" + UnityEngine.Time.frameCount;                       // ALWAYS v
 ```
 
 - **Only on an occluded/frozen editor.** On a free-running editor a 300–500 Step batch advances
-  frameCount by ZERO and leaves the editor **paused** — silently freezing it. (Proven 2026-07-14:
-  this wedged the host of a paired MP session and the client's join timed out `ClosedByRemote`.)
-  If a peer stops responding mid-session, check `EditorApplication.isPaused` FIRST.
+  frameCount by ZERO and leaves the editor **paused** — silently freezing it. In a paired MP
+  session that wedges the host and times the client's join out as `ClosedByRemote`, so if a peer
+  stops responding mid-session, check `EditorApplication.isPaused` FIRST.
 - **Cap ~600 Steps per `execute_code` call, counting the SUM across loops in that call.** A 2800-step
   batch — and separately a loop totalling 3000 — blocked the editor main thread past the bridge
   timeout; every later call times out for minutes. A timed-out call may still have fully executed:
   re-sync with a light `frameCount` probe once the bridge answers.
-- **Wall-clock command windows expire between bridge calls (cost three driver legs, 2026-08-10):**
+- **Wall-clock command windows expire between bridge calls:**
   `ffauto:movement.hold`'s duration is WALL-CLOCK, and on an occluded editor ZERO frames run
   between `execute_code` calls — issue the hold in one call and the `Step()` pump in the next and
   the window can expire before a single frame ticks, while the command still returns success. The
   player never moves and nothing errors; a drive/trace that "did nothing" (velocity never nonzero,
   `moving_frames=0`) is the tell. **Always issue the command AND its Step-pump batch in the SAME
   `execute_code` call.** Assume the same for any other wall-clock-windowed ffauto verb.
-- **Pace pumped Steps when capturing motion traces (057 Design C′, 2026-08-10):** `Step()` pins
+- **Pace pumped Steps when capturing motion traces:** `Step()` pins
   `Time.deltaTime` at 20 ms while stepping much faster in real time, which trips the per-frame
   player mover's stall gate (`LocalPlayerMotionSystem`) — a trace comes back mostly `stallGated`
   in its mover-attribution column and is a BROKEN capture, not a clean one. Pace pumps to roughly
@@ -182,8 +182,7 @@ return "frame=" + UnityEngine.Time.frameCount;                       // ALWAYS v
   as much as abnormal. The position override is a static (`AutomationPointer._positionOverride`)
   that survives play-mode cycles while domain reload is off, so a skipped clear leaves the user's
   NEXT session reading a frozen mouse position — selection, hover, and ability indicators all
-  ignore the real mouse, which presents as a gameplay regression (cost a live diagnosis 2026-08-04,
-  057 US3 probe leg).
+  ignore the real mouse, which presents as a gameplay regression.
 
 ## Standard workflow
 
@@ -250,8 +249,8 @@ UnityEditor.EditorApplication.Step(); UnityEditor.EditorApplication.Step(); // c
   the user to bring the Unity app to the foreground**, and it does not un-occlude the editor —
   the player loop still only advances on `Step()` (see Check 2 above).
 
-**World-only (no UI) — not available today.** The only way to exclude overlay UI would be the
-camera-specified render, which is blank here (feature 020, T020). Nearest fallback:
+**World-only (no UI) — not available.** The only way to exclude overlay UI would be the
+camera-specified render, which is blank here. Nearest fallback:
 `manage_camera` `capture_source: scene_view`, which always works but shows world geometry + editor
 gizmos rather than the game's HUD.
 
@@ -275,7 +274,7 @@ gizmos rather than the game's HUD.
     .GetMethod("MarkFinished", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
     .Invoke(null, null);
   ```
-  then `refresh_unity(compile:request, mode:force)` before the next run. (Proven 2026-07-20.)
+  then `refresh_unity(compile:request, mode:force)` before the next run.
 - **Long PlayMode NUnit runs driven by `Step()` on an occluded editor are unreliable** — distinct
   from the plain freeze: the run can WEDGE mid-test with `frameCount` still advancing while the
   test's own async chain (`UniTask.NextFrame()` continuations, `SaveGameManager`'s

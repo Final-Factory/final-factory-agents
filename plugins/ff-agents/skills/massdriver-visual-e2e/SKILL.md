@@ -18,8 +18,6 @@ tiles shift by a constant offset; relative geometry (the pair distances) is pres
 Never assert against absolute tiles — the snippets below identify drivers by their
 target-distance instead.
 
-First run + baseline screenshots: 2026-07-05 (feature 012) — PASS, all assertions + captures.
-
 ## Prerequisites
 
 - Unity editor open on THIS project, Edit mode, compiled clean. Pin the MCP instance
@@ -99,7 +97,7 @@ inventory: after ~1 min of uptime the d=20 and d=40 receivers hold >0 delivered 
 d=45 receiver holds EXACTLY 0. (Do NOT use the Cargo Holds — the receiver→connector→hold drain
 does not flow in this scenario; receivers accumulate instead.)
 
-**2c. Capacity-gate stall (bonus, verifies the C5 fix live)**: receivers fill at 164
+**2c. Capacity-gate stall (verifies the receiver-capacity gate live)**: receivers fill at 164
 (`NumCanAdd == 0`) and their senders then hold fire at `ReadyToFire == true`. To resume launches
 (for the flight capture), zero the receiver Primary slots from `execute_code`; launches resume
 within one cycle (~3s, CarryCapacity 30 per launch).

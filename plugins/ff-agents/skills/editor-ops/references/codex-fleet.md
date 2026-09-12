@@ -28,7 +28,7 @@ by the same driver and may not spawn children. The driver counts BOTH kinds agai
 cap of four active agents including itself, records them in the queue, and reserves capacity before
 launching. Only the driver commits or pushes.
 
-## Fleet checked on 2026-09-05
+## The fleet
 
 | Machine | SSH route from M5 | Checkout | Use |
 |---|---|---|---|
@@ -38,9 +38,9 @@ launching. Only the driver commits or pushes.
 
 The M5 SSH configuration maps the older LAN addresses to these Tailscale names. Verify with
 `ssh -o BatchMode=yes -o ConnectTimeout=10 <alias> hostname`; do not diagnose a sandbox DNS denial
-as a dead machine. Follow the active host's approval policy for network access.
-All three had Codex CLI 0.153.4 and ChatGPT login; M3 and BEAST completed explicit Sol-medium
-read-only smoke requests. These are dated observations, not permanent availability guarantees.
+as a dead machine. Follow the active host's approval policy for network access. Availability is
+never a given: prove each machine's route, Codex CLI and login at the start of a lane rather than
+assuming a previous lane's success carries over.
 
 Before each lane, read the machine's branch, HEAD, working changes, existing job state and editor
 state. One writer/build/editor owner per checkout. Never sync C# into a checkout while another
@@ -89,10 +89,9 @@ For archive verification and complete examples of terminal polling, see
 ## Unity and proof
 
 Unity MCP works in Codex. Discover `mcpforunity://instances`, match the exact checkout path and
-pin it; then run editor preflight. Tool availability is session-specific. On M5, the 2026-09-05
-session successfully pinned `FinalFactory@d91200fa` at the expected Assets path and queried idle
-state. Do not copy that instance ID into other checkouts. The preflight found Burst disabled on
-M5; it was enabled before further verification. M3 preflight passed with Burst enabled and idle.
+pin it; then run editor preflight. Tool availability is session-specific, and an instance id
+belongs to one checkout — never carry one across. Expect preflight to find Burst disabled after a
+launcher-driven start; enable and drain it before any verification.
 
 Register the local stdio server with `codex mcp add UnityMCP -- <absolute-uvx> --from
 mcpforunityserver==10.0.0 mcp-for-unity` only if no matching server is configured. Match the
