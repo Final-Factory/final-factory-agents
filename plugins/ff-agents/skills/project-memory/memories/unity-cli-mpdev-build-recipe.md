@@ -8,8 +8,9 @@ description: "Building the multiplayer-dev players from the unity CLI shim witho
 - **Shim syntax** (`~/.local/bin/unity`, `scripts/unity-cli.sh`): `unity editor_status --project-path <repo>`,
   `unity command --project-path <repo> <name> [key=value…]`, `unity eval '<C# statements; return x;>'
   --project-path <repo>`. There is NO `--json` flag — passing it silently prints nothing.
-  `run_tests` accepts `filter_type=testName|assembly|category` (not namespace); read the counts from
-  `Temp/pipeline_test_status.json`, the `test_status` JSON is awkward.
+  `run_tests` accepts `filter_type=testName|assembly|category` (not namespace) — but a testName filter did NOT
+  narrow the run, and `Temp/pipeline_test_status.json` can be STALE: parse the shim's own JSON
+  (`result.Summary`, `result.Results[].Status`) — see [[unity-shim-run-tests-filter-does-not-narrow-and-static-test-isolation]].
 - **Full pipeline, not the platform entry points.** `Editor.BuildCommand2.BuildWindowsMultiplayerDev()` /
   `BuildOsxMultiplayerDev()` build one player each and SKIP the localization harvest + font check, the
   `Localization/` copy into each build and the `cicd/builds/{windows/main/FinalFactory,mac/main}` copy.
