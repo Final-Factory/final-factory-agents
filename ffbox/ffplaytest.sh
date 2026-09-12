@@ -149,6 +149,17 @@ if [ ! -d "$PROJECT/Assets" ]; then
     echo "ffplaytest: $PROJECT does not look like a Unity project" >&2
     exit 2
 fi
+# ONE PROJECT, ONE EDITOR. A live MCP bridge means an editor already has this project open, and
+# Unity refuses the second one outright -- measured: "Multiple Unity instances cannot open the same
+# project.", exit 1, which arrives as a generic failure thousands of log lines from anything that
+# explains it. So say it here, with the fix, instead of letting Unity say it badly.
+if command -v ffmcp >/dev/null 2>&1 && ffmcp status >/dev/null 2>&1; then
+    echo "ffplaytest: a live Unity editor already has this project open (the MCP bridge)." >&2
+    echo "  Use the MCP \`run_tests\` tool instead -- it runs in the editor that is already up --" >&2
+    echo "  or \`ffmcp stop\` first if you genuinely need a cold play-mode session." >&2
+    exit 2
+fi
+
 
 # THE BASE-REF GATE. The harness is on develop, not on master, and an editor handed a config it
 # has no code to read boots, ignores it, and sits there until the timeout kills it — minutes spent

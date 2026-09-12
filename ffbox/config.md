@@ -860,6 +860,8 @@ Each class is staged into a pool of its own and neither can take the other's war
 | `pool.max` | `-1` | `3` | This class's own ceiling on containers, runs and staged ones together. |
 | `idle_agent_ttl_secs` | `14400` | `14400` | How long a staged container waits before retiring. |
 | `pool_ref` | `null` | `null` | Which branch the pool stages. `null` follows `base_ref`. |
+| `unity_mcp.enabled` | `false` | `false` | THE LIVE EDITOR. On, a turn of this class gets a headless Unity editor booted before the agent starts (`ffmcp`) and the curated `mcp__UnityMCP__*` tools on its tool list, so it can read live state, recompile and run the suite in one editor instead of booting one per question. Off, it has `ffverify` and `ffplaytest` exactly as before and pays nothing. Off by default because the bridge was proven against a BLANK project on 2026-09-11 and the real workspace's boot cost is still unmeasured — see `design/unitymcp_container_design.txt`. Leave ffagent off regardless: the class that runs text strangers wrote is not the one to hand `execute_code` to first. |
+| `unity_mcp.ready_timeout_secs` | `600` | `600` | How long `ffmcp start` waits for the log line `StdioBridgeHost started on port N` before giving up, stopping the editor and letting the turn run DEGRADED (no MCP tools, a prompt that says so, `ffverify` unaffected). It bounds the wait only; the boot itself is inside `warmup_secs`, which is why no new clock exists. |
 | `warm_branches.count` | `1` | `1` | Evictable spares this class keeps on recently-used branches. `0` is off. See below. |
 | `warm_branches.window_secs` | `3600` | `3600` | How recently a turn must have wanted a branch for it to be a candidate. |
 | `warm_branches.ttl_secs` | `3600` | `3600` | How long an evictable spare waits before retiring. |
@@ -1533,7 +1535,7 @@ asked for; in `watch` the keys are channel identities, and inheriting four of th
 | `drain_switch` | `~/.config/ffbox/draining` | Stops launches only, so an in-flight run's replies still reach Discord while the updater waits for it to end. |
 | `events_path` | `~/.config/ffbox/discord/events.jsonl` | |
 | `plugins_dir` | this checkout's `plugins/` | WHERE plugin trees are read from. WHICH ones a container gets is `plugins` in its pool block. |
-| `task_script`, `pool_task`, `ffverify`, `ffplaytest`, `ffbox`, `ffdiscord`, `docker`, `claude_bin` | paths beside `ffwatch.py`, or resolved on PATH | External commands and the scripts handed to a container. `ffverify` (EditMode suite) and `ffplaytest` (one play-mode session) are both mounted onto the container's PATH; they are conveniences that own the per-invocation results path and the cleanup, NOT a fence around `unity-editor`, which the bare-`Bash` allow list has permitted since 2026-08-25. |
+| `task_script`, `pool_task`, `ffverify`, `ffplaytest`, `ffmcp`, `ffbox`, `ffdiscord`, `docker`, `claude_bin` | paths beside `ffwatch.py`, or resolved on PATH | External commands and the scripts handed to a container. `ffverify` (EditMode suite) and `ffplaytest` (one play-mode session) are both mounted onto the container's PATH; they are conveniences that own the per-invocation results path and the cleanup, NOT a fence around `unity-editor`, which the bare-`Bash` allow list has permitted since 2026-08-25. |
 
 ## Environment overrides
 
@@ -1542,7 +1544,8 @@ asked for; in `watch` the keys are channel identities, and inheriting four of th
 `FFWATCH_KILL_SWITCH`, `FFWATCH_DRAIN_SWITCH`, `FFWATCH_BASE_REF`, `FFWATCH_AGENT_SECS`,
 `FFWATCH_WARMUP_SECS`, `FFWATCH_KILL_GRACE`, `FFWATCH_MAX_RUNS`, `FFWATCH_WEB_HOST`,
 `FFWATCH_WEB_PORT`, `FFWATCH_CATCHUP_SECS`, `FFWATCH_VERIFY`, `FFWATCH_VERIFY_SECS`,
-`FFWATCH_GIT_DIR`, `FFWATCH_PLAYTEST`, plus `FFWATCH_DRY_RUN` and `FFWATCH_APPROVE`.
+`FFWATCH_GIT_DIR`, `FFWATCH_PLAYTEST`, `FFWATCH_MCP`, plus `FFWATCH_DRY_RUN` and
+`FFWATCH_APPROVE`.
 
 The CI lane takes `FFGITHUBRUNNERS_<KEY>` for every key in `lib/config.sh`, upper-cased.
 

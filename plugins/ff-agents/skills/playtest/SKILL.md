@@ -66,10 +66,13 @@ plus `Seed` or `SaveName` (a COPY of any dev save, or a `claude_*` save) and opt
 auto-enters play and the session starts/stops itself. **Delete the config file when done — a
 leftover auto-plays on the next editor boot.**
 
-## On the ffbox build server there is no editor — use `ffplaytest`
+## On the ffbox build server — `ffplaytest`, or a live bridge when the run has one
 
-A Discord `fix`/`dev` turn runs in a container with no editor open and no MCP bridge, so none of
-the pump-and-poll flow above applies. What it has is `ffplaytest --chain 'ffauto:...;ffauto:...'`
+A Discord `fix`/`dev` turn runs in a container. Since 2026-09-11 it MAY have a live editor on the
+MCP bridge (`ffmcp`, off by default per agent class, and the prompt says whether it is up) — in
+which case the pump-and-poll flow above applies as it does anywhere else, through
+`mcp__UnityMCP__execute_code`. Without it there is no editor and no bridge, and none of that flow
+applies. What it has is `ffplaytest --chain 'ffauto:...;ffauto:...'`
 on its PATH: one host session, the chain run as `PreConnectCommand` (a solo host never reaches the
 post-join chain — it clamps `TargetClientCount` to 1 and then waits 900s for a peer), the journal
 reported as JSON, and the automation config deleted on every exit path. Two limits: the automation

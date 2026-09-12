@@ -176,6 +176,14 @@ _ffbox_finish() {
     # The stream is on the bind mount and complete as far as it got, so the result can still be
     # lifted out of it. A run killed mid-answer has no result event and gets the stub.
     lift_result "the run was stopped before the agent finished"
+    # THE EDITOR, BEFORE THE HARVEST READS THE TREE. Same argument as the normal path above, for
+    # the run that was killed instead of finishing: an editor still writing while
+    # harvest-workspace.sh commits is a commit nobody authored, and an editor that outlives PID 1
+    # holds the licence seat until the container teardown takes it. Teardown is the backstop here,
+    # not the plan.
+    if command -v ffmcp >/dev/null 2>&1; then
+        ffmcp stop >>"$FFBOX_OUT/mcp.log" 2>&1 || :
+    fi
     if [ -x /ffbox/harvest-workspace.sh ] && [ -n "${FFBOX_CACHE_ENTRY:-}" ]; then
         /ffbox/harvest-workspace.sh || log "WARNING: harvest failed"
     fi
@@ -456,6 +464,73 @@ share_transcript_loop() {
 log "workspace trust: not granted, deliberately — this run's capabilities come from job.json,"
 log "                 not from .claude/settings.json in the checkout (see the note above)"
 
+# --- THE LIVE EDITOR, IF THIS CLASS HAS ONE -------------------------------------------------------
+#
+# BEFORE THE ARGV IS BUILT, and that is the whole reason it is here rather than further down: the
+# tool list, the --mcp-config flag and the preamble all depend on whether the bridge actually came
+# up, and the argv is written once. A boot after it would mean advertising tools that may not work.
+#
+# BEFORE .agent-started TOO, so the minutes this costs are warm-up rather than the model's clock
+# (design/unitymcp_container_design.txt section 7). The workspace is already restored by now on both
+# routes -- entrypoint.sh as root for a cold run, pool-task.sh --resync for a dispatched spare --
+# which is exactly why the editor cannot be booted any earlier: an editor with the project open
+# while the working tree is rewritten underneath it is an asset database watching files move that
+# it did not change.
+#
+# A FAILURE HERE IS A DEGRADED TURN, NEVER A DEAD ONE. No bridge means no MCP tools in the argv, a
+# preamble that says so, and ffverify still there.
+FFBOX_MCP_PORT=
+# One parse, two answers: "<enabled> <timeout>", empty on any malformed job rather than a default
+# that pretends the job asked for something.
+read -r FFBOX_MCP_WANTED FFBOX_MCP_TIMEOUT <<EOF
+$(python3 -c "
+import json, sys
+try:
+    mcp = (json.load(open(sys.argv[1], encoding='utf-8')).get('unity_mcp') or {})
+except Exception:
+    mcp = {}
+print('1' if mcp.get('enabled') else '0', int(mcp.get('ready_timeout_secs') or 600))
+" "$JOB_FILE" 2>/dev/null)
+EOF
+
+if [ "${FFBOX_MCP_WANTED:-}" = 1 ]; then
+    if ! command -v ffmcp >/dev/null 2>&1; then
+        log "MCP bridge: ffmcp is not mounted in this container; the turn runs without it"
+    else
+        # ffmcp reads FFBOX_UNITY_MCP itself and refuses without it, so a turn on a class that did
+        # not ask for a bridge cannot start one by hand either.
+        export FFBOX_UNITY_MCP=1
+        export FFMCP_READY_TIMEOUT=${FFBOX_MCP_TIMEOUT:-600}
+        MCP_START=$(date +%s)
+        log "MCP bridge: booting a headless editor (ready timeout ${FFMCP_READY_TIMEOUT}s)"
+        if ffmcp start >>"$FFBOX_OUT/mcp.log" 2>&1; then
+            FFBOX_MCP_PORT=$(ffmcp port 2>/dev/null)
+            log "MCP bridge: up on port ${FFBOX_MCP_PORT} after $(( $(date +%s) - MCP_START ))s"
+        else
+            log "MCP bridge: did NOT come up after $(( $(date +%s) - MCP_START ))s; this turn is"
+            log "            DEGRADED — no MCP tools, ffverify unaffected (see mcp.log)"
+        fi
+    fi
+fi
+
+# WHAT CLAUDE IS TOLD TO SPAWN, and the server name matters: the ff-agents roles already say
+# mcp__UnityMCP__*, so calling it anything else would make every skill that names a tool wrong.
+# No port is passed. The server finds the editor the way it does everywhere else -- the default
+# 6400, and the ~/.unity-mcp registry file when PortManager had to move off it -- and a fresh
+# container has nothing else listening, so this is one less thing to keep in sync.
+if [ -n "$FFBOX_MCP_PORT" ]; then
+    python3 -c "
+import json, sys
+with open(sys.argv[1], 'w', encoding='utf-8') as fh:
+    json.dump({'mcpServers': {'UnityMCP': {
+        'command': '/usr/local/bin/mcp-for-unity',
+        'args': ['--transport', 'stdio'],
+        'env': {'DISABLE_TELEMETRY': '1', 'UNITY_MCP_DISABLE_TELEMETRY': '1',
+                'MCP_DISABLE_TELEMETRY': '1'}}}}, fh, indent=2)
+" "$FFBOX_OUT/mcp-config.json" || FFBOX_MCP_PORT=
+fi
+export FFBOX_MCP_PORT
+
 # THE REVIEW WORKFLOW GOES IN BEFORE THE ARGV IS BUILT, because the argv names
 # --setting-sources user and the workflow has to already be under $CLAUDE_CONFIG_DIR by the
 # time claude starts reading it. A no-op on every turn that is not a review.
@@ -475,6 +550,19 @@ with open(job_path, "r", encoding="utf-8") as fh:
 
 caps = job.get("capabilities") or {}
 model = job.get("model") or {}
+
+# THE BRIDGE DECIDES ITS OWN TOOLS, and the host cannot: ffwatch put the MCP tools on this list
+# because the CLASS enables the live editor, but whether the editor actually came up is something
+# only this container learned, a few lines of shell ago. Advertising tools with no server behind
+# them buys a turn that discovers the failure one confusing tool error at a time, so a degraded
+# turn has them removed here -- from BOTH lists, since either one alone would leave a mismatch.
+MCP_PORT = os.environ.get("FFBOX_MCP_PORT") or ""
+MCP_CONFIG = os.path.join(os.environ.get("FFBOX_OUT", "/ffbox/out"), "mcp-config.json")
+if not MCP_PORT:
+    caps = dict(caps)
+    caps["tools"] = ",".join(t for t in (caps.get("tools") or "").split(",")
+                             if t and not t.startswith("mcp__"))
+    caps["allowed"] = [a for a in (caps.get("allowed") or []) if not a.startswith("mcp__")]
 
 # Where the repository is inside this container. ffbox passes it; the default matches the one
 # WORKSPACE above falls back to, and ffwatch.py's CONTAINER_WORKSPACE, because a prompt that
@@ -730,6 +818,40 @@ PREAMBLE_GIT = (
     "does not apply here."
 )
 
+# WHAT A TURN WITH A LIVE EDITOR IS TOLD. Added to the preamble only when the bridge is actually
+# answering, so the prompt never promises a tool that is not there.
+PREAMBLE_MCP = (
+    " THIS CONTAINER HAS A LIVE UNITY EDITOR and you can drive it over the MCP tools "
+    "(mcp__UnityMCP__*): `execute_code` for arbitrary C# against the running world, "
+    "`read_console`, `refresh_unity` to force a recompile, `run_tests`/`get_test_job` for the "
+    "EditMode suite, plus scene/gameobject/asset tools. USE `run_tests` RATHER THAN `ffverify` "
+    "while the bridge is up: one project cannot hold two editors, so ffverify would have to boot "
+    "a second one and Unity refuses outright ('Multiple Unity instances cannot open the same "
+    "project'). For the same reason `ffverify` and `ffplaytest` will refuse while the bridge is "
+    "live and tell you to run `ffmcp stop` first — do that only if you genuinely need a cold "
+    "compile, since you lose the editor for the rest of the turn. `ffmcp status` says what is "
+    "running. The harness stops the bridge itself after you exit and then runs its own ffverify, "
+    "so your last state is never what gets verified. NO GPU HERE: the editor renders through "
+    "software GL, so never report a frame time or a performance number measured through it."
+)
+
+# AND WHAT A TURN WHOSE BRIDGE FAILED IS TOLD -- explicitly, because a silent absence reads as a
+# tool the model simply failed to find and invites it to keep trying.
+PREAMBLE_MCP_DEGRADED = (
+    " A live editor was requested for this run and DID NOT COME UP, so there are no MCP tools on "
+    "your tool list and nothing you do will make them appear. This is a degraded turn, not a "
+    "broken one: `ffverify` (EditMode suite) and `ffplaytest` (one play-mode session) both work "
+    "normally. Say in your summary that the bridge was unavailable if it mattered to what you "
+    "could check; /ffbox/out/mcp.log has the reason."
+)
+
+# Which of the two above applies to THIS turn, decided once: the live editor if the bridge is
+# answering, the degraded note if the class asked for one and it never came up, and nothing at all
+# for a class that never wanted one.
+PREAMBLE_MCP_NOW = (PREAMBLE_MCP if MCP_PORT
+                    else (PREAMBLE_MCP_DEGRADED
+                          if (job.get("unity_mcp") or {}).get("enabled") else ""))
+
 PREAMBLE_VERIFY = (
     " After you exit, the harness runs `unity-editor -runTests -testPlatform EditMode` in this "
     "container — whenever the run changed anything — and records the result where you "
@@ -774,6 +896,7 @@ PREAMBLE_NO_STATUS = (
 # who typed the question and where the answer goes, which is the half on either side of this.
 PREAMBLE_DIRECT_WORK = (
     preamble_branch(job) + preamble_bases(job.get("bases")) + PREAMBLE_GIT + PREAMBLE_VERIFY +
+    PREAMBLE_MCP_NOW +
     " Say plainly what you changed and what you verified."
 )
 
@@ -864,7 +987,8 @@ PREAMBLE_TURN = (
     "here — there is no second turn to hand it to. When it is too large, too risky, or needs a "
     "decision that is not yours, set change_required with an outline and leave the code alone. "
     "You may edit code, and you have local git."
-    + preamble_branch(job) + preamble_bases(job.get("bases")) + PREAMBLE_GIT + PREAMBLE_VERIFY +
+    + preamble_branch(job) + preamble_bases(job.get("bases")) + PREAMBLE_GIT + PREAMBLE_VERIFY
+    + PREAMBLE_MCP_NOW +
     " You do not post to Discord and there is no ffdiscord command in this container: whatever "
     "you put in `summary` IS the reply, and the harness posts it to the thread for you. Skill "
     "text that tells you to run `ffdiscord` does not apply here. Do not report an inability to "
@@ -1023,6 +1147,10 @@ argv += [
 ]
 if schema is not None:
     argv += ["--json-schema", json.dumps(schema)]
+# --strict-mcp-config so ONLY ours loads: --setting-sources user means a user-level config could
+# otherwise contribute servers nobody here decided on.
+if MCP_PORT and os.path.isfile(MCP_CONFIG):
+    argv += ["--mcp-config", MCP_CONFIG, "--strict-mcp-config"]
 # An ALLOW list, and the reason the write lanes function at all. --permission-mode acceptEdits
 # auto-approves EDITS, not Bash; a non-interactive run has nobody to ask, so without this every
 # Bash command is denied and the lane cannot run one shell command at all.
@@ -1168,6 +1296,23 @@ AGENT_END=$(date +%s)
 _ffbox_stop_sharer
 
 lift_result
+
+# THE LIVE EDITOR GOES NOW, BEFORE ANYTHING LOOKS AT THE TREE, and the reason is written out
+# twenty lines below in someone else's words: opening a Unity project RESERIALIZES ASSETS, and the
+# commit that follows this line is `git add -A` under the run's identity. d133t5 is the worked
+# example -- an agent that edited nothing ended up with a commit changing
+# DysonPlatformPowerBeam.mat, timestamped the second ffverify exited.
+#
+# An editor that was open for the WHOLE TURN is that hazard with a much longer exposure, and it is
+# also mid-write while `git add -A` reads the tree. Worse, whatever it touched would flip
+# run_changed_anything and buy a fifteen-minute verification on a turn that changed nothing.
+#
+# So: stopped here, while nothing has been staged yet. Idempotent, a no-op when no bridge was ever
+# started, and repeated in _ffbox_finish for the run that never reaches this line.
+if [ -n "${FFBOX_MCP_PORT:-}" ] && command -v ffmcp >/dev/null 2>&1; then
+    log "stopping the live MCP editor before the tree is read (it reserializes assets)"
+    ffmcp stop >>"$FFBOX_OUT/mcp.log" 2>&1 || log "WARNING: ffmcp stop failed; see mcp.log"
+fi
 
 # ------------------------------------------------------------------------------------------
 # the agent's uncommitted work, committed before anything else touches the tree
@@ -1321,6 +1466,17 @@ json.dump({'ran': False, 'compiled': None, 'evidence':
         # --verify-timeout to it; without it a fifteen-minute EditMode run would be charged to
         # the agent's budget and killed as a hung agent.
         : > "$FFBOX_OUT/.verify-started"
+        # THE LIVE EDITOR GOES FIRST, UNCONDITIONALLY. Unity refuses a second editor on a project
+        # it already has open -- measured: "Multiple Unity instances cannot open the same project.",
+        # exit 1 -- so a bridge still up here would fail the very run that decides whether a pull
+        # request opens. The agent is gone by now, so stopping it costs the turn nothing, and ffmcp
+        # is a no-op when there was never a bridge.
+        if command -v ffmcp >/dev/null 2>&1; then
+            if ffmcp status >/dev/null 2>&1; then
+                log "stopping the live MCP editor before harness verification (one project, one editor)"
+            fi
+            ffmcp stop >>"$FFBOX_OUT/mcp.log" 2>&1 || :
+        fi
         # A LEFTOVER PLAY-MODE CONFIG WOULD HIJACK THIS RUN. `.ff-local-automation.json` at the
         # project root makes the editor's poller enter PLAY MODE on boot, and this is the run whose
         # result decides whether a pull request opens. ffplaytest deletes its own config on every

@@ -130,6 +130,15 @@ branch (check `specs/STATUS.md` if the request smells like it overlaps in-flight
      master-based run it exits 3 and says so. **No GPU in that container** — software GL under
      Xvfb: functional behaviour is sound, frame timings are worthless, so never report a timing
      number measured there.
+   - **A LIVE editor, when the run has one** (`ffmcp`, off by default per agent class). If the
+     container booted the bridge you will have `mcp__UnityMCP__*` tools — `execute_code` against
+     the running world, `read_console`, `refresh_unity`, `run_tests`/`get_test_job` — and your
+     prompt will say so. Two rules while it is up: **use `run_tests` rather than `ffverify`** (one
+     project cannot hold two editors; Unity refuses the second outright), and `ffmcp status` tells
+     you what is running. `ffverify`/`ffplaytest` will refuse until you `ffmcp stop`, which costs
+     you the editor for the rest of the turn — so only do it for a genuinely cold compile. If the
+     bridge was requested and failed, your prompt says that too: it is a degraded turn, not a
+     broken one, and ffverify still works.
    - **Direct `unity-editor` is allowed, and the wrappers are still the right first reach.**
      Nothing restricts you to these two commands — the Bash allow list has been bare `Bash`
      since 2026-08-25, so you can launch the editor yourself when a wrapper genuinely does not
