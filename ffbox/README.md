@@ -288,7 +288,8 @@ Eight things worth knowing:
   child of `ffwatch` in its cgroup, so `systemctl stop ffbox.target` signalled it and its trap
   stopped every container on the box.
 
-  The run also reads *copies* of the task script, `ffverify` and its class's plugin trees, taken
+  The run also reads *copies* of the task script, `ffverify`, `ffplaytest` and its class's plugin
+  trees, taken
   into its own directory at launch, so the merge has nothing to reach. A CI job is insulated the
   same way by construction: its runner scripts come from the image, and what it mounts off the
   host is the cache (read-only) and its own drop box.
@@ -1497,6 +1498,43 @@ and the agent cannot touch:
   that the tests passed is not part of it and is never asked for. Conversation 133 is why: four
   files on origin, a green suite the agent ran itself, and no pull request that any amount of
   waiting could produce.
+
+  **A leftover play-mode config is cleared before this run.** `.ff-local-automation.json` at the
+  project root makes the editor enter PLAY MODE on boot instead of sitting in Edit mode, and this
+  is the run whose result decides whether a pull request opens. `ffplaytest` deletes its own config
+  on every exit path, so the file only survives a killed session or a hand-written one — and the
+  gate is not where that should be discovered. The task removes it (and its status sibling) first;
+  the file is gitignored on develop, so nothing that matters is ever kept there.
+
+- **`ffplaytest`, for what an EditMode suite cannot see** (2026-09-11). The sibling of `ffverify`:
+  one host play-mode session, driven by an `ffauto` chain, with the session journal reported as
+  JSON. It is for the bug class the EditMode suite structurally misses — an op silently dropped, a
+  null thrown mid-frame, a state machine that ends up wrong while every unit test still passes.
+
+  `ffplaytest --chain 'ffauto:...;ffauto:...'` writes the automation config, lets the editor's own
+  poller enter play mode, watches the log for `status pre-connect-command-complete`, keeps
+  simulating for `--settle` seconds, then stops the editor. The chain goes in `PreConnectCommand`
+  because a solo host's post-join chain never runs: the bootstrap clamps `TargetClientCount` to a
+  minimum of 1 and then waits 900s for a peer that does not exist, so a session that put its work
+  post-join would time out having done nothing.
+
+  Three things it owns, and they are the reason to prefer it over a hand-rolled editor launch:
+  the config is deleted on **every** exit path including SIGTERM; the editor runs in its own
+  process group and is killed as a group, because `unity-editor` is an `xvfb-run` wrapper whose
+  children otherwise survive and hold the licence seat; and the session label scopes the journal
+  per invocation, so two runs cannot read each other's.
+
+  **It needs the automation harness, which lives on `develop` and not on `master`** — the default
+  base for a run. On a master-based workspace it exits 3 and says which file is missing rather
+  than booting an editor that will ignore the config. **And there is no GPU in the container**
+  (`/dev/dri` does not exist), so rendering is llvmpipe software GL under Xvfb: functional repro is
+  sound, frame timing is worthless, and the report says so in its own `timing_valid: false` field
+  rather than leaving somebody to infer it.
+
+  Neither wrapper is a fence around Unity. The Bash allow list has been bare `Bash` since
+  2026-08-25, so a run can launch `unity-editor` directly; the prompt says the wrappers are
+  preferred and that direct launches are permitted, because the old prose claimed the opposite and
+  a dev run believed it (see `docs/docker-security-model.md`, "What is not a boundary").
 - **Publication.** The run starts on `ffbox/<run-id>` and the agent is told to make its own
   branch off it, named for the change (see "Local git" below); ffbox commits whatever is left
   over, publishes whatever branch HEAD ended on as `ffbox/<the agent's name>-<run-id>`, and
@@ -2126,7 +2164,8 @@ have to land together: either alone is worse than neither.
 `ffbox/test_pool_task.sh` covers that offline, against the real script.
 
 **A drain destroys every IDLE staged one.** Not housekeeping: `pool-task.sh`, the turn task and
-`ffverify` are bind-mounted from this checkout, live, and the self-updater fast-forwards it
+`ffverify`/`ffplaytest` are bind-mounted from this checkout, live, and the self-updater
+fast-forwards it
 immediately after draining.
 
 A container serving a turn is left alone, and the file that decides which is which is

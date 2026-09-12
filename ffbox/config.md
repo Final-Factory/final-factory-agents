@@ -1533,7 +1533,7 @@ asked for; in `watch` the keys are channel identities, and inheriting four of th
 | `drain_switch` | `~/.config/ffbox/draining` | Stops launches only, so an in-flight run's replies still reach Discord while the updater waits for it to end. |
 | `events_path` | `~/.config/ffbox/discord/events.jsonl` | |
 | `plugins_dir` | this checkout's `plugins/` | WHERE plugin trees are read from. WHICH ones a container gets is `plugins` in its pool block. |
-| `task_script`, `pool_task`, `ffverify`, `ffbox`, `ffdiscord`, `docker`, `claude_bin` | paths beside `ffwatch.py`, or resolved on PATH | External commands and the scripts handed to a container. |
+| `task_script`, `pool_task`, `ffverify`, `ffplaytest`, `ffbox`, `ffdiscord`, `docker`, `claude_bin` | paths beside `ffwatch.py`, or resolved on PATH | External commands and the scripts handed to a container. `ffverify` (EditMode suite) and `ffplaytest` (one play-mode session) are both mounted onto the container's PATH; they are conveniences that own the per-invocation results path and the cleanup, NOT a fence around `unity-editor`, which the bare-`Bash` allow list has permitted since 2026-08-25. |
 
 ## Environment overrides
 
@@ -1542,7 +1542,7 @@ asked for; in `watch` the keys are channel identities, and inheriting four of th
 `FFWATCH_KILL_SWITCH`, `FFWATCH_DRAIN_SWITCH`, `FFWATCH_BASE_REF`, `FFWATCH_AGENT_SECS`,
 `FFWATCH_WARMUP_SECS`, `FFWATCH_KILL_GRACE`, `FFWATCH_MAX_RUNS`, `FFWATCH_WEB_HOST`,
 `FFWATCH_WEB_PORT`, `FFWATCH_CATCHUP_SECS`, `FFWATCH_VERIFY`, `FFWATCH_VERIFY_SECS`,
-`FFWATCH_GIT_DIR`, plus `FFWATCH_DRY_RUN` and `FFWATCH_APPROVE`.
+`FFWATCH_GIT_DIR`, `FFWATCH_PLAYTEST`, plus `FFWATCH_DRY_RUN` and `FFWATCH_APPROVE`.
 
 The CI lane takes `FFGITHUBRUNNERS_<KEY>` for every key in `lib/config.sh`, upper-cased.
 

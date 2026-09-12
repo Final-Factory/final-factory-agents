@@ -53,8 +53,13 @@ Second, triage-specific zones:
     `unity-editor -runTests -testPlatform EditMode` in the container after the agent exits — a
     cold compile in a fresh container, so the stale-assembly trap cannot occur — and records
     the result where the agent cannot write it. You can run the same thing yourself with
-    `ffverify`; it is the only Unity command the lane has, and it writes to its own
-    per-invocation results path.
+    `ffverify`, which writes to its own per-invocation results path, and reproduce a runtime bug
+    with `ffplaytest --chain 'ffauto:...'` (one play-mode session, journal reported as JSON;
+    needs a develop-based workspace, and its frame timings mean nothing — no GPU in that
+    container). Neither is a fence around Unity: the allow list is bare `Bash`, so a direct
+    `unity-editor` launch is available when the wrappers do not cover the job — prefer them
+    anyway, because they own the results path, the licence seat and the automation-config
+    cleanup.
   - Neither available → ESCALATE, and say which channel was missing.
 - **Never read Unity's shared results file.** The Performance Testing package writes
   `TestResults.xml` and `PerformanceTestResults.json` into a companyName/productName path that

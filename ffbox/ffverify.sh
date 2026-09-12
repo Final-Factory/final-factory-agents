@@ -8,11 +8,20 @@
 #   the harness   discord-task.sh runs it AFTER the agent process has exited, into
 #                 /ffbox/out/verification. That result is the one ffwatch records in the
 #                 `verification` table, and the agent has no way to write it (design section 14).
-#   the agent     a fix/dev lane may run `ffverify` itself to check its own work before it
-#                 finishes. It is the ONLY Unity entry point on the lane's Bash allow list, which
-#                 is why this script exists as a script rather than as a line of the task: with
-#                 `Bash(unity-editor *)` allowed instead, an agent could pass its own
-#                 -testResults (or -executeMethod anything) and walk straight into rule 1 below.
+#   the agent     a run may invoke `ffverify` itself to check its own work before it finishes.
+#
+# WHAT THIS IS NOT, corrected 2026-09-11. This header used to claim ffverify was "the ONLY Unity
+# entry point on the lane's Bash allow list". That stopped being true on 2026-08-25, when the lanes
+# and their enumerated allow lists were replaced by bare `Bash` (design/single_lane_design.txt;
+# ffwatch.py CAPABILITY_ALLOWED). `unity-editor` has been directly reachable ever since, and the
+# claim survived in the prose long enough that an agent read it back as a technical limit and
+# reported that it could not start the game at all.
+#
+# So this is a CONVENIENCE THAT KNOWS THE TRAPS, not a fence: an explicit per-invocation
+# -testResults path (rule 1 below), the licence handling, and the JSON the harness records. A run
+# that needs something these wrappers do not cover may launch the editor itself -- and then owns
+# rule 1 by hand, which is the part that is easy to get wrong. `ffplaytest` is the sibling for
+# play-mode work.
 #
 # TWO RULES FROM DESIGN SECTION 14, NEITHER NEGOTIABLE:
 #
