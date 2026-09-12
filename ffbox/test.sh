@@ -46,6 +46,10 @@ run "test_ci_lane.py"       python3 "$HERE/test_ci_lane.py"
 # remembered to run it by hand. That is the state this file exists to end.
 run "test_container_credential.sh" sh "$HERE/test_container_credential.sh"
 run "test_update_drain.sh"  sh  "$HERE/test_update_drain.sh"
+# THE OTHER SUITE THAT DRIVES THE REAL ffbox, for the four lines that decide which cache entry a
+# run restores from. Nothing it can get wrong FAILS a run -- every answer is a real tar -- so the
+# only way a regression here shows up is as runs that got slower, which is why it wants a test.
+run "test_entry_ladder.sh"  sh  "$HERE/test_entry_ladder.sh"
 # THE RESTORE, which is the one script that decides whether a container gets as far as the agent
 # at all. Its suite needs git-lfs and skips itself without one, because the property it holds --
 # that a reset onto a branch resolves LFS from the mirror rather than from GitHub -- cannot be
