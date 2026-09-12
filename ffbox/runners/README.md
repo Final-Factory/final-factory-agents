@@ -290,7 +290,8 @@ then re-runs both setups — `ffbox/setup.sh` and `ffbox/runners/setup.sh`, both
 So most of this system deploys itself: **push, and within five minutes**
 
 - the image is rebuilt (`03-build.sh` builds the one tag both systems share, so a change to
-  `Dockerfile`, `entrypoint-ci.sh` or `unity-license.sh` is live),
+  `Dockerfile`, `entrypoint-ci.sh` or `unity-license.sh` is live, and Claude Code moves to the
+  newest release — see `claude-version.sh`),
 - the egress fence and the git mirror are brought back into line with the allowlist and images in
   git — and left alone when nothing they depend on changed, so a job mid-fetch is not cut off,
 - a change to `ci_lane.py` or `lib/config.sh` reaches the lane when ffwatch restarts, which the
