@@ -16616,7 +16616,9 @@ def test_a_merge_notice_reaches_a_thread_that_only_owns_the_branch():
     origin, host = git_origin(case)
     merge_cfg(case)
     sha = a_version_commit(case, "master")
-    conv = a_reported_bug(case, thread="70002", branch="loth/pr-branch", github_pr=None)
+    # NOT A BUG THREAD: a dev-channel conversation, the private venue that stays open.
+    conv = a_reported_bug(case, thread="70002", branch="loth/pr-branch", github_pr=None,
+                          kind="ask", alias="ask_claude")
     a_pull_request(42, "loth/pr-branch", state="closed", merged=True, base="master",
                    merge_sha=sha)
 
@@ -16636,6 +16638,31 @@ def test_a_merge_notice_reaches_a_thread_that_only_owns_the_branch():
     check("a private venue keeps its thread open",
           [r["action"] for r in case.rows("SELECT * FROM outbound")] == ["post"],
           case.rows("SELECT * FROM outbound"))
+
+
+def test_a_merge_files_away_a_bug_thread_in_a_private_channel():
+    """dev_bug_reports: developer wording, but still a bug report whose fix has merged."""
+    print("merge notice: private bug thread")
+    case = Case("mergenoticeprivatebug", venue="private")
+    origin, host = git_origin(case)
+    merge_cfg(case)
+    sha = a_version_commit(case, "master")
+    conv = a_reported_bug(case, thread="70003", github_pr=PR_41)
+    a_pull_request(41, "ffbox/belt-fix", state="closed", merged=True, base="master",
+                   merge_sha=sha)
+
+    check("the merge queues one notice",
+          len(case.watcher.poll_github_merges()) == 1, case.rows("SELECT * FROM outbound"))
+    rows = case.rows("SELECT * FROM outbound WHERE conversation_id=? ORDER BY id", (conv,))
+    payload = json.loads(rows[0]["payload_json"])
+    check("worded for developers, because the venue is private",
+          payload["text"].startswith("Fix merged into master."), payload)
+    check("and the bug thread is filed away after it, as a public one would be",
+          [r["action"] for r in rows] == ["post", "close"], rows)
+    close = json.loads(rows[1]["payload_json"])
+    check("the close waits on the notice",
+          close["channel"] == "70003" and close["after_local_id"] == rows[0]["local_id"],
+          close)
 
 
 def test_a_merged_bug_thread_is_filed_away_after_the_notice_lands():
@@ -20489,6 +20516,7 @@ def main():
         test_a_reserve_that_can_never_be_met_is_clamped,
         test_a_merged_pull_request_tells_the_thread_which_build_carries_the_fix,
         test_a_merge_notice_reaches_a_thread_that_only_owns_the_branch,
+        test_a_merge_files_away_a_bug_thread_in_a_private_channel,
         test_a_merged_bug_thread_is_filed_away_after_the_notice_lands,
         test_a_merge_that_is_nobodys_news_says_nothing,
         test_the_first_merge_poll_announces_nothing_that_predates_it,
