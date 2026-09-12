@@ -1089,6 +1089,168 @@ def test_a_player_never_gets_a_private_half():
     check("and nothing was DMed to anyone", not any(c[0] == "dm" for c in case.calls()))
 
 
+DETAILS = "700000000000000005"
+
+
+def details_case(name, fixture, target_venue="private"):
+    """A public ask channel whose `details_to` names dev_details, declared `target_venue`."""
+    fixture["channels"]["dev_details"] = DETAILS
+    fixture["messages"][DETAILS] = []
+    case = Case(name, fixture)
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
+    case.cfg["watch"]["ask_claude"]["details_to"] = "dev_details"
+    case.cfg["watch"]["dev_details"] = {"kind": "ask", "forum": False,
+                                        "venue": target_venue, "engage": "mention"}
+    case.cfg["_discord"]["channels"]["dev_details"] = DETAILS
+    return case
+
+
+def run_with_verdict(case, event, verdict):
+    os.environ["FFBOX_STUB_VERDICT"] = json.dumps(verdict)
+    try:
+        case.events(event)
+        case.watcher.once()
+    finally:
+        os.environ.pop("FFBOX_STUB_VERDICT", None)
+    run = case.watcher.db.one("SELECT * FROM run ORDER BY id DESC LIMIT 1")
+    return json.load(open(os.path.join(os.path.dirname(run["stream_path"]), "job.json"),
+                          encoding="utf-8"))
+
+
+SPLIT_VERDICT = {
+    "summary": "Checked it, and you're right. I passed the details to the devs.",
+    "private_summary": "Connectors/PerpendicularConnectorTransferSystem.cs:88",
+    "change_required": False}
+
+
+def test_a_players_detail_goes_to_the_details_channel():
+    """A player in a public channel with `details_to` gets one public reply, and the developers
+    get the rest in the private channel it names -- opened with the same link an operator's DM
+    carries, silent, and never addressed to the player."""
+    print("details_to: a player's private half")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(6301, "the merger drops items")]
+    case = details_case("details-player", fixture)
+    job = run_with_verdict(case, ask_event(6301), SPLIT_VERDICT)
+    check("the host told the run where the second half goes",
+          job.get("split") == {"to": "team", "channel": DETAILS}, job.get("split"))
+    check("and the prompt says so as a harness fact",
+          "developers' private channel" in job["prompt"], job["prompt"][:900])
+
+    posts = case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")
+    check("two posts are queued", len(posts) == 2, posts)
+    pub = json.loads(posts[0]["payload_json"])
+    priv = json.loads(posts[1]["payload_json"])
+    check("the public half goes to the channel the player wrote in",
+          pub["channel"] == ASK_CHANNEL and "Perpendicular" not in pub["text"], pub)
+    check("the private half goes to the details channel, and to nobody's DM",
+          priv["channel"] == DETAILS and "dm_to" not in priv, priv)
+    check("it opens with the same link back to the message an operator's DM does",
+          priv["text"].startswith(
+              f"Re: [this Discord message](https://discord.com/channels/{GUILD}"
+              f"/{ASK_CHANNEL}/6301)\n\n"), priv["text"])
+    check("and carries what the run found",
+          "PerpendicularConnectorTransferSystem.cs:88" in priv["text"], priv["text"])
+    check("it mentions nobody", not priv.get("mention") and not priv.get("ping"), priv)
+    detail_posts = [c for c in sent_calls(case) if c[1] == DETAILS]
+    check("it went out to the details channel, once, silent",
+          len(detail_posts) == 1 and "--silent" in detail_posts[0], sent_calls(case))
+    check("no DM was opened for anybody", not any(c[0] == "dm" for c in case.calls()))
+    check("both halves went out", all(p["status"] == "sent" for p in
+                                      case.rows("SELECT * FROM outbound WHERE action='post'")))
+
+
+def test_an_operator_in_a_details_channel_is_still_answered_by_dm():
+    """`details_to` is for detail nobody asked for. An operator asked, so the rest is theirs."""
+    print("details_to: an operator still gets a DM")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [
+        message(6401, "which file defines the merger?", author=LOTHSAHN, name="lothsahn")]
+    case = details_case("details-operator", fixture)
+    job = run_with_verdict(case, ask_event(6401), SPLIT_VERDICT)
+    check("the split is the asker's", job.get("split") == {"to": "asker"}, job.get("split"))
+    check("and the prompt does not mention the developers' channel",
+          "developers' private channel" not in job["prompt"], job["prompt"][:900])
+    posts = case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")
+    check("two posts are queued", len(posts) == 2, posts)
+    priv = json.loads(posts[1]["payload_json"])
+    check("the private half is a DM to the operator", priv.get("dm_to") == LOTHSAHN, priv)
+    check("and nothing was posted to the details channel",
+          not any(c[1] == DETAILS for c in sent_calls(case))
+          and not any(json.loads(p["payload_json"]).get("channel") == DETAILS for p in posts),
+          sent_calls(case))
+
+
+def test_a_details_channel_not_declared_private_is_refused():
+    """A target that is not declared `venue: private` is treated as no target at all."""
+    print("details_to: a public target")
+    fixture = base_fixture()
+    fixture["messages"][ASK_CHANNEL] = [message(6501, "the merger drops items")]
+    case = details_case("details-public-target", fixture, target_venue="public")
+    job = run_with_verdict(case, ask_event(6501), SPLIT_VERDICT)
+    check("no split is offered", job.get("split") is None, job.get("split"))
+    check("and the prompt offers no private half",
+          "private half" not in job["prompt"], job["prompt"][:900])
+    posts = case.rows("SELECT * FROM outbound WHERE action='post'")
+    check("exactly one post, whatever the verdict carried", len(posts) == 1, posts)
+    check("and nothing reached the target channel",
+          not any(c[1] == DETAILS for c in sent_calls(case)), sent_calls(case))
+    warnings = ffwatch.config_warnings(case.cfg)
+    check("startup says which entry is off and why",
+          any("watch.ask_claude.details_to" in w and "venue: private" in w for w in warnings),
+          warnings)
+
+    cfg = {"watch": {"a": {"venue": "public", "details_to": "a"},
+                     "b": {"venue": "public", "details_to": "nowhere"},
+                     "c": {"venue": "public", "details_to": "d"},
+                     "d": {"venue": "private"},
+                     "e": {"venue": "public"}},
+           "_discord": {"channels": {}}}
+    check("a channel cannot name itself", "itself" in ffwatch.details_problem(cfg, "a"))
+    check("an alias with no watch entry is refused",
+          "no watch entry" in ffwatch.details_problem(cfg, "b"))
+    check("a private target with no channel id is refused",
+          "no channel id" in ffwatch.details_problem(cfg, "c"))
+    check("and an entry without the field has no problem and no channel",
+          ffwatch.details_problem(cfg, "e") is None
+          and ffwatch.details_channel_for(cfg, "e") is None)
+    turn = {"venue": "public", "trust_tier": "player"}
+    check("a direct turn never splits, whatever the channel says",
+          ffwatch.split_destination(cfg, turn, {"watch_alias": "c"}, True) is None)
+
+
+def test_the_split_preamble_follows_the_hosts_decision():
+    print("split preamble: which half, from `split`")
+    player = dict(JOB_SKELETON, local=False, direct=False,
+                  trust={"tier": "player", "actor": "", "why": ""}, venue={"kind": "public"})
+    operator = dict(player, trust={"tier": "operator", "actor": LOTHSAHN, "why": "configured"})
+    team = {"to": "team", "channel": DETAILS}
+
+    pre = preamble_for(dict(player, split=team), "split-team")
+    check("a player with a team split is told the second half goes to the developers",
+          "goes to the developers" in pre and "never sees it" in pre, pre[-1500:])
+    check("that the public half may only promise it when there is one",
+          "Only when it is not empty" in pre, pre[-1500:])
+    check("and that the two halves are not in one voice",
+          "THE TWO HALVES ARE NOT IN THE SAME VOICE" in pre, pre[-1500:])
+    check("it is not the operator's version",
+          "sends it to the asker" not in pre, pre[-1500:])
+    check("a player with no split gets no private half",
+          "private_summary" not in preamble_for(dict(player, split=None), "split-none"))
+    check("nor does a player on a job written before `split` existed",
+          "private_summary" not in preamble_for(player, "split-old-player"))
+    check("an operator on such a job still gets the DM split",
+          "sends it to the asker" in preamble_for(operator, "split-old-operator"))
+    check("an operator's question is never routed to the team, whatever the job says",
+          "private_summary" not in preamble_for(dict(operator, split=team), "split-op-team"))
+    check("and a player's never to a DM",
+          "private_summary" not in preamble_for(dict(player, split={"to": "asker"}),
+                                                "split-player-asker"))
+    check("a direct turn gets neither",
+          "private_summary" not in preamble_for(dict(player, direct=True, split=team),
+                                                "split-direct"))
+
+
 def test_an_undeliverable_private_half_never_becomes_public():
     print("undeliverable")
     fixture = base_fixture()
@@ -20286,6 +20448,10 @@ def main():
         test_a_message_link_points_at_the_message_and_not_the_top_of_the_channel,
         test_the_two_halves_of_a_split_reply_are_not_in_one_voice,
         test_a_player_never_gets_a_private_half,
+        test_a_players_detail_goes_to_the_details_channel,
+        test_an_operator_in_a_details_channel_is_still_answered_by_dm,
+        test_a_details_channel_not_declared_private_is_refused,
+        test_the_split_preamble_follows_the_hosts_decision,
         test_an_undeliverable_private_half_never_becomes_public,
         test_an_operator_dm_is_a_private_venue,
         test_a_group_dm_is_answered_by_nobody,
