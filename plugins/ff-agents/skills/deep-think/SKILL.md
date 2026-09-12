@@ -78,9 +78,10 @@ assumptions as facts. Re-read it before sending.
   that design decisions and final adjudication stay in the parent session. Before acting on it,
   re-open the cited code and check the load-bearing claims yourself. Do not relay its findings to
   the user as established fact until you have.
-- Determinism-critical paths (`fp` math, heartbeat/op ordering, RNG seeding, Burst jobs,
-  system-group order, `[Save]` layout, join/recovery) may be *inspected* by the agent, but the
-  parent decides every finding.
+- Determinism-critical paths may be *inspected* by the agent, but the parent decides every
+  finding. The canonical surface list is the game repo's
+  `Documentation/Crown-Jewel-Surfaces.md` — point the agent at it rather than pasting a copy of
+  the list into the brief, because copies drift.
 - Never let it commit, push, enter/exit Play mode, change editor settings, or touch a `_clone_0`
   directory.
 - Direct children only, max four active threads.

@@ -1,6 +1,6 @@
 ---
 name: project-unified-16ups-smooth-presentation
-description: "Ben's design goal: one 16 UPS baseline for single-player and multiplayer with smooth per-frame presentation. Feature 057 owns the program. Player, belts, and projectile particles are approved; Phase C world movers and paired determinism proof remain."
+description: "Ben's design goal: one 16 UPS baseline for single-player and multiplayer with smooth per-frame presentation. Feature 057 owns the program; read its plan for where the staged work stands."
 metadata:
   node_type: memory
   type: project
@@ -24,21 +24,16 @@ The architectural boundary is strict: authoritative simulation stays discrete, d
 and fixed-point; presentation runs every rendered frame and may use floats, but must never feed
 values back into simulation (`CLAUDE.md`, "Key Constraints" → "Simulation vs presentation").
 
-Current progress as of 2026-08-02:
+**Where the program stands is a fact about the repo, not about this file.** Read the dated SESSION
+HANDOFF at the top of `specs/057-unified-rate-smooth-presentation/plan.md` and the task states in
+that feature's `tasks.md` before planning anything here, and check whether the tip commits are
+ancestors of `origin/develop` rather than trusting a "done" line.
 
-- User Story 1, local ship and camera glide, is complete.
-- User Story 2 phases A and B are complete. Belt movement was approved. Projectile companion
-  particles now follow the interpolated projectile pose and Ben approved the final feel after the
-  review-hardening follow-up (`specs/057-unified-rate-smooth-presentation/plan.md`, latest SESSION
-  HANDOFF; commits `200c2a414`, `67ca33670`).
-- The fast EditMode suite passed after the final follow-up: 2074 total, 2071 passed, 0 failed, and
-  3 documented skips (MCP job `69714b72f3eb40e6a97434a984451e44`).
-- The formal busy-belt jam-stop checkpoint still needs to be closed unless that behavior was
-  explicitly observed during the earlier belt approval
-  (`specs/057-unified-rate-smooth-presentation/tasks.md`, T021).
-- Phase C world movers, paired on/off determinism proof, UI smoothing, and the single-player rate
-  flip remain open (`specs/057-unified-rate-smooth-presentation/tasks.md`, T024–T028; feature
-  `spec.md`, User Stories 3–4). Read the latest handoff at the top of the feature plan before
-  continuing.
+Two things that stay true whatever the stage:
+
+- Each stage is presentation-only, proven by an on/off paired-audit bit-identity run. A stage that
+  changed a simulation value is not a presentation change however it was framed.
+- The single-player 60→16 flip is gated on auditing every heartbeat-count-keyed constant. Do not
+  treat the flip as a config edit.
 
 Related: [[player-domain-already-conventional]].
