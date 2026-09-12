@@ -65,6 +65,9 @@ TIMEOUT=${FFPLAYTEST_TIMEOUT:-900}
 # How long the sim keeps running after the chain reports complete, so effects the chain kicked off
 # (a bot moving, a belt filling) are in the journal rather than cut off mid-flight.
 SETTLE=${FFPLAYTEST_SETTLE:-10}
+# How often the watch loop re-reads the log for a phase line. Whole seconds, and a knob only so
+# the offline suite can stop paying a full poll interval to learn what the stub wrote instantly.
+POLL=${FFPLAYTEST_POLL:-2}
 FORCE=0
 
 # Same as ffverify: this launches an editor, so it makes sure there is a licence. Usually the pool
@@ -336,7 +339,7 @@ while :; do
         OUTCOME=session-ended
         break
     fi
-    sleep 2
+    sleep "$POLL"
 done
 
 if editor_alive; then
