@@ -32,7 +32,8 @@ openrouter.ai
 # Deliberately ABSENT, and the container's environment is what keeps them absent rather than
 # this file: the two Datadog intake hosts (CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1) and
 # downloads.claude.ai (DISABLE_AUTOUPDATER=1). A run that silently updated its own Claude Code
-# would also stop being the version this image was built and tested with.
+# would also stop being the version this image was built and tested with. New versions come in
+# at image build time instead, on the host outside this fence (ffbox/claude-version.sh).
 
 # --- CANDIDATES FOR REMOVAL, 2026-09-01 ------------------------------------------------------------
 # The licence became an offline .ulf on this date (ffbox/unity-offline-license.sh), and the offline

@@ -11,9 +11,13 @@ cd "$(dirname "$0")"
 UNITY_VERSION=${UNITY_VERSION:-6000.3.19f1}
 UNITY_IMAGE=${UNITY_IMAGE:-unityci/editor:ubuntu-${UNITY_VERSION}-windows-mono-3.2.2}
 TAG=${FFBOX_IMAGE:-ffbox:latest}
+# The newest Claude Code release, so every rebuild (the updater runs this on every pass) carries
+# it. A new version rebuilds only the install layer; an unchanged one is a cache hit.
+CLAUDE_VERSION=$(sh ./claude-version.sh "$TAG")
 
-echo "base:  $UNITY_IMAGE"
-echo "tag:   $TAG"
+echo "base:   $UNITY_IMAGE"
+echo "tag:    $TAG"
+echo "claude: $CLAUDE_VERSION"
 
 # --pull=false: the ~11GB base is already local and re-checking the registry on every build is a
 # long stall for no benefit. Pull explicitly when you intend to move to a new Unity version.
@@ -21,6 +25,7 @@ docker build \
     --pull=false \
     --build-arg "UNITY_IMAGE=${UNITY_IMAGE}" \
     --build-arg "UNITY_VERSION=${UNITY_VERSION}" \
+    --build-arg "CLAUDE_VERSION=${CLAUDE_VERSION}" \
     -t "$TAG" \
     .
 

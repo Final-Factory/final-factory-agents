@@ -28,12 +28,6 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ripgrep less vim-tiny ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# Claude Code ships as one self-contained native binary. Install it as root, then park the
-# resolved binary in /usr/local/bin: at run time we drop to whatever UID owns the bind-mounted
-# workspace (see entrypoint.sh), and that user has no $HOME/.local to install into.
-COPY install-claude.sh /ffbox/install-claude.sh
-RUN bash /ffbox/install-claude.sh
-
 # Unity's serial activation opens a project while it activates, and game-ci's activate.sh points
 # it at /BlankProject. That path is supplied by the ACTION, not the image — the base image has no
 # such directory — so make a minimal one or every activation fails before it starts.
@@ -175,6 +169,23 @@ RUN set -eux; \
     mcp-for-unity --help >/dev/null; \
     echo "mcpforunityserver ${MCP_SERVER_VERSION} installed for $(uv --version)"
 
+# Claude Code ships as one self-contained native binary. Install it as root, then park the
+# resolved binary in /usr/local/bin: at run time we drop to whatever UID owns the bind-mounted
+# workspace (see entrypoint.sh), and that user has no $HOME/.local to install into.
+#
+# THE VERSION IS AN INPUT, SO A NEW RELEASE REBUILDS THIS LAYER. 03-build.sh and 03-image.sh pass
+# the latest release from claude-version.sh. Until 2026-09-12 this RUN took no argument, docker
+# cached it on install-claude.sh alone, and every update pass reused an install from 2026-08-25.
+# Containers cannot update themselves (DISABLE_AUTOUPDATER=1, and the fence has no
+# downloads.claude.ai), so a rebuild is the only way a new version gets in.
+#
+# LATE IN THE FILE ON PURPOSE. It moves most days, and every layer below it rebuilds when it does:
+# here that is the script copy and a symlink, not the runner tarball and a python toolchain. Still
+# above the script COPY, which moves on most commits and would otherwise re-download this.
+ARG CLAUDE_VERSION=latest
+COPY install-claude.sh /ffbox/install-claude.sh
+RUN bash /ffbox/install-claude.sh "${CLAUDE_VERSION}"
+
 COPY entrypoint.sh entrypoint-ci.sh run-as-user.sh unity-license.sh restore-workspace.sh harvest-workspace.sh /ffbox/
 RUN chmod +x /ffbox/entrypoint.sh /ffbox/entrypoint-ci.sh /ffbox/run-as-user.sh /ffbox/restore-workspace.sh /ffbox/harvest-workspace.sh
 
@@ -190,6 +201,7 @@ RUN mkdir -p /opt/ffghr && ln -sf /ffbox/unity-license.sh /opt/ffghr/unity-licen
 LABEL org.finalfactory.runner-version="${RUNNER_VERSION}" \
       org.finalfactory.unity-version="${UNITY_VERSION}" \
       org.finalfactory.gh-version="${GH_VERSION}" \
-      org.finalfactory.mcp-server-version="${MCP_SERVER_VERSION}"
+      org.finalfactory.mcp-server-version="${MCP_SERVER_VERSION}" \
+      org.finalfactory.claude-version="${CLAUDE_VERSION}"
 
 ENTRYPOINT ["/ffbox/entrypoint.sh"]

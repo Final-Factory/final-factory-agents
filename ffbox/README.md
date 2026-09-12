@@ -797,6 +797,18 @@ Cmnd_Alias FFBOX_ZFS = /usr/sbin/zfs snapshot <pool>/ff/golden@ffbox-*, \
 Builds `ffbox:latest`. Uses `--pull=false` because the ~11GB base is already local; pull
 explicitly when moving to a new Unity version.
 
+**Claude Code is the newest release at build time.** `claude-version.sh` reads
+`downloads.claude.ai/claude-code-releases/latest` and the build passes it as
+`--build-arg CLAUDE_VERSION`, so the install layer rebuilds when a release is new and is a cache hit
+otherwise. The self-updater runs this stage on every pass, so a push or a config edit also brings
+the image's Claude Code up to date. A release on a day with neither waits for the next pass.
+`docker image inspect ffbox:latest --format '{{index .Config.Labels "org.finalfactory.claude-version"}}'`
+says what is baked in. Set `FFBOX_CLAUDE_VERSION=X.Y.Z` to pin one by hand; if the lookup fails,
+the build keeps the version the current image has.
+
+Containers never update themselves: they run with `DISABLE_AUTOUPDATER=1` and the fence does not
+list `downloads.claude.ai`. A new image reaches only containers started after it.
+
 ### The workspace: CI's cache, not a golden clone
 
 There is no warm-Library stage any more, and no golden clone. A run restores the tar CI already

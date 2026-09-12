@@ -122,6 +122,9 @@ else
   BUILD_ARGS=""
   [ -z "$RUNNER_VERSION" ] || BUILD_ARGS="$BUILD_ARGS --build-arg RUNNER_VERSION=$RUNNER_VERSION"
   [ -z "$GH_VERSION" ]     || BUILD_ARGS="$BUILD_ARGS --build-arg GH_VERSION=$GH_VERSION"
+  # Always passed, unlike the two above. Without it this build would hand the Dockerfile the
+  # constant "latest" and could re-tag the shared image with an older Claude than 03-build.sh's.
+  BUILD_ARGS="$BUILD_ARGS --build-arg CLAUDE_VERSION=$(sh "$FFBOX/claude-version.sh" "$IMAGE")"
 
   say "building $IMAGE (this pulls the Unity base image; it is slow the first time)"
   # shellcheck disable=SC2086  # NO_CACHE and BUILD_ARGS are deliberately word-split option lists
@@ -129,7 +132,7 @@ else
   # the same source; only the tag and the daemon differ until section 17 merges those too.
   docker build $NO_CACHE $BUILD_ARGS -t "$IMAGE" "$FFBOX" \
     || die "the runner image did not build"
-  skip "$IMAGE is $(docker image inspect "$IMAGE" --format '{{.Size}}' | awk '{printf "%.1f GB", $1/1073741824}'), runner $(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.finalfactory.runner-version"}}')"
+  skip "$IMAGE is $(docker image inspect "$IMAGE" --format '{{.Size}}' | awk '{printf "%.1f GB", $1/1073741824}'), runner $(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.finalfactory.runner-version"}}'), claude $(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.finalfactory.claude-version"}}')"
 fi
 
 if [ "$DO_EGRESS" -eq 0 ]; then
