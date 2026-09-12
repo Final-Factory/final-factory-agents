@@ -18386,11 +18386,15 @@ class Watcher:
         # still seeing the bug reopens their own report by answering, with no moderator in it.
         # Locking would turn a merge into a verdict.
         #
-        # PUBLIC THREADS ONLY. The private venues are the dev channel and the operator DM,
-        # where the notice is developer prose in somebody's working conversation rather than an
-        # answer to a question that has now been answered; those close when their owner says so.
-        # A non-thread conversation has no thread to archive -- the notice went to the channel.
-        if nonce and conv["is_thread"] and not private and self.close_supported():
+        # BUG THREADS AND PUBLIC THREADS. The venue decides how the notice is WORDED, not
+        # whether the thread is done. A private bug channel (dev_bug_reports) is still a bug
+        # report whose fix has merged, and was left open for no reason until 2026-09-12. The
+        # other private venues, the dev channel and the operator DM, are somebody's working
+        # conversation rather than a question that has now been answered; those close when
+        # their owner says so. A non-thread conversation has no thread to archive -- the notice
+        # went to the channel.
+        closes = not private or conv["kind"] == "bug_report"
+        if nonce and conv["is_thread"] and closes and self.close_supported():
             self.record_outbound(run_row_id, conv["id"], "close", {
                 "channel": reply_channel(conv),
                 "local_id": merge_close_local_id(number, conv["id"]),
