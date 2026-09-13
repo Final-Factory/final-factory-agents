@@ -107,8 +107,8 @@ you choose, with the Discord user id inside.
       "player": 15,
       "operator": null,
       "users": {
-        "junktion": { "discord": "419904541656350720", "limit": 40 },
-        "spammer":  { "discord": "1374974531147403397", "limit": 0 }
+        "somebody":      { "discord": "123456789012345678", "limit": 40 },
+        "somebody_else": { "discord": "876543210987654321", "limit": 0 }
       },
       "send": { "per_hour": 60, "per_conversation_hour": 12 }
     }
