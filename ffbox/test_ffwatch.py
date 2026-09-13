@@ -4688,28 +4688,30 @@ def test_sender_rate_limit():
     check("a second pass does not sneak them out either",
           case.watcher.send_pending() == 0, case.calls())
 
-    # WHICH OF THE TWO GETS DROPPED. The acknowledgement is queued at turn creation, so it holds
-    # the lowest id in its conversation; sent in id order it took the last slot under the
-    # ceiling and left the answer it promised sitting pending. It still counts — these limits
-    # are the only bound on what reaches Discord at all — it just goes last.
+    # REACTIONS STAND OUTSIDE THE CEILINGS, both ways. A thread that has used its hour must not
+    # hold the 👀 back (conversation 179, 2026-09-13: three turns of four sends each, and the
+    # fourth turn's mark sat pending for twenty-five minutes), and the 👀 and its removal must
+    # not use up the slot the answer needs.
     ack = Case("sendrateack")
     ack.watcher.cfg["rate_limits"] = dict(ack.watcher.cfg.get("rate_limits") or {},
-                                          send={"per_hour": 0, "per_conversation_hour": 1})
+                                          send={"per_hour": 1, "per_conversation_hour": 1})
     conv = seed_conversation(ack)
-    ack.watcher.record_outbound(None, conv, "react",
-                                {"channel": ASK_CHANNEL, "message": "22001",
-                                 "emoji": ffwatch.ACK_EMOJI})
+    mark = {"channel": ASK_CHANNEL, "message": "22001", "emoji": ffwatch.ACK_EMOJI}
+    ack.watcher.record_outbound(None, conv, "react", mark)
     ack.watcher.record_outbound(None, conv, "post", {"channel": ASK_CHANNEL, "text": "answer"})
-    check("the one slot goes to the answer, not to the tick that promised it",
-          ack.watcher.send_pending() == 1 and sent_calls(ack)[0][0] == "post",
+    ack.watcher.record_outbound(None, conv, "unreact", dict(mark, local_id="ack-off:1"))
+    check("under ceilings of one, the answer and both reactions all go out",
+          ack.watcher.send_pending() == 3, ack.calls())
+    ack.watcher.record_outbound(None, conv, "post", {"channel": ASK_CHANNEL, "text": "second"})
+    ack.watcher.record_outbound(None, conv, "react",
+                                dict(mark, message="22002", local_id="ack:2"))
+    check("a full conversation still holds the post, but not the 👀",
+          ack.watcher.send_pending() == 1 and len(sent_calls(ack, "react")) == 3,
           ack.calls())
-    check("and the acknowledgement is the row held back",
-          [(r["action"], r["status"]) for r in
-           ack.rows("SELECT action, status FROM outbound ORDER BY id")]
-          == [("react", "pending"), ("post", "sent")],
+    check("and the post is the only row left pending",
+          [r["action"] for r in ack.rows("SELECT action FROM outbound"
+                                         " WHERE status='pending'")] == ["post"],
           ack.rows("SELECT * FROM outbound"))
-    check("a react is still counted, so it is not a way around the ceiling either",
-          ack.watcher.send_pending() == 0, ack.calls())
 
     # Deprioritised is not the same as starved. `limit` is a batch cap and pending rows are
     # re-selected every pass, so one ordered SELECT would hand back nothing but posts for as

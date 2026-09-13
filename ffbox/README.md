@@ -1492,10 +1492,11 @@ the skills merely advise:
   in a text channel is a new one — and keyed on the parent channel rather than the reply
   target, or a forum would give each new bug thread its own refusal. A private venue is also told which tier ran out.
 - **Reactions go last, both directions.** The acknowledgement is queued at turn creation and
-  holds the lowest id in its conversation, so sending in id order spent the last slot under a
+  holds the lowest id in its conversation, so sending in id order once spent the last slot under a
   `rate_limits.send` ceiling on the tick and left the answer it promised pending. Messages are sent
-  first and reactions after; a reaction still counts towards the ceilings, which are the only
-  bound on what reaches Discord at all. Its removal is queued alongside the reply and is
+  first and reactions after. Reactions are no longer held by the `rate_limits.send` ceilings nor
+  counted towards them: at four sends a turn, three turns filled a thread's hour and the fourth
+  went twenty-five minutes with no 👀 (2026-09-13). Its removal is queued alongside the reply and is
   deprioritised the same way, because taking a mark off is never more urgent than the answer
   that makes it stale. Deprioritised, not starved: the two groups are selected by separate
   queries, so a backlog of held messages cannot eat the batch and leave the reactions unsent.

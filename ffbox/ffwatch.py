@@ -8123,7 +8123,8 @@ class Watcher:
         block: create_turn goes straight from this into resettle(), which is fifteen seconds of
         model call, and a row queued but not sent would sit behind exactly the wait this exists
         to get in front of. It goes out through _send_row, so it passes the same kill switch,
-        dry-run, approval queue, backoff and rate limits the batch sender applies.
+        dry-run, approval queue and backoff the batch sender applies. The send ceilings do not
+        apply to it, there or anywhere; see _send_limited.
 
         IDEMPOTENT ON THE MESSAGE. A conversation whose batch the selector splits gets a second
         create_turn on the next pass for the half that moved; finding the row already there is
@@ -15916,12 +15917,10 @@ class Watcher:
                 self._kill_switch_logged = True
             return 0
 
-        # MESSAGES FIRST, reactions after — both directions of them. The acknowledgement is
-        # queued at turn creation and so holds the lowest id in its conversation; by plain id
-        # order it took the last slot under a send ceiling and the reply it promised was the row
-        # left pending, which is the wrong one of the two to drop. Its removal is queued
-        # alongside that reply and wants the same treatment for the same reason: taking a mark
-        # off is never more urgent than the answer that makes it stale.
+        # MESSAGES FIRST, reactions after — both directions of them. This order once decided
+        # which row a send ceiling dropped; reactions stand outside the ceilings now (see
+        # _send_limited), and what it still buys is that within one pass the answer goes out
+        # before the mark it makes stale comes off.
         #
         # TWO QUERIES rather than one ORDER BY, because `limit` is a batch cap and one query
         # would let a backlog eat it: 200 posts held by an unattended approval queue or a
@@ -15950,7 +15949,8 @@ class Watcher:
 
         LIFTED OUT OF send_pending SO THE ACKNOWLEDGEMENT CAN USE IT TOO. mark_working sends a
         single row the moment it is queued, and it has to be the same dry-run, approval,
-        backoff, rate-limit and claim path as the batch — a second sender that skipped any of
+        backoff, rate-limit and claim path as the batch (rate limits pass reactions
+        straight through, in _send_limited) — a second sender that skipped any of
         them would be a way to put something on Discord that the queue was holding back.
         """
         if self.dry_run:
@@ -16055,27 +16055,32 @@ class Watcher:
         """Send-side ceilings. Separate from the per-lane turn limits: a single run that loops
         writing intents would otherwise spray a thread no matter how few turns it ran.
 
-        A reaction counts like everything else. It is tempting to exempt it — no content, no
-        ping, one PUT — but these ceilings are the only bound on what the bot puts on the wire
-        at all, and the acknowledgement is queued from create_turn, which nothing rate-limits.
-        Exempting it would leave a burst of newly-claimed conversations firing unthrottled.
-        What the acknowledgement gets instead is LOWER PRIORITY, in send_pending: it is queued
-        minutes before the reply and holds the lower id, so ordering by id alone spent the
-        conversation's last slot on the tick and held back the answer it promised.
+        REACTIONS ARE NEITHER HELD NOR COUNTED. They used to be both, on the theory that these
+        ceilings were the only bound on what reaches the wire. Measured on the build server
+        2026-09-13: a turn in a thread spends four sends (the 👀, the reply, the DM copy, the 👀
+        coming off), so a per_conversation_hour of 12 was used up by three turns, and the fourth,
+        an operator's work order, sat for twenty-five minutes with no mark on it, which from the
+        other end looks exactly like a message nobody picked up. A reaction carries no text and
+        pings nobody, and there is one on and one off per turn, so the turn limits bound them
+        already. What these ceilings are for is text.
         """
+        if row["action"] in ("react", "unreact"):
+            return None
         limits = (self.cfg.get("rate_limits") or {}).get("send") or {}
         since = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         per_hour = int(limits.get("per_hour") or 0)
         if per_hour:
             used = self.db.scalar("SELECT COUNT(*) FROM outbound WHERE status='sent'"
-                                  " AND sent_at>=?", (since,), 0)
+                                  " AND action NOT IN ('react','unreact') AND sent_at>=?",
+                                  (since,), 0)
             if used >= per_hour:
                 return f"{used} sends in the last hour reaches the per_hour limit {per_hour}"
         per_conv = int(limits.get("per_conversation_hour") or 0)
         if per_conv and row["conversation_id"]:
             used = self.db.scalar(
                 "SELECT COUNT(*) FROM outbound WHERE status='sent' AND conversation_id=?"
-                " AND sent_at>=?", (row["conversation_id"], since), 0)
+                " AND action NOT IN ('react','unreact') AND sent_at>=?",
+                (row["conversation_id"], since), 0)
             if used >= per_conv:
                 return (f"conversation {row['conversation_id']} has {used} sends in the last "
                         f"hour, the per_conversation_hour limit")

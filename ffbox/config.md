@@ -354,6 +354,10 @@ An id listed under two labels logs a warning and the first entry in the file is 
 
 A turn over the limit is blocked and never runs. The person is told once a day per channel.
 
+Reactions are outside `send` entirely. The 👀 and its removal are never held by either ceiling
+and never count towards one, so a busy thread holds back its posts but never the mark that says
+a turn is running.
+
 `send` is separate because it caps what reaches the wire. One run that loops writing intents
 would spray a thread no matter how few turns it took.
 
