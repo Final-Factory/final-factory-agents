@@ -3211,6 +3211,36 @@ def test_actions_refuse_a_public_bind():
     check("main() exits 2 when the database is missing", rc == 2, rc)
 
 
+def test_the_published_default_password_cannot_serve_a_public_bind():
+    """The built-in password is in a public repo, so a wider-than-loopback bind that still uses
+    it must refuse to start rather than serve it — the same stance --enable-actions takes on a
+    public host. Loopback keeps the convenience default (which the rest of this file relies on,
+    serving on 127.0.0.1 with DEFAULT_PASSWORD throughout).
+
+    _env_password is forced to the default here so the case does not depend on whether this
+    machine happens to have FFWEB_PASSWORD exported when the suite runs.
+    """
+    import contextlib
+    import io
+    saved = ffweb._env_password
+    ffweb._env_password = ffweb.DEFAULT_PASSWORD
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            # A healthy database and schema, so the refusal is the password one and nothing
+            # earlier in main() — the DB and schema checks come first by design.
+            rc = ffweb.main(["--host", "0.0.0.0", "--db", DB_PATH, "--state-dir", STATE,
+                             "--blobs", BLOBS, "--port", "0"])
+        check("main() refuses a non-loopback bind on the built-in password", rc == 2, rc)
+        check("and the refusal names FFWEB_PASSWORD as the fix",
+              "FFWEB_PASSWORD" in buf.getvalue(), buf.getvalue())
+        # Loopback keeps the default — proven by the whole rest of this file, which signs in on
+        # 127.0.0.1 with DEFAULT_PASSWORD. main() itself cannot be driven to that success here
+        # because it would enter serve_forever; only its refusals return.
+    finally:
+        ffweb._env_password = saved
+
+
 def run_main(argv):
     """ffweb.main with stderr swallowed — it prints a refusal we do not want in the output."""
     import io
@@ -4235,6 +4265,7 @@ def main():
         test_a_silent_connection_does_not_stall_the_server,
         test_slow_and_excess_connections_cannot_pile_up,
         test_a_hostile_content_length_is_refused_without_reading_the_socket,
+        test_the_published_default_password_cannot_serve_a_public_bind,
         test_a_queued_prompt_says_one_thing_and_a_failure_says_everything,
         test_the_live_pages_reload_themselves,
         test_open_folds_survive_the_tick,
