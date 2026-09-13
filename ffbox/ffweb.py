@@ -147,7 +147,7 @@ DEFAULT_GITHUB_REPO = "Final-Factory/FinalFactory"
 # Shown in the header so a person reading a page knows which build wrote it. The HTTP
 # server_version below is the protocol banner and moves for its own reasons; this is the
 # one a human is meant to read.
-VERSION = "0.9.7"
+VERSION = "0.9.8"
 
 # A turn in one of these has stopped; anything else is still on its way. Kept in step with
 # ffwatch's own list by hand, because this process deliberately imports nothing from it — it
@@ -299,6 +299,11 @@ _claude_keys.USER_AGENT = "ffweb/" + VERSION
 # The environment overrides, so a machine can change this without a patch and secrets.env is
 # already the file the units read: FFWEB_PASSWORD sets the password for every account below,
 # and FFWEB_USER narrows the whole thing to one named account with that password.
+#
+# AND THE DEFAULT IS PUBLISHED — this repository is public — so it is a password only where
+# nobody else can reach the port. main() refuses to serve a non-loopback bind while this string
+# is still the effective password; loopback keeps it for a laptop. So the fallback is a
+# convenience for the one safe case and cannot silently hold a LAN-facing page shut.
 DEFAULT_PASSWORD = "FF is better than W0rkf0rce"
 
 _env_password = os.environ.get("FFWEB_PASSWORD") or DEFAULT_PASSWORD
@@ -4424,6 +4429,25 @@ def main(argv=None):
             ("…\n" if len(gaps) > 12 else "\n") +
             "       Run `python3 ffbox/ffwatch.py --state-dir " + state_dir +
             " init` to apply them.\n")
+        app.db.close()
+        return 2
+
+    # The built-in password is published — this repo is public — so a non-loopback bind that
+    # still falls back to it is open to anyone who can read the source. Refuse to start rather
+    # than serve it, the same stance --enable-actions takes on a public bind: the failure mode
+    # of getting this wrong is not recoverable, and a warning in a log nobody reads is not a
+    # control. FFWEB_PASSWORD in secrets.env is the fix. Loopback keeps the convenience default,
+    # because a page on 127.0.0.1 is only reachable by someone already on the machine.
+    #
+    # AFTER the schema check and before the TLS mint, for the same reason that block gives:
+    # a start this refuses should not have left a fresh private key on disk, and a stale-schema
+    # or missing database is a truer thing to say first when it is the actual problem.
+    if not is_loopback(args.host) and _env_password == DEFAULT_PASSWORD:
+        sys.stderr.write(
+            f"ffweb: refusing to serve non-loopback host {args.host} with the built-in\n"
+            "       password, which is published in this public repository. Set FFWEB_PASSWORD\n"
+            "       (and optionally FFWEB_USER) in ~/.config/ffbox/secrets.env, or bind a\n"
+            "       loopback address and reach the page through an SSH tunnel.\n")
         app.db.close()
         return 2
 
