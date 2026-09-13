@@ -63,6 +63,8 @@ ExecStart=/usr/bin/env python3 @FFWEB@ --host @WEBHOST@ --port @WEBPORT@ --quiet
 EnvironmentFile=-@HOME@/.config/ffbox/secrets.env
 Restart=always
 RestartSec=10
+# Soft 100000 instead of systemd's default 1024; see ffwatch.service for why.
+LimitNOFILE=100000:524288
 
 [Install]
 WantedBy=ffbox.target

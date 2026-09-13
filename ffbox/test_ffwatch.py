@@ -9951,6 +9951,8 @@ def test_systemd_units_hang_off_one_target():
             check(f"{name} keeps {key} in [Unit], where systemd actually reads it",
                   key in unit_section, unit_section)
         check(f"{name} restarts on its own", "Restart=always" in body, body)
+        check(f"{name} raises its open-file soft limit past systemd's default of 1024",
+              "\nLimitNOFILE=100000:524288\n" in body, body)
 
     # The web UI is not optional any more (2026-08-22): the outbound queue, the run transcripts
     # and the verification rows are only legible through it.

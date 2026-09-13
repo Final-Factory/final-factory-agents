@@ -55,6 +55,12 @@ RestartSec=10
 # terminal-failed and requeued by the recovery pass on the next start.
 KillSignal=SIGTERM
 TimeoutStopSec=120
+# 100000 SOFT, 524288 HARD. A system unit otherwise starts with systemd's DefaultLimitNOFILESoft,
+# which is 1024 — running as @USER@ does not change that, and neither does the rootless daemon,
+# whose own limits reach only the containers. Python never raises its soft limit by itself, so
+# 1024 is what this process got. The hard value is named rather than inherited so the ceiling
+# does not move with the distribution's default. The same line is in ffweb and the listener.
+LimitNOFILE=100000:524288
 
 [Install]
 WantedBy=ffbox.target
