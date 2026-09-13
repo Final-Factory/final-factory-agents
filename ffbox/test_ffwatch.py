@@ -14792,14 +14792,17 @@ def test_an_operator_can_lock_a_thread_and_unlock_it():
     w.db.execute("INSERT INTO run(turn_id, ffbox_run_id, container_name) VALUES(?,?,?)",
                  (flight, "d-flight", "ffbox-agent-flight"))
 
+    row_id = lambda discord_id: case.rows("SELECT id FROM message WHERE discord_id=?",
+                                          (discord_id,))[0]["id"]
     before = posts()
     lock = sflake(-7998000, 3)
     say_in_thread(case, tid, lock, "!lock", author=LOTHSAHN, name="lothsahn")
     row = case.rows("SELECT * FROM conversation")[0]
     check("an operator's !lock locks the thread",
           row["locked"] == 1 and row["locked_by"] == LOTHSAHN and row["locked_at"], row)
+    lock_said = ffwatch.lock_note("lock", "thread", row_id(lock))
     check("and says so, once, naming it a thread",
-          posts() == before + [ffwatch.LOCK_NOTE.format(place="thread")], posts())
+          posts() == before + [lock_said] and "thread" in lock_said, posts())
     check("the lock message never becomes a turn",
           case.rows("SELECT gate FROM message WHERE discord_id=?", (lock,))[0]["gate"]
           == "lock_directive")
@@ -14807,14 +14810,20 @@ def test_an_operator_can_lock_a_thread_and_unlock_it():
           stopped == [("ffbox-agent-flight", True)], stopped)
     w.db.execute("UPDATE run SET terminal_state='failed' WHERE turn_id=?", (flight,))
     check("and a reply for it posts nothing on a locked thread",
-          w.record_launch_failure(flight, "stopped") == 0 and posts() == before + [
-              ffwatch.LOCK_NOTE.format(place="thread")], posts())
+          w.record_launch_failure(flight, "stopped") == 0 and posts() == before + [lock_said],
+          posts())
     w.finish_turn(flight, "failed", error="stopped")
 
-    # A SECOND !lock CHANGES NOTHING AND SAYS NOTHING.
+    # A SECOND !lock CHANGES NOTHING, AND SAYS THAT, because silence is what a directive that
+    # never parsed looks like.
     before = posts()
+    locked_at = case.rows("SELECT locked_at FROM conversation")[0]["locked_at"]
     say_in_thread(case, tid, sflake(-7997000, 4), "!lock", author=LOTHSAHN, name="lothsahn")
-    check("locking a locked thread posts nothing", posts() == before, posts())
+    check("locking a locked thread says it already was",
+          posts() == before + [ffwatch.ALREADY_LOCKED_NOTE.format(place="thread")], posts())
+    check("and changes nothing",
+          case.rows("SELECT locked, locked_at FROM conversation")[0]
+          == {"locked": 1, "locked_at": locked_at})
 
     # WHILE LOCKED, messages are recorded as normal and nothing starts.
     turns_before = len(case.rows("SELECT * FROM turn"))
@@ -14847,7 +14856,7 @@ def test_an_operator_can_lock_a_thread_and_unlock_it():
     check("an operator's !unlock clears the lock",
           row["locked"] == 0 and row["locked_by"] is None and row["locked_at"] is None, row)
     check("and says so, naming it a thread",
-          posts() == before + [ffwatch.UNLOCK_NOTE.format(place="thread")], posts())
+          posts() == before + [ffwatch.lock_note("unlock", "thread", row_id(unlock))], posts())
     check("a bare !unlock is gated like a bare !lock",
           case.rows("SELECT gate FROM message WHERE discord_id=?", (unlock,))[0]["gate"]
           == "lock_directive")
@@ -14861,8 +14870,28 @@ def test_an_operator_can_lock_a_thread_and_unlock_it():
     check("so later turns see them in the history", waiting in history, history)
     w.finish_turn(claimed[0], "done")
 
-    # !unlock WITH A QUESTION: unlocked, and the question stays an ordinary, addressed message.
-    say_in_thread(case, tid, sflake(-7993000, 8), "!lock", author=LOTHSAHN, name="lothsahn")
+    # !unlock ON AN UNLOCKED THREAD says so too.
+    before = posts()
+    say_in_thread(case, tid, sflake(-7993500, 10), "!unlock", author=LOTHSAHN, name="lothsahn")
+    check("unlocking an unlocked thread says it wasn't locked",
+          posts() == before + [ffwatch.ALREADY_UNLOCKED_NOTE.format(place="thread")], posts())
+
+    # !lock WITH PROSE ON THE SAME LINE is still a lock: conversation 177's message, which the
+    # alone-on-its-line parser missed, leaving the thread open and nobody told.
+    prose_lock = sflake(-7993000, 8)
+    say_in_thread(case, tid, prose_lock, "!lock Okay, locking the thread from max.  That should "
+                  "resolve most of it.", author=LOTHSAHN, name="lothsahn")
+    check("!lock followed by prose on its line locks",
+          case.rows("SELECT locked FROM conversation")[0]["locked"] == 1)
+    check("and the message never becomes a turn",
+          case.rows("SELECT gate FROM message WHERE discord_id=?", (prose_lock,))[0]["gate"]
+          == "lock_directive")
+    check("a directive part way along a line is prose",
+          ffwatch.lock_directive("you can type !lock to stop him") is None)
+    check("and so is a word that merely starts with it",
+          ffwatch.lock_directive("!locked out of my save") is None)
+    check("but a later line may carry it",
+          ffwatch.lock_directive("thanks all\n  !unlock now") == "unlock")
     ask = sflake(-7992000, 9)
     say_in_thread(case, tid, ask, "!unlock\nwhat does the log say now?", author=LOTHSAHN,
                   name="lothsahn")
@@ -14892,7 +14921,7 @@ def test_a_lock_says_conversation_where_there_is_no_thread():
     case = Case("lock-chain")
     w = case.watcher
     conv_id = seed_conversation(case, thread_id="22100", is_thread=0)
-    for verb, note in (("lock", ffwatch.LOCK_NOTE), ("unlock", ffwatch.UNLOCK_NOTE)):
+    for verb in ("lock", "unlock"):
         cur = w.db.execute(
             "INSERT INTO message(conversation_id, discord_id, direction, author_id, author_name,"
             " content, created_at) VALUES(?,?,'in',?,'lothsahn',?,?)",
@@ -14902,8 +14931,78 @@ def test_a_lock_says_conversation_where_there_is_no_thread():
               w.take_lock_directive(conv_id, cur.lastrowid, {"id": LOTHSAHN}, f"!{verb}") == verb)
         last = case.rows("SELECT payload_json FROM outbound WHERE action='post' ORDER BY id")[-1]
         check(f"and the !{verb} note says conversation",
-              json.loads(last["payload_json"])["text"] == note.format(place="conversation"),
-              last)
+              json.loads(last["payload_json"])["text"]
+              == ffwatch.lock_note(verb, "conversation", cur.lastrowid), last)
+    check("every note names what it locks and has no dashes in it", all(
+        "{place}" in n and "—" not in n and "–" not in n
+        for n in ffwatch.LOCK_NOTES + ffwatch.UNLOCK_NOTES
+        + (ffwatch.ALREADY_LOCKED_NOTE, ffwatch.ALREADY_UNLOCKED_NOTE)))
+
+
+def test_directives_stack_at_the_front_of_a_line():
+    """`!conv 177 !branch foo` is two directives, and `!conv 177 !lock` forks and then locks.
+
+    Directives are read off the front of a line, as many as are stacked there, and whatever
+    follows them is the question. Part way along a line they are prose.
+    """
+    print("directives: stacked at the front of a line")
+    parse = ffwatch.parse_directives
+    check("a stacked run is every directive in it, in order",
+          parse("!conv 177 !branch foo") == ([("conv", 177), ("branch", "foo")], []),
+          parse("!conv 177 !branch foo"))
+    check("and the rest of the line is the question",
+          parse("!branch develop Host FPS drops") == ([("branch", "develop")],
+                                                      ["Host FPS drops"]),
+          parse("!branch develop Host FPS drops"))
+    check("on any line of the message",
+          parse("thanks\n!conversation 5 !lock\nall done") == (
+              [("conv", 5), ("lock", None)], ["thanks", "all done"]),
+          parse("thanks\n!conversation 5 !lock\nall done"))
+    check("a directive part way along a line is prose",
+          parse("why does !branch develop not work") == (
+              [], ["why does !branch develop not work"]))
+    check("and so is a directive that runs into a longer word",
+          parse("!conv 177abc !lockdown") == ([], ["!conv 177abc !lockdown"]))
+    check("prose ends the run, so a directive after it is prose too",
+          parse("!lock ok !unlock") == ([("lock", None)], ["ok !unlock"]))
+    check("a message of nothing but directives has nothing to answer",
+          ffwatch.is_only_directives("!conv 1 !lock\n  !branch x ") and
+          not ffwatch.is_only_directives("!conv 1 keep going"))
+
+    def posts(case):
+        return [json.loads(r["payload_json"])["text"]
+                for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+
+    # !conv 1 !lock, in another channel: it becomes the fork, and then it is locked.
+    case, fixture = fork_case("stacked-conv-lock")
+    before = posts(case)
+    say_in_devchat(case, fixture, 6101, "!conv 1 !lock")
+    forks = case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")
+    check("!conv 1 !lock forks", len(forks) == 1 and forks[0]["forked_from"] == 1, forks)
+    fork = forks[0]
+    check("and locks the fork, not the source",
+          fork["locked"] == 1 and fork["locked_by"] == LOTHSAHN
+          and case.rows("SELECT locked FROM conversation WHERE id=1")[0]["locked"] == 0, fork)
+    said = posts(case)[len(before):]
+    msg_id = case.rows("SELECT id FROM message WHERE discord_id='6101'")[0]["id"]
+    check("the fork is acknowledged, then the lock",
+          len(said) == 2 and said[0].startswith("ok — this continues conversation")
+          and said[1] == ffwatch.lock_note("lock", "conversation", msg_id), said)
+    check("and nothing is started for it", case.watcher.claim_turns() == [],
+          case.rows("SELECT * FROM turn WHERE conversation_id=?", (fork["id"],)))
+
+    # !conv 1 !branch foo, in another channel: the fork, on foo.
+    case, fixture = fork_case("stacked-conv-branch")
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "loth/stacked")
+    say_in_devchat(case, fixture, 6102, "!conv 1 !branch loth/stacked")
+    forks = case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")
+    check("!conv 1 !branch forks",
+          len(forks) == 1 and forks[0]["forked_from"] == 1, forks)
+    check("and the fork is on the branch that was named",
+          forks[0]["branch"] == "loth/stacked", forks[0]["branch"])
+    gate = case.rows("SELECT gate FROM message WHERE discord_id='6102'")[0]["gate"]
+    check("a message of only directives never becomes a turn", gate is not None, gate)
 
 
 def test_a_backlog_only_conversation_never_asks_anthropic_anything():
@@ -21309,6 +21408,7 @@ def main():
         test_which_pool_a_discord_author_gets_is_read_from_the_trust_table,
         test_an_operator_can_lock_a_thread_and_unlock_it,
         test_a_lock_says_conversation_where_there_is_no_thread,
+        test_directives_stack_at_the_front_of_a_line,
         test_a_discord_conversation_opens_in_the_pool_its_opener_earns,
         test_a_spare_says_which_tier_it_is,
         test_which_branches_are_worth_warming,
