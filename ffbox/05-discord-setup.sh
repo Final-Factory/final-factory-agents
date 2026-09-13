@@ -480,11 +480,13 @@ for key, value in (
     # took. One budget across every kind of turn a player can cause. `operator` is null, which
     # ffwatch reads as no limit: an operator directive and a locally typed prompt are not the
     # runaway a busy forum is. See ffwatch.py DEFAULTS.
-    # Tier keys cap TURNS per rolling 24 hours, keyed on who wrote the text rather than which
-    # lane it took; "send" caps what reaches the wire, and is separate because one run that loops
-    # writing intents would spray a thread no matter how few turns it took. Anything here that is
-    # not "send" is a tier. `operator` is null, which ffwatch reads as no limit.
-    ("rate_limits", {"player": 5, "operator": None,
+    # Tier keys give each PERSON of that tier a number of turns per rolling 24 hours, counted
+    # against the author of the message that triggered each turn. `users` gives one person their
+    # own limit: {"<label>": {"discord": "<numeric id>", "limit": 40}}, where the label is only for
+    # whoever reads this file, null is uncapped and 0 is no turns. "send" caps what reaches the
+    # wire, and is separate because one run that loops writing intents would spray a thread no
+    # matter how few turns it took. `operator` is null, which ffwatch reads as no limit.
+    ("rate_limits", {"player": 15, "operator": None, "users": {},
                      "send": {"per_hour": 60, "per_conversation_hour": 12}}),
     # THE HOURS THE BOX DOES NOT WORK, seeded EMPTY and therefore off. Fill both in as "HH:MM"
     # and nothing starts between them: not a new conversation, not a follow-up, not a

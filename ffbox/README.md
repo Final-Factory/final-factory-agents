@@ -1095,11 +1095,10 @@ long that request may spend verifying.
 
 **And they are read from the TURN, not from the container it runs in.** Since 2026-09-11 a class
 block is two things: a resource budget (these four plus `max_budget_usd`) and a security boundary
-(`network`, `github.container_token`, `plugins`). The budget follows whoever asked — an operator's
-turn takes `discord.operator_pool`'s clocks even in a conversation a player opened — and the
-boundary stays on the conversation, where it can only ever be given up. `ffbox/config.md`, "Two
-halves", has the argument; the short version is that one session is resumed by every turn of a
-conversation, so a stranger's words are still in the transcript when the operator's turn runs.
+(`network`, `github.container_token`, `plugins`). Both follow whoever triggered the turn — an
+operator's turn takes `discord.operator_pool`'s clocks and container even in a conversation a
+player opened. `ffbox/config.md`, "Two halves", has the argument; the short version is that an
+operator gets the last say, and `!lock` is how they stop a thread they do not trust.
 
 The clocks are enforced only when the run is a task run, or when you pass one of the flags
 explicitly. A plain interactive one-shot stays unbounded, as it always was.
@@ -1275,17 +1274,15 @@ not Bash, and a `-p` run has nobody to ask, so an empty allow list denies every 
 There were four lanes until then, and the table was answering two questions at once: what a run
 may do, and how far to trust the text its prompt was built from. Only the second still needs
 deciding, and `turn_trust()` decides it from a dictionary lookup on Discord's authenticated
-`author.id` with no model involved. So trust tier now carries the rate limit (five turns per
-rolling 24 hours for anything a player caused, operators uncapped) and the split reply, and
-capability is uniform.
+`author.id` with no model involved. So trust tier now carries the rate limit (fifteen turns per
+person per rolling 24 hours for a player, operators uncapped, `rate_limits.users` for one
+person's own number) and the split reply, and capability is uniform.
 
-The same lookup also picks **which agent class the conversation opens in** — `discord.user_pool`
-for a stranger, `discord.operator_pool` for an account in `operators` — so an operator
-directive in Discord runs in the class dev work runs in, and everything else stays behind the
-egress fence. That is a different question from the tier: the class says which container, the
-tier says what that container may say and do, and a turn that batches one player's message into
-an operator's conversation is a player's turn in an operator's container. See "Two agent
-classes: ffagent and ffdev" below.
+The same lookup also picks **which agent class the turn runs in** — `discord.user_pool` for a
+stranger, `discord.operator_pool` for an account in `operators` — and it is asked of the author
+of the message that triggered the turn, the last one in a batch. So an operator's message in
+Discord runs in the class dev work runs in, and everything else stays behind the egress fence.
+See "Two agent classes: ffagent and ffdev" below.
 
 **A stranger's bug report can therefore produce a branch and a pull request, and a human decides
 whether it merges.** What contains that is what always actually did, none of which changed: no
@@ -1944,12 +1941,9 @@ the branch is about to be pushed by a run that would then race the fork's.
 
 **The class is not a fork decision.** The fork opens in whatever class a conversation opened
 there would — `discord.operator_pool` for the operator who typed the directive, the dropdown on
-the page, `--agent` on the CLI. What forking adds is that a fenced thread's messages can end up
-in an unfenced container, which is a promotion `demote_for_stranger` never makes on its own. It
-is allowed because it is a decision by somebody the box trusts and the row records who and when,
-and it is bounded: the inherited history stays behind the untrusted-input fence in the prompt
-whatever container it lands in, and `demote_for_stranger` still applies to the fork from its
-first message.
+the page, `--agent` on the CLI, and after that each of its turns runs in the class of whoever
+triggered it. The inherited history stays behind the untrusted-input fence in the prompt whatever
+container it lands in.
 
 Two things fall out for free. A fork that inherited the branch means the public thread gets the
 merge notice when the fork's pull request lands, in the player-facing register with no pull
@@ -1960,6 +1954,34 @@ adopts the same branch.
 If the session transcript cannot be copied, the fork still happens and starts from a written
 summary of the source instead — the same fallback a lost transcript has always taken — and the
 acknowledgement says so.
+
+### Locking a thread
+
+```
+!lock
+```
+
+An operator's `!lock`, alone on its line, stops the bot acting in a conversation. The author of
+the message that triggers a turn decides its tier, its pool and who pays, so an operator always
+gets the last say in a thread; `!lock` is the brake for a thread an operator does not trust.
+
+While a conversation is locked, every message in it is still read and recorded as normal, but
+nothing is started: `claim_turns` and `create_turn` make no turn and spend no classifier call, a
+turn already queued is blocked, and a run in flight is stopped and posts and publishes nothing.
+The harness posts once:
+
+    This thread is now locked from interactions with Max. He won't respond in this thread in the future.
+
+(`conversation` instead of `thread` for a reply chain in a text channel.) `!unlock`, also
+operator-only, clears it and posts the matching note:
+
+    This thread is now unlocked for interactions with Max. He will respond in this thread again.
+
+The messages posted while locked are then ordinary unanswered messages, so the next pass handles
+them. `!unlock` with a question in the same message unlocks and answers the question. Like
+`!branch` and `!conv`, both are ignored silently from anybody who is not an operator, and a
+message that is only the directive never becomes a turn or a title. The web page shows a locked
+column on the conversation list and "locked by" on the conversation.
 
 ### Idle agents: a container that is already warm
 
@@ -2310,18 +2332,13 @@ the allowlist proxy described below; `ffdev` runs `"full"`, the ordinary `bridge
 internet, no allowlist and no SNI filter, so a dev turn can search the web, read documentation
 and fetch a package without an operator editing `allowlist.txt` first. That also hands it this
 machine's LAN address, so it is trusted the way a developer's own shell on this box is trusted.
-What keeps that defensible is that **no text written by a stranger reaches an unfenced
-container**: a Discord conversation opens in `discord.user_pool`, which is `ffagent`, unless the
-account that opened it is in `operators`, in which case it opens in
-`discord.operator_pool`, which is `ffdev`. An operator directive is dev work by the person who
-owns the box, so it gets the class dev work runs in; everything else stays behind the fence. And
-a conversation that opened unfenced is demoted to `user_pool` as soon as anybody outside the
-trust table posts in it, so the guarantee covers the whole life of a thread and not only its
-first message — see "Whoever OPENED the conversation decides" below.
-**The clocks are the one thing that does not work this way**: an operator asking for real work in
-a player's thread gets `operator_pool`'s budget and still gets `user_pool`'s container. The
-journal says so when they differ — `agent=ffagent budget=ffdev`. Only a fork moves a
-conversation's text into the other container, and only an operator can ask for one.
+What keeps that defensible is that **only an operator can put a turn in an unfenced container**:
+a Discord turn runs in `discord.user_pool`, which is `ffagent`, unless the message that triggered
+it came from an account in `operators`, in which case it runs in `discord.operator_pool`, which is
+`ffdev`. An operator's message is dev work by the person who owns the box, so it gets the class dev
+work runs in, and the operator gets the last say: a player's earlier words in the same thread ride
+along in that turn's session. An operator who does not want that locks the thread with `!lock`
+(see "Locking a thread").
 `docs/docker-security-model.md` has the full argument under "The class that is not fenced".
 Putting ffdev back behind the fence is `"network": "limited"`, a restart, and `pool drop` for
 anything already staged; pointing Discord's operators back at the fenced class is
@@ -2347,10 +2364,9 @@ turn of that conversation reads it back, so there is deliberately no dropdown on
 and `--agent` is ignored with a note under `--conversation`. A conversation is pinned to a base
 sha, resumes one session transcript and owns one branch; letting a reply re-pick the class would
 change the clocks that session has been running under whenever the operator felt like it, which
-is not a choice worth offering. The stranger demotion below is the one exception, and it is a
-narrow one: it only ever tightens the clocks, it is not something anybody chooses, and it does not
-touch the tree — `run_ref` reaches for the conversation's branch and then its pinned `base_sha`
-long before any class's `base_ref`.
+is not a choice worth offering. Discord is the exception, below: there each turn runs in the
+class of whoever triggered it. That does not touch the tree — `run_ref` reaches for the
+conversation's branch and then its pinned `base_sha` long before any class's `base_ref`.
 
 **A Discord conversation gets no dropdown either**, and it does not need one: the `"discord"`
 section names a class per side of the trust table, and ingest reads Discord's authenticated
@@ -2363,33 +2379,23 @@ author id to pick between them.
 }
 ```
 
-**Whoever OPENED the conversation decides what it OPENS as**, which is the same rule the dropdown
-obeys. A forum thread a player started stays `ffagent` for its whole life even after Lothsahn
-answers in it — there is no promotion path, in Discord or anywhere else.
+**The message that triggered the turn decides which class the turn runs in.** In a batch that is
+the last message. A player's turn runs in `user_pool` even in a thread Lothsahn opened, and
+Lothsahn's turn runs in `operator_pool` even in a thread a player opened. The conversation opens in
+its opener's class and then follows its latest turn, which is what the web page's agent column
+shows.
 
-**And a stranger takes the unfenced class back.** The moment anybody outside `operators`
-posts in an `ffdev` conversation, it is moved to `user_pool` and stays there. A dev thread an
-operator opened in a public channel therefore loses its internet the first time a player joins in,
-instead of running the player's text in a container with the whole internet and a git credential
-in it. The ratchet is one-way on purpose: the operator answering again does not buy the network
-back, because the player's text is already in the chain and in the session transcript the
-conversation resumes.
+**An operator gets the last say.** When Lothsahn replies in a player's thread, the player's
+earlier words are in the session that turn resumes, and that turn runs in `ffdev` with the whole
+internet and a git credential. That is intended; an operator who does not trust a thread locks it
+(see "Locking a thread"). Local `shell` and `web` conversations keep the class they were opened
+with: their author id is a unix uid that must never be looked up in the trust table.
 
-Two things it deliberately does not treat as a stranger's message, and one it does. Max's own
-replies come back through the 15-minute sweep like every other message in a thread, so they are
-skipped — otherwise every unfenced conversation would fence itself on its own first answer. Local
-`shell` and `web` conversations are exempt entirely: their class is chosen at the terminal or the
-page by whoever runs the box, and their author id is a unix uid that must never be looked up in
-the trust table. Any OTHER bot IS a stranger — a webhook relaying a fork's PR title is exactly the
-text the fence exists for.
-
-The demotion lands on the **next** turn. A container's network is fixed when it is created and
-dispatch cannot move it, so a run already in flight finishes in the container it started in; the
-message that caused the demotion was never part of that run anyway, since `create_turn` leaves a
-message arriving mid-run unclaimed. Nothing else about the conversation moves with it — it keeps
-its pinned `base_sha` and its branch, which is what `run_ref` reaches for ahead of any class's
-`base_ref`, so the tree its transcript has been citing `file.cs:214` positions against is the same
-tree after the demotion as before.
+A class change lands on the **next** turn. A container's network is fixed when it is created and
+dispatch cannot move it, so a run already in flight finishes in the container it started in.
+Nothing else about the conversation moves with it — it keeps its pinned `base_sha` and its branch,
+which is what `run_ref` reaches for ahead of any class's `base_ref`, so the tree its transcript has
+been citing `file.cs:214` positions against is the same tree whichever class runs the next turn.
 
 On a box with nobody in `operators` — which is what the template ships — every Discord
 conversation is a user's. A name that is not an agent class falls back to the default with a
@@ -2591,8 +2597,7 @@ that they are not an operator.
 **Why a public comment box may start an unfenced container.** Because it contributes no text.
 The prompt is built by the harness out of the pull request number, the branch, the base and the
 diff; the comment selects the run and nothing else, and the message row it is recorded in is
-never read. That is why `demote_for_stranger` has no counterpart here — there is no chain for a
-stranger to get into. What covers the DIFF, which a stranger really could have written, is that
+never read. There is no chain for a stranger to get into. What covers the DIFF, which a stranger really could have written, is that
 the head must be a branch in this repository, and creating one takes push access. A fork's pull
 request is refused, and a test asserts the comment body appears nowhere in the built prompt.
 

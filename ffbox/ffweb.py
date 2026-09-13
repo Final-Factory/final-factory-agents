@@ -2500,10 +2500,11 @@ class App:
         # uses — conversation.github_pr, written when the PR is opened and holding a url when
         # there is one — so the number links to the pull request from either place.
         body = [table(
-            ["id", "kind", "state", "lane", "agent", "verdict", "title", "branch", "PR",
+            ["id", "kind", "state", "locked", "lane", "agent", "verdict", "title", "branch", "PR",
              "msgs", "turns"]
             + AGG_HEADERS + ["last activity", "read"],
             [[link(f"/conversation/{r['id']}", r["id"]), r["kind"], pill(r["state"]),
+              "locked" if _row(r, "locked") else "—",
               r["lane"] or "—", _row(r, "agent_class") or DEFAULT_AGENT_CLASS,
               r["verdict"] or "—",
               link(f"/conversation/{r['id']}", short(r["title"] or r["thread_id"], 70)),
@@ -3213,6 +3214,7 @@ class App:
               conv["verdict"] or "—", conv["thread_id"],
               (conv["base_sha"] or "—")[:12], conv["github_issue"] or "—",
               pr_link(conv["github_pr"])]]))
+        head.append(lock_note(conv))
         head.append(self._branch_note(conv))
         head.append(self._fork_note(conv))
         head.append(self._identity_note(conv))
@@ -4137,7 +4139,7 @@ def is_loopback(host):
 # traceback on a page rather than as a fixable message, so it is checked once at startup.
 REQUIRED_COLUMNS = {
     "conversation": ["kind", "state", "lane", "verdict", "title", "thread_id",
-                     "read_through", "agent_class"],
+                     "read_through", "agent_class", "locked"],
     "message": ["direction", "author_name", "content", "turn_id"],
     "attachment": ["filename", "content_type", "sha256", "blob_path", "kind"],
     "turn": ["seq", "lane", "status", "failed_closed", "parent_turn_id", "rebased_from",
@@ -4225,6 +4227,32 @@ def claude_claims(rows):
         seen[hits[0]] = seen.get(hits[0], 0) + 1
         out[hits[0]] = str(who)
     return {name: who for name, who in out.items() if seen.get(name) == 1}
+
+
+def operator_name_for(discord_id):
+    """The operators-block name whose `discord` id this is, or the id itself when nobody claims it."""
+    ops = _config_block().get("operators")
+    wanted = str(discord_id or "").strip()
+    if isinstance(ops, dict) and wanted:
+        for who, entry in ops.items():
+            if isinstance(entry, dict) and str(entry.get("discord") or "").strip() == wanted:
+                return str(who)
+    return wanted
+
+
+def lock_note(conv):
+    """"locked by <name> at <time>" for a conversation an operator locked with `!lock`, else "".
+
+    Guarded for the columns being absent, like the branch note: this page can be holding a row
+    from a database ffwatch has not migrated yet."""
+    try:
+        if not conv["locked"]:
+            return ""
+        by, at = conv["locked_by"], conv["locked_at"]
+    except (IndexError, KeyError):
+        return ""
+    return ("<p class=\"note\">locked by " + esc(operator_name_for(by) or "an operator")
+            + (" at " + esc(at) if at else "") + "</p>")
 
 
 def _model_config():

@@ -561,6 +561,15 @@ ADDED_COLUMNS = [
     ("conversation", "classify_error", "TEXT"),
     ("conversation", "classify_flagged_at", "TEXT"),
     ("conversation", "gate_released_by", "TEXT"),
+    # -- per-user limits and !lock (design/ffbox_per_user_limits_design.txt) ----------------
+    # WHICH POOL RAN THIS TURN, decided by the author of the message that triggered it. NULL on
+    # a turn from before the column, which reads the conversation's class (turn_class).
+    ("turn", "agent_class", "TEXT"),
+    # AN OPERATOR'S !lock. While set, no turn is created or launched for the conversation.
+    # locked_by is the operator's Discord id; locked_at when they locked it.
+    ("conversation", "locked", "INTEGER NOT NULL DEFAULT 0"),
+    ("conversation", "locked_by", "TEXT"),
+    ("conversation", "locked_at", "TEXT"),
 ]
 
 DISCORD_CLI_DIR = os.path.join(REPO_ROOT, "plugins", "ff-discord", "skills", "discord-cli")
@@ -1113,29 +1122,34 @@ DEFAULTS = {
     # bill. Separate from max_budget_usd, which bounds a container run.
     "classifier_budget_usd": 0.25,
     "effort": None,
-    "max_budget_usd": 10,
+    # WHAT ONE CONTAINER RUN MAY COST, in Claude Code's own estimate, which prices every model
+    # at Opus rates when it does not know the real price. $10 stopped long bug investigations
+    # part way through (conversation 172, 2026-09-13), so it is $30.
+    "max_budget_usd": 30,
 
-    # TURNS PER ROLLING 24 HOURS, KEYED ON TRUST TIER. Not a calendar day and not a reset at
-    # midnight: rate_limited() counts turns started within the last day.
+    # TURNS PER PERSON PER ROLLING 24 HOURS. Not a calendar day and not a reset at midnight:
+    # rate_limited() counts the turns a person started within the last day.
     #
-    # Keyed on tier since 2026-08-25, having been keyed on lane. The lane was always a proxy for
-    # the real question, which is who wrote the text the prompt was built from, and turn_trust()
-    # answers that from a dictionary lookup on Discord's authenticated author.id with no model
-    # involved. It is ONE budget across every kind of turn a player can cause, which is a good
-    # deal tighter than the 200 answer + 100 triage + 3 fix it replaces, and deliberately so:
-    # what it bounds is how many containers a stranger can cause, and a question costs the same
-    # container a change does.
+    # PER PERSON, not per tier. The person is turn.trust_actor, the author of the message that
+    # triggered the turn (see turn_trust), so one busy player spends their own turns and nobody
+    # else's. The tier keys give the default limit for a person of that tier, and `users` gives
+    # one person a limit of their own:
+    #
+    #   "users": {"<label>": {"discord": "<numeric Discord id>", "limit": 40}}
+    #
+    # The label is for whoever reads the file and nothing reads it; the id is what matches. A
+    # listed limit wins whatever the tier: null is uncapped, 0 is no turns at all.
     #
     # `operator` is None, which rate_limited() reads as no limit. An operator directive and a
     # locally typed prompt are not a runaway risk the way a busy forum is: nobody accidentally
     # types two hundred prompts, and a person at a terminal watching a prompt refused because
     # "the tier is full today" is a worse failure than the one a cap prevents. Concurrency and
     # the per-run clocks still bound what they can spend at any moment.
-    # TURNS BY TRUST TIER, AND SENDS BY THE HOUR, in one place because both answer "how much may
-    # this thing do". The tier keys cap how many TURNS a lane may run; "send" caps what reaches the
-    # wire, and is separate because a single run that loops writing intents would spray a thread no
-    # matter how few turns it took. Anything here that is not "send" is a tier.
-    "rate_limits": {"player": 5, "operator": None,
+    # TURNS PER PERSON, AND SENDS BY THE HOUR, in one place because both answer "how much may
+    # this thing do". "send" caps what reaches the wire, and is separate because a single run
+    # that loops writing intents would spray a thread no matter how few turns it took. Anything
+    # here that is not "send" or "users" is a tier.
+    "rate_limits": {"player": 15, "operator": None, "users": {},
                     "send": {"per_hour": 60, "per_conversation_hour": 12}},
 
     # alias -> what this channel IS. kind decides the lane; the listener reports the parent
@@ -2255,10 +2269,12 @@ def discord_pool(cfg, key):
 
 
 def discord_agent_class(cfg, author_id):
-    """Which agent class a Discord conversation OPENED by this author starts in.
+    """Which agent class this Discord author's turns run in: operator_pool or user_pool.
 
-    Starts in, not runs in: an unfenced conversation gives that class up the moment somebody
-    who is not an operator posts in it. See Watcher.demote_for_stranger.
+    Used twice: for the class a conversation opens in, and for each turn's own class, which is
+    decided by the author of the message that triggered it (create_turn). An operator's turn
+    runs in operator_pool even in a thread a player opened; a player's runs in user_pool even
+    in an operator's thread.
 
     Decided from Discord's authenticated author.id through the same trust table that decides
     everything else about who is speaking -- never from a username, never from message text.
@@ -2276,48 +2292,69 @@ def discord_agent_class(cfg, author_id):
 #   a SECURITY BOUNDARY  network, github.container_token, plugins -- what the container may
 #                      reach. It is a fact about WHOSE WORDS ARE IN THE SESSION.
 #
-# Reading both off the conversation meant an operator's request in a thread a player opened was
-# held to the player's thirty (now forty) minutes, because the conversation's class is the
-# opener's. Reading both off the turn instead would be far worse: see demote_for_stranger, and
-# the note on the security half in launch().
+# Both now follow the turn, and both are decided by the same person: the author of the message
+# that triggered it. The budget comes from budget_class(tier), the fence from turn.agent_class
+# (create_turn). They are still two lookups, because a local or GitHub conversation's class is
+# chosen at the ingress while its tier is always operator.
 #
-# THE BUDGET COMES OFF THE TURN, through the same two config keys that decide the opening class,
-# so a box that points both Discord pools at one class gets one budget and never has to think
-# about this. The tier is turn_trust's answer -- a dictionary lookup over authenticated ids,
-# never a model, and conservative across a batch: one player in it makes the whole turn a
-# player's.
+# THE BUDGET COMES OFF THE TURN, through the same two config keys that decide the class, so a
+# box that points both Discord pools at one class gets one budget and never has to think about
+# this. The tier is turn_trust's answer -- a dictionary lookup over authenticated ids, never a
+# model.
 #
-# IT CAN ONLY MOVE THE CLOCK, NEVER THE FENCE. Nothing this returns is read for a network, a
-# credential or a plugin list; launch() takes those from the conversation and says so.
+# Nothing this returns is read for a network, a credential or a plugin list; launch() takes
+# those from turn_class() and says so.
 def budget_class(cfg, tier):
     """Which class's clocks and cost ceiling bound a turn at this trust tier."""
     return discord_pool(cfg, "operator_pool" if (tier or "player") == "operator"
                         else "user_pool")
 
 
-def stranger_downgrade_class(cfg, agent_class):
-    """Where a conversation running in `agent_class` goes when a stranger speaks in it.
+# Duplicate ids already warned about, so a config with one is said once per process rather than
+# on every turn the scheduler looks at.
+_USER_LIMIT_DUPLICATES_LOGGED = set()
 
-    None means it stays where it is, which is the answer for every conversation that is already
-    behind the fence -- there is nothing left to take away.
 
-    KEYED ON THE NETWORK, NOT ON THE CLASS NAME. What a stranger's message costs a conversation
-    is the open internet and the git credential that comes with it, and `network` is the one
-    field that says whether it has them. A box that renames its classes, or points both Discord
-    pools at one of them, gets the right answer without this function knowing anything about
-    which names mean what.
+def user_limit(cfg, actor):
+    """(True, limit) when `actor` has an entry of their own in rate_limits.users, else (False, None).
 
-    It refuses to move a conversation onto another "full" class for the same reason. A box whose
-    `user_pool` is itself unfenced has opted out of the split entirely; there is no fence to fall
-    back to, and quietly moving the conversation sideways would look like a demotion while
-    changing nothing about what the container can reach.
+    rate_limits.users is keyed by a LABEL somebody chose, usually the person's handle, with the
+    numeric Discord id inside:
+
+        "users": {"junktion": {"discord": "419904541656350720", "limit": 40}}
+
+    Nothing reads the label, so an out-of-date handle does no harm. The id is what matches.
+    `limit` is returned as written: a number, 0 for no turns, null (or no key) for uncapped.
+
+    AN ID LISTED TWICE is a config mistake with two readings. The first entry in the file wins
+    and the second is named in one warning, so the person editing the file finds out.
     """
-    if class_cfg(cfg, agent_class).get("network") != "full":
-        return None
-    target = discord_pool(cfg, "user_pool")
-    if target == agent_class or class_cfg(cfg, target).get("network") == "full":
-        return None
-    return target
+    users = (cfg.get("rate_limits") or {}).get("users")
+    actor = str(actor or "")
+    if not actor or not isinstance(users, dict):
+        return False, None
+    found = None
+    for label, entry in users.items():
+        if not isinstance(entry, dict) or str(entry.get("discord") or "").strip() != actor:
+            continue
+        if found is None:
+            found = (label, entry.get("limit"))
+        elif actor not in _USER_LIMIT_DUPLICATES_LOGGED:
+            _USER_LIMIT_DUPLICATES_LOGGED.add(actor)
+            log(f"WARNING: rate_limits.users lists Discord id {actor} under both "
+                f"{found[0]!r} and {label!r}; using {found[0]!r}, the first")
+    return (True, found[1]) if found else (False, None)
+
+
+def conversation_locked(conv):
+    """Has an operator locked this conversation with `!lock`? False for a row read before the
+    column existed, which is every conversation from before locking did."""
+    if conv is None:
+        return False
+    try:
+        return bool(conv["locked"])
+    except (IndexError, KeyError):
+        return False
 
 
 def watch_entry(cfg, alias):
@@ -3292,12 +3329,38 @@ def is_only_fork_directive(content):
     return len(lines) == 1 and FORK_DIRECTIVE_RE.fullmatch(lines[0].strip()) is not None
 
 
+# THE OPERATOR DIRECTIVES THAT LOCK AND UNLOCK A CONVERSATION. `!lock` or `!unlock`, alone on its
+# line and anchored like the two above, so a sentence that mentions `!lock` is not one.
+LOCK_DIRECTIVE_RE = re.compile(r"^\s*!(lock|unlock)\s*$", re.MULTILINE)
+
+
+def lock_directive(content):
+    """"lock", "unlock", or None for a message that carries neither directive."""
+    found = LOCK_DIRECTIVE_RE.search(content or "")
+    return found.group(1) if found else None
+
+
+def is_only_lock_directive(content):
+    """True when the message is nothing but the directive."""
+    lines = [ln for ln in (content or "").strip().splitlines() if ln.strip()]
+    return len(lines) == 1 and LOCK_DIRECTIVE_RE.fullmatch(lines[0].strip()) is not None
+
+
+# What the harness posts when an operator locks or unlocks. {place} is "thread" in a Discord
+# thread and "conversation" in a reply chain, which has no thread to name. Worded by Lothsahn.
+LOCK_NOTE = ("This {place} is now locked from interactions with Max. "
+             "He won't respond in this {place} in the future.")
+UNLOCK_NOTE = ("This {place} is now unlocked for interactions with Max. "
+               "He will respond in this {place} again.")
+
+
 # A DIRECTIVE AT THE FRONT OF A LINE, for naming only. Looser than the two above on purpose: those
 # decide whether to ACT, and a sentence must not be acted on, so they want the directive alone on
 # its line. A name only has to leave it out, and `!branch develop Host FPS drops` typed on one
 # line -- which the build server's conversations 143-154 were -- is the same noise in front of
 # the same report whether or not anything acted on it.
-TITLE_DIRECTIVE_PREFIX_RE = re.compile(r"^(?:!branch\s+\S+|!conv(?:ersation)?\s+\d+)(?:\s+|$)")
+TITLE_DIRECTIVE_PREFIX_RE = re.compile(
+    r"^(?:!branch\s+\S+|!conv(?:ersation)?\s+\d+|!lock|!unlock)(?:\s+|$)")
 
 
 def title_from(text):
@@ -6174,29 +6237,41 @@ class Watcher:
         """
         return os.path.exists(self.cfg["drain_switch"])
 
-    def rate_limited(self, tier):
-        """Has this trust tier used its turns for the rolling day?
+    def rate_limited(self, tier, actor=""):
+        """Has this person used their turns for the rolling day?
 
-        `tier` is turn_trust()'s answer, not a lane. A missing or falsey limit is NO limit,
-        which is how `operator: null` means uncapped. An unknown or absent tier counts as
-        `player`: the caller passes a column that is NULL on rows written before the tier
-        existed, and guessing the uncapped side there would let old rows launch unbounded.
+        `tier` and `actor` are turn_trust()'s answer, off the turn row. The count is the ACTOR's
+        turns, whatever tier each ran at. The limit is the actor's own `rate_limits.users` entry
+        when there is one, and otherwise the tier's: a missing limit is NO limit, which is how
+        `operator: null` means uncapped, and 0 is no turns.
+
+        An unknown or absent tier counts as `player`: the caller passes a column that is NULL on
+        rows written before the tier existed, and guessing the uncapped side there would let old
+        rows launch unbounded. An absent actor is the empty id, so every such turn shares one
+        limit rather than escaping it.
         """
         tier = tier or "player"
-        # "send" is a sibling of the tier keys and is NOT one: it holds the send-side ceilings
-        # that _send_limited reads. A turn whose trust tier were somehow the string "send" would
-        # otherwise be capped by a dict, which `if not limit` would read as no limit at all.
-        if tier == "send":
+        actor = str(actor or "")
+        found, limit = user_limit(self.cfg, actor)
+        if not found:
+            # "send" and "users" are siblings of the tier keys and are NOT tiers: they hold the
+            # send-side ceilings and the per-user table. A turn whose trust tier were somehow one
+            # of those strings would otherwise be capped by a dict.
+            if tier in ("send", "users"):
+                return False
+            limit = (self.cfg.get("rate_limits") or {}).get(tier)
+        if limit is None or isinstance(limit, (dict, list, bool)):
             return False
-        limit = (self.cfg.get("rate_limits") or {}).get(tier)
-        if not limit:
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
             return False
         since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         used = self.db.scalar(
-            "SELECT COUNT(*) FROM turn WHERE COALESCE(trust_tier,'player')=?"
+            "SELECT COUNT(*) FROM turn WHERE COALESCE(trust_actor,'')=?"
             " AND started_at IS NOT NULL AND started_at>=?",
-            (tier, since), 0)
-        return used >= int(limit)
+            (actor, since), 0)
+        return used >= limit
 
     # ======================================================================================
     # ingest
@@ -6323,9 +6398,9 @@ class Watcher:
 
         `agent_class` is written ON CREATION ONLY and the UPDATE branch deliberately does not
         touch it: a conversation's class is settled by its opening turn, and a later upsert --
-        which every subsequent message in a Discord thread performs -- must never move it. The
-        one thing that DOES move it afterwards is demote_for_stranger(), from the ingest of a
-        message rather than from here, and it only ever moves a conversation towards the fence.
+        which every subsequent message in a Discord thread performs -- must never move it. What
+        DOES move it afterwards is create_turn(), which sets it to each new turn's class, so the
+        readers with no turn in hand follow whoever triggered the latest turn.
 
         THE DISCORD INGRESS PASSES IT EXPLICITLY, from discord_agent_class() on the account that
         opened the conversation: discord.user_pool for a stranger, discord.operator_pool for an
@@ -6495,7 +6570,8 @@ class Watcher:
         # nothing that parses as a directive is one anybody may act on.
         content = msg.get("content") or ""
         provisional = None
-        if gate is None and (branch_directive(content) or fork_directive(content)):
+        if gate is None and (branch_directive(content) or fork_directive(content)
+                             or lock_directive(content)):
             provisional = DIRECTIVE_PENDING_GATE
             gate = provisional
             gate_reason = "a directive on this message has not been decided yet"
@@ -6540,13 +6616,14 @@ class Watcher:
             if named:
                 self.db.execute("UPDATE conversation SET title=? WHERE id=? AND title IS NULL",
                                 (named, conv_id))
-        # A STRANGER IN THE CHAIN TAKES THE FENCE BACK. Checked on every message that is
-        # actually new -- the rowcount check above already dropped the duplicates, so a
-        # re-read of a thread cannot re-log a demotion that happened days ago.
-        self.demote_for_stranger(conv_id, author)
-        # AND AN OPERATOR MAY NAME THE BRANCH. Beside the demotion because it is the other thing
-        # decided per new message about WHO IS SPEAKING, and on the same "actually new" path so
-        # a re-read of a thread cannot adopt twice or post its answer twice.
+        # AN OPERATOR MAY LOCK OR UNLOCK THE CONVERSATION. First of the directives, so `!unlock`
+        # and `!branch` in one message both act, and on the "actually new" path -- the rowcount
+        # check above already dropped the duplicates -- so a re-read of a thread cannot lock
+        # twice or post its note twice.
+        self.take_lock_directive(conv_id, message_id, author, msg.get("content") or "")
+        # AND AN OPERATOR MAY NAME THE BRANCH. Decided per new message about WHO IS SPEAKING, on
+        # the same "actually new" path so a re-read of a thread cannot adopt twice or post its
+        # answer twice.
         self.take_branch_directive(conv_id, message_id, author, msg.get("content") or "")
         # AND AN OPERATOR MAY POINT THIS CONVERSATION AT ANOTHER ONE. Beside the branch
         # directive because it is decided per new message about who is speaking, and on the same
@@ -6599,6 +6676,10 @@ class Watcher:
         # Acting on it would also write over the staging gate take_review_trigger is holding
         # that row with, which is the one thing standing between a review and the wrong tree.
         if conv is None or is_local_conversation(conv) or conv["kind"] == GITHUB_KIND:
+            return None
+        # NOR ON A LOCKED CONVERSATION. A lock means the bot does nothing here until an operator
+        # unlocks it, and adopting a branch is doing something.
+        if conversation_locked(conv):
             return None
         branch = branch_directive(content)
         if not branch:
@@ -6694,8 +6775,10 @@ class Watcher:
         if not source_id:
             return None
         conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
-        # NOT ON A REVIEW EITHER, for the reason take_branch_directive gives.
-        if conv is None or is_local_conversation(conv) or conv["kind"] == GITHUB_KIND:
+        # NOT ON A REVIEW EITHER, for the reason take_branch_directive gives, and not on a
+        # locked conversation.
+        if (conv is None or is_local_conversation(conv) or conv["kind"] == GITHUB_KIND
+                or conversation_locked(conv)):
             return None
         author_id = str((author or {}).get("id") or "")
         if not is_operator(self.cfg, author_id):
@@ -6728,80 +6811,80 @@ class Watcher:
             "reply_to": last["discord_id"] if last else None})
         return source_id if ok else None
 
-    def demote_for_stranger(self, conv_id, author):
-        """Move a conversation out of the unfenced class the moment a stranger speaks in it.
+    def take_lock_directive(self, conv_id, message_id, author, content):
+        """Act on a `!lock` or `!unlock` line, if an operator wrote one. Returns the verb or None.
 
-        Returns the class it was moved to, or None when nothing moved.
+        THE OPERATOR'S BRAKE. The author of the message that triggers a turn decides its tier,
+        its pool and who pays (turn_trust), so an operator gets the last say in any thread. An
+        operator who does not like where a thread is going locks it: from then on every message
+        is recorded as normal, but claim_turns, create_turn and schedule() start nothing for the
+        conversation until an operator unlocks it.
 
-        THE OPENER STILL CHOOSES WHAT A CONVERSATION STARTS AS, and upsert_conversation is still
-        the only thing that writes that. What this adds is the other end: an operator's thread in
-        a public channel is one message away from carrying a stranger's text, and it used to
-        carry that text into a container with the whole internet and a git credential in it. Any
-        non-operator in the chain now costs the conversation that container from its next turn
-        on. "Whoever opened it decides" survives as the rule for OPENING; it is no longer the
-        rule for the whole life of the thread.
+        OPERATORS ONLY, AND SILENTLY OTHERWISE, for the reason take_branch_directive gives. Not
+        on a local conversation or a review, for the same reasons.
 
-        ONE-WAY, and that is the entire safety argument. stranger_downgrade_class only ever
-        answers with a fenced class, so a stranger can cost a conversation its network and can
-        never hand one back -- there is deliberately no promotion path anywhere, not even when
-        the message is deleted afterwards. The text was in the chain, and the session transcript
-        this conversation resumes has already read it.
+        !lock sets the columns, posts LOCK_NOTE, ends any queued turn `blocked`, and stops a run
+        in flight; finish_run then publishes and posts nothing from it. The message itself is
+        gated, so it never becomes a turn, even after an unlock.
 
-        OUR OWN BOT IS NOT A STRANGER. Max's own replies come back through the 15-minute sweep
-        like every other message in the thread, so without this every unfenced conversation
-        would demote itself on its own first answer. Any OTHER bot is: a webhook relaying a
-        fork's PR title is precisely the text the fence exists for. When the bot's own id could
-        not be resolved -- bot_id() says so loudly and caches None -- this falls closed and
-        demotes, because a degraded whoami costing dev threads their internet is the cheaper
-        half of that trade.
+        !unlock clears the columns and posts UNLOCK_NOTE. On its own it is gated; with a
+        question beside it the message stays ungated and is marked addressed, as `!conv` does,
+        so the question is answered on the next pass along with anything posted while locked.
 
-        LOCAL CONVERSATIONS ARE NOT SUBJECT TO IT. Their class is chosen at the terminal or the
-        page by whoever runs the box, their `author_id` is a unix uid rather than a snowflake,
-        and a uid that happened to be all digits must never be looked up in the trust table --
-        the same reason upsert_conversation takes the class as an argument instead of deriving
-        one.
-
-        A RUN ALREADY IN FLIGHT KEEPS ITS CONTAINER. A container's network is fixed when it is
-        created and dispatch cannot move it, so the fence lands on the next turn -- which is the
-        turn that will actually read the stranger's message. The one already running never sees
-        it: create_turn leaves a message that arrives mid-run unclaimed on purpose.
+        A LOCK ON A LOCKED CONVERSATION, or an unlock on an unlocked one, changes nothing and
+        posts nothing: an operator repeating themselves should not put a second note in the
+        thread.
         """
-        conv = self.db.one("SELECT id, kind, agent_class FROM conversation WHERE id=?",
-                           (conv_id,))
-        if conv is None or is_local_conversation(conv):
+        verb = lock_directive(content)
+        if not verb:
             return None
-        # A PULL REQUEST CONVERSATION HAS NO CHAIN FOR A STRANGER TO GET INTO, and since
-        # design/pr_feedback_design.txt that is a fact about the INGRESS rather than about the
-        # prompt. A #codereview turn's prompt still carries no comment text at all. A feedback
-        # turn's prompt is nothing but comment text -- and every word of it was written by an
-        # account in the `operators` block, because take_feedback writes down nobody else's
-        # comment and render_feedback_prompt renders nobody else's row. A stranger's comment on
-        # the pull request is read, counted against the cursor, and dropped; it never becomes a
-        # message, so there is no message here to fence.
-        #
-        # What covers the DIFF, which a stranger really could have written, is the in-repo head
-        # requirement at ingest: creating a branch here needs push access.
-        #
-        # This exemption is only sound while both of those hold. A third ingress that wrote a
-        # non-operator's text into a github_pr conversation would need the demotion back with
-        # it -- or, better, would need to not do that.
-        if conv["kind"] == GITHUB_KIND:
-            return None
-        current = self.conversation_class(conv)
-        target = stranger_downgrade_class(self.cfg, current)
-        if target is None:
+        conv = self.db.one("SELECT * FROM conversation WHERE id=?", (conv_id,))
+        if conv is None or is_local_conversation(conv) or conv["kind"] == GITHUB_KIND:
             return None
         author_id = str((author or {}).get("id") or "")
-        if is_operator(self.cfg, author_id):
+        if not is_operator(self.cfg, author_id):
+            log(f"conversation {conv_id}: ignoring a !{verb} line from {author_id or '?'}, who "
+                f"is not in the operators block")
             return None
-        me = self.bot_id()
-        if me and author_id == str(me):
-            return None
-        self.db.execute("UPDATE conversation SET agent_class=? WHERE id=?", (target, conv_id))
-        who = (author or {}).get("global_name") or (author or {}).get("username") or "?"
-        log(f"conversation {conv_id}: {current} -> {target}; {who} ({author_id or 'no author'}) "
-            f"is not in trust.operators, so this conversation is fenced from its next turn on")
-        return target
+        was_locked = conversation_locked(conv)
+        if verb == "lock" or is_only_lock_directive(content):
+            self.db.execute("UPDATE message SET gate='lock_directive', gate_reason=?"
+                            " WHERE id=?", (f"!{verb} by {author_id}", message_id))
+        else:
+            self.db.execute("UPDATE message SET addressed=1 WHERE id=?", (message_id,))
+        place = "thread" if conv["is_thread"] else "conversation"
+        if verb == "lock":
+            if was_locked:
+                return verb
+            self.db.execute("UPDATE conversation SET locked=1, locked_by=?, locked_at=?"
+                            " WHERE id=?", (author_id, now_iso(), conv_id))
+            log(f"conversation {conv_id}: locked by {author_id}")
+            for queued in self.db.query("SELECT id FROM turn WHERE conversation_id=?"
+                                        " AND status='queued'", (conv_id,)):
+                self.finish_turn(queued["id"], "blocked", error="the thread is locked")
+            # DETACHED, because this can run on the daemon loop and a stop waits out the grace
+            # period. finish_run sees the lock when the container exits and posts nothing.
+            for run in self.db.query(
+                    "SELECT r.container_name FROM run r JOIN turn t ON t.id = r.turn_id"
+                    " WHERE t.conversation_id=? AND t.status='running'"
+                    " AND r.terminal_state IS NULL AND r.container_name IS NOT NULL",
+                    (conv_id,)):
+                ok, why = self.stop_workload(run["container_name"], detach=True)
+                log(f"conversation {conv_id}: lock stops {run['container_name']}: {why}")
+            text = LOCK_NOTE.format(place=place)
+        else:
+            if not was_locked:
+                return verb
+            self.db.execute("UPDATE conversation SET locked=0, locked_by=NULL, locked_at=NULL"
+                            " WHERE id=?", (conv_id,))
+            log(f"conversation {conv_id}: unlocked by {author_id}")
+            text = UNLOCK_NOTE.format(place=place)
+        last = self.db.one("SELECT * FROM message WHERE id=?", (message_id,))
+        self.record_outbound(None, conv_id, "post", {
+            "channel": reply_channel(conv), "text": text, "silent": True,
+            "local_id": f"{verb}:{conv_id}:{message_id}",
+            "reply_to": last["discord_id"] if last else None})
+        return verb
 
     def download_attachments(self, conv_id, message_id, msg):
         """Content-addressed at ingest, because Discord's attachment URLs are signed and
@@ -6950,11 +7033,8 @@ class Watcher:
             opener=meta.get("owner_id"),
             is_thread=True,
             alias=alias,
-            # WHOEVER OPENED THE THREAD decides what it OPENS in, not whoever spoke last. A
-            # forum thread a player started stays a player's for its whole life even after an
-            # operator answers in it -- there is no promotion path. The other direction is not
-            # symmetric any more: demote_for_stranger() takes an operator-opened thread back
-            # behind the fence as soon as anybody else posts in it.
+            # WHOEVER OPENED THE THREAD decides what it OPENS in. Each turn after that runs in
+            # the class of whoever triggered it; see create_turn.
             agent_class=discord_agent_class(self.cfg, meta.get("owner_id")))
         for m in msgs:
             m.setdefault("channel_id", str(thread_id))
@@ -7891,6 +7971,9 @@ class Watcher:
             " JOIN conversation c ON c.id = m.conversation_id"
             f" WHERE m.turn_id IS NULL AND m.direction='in' AND {self.not_the_bot_itself('m.')}"
             "   AND m.gate IS NULL"
+            # A LOCKED CONVERSATION IS NOT OFFERED. Its messages are recorded ungated and wait
+            # for an unlock; offering it here would call create_turn every tick to refuse it.
+            "   AND COALESCE(c.locked,0)=0"
             f" AND (c.kind NOT IN ({','.join('?' * len(LOCAL_KINDS))})"
             "      OR EXISTS (SELECT 1 FROM turn t WHERE t.conversation_id = c.id))",
             LOCAL_KINDS)
@@ -7906,10 +7989,14 @@ class Watcher:
     def turn_trust(self, conv, msgs):
         """(tier, actor, reason) for this turn. A dictionary lookup, never a model.
 
-        A turn can batch several messages, and the reply addresses all of them, so operator
-        tier requires that EVERY message in the batch came from one. One player in the batch
-        makes the whole turn a player's, which is the conservative direction and the only one
-        that cannot leak.
+        THE TRIGGERING MESSAGE DECIDES. A turn can batch several messages, and the one that
+        triggered it is the LAST: `msgs` is oldest first. Its author is the actor, and the tier
+        is that author's own. So players A and B followed by operator O is O's turn -- operator
+        tier, O's credential, O's pool, O's limit -- and O followed by player A is A's.
+
+        This used to be the conservative direction instead: one player anywhere in the batch
+        made the whole turn a player's. Operators get the last say now, and an operator who does
+        not like where a thread is going locks it (take_lock_directive).
         """
         if is_local_conversation(conv):
             who = conv["opener_discord_id"] or conv["kind"]
@@ -7924,14 +8011,14 @@ class Watcher:
         if conv["kind"] == GITHUB_KIND:
             return "operator", (conv["opener_discord_id"] or ""), "github.trust.operators"
         authors = [str(m["author_id"] or "") for m in msgs]
+        actor = authors[-1] if authors else ""
         ops = operators(self.cfg)
         by_id = {uid: name for name, uid in ops.items()}
-        if authors and all(a in by_id for a in authors):
-            named = sorted({by_id[a] for a in authors})
-            return "operator", authors[0], f"trust.operators.{'/'.join(named)}"
+        if actor and actor in by_id:
+            return "operator", actor, f"trust.operators.{by_id[actor]}"
         if not ops:
-            return "player", (authors[0] if authors else ""), "no operators are configured"
-        return "player", (authors[0] if authors else ""), "not in the operator set"
+            return "player", actor, "no operators are configured"
+        return "player", actor, "not in the operator set"
 
     def turn_venue(self, conv, alias):
         """public or private, from the watch entry that declared it. Never inferred.
@@ -8739,6 +8826,13 @@ class Watcher:
                 "thread": self.gate_thread(conv, msgs, at=at), "at": at}
 
     def create_turn(self, conv):
+        # A LOCKED CONVERSATION GETS NO TURN, and this is the first line on purpose: above the
+        # hold check and the classifier, so a locked thread costs no model call. claim_turns
+        # already leaves locked conversations out; this is the backstop for every other caller.
+        # The messages stay recorded and ungated, and the first pass after an `!unlock` gets them.
+        if conversation_locked(self.db.one("SELECT locked FROM conversation WHERE id=?",
+                                           (conv["id"],))):
+            return None
         # A REVIEW WITHOUT ITS BRANCH IS NOT A TURN, IT IS THE WRONG TREE. A #codereview
         # conversation exists to review one pull request's branch, and everything that makes
         # that true -- the checkout, the diff range, the prompt's own "you are standing on its
@@ -8925,13 +9019,21 @@ class Watcher:
         venue = self.turn_venue(conv, alias)
         seq = int(self.db.scalar("SELECT COALESCE(MAX(seq),0) FROM turn WHERE conversation_id=?",
                                  (conv["id"],), 0)) + 1
+        # WHICH POOL RUNS THIS TURN: the triggering author's. A local or GitHub conversation's
+        # class was chosen at its ingress (the dropdown, --agent, review_pool) and is kept; a
+        # Discord turn runs in operator_pool when an operator triggered it and user_pool when
+        # anybody else did, whoever opened the thread.
+        if is_local_conversation(conv) or conv["kind"] == GITHUB_KIND:
+            agent_class = self.conversation_class(conv)
+        else:
+            agent_class = discord_agent_class(self.cfg, actor)
         cur = self.db.execute(
             "INSERT INTO turn(conversation_id, seq, trigger, lane, status, classification_json,"
             " failed_closed, failed_closed_reason, queued_at, trust_tier, trust_actor,"
-            " trust_reason, venue) VALUES(?,?,?,?,'queued',?,?,?,?,?,?,?,?)",
+            " trust_reason, venue, agent_class) VALUES(?,?,?,?,'queued',?,?,?,?,?,?,?,?,?)",
             (conv["id"], seq, TRIGGER_BY_KIND.get(conv["kind"], "message"), lane,
              json.dumps(classification), 0, None, now_iso(),
-             tier, actor, why, venue))
+             tier, actor, why, venue, agent_class))
         turn_id = cur.lastrowid
         # THE CLAIM IS GUARDED, AND THAT IS WHAT MAKES IT THE DECISION. Two threads can reach
         # this: the daemon loop runs claim_turns every tick, and take_review_trigger creates its
@@ -8964,9 +9066,12 @@ class Watcher:
             return winner
         # A TURN EXISTS, so whatever the classification backoff and a release were holding
         # open is spent: the next message starts from a clean slate.
+        # agent_class FOLLOWS THE LATEST TURN, so the readers with no turn in hand -- the reconcile
+        # sweep, send_github, the web page's agent column -- see the class that last ran here.
         self.db.execute("UPDATE conversation SET state='queued', lane=?, classify_failures=0,"
                         " classify_retry_at=NULL, classify_error=NULL, classify_flagged_at=NULL,"
-                        " gate_released_by=NULL WHERE id=?", (lane, conv["id"]))
+                        " gate_released_by=NULL, agent_class=? WHERE id=?",
+                        (lane, agent_class, conv["id"]))
         if not is_local_conversation(conv):
             # HERE, and not in record_reply, is the whole point: the acknowledgement goes out
             # on the pass that DECIDES to answer, not after a container run that can take a
@@ -10780,6 +10885,7 @@ class Watcher:
         queued = self.db.query(
             "SELECT t.*, c.state AS conv_state, c.base_sha AS conv_base_sha,"
             " c.agent_class AS conv_agent_class, c.branch AS conv_branch,"
+            " COALESCE(c.locked,0) AS conv_locked,"
             " c.requested_base AS conv_requested_base, c.kind AS conv_kind FROM turn t"
             " JOIN conversation c ON c.id=t.conversation_id"
             " WHERE t.status='queued' ORDER BY t.queued_at, t.id")
@@ -10798,7 +10904,15 @@ class Watcher:
             # BOTH CEILINGS, and a dispatch is exempt from both for the same reason: handing a
             # turn to a container that is already running creates nothing, so neither the box
             # nor this lane is asked for another place.
-            turn_class = self.conversation_class(turn, "conv_agent_class")
+            #
+            # A LOCKED CONVERSATION'S TURN NEVER LAUNCHES. Checked first, so it neither holds up
+            # the queue at a ceiling nor counts against anybody's limit, and blocked without a
+            # note: the lock already said so in the thread. This is the turn create_turn was
+            # still building when the lock landed.
+            if turn["conv_locked"]:
+                self.finish_turn(turn["id"], "blocked", error="the thread is locked")
+                continue
+            turn_class = self.turn_class(turn, None, "conv_agent_class")
             # THE REF launch() WILL ACTUALLY USE, through the one ladder that decides it.
             # This used to re-derive it here as "--ref, else the pinned base sha, else the
             # class's base_ref", which ignored the conversation's own branch and so answered a
@@ -10831,7 +10945,7 @@ class Watcher:
                 break
             if turn["conv_state"] == "running":
                 continue
-            if self.rate_limited(turn["trust_tier"]):
+            if self.rate_limited(turn["trust_tier"], turn["trust_actor"]):
                 reason = (f"rate limit for trust tier "
                           f"{turn['trust_tier'] or 'player'} reached")
                 # finish_turn rather than a bare UPDATE of the turn row: `blocked` is a terminal
@@ -10870,9 +10984,9 @@ class Watcher:
         reached" names an internal that means nothing to a player and invites an argument
         about it.
 
-        ONCE PER CHANNEL PER TIER PER CEILING WINDOW, which is the whole difference between
+        ONCE PER CHANNEL PER PERSON PER CEILING WINDOW, which is the whole difference between
         saying so and haranguing everybody about it. A blocked turn never sets started_at, so
-        it does not count towards the ceiling that blocked it: the tier stays over its limit
+        it does not count towards the ceiling that blocked it: the person stays over their limit
         for the rest of the day while claim_turns keeps minting turns — turn CREATION is not
         rate limited, only launching is — and every message after the fifth would otherwise
         draw its own refusal. Those posts count against rate_limits.send like any
@@ -10900,15 +11014,15 @@ class Watcher:
         # the watch entry is about. It falls back for the shape that has no parent: a reply
         # chain rooted in a text channel already stores that channel here.
         #
-        # The TIER is in the key too: a channel where a player's budget ran out and an
-        # operator's later did has two different things to be told.
+        # The PERSON is in the key too, since limits are per person: a second player who runs
+        # out in the same channel is a different person and is told.
         marker = (f"blocked:{conv['channel_id'] or reply_channel(conv)}:"
-                  f"{turn['trust_tier'] or 'player'}")
+                  f"{turn['trust_actor'] or ''}")
         since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         if self.db.scalar("SELECT COUNT(*) FROM outbound WHERE local_id=? AND created_at>=?",
                           (marker, since), 0):
-            log(f"turn {turn_id} blocked: {reply_channel(conv)} was already told about the "
-                f"{turn['trust_tier'] or 'player'} ceiling today")
+            log(f"turn {turn_id} blocked: {turn['trust_actor'] or 'nobody'} was already told "
+                f"about their limit in {reply_channel(conv)} today")
             return 0
         last = self.db.one("SELECT * FROM message WHERE turn_id=?"
                            f" ORDER BY {MESSAGE_ORDER_DESC} LIMIT 1", (turn_id,))
@@ -10990,7 +11104,7 @@ class Watcher:
         another (see transcript_provider). None skips that check, which is what a caller with no
         credential in hand -- the tests, mostly -- has always had.
         """
-        agent_class = agent_class or self.conversation_class(conv)
+        agent_class = agent_class or self.turn_class(turn, conv)
         ccfg = ccfg or class_cfg(self.cfg, agent_class)
         # THE BUDGET BLOCK, WHICH IS NOT ALWAYS THE CONTAINER'S. Defaulted from the turn for the
         # same reason the other two are defaulted: a caller with nothing to say still gets the
@@ -12002,6 +12116,25 @@ class Watcher:
             return DEFAULT_AGENT_CLASS
         return got if got in AGENT_CLASSES else DEFAULT_AGENT_CLASS
 
+    @staticmethod
+    def turn_class(turn, conv=None, column="agent_class"):
+        """Which agent class runs THIS TURN. Always one of AGENT_CLASSES.
+
+        turn.agent_class, written by create_turn from the author of the message that triggered
+        the turn. A turn row from before that column, or one read before the migration ran,
+        reads the conversation's class instead -- which is what that turn actually ran in.
+
+        `conv` and `column` are passed to conversation_class. schedule() holds a JOINed turn row
+        and passes (turn, None, "conv_agent_class"), so the fallback reads the same row.
+        """
+        try:
+            got = turn["agent_class"] if turn is not None else None
+        except (IndexError, KeyError):
+            got = None
+        if got in AGENT_CLASSES:
+            return got
+        return Watcher.conversation_class(turn if conv is None else conv, column)
+
     def run_ref(self, turn, conv, log_override=True):
         """WHERE THIS RUN'S CLONE STARTS, and the one place that ladder is written.
 
@@ -12048,7 +12181,7 @@ class Watcher:
         # on the base and pins a commit of it, and later turns of a conversation that has not
         # published keep reasoning about that one tree -- exactly what base_ref gets.
         return (override or conv["base_sha"] or self.conversation_requested_base(conv)
-                or class_cfg(self.cfg, self.conversation_class(conv))["base_ref"])
+                or class_cfg(self.cfg, self.turn_class(turn, conv))["base_ref"])
 
     def mirror_carries(self, branch):
         """Is `branch` in the local git mirror, which is the only place a container can see it.
@@ -13124,26 +13257,24 @@ class Watcher:
         # reads as it always did when they are; when they differ, each half is taken from the
         # question it actually answers.
         #
-        # `cls`/`ccfg` -- THE SECURITY BOUNDARY, settled when this conversation was opened and
-        # only ever moved DOWNWARDS afterwards, by demote_for_stranger. Everything a container
-        # can REACH comes from here: --agent-class (the container's name, label and which pool
-        # may serve it), --network, the plugin mounts, the container git credential and the
-        # token that opens its pull request. It is a fact about whose words are in the session
-        # this run resumes, and a session is a property of the conversation: the transcript is
-        # mounted in on every launch, so a stranger's text from turn 2 is in front of the model
-        # on turn 9. That is why there is no promotion path here and why this half must never
-        # be taken from the turn.
+        # `cls`/`ccfg` -- THE SECURITY BOUNDARY, THIS TURN's class: the pool of whoever wrote
+        # the message that triggered it (create_turn). Everything a container can REACH comes
+        # from here: --agent-class (the container's name, label and which pool may serve it),
+        # --network, the plugin mounts, the container git credential and the token that opens
+        # its pull request.
+        #
+        # AN OPERATOR GETS THE LAST SAY. The session this run resumes may hold a player's words
+        # from earlier turns, and an operator-triggered turn runs them in the operator's pool.
+        # That is intended (design/ffbox_per_user_limits_design.txt, "Risk"); an operator who
+        # does not like where a thread is going locks it with `!lock`.
         #
         # `bcls`/`bcfg` -- THE RESOURCE BUDGET, taken from THIS TURN's trust tier. The four
-        # clocks and the cost ceiling: how long this request may take and what it may cost,
-        # which is a fact about who asked rather than about what the container may touch. An
-        # operator asking for real work in a thread a player opened gets the operator clocks and
-        # still gets the fenced container.
+        # clocks and the cost ceiling: how long this request may take and what it may cost.
         #
         # A POOLED RUN NEEDS NOTHING FROM THE POOL FOR THIS. ffbox writes <out>/clock at
         # DISPATCH rather than at staging, off the four arguments below, so one warm spare of
         # the right class serves either budget and pool_claim_for is untouched.
-        cls = self.conversation_class(conv)
+        cls = self.turn_class(turn, conv)
         ccfg = class_cfg(self.cfg, cls)
         bcls, bcfg = self.turn_budget(turn)
         # AFTER ccfg, and that order is load-bearing since 2026-09-11: the class block decides
@@ -13634,7 +13765,15 @@ class Watcher:
 
         if (job.get("verify") or {}).get("enabled"):
             self.record_verification(run_row_id, turn, run_dir, timeout_kind)
-        published = self.publish(run_row_id, turn, conv, run_dir, job, verdict)
+        # A LOCKED CONVERSATION TAKES NOTHING FROM THIS RUN, however it ended: stopped by the
+        # lock, or finished on its own after it. Nothing is pushed or proposed, and record_reply
+        # posts nothing either. The run is still recorded and the turn still finishes.
+        locked = self.conversation_is_locked(conv["id"])
+        if locked:
+            log(f"run {run_row_id}: conversation {conv['id']} is locked; nothing from this run "
+                f"is published or posted")
+        published = None if locked else self.publish(run_row_id, turn, conv, run_dir, job,
+                                                     verdict)
         # THE SAME QUESTION, ASKED CONVERSATION-WIDE. publish() only ever looks at the run in
         # front of it, and a turn that changed no files returns from it before it has looked at
         # a pull request at all — so a branch an earlier turn pushed and failed to get a PR for
@@ -13642,7 +13781,7 @@ class Watcher:
         #
         # ONLY WHEN THIS RUN DID NOT END WITH ONE, so the ordinary path — agent changes files,
         # verification passes, PR opens — costs nothing here at all.
-        if not (published or {}).get("pr_url"):
+        if not locked and not (published or {}).get("pr_url"):
             # THE RUN IN FLIGHT IS NAMED so a pull request opened for THIS run's own branch is
             # left to the footer of the reply composed below, and one opened for a branch an
             # earlier turn stranded — the case where this turn changed no files and publish()
@@ -13800,6 +13939,11 @@ class Watcher:
             payload = {"channel": channel, "text": private, "silent": True,
                        "private_half": True}
         return 1 if self.record_outbound(run_row_id, conv["id"], "post", payload) else 0
+
+    def conversation_is_locked(self, conv_id):
+        """The lock as it is in the database NOW, not on a row read before the run started."""
+        return conversation_locked(self.db.one("SELECT locked FROM conversation WHERE id=?",
+                                               (conv_id,)))
 
     def finish_turn(self, turn_id, status, error=None):
         self.db.execute("UPDATE turn SET status=?, ended_at=?, error=? WHERE id=?",
@@ -14065,6 +14209,11 @@ class Watcher:
         by create_turn, when the harness decided to answer it; a second reaction saying how the
         run ended would only tell a reader something the reply itself says better.
         """
+        # A LOCKED CONVERSATION IS SENT NOTHING: not the answer, not the private half, not a
+        # launch failure. The operator who locked it has said the bot is done here.
+        if conv is not None and self.conversation_is_locked(conv["id"]):
+            log(f"conversation {conv['id']} is locked; no reply is posted for turn {turn['id']}")
+            return 0
         if is_local_conversation(conv):
             # No Discord side to answer. The record IS the reply: the run row, the transcript
             # index and the result text are what the web page and the waiting terminal read.
@@ -14835,7 +14984,9 @@ class Watcher:
         if not verdict.get("confident"):
             return self._no_pr(run_row_id, conv, branch, _unconfident_reason(verdict))
 
-        gh = GitHub(self.cfg, self.conversation_class(conv))
+        # THE RUN'S OWN CLASS opens its pull request, not whatever the conversation's latest
+        # turn happens to be by the time this one finishes.
+        gh = GitHub(self.cfg, self.turn_class(turn, conv))
         if not gh.token or not gh.repo:
             return self._no_pr(run_row_id, conv, branch,
                                gh.token_error

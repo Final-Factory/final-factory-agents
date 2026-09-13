@@ -11,14 +11,21 @@ changes: `ffwatch.py` (`DEFAULTS`, `rate_limited`, `turn_trust`, `create_turn`, 
 
 Effort: **S** under an hour, **M** an afternoon, **L** a day or more.
 
+## Status: implemented and pushed.
+
+One correction found while implementing: `record_branch_pull_request()` is only called from
+branch adoption and the reconcile sweep, neither of which has a turn, so it stays on the
+conversation's class like `reconcile_publication`. Only `publish()` reads the turn's class for
+the pull request token. B5 and the design say so now.
+
 ## Cross-check against the design
 
 Checked before implementing. Corrections, all made in the design:
 
 - **The pool readers were named loosely.** `run_ref()` reads the class's `base_ref`, and
-  `record_branch_pull_request()` picks the pull request token by class. Both now read the turn's
-  class. `reconcile_publication` and `send_github` have no turn and follow the conversation's
-  class, which each new turn updates.
+  `publish()` picks the pull request token by class. Both now read the turn's class.
+  `reconcile_publication` and `send_github` have no turn and follow the conversation's class,
+  which each new turn updates.
 - **`claim_turns` would offer a locked conversation every tick.** Its query now leaves locked
   conversations out; the check at the top of `create_turn` stays as the backstop.
 - **The design only stopped the reply of a run it stopped.** A run that finishes on its own
@@ -52,7 +59,7 @@ Checked before implementing. Corrections, all made in the design:
 - **B4 (S).** A helper `turn_class(turn, conv)`: the turn's `agent_class` if it is a known class,
   else `conversation_class(conv)`.
 - **B5 (M).** Read the turn's class in `launch()`, `schedule()` (ceiling and `pool_would_serve`),
-  `run_ref()`, `build_job()`, `publish()` and `record_branch_pull_request()`. Update the long
+  `run_ref()`, `build_job()` and `publish()`. Update the long
   comment in `launch()` that calls the fence a conversation property.
 - **B6 (S).** Remove `demote_for_stranger()`, its call in `insert_message`, and
   `stranger_downgrade_class()`. Fix the comments that name them (`discord_agent_class`,

@@ -260,17 +260,24 @@ machine's own LAN address with it — measured 2026-08-25, a container on the de
 opened port 22 on this box, because rootless Docker disables the host *loopback* and not the
 host's IP. `bridge` is not the fence minus DNS filtering; it is no fence.
 
-That is the intended trade and it rests entirely on **who can start an `ffdev` turn**. The class
-is chosen when a conversation is opened. Locally that is the dropdown on the web page's new-prompt
-box or `ffwatch submit --agent ffdev`, both behind the login on 127.0.0.1 or a shell on this box.
-From Discord it is the `user_pool` / `operator_pool` pair in the `"discord"` section, and the
-question it asks is the trust question: **is the account that opened this conversation in
-`discord.trust.operators`?** A stranger gets `user_pool`, which is `ffagent`, so **no text written
-by somebody outside the trust table can reach an unfenced container**. An operator gets
-`operator_pool`, which is `ffdev`, because an operator directive *is* a dev turn — Ben or Loth
-asking for work, in Discord instead of at a keyboard — and it needs to read documentation, search
-the web and fetch a package; an allowlist edited every time it wants a new host is not a fence, it
-is a queue.
+That is the intended trade and it rests entirely on **who can start an `ffdev` turn**. Locally
+the class is chosen when a conversation is opened: the dropdown on the web page's new-prompt box or
+`ffwatch submit --agent ffdev`, both behind the login on 127.0.0.1 or a shell on this box. From
+Discord it is the `user_pool` / `operator_pool` pair in the `"discord"` section, asked of **each
+turn**, and the question is the trust question: **is the author of the message that triggered this
+turn (the last message in its batch) in the `operators` block?** A stranger's turn gets
+`user_pool`, which is `ffagent`. An operator's turn gets `operator_pool`, which is `ffdev`, because
+an operator's message *is* a dev turn — Ben or Loth asking for work, in Discord instead of at a
+keyboard — and it needs to read documentation, search the web and fetch a package; an allowlist
+edited every time it wants a new host is not a fence, it is a queue.
+
+**An operator gets the last say, and that is a deliberate hole in the fence.** A conversation has
+one Claude session and every turn resumes it, so when an operator triggers a turn in a thread a
+player has written in, the player's words are in front of an `ffdev` model with the open network
+and the container git credential. Prompt injection aimed at that turn is possible. What bounds it
+is that the prompt labels Discord user text as untrusted, the host and not the container opens
+pull requests, nothing merges without review, and an operator who does not trust a thread locks
+it: `!lock` alone on a line stops every turn in the conversation until an operator sends `!unlock`.
 
 Three properties hold that line, and all three are worth checking before changing this pair:
 
@@ -278,37 +285,21 @@ Three properties hold that line, and all three are worth checking before changin
   `trust.operators`, which stores snowflakes and drops anything that is not all digits. A
   username is renameable and message text is a stranger's to write; neither can reach this
   decision.
-- **The opener decides what it opens as; a stranger can take that away.** The class is written
-  when the conversation is created, and it only ever moves one way afterwards. An operator
-  replying in a player's thread does not promote it into `ffdev` — there is no promotion path at
-  all. But since 2026-09-05 a conversation an operator opened in a *public* channel is demoted to
-  `user_pool` the moment anybody outside `trust.operators` posts in it, so a player joining a dev
-  thread costs that thread its internet from the next turn on rather than running their text in an
-  unfenced container. It is a one-way ratchet: the operator speaking again does not buy the
-  network back, because the stranger's text is already in the chain and in the session transcript
-  the conversation resumes. Our own bot's replies do not count as a stranger's; any other bot
-  does, a webhook relaying a fork's PR title being exactly the case. The demotion lands on the
-  NEXT turn — a container's network is fixed when it is created, so a run already in flight
-  finishes in the container it started in, and that run never sees the message anyway.
+- **The triggering author decides, per turn.** `create_turn` writes `turn.agent_class` from the
+  author of the batch's last message, and `launch()` reads the container's network, plugins and
+  git credential from that. A player's own message always runs in `user_pool`, even in a thread an
+  operator opened; the one way player text reaches `ffdev` is an operator choosing to speak after
+  it, which is the hole described above.
 - **A blank trust table trusts nobody.** The template seeds `trust.operators` with an example
   name and an empty id, and every reader filters for a numeric one, so an unconfigured box routes
   every Discord conversation to `user_pool`.
 
-**The clocks are not part of this line, and since 2026-09-11 they are not read from here.** A
-class block carries two unrelated things: what a container may REACH — `network`,
-`github.container_token`, `plugins`, everything argued above — and what a request may SPEND, which
-is the four clocks and `max_budget_usd`. The second is read from the turn's trust tier instead, so
-an operator asking for real work in a player's thread gets `operator_pool`'s clocks and still gets
-`user_pool`'s container. That half is outside this argument by construction: nothing derived from
-the turn is read for a network, a credential or a plugin list, and `launch()` takes those three
-from the conversation. `ffwatch` names the budget in the journal whenever the two differ —
-`agent=ffagent budget=ffdev`. `ffbox/config.md`, "Two halves", has the reasoning; the short
-version is that a conversation has one session and every turn resumes it, so the fence has to
-follow the transcript and the clock has no reason to.
-
-What the demotion does NOT cover is the turn already running when the stranger posts, and one
-narrower gap it cannot: an operator who quotes or pastes a stranger's text themselves is still an
-operator saying it, and no id check can see that.
+**The clocks follow the same person.** A class block carries two unrelated things: what a
+container may REACH — `network`, `github.container_token`, `plugins`, everything argued above —
+and what a request may SPEND, which is the four clocks and `max_budget_usd`. The second is read
+from the turn's trust tier, the first from the turn's class, and both come from the triggering
+author. `ffwatch` names the budget in the journal whenever the two differ —
+`agent=ffagent budget=ffdev`. `ffbox/config.md`, "Two halves", has the reasoning.
 
 Two consequences worth stating plainly. An `ffdev` container is as trusted as a developer's own
 shell on this box, so everything under "The container is assumed hostile" is an `ffagent`

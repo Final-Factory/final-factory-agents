@@ -1596,12 +1596,13 @@ def test_tier_and_venue_reach_the_container():
           "policy and voice" not in job2["prompt"], job2["prompt"][:600])
 
 
-def test_a_player_never_inherits_an_operators_clearance():
-    print("tier is a property of the turn")
+def test_the_triggering_author_decides_a_turns_tier():
+    """A batch is the turn of whoever wrote its LAST message: tier, actor and pool."""
+    print("tier is the triggering author's")
     fixture = base_fixture()
     root = message(4701, "here is how it works", author=LOTHSAHN, name="lothsahn")
     # A REPLY, so both land in one conversation and one turn batches them. The reply is a
-    # player's, and the turn answers both, so the whole turn is a player's.
+    # player's and it came last, so the turn is the player's.
     fixture["messages"][ASK_CHANNEL] = [
         root, message(4702, "wait, which file is that in?", ref=root)]
     case = Case("tier-mixed", fixture)
@@ -1609,9 +1610,28 @@ def test_a_player_never_inherits_an_operators_clearance():
     case.events(ask_event(4701), ask_event(4702))
     case.watcher.drain_events()
     case.watcher.claim_turns()
-    tiers = {t["trust_tier"] for t in case.rows("SELECT * FROM turn")}
-    check("a batch that contains a player's message is a player's turn",
-          tiers == {"player"}, case.rows("SELECT trust_tier, trust_actor FROM turn"))
+    turns = case.rows("SELECT trust_tier, trust_actor, agent_class FROM turn")
+    check("an operator then a player is the player's turn, in the player's pool",
+          turns == [{"trust_tier": "player", "trust_actor": PLAYER, "agent_class": "ffagent"}],
+          turns)
+
+    # THE OTHER WAY ROUND: the operator has the last say.
+    fixture = base_fixture()
+    root = message(4711, "which file is the belt merger in?")
+    fixture["messages"][ASK_CHANNEL] = [
+        root, message(4712, "Max, find it and fix the drop", author=LOTHSAHN, name="lothsahn",
+                      ref=root)]
+    case = Case("tier-mixed-operator-last", fixture)
+    case.cfg["operators"] = {"lothsahn": {"discord": LOTHSAHN, "model": SUITE_CLAUDE_NAME}}
+    ev = ask_event(4712)
+    ev["author_id"] = LOTHSAHN
+    case.events(ask_event(4711), ev)
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    turns = case.rows("SELECT trust_tier, trust_actor, agent_class FROM turn")
+    check("a player then an operator is the operator's turn, in the operator's pool",
+          turns == [{"trust_tier": "operator", "trust_actor": LOTHSAHN, "agent_class": "ffdev"}],
+          turns)
 
 
 def test_operator_table_holds_ids_only():
@@ -1669,40 +1689,6 @@ def test_which_pool_a_discord_author_gets_is_read_from_the_trust_table():
           ffwatch.discord_agent_class(typo, LOTHSAHN) == "ffdev", None)
 
 
-def test_where_a_conversation_goes_when_a_stranger_speaks_in_it():
-    """The policy half of the demotion, keyed on the network rather than on a class name.
-
-    A configuration reader like discord_agent_class() above: it answers WHERE, and
-    demote_for_stranger() decides WHETHER anyone should be moved there.
-    """
-    print("stranger demotion: the policy")
-    cfg = ffwatch.load_config()
-    check("an unfenced conversation falls back to the fenced class",
-          ffwatch.stranger_downgrade_class(cfg, "ffdev") == "ffagent", None)
-    check("and one already behind the fence has nothing left to lose",
-          ffwatch.stranger_downgrade_class(cfg, "ffagent") is None, None)
-
-    # NOT BY NAME. A box that puts ffdev back behind the fence has two fenced classes and
-    # nothing to demote, whatever the class is called.
-    fenced = copy.deepcopy(cfg)
-    fenced["agent_classes"]["ffdev"]["network"] = "limited"
-    check("a class that is not unfenced is not demoted",
-          ffwatch.stranger_downgrade_class(fenced, "ffdev") is None, None)
-
-    # AND IT REFUSES TO MOVE ONE UNFENCED CLASS ONTO ANOTHER. A box whose user_pool is itself
-    # "full" has opted out of the split; moving the conversation sideways would read as a
-    # demotion while changing nothing about what the container can reach.
-    opted_out = copy.deepcopy(cfg)
-    opted_out["_discord"] = {"user_pool": "ffdev", "operator_pool": "ffdev"}
-    check("a box with no fenced pool to fall back to moves nothing",
-          ffwatch.stranger_downgrade_class(opted_out, "ffdev") is None, None)
-
-    both = copy.deepcopy(cfg)
-    both["_discord"] = {"user_pool": "ffagent", "operator_pool": "ffagent"}
-    check("and user_pool is where it goes, read from the config",
-          ffwatch.stranger_downgrade_class(both, "ffdev") == "ffagent", None)
-
-
 def test_a_discord_conversation_opens_in_the_pool_its_opener_earns():
     """The ingress end of the same rule, and the "whoever opened it decides" half of it.
 
@@ -1727,9 +1713,19 @@ def test_a_discord_conversation_opens_in_the_pool_its_opener_earns():
     convs = case.rows("SELECT * FROM conversation")
     check("a player's message opens one conversation", len(convs) == 1, convs)
     check("in the fenced class", convs[0]["agent_class"] == "ffagent", convs)
-    check("and an operator answering in it does not promote it",
+    check("and an operator answering in it does not move it at the ingest",
           case.rows("SELECT COUNT(*) c FROM message")[0]["c"] == 2
           and convs[0]["agent_class"] == "ffagent", convs)
+    # THE TURN IS THE OPERATOR'S, because theirs is the message that triggered it. It runs in
+    # the operator's pool, and the conversation follows its latest turn there.
+    case.watcher.claim_turns()
+    turns = case.rows("SELECT trust_tier, trust_actor, agent_class FROM turn")
+    check("the operator's reply makes an operator's turn in the operator's pool",
+          turns == [{"trust_tier": "operator", "trust_actor": LOTHSAHN, "agent_class": "ffdev"}],
+          turns)
+    check("and the conversation follows it",
+          case.rows("SELECT agent_class FROM conversation")[0]["agent_class"] == "ffdev",
+          case.rows("SELECT agent_class FROM conversation"))
 
     # AN OPERATOR OPENS ONE. Unfenced -- until a player joins in, which is the case worth
     # knowing about, and which now takes the class back rather than carrying the player's text
@@ -1761,35 +1757,29 @@ def test_a_discord_conversation_opens_in_the_pool_its_opener_earns():
     check("our own bot answering in it does not demote it",
           convs2[0]["agent_class"] == "ffdev", convs2)
 
-    # A PLAYER DOES. One message from anybody not in trust.operators, and the rest of the
-    # conversation runs behind the fence.
+    # A PLAYER POSTING DOES NOT MOVE IT. There is no demotion any more: each turn runs in the
+    # pool of whoever triggered it, and an operator who does not like a thread locks it.
     fixture2["messages"][ASK_CHANNEL].append(message(4813, "seeing it too", ref=root2))
     case2.write_fixture(fixture2)
     case2.events(ask_event(4813))
     case2.watcher.drain_events()
     convs2 = case2.rows("SELECT * FROM conversation")
-    check("a player joining demotes it to the fenced class",
+    check("a player joining leaves the class alone",
           case2.rows("SELECT COUNT(*) c FROM message")[0]["c"] == 3
-          and convs2[0]["agent_class"] == "ffagent", convs2)
+          and convs2[0]["agent_class"] == "ffdev", convs2)
 
-    # ONE-WAY. The operator speaking again does not buy the network back -- the player's text
-    # is in the chain and in the session transcript this conversation resumes.
+    # THE OPERATOR SPEAKS LAST, so the batch is the operator's: their tier and their pool, with
+    # the player's message in it.
     fixture2["messages"][ASK_CHANNEL].append(
         message(4814, "fixed on my branch", author=LOTHSAHN, name="lothsahn", ref=root2))
     case2.write_fixture(fixture2)
     case2.events(ask_event(4814))
     case2.watcher.drain_events()
-    convs2 = case2.rows("SELECT * FROM conversation")
-    check("and the operator answering again does not promote it back",
-          convs2[0]["agent_class"] == "ffagent", convs2)
-
-    # AND THE TURN'S TIER IS STILL THE TURN'S. The class says which container; trust_tier says
-    # what that container may say and do. A player in the batch makes the turn a player's
-    # however unfenced the box it runs in.
     case2.watcher.claim_turns()
-    tiers = {t["trust_tier"] for t in case2.rows("SELECT * FROM turn")}
-    check("a player in an operator's conversation still makes a player's turn",
-          tiers == {"player"}, case2.rows("SELECT trust_tier, trust_actor FROM turn"))
+    turns2 = case2.rows("SELECT trust_tier, trust_actor, agent_class FROM turn")
+    check("the last author's turn is theirs, player text and all",
+          turns2 == [{"trust_tier": "operator", "trust_actor": LOTHSAHN,
+                      "agent_class": "ffdev"}], turns2)
 
 
 def test_no_channel_is_watched_unless_the_config_says_so():
@@ -5553,22 +5543,23 @@ def test_a_capped_lane_tells_a_channel_once_not_every_asker():
           len(case.rows("SELECT * FROM conversation")) == 2,
           case.rows("SELECT id, thread_id, channel_id FROM conversation"))
 
-    reason = "rate limit for lane answer reached"
-    check("the channel is told once", case.watcher.record_blocked_reply(turns[0], reason) == 1)
-    check("and the next asker in the SAME channel is not told again",
+    # THE SAME PERSON asking twice in one channel. Limits are per person, so the key is too.
+    case.watcher.db.execute("UPDATE turn SET trust_actor=? WHERE id IN (?,?)",
+                            (PLAYER, turns[0], turns[1]))
+    reason = "rate limit for trust tier player reached"
+    check("the person is told once", case.watcher.record_blocked_reply(turns[0], reason) == 1)
+    check("and their next question in the SAME channel is not told again",
           case.watcher.record_blocked_reply(turns[1], reason) == 0,
           case.rows("SELECT payload_json FROM outbound"))
     check("so exactly one note exists",
           len(case.rows("SELECT * FROM outbound WHERE action='post'")) == 1,
           case.rows("SELECT * FROM outbound"))
 
-    # A different ceiling is a different thing to be told, so it is keyed apart. The turn above
-    # was a player's; this one is an operator's, and a channel where both ran out has two things
-    # to say rather than one.
-    case.watcher.db.execute("UPDATE turn SET trust_tier='operator' WHERE id=?", (turns[1],))
-    check("but a different ceiling running out is",
-          case.watcher.record_blocked_reply(turns[1],
-                                            "rate limit for trust tier operator reached") == 1,
+    # A DIFFERENT PERSON running out in the same channel has their own limit, so they are told.
+    case.watcher.db.execute("UPDATE turn SET trust_actor=? WHERE id=?",
+                            ("800000000000000002", turns[1]))
+    check("but a second person running out is",
+          case.watcher.record_blocked_reply(turns[1], reason) == 1,
           case.rows("SELECT * FROM outbound"))
 
     # A forum is the shape that nearly slipped through: a bug-report conversation IS a thread,
@@ -6151,25 +6142,51 @@ def test_fix_lane_launches_with_write_capabilities():
 
 
 def test_fix_lane_rate_limit():
-    print("trust tier: five player turns a day")
+    print("rate limit: a person's own turns a day")
     case = bug_case("fixrate")
+    # FIVE, set here rather than read from the machine's config, so the count below is the
+    # code's and not whatever ~/.config/ffbox/config.json on this box says.
+    case.cfg["rate_limits"] = dict(ffwatch.DEFAULTS["rate_limits"], player=5, users={})
     conv = case.rows("SELECT * FROM conversation")[0]
-    triage = case.rows("SELECT * FROM turn ORDER BY id")[0]
-    # Five player-tier turns already run today. ONE budget across every kind of turn a player
-    # can cause: the lane they took does not matter, only who caused them.
+    other = "800000000000000002"
+    # Five turns by one player already run today. ONE budget across every kind of turn they
+    # can cause, and it is THEIRS: the lane does not matter, only who triggered them.
     for n in range(5):
         case.watcher.db.execute(
-            "INSERT INTO turn(conversation_id, seq, lane, status, trust_tier, queued_at,"
-            " started_at, ended_at) VALUES(?,?,?,'done','player',?,?,?)",
-            (conv["id"], 100 + n, "answer" if n % 2 else "fix",
+            "INSERT INTO turn(conversation_id, seq, lane, status, trust_tier, trust_actor,"
+            " queued_at, started_at, ended_at) VALUES(?,?,?,'done','player',?,?,?,?)",
+            (conv["id"], 100 + n, "answer" if n % 2 else "fix", PLAYER,
              ffwatch.now_iso(), ffwatch.now_iso(), ffwatch.now_iso()))
-    check("the limit is reached at five, whatever lanes they were",
-          case.watcher.rate_limited("player") is True)
-    check("but an operator is uncapped", case.watcher.rate_limited("operator") is False)
+    w = case.watcher
+    check("the limit is reached at five for the person who used them",
+          w.rate_limited("player", PLAYER) is True)
+    check("but another player in the same thread still has all of theirs",
+          w.rate_limited("player", other) is False)
+    check("an operator is uncapped", w.rate_limited("operator", LOTHSAHN) is False)
     check("and a turn with no tier recorded counts as a player, not as uncapped",
-          case.watcher.rate_limited(None) is True)
+          w.rate_limited(None, PLAYER) is True)
 
-    queue_follow_up(case, conv, venue="public")
+    # ONE PERSON'S OWN LIMIT, by the numeric id inside a labelled entry.
+    users = case.cfg["rate_limits"]["users"]
+    users["the meanie"] = {"discord": PLAYER, "limit": 40}
+    check("an override raises one person's limit", w.rate_limited("player", PLAYER) is False)
+    users["the meanie"]["limit"] = None
+    check("null uncaps them", w.rate_limited("player", PLAYER) is False)
+    users["quiet one"] = {"discord": other, "limit": 0}
+    check("0 gives a person no turns at all", w.rate_limited("player", other) is True)
+    users["loth"] = {"discord": LOTHSAHN, "limit": 0}
+    check("and a listed limit wins whatever the tier",
+          w.rate_limited("operator", LOTHSAHN) is True)
+    users.clear()
+    users["first"] = {"discord": PLAYER, "limit": 40}
+    users["second"] = {"discord": PLAYER, "limit": 0}
+    check("an id listed twice takes the first entry", w.rate_limited("player", PLAYER) is False)
+    users.clear()
+    check("`users` is never read as a tier", w.rate_limited("users", other) is False)
+    check("and neither is `send`", w.rate_limited("send", other) is False)
+
+    follow = queue_follow_up(case, conv, venue="public")
+    w.db.execute("UPDATE turn SET trust_actor=? WHERE id=?", (PLAYER, follow))
     started = case.watcher.schedule()
     fourth = case.rows("SELECT * FROM turn WHERE status='blocked' ORDER BY id DESC")[0]
     check("the sixth player turn of the day does not launch", started == [], started)
@@ -6201,7 +6218,8 @@ def test_fix_lane_rate_limit():
     # and without a guard every message after the cap would draw its own refusal — spending the
     # channel's send budget saying no while real replies queued behind them.
     before = len(case.rows("SELECT * FROM outbound WHERE action='post'"))
-    queue_follow_up(case, case.rows("SELECT * FROM conversation")[0], venue="public")
+    again = queue_follow_up(case, case.rows("SELECT * FROM conversation")[0], venue="public")
+    case.watcher.db.execute("UPDATE turn SET trust_actor=? WHERE id=?", (PLAYER, again))
     case.watcher.schedule()
     blocked = case.rows("SELECT * FROM turn WHERE status='blocked'")
     check("a fifth blocked turn is still recorded", len(blocked) == 2, blocked)
@@ -9270,8 +9288,12 @@ def test_the_shell_lane_was_merged_into_dev():
     # machine running the suite rather than on the code.
     limits = ffwatch.DEFAULTS["rate_limits"]
     check("an operator carries no daily cap by default", not limits.get("operator"), limits)
-    check("and a player does — one budget across every kind of turn they can cause",
-          limits["player"] == 5, limits)
+    check("and a player does — fifteen turns a day each, across every kind of turn",
+          limits["player"] == 15, limits)
+    check("with no per-person overrides until the config names some",
+          limits["users"] == {}, limits)
+    check("and one run may spend thirty dollars",
+          ffwatch.DEFAULTS["max_budget_usd"] == 30, ffwatch.DEFAULTS["max_budget_usd"])
     case = Case("devunlimited")
     case.cfg["rate_limits"] = dict(limits)
     case.watcher.db.execute(
@@ -11915,28 +11937,18 @@ def test_an_ffdev_turn_runs_under_ffdevs_numbers():
           argv2[argv2.index("--agent-timeout") + 1] == "4242", argv2)
 
 
-def test_an_operators_request_in_a_players_thread_gets_the_clock_and_not_the_network():
-    """Conversation 133, rebuilt: the case the split exists for.
+def test_an_operators_request_in_a_players_thread_runs_as_the_operators():
+    """Conversation 133, rebuilt: an operator asking for work in a thread a player opened.
 
-    A player opened a #bug-reports thread, so the conversation is ffagent -- the opener decides,
-    and demote_for_stranger only ever moves that downwards. Lothsahn then asked, in the thread,
-    for a fix to be written and pushed. That request ran under ffagent's thirty-minute agent
-    clock and was killed on it with the fix half written, because the clock was read off the
-    conversation and the conversation belongs to whoever opened it.
-
-    THE TWO HALVES GO SEPARATE WAYS HERE, and both directions matter:
-
-      the BUDGET follows the asker   ffdev's clocks, because an operator asked
-      the FENCE follows the thread   an ffagent container, on the fenced network, with the
-                                     Discord plugin alone and no git credential
-
-    The second half is the one with teeth. The session transcript this run resumes has the
-    player's words in it -- that is why there is no promotion path in demote_for_stranger -- so a
-    change that let an operator's message buy the open internet and the container git credential
-    would be prompt injection with a route out. Every check below the clock ones is guarding that
-    the budget did NOT drag the fence along with it.
+    That request once ran under ffagent's thirty-minute agent clock and was killed on it with
+    the fix half written, because the clock was read off the conversation. Since
+    design/ffbox_per_user_limits_design.txt BOTH halves follow the author of the message that
+    triggered the turn: the operator's request gets ffdev's clocks AND an ffdev container, and
+    the player's own next message is back on ffagent for both. The player's words from earlier
+    turns are in the session the operator's turn resumes; that is intended, and `!lock` is how an
+    operator stops a thread they do not trust.
     """
-    print("the split: an operator's clock, a player's fence")
+    print("the triggering author: an operator's clock and an operator's pool")
     opener, ask = sflake(-9100000, 1), sflake(-9099000, 2)
     fixture = base_fixture()
     bug_thread(fixture, "31900", "desyncs", [
@@ -11954,11 +11966,9 @@ def test_an_operators_request_in_a_players_thread_gets_the_clock_and_not_the_net
                                             "verify_secs": 4444, "kill_grace_secs": 44})
     w.cfg["agent_classes"]["ffagent"].update({"agent_secs": 1111, "warmup_secs": 2222,
                                               "verify_secs": 3333, "kill_grace_secs": 11})
-    # THE OPENER IS ANSWERED FIRST, and that is not scene-setting. turn_trust needs EVERY
-    # message in a batch to be an operator's before the turn is one, so an opener still sitting
-    # unanswered would ride along in the next batch and make the operator's request a player's
-    # turn -- correctly, and not the case under test. 133 ran the same way round: two turns
-    # answered the player before Lothsahn asked for the fix.
+    # THE OPENER IS ANSWERED FIRST, so the operator's message below opens a second turn of its
+    # own rather than riding in a batch. 133 ran the same way round: two turns answered the
+    # player before Lothsahn asked for the fix.
     #
     # sweep() is what reads a forum thread in; once() is what runs the turn it produced through
     # to its finish, so the operator's message below opens a second turn rather than a batch.
@@ -11969,8 +11979,8 @@ def test_an_operators_request_in_a_players_thread_gets_the_clock_and_not_the_net
           and convs[0]["agent_class"] == "ffagent", convs)
     first = case.rows("SELECT * FROM run ORDER BY id")[-1]
 
-    # THE OPERATOR ASKS, IN THE PLAYER'S THREAD. This does not move the conversation -- nothing
-    # moves it upwards -- so the container below is still the fenced one.
+    # THE OPERATOR ASKS, IN THE PLAYER'S THREAD. Theirs is the triggering message, so the turn
+    # runs in their pool.
     fixture = case.read_fixture()
     fixture["threads"]["31900"]["messages"].append(
         message(ask, "work out what is desyncing and push a fix to a branch",
@@ -11981,8 +11991,9 @@ def test_an_operators_request_in_a_players_thread_gets_the_clock_and_not_the_net
 
     turn = case.rows("SELECT * FROM turn ORDER BY id")[-1]
     check("the turn is recorded as an operator's", turn["trust_tier"] == "operator", dict(turn))
-    check("while the conversation is still the player's class",
-          case.rows("SELECT * FROM conversation")[0]["agent_class"] == "ffagent", convs)
+    check("and the conversation follows the latest turn to the operator's class",
+          case.rows("SELECT * FROM conversation")[0]["agent_class"] == "ffdev",
+          case.rows("SELECT agent_class FROM conversation"))
 
     run = case.rows("SELECT * FROM run ORDER BY id")[-1]
     check("the operator's request is a run of its own", run["id"] != first["id"],
@@ -12007,17 +12018,17 @@ def test_an_operators_request_in_a_players_thread_gets_the_clock_and_not_the_net
           job["limits"] == {"agent_secs": 4242, "warmup_secs": 4343, "verify_secs": 4444,
                             "kill_grace_secs": 44}, job["limits"])
 
-    # THE FENCE HALF, which is the half a mistake here would be dangerous rather than annoying.
-    check("but the container is still the conversation's, not the asker's",
-          argv[argv.index("--agent-class") + 1] == "ffagent", argv)
-    check("and it is created on the fenced network",
-          argv[argv.index("--network") + 1] == "ffbox-net", argv)
+    # THE FENCE HALF follows the same person now.
+    check("and the container is the asker's pool, not the opener's",
+          argv[argv.index("--agent-class") + 1] == "ffdev", argv)
+    check("off the fenced network",
+          argv[argv.index("--network") + 1] != "ffbox-net", argv)
     mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "--mount"]
-    check("and carries only the Discord plugin, never the engineering skills",
+    check("carrying the engineering skills as well as the Discord plugin",
           [m.split(":")[1] for m in mounts if "/ffbox/plugins/" in m]
-          == ["/ffbox/plugins/ff-discord"], mounts)
-    check("and job.json still names the conversation's class",
-          job["turn"]["agent_class"] == "ffagent", job["turn"])
+          == ["/ffbox/plugins/ff-discord", "/ffbox/plugins/ff-agents"], mounts)
+    check("and job.json names the turn's class",
+          job["turn"]["agent_class"] == "ffdev", job["turn"])
     # THE CONTAINER GIT CREDENTIAL IS THE OTHER THING THE FENCE HOLDS, and --agent-class above
     # is the whole of what holds it: ffbox reads container_token out of the config itself, keyed
     # on the class it was told. There is no flag in the argv to look for, so this is asserted at
@@ -14712,6 +14723,174 @@ def test_only_an_operator_may_name_a_branch_from_discord():
     said = case2.rows("SELECT * FROM message WHERE discord_id='4903'")
     check("their message is an ordinary one, gate and all",
           said and said[0]["gate"] is None, said)
+
+
+def say_in_thread(case, tid, mid, text, *, author, name="someone"):
+    """Another message in a forum thread, ingested the way the doorbell would have it."""
+    fixture = case.read_fixture()
+    fixture["threads"][str(tid)]["messages"].append(
+        message(mid, text, channel=str(tid), author=author, name=name))
+    case.write_fixture(fixture)
+    ev = thread_event(tid, mid, kind="thread_message")
+    ev["author_id"] = author
+    case.events(ev)
+    case.watcher.drain_events()
+
+
+def test_an_operator_can_lock_a_thread_and_unlock_it():
+    """`!lock` stops the bot acting in a thread; `!unlock` gives it back. Operators only.
+
+    While locked every message is recorded as normal and nothing is started: no turn is created,
+    a queued one never launches, a run in flight is stopped and posts nothing. After the unlock
+    the messages posted meanwhile are ordinary pending messages again.
+    """
+    print("lock: !lock and !unlock in a thread")
+    tid = "32100"
+    opener = sflake(-8000000, 1)
+    fixture = base_fixture()
+    bug_thread(fixture, tid, "train stuck", [
+        message(opener, "the train will not leave the station", channel=tid)])
+    case = Case("lock-thread", fixture)
+    w = case.watcher
+    case.events(thread_event(tid, kind="thread"))
+    w.once()
+    conv = case.rows("SELECT * FROM conversation")[0]
+    posts = lambda: [json.loads(r["payload_json"])["text"]
+                     for r in case.rows("SELECT * FROM outbound WHERE action='post' ORDER BY id")]
+
+    # A PLAYER'S !lock IS PROSE: nothing locks, nothing is said, and the message is ordinary.
+    before = posts()
+    player_lock = sflake(-7999000, 2)
+    say_in_thread(case, tid, player_lock, "!lock", author=PLAYER)
+    check("a player's !lock locks nothing",
+          not case.rows("SELECT locked FROM conversation")[0]["locked"])
+    check("and posts nothing", posts() == before, posts())
+    check("and their message is an ordinary one",
+          case.rows("SELECT gate FROM message WHERE discord_id=?", (player_lock,))[0]["gate"]
+          is None)
+    w.once()  # answer it, so what follows is about the lock
+
+    # A RUN IN FLIGHT when the lock lands is stopped.
+    stopped = []
+    w.stop_workload = lambda name, detach=False: (stopped.append((name, detach)) or (True, "ok"))
+    flight = queue_follow_up(case, conv, venue="public")
+    w.db.execute("UPDATE turn SET status='running', started_at=? WHERE id=?",
+                 (ffwatch.now_iso(), flight))
+    w.db.execute("INSERT INTO run(turn_id, ffbox_run_id, container_name) VALUES(?,?,?)",
+                 (flight, "d-flight", "ffbox-agent-flight"))
+
+    before = posts()
+    lock = sflake(-7998000, 3)
+    say_in_thread(case, tid, lock, "!lock", author=LOTHSAHN, name="lothsahn")
+    row = case.rows("SELECT * FROM conversation")[0]
+    check("an operator's !lock locks the thread",
+          row["locked"] == 1 and row["locked_by"] == LOTHSAHN and row["locked_at"], row)
+    check("and says so, once, naming it a thread",
+          posts() == before + [ffwatch.LOCK_NOTE.format(place="thread")], posts())
+    check("the lock message never becomes a turn",
+          case.rows("SELECT gate FROM message WHERE discord_id=?", (lock,))[0]["gate"]
+          == "lock_directive")
+    check("the run in flight is stopped, detached",
+          stopped == [("ffbox-agent-flight", True)], stopped)
+    w.db.execute("UPDATE run SET terminal_state='failed' WHERE turn_id=?", (flight,))
+    check("and a reply for it posts nothing on a locked thread",
+          w.record_launch_failure(flight, "stopped") == 0 and posts() == before + [
+              ffwatch.LOCK_NOTE.format(place="thread")], posts())
+    w.finish_turn(flight, "failed", error="stopped")
+
+    # A SECOND !lock CHANGES NOTHING AND SAYS NOTHING.
+    before = posts()
+    say_in_thread(case, tid, sflake(-7997000, 4), "!lock", author=LOTHSAHN, name="lothsahn")
+    check("locking a locked thread posts nothing", posts() == before, posts())
+
+    # WHILE LOCKED, messages are recorded as normal and nothing starts.
+    turns_before = len(case.rows("SELECT * FROM turn"))
+    waiting = sflake(-7996000, 5)
+    say_in_thread(case, tid, waiting, "hello? is anyone there", author=PLAYER)
+    say_in_thread(case, tid, sflake(-7995000, 6), "Max, look again", author=LOTHSAHN,
+                  name="lothsahn")
+    check("no turn is claimed", w.claim_turns() == [])
+    check("create_turn refuses a locked conversation even when asked directly",
+          w.create_turn(w.db.one("SELECT * FROM conversation WHERE id=?", (conv["id"],)))
+          is None)
+    kept = case.rows("SELECT gate, turn_id FROM message WHERE discord_id=?", (waiting,))[0]
+    check("the messages are recorded ungated and unclaimed",
+          kept == {"gate": None, "turn_id": None}, kept)
+    check("and no turn exists for them", len(case.rows("SELECT * FROM turn")) == turns_before)
+
+    # A TURN QUEUED BEFORE THE LOCK LANDED never launches, and is not a rate-limit note.
+    before = posts()
+    queued = queue_follow_up(case, conv, venue="public")
+    check("a queued turn on a locked thread launches nothing", w.schedule() == [])
+    blocked = case.rows("SELECT status, error FROM turn WHERE id=?", (queued,))[0]
+    check("it is blocked because the thread is locked",
+          blocked == {"status": "blocked", "error": "the thread is locked"}, blocked)
+    check("without a note of its own", posts() == before, posts())
+
+    # UNLOCK: said once, and the waiting messages are pending again.
+    unlock = sflake(-7994000, 7)
+    say_in_thread(case, tid, unlock, "!unlock", author=LOTHSAHN, name="lothsahn")
+    row = case.rows("SELECT * FROM conversation")[0]
+    check("an operator's !unlock clears the lock",
+          row["locked"] == 0 and row["locked_by"] is None and row["locked_at"] is None, row)
+    check("and says so, naming it a thread",
+          posts() == before + [ffwatch.UNLOCK_NOTE.format(place="thread")], posts())
+    check("a bare !unlock is gated like a bare !lock",
+          case.rows("SELECT gate FROM message WHERE discord_id=?", (unlock,))[0]["gate"]
+          == "lock_directive")
+    claimed = w.claim_turns()
+    check("the messages posted while locked get a turn on the next pass", len(claimed) == 1,
+          claimed)
+    kept = case.rows("SELECT turn_id FROM message WHERE discord_id=?", (waiting,))[0]
+    check("and they are that turn's own messages", kept["turn_id"] == claimed[0], kept)
+    history = [m["discord_id"] for m in w.history_messages_for(
+        w.db.one("SELECT * FROM conversation WHERE id=?", (conv["id"],)))]
+    check("so later turns see them in the history", waiting in history, history)
+    w.finish_turn(claimed[0], "done")
+
+    # !unlock WITH A QUESTION: unlocked, and the question stays an ordinary, addressed message.
+    say_in_thread(case, tid, sflake(-7993000, 8), "!lock", author=LOTHSAHN, name="lothsahn")
+    ask = sflake(-7992000, 9)
+    say_in_thread(case, tid, ask, "!unlock\nwhat does the log say now?", author=LOTHSAHN,
+                  name="lothsahn")
+    check("!unlock with a question unlocks",
+          case.rows("SELECT locked FROM conversation")[0]["locked"] == 0)
+    said = case.rows("SELECT gate, addressed FROM message WHERE discord_id=?", (ask,))[0]
+    check("and the question is left to be answered",
+          said == {"gate": None, "addressed": 1}, said)
+    check("on the next pass", len(w.claim_turns()) == 1)
+
+    # THE TITLE LEAVES THE DIRECTIVES OUT, and only the directives.
+    check("a leading !lock is not a title",
+          ffwatch.title_from("!lock\nthe train is stuck") == "the train is stuck",
+          ffwatch.title_from("!lock\nthe train is stuck"))
+    check("nor a leading !unlock on the same line",
+          ffwatch.title_from("!unlock the train is stuck") == "the train is stuck",
+          ffwatch.title_from("!unlock the train is stuck"))
+    check("a message that is only the directive has no title", ffwatch.title_from("!lock") is None)
+    check("and a word that merely starts with it is left alone",
+          ffwatch.title_from("!locked out of my save") == "!locked out of my save",
+          ffwatch.title_from("!locked out of my save"))
+
+
+def test_a_lock_says_conversation_where_there_is_no_thread():
+    """A reply chain in a text channel has no thread to name, so the note says conversation."""
+    print("lock: the note names a conversation outside a thread")
+    case = Case("lock-chain")
+    w = case.watcher
+    conv_id = seed_conversation(case, thread_id="22100", is_thread=0)
+    for verb, note in (("lock", ffwatch.LOCK_NOTE), ("unlock", ffwatch.UNLOCK_NOTE)):
+        cur = w.db.execute(
+            "INSERT INTO message(conversation_id, discord_id, direction, author_id, author_name,"
+            " content, created_at) VALUES(?,?,'in',?,'lothsahn',?,?)",
+            (conv_id, sflake(-6000000, 1 if verb == "lock" else 2), LOTHSAHN, f"!{verb}",
+             ffwatch.now_iso()))
+        check(f"an operator's !{verb} is taken",
+              w.take_lock_directive(conv_id, cur.lastrowid, {"id": LOTHSAHN}, f"!{verb}") == verb)
+        last = case.rows("SELECT payload_json FROM outbound WHERE action='post' ORDER BY id")[-1]
+        check(f"and the !{verb} note says conversation",
+              json.loads(last["payload_json"])["text"] == note.format(place="conversation"),
+              last)
 
 
 def test_a_backlog_only_conversation_never_asks_anthropic_anything():
@@ -18871,9 +19050,8 @@ def test_everybody_else_is_billed_to_the_metered_default():
     check("a player goes to the API key", name == "ANTHROPIC_API_KEY", (name, why))
     check("and so does a stranger the box happens to trust nowhere",
           route("operator", "999999999999999999")[0] == "ANTHROPIC_API_KEY")
-    # THE CONSERVATIVE DIRECTION, and turn_trust already takes it: one player in a batch makes
-    # the whole turn a player's, so a mixed batch is billed to the API key rather than to the
-    # operator who happened to speak first. This is the routing half of that.
+    # THE TIER DECIDES, NOT THE ID. turn_trust gives a batch the tier of its last author, so a
+    # player-tier turn is billed to the API key even if an operator's id were somehow its actor.
     check("a turn whose tier is player is a player's turn whoever the actor is",
           route("player", "800000000000000001")[0] == "ANTHROPIC_API_KEY")
 
@@ -20829,7 +21007,7 @@ def main():
         test_the_reaper_says_a_held_spool_once,
         test_an_ffdev_turn_runs_under_ffdevs_numbers,
         test_the_outer_launch_ceiling_clears_every_phase_clock,
-        test_an_operators_request_in_a_players_thread_gets_the_clock_and_not_the_network,
+        test_an_operators_request_in_a_players_thread_runs_as_the_operators,
         test_the_budget_class_is_read_from_the_turns_tier,
         test_the_two_agent_classes_are_configured_independently,
         test_each_class_gets_its_own_plugins,
@@ -20898,7 +21076,7 @@ def main():
         test_a_player_who_dms_max_is_pointed_at_the_public_channels,
         test_a_dm_doorbell_never_grants_the_trust_it_claims,
         test_tier_and_venue_reach_the_container,
-        test_a_player_never_inherits_an_operators_clearance,
+        test_the_triggering_author_decides_a_turns_tier,
         test_operator_table_holds_ids_only,
         test_no_channel_is_watched_unless_the_config_says_so,
         test_sweep_uses_the_id_once_the_config_has_one,
@@ -21116,7 +21294,8 @@ def main():
         test_the_classifier_tries_the_cheap_call_first_and_falls_back,
         test_the_fast_answer_is_held_to_the_schema_the_flag_would_have_enforced,
         test_which_pool_a_discord_author_gets_is_read_from_the_trust_table,
-        test_where_a_conversation_goes_when_a_stranger_speaks_in_it,
+        test_an_operator_can_lock_a_thread_and_unlock_it,
+        test_a_lock_says_conversation_where_there_is_no_thread,
         test_a_discord_conversation_opens_in_the_pool_its_opener_earns,
         test_a_spare_says_which_tier_it_is,
         test_which_branches_are_worth_warming,
