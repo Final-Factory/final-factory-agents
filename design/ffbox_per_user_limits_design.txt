@@ -1,0 +1,266 @@
+ffbox: per-user turn limits, a $30 run budget, and the triggering author
+=======================================================================
+
+GOAL
+
+1. One run may spend up to $30 (Claude Code's estimate, priced at Opus rates), up from $10.
+2. Each person gets their own 15 turns per rolling 24 hours. Today all players share one count
+   (live: 10). Operators stay uncapped. config.json can give one person a different limit.
+3. The message that triggers a turn decides everything about who the turn is for: the tier, who
+   pays, whose limit it counts against, and which pool (ffdev or ffagent) runs it.
+4. An operator can `!lock` a thread: messages are still recorded, but no turn runs until an
+   operator posts `!unlock`.
+
+
+1. RUN BUDGET
+
+ffwatch.py DEFAULTS: "max_budget_usd": 10 -> 30.
+
+The live config and both pool blocks leave max_budget_usd unset or null, so the default change is
+enough. build_job passes it to discord-task.sh, which passes it to `claude --max-budget-usd` for
+the turn and for the compaction pass.
+
+
+2. THE TRIGGERING AUTHOR
+
+turn_trust() decides a turn's tier and actor when the turn is created. It changes to:
+
+    actor = the author of the LAST message in the batch (the batch is oldest first)
+    tier  = operator if actor is in the operators block, player otherwise
+
+The old rule, where one player message anywhere in the batch made the turn a player's, goes.
+
+That one answer drives the whole turn:
+
+    turn.trust_tier, turn.trust_actor    written as today
+    who pays                             claude_route(): an operator's own credential, or the
+                                         metered key for a player
+    turn limit                           section 3, counted against the actor
+    clocks and budget                    budget_class(tier), as today
+    pool                                 NEW turn.agent_class = discord_agent_class(actor):
+                                         ffdev for an operator, ffagent for a player
+    private half of a public reply       an operator gets it by DM, as today, sent to the actor
+
+Example: players A and B post, then operator Loth posts last. The turn is Loth's: operator tier,
+runs in ffdev, billed to Loth's credential, counted against Loth's limit (none by default).
+If Loth posts first and player A posts last, the turn is A's: player tier, ffagent, metered key,
+counted against A.
+
+The pool moves from the conversation to the turn:
+
+- These read turn.agent_class instead of conversation.agent_class: launch() (network, plugins,
+  container git token, which warm pool may serve it), the ceiling and warm-pool check in
+  schedule(), run_ref() (the class's base_ref), build_job(), and publish() with
+  record_branch_pull_request() (the token the run's pull request is opened with).
+- demote_for_stranger() and stranger_downgrade_class() are removed. A stranger's message no
+  longer pins a conversation to ffagent; each turn gets the pool of whoever triggered it.
+- conversation.agent_class is set to each new turn's class, so the readers with no turn in hand
+  (reconcile_publication, send_github, ffweb's "agent" column) follow the latest turn.
+- A turn row older than the column reads the conversation's class.
+- fenced_history is unchanged. It decides how a fork's inherited text is framed in the prompt,
+  not which pool runs it.
+
+Local (shell, web) and GitHub pull request conversations are unchanged: they are operator turns
+and their class is chosen as today.
+
+
+RISK: PLAYER TEXT IN FFDEV
+
+When an operator triggers a turn, everything in its context runs in ffdev: the players' messages
+batched with it, and the thread's earlier turns through the resumed session. ffdev has full
+network, the container GitHub token and ff-agents. A player who writes instructions into a
+thread and waits for an operator to reply gets those instructions in front of an agent that can
+push and reach the internet.
+
+What still holds: the prompt labels all Discord user text as untrusted input, the host (not the
+container) opens pull requests, and nothing merges without review. The label is an instruction
+to the model, not a fence.
+
+This is intended: an operator gets the last say and can steer the bot. An operator who has
+concerns about a thread locks it (section 6).
+
+
+3. PER-USER TURN LIMIT
+
+rate_limited(tier) becomes rate_limited(tier, actor) and counts that person's turns:
+
+    SELECT COUNT(*) FROM turn
+     WHERE COALESCE(trust_actor,'')=?
+       AND started_at IS NOT NULL AND started_at>=?          -- now minus 24h
+
+The one caller, schedule(), passes the turn's trust_tier and trust_actor; its row is already
+`turn t.*`.
+
+Rolling 24 hours stays. It is what the check does today, so there is no reset time to add.
+
+A turn with no actor counts against the empty id, so all such turns share one limit and are never
+uncapped.
+
+
+4. PER-USER OVERRIDES
+
+A new `users` table inside rate_limits, the same shape as the `operators` block: keyed by a name
+you choose, with the Discord user id inside.
+
+    "rate_limits": {
+      "player": 15,
+      "operator": null,
+      "users": {
+        "junktion": { "discord": "419904541656350720", "limit": 40 },
+        "spammer":  { "discord": "1374974531147403397", "limit": 0 }
+      },
+      "send": { "per_hour": 60, "per_conversation_hour": 12 }
+    }
+
+The name is a label and nothing reads it, so an out-of-date handle does no harm. `discord` is
+the account's numeric id (Developer Mode, right-click the user, Copy User ID).
+
+The limit for a turn is looked up in this order:
+
+    the users entry whose discord == actor     if there is one
+    rate_limits[tier]                          otherwise
+
+A listed limit wins whatever the tier. null means uncapped, 0 means no turns. An id listed under
+two names logs a warning, and the first entry in the file is used.
+
+"users", like "send", is not a tier, and rate_limited refuses it as one.
+
+Config edits take effect within one ffbox-update tick.
+
+
+5. WHAT A BLOCKED USER HEARS
+
+Unchanged: the turn ends `blocked`, never runs, and BLOCKED_NOTE is posted. No wording changes,
+public or private.
+
+The note is posted once per person per day instead of once per channel per tier, so every
+blocked person is told. The outbound marker changes from
+
+    blocked:<channel>:<tier>        to        blocked:<channel>:<actor>
+
+
+6. !LOCK AND !UNLOCK
+
+The operator's answer to section 2's risk: an operator gets the last say, and an operator who
+does not like where a thread is going can stop the bot acting in it.
+
+Parsed like `!branch`: a line whose whole content is `!lock` or `!unlock`. Operators only, and
+silently ignored from anybody else, for the same reason `!branch` is. Discord conversations only,
+not local or GitHub pull request conversations. The lock belongs to the conversation, so for a
+reply chain in a text channel it covers that chain.
+
+New columns: conversation.locked INTEGER NOT NULL DEFAULT 0, locked_by TEXT, locked_at TEXT.
+
+!lock
+
+- Sets locked, locked_by (the operator's id) and locked_at.
+- Posts, with <place> = "thread" when conversation.is_thread is 1 and "conversation" otherwise:
+
+      This <place> is now locked from interactions with Max. He won't respond in this <place>
+      in the future.
+- A queued turn in the conversation ends `blocked` ("the thread is locked"), with no note of its
+  own. A running turn is stopped through stop_workload(), and its reply and its work are not
+  posted or published.
+- The !lock message itself is gated like a bare `!branch` (gate='lock_directive'), so it never
+  becomes a turn, even after an unlock. Its row is born with the provisional directive gate, as
+  `!branch` rows are, so the scheduler cannot pick it up before the lock is set.
+- !lock on a thread that is already locked does nothing and posts nothing.
+
+While locked
+
+The lock is on the conversation, and messages are not marked at all.
+
+- Every new message is recorded exactly as it would be unlocked.
+- claim_turns() leaves locked conversations out of its query, and create_turn() also returns at
+  its first line when conversation.locked is set, before the hold check and the classifier. No
+  turn is created and no model call is spent. create_turn is the one place a Discord turn is
+  created.
+- schedule() ends a queued turn whose conversation is locked as `blocked` ("the thread is
+  locked"), with no note, before the rate limit is checked. That covers a turn create_turn was
+  already building when the lock landed.
+- finish_run() checks the lock when a run ends, however it ended: on a locked conversation it
+  posts no reply and no private half, and publishes nothing.
+- take_branch_directive() and take_fork_directive() do nothing on a locked conversation; the
+  message is recorded like any other.
+
+!unlock
+
+- Clears locked, locked_by and locked_at, and posts, with <place> chosen the same way:
+
+      This <place> is now unlocked for interactions with Max. He will respond in this <place>
+      again.
+- Messages from the locked period are ordinary pending messages. The first pass after the unlock
+  hands them to create_turn like any others: the engagement gate decides whether they get an
+  answer, and anything not answered is history for the next turn.
+- Like `!conv`, a message carrying `!unlock` and a question unlocks first, then the question is
+  handled as an ordinary message, marked addressed so an engage=mention channel still answers
+  it. `!unlock` on its own is gated (gate='lock_directive') and starts no turn.
+- On ingest the lock directive is taken before `!branch` and `!conv`, so `!unlock` and `!branch`
+  in one message both act.
+- !unlock on a thread that is not locked does nothing and posts nothing.
+
+ffweb
+
+- The conversations list gets a "locked" column beside "state": "locked" or "—".
+- The conversation page header says "locked by <name> at <time>" when locked. locked_by holds the
+  operator's Discord id; ffweb shows the name the operators block gives that id, or the id.
+- conversation.locked is added to REQUIRED_COLUMNS.
+
+Titles
+
+TITLE_DIRECTIVE_PREFIX_RE gains `!lock` and `!unlock`. ffweb shows the title ffwatch stored, so
+the directives are filtered there without an ffweb change.
+
+
+7. CONFIG, SCHEMA AND DOCS
+
+- Schema: add turn.agent_class TEXT and conversation.locked, locked_by, locked_at to the
+  added-columns list in ffwatch.py.
+- ffbox/README.md: document !lock and !unlock wherever !branch and !conv are described.
+- ffwatch.py DEFAULTS: rate_limits.player 5 -> 15, add "users": {}, max_budget_usd 10 -> 30.
+- 05-discord-setup.sh seeded template: player 5 -> 15, add "users": {}. The script only seeds a
+  missing key, so existing boxes are not touched.
+- Live ~/.config/ffbox/config.json: rate_limits.player 10 -> 15, add "users": {}.
+- ffbox/config.md: the rate_limits section, the max_budget_usd rows, the "Two halves" table and
+  the text under it, and the user_pool/operator_pool section.
+- ffbox/README.md: the passages on the conversation's fence, the fork's class, and the class
+  that is not fenced, plus the "five turns per rolling 24 hours" line.
+- docs/docker-security-model.md: "The class that is not fenced".
+
+
+8. TESTS (test_ffwatch.py, test_ffweb.py)
+
+- DEFAULTS: player == 15, max_budget_usd == 30, users == {}.
+- Limit: actor A at the limit is blocked while B in the same channel is not. An override raises
+  one person's limit, 0 blocks, null uncaps, and "users" is never read as a tier.
+- Batch A, B (players) then O (operator): operator tier, actor O, ffdev, O's credential, counts
+  against O only.
+- Batch O then A: player tier, actor A, ffagent, metered key, counts against A.
+- A stranger posting leaves conversation.agent_class alone, and the next operator-triggered turn
+  runs in ffdev.
+- Existing tests that assert the old rules are rewritten to the new ones:
+  test_a_player_never_inherits_an_operators_clearance,
+  test_where_a_conversation_goes_when_a_stranger_speaks_in_it (removed with the function),
+  test_a_discord_conversation_opens_in_the_pool_its_opener_earns,
+  test_an_operators_request_in_a_players_thread_gets_the_clock_and_not_the_network,
+  test_a_capped_lane_tells_a_channel_once_not_every_asker, test_fix_lane_rate_limit, and the
+  DEFAULTS check near line 9270.
+- Blocked notes: two people blocked in one channel each get one note; the same person's second
+  blocked turn that day gets none.
+- Lock: an operator's !lock sets the columns and posts once; a player's !lock changes nothing and
+  posts nothing.
+- The lock and unlock posts say "thread" in a thread and "conversation" in a reply chain.
+- While locked, a player's message and an operator's question are both recorded ungated and
+  create no turn, and no classifier call is made.
+- !lock with a turn queued blocks it; with a run in flight, stops it and posts no reply.
+- After !unlock, the messages posted while locked go to create_turn on the next pass, and a
+  later turn's history includes them.
+- A turn created in the same pass the lock landed is blocked at schedule() and never launches.
+- !unlock plus a question in one message answers the question.
+- title_from drops a leading !lock or !unlock, and ffweb's list shows the locked column.
+
+
+NOT IN SCOPE
+
+- Total spend per person. Only the turn count is limited; each turn is bounded by the $30 cap.
+- Showing per-person counts on the web page or in `ffwatch status`.
