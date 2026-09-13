@@ -6118,7 +6118,7 @@ def test_fix_lane_launches_with_write_capabilities():
     check("and the tripwire still names every git command that leaves the clone",
           all(p in (run["disallowed"] or "") for p in
               ("Bash(git push*)", "Bash(git remote*)", "Bash(git fetch*)",
-               "Bash(git merge*)", "Bash(git rebase*)", "Bash(gh *)")), run["disallowed"])
+               "Bash(git merge *)", "Bash(git rebase*)", "Bash(gh *)")), run["disallowed"])
 
     run_dir = os.path.join(case.watcher.conv_dir(1), "runs", run["ffbox_run_id"])
     argv = json.load(open(os.path.join(run_dir, "ffbox-argv.json"), encoding="utf-8"))
@@ -6552,9 +6552,20 @@ def test_the_agent_commits_its_own_work():
     # harvest's identity check has no answer for a legitimate `git merge`.
     check("local git comes with bare Bash rather than an enumeration",
           ffwatch.CAPABILITIES["allowed"] == ["Bash"], ffwatch.CAPABILITIES["allowed"])
-    for verb in ("merge", "rebase", "cherry-pick", "am"):
+    for verb in ("rebase", "cherry-pick", "am"):
         check(f"but git {verb} is still on the tripwire, because it imports somebody else's "
               f"commits", f"Bash(git {verb}*)" in ffwatch.TRIPWIRE)
+    check("and so is git merge, with and without arguments",
+          "Bash(git merge *)" in ffwatch.TRIPWIRE and "Bash(git merge)" in ffwatch.TRIPWIRE,
+          ffwatch.TRIPWIRE)
+    # A trailing `*` with no space is a plain string prefix, so `Bash(git merge*)` denied
+    # `git merge-base` too, and run 234 lost a read-only branch check to it. Nothing that only
+    # reads history may start with a denied prefix.
+    for command in ("git merge-base HEAD origin/master", "git merge-tree HEAD feature"):
+        check(f"but `{command}` is not caught by any prefix entry, because it only reads",
+              not [p for p in ffwatch.TRIPWIRE
+                   if p.endswith("*)") and command.startswith(p[len("Bash("):-len("*)")])],
+              ffwatch.TRIPWIRE)
     for verb in ("push", "remote", "fetch"):
         check(f"and git {verb} is denied too, for the older reason: it reaches a remote",
               f"Bash(git {verb}*)" in ffwatch.TRIPWIRE)
@@ -10288,8 +10299,8 @@ def test_allow_list_is_scope_not_a_boundary():
           ffwatch.TRIPWIRE)
     check("and the four that would import somebody else's commits",
           all(p in ffwatch.TRIPWIRE for p in
-              ["Bash(git merge*)", "Bash(git rebase*)", "Bash(git cherry-pick*)",
-               "Bash(git am*)"]), ffwatch.TRIPWIRE)
+              ["Bash(git merge *)", "Bash(git merge)", "Bash(git rebase*)",
+               "Bash(git cherry-pick*)", "Bash(git am*)"]), ffwatch.TRIPWIRE)
     check("nothing in the capability set can publish on its own",
           not [p for p in ffwatch.CAPABILITIES["allowed"]
                if "push" in p or "gh " in p or "remote" in p], ffwatch.CAPABILITIES)
