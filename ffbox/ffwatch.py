@@ -2321,7 +2321,7 @@ def user_limit(cfg, actor):
     rate_limits.users is keyed by a LABEL somebody chose, usually the person's handle, with the
     numeric Discord id inside:
 
-        "users": {"junktion": {"discord": "419904541656350720", "limit": 40}}
+        "users": {"somebody": {"discord": "123456789012345678", "limit": 40}}
 
     Nothing reads the label, so an out-of-date handle does no harm. The id is what matches.
     `limit` is returned as written: a number, 0 for no turns, null (or no key) for uncapped.
