@@ -15115,6 +15115,57 @@ def test_directives_stack_at_the_front_of_a_line():
     check("a message of only directives never becomes a turn", gate is not None, gate)
 
 
+def test_a_one_line_conv_in_a_report_channel_forks_onto_the_branch():
+    """Conversation 180's post, as it should have gone: `!conv 179 <the report>` on one line.
+
+    Posted in a private thread_per_message channel (#dev-bug-reports) naming a public bug thread
+    that owns a branch and a session. The new report continues 179: it takes the branch and the
+    session, the text after the directive is its question, and the turn that answers it starts
+    on the branch and resumes the copied session.
+    """
+    print("directives: a one-line !conv in a report channel")
+    case, fixture = fork_case("stacked-conv-report")
+    case.cfg["watch"]["dev_chat"]["thread_per_message"] = True
+    check("the channel is a report channel", ffwatch.thread_per_message_for(case.cfg, "dev_chat"))
+    origin, host = git_origin(case)
+    push_a_stranger_branch(host, "ffbox/flying-station-signal")
+    ok, why = case.watcher.adopt_branch(1, "ffbox/flying-station-signal", by=LOTHSAHN)
+    check("the source owns a branch", ok, why)
+
+    question = "Signal emitters while moving don't show in the station info screen."
+    say_in_devchat(case, fixture, 6201, f"!conv 1 {question}")
+    forks = case.rows("SELECT * FROM conversation WHERE forked_from IS NOT NULL")
+    check("the one-line directive forks conversation 1",
+          len(forks) == 1 and forks[0]["forked_from"] == 1,
+          case.rows("SELECT id, forked_from, title FROM conversation"))
+    fork = forks[0]
+    check("onto its branch", fork["branch"] == "ffbox/flying-station-signal", fork["branch"])
+    check("with its session", fork["fork_session"] is not None, fork)
+    check("named after the report, not the directive", fork["title"] == question, fork["title"])
+    said = case.rows("SELECT gate, addressed FROM message WHERE discord_id='6201'")[0]
+    check("and the report is a question to answer",
+          said == {"gate": None, "addressed": 1}, said)
+    posted = _posted(case)
+    check("the operator is told it continues 1 on that branch",
+          posted and posted[-1].startswith("ok — this continues conversation")
+          and "ffbox/flying-station-signal" in posted[-1], posted)
+
+    case.watcher.claim_turns()
+    turns = case.rows("SELECT * FROM turn WHERE conversation_id=?", (fork["id"],))
+    check("the report gets a turn on the fork", len(turns) == 1, turns)
+    fork = case.watcher.db.one("SELECT * FROM conversation WHERE id=?", (fork["id"],))
+    check("which starts on the branch",
+          case.watcher.run_ref(turns[0], fork, log_override=False)
+          == "ffbox/flying-station-signal")
+    case.watcher.launch(turns[0]["id"])
+    run = case.watcher.db.one("SELECT * FROM run WHERE turn_id=?", (turns[0]["id"],))
+    job = json.load(open(os.path.join(os.path.dirname(run["stream_path"]), "job.json"),
+                         encoding="utf-8"))
+    check("and resumes the session it copied",
+          job["session"]["resume"] is True and job["session"]["id"] == fork["session_id"],
+          job["session"])
+
+
 def test_a_backlog_only_conversation_never_asks_anthropic_anything():
     """The subscription is read when work arrives, and never on a clock.
 
@@ -21520,6 +21571,7 @@ def main():
         test_an_operator_can_lock_a_thread_and_unlock_it,
         test_a_lock_says_conversation_where_there_is_no_thread,
         test_directives_stack_at_the_front_of_a_line,
+        test_a_one_line_conv_in_a_report_channel_forks_onto_the_branch,
         test_a_discord_conversation_opens_in_the_pool_its_opener_earns,
         test_a_spare_says_which_tier_it_is,
         test_which_branches_are_worth_warming,
