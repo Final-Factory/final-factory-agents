@@ -13,6 +13,7 @@
 #   changed_files.txt   the range's changed paths
 #   changes.patch       the range as a diff
 #   work.bundle         the range as a bundle
+#   lfs/objects/        the LFS content the range adds, which a bundle cannot carry
 #   harvest_error.txt   why there is nothing to publish, when that is the answer
 #
 # WHAT THIS IS NOT. The checks below are the same ones the host used to run and they are not a
@@ -73,7 +74,46 @@ export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$W
 harvest_failed() {
     printf '%s\n' "$1" > "$OUT/harvest_error.txt"
     rm -f "$OUT/work.bundle" "$OUT/branch.txt" "$OUT/changes.patch"
+    rm -rf "$OUT/lfs"
     log "NOT PUBLISHING: $1"
+}
+
+# THE LFS CONTENT THE RANGE ADDS, which the bundle cannot carry.
+#
+# A bundle holds git objects, and an LFS file's git object is only its pointer text. The host's
+# `git push` runs git-lfs's pre-push hook, which uploads the content behind every pointer in the
+# pushed commits and refuses the WHOLE push when it cannot find one: "Git LFS upload failed:
+# (missing) a.png". So a run that changed one texture published nothing, code included. Reproduced
+# 2026-09-13; no run had changed an LFS file before then. The host copies what lands here into its
+# own store before it pushes (push_bundle in ffwatch.py).
+#
+# EVERY POINTER IN THE RANGE, not only the ones at its tip: the hook checks each pushed commit, so a
+# texture committed twice needs both versions. The spec keeps a pointer under 1024 bytes, which
+# keeps the cat-file pass to small blobs. Never fatal: an object missing here leaves the push to
+# name it.
+export_lfs_objects() {
+    local range=$1 oid src dst copied=0 missing=0
+    rm -rf "$OUT/lfs"
+    while read -r oid; do
+        src="$WORKSPACE/.git/lfs/objects/${oid:0:2}/${oid:2:2}/$oid"
+        dst="$OUT/lfs/objects/${oid:0:2}/${oid:2:2}"
+        if [ -f "$src" ] && mkdir -p "$dst" && cp "$src" "$dst/$oid"; then
+            copied=$((copied + 1))
+        else
+            missing=$((missing + 1))
+        fi
+    done < <(g rev-list --objects "$range" 2>/dev/null | cut -d' ' -f1 \
+             | g cat-file --batch-check='%(objecttype) %(objectsize) %(objectname)' 2>/dev/null \
+             | awk '$1 == "blob" && $2 < 1024 { print $3 }' \
+             | g cat-file --batch 2>/dev/null \
+             | awk '/^[0-9a-f]+ blob [0-9]+$/ { p = 0; next }
+                    $0 == "version https://git-lfs.github.com/spec/v1" { p = 1; next }
+                    p && /^oid sha256:/ && length($0) == 75 {
+                        o = substr($0, 12); if (o !~ /[^0-9a-f]/) print o; p = 0 }' \
+             | sort -u)
+    [ "$copied" -eq 0 ] || log "exported $copied LFS object(s) for the host to upload"
+    [ "$missing" -eq 0 ] \
+        || log "WARNING: $missing LFS object(s) in the range are not in this workspace; the push will name them"
 }
 
 g status --porcelain > "$OUT/status.txt" 2>/dev/null || true
@@ -239,6 +279,9 @@ if [ "$OK" = 1 ]; then
         g bundle create "$OUT/work.bundle" "${PUBLISH_BASE_SHA}..${BRANCH}" >/dev/null 2>&1 \
             && log "bundled $(wc -l < "$OUT/changed_files.txt") file(s) on $BRANCH" \
             || { harvest_failed "the range could not be bundled"; }
+        if [ -s "$OUT/work.bundle" ]; then
+            export_lfs_objects "${PUBLISH_BASE_SHA}..${BRANCH}"
+        fi
     else
         log "no changes in the range"
     fi

@@ -35,6 +35,7 @@ import contextlib
 import copy
 import getpass
 import importlib
+import hashlib
 import inspect
 import io
 import json
@@ -17653,6 +17654,85 @@ def test_the_harness_never_creates_a_branch_outside_its_prefix():
     check("and the run says why", "not on origin" in (err or ""), err)
 
 
+def test_a_run_that_changes_an_lfs_file_publishes_its_content():
+    """An LFS file's content goes up with its pointer, or the whole push is refused.
+
+    A bundle carries pointers, not content, and the host's push runs git-lfs's pre-push hook, which
+    refuses the entire push when an object is missing. Reproduced 2026-09-13: one changed texture
+    and the run published nothing. The harvest now exports the objects beside the bundle and
+    push_bundle stages them, checking each one first, because a container wrote them.
+    """
+    print("publication: an LFS file's content goes up with its pointer")
+    if not shutil.which("git-lfs"):
+        print("  skip: git-lfs is not installed")
+        return
+    case = bug_case("lfspublish", venue="private")
+    origin, host = git_origin(case)
+    git_run("-C", host, "lfs", "install", "--local")     # the pre-push hook the real checkout has
+    prefix = case.watcher.cfg["branch_prefix"]
+    branch = prefix + "lfs-work"
+    scratch = os.path.join(case.root, "scratch")
+    git_run("clone", "-q", origin, scratch)
+    git_run("-C", scratch, "lfs", "install", "--local")
+    git_run("-C", scratch, "config", "user.email", "ffbox@final-factory.invalid")
+    git_run("-C", scratch, "config", "user.name", "ffbox")
+    git_run("-C", scratch, "checkout", "-q", "-B", branch, "origin/develop")
+    with open(os.path.join(scratch, ".gitattributes"), "a", encoding="utf-8") as fh:
+        fh.write("*.png filter=lfs diff=lfs merge=lfs -text\n")
+    # TWO VERSIONS, because the hook checks every pushed commit and not only the tip.
+    oids = []
+    for n in range(2):
+        payload = os.urandom(4096)
+        with open(os.path.join(scratch, "Assets", "icon.png"), "wb") as fh:
+            fh.write(payload)
+        oids.append(hashlib.sha256(payload).hexdigest())
+        git_run("-C", scratch, "add", "-A")
+        git_run("-C", scratch, "commit", "-qm", f"ffbox: icon v{n}")
+    pointer = git_run("-C", scratch, "show", "HEAD:Assets/icon.png").stdout
+    check("the fixture commits a pointer, not the bytes",
+          pointer.startswith("version https://git-lfs"), pointer[:80])
+
+    out = os.path.join(case.root, "out")
+    ok, published, error = run_harvest(scratch, out, branch=branch, prefix=prefix,
+                                       base_refs="develop")
+    check("the harvest publishes", ok and published == branch, (published, error))
+    in_dir = lambda root, oid: os.path.isfile(os.path.join(root, "lfs", "objects",
+                                                          oid[:2], oid[2:4], oid))
+    check("both versions' content is exported beside the bundle",
+          all(in_dir(out, oid) for oid in oids), oids)
+
+    # WITHOUT THEM the push is refused, which is what every such run hit before this.
+    bare = os.path.join(case.root, "bare")
+    os.makedirs(bare)
+    shutil.copy(os.path.join(out, "work.bundle"), bare)
+    ok, err, _ = case.watcher.push_bundle(os.path.join(bare, "work.bundle"), branch)
+    check("a bundle with no LFS objects beside it cannot be pushed", not ok, err)
+
+    ok, err, _ = case.watcher.push_bundle(os.path.join(out, "work.bundle"), branch)
+    check("with them the push goes through", ok, err)
+    check("and origin holds both versions' content",
+          all(in_dir(origin, oid) for oid in oids), oids)
+
+    # WHAT A CONTAINER HANDS OVER IS CHECKED. An object whose bytes do not match its name, and a
+    # symlink whose target DOES match, pointing at a file on the host.
+    forged = os.path.join(case.root, "forged")
+    secret = os.path.join(case.root, "host-only.txt")
+    with open(secret, "wb") as fh:
+        fh.write(b"a file on the host\n")
+    liar = hashlib.sha256(b"what the name promises").hexdigest()
+    link = hashlib.sha256(b"a file on the host\n").hexdigest()
+    for name in (liar, link):
+        os.makedirs(os.path.join(forged, "lfs", "objects", name[:2], name[2:4]), exist_ok=True)
+    with open(os.path.join(forged, "lfs", "objects", liar[:2], liar[2:4], liar), "wb") as fh:
+        fh.write(b"something else entirely")
+    os.symlink(secret, os.path.join(forged, "lfs", "objects", link[:2], link[2:4], link))
+    staged = case.watcher.stage_lfs_objects(os.path.join(forged, "work.bundle"), host)
+    store = os.path.join(host, ".git")
+    check("an object that does not hash to its name is not staged", not in_dir(store, liar))
+    check("nor is a symlink, even one whose target hashes to its name", not in_dir(store, link))
+    check("and neither is counted", staged == 0, staged)
+
+
 def _pulls_for(branch):
     return [p for p in GH_STATE["pulls"] if p["_head"] == branch]
 
@@ -21002,6 +21082,7 @@ def main():
         test_the_sweep_backfills_a_thread_that_adopted_before_the_pull_request_existed,
         test_the_mirror_sync_writes_only_what_origin_says,
         test_the_harness_never_creates_a_branch_outside_its_prefix,
+        test_a_run_that_changes_an_lfs_file_publishes_its_content,
         test_the_keeper_expires_a_stale_spare_and_never_a_claimed_one,
         test_the_project_directory_survives_a_workspace_move,
         test_draining_destroys_what_is_idle_and_nothing_else,

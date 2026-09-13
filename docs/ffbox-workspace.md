@@ -73,6 +73,8 @@ read them — so the host uses the container's files for **intent** (which branc
 | bundle really contains `.github/` | refused — CI configuration |
 | bundle really carries another author | refused — identity this run does not own |
 | host cannot write its own derivation | **refused** — see bug 4 below |
+| `lfs/objects/` beside the bundle | each object copied into the host checkout's LFS store for the push to upload, only if it is a regular file at its own path whose content hashes to its name |
+| an LFS object that fails that check, or is missing | left out; git-lfs's pre-push hook then refuses the push and names it |
 
 ### F7 is gone, not mitigated
 
