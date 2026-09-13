@@ -133,6 +133,39 @@ else
     bad "base_sha.txt is $(cat "$TMP/out/base_sha.txt" 2>/dev/null)"
 fi
 
+# --- an object damaged through its hardlink ---------------------------------------------------
+#
+# The cache entry stores each LFS file once: CI hardlinks the stored object to the checked-out file.
+# A program that writes INTO the file damages the object too, and git-lfs refuses a damaged object.
+# The mirror, listed as a git alternate, is where the intact copy comes from.
+printf '\nrestore: an object damaged through its hardlink comes back from the mirror\n'
+fresh_workspace
+restore || bad "the restore failed: $(tail -3 "$TMP/log" | tr '\n' ' ')"
+restore || bad "a second resync failed: $(tail -3 "$TMP/log" | tr '\n' ' ')"
+if [ "$(grep -cxF "$MIRROR/objects" "$TMP/ws/.git/objects/info/alternates" 2>/dev/null)" = 1 ]; then
+    ok "the mirror is listed as an alternate, once, after two resyncs"
+else
+    bad "alternates holds: $(tr '\n' ' ' < "$TMP/ws/.git/objects/info/alternates" 2>/dev/null)"
+fi
+_rest=${BRANCH_OID#??}
+_d1=${BRANCH_OID%"$_rest"}
+_d2=${_rest%"${_rest#??}"}
+_obj=$TMP/ws/.git/lfs/objects/$_d1/$_d2/$BRANCH_OID
+ln -f "$TMP/ws/asset.bin" "$_obj"
+printf 'written into the file in place\n' > "$TMP/ws/asset.bin"
+if [ "$(cat "$_obj" 2>/dev/null)" = 'written into the file in place' ]; then
+    ok "the fixture really did damage the stored object"
+else
+    bad "the stored object was not damaged, so the next check proves nothing"
+fi
+if git -C "$TMP/ws" checkout -- asset.bin > "$TMP/log" 2>&1 \
+   && [ "$(cat "$TMP/ws/asset.bin" 2>/dev/null)" = "the branch payload, which master never had" ]; then
+    ok "git puts the real content back, read from the mirror"
+else
+    bad "asset.bin is '$(head -c 60 "$TMP/ws/asset.bin" 2>/dev/null)': $(tr '\n' ' ' < "$TMP/log")"
+fi
+unset _rest _d1 _d2 _obj
+
 # --- the object is in neither -------------------------------------------------------------------
 #
 # A run is worth more than a file: pointer text is wrong in a way the agent can see and say, and a

@@ -92,6 +92,28 @@ export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0=safe.directory
 export GIT_CONFIG_VALUE_0="$WORKSPACE"
 
+# THE MIRROR AS A GIT ALTERNATE, so a damaged LFS object has an intact copy behind it.
+#
+# The cache entry stores each LFS file once: CI hardlinks .git/lfs/objects/<oid> to the checked-out
+# file before it archives, and tar keeps the link. That takes 4.8 GB out of every restore, and it
+# means a program that writes INTO one of those files (PIL's save(), `cp` onto it) rewrites the
+# stored object as well. git, and an agent's Write and Edit tools, replace a file instead, which
+# breaks the link and damages nothing.
+#
+# git-lfs hashes an object before it serves it, and it looks in each alternate's lfs/objects when
+# its own copy is missing or wrong. Without this line a damaged object fails the smudge with
+# "smudge filter lfs failed"; with it the content comes from the mirror. Measured 2026-09-13 with
+# git-lfs 3.0.2 (the image) and 3.4.1 (the host).
+#
+# Alternates are only read, so what a run commits still lands in this workspace's own store, and a
+# :ro mount is enough. git reads ordinary objects through it too, which makes the fetch below copy
+# nothing the mirror already holds. Appended once: --resync runs this again on the same tree.
+if [ -n "$MIRROR" ] && [ -d "$MIRROR/objects" ]; then
+    mkdir -p "$WORKSPACE/.git/objects/info"
+    grep -qxF "$MIRROR/objects" "$WORKSPACE/.git/objects/info/alternates" 2>/dev/null \
+        || printf '%s\n' "$MIRROR/objects" >> "$WORKSPACE/.git/objects/info/alternates"
+fi
+
 _have=$(git -C "$WORKSPACE" rev-parse --verify --quiet HEAD 2>/dev/null || echo "")
 log "archive is at ${_have:-<no HEAD>}"
 
