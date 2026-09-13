@@ -14868,6 +14868,55 @@ def test_a_directive_beside_a_question_keeps_its_turn():
     check("a turn is made for it", case.watcher.create_turn(conv) is not None)
 
 
+def test_a_conversation_is_named_by_its_question_not_its_directive():
+    """`!branch develop` says where the work happens. The title is for what the work IS.
+
+    Found on the build server 2026-09-12: eight bug reports in a row on the conversation page, all
+    titled `!branch develop`, and twelve more titled `!branch develop <the report>` because the
+    directive was typed on the same line.
+    """
+    print("titles: the directive is left out")
+    title_from = ffwatch.title_from
+    check("a directive line is skipped for the line under it",
+          title_from("!branch develop\nMining lasers miss") == "Mining lasers miss",
+          title_from("!branch develop\nMining lasers miss"))
+    check("a directive in front of the text is cut off it",
+          title_from("!branch develop Host FPS drops") == "Host FPS drops",
+          title_from("!branch develop Host FPS drops"))
+    check("so is a !conv, in either spelling, and two in a row",
+          title_from("!conv 4 !conversation 5 what about this") == "what about this",
+          title_from("!conv 4 !conversation 5 what about this"))
+    check("a directive and nothing else names nothing", title_from("!branch develop") is None,
+          title_from("!branch develop"))
+    check("prose that mentions a directive is prose",
+          title_from("why does !branch develop not work") == "why does !branch develop not work",
+          title_from("why does !branch develop not work"))
+    check("and text with no directive is untouched, cut to 100",
+          title_from("x" * 150) == "x" * 100)
+
+    case, _ = branch_directive_case("title-directive", "!branch develop\nMining lasers miss",
+                                    author=LOTHSAHN)
+    check("through the ingest, the conversation is named by the report",
+          case.rows("SELECT title FROM conversation")[0]["title"] == "Mining lasers miss",
+          case.rows("SELECT title FROM conversation"))
+
+    # A BARE DIRECTIVE names nothing, and the operator's next words name the conversation.
+    case, _ = branch_directive_case("title-bare", "!branch develop", author=LOTHSAHN)
+    check("a bare directive leaves the title empty",
+          case.rows("SELECT title FROM conversation")[0]["title"] is None,
+          case.rows("SELECT title FROM conversation"))
+    case.watcher.insert_message(1, message(4902, "Mining lasers miss", author=LOTHSAHN,
+                                           name="lothsahn"))
+    check("the next message that says something names it",
+          case.rows("SELECT title FROM conversation")[0]["title"] == "Mining lasers miss",
+          case.rows("SELECT title FROM conversation"))
+    case.watcher.insert_message(1, message(4903, "and the beams too", author=LOTHSAHN,
+                                           name="lothsahn"))
+    check("and the one after it does not rename it",
+          case.rows("SELECT title FROM conversation")[0]["title"] == "Mining lasers miss",
+          case.rows("SELECT title FROM conversation"))
+
+
 def test_naming_a_base_bases_the_work_there_instead_of_adopting_it():
     """`!branch develop` means "do this work on develop", never "push to develop".
 
@@ -20887,6 +20936,7 @@ def main():
         test_a_directive_nobody_may_act_on_is_left_an_ordinary_message,
         test_a_directive_only_message_adopts_and_asks_for_no_turn,
         test_a_directive_beside_a_question_keeps_its_turn,
+        test_a_conversation_is_named_by_its_question_not_its_directive,
         test_naming_a_base_bases_the_work_there_instead_of_adopting_it,
         test_a_refused_directive_links_the_thread_holding_it_and_spends_no_turn,
         test_the_comment_poll_is_not_the_discord_sweeps_passenger,

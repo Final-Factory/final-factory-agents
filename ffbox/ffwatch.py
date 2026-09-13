@@ -3291,6 +3291,39 @@ def is_only_fork_directive(content):
     return len(lines) == 1 and FORK_DIRECTIVE_RE.fullmatch(lines[0].strip()) is not None
 
 
+# A DIRECTIVE AT THE FRONT OF A LINE, for naming only. Looser than the two above on purpose: those
+# decide whether to ACT, and a sentence must not be acted on, so they want the directive alone on
+# its line. A name only has to leave it out, and `!branch develop Host FPS drops` typed on one
+# line -- which the build server's conversations 143-154 were -- is the same noise in front of
+# the same report whether or not anything acted on it.
+TITLE_DIRECTIVE_PREFIX_RE = re.compile(r"^(?:!branch\s+\S+|!conv(?:ersation)?\s+\d+)(?:\s+|$)")
+
+
+def title_from(text):
+    """A conversation's name from the text that opened it, with the directives left out.
+
+    TITLED BY THE QUESTION, NOT BY THE COMMAND. `!branch develop` or `!conv 85` is so often the
+    first line of an operator's message that a list of conversations named by first lines is a
+    list of branch names and conversation numbers, which says where the work happens and nothing
+    about what it is. The words after the directive are what the operator came to ask.
+
+    Stripped from EVERYBODY'S text, not only an operator's. Whether a directive is acted on
+    depends on who wrote it; whether a `!branch x` in front of a line describes the conversation
+    does not. Used for Discord thread names too: a thread this box opened was named from a title,
+    and the sweep reads that name back on every pass.
+
+    None when nothing is left -- a message that is only a directive, or only an attachment. The
+    conversation then takes a name from the first message that has one; see insert_message.
+    """
+    for line in (text or "").strip().splitlines():
+        line = line.strip()
+        while (lead := TITLE_DIRECTIVE_PREFIX_RE.match(line)):
+            line = line[lead.end():]
+        if line:
+            return line[:100]
+    return None
+
+
 def discord_link(conv, cfg=None):
     """A jump link to where this conversation lives, or None when it has no Discord side.
 
@@ -6495,6 +6528,17 @@ class Watcher:
                         " WHERE id=? AND (in_watermark_id IS NULL OR CAST(in_watermark_id AS"
                         " INTEGER) < CAST(? AS INTEGER))",
                         (now_iso(), discord_id, conv_id, discord_id))
+        # A CONVERSATION OPENED BY A BARE DIRECTIVE HAS NO NAME YET, because title_from leaves
+        # one out rather than call it `!branch develop`. The first message after it that says
+        # something names it, which is what the operator's next line is. Only ever into an
+        # EMPTY title, so a thread's name or a first line already chosen is never replaced.
+        # Inbound messages only: the bot's own reply is not what the conversation is about.
+        # A bare `!conv` fills from the source in fork_conversation, and finds this left alone.
+        if not author.get("bot"):
+            named = title_from(message_text(msg))
+            if named:
+                self.db.execute("UPDATE conversation SET title=? WHERE id=? AND title IS NULL",
+                                (named, conv_id))
         # A STRANGER IN THE CHAIN TAKES THE FENCE BACK. Checked on every message that is
         # actually new -- the rowcount check above already dropped the duplicates, so a
         # re-read of a thread cannot re-log a demotion that happened days ago.
@@ -6900,7 +6944,7 @@ class Watcher:
             kind=watch.get("kind") or "ask",
             channel_id=meta.get("parent_id") or thread_id,
             guild_id=meta.get("guild_id"),
-            title=meta.get("name"),
+            title=title_from(meta.get("name")),
             root_message_id=thread_id,
             opener=meta.get("owner_id"),
             is_thread=True,
@@ -6962,13 +7006,12 @@ class Watcher:
             if known:
                 root_id = self.db.scalar(
                     "SELECT thread_id FROM conversation WHERE id=?", (known["conversation_id"],))
-        title = (msg.get("content") or "").strip().splitlines()
         conv_id = self.upsert_conversation(
             root_id or str(msg.get("id")),
             kind="operator_dm",
             channel_id=channel_id,
             guild_id=None,
-            title=(title[0][:100] if title else None),
+            title=title_from(msg.get("content")),
             root_message_id=root_id or str(msg.get("id")),
             opener=author_id,
             # An operator by construction -- the check above dropped every other DM -- so this
@@ -7221,8 +7264,7 @@ class Watcher:
             target = self.upsert_conversation(
                 anchor["discord_id"], kind=conv["kind"], channel_id=conv["channel_id"],
                 guild_id=conv["guild_id"],
-                title=(anchor["content"] or "").strip().splitlines()[:1][0][:100]
-                      if (anchor["content"] or "").strip() else None,
+                title=title_from(anchor["content"]),
                 root_message_id=anchor["discord_id"], opener=anchor["author_id"],
                 is_thread=False, alias=conv["watch_alias"],
                 # The anchor opens this one, so it is the anchor's author who picks the class
@@ -7561,19 +7603,15 @@ class Watcher:
         # same wherever the directive was typed.
         author_id = str((msg.get("author") or {}).get("id") or "")
         if fork_directive(msg.get("content") or "") and is_operator(self.cfg, author_id):
-            # TITLED BY THE QUESTION, NOT BY THE COMMAND. `!conv 85` is the whole first line
-            # and it makes a useless name in a list; the line under it, when there is one, is
-            # what the operator actually came to ask. With nothing under it the title is left
-            # empty here and fork_conversation fills in the source's, so a bare directive names
-            # the conversation it continues.
-            title = [ln for ln in (msg.get("content") or "").strip().splitlines()
-                     if ln.strip() and not FORK_DIRECTIVE_RE.fullmatch(ln.strip())]
+            # TITLED BY THE QUESTION, NOT BY THE COMMAND -- see title_from. With nothing under
+            # the directive the title is left empty here and fork_conversation fills in the
+            # source's, so a bare directive names the conversation it continues.
             conv_id = self.upsert_conversation(
                 message_id,
                 kind=conv_kind,
                 channel_id=channel_id,
                 guild_id=msg.get("guild_id"),
-                title=(title[0][:100] if title else None),
+                title=title_from(msg.get("content")),
                 root_message_id=message_id,
                 opener=author_id,
                 is_thread=False,
@@ -7621,13 +7659,12 @@ class Watcher:
         # invisible on the web page, and in a thread_per_message channel it is also the name
         # of the thread the report is answered in, where "report 1548..." is what a person
         # would have had to click to find out what it was about.
-        title = message_text(root).strip().splitlines()
         conv_id = self.upsert_conversation(
             root.get("id"),
             kind=conv_kind,
             channel_id=channel_id,
             guild_id=msg.get("guild_id"),
-            title=(title[0][:100] if title else None),
+            title=title_from(message_text(root)),
             root_message_id=root.get("id"),
             opener=(root.get("author") or {}).get("id"),
             is_thread=False,
@@ -14195,9 +14232,8 @@ class Watcher:
             raise RuntimeError(f"{why}. Nothing was started and nothing was recorded — the "
                                f"prompt is still yours to send {when}.")
         key = local_message_key()
-        first_line = prompt.splitlines()[0][:100]
         conv_id = self.upsert_conversation(
-            key, kind=kind, channel_id=None, title=first_line,
+            key, kind=kind, channel_id=None, title=title_from(prompt),
             root_message_id=key, opener=getpass.getuser(), is_thread=False,
             agent_class=agent_class)
         self.insert_message(conv_id, {
@@ -14459,7 +14495,7 @@ class Watcher:
             stamp = now_iso()
 
         conv_id = self.upsert_conversation(
-            key, kind="shell", channel_id=None, title=prompt.splitlines()[0][:100],
+            key, kind="shell", channel_id=None, title=title_from(prompt),
             root_message_id=key, opener=getpass.getuser(), is_thread=False)
         self.db.execute("UPDATE conversation SET created_at=?, last_activity_at=?, state='idle',"
                         " lane='dev' WHERE id=?", (stamp, stamp, conv_id))
