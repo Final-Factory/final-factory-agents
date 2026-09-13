@@ -56,6 +56,7 @@ import select
 import shutil
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -15485,6 +15486,9 @@ class Watcher:
         if got.returncode != 0:
             return False, "could not read the work bundle: " + \
                 (got.stderr or "").strip()[:200], existed
+        staged = self.stage_lfs_objects(bundle, git_dir)
+        if staged:
+            log(f"publish {branch}: staged {staged} LFS object(s) for the push to upload")
         pushed = git("push", remote, f"{ref}:refs/heads/{branch}")
         if pushed.returncode != 0:
             # THE LIKELY CAUSE NAMED, because git's own message ("non-fast-forward", "fetch
@@ -15499,6 +15503,72 @@ class Watcher:
                            + (pushed.stderr or "").strip()[:200] + hint), existed
         self.set_upstream(git, remote, branch)
         return True, None, existed
+
+    @staticmethod
+    def stage_lfs_objects(bundle, git_dir):
+        """Copy the LFS objects the harvest left beside `bundle` into git_dir's own LFS store.
+        Returns how many were copied.
+
+        A bundle carries an LFS file's pointer and not its content, and the push that follows runs
+        git-lfs's pre-push hook, which uploads the content behind every pointer in the pushed
+        commits and refuses the WHOLE push when one is missing ("Git LFS upload failed: (missing)
+        ..."). harvest-workspace.sh exports that content to lfs/objects next to the bundle; this
+        puts it where the hook looks. Reproduced 2026-09-13: until then a run that changed one
+        texture published nothing at all.
+
+        A CONTAINER WROTE THESE FILES, so none of them is taken on trust. An object is copied only
+        when it sits at the path its name implies, is a regular file opened with O_NOFOLLOW (a
+        symlink cannot point this at a file on the host; O_NONBLOCK so a FIFO cannot hang it), and
+        hashes to its name. The hash is taken over the bytes as they are copied, so nothing can
+        change between the check and the copy. Anything else is logged and left out, and the push
+        then names what is missing. An object the store already holds is left alone.
+        """
+        src_root = os.path.join(os.path.dirname(bundle), "lfs", "objects")
+        if os.path.islink(src_root) or not os.path.isdir(src_root):
+            return 0
+        found = subprocess.run(["git", "-C", git_dir, "rev-parse", "--path-format=absolute",
+                                "--git-common-dir"], capture_output=True, text=True)
+        if found.returncode != 0 or not found.stdout.strip():
+            log(f"publish: could not find the git directory of {git_dir} to stage LFS objects in")
+            return 0
+        dst_root = os.path.join(found.stdout.strip(), "lfs", "objects")
+        copied = 0
+        for top, _dirs, files in os.walk(src_root):
+            for name in files:
+                path = os.path.join(top, name)
+                if (len(name) != 64 or set(name) - set("0123456789abcdef")
+                        or os.path.relpath(path, src_root) != os.path.join(name[:2], name[2:4], name)):
+                    log(f"publish: ignoring lfs/objects/{os.path.relpath(path, src_root)}: "
+                        f"not where an LFS object lives")
+                    continue
+                dest = os.path.join(dst_root, name[:2], name[2:4], name)
+                if os.path.exists(dest):
+                    continue
+                part = f"{dest}.{os.getpid()}.part"
+                try:
+                    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                    with os.fdopen(fd, "rb") as src:
+                        if not stat.S_ISREG(os.fstat(src.fileno()).st_mode):
+                            log(f"publish: ignoring LFS object {name}: not a regular file")
+                            continue
+                        os.makedirs(os.path.dirname(dest), exist_ok=True)
+                        digest = hashlib.sha256()
+                        with open(part, "wb") as out:
+                            for chunk in iter(lambda: src.read(1 << 20), b""):
+                                digest.update(chunk)
+                                out.write(chunk)
+                    if digest.hexdigest() != name:
+                        log(f"publish: ignoring LFS object {name}: its content does not hash to "
+                            f"its name")
+                        os.unlink(part)
+                        continue
+                    os.replace(part, dest)
+                    copied += 1
+                except OSError as exc:
+                    log(f"publish: ignoring LFS object {name}: {exc}")
+                    with contextlib.suppress(OSError):
+                        os.unlink(part)
+        return copied
 
     @staticmethod
     def set_upstream(git, remote, branch):
