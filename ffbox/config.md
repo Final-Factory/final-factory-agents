@@ -548,7 +548,9 @@ block.
 | `review_hold_pct` | `0.75` | Above this share of the account that would pay, a `#codereview` trigger — or a ripe batch of pull-request feedback — waits for the window to refill instead of starting. Asked per pull request, since the account that pays is per operator. |
 | `new_conversation_hold_pct` | `0.9` | Above this, a brand-new conversation waits for its first turn. |
 
-Not seeded. A box with no `subscription` block gets exactly the defaults above.
+Seeded with the two `_hold_pct` keys at their defaults, so the thresholds are on page;
+`refresh_secs` and `timeout_secs` are not seeded. A box with no `subscription` block, or with
+only some of its keys, gets the defaults above for whatever is missing.
 
 **Where the numbers come from.** Anthropic, through `ffbox/claude_keys.py` — the same module
 that draws ffweb's `/claude` page, so the page and the daemon cannot disagree. A key from

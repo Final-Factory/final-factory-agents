@@ -500,6 +500,12 @@ for key, value in (
     # hold with no reading behind it to fail open from, and a box that stopped answering
     # overnight because a template said so is a fault nobody would think to look for.
     ("quiet_hours", {"start": None, "end": None, "timezone": None}),
+    # HOW FULL A SUBSCRIPTION MAY GET BEFORE WORK WAITS FOR IT TO REFILL, as a share of whichever
+    # of the five-hour and seven-day windows is fuller, on the account that would pay. These are
+    # ffwatch's own defaults, seeded so the numbers are on page rather than only in config.md: a
+    # #codereview trigger stands down at 75%, a Discord conversation at 90%. null or 0 turns
+    # that hold off. refresh_secs and timeout_secs are left to DEFAULTS.
+    ("subscription", {"review_hold_pct": 0.75, "new_conversation_hold_pct": 0.9}),
     # ONE KEY OUT OF THE CLUSTERING BLOCK, and deliberately not the other seven. ffwatch
     # deep-merges this section, so a config naming one key inherits the rest of DEFAULTS
     # ["cluster"] rather than replacing it -- which means the shipped file can put the one
