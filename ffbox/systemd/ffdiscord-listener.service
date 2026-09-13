@@ -46,6 +46,8 @@ ExecStart=@HOME@/.local/bin/ffdiscord-listener
 EnvironmentFile=-@HOME@/.config/ffbox/secrets.env
 Restart=always
 RestartSec=5
+# Soft 100000 instead of systemd's default 1024; see ffwatch.service for why.
+LimitNOFILE=100000:524288
 
 [Install]
 WantedBy=ffbox.target
