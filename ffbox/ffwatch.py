@@ -19323,6 +19323,27 @@ PUBLIC_TIMED_OUT = ("This one ran past the time I am allowed to spend on a singl
                     "stopped part way through and there is no answer to give. A narrower "
                     "question usually gets through.")
 
+# A turn stopped by the MONEY ceiling, `max_budget_usd`. On 2026-09-13 conversation 172, a
+# player's bug report, spent $10.15 over 59 turns and got PUBLIC_NO_ANSWER, telling a player
+# something broke and to ask again. Nothing broke, and a fresh ask starts over. The next message
+# in the thread RESUMES the conversation's transcript instead, so the useful advice is to prompt
+# it to carry on from where it stopped. Worded by Lothsahn; "time" rather than money on purpose,
+# because the spend is the harness's business and not the player's.
+PUBLIC_OVER_BUDGET = ("Sorry, I had to do a lot of thinking there and ran out of time. "
+                      "You or a dev can prompt me to continue.")
+
+
+def result_hit_budget(result):
+    """Did the CLI end this run on `--max-budget-usd`?
+
+    Both fields, because they are two names for one stop and either alone is one CLI release
+    away from being renamed: `subtype` has said error_max_budget_usd since the flag existed, and
+    `terminal_reason` says budget_exhausted on the build that ended conversation 172.
+    """
+    return isinstance(result, dict) and (
+        str(result.get("subtype") or "") == "error_max_budget_usd"
+        or str(result.get("terminal_reason") or "") == "budget_exhausted")
+
 # A turn a PERSON ended, from the box page or `ffwatch stop`. Neither of the two above fits it,
 # and both get the advice wrong in a different direction: nothing broke, so "something broke on
 # my end" is untrue, and the question is fine, so unlike a run that spent the whole ceiling
@@ -19366,6 +19387,12 @@ def result_failure_detail(result):
         # loud at somebody.
         status = result.get("api_error_status")
         return f"the API returned {status}" if status else "the API returned an error"
+    if result_hit_budget(result):
+        # The same courtesy: `the run failed: error_max_budget_usd` is a machine word. What the
+        # run actually spent is the number an operator weighs against the ceiling.
+        cost = result.get("total_cost_usd")
+        return (f"it hit its spending ceiling at ${float(cost):.2f}"
+                if isinstance(cost, (int, float)) else "it hit its spending ceiling")
     subtype = str(result.get("subtype") or "").strip()
     if subtype and subtype != "success":
         return subtype
@@ -19569,14 +19596,18 @@ def compose_head(conv, turn, terminal, result, verdict, timeout_kind, job,
         # that IS the error string. Posting it would put a stack-shaped line in a player's
         # thread as though it were the reply.
         if not answer_is_publishable(turn, terminal):
-            # THREE ENDINGS AND THREE SENTENCES, because the advice differs every time. A run
-            # stopped by its own ceiling is not a run that broke; a run a person stopped is
-            # neither, and is the only one of the three where asking exactly the same question
+            # FOUR ENDINGS AND FOUR SENTENCES, because the advice differs every time. A run
+            # stopped by its own ceiling, time or money, is not a run that broke; a run a person
+            # stopped is neither, and is the only one where asking exactly the same question
             # again is the right thing to do.
             if stopped:
                 answer = PUBLIC_STOPPED
+            elif terminal == "timed_out":
+                answer = PUBLIC_TIMED_OUT
+            elif result_hit_budget(result):
+                answer = PUBLIC_OVER_BUDGET
             else:
-                answer = PUBLIC_TIMED_OUT if terminal == "timed_out" else PUBLIC_NO_ANSWER
+                answer = PUBLIC_NO_ANSWER
             # NOT TRUNCATED — withheld. None of the agent's words are in this reply, so there
             # is nothing owed to an attachment, and saying otherwise here would hand
             # record_reply the whole withheld summary to upload beside the sentence that exists
