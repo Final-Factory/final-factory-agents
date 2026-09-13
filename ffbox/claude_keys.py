@@ -1087,10 +1087,16 @@ class ClaudeKeys:
             if util is None and reset is None:
                 continue
             status = (headers.get(f"{RATELIMIT_PREFIX}{key}-status") or "").strip().lower()
-            # An overall `rejected` with a per-window status that did not say so is still this
-            # window's problem when it is the one that is full; taking the worse of the two is
-            # how a locked key stops reading as merely busy.
-            locked = next((s for s in (status, overall) if s and s != "allowed"), "")
+            # ONLY `rejected` IS A LOCK. Anthropic also sends `allowed_warning` when a window is
+            # getting close, and until 2026-09-12 anything that was not exactly `allowed` counted
+            # as locked — so a key that could still be spent read `locked: allowed_warning`,
+            # scored as full, and tripped the holds early. ffbox has its own warnings and
+            # cutoffs short of the limit; this field is for Anthropic refusing requests.
+            #
+            # The window's own status wins when it sent one. The overall status stands in only
+            # when it did not, which is how the rejection reply reads — it carries the overall
+            # `rejected` and no per-window statuses at all.
+            locked = "rejected" if (status or overall) == "rejected" else ""
             fraction = _as_float(util)
             rows.append({"key": {"5h": "five_hour", "7d": "seven_day"}[key],
                          "label": label,

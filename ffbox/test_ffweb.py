@@ -2613,6 +2613,50 @@ def test_a_key_that_has_run_out_still_says_when_it_comes_back():
           five["resets_at"] is None and not five.get("reset_remembered"), five)
 
 
+def test_a_warning_from_anthropic_is_not_a_lock():
+    """`allowed_warning` means close to the limit and still spendable, so nothing is locked.
+
+    THE FAILURE THIS PINS. The header parser counted every status that was not exactly `allowed`
+    as a lock, so a key Anthropic was only warning about read `locked: allowed_warning` on the
+    page, took the `locked` state, and scored as a full window, which held work ffbox's own
+    thresholds had not asked to hold. It also copied the overall status onto a window whose own
+    status said `allowed`.
+    """
+    print("a warning from anthropic is not a lock")
+    headers = dict(CLAUDE_HEADERS)
+    headers["anthropic-ratelimit-unified-status"] = "allowed_warning"
+    headers["anthropic-ratelimit-unified-5h-status"] = "allowed_warning"
+
+    def probe(token):
+        return dict(headers), ""
+
+    keys = claude_keys_stub(pool=[CLAUDE_POOL[3]], probe=probe)
+    rec = keys.read()[0]
+    five = claude_keys.window_of(rec, "five_hour")
+    week = claude_keys.window_of(rec, "seven_day")
+    check("a warned window is not locked", five["locked"] == "", five)
+    check("nor is the other window, whose own status said allowed", week["locked"] == "", week)
+    check("so the key is not in the locked state", rec["state"] != "locked", rec["state"])
+    worst, _key = claude_keys.fullest_window(rec)
+    check("and the chooser scores it on its real usage, not as full",
+          worst is not None and worst < 1.0, worst)
+
+    srv = serve(claude_keys=keys)
+    try:
+        _c, _h, body = srv.get("/claude")
+        block = text_of(body).split('<div class="item key">')[1]
+    finally:
+        srv.stop()
+    check("the page does not say locked", "locked:" not in block, block[:800])
+
+    # A WINDOW'S OWN `rejected` IS STILL A LOCK, even when the overall status only warns.
+    headers["anthropic-ratelimit-unified-5h-status"] = "rejected"
+    later = keys.read(now=time.time() + ffweb.CLAUDE_USAGE_TTL_SECS + 1)[0]
+    check("a window that says rejected is locked",
+          claude_keys.window_of(later, "five_hour")["locked"] == "rejected"
+          and later["state"] == "locked", later)
+
+
 def test_actions_are_off_by_default():
     srv = serve(enable_actions=False)
     try:
@@ -4048,6 +4092,7 @@ def main():
         test_two_processes_share_one_reading_through_the_state_directory,
         test_a_key_that_cannot_read_its_usage_is_asked_the_other_way_once,
         test_a_key_that_has_run_out_still_says_when_it_comes_back,
+        test_a_warning_from_anthropic_is_not_a_lock,
         test_actions_are_off_by_default,
         test_actions_call_ffwatch_not_the_database,
         test_the_agent_class_is_chosen_only_when_a_conversation_opens,
