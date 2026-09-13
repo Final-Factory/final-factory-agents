@@ -958,7 +958,7 @@ triggers turn 9, it runs in the operator's pool — open network, container git 
 `ff-agents` — with that text in the session. That is intended: the operator is steering the bot.
 The prompt still labels Discord user text as untrusted, the host opens pull requests, and nothing
 merges without review. An operator who does not trust where a thread is going **locks it**: `!lock`
-alone on a line stops every turn in the conversation until an operator sends `!unlock`. See the
+at the front of a line stops every turn in the conversation until an operator sends `!unlock`. See the
 README's "Locking a thread".
 
 `ffwatch`'s journal names the budget only when it differs from the container:

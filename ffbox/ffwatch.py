@@ -3292,83 +3292,116 @@ DM_DOORBELL_KINDS = ("operator_dm", "player_dm")
 LOCAL_KIND_ORIGIN = {"shell": "this machine's shell", "web": "the web page"}
 
 
-# THE OPERATOR DIRECTIVE THAT NAMES A BRANCH. A line whose whole content is `!branch <name>`,
-# in a message an operator wrote. It is recognised from the Discord-authenticated author id on
-# the stored row and from nothing in the text: what a message SAYS about who wrote it is worth
-# nothing here, as it is everywhere else in this file.
+# THE OPERATOR DIRECTIVES: `!branch <name>`, `!conv <id>` (or `!conversation <id>`), `!lock` and
+# `!unlock`, in a message an operator wrote. They are recognised from the Discord-authenticated
+# author id on the stored row and from nothing in the text: what a message SAYS about who wrote
+# it is worth nothing here, as it is everywhere else in this file. A player's identical line is
+# prose too, for a different reason: they are not an operator, and nothing below runs for them.
 #
-# Anchored to a whole line, and to the start of it, so a sentence discussing the directive --
-# "tell it `!branch feature/x`" -- is prose and stays prose. A player's identical line is prose
-# too, for a different reason: they are not an operator, and nothing below runs for them.
-BRANCH_DIRECTIVE_RE = re.compile(r"^\s*!branch\s+(\S+)\s*$", re.MULTILINE)
+# READ OFF THE FRONT OF A LINE, AS MANY AS ARE STACKED THERE. `!conv 177 !branch foo` is both of
+# them, `!conv 177 !lock` forks and then locks, and whatever follows the last directive is prose:
+# the question, if there is one. Every argument is a single token, so a line never leaves in
+# doubt where the directives stop and the prose starts.
+#
+# NEVER PART WAY ALONG A LINE, so "why does !branch develop not work" is a sentence about the
+# directive and stays one. And never a longer word: `!locked out of my save` is not a lock.
+#
+# ALL FOUR USED TO HAVE TO BE ALONE ON THEIR LINE, and that cost conversation 177 its lock:
+# Lothsahn wrote `!lock Okay, locking the thread from max. ...` on one line, nothing matched, and
+# the thread stayed open with no note to say so. The title reader already stripped a stacked run
+# like this one; what is acted on and what is left out of a name are now the same parse.
+DIRECTIVE_RE = re.compile(
+    r"!(?:branch\s+(?P<branch>\S+)|conv(?:ersation)?\s+(?P<conv>\d+)|(?P<lock>lock|unlock))"
+    r"(?=\s|$)")
+
+
+def parse_directives(content):
+    """([(verb, argument), ...], [prose line, ...]) for a message, directives in the order typed.
+
+    verb is "branch" with the name, "conv" with the id as an int, or "lock" / "unlock" with None.
+    The prose is every non-empty line with its leading directives taken off.
+    """
+    # THE CHEAP TEST FIRST. Every message the box ingests comes through here, and almost none of
+    # them have a `!` in them at all.
+    if "!" not in (content or ""):
+        return [], [ln.strip() for ln in (content or "").splitlines() if ln.strip()]
+    found, prose = [], []
+    for line in content.splitlines():
+        rest = line.strip()
+        while (lead := DIRECTIVE_RE.match(rest)):
+            if lead.group("branch") is not None:
+                found.append(("branch", lead.group("branch")))
+            elif lead.group("conv") is not None:
+                found.append(("conv", int(lead.group("conv"))))
+            else:
+                found.append((lead.group("lock"), None))
+            rest = rest[lead.end():].lstrip()
+        if rest:
+            prose.append(rest)
+    return found, prose
 
 
 def branch_directive(content):
-    """The branch a `!branch` line names, or None. First one wins."""
-    found = BRANCH_DIRECTIVE_RE.search(content or "")
-    return found.group(1) if found else None
-
-
-def is_only_branch_directive(content):
-    """True when the message is the directive and nothing else — no question to answer."""
-    lines = [ln for ln in (content or "").splitlines() if ln.strip()]
-    return len(lines) == 1 and BRANCH_DIRECTIVE_RE.fullmatch(lines[0].strip()) is not None
-
-
-# THE OPERATOR DIRECTIVE THAT NAMES ANOTHER CONVERSATION. `!conv 85`, or `!conversation 85`,
-# on a line of its own. Both spellings are one rule: `!conv` is what gets typed and
-# `!conversation` is what gets typed by somebody who has forgotten that the short form exists.
-#
-# Anchored like BRANCH_DIRECTIVE_RE and for the same reason -- a sentence about the directive is
-# prose and stays prose -- and recognised from the Discord-authenticated author id on the stored
-# row, never from anything the text claims about who wrote it.
-FORK_DIRECTIVE_RE = re.compile(r"^\s*!conv(?:ersation)?\s+(\d+)\s*$", re.MULTILINE)
+    """The branch a `!branch` names, or None. First one wins."""
+    return next((arg for verb, arg in parse_directives(content)[0] if verb == "branch"), None)
 
 
 def fork_directive(content):
-    """The conversation id a `!conv` line names, or None. First one wins."""
-    found = FORK_DIRECTIVE_RE.search(content or "")
-    return int(found.group(1)) if found else None
-
-
-def is_only_fork_directive(content):
-    """True when the message is the directive and nothing else -- no question to answer."""
-    lines = [ln for ln in (content or "").splitlines() if ln.strip()]
-    return len(lines) == 1 and FORK_DIRECTIVE_RE.fullmatch(lines[0].strip()) is not None
-
-
-# THE OPERATOR DIRECTIVES THAT LOCK AND UNLOCK A CONVERSATION. `!lock` or `!unlock`, alone on its
-# line and anchored like the two above, so a sentence that mentions `!lock` is not one.
-LOCK_DIRECTIVE_RE = re.compile(r"^\s*!(lock|unlock)\s*$", re.MULTILINE)
+    """The conversation id a `!conv` names, or None. First one wins."""
+    return next((arg for verb, arg in parse_directives(content)[0] if verb == "conv"), None)
 
 
 def lock_directive(content):
-    """"lock", "unlock", or None for a message that carries neither directive."""
-    found = LOCK_DIRECTIVE_RE.search(content or "")
-    return found.group(1) if found else None
+    """"lock", "unlock", or None for a message that carries neither directive. First one wins."""
+    return next((verb for verb, _ in parse_directives(content)[0]
+                 if verb in ("lock", "unlock")), None)
 
 
-def is_only_lock_directive(content):
-    """True when the message is nothing but the directive."""
-    lines = [ln for ln in (content or "").strip().splitlines() if ln.strip()]
-    return len(lines) == 1 and LOCK_DIRECTIVE_RE.fullmatch(lines[0].strip()) is not None
+def is_only_directives(content):
+    """True when the message is directives and nothing else -- no question to answer."""
+    found, prose = parse_directives(content)
+    return bool(found) and not prose
 
 
-# What the harness posts when an operator locks or unlocks. {place} is "thread" in a Discord
-# thread and "conversation" in a reply chain, which has no thread to name. Worded by Lothsahn.
-LOCK_NOTE = ("This {place} is now locked from interactions with Max. "
-             "He won't respond in this {place} in the future.")
-UNLOCK_NOTE = ("This {place} is now unlocked for interactions with Max. "
-               "He will respond in this {place} again.")
+# What the harness posts, as Max, when an operator locks or unlocks. {place} is "thread" in a
+# Discord thread and "conversation" in a reply chain, which has no thread to name.
+#
+# EVERY DIRECTIVE GETS ONE, a repeat included. Silence is what a directive that did not parse
+# looks like, so a lock that took and said nothing is indistinguishable from conversation 177's,
+# which did not take. A repeat gets the ALREADY line instead, and changes nothing else.
+#
+# SEVERAL WAYS OF SAYING EACH, picked by lock_note from the message's own id so a re-read says
+# the same thing and a thread locked twice in a week does not read like a form letter. Max voice
+# (plugins/ff-discord/skills/max-voice): no dashes, contractions, and the joke is on Max. Every
+# line still says plainly what happened, because a player reading it needs to know Max has gone.
+LOCK_NOTES = (
+    "Right, that's my cue. This {place} is locked, so I won't be answering in here until a dev "
+    "lets me back in.",
+    "I'm leaving now. This {place} is locked and I'll be keeping my opinions to myself in here "
+    "until a dev says otherwise.",
+    "Clocking out of this {place}. It's locked, so no more replies from me here until a dev "
+    "unlocks it.",
+    "Stepping out. A dev has locked this {place}, and I won't say another word in it until "
+    "they unlock it.",
+)
+UNLOCK_NOTES = (
+    "I'm back. This {place} is unlocked, so I'll be answering in here again.",
+    "And I'm back. A dev unlocked this {place}, and I'm allowed to talk again.",
+    "Let back in. This {place} is unlocked and I'm answering here again.",
+    "Back from my enforced break. This {place} is unlocked, so I'm replying in here again.",
+)
+ALREADY_LOCKED_NOTE = "Still gone. This {place} was already locked, so nothing's changed."
+ALREADY_UNLOCKED_NOTE = "Still here. This {place} wasn't locked, so nothing's changed."
 
 
-# A DIRECTIVE AT THE FRONT OF A LINE, for naming only. Looser than the two above on purpose: those
-# decide whether to ACT, and a sentence must not be acted on, so they want the directive alone on
-# its line. A name only has to leave it out, and `!branch develop Host FPS drops` typed on one
-# line -- which the build server's conversations 143-154 were -- is the same noise in front of
-# the same report whether or not anything acted on it.
-TITLE_DIRECTIVE_PREFIX_RE = re.compile(
-    r"^(?:!branch\s+\S+|!conv(?:ersation)?\s+\d+|!lock|!unlock)(?:\s+|$)")
+def lock_note(verb, place, message_id, already=False):
+    """The note for a `!lock` or `!unlock`, the same one every time for the same message."""
+    if already:
+        text = ALREADY_LOCKED_NOTE if verb == "lock" else ALREADY_UNLOCKED_NOTE
+    else:
+        notes = LOCK_NOTES if verb == "lock" else UNLOCK_NOTES
+        text = notes[int(message_id or 0) % len(notes)]
+    return text.format(place=place)
 
 
 def title_from(text):
@@ -3387,13 +3420,8 @@ def title_from(text):
     None when nothing is left -- a message that is only a directive, or only an attachment. The
     conversation then takes a name from the first message that has one; see insert_message.
     """
-    for line in (text or "").strip().splitlines():
-        line = line.strip()
-        while (lead := TITLE_DIRECTIVE_PREFIX_RE.match(line)):
-            line = line[lead.end():]
-        if line:
-            return line[:100]
-    return None
+    prose = parse_directives(text)[1]
+    return prose[0][:100] if prose else None
 
 
 def discord_link(conv, cfg=None):
@@ -6624,20 +6652,30 @@ class Watcher:
             if named:
                 self.db.execute("UPDATE conversation SET title=? WHERE id=? AND title IS NULL",
                                 (named, conv_id))
-        # AN OPERATOR MAY LOCK OR UNLOCK THE CONVERSATION. First of the directives, so `!unlock`
-        # and `!branch` in one message both act, and on the "actually new" path -- the rowcount
-        # check above already dropped the duplicates -- so a re-read of a thread cannot lock
-        # twice or post its note twice.
-        self.take_lock_directive(conv_id, message_id, author, msg.get("content") or "")
+        # AN OPERATOR MAY UNLOCK THE CONVERSATION. First of the directives, because `!branch` and
+        # `!conv` do nothing on a locked conversation and `!unlock !branch foo` means both. On
+        # the "actually new" path -- the rowcount check above already dropped the duplicates --
+        # so a re-read of a thread cannot unlock twice or post its note twice.
+        content = msg.get("content") or ""
+        lock_verb = lock_directive(content)
+        if lock_verb == "unlock":
+            self.take_lock_directive(conv_id, message_id, author, content)
         # AND AN OPERATOR MAY NAME THE BRANCH. Decided per new message about WHO IS SPEAKING, on
         # the same "actually new" path so a re-read of a thread cannot adopt twice or post its
-        # answer twice.
-        self.take_branch_directive(conv_id, message_id, author, msg.get("content") or "")
+        # answer twice. BEFORE `!conv`, because a fork takes its source's branch and a
+        # conversation keeps its branch for life: `!conv 177 !branch foo` gets foo, and the
+        # fork's ack says it could not also take 177's.
+        self.take_branch_directive(conv_id, message_id, author, content)
         # AND AN OPERATOR MAY POINT THIS CONVERSATION AT ANOTHER ONE. Beside the branch
         # directive because it is decided per new message about who is speaking, and on the same
         # "actually new" path so a sweep's re-read of a thread cannot fork twice or post its
         # answer twice. The routing half of it lives in ingest_channel_message; see there.
-        self.take_fork_directive(conv_id, message_id, author, msg.get("content") or "")
+        self.take_fork_directive(conv_id, message_id, author, content)
+        # AND AN OPERATOR MAY LOCK IT. Last, so `!conv 177 !lock` makes this conversation the fork
+        # and then locks it, where locking first would have the fork refuse a locked
+        # conversation. Nothing above starts a turn, so nothing escapes the lock by going first.
+        if lock_verb == "lock":
+            self.take_lock_directive(conv_id, message_id, author, content)
         # AND NEITHER OF THEM CLAIMED IT, so it is an ordinary message that merely contains
         # something shaped like a directive: a stranger's `!branch`, a `!conv` on a local
         # conversation, a line the parser matched and the policy declined. Guarded on the
@@ -6705,7 +6743,7 @@ class Watcher:
             ok, reason = self.request_base(conv_id, branch, by=author_id)
         else:
             ok, reason = self.adopt_branch(conv_id, branch, by=author_id)
-        alone = is_only_branch_directive(content)
+        alone = is_only_directives(content)
         # NO BRANCH, NO TURN — and that is two rules, not one. A directive on its own has no
         # question in it to answer. A REFUSED directive has one and must still not run it: the
         # operator asked for work on a named branch, this conversation did not get that branch,
@@ -6794,7 +6832,7 @@ class Watcher:
                 f"is not in discord.trust.operators")
             return None
         ok, reason = self.fork_conversation(conv_id, source_id, by=author_id)
-        alone = is_only_fork_directive(content)
+        alone = is_only_directives(content)
         if alone or not ok:
             self.db.execute("UPDATE message SET gate='fork_directive', gate_reason=?"
                             " WHERE id=?", (reason[:200], message_id))
@@ -6820,7 +6858,7 @@ class Watcher:
         return source_id if ok else None
 
     def take_lock_directive(self, conv_id, message_id, author, content):
-        """Act on a `!lock` or `!unlock` line, if an operator wrote one. Returns the verb or None.
+        """Act on a `!lock` or `!unlock`, if an operator wrote one. Returns the verb or None.
 
         THE OPERATOR'S BRAKE. The author of the message that triggers a turn decides its tier,
         its pool and who pays (turn_trust), so an operator gets the last say in any thread. An
@@ -6831,17 +6869,17 @@ class Watcher:
         OPERATORS ONLY, AND SILENTLY OTHERWISE, for the reason take_branch_directive gives. Not
         on a local conversation or a review, for the same reasons.
 
-        !lock sets the columns, posts LOCK_NOTE, ends any queued turn `blocked`, and stops a run
-        in flight; finish_run then publishes and posts nothing from it. The message itself is
-        gated, so it never becomes a turn, even after an unlock.
+        !lock sets the columns, posts one of LOCK_NOTES, ends any queued turn `blocked`, and
+        stops a run in flight; finish_run then publishes and posts nothing from it. The message
+        itself is gated, so it never becomes a turn, even after an unlock.
 
-        !unlock clears the columns and posts UNLOCK_NOTE. On its own it is gated; with a
+        !unlock clears the columns and posts one of UNLOCK_NOTES. On its own it is gated; with a
         question beside it the message stays ungated and is marked addressed, as `!conv` does,
         so the question is answered on the next pass along with anything posted while locked.
 
-        A LOCK ON A LOCKED CONVERSATION, or an unlock on an unlocked one, changes nothing and
-        posts nothing: an operator repeating themselves should not put a second note in the
-        thread.
+        A LOCK ON A LOCKED CONVERSATION, or an unlock on an unlocked one, changes nothing but
+        still posts, the ALREADY note: an operator who hears nothing back cannot tell a repeat
+        from a directive that never parsed.
         """
         verb = lock_directive(content)
         if not verb:
@@ -6855,15 +6893,16 @@ class Watcher:
                 f"is not in the operators block")
             return None
         was_locked = conversation_locked(conv)
-        if verb == "lock" or is_only_lock_directive(content):
+        if verb == "lock" or is_only_directives(content):
             self.db.execute("UPDATE message SET gate='lock_directive', gate_reason=?"
                             " WHERE id=?", (f"!{verb} by {author_id}", message_id))
         else:
             self.db.execute("UPDATE message SET addressed=1 WHERE id=?", (message_id,))
         place = "thread" if conv["is_thread"] else "conversation"
-        if verb == "lock":
-            if was_locked:
-                return verb
+        already = was_locked == (verb == "lock")
+        if already:
+            log(f"conversation {conv_id}: !{verb} by {author_id} changes nothing")
+        elif verb == "lock":
             self.db.execute("UPDATE conversation SET locked=1, locked_by=?, locked_at=?"
                             " WHERE id=?", (author_id, now_iso(), conv_id))
             log(f"conversation {conv_id}: locked by {author_id}")
@@ -6879,14 +6918,11 @@ class Watcher:
                     (conv_id,)):
                 ok, why = self.stop_workload(run["container_name"], detach=True)
                 log(f"conversation {conv_id}: lock stops {run['container_name']}: {why}")
-            text = LOCK_NOTE.format(place=place)
         else:
-            if not was_locked:
-                return verb
             self.db.execute("UPDATE conversation SET locked=0, locked_by=NULL, locked_at=NULL"
                             " WHERE id=?", (conv_id,))
             log(f"conversation {conv_id}: unlocked by {author_id}")
-            text = UNLOCK_NOTE.format(place=place)
+        text = lock_note(verb, place, message_id, already=already)
         last = self.db.one("SELECT * FROM message WHERE id=?", (message_id,))
         self.record_outbound(None, conv_id, "post", {
             "channel": reply_channel(conv), "text": text, "silent": True,

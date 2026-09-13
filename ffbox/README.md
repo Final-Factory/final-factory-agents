@@ -1804,11 +1804,20 @@ So a conversation can be told which branch it owns instead:
 python3 ffbox/ffwatch.py adopt --conversation 51 --branch loth/save-fix
 ```
 
-and, in a watched Discord channel, a line whose whole content is
+and, in a watched Discord channel, a line that starts with
 
 ```
 !branch loth/save-fix
 ```
+
+**Directives stack at the front of a line.** `!branch`, `!conv`, `!lock` and `!unlock` are read
+off the start of any line, as many as are typed there, and whatever follows the last one is the
+question: `!conv 177 !branch foo` does both, and `!conv 177 !lock` forks and then locks the new
+conversation. They are applied in a fixed order whatever order they were typed in: `!unlock`,
+then `!branch`, then `!conv`, then `!lock`. So `!conv 177 !branch foo` ends up on foo, and the
+fork's reply says it could not also take 177's branch. A directive part way along a sentence
+("why does !branch develop not work") is prose, and so is one run into a longer word
+(`!locked`).
 
 **Only an operator's `!branch` counts.** It is recognised from the author id Discord
 authenticated, never from anything the message says about who wrote it. In anybody else's
@@ -1900,7 +1909,7 @@ pinned to a Discord thread id, the session id is derived from that, and every re
 where the question came from. Opening a fresh thread in a private channel loses the branch, the
 session and everything the investigation already worked out.
 
-So a conversation can be **forked**. In a watched channel, a line whose whole content is
+So a conversation can be **forked**. In a watched channel, a line that starts with
 
 ```
 !conv 85
@@ -1962,21 +1971,28 @@ acknowledgement says so.
 !lock
 ```
 
-An operator's `!lock`, alone on its line, stops the bot acting in a conversation. The author of
+An operator's `!lock`, at the front of a line, stops the bot acting in a conversation. Prose may
+follow it on the same line (`!lock okay, that's enough from Max`), and it stacks with the other
+directives (see "Adopting a branch somebody else pushed"). The author of
 the message that triggers a turn decides its tier, its pool and who pays, so an operator always
 gets the last say in a thread; `!lock` is the brake for a thread an operator does not trust.
 
 While a conversation is locked, every message in it is still read and recorded as normal, but
 nothing is started: `claim_turns` and `create_turn` make no turn and spend no classifier call, a
 turn already queued is blocked, and a run in flight is stopped and posts and publishes nothing.
-The harness posts once:
+The harness posts a note as Max, one of `LOCK_NOTES`, chosen from the message id so a re-read
+says the same thing:
 
-    This thread is now locked from interactions with Max. He won't respond in this thread in the future.
+    I'm leaving now. This thread is locked and I'll be keeping my opinions to myself in here until a dev says otherwise.
 
 (`conversation` instead of `thread` for a reply chain in a text channel.) `!unlock`, also
-operator-only, clears it and posts the matching note:
+operator-only, clears it and posts one of `UNLOCK_NOTES`:
 
-    This thread is now unlocked for interactions with Max. He will respond in this thread again.
+    I'm back. This thread is unlocked, so I'll be answering in here again.
+
+Every operator directive gets a note, a repeat included: `!lock` on a locked thread changes
+nothing and posts "Still gone. This thread was already locked, so nothing's changed.", and
+`!unlock` on an open one the matching "Still here". No note means the directive did not parse.
 
 The messages posted while locked are then ordinary unanswered messages, so the next pass handles
 them. `!unlock` with a question in the same message unlocks and answers the question. Like
