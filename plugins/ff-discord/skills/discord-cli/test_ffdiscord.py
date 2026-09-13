@@ -138,6 +138,9 @@ class MockDiscord(BaseHTTPRequestHandler):
             return self._send(200, {"id": THREAD_NEW, "type": 11,
                                     "name": "Crash when placing solar panel",
                                     "applied_tags": []})
+        if path == "/channels/70002":
+            return self._send(200, {"id": "70002", "type": 11, "name": "!branch develop Typo",
+                                    "thread_metadata": {"archived": True}})
         if path == f"/channels/{THREAD_NEW}/messages/{THREAD_NEW}":
             return self._send(200, self._starter())
         if path == f"/channels/{THREAD_NEW}/messages":
@@ -563,6 +566,30 @@ def main():
     p = run(tmp, "close", "70001", "--dry-run")
     check("--dry-run touches nothing", len(POSTED) == n_before and "DRY RUN" in p.stdout,
           p.stdout)
+
+    print("rename")
+    POSTED.clear()
+    p = run(tmp, "rename", THREAD_NEW, "Crash placing a solar panel")
+    check("an open thread gets one PATCH, with the name and nothing else",
+          len(POSTED) == 1 and POSTED[0]["path"] == f"/channels/{THREAD_NEW}"
+          and POSTED[0]["body"] == {"name": "Crash placing a solar panel"}, POSTED)
+    POSTED.clear()
+    p = run(tmp, "rename", "70002", "Typo")
+    # DISCORD REFUSES ANY EDIT TO AN ARCHIVED THREAD but unarchiving it, so the name has to ride
+    # on the unarchive -- and a rename is not a reason to reopen a report somebody filed away.
+    check("an archived thread is renamed in the same request that unarchives it",
+          POSTED and POSTED[0]["body"] == {"name": "Typo", "archived": False}, POSTED)
+    check("and archived again after",
+          len(POSTED) == 2 and POSTED[1]["body"] == {"archived": True}, POSTED)
+    check("and says so", "still archived" in p.stdout, p.stdout)
+    POSTED.clear()
+    run(tmp, "rename", THREAD_NEW, "q" * 250)
+    check("trims a >100 char name", len(POSTED[-1]["body"]["name"]) == 100, POSTED)
+    POSTED.clear()
+    p = run(tmp, "rename", THREAD_NEW, "   ", expect_code=1)
+    check("refuses a blank name", POSTED == [], p.stderr)
+    p = run(tmp, "rename", "70002", "Typo", "--dry-run")
+    check("--dry-run touches nothing", POSTED == [] and "DRY RUN" in p.stdout, p.stdout)
 
     print("doctor")
     p = run(tmp, "doctor")

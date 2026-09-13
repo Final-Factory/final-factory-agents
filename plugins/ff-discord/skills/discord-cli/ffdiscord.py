@@ -1274,6 +1274,35 @@ def cmd_close(client, args):
     emit(args, ch, f"archived thread {thread}")
 
 
+def cmd_rename(client, args):
+    """Rename a thread, and leave it as open or as archived as it was.
+
+    AN ARCHIVED THREAD CANNOT BE EDITED, only unarchived: Discord refuses any other change to one
+    with "Thread is archived". So the name goes out WITH `archived: false`, and an archived thread
+    is archived again straight after -- renaming a bug report is tidying its label, and must not
+    put a report somebody filed away back in front of everybody.
+
+    Trimmed to 100 and refused when blank, the same as thread-create, for the same reason.
+    """
+    name = (args.name or "").strip()
+    if not name:
+        die("a thread name cannot be blank")
+    name = name[:100]
+    thread = resolve_channel(client, args.thread)
+    current = client.get(f"/channels/{thread}") or {}
+    archived = bool((current.get("thread_metadata") or {}).get("archived"))
+    if args.dry_run:
+        print(f"DRY RUN — would rename thread {thread} from {current.get('name')!r} to "
+              f"{name!r}{' and archive it again' if archived else ''}")
+        return
+    body = {"name": name, "archived": False} if archived else {"name": name}
+    ch = client.request("PATCH", f"/channels/{thread}", body=body)
+    if archived:
+        ch = client.request("PATCH", f"/channels/{thread}", body={"archived": True})
+    emit(args, ch, f"renamed thread {thread} to {name!r}"
+                   + (" (still archived)" if archived else ""))
+
+
 def cmd_download(client, args):
     channel = resolve_channel(client, args.channel)
     msg = client.get(f"/channels/{channel}/messages/{args.message}")
@@ -1557,6 +1586,11 @@ def build_parser():
 
     sp = add("close", cmd_close, "archive a thread (a reply reopens it; never locks)")
     sp.add_argument("thread", help="thread id (a forum post is a thread)")
+    sp.add_argument("--dry-run", action="store_true")
+
+    sp = add("rename", cmd_rename, "rename a thread (an archived one stays archived)")
+    sp.add_argument("thread", help="thread id (a forum post is a thread)")
+    sp.add_argument("name", help="the new name (trimmed to 100 chars)")
     sp.add_argument("--dry-run", action="store_true")
 
     sp = add("download", cmd_download, "download a message's attachments (logs, saves)")
