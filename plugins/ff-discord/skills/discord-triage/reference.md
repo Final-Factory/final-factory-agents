@@ -37,8 +37,9 @@ Second, triage-specific zones:
 
 - Build, release, Steamworks, or anything touching webhooks/secrets
 - Binary assets — shaders, materials, prefabs, scenes (cannot be reviewed as a diff)
-- Localization **table** structure (adding a `Messages`/`Labels` constant is fine; the table
-  rows are batched deliberately — see `CLAUDE.md`)
+- Localization **table** structure (adding a `Messages`/`Labels` constant is fine, and a fix
+  that adds visible text must add its table rows for every locale in the same change — see
+  `docs/LocalizationWorkflow.md`)
 
 ## Hard preconditions for any autofix {#hard-preconditions}
 
