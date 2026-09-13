@@ -3534,7 +3534,11 @@ def test_the_password_is_the_only_way_in():
 def test_next_cannot_leave_this_origin():
     """An open redirect on a login form is how a phishing page borrows a real hostname."""
     bad = [n for n in ("https://evil.example/", "//evil.example/", "/\\evil.example",
-                       "http:/evil", "javascript:alert(1)", "")
+                       "http:/evil", "javascript:alert(1)", "",
+                       # A browser strips these out of the URL before parsing, so each folds to
+                       # `//evil.example` — a protocol-relative jump off-origin — if let through.
+                       "/\t/evil.example", "/\n//evil.example", "/\r/evil.example",
+                       "/\x00/evil.example")
            if ffweb.safe_next(n) != "/"]
     check("safe_next refuses anything that is not a local path", not bad, bad)
     check("safe_next keeps a real local path",
@@ -3542,11 +3546,13 @@ def test_next_cannot_leave_this_origin():
 
     srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
     try:
-        code, hdr, _b = srv.post("/login", {"user": "Ben",
-                                            "password": ffweb.DEFAULT_PASSWORD,
-                                            "next": "https://evil.example/"})
-        check("a hostile next is flattened to /",
-              code == 303 and hdr.get("Location") == "/", hdr.get("Location"))
+        for target, label in [("https://evil.example/", "a scheme"),
+                              ("/\t/evil.example", "a tab a browser would fold to //")]:
+            code, hdr, _b = srv.post("/login", {"user": "Ben",
+                                                "password": ffweb.DEFAULT_PASSWORD,
+                                                "next": target})
+            check(f"a hostile next ({label}) is flattened to /",
+                  code == 303 and hdr.get("Location") == "/", hdr.get("Location"))
     finally:
         srv.stop()
 

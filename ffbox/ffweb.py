@@ -147,7 +147,7 @@ DEFAULT_GITHUB_REPO = "Final-Factory/FinalFactory"
 # Shown in the header so a person reading a page knows which build wrote it. The HTTP
 # server_version below is the protocol banner and moves for its own reasons; this is the
 # one a human is meant to read.
-VERSION = "0.9.8"
+VERSION = "0.9.9"
 
 # A turn in one of these has stopped; anything else is still on its way. Kept in step with
 # ffwatch's own list by hand, because this process deliberately imports nothing from it — it
@@ -733,10 +733,17 @@ def safe_next(path):
     scheme, a `//host` protocol-relative URL, a backslash Windows browsers fold to a slash —
     becomes "/", because an open redirect on a login form is how a phishing page borrows a
     real hostname.
+
+    THE CONTROL-CHARACTER CHECK IS NOT DECORATION. A browser strips tab, CR and LF out of a URL
+    BEFORE it parses it (the WHATWG URL spec removes them), so `/<tab>/evil.example` is fetched
+    as `//evil.example` — a protocol-relative URL onto another host — and the `//` guard above
+    never saw it, because the raw string this function holds still begins `/<tab>`. Rejecting
+    the whole class of C0 controls and DEL closes that, rather than chasing the three that are
+    known to fold today.
     """
     if not path or not path.startswith("/") or path.startswith("//"):
         return "/"
-    if "\\" in path or "\r" in path or "\n" in path:
+    if "\\" in path or any(ch < " " or ch == "\x7f" for ch in path):
         return "/"
     return path
 
