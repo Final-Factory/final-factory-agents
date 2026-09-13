@@ -508,14 +508,15 @@ for key, value in (
     # #codereview trigger stands down at 75%, a Discord conversation at 90%. null or 0 turns
     # that hold off. refresh_secs and timeout_secs are left to DEFAULTS.
     ("subscription", {"review_hold_pct": 0.75, "new_conversation_hold_pct": 0.9}),
-    # ONE KEY OUT OF THE CLUSTERING BLOCK, and deliberately not the other seven. ffwatch
-    # deep-merges this section, so a config naming one key inherits the rest of DEFAULTS
-    # ["cluster"] rather than replacing it -- which means the shipped file can put the one
-    # tunable a person actually reaches for on page and leave the candidacy arithmetic to the
-    # code. This is how often a long-running conversation's session is compacted, counted in
-    # turns from the last seam: past it the turn runs /compact against the session it was about
-    # to resume, and then resumes it. Overridable per `watch` entry, like everything in here.
-    ("cluster", {"compact_turns": 20}),
+    # TWO KEYS OUT OF THE CLUSTERING BLOCK, and deliberately not the other seven. ffwatch
+    # deep-merges this section, so a config naming two keys inherits the rest of DEFAULTS
+    # ["cluster"] rather than replacing it -- which means the shipped file can put the tunables
+    # a person actually reaches for on page and leave the candidacy arithmetic to the code.
+    # These say when a long-running conversation's session is compacted: after compact_turns
+    # turns from the last seam, or when the session it is about to resume holds more than
+    # compact_tokens tokens. Either way the turn runs /compact against that session and then
+    # resumes it. Overridable per `watch` entry, like everything in here.
+    ("cluster", {"compact_turns": 20, "compact_tokens": 200000}),
     # The page. It is behind a login and served over TLS, but 127.0.0.1 is still the default:
     # it renders raw model thinking, and one hardcoded password is a thin thing to hold a LAN
     # off with. Widening it stays a deliberate edit, made here where it is reviewable.

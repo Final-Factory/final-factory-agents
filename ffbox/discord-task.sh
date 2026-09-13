@@ -1289,7 +1289,7 @@ rm -f "$FFBOX_OUT/argv"
 # full. The host has already moved the seam, so this is not retried on the next turn either.
 if [ -s "$FFBOX_OUT/argv.compact" ]; then
     mapfile -d '' -t COMPACT_ARGV < "$FFBOX_OUT/argv.compact"
-    log "compacting the session before this turn (the host asked; cluster.compact_turns)"
+    log "compacting the session before this turn (the host asked: cluster.compact_turns or compact_tokens; ffwatch's journal says which)"
     COMPACT_START=$(date +%s)
     if timeout "${FFBOX_COMPACT_SECS:-600}" "${COMPACT_ARGV[@]}" \
             > "$FFBOX_OUT/compact.log" 2>&1 </dev/null; then

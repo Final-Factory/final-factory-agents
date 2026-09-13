@@ -1274,6 +1274,11 @@ DEFAULTS = {
         # since 2026-09-03 not a rotation either: the turn that trips this runs /compact against
         # the session it was already going to resume, and then resumes it. See build_job.
         "compact_turns": 20,
+        # THE SAME COMPACTION, BY SIZE. A resumed session holding more than this many tokens is
+        # compacted before the turn resumes it. compact_turns alone never bounded what a resume
+        # re-reads: conversation 179 was seven turns and 385k tokens. 0 turns it off. See
+        # transcript_context_tokens and build_job.
+        "compact_tokens": 200_000,
         # Two people talking in one channel are one discussion, so this is false. A channel with
         # many simultaneous speakers is the opposite case and can say so per watch entry.
         "per_author": False,
@@ -11257,11 +11262,29 @@ class Watcher:
         # CONTAINER_WORKSPACE so Claude Code derives the project slug this file already
         # assumes, and a host-side compaction would block a whole daemon pass on a model call.
         # The host's job is the decision, which is this.
-        compact_after = int(cluster_cfg(self.cfg, conv["watch_alias"])["compact_turns"])
+        cluster = cluster_cfg(self.cfg, conv["watch_alias"])
+        compact_after = int(cluster["compact_turns"])
         since = int(turn["seq"]) - int(conv["compacted_at_seq"] or 0)
         compact = bool(resume and compact_after and since > compact_after)
+        why = f"{since} turns since the last session seam"
+        # AND BY SIZE, which is the bound that was actually missing. Conversation 179 on
+        # 2026-09-13: seven operator follow-ups, nowhere near compact_turns, and the session was
+        # 385k tokens by the last of them. Every call in turns 4 to 6 re-read 220k to 375k of
+        # context, and the conversation cost $34 where a one-turn fix costs $5 to $8.
+        #
+        # ONLY ON A RESUME, which is still what `resume` means here: a provider switch set it
+        # False above and seeds a new session instead, and a lost transcript has nothing to
+        # compact. NOT ON THE TURN STRAIGHT AFTER A SEAM: a session still over the line one turn
+        # after a compaction was asked for is a /compact that failed, and retrying it on every
+        # turn would spend up to FFBOX_COMPACT_SECS of warm-up each time. The turn after tries.
+        limit = int(cluster.get("compact_tokens") or 0)
+        if resume and not compact and limit and (not conv["compacted_at_seq"] or since > 1):
+            held = transcript_context_tokens(transcript)
+            if held > limit:
+                compact = True
+                why = f"the session holds about {held} tokens, over compact_tokens ({limit})"
         if compact:
-            log(f"conversation {conv['id']}: {since} turns since the last session seam, "
+            log(f"conversation {conv['id']}: {why}, "
                 f"compacting before turn {turn['seq']} — the session and the conversation "
                 "both stay")
             # RECORDED WHEN IT IS ASKED FOR, not when it succeeds. The container's compaction
@@ -20190,6 +20213,90 @@ def transcript_provider(path):
     if str(last["id"]).startswith("msg_"):
         return ("anthropic", None)
     return ("openrouter", _model_family(last.get("model")))
+
+
+# ROUGH ON PURPOSE. Only the part of a session no usage reading covers is estimated, and the
+# threshold it is compared against is a round number somebody picked.
+TRANSCRIPT_CHARS_PER_TOKEN = 4
+TRANSCRIPT_IMAGE_TOKENS = 1_600
+
+
+def _usage_context(usage):
+    """The context one answer's recorded usage says it had, its own output included, or 0."""
+    if not isinstance(usage, dict):
+        return 0
+    total = 0
+    for key in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
+                "output_tokens"):
+        try:
+            total += int(usage.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _estimated_tokens(message):
+    """A message's size in tokens, estimated from its characters, with images at a flat rate.
+
+    An image is billed by its pixels and not by its base64, which in a transcript is hundreds of
+    kilobytes of characters for what the API counts as a couple of thousand tokens at most.
+    """
+    chars, images = 0, 0
+
+    def walk(content):
+        nonlocal chars, images
+        if isinstance(content, str):
+            chars += len(content)
+            return
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "image":
+                images += 1
+            elif btype == "tool_result":
+                walk(block.get("content"))
+            elif btype == "tool_use":
+                chars += len(json.dumps(block.get("input"), ensure_ascii=False))
+            else:
+                chars += len(block.get("text") or block.get("thinking") or "")
+
+    walk(message.get("content"))
+    return chars // TRANSCRIPT_CHARS_PER_TOKEN + images * TRANSCRIPT_IMAGE_TOKENS
+
+
+def transcript_context_tokens(path):
+    """About how many tokens resuming this session would send: 0 for a missing or empty one.
+
+    THE LAST ANSWER'S OWN USAGE, where the transcript records one. Claude Code writes the API's
+    usage onto every assistant entry, and input plus cache reads plus cache writes is the context
+    that call was sent; its output joins the next one. Whatever was written after that answer --
+    the tool results it asked for, the next prompt -- is estimated from its characters.
+
+    ESTIMATED OUTRIGHT where no answer carries usage. The stream an OpenRouter run prints reports
+    zeros on every assistant message (measured 2026-09-13 against z-ai/glm-5.3-flash), and a
+    session whose transcript did the same would otherwise read as empty and never be compacted.
+    The transcript itself did carry real numbers on that probe; this is the fallback for the
+    session that does not.
+
+    FROM THE LAST COMPACTION BOUNDARY, for the reason render_transcript gives: that is where a
+    resume starts. Sidechains and synthetic entries are left out for the reason _real_message
+    gives.
+    """
+    reading, after = 0, []
+    for rec in _transcript_records(path):
+        if rec.get("type") == "system" and rec.get("subtype") == "compact_boundary":
+            reading, after = 0, []
+            continue
+        message = _real_message(rec)
+        if message is None:
+            continue
+        seen = _usage_context(message.get("usage")) if rec.get("type") == "assistant" else 0
+        if seen:
+            reading, after = seen, []
+        else:
+            after.append(message)
+    return reading + sum(_estimated_tokens(m) for m in after)
 
 
 def credential_provider(name, cred=None):
