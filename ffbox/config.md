@@ -73,7 +73,7 @@ already there:
 {
   "approve_before_send": false,
   "catchup_secs": 900,
-  "cluster": { "compact_turns": 20 },
+  "cluster": { "compact_turns": 20, "compact_tokens": 200000 },
   "container": {
     "workspace_size": "40g",
     "memory": "72g",
@@ -1627,7 +1627,8 @@ has scrolled past it.
 | `certain_secs` | `900` | A lone candidate this recent, with nothing in between, is a continuation and must not cost a model call. |
 | `max_candidate_secs` | `604800` | Nothing older is ever offered. |
 | `max_candidates` | `5` | How many the selector chooses between. |
-| `compact_turns` | `20` | Turns since the last session seam before the next turn **compacts** the session it was about to resume — `claude -p /compact --resume <id>` in the container, before the agent clock starts, then the turn resumes the same id. The conversation stays open and keeps its id, its page and its Discord anchor; the session keeps its id too. Seeded into the file by stage 5, and the one `cluster` key that is. |
+| `compact_turns` | `20` | Turns since the last session seam before the next turn **compacts** the session it was about to resume — `claude -p /compact --resume <id>` in the container, before the agent clock starts, then the turn resumes the same id. The conversation stays open and keeps its id, its page and its Discord anchor; the session keeps its id too. Seeded into the file by stage 5. |
+| `compact_tokens` | `200000` | The same compaction, triggered by size: a turn about to **resume** a session holding more than this many tokens compacts it first. Measured on the host from the session transcript, counted from its last compaction boundary: the last answer's recorded usage (input, cache reads, cache writes and its output), plus an estimate of four characters to a token for everything written after it — which is the whole session when no answer recorded usage, as an OpenRouter stream can report. Never on a turn that starts a new session instead (a provider switch, a lost transcript), and not on the turn straight after a seam, so a `/compact` that keeps failing is retried every other turn rather than every turn. Works on OpenRouter credentials too: the pass runs through the same credential as the turn, and the slot's model writes the summary. `0` turns it off. Seeded into the file by stage 5. |
 | `per_author` | `false` | Two people talking in one channel are one discussion. A channel with many simultaneous speakers can say otherwise per `watch` entry. |
 
 A compaction is bounded (`FFBOX_COMPACT_SECS` in the container, 600s) and non-fatal: if it

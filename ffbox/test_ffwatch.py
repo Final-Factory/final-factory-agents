@@ -7953,6 +7953,116 @@ def test_a_long_conversation_compacts_its_session_not_itself():
           rolled["compacted_at_seq"] == 6, dict(rolled))
 
 
+def test_a_session_over_compact_tokens_compacts_before_resuming():
+    """Conversation 179: seven turns, nowhere near compact_turns, and a 385k-token session.
+
+    A turn count never bounded what a resume re-reads. compact_tokens does, measured off the
+    session transcript itself, and only on a turn that really resumes it.
+    """
+    print("session compaction by size")
+    root = os.path.join(TMPROOT, "context-tokens")
+    shutil.rmtree(root, ignore_errors=True)
+    boundary = {"type": "system", "subtype": "compact_boundary", "uuid": "b"}
+
+    def sized(uid, msg_id, model, **usage):
+        rec = _answer(uid, "x", msg_id, model)
+        rec["message"]["usage"] = usage
+        return rec
+
+    def tokens(name, records):
+        path = os.path.join(root, f"{name}.jsonl")
+        _write_transcript(path, records)
+        return ffwatch.transcript_context_tokens(path)
+
+    opus = "claude-opus-5"
+    check("the last answer's usage is the context, its output included",
+          tokens("usage", [_asked("u1", "q"),
+                           sized("a1", "msg_01", opus, input_tokens=2,
+                                 cache_read_input_tokens=400000,
+                                 cache_creation_input_tokens=1000, output_tokens=2000)])
+          == 403002)
+    check("what was written after that answer is added as an estimate",
+          tokens("after", [sized("a1", "msg_01", opus, input_tokens=1000),
+                           _asked("u2", "y" * 4000)]) == 2000)
+    check("a session with no usage anywhere is estimated from its characters",
+          tokens("nousage", [_asked("u1", "y" * 8000),
+                             _answer("a1", "z" * 4000, "gen-1", "z-ai/glm-5.3-flash")]) == 3000)
+    check("an image counts at a flat rate, not by the size of its base64",
+          tokens("image", [{"type": "user", "uuid": "u", "isSidechain": False,
+                            "message": {"role": "user", "content": [
+                                {"type": "tool_result", "tool_use_id": "t", "content": [
+                                    {"type": "image", "source": {"data": "A" * 500000}}]}]}}])
+          == ffwatch.TRANSCRIPT_IMAGE_TOKENS)
+    check("a compaction boundary starts the count again",
+          tokens("boundary", [sized("a1", "msg_01", opus, input_tokens=300000), boundary,
+                              _asked("s", "y" * 400)]) == 100)
+    side = sized("s1", "msg_02", opus, input_tokens=900000)
+    side["isSidechain"] = True
+    check("a sidechain and an API error are not what a resume sends",
+          tokens("side", [sized("a1", "msg_01", opus, input_tokens=100), side, SYNTHETIC_400])
+          == 100)
+    check("a missing transcript holds nothing",
+          ffwatch.transcript_context_tokens(os.path.join(root, "gone.jsonl")) == 0)
+
+    fixture = base_fixture()
+    mid = sflake(0, 1)
+    fixture["messages"][ASK_CHANNEL] = [message(mid, "flying stations do not generate signal")]
+    case = Case("compact-tokens", fixture, verdict={"engage": True, "reason": "r"})
+    case.events(ask_event(mid))
+    case.watcher.drain_events()
+    case.watcher.claim_turns()
+    conv = case.rows("SELECT * FROM conversation")[0]
+    case.cfg["cluster"] = dict(case.cfg["cluster"], compact_turns=20, compact_tokens=200000)
+    session = conv["session_id"]
+    path = case.watcher.transcript_path(conv["id"], session)
+
+    def row():
+        return case.rows("SELECT * FROM conversation WHERE id=?", (conv["id"],))[0]
+
+    def job_for(seq, key=None):
+        turn = dict(case.rows("SELECT * FROM turn")[0])
+        turn["seq"] = seq
+        return case.watcher.build_job(turn, row(), f"r{seq}", os.path.join(case.root, "att"),
+                                      claude_key=key)["session"]
+
+    def holding(n, msg_id="msg_01", model=opus):
+        return [_asked("u", "q"), sized("a", msg_id, model, cache_read_input_tokens=n)]
+
+    _write_transcript(path, holding(150000))
+    job = job_for(2)
+    check("a session under compact_tokens resumes without compacting",
+          job["resume"] and not job["compact"], job)
+
+    _write_transcript(path, holding(250000))
+    job = job_for(3)
+    check("a session over it compacts first, then resumes that same session",
+          job["resume"] and job["compact"] and job["id"] == session, job)
+    check("and the seam is recorded, as a compaction by turn count records it",
+          row()["compacted_at_seq"] == 3, dict(row()))
+    job = job_for(4)
+    check("still over the line on the very next turn is a failed /compact, not retried at once",
+          job["resume"] and not job["compact"], job)
+    job = job_for(5)
+    check("the turn after that tries again", job["resume"] and job["compact"], job)
+
+    _write_transcript(path, holding(250000) + [boundary, _asked("s", "the summary")])
+    job = job_for(7)
+    check("a compacted session is measured from its boundary, not from its whole file",
+          job["resume"] and not job["compact"], job)
+
+    case.cfg["cluster"] = dict(case.cfg["cluster"], compact_tokens=0)
+    _write_transcript(path, holding(900000))
+    job = job_for(9)
+    check("compact_tokens 0 turns it off", job["resume"] and not job["compact"], job)
+
+    case.cfg["cluster"] = dict(case.cfg["cluster"], compact_tokens=200000)
+    _write_transcript(path, holding(900000, "gen-1", "z-ai/glm-5.3-flash"))
+    job = job_for(11, "CLAUDE_CODE_OAUTH_TOKEN1")
+    check("a provider switch seeds a new session and compacts nothing, however big the old one",
+          not job["resume"] and not job["compact"]
+          and (job["seam"] or {}).get("reason") == "provider", job)
+
+
 def _write_transcript(path, records, mode="w"):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, mode, encoding="utf-8") as fh:
@@ -21296,6 +21406,7 @@ def main():
         test_a_sole_candidate_is_still_a_question,
         test_the_cheap_model_routes_and_the_good_one_answers,
         test_a_long_conversation_compacts_its_session_not_itself,
+        test_a_session_over_compact_tokens_compacts_before_resuming,
         test_a_thread_in_an_ordinary_channel_is_swept,
         test_a_container_sees_only_its_own_conversation,
         test_the_classifier_runs_in_a_sandbox,
