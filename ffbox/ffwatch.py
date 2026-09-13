@@ -3056,9 +3056,17 @@ CAPABILITY_TOOLS = "Read,Grep,Glob,Edit,Write,Bash"
 # base..branch to carry ffbox@final-factory.invalid, because a commit wearing a person's name on
 # a branch a reviewer reads by author is how agent work would pass as human work. Allowing any
 # of them means giving that check up or making it much subtler.
+#
+# MERGE IS SPELLED WITH A SPACE, AND BARE AS WELL. `Bash(git merge*)` is a string prefix, so it
+# also denied `git merge-base`, which only reads history. Run 234 lost its closing branch-state
+# check to that on 2026-09-13. `Bash(git merge *)` needs a space after the verb, so it leaves
+# `merge-base` and `merge-tree` alone, and `Bash(git merge)` catches the form with no arguments.
+# Measured with claude 2.1.270 in a scratch repo: `git merge`, `git merge --abort`,
+# `git merge feature` and `git status; git merge feature` were all denied, and
+# `git merge-base HEAD feature`, `git merge-base --is-ancestor ...` and `git merge-tree` ran.
 TRIPWIRE = ["Bash(git push*)", "Bash(gh *)", "Bash(git remote*)", "Bash(git fetch*)",
-            "Bash(git merge*)", "Bash(git rebase*)", "Bash(git cherry-pick*)",
-            "Bash(git am*)"]
+            "Bash(git merge *)", "Bash(git merge)", "Bash(git rebase*)",
+            "Bash(git cherry-pick*)", "Bash(git am*)"]
 
 # `Bash` bare, and it is REQUIRED rather than decorative. `--permission-mode acceptEdits`
 # auto-approves EDITS and not Bash; a `-p` run has nobody to ask, so with an empty allow list
