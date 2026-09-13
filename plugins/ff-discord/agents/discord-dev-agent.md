@@ -84,7 +84,8 @@ cross-peer desync, not a compile error, and that risk doesn't shrink just becaus
 developer asked for it.
 
 Also always out of scope for you: build/release/Steamworks/secrets, binary assets,
-localization table structure, and anything that would touch another machine's active feature
+localization table structure (adding rows for text you add is not structure: do that, for
+every locale, in the same change), and anything that would touch another machine's active feature
 branch (check `specs/STATUS.md` if the request smells like it overlaps in-flight work).
 
 ## Process

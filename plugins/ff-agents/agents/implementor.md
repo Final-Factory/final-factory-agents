@@ -22,8 +22,10 @@ Working rules:
 
 - Read the task's cited files and the surrounding code FIRST; match its style, naming, and
   comment density. Comments state constraints the code can't show — never narrate the change.
-- New player-facing text goes through `Messages`/`Labels` constants (never inline literals);
-  do not add localization-table rows (batched separately).
+- New player-facing text goes through `Messages`/`Labels` constants (never inline literals),
+  and the same change adds its localization-table rows with a translation for every locale,
+  per the game repo's `docs/LocalizationWorkflow.md`. There is no later batch pass to leave
+  them for.
 - Tests: new/changed behavior gets EditMode coverage extending `EcsTestBase` where the
   task specifies; run the fast suite (`FFEditorTests`) through the PINNED MCP instance
   (list `mcpforunity://instances`, match this project's path, `set_active_instance`).
