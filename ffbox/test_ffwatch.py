@@ -5614,6 +5614,30 @@ def test_a_public_venue_never_publishes_a_failed_runs_output():
           "API Error" not in timed and "500" not in timed, timed)
     check("but says it ran out of time rather than that something broke",
           timed == ffwatch.PUBLIC_TIMED_OUT, timed)
+    # THE MONEY CEILING, as conversation 172 wrote it on 2026-09-13: a `failed` run, so without
+    # this it was told something broke and to try again, when a prompt would have resumed it.
+    broke_bank = {"is_error": True, "subtype": "error_max_budget_usd",
+                  "terminal_reason": "budget_exhausted", "total_cost_usd": 10.145000000000001,
+                  "errors": ["Reached maximum budget ($10)"]}
+    spent = ffwatch.compose_head(None, turn, "failed", broke_bank, {}, None, job)
+    check("a run that spent its budget says so rather than that something broke",
+          spent == ffwatch.PUBLIC_OVER_BUDGET, spent)
+    for older in ({"is_error": True, "subtype": "error_max_budget_usd"},
+                  {"is_error": True, "terminal_reason": "budget_exhausted"}):
+        check("either field alone is enough to recognise it",
+              ffwatch.compose_head(None, turn, "failed", older, {}, None, job)
+              == ffwatch.PUBLIC_OVER_BUDGET, older)
+    text = ffwatch.PUBLIC_OVER_BUDGET
+    check("the budget reply has no em or en dashes", "—" not in text and "–" not in text, text)
+    check("and does not claim anything broke", "broke" not in text.lower(), text)
+    check("it says a prompt picks the run back up", "continue" in text.lower(), text)
+    check("an operator reads what it spent, not the subtype",
+          ffwatch.result_failure_detail(broke_bank) == "it hit its spending ceiling at $10.15",
+          ffwatch.result_failure_detail(broke_bank))
+    private = {"venue": "private", "failed_closed": 0, "failed_closed_reason": None}
+    head = ffwatch.compose_head(None, private, "failed", broke_bank, {}, None, job)
+    check("and the private state line carries it",
+          "the run failed: it hit its spending ceiling at $10.15" in head, head)
     check("while a run that ended done still answers with its summary",
           ffwatch.compose_head(None, turn, "done", {}, {"summary": "the belt is fine"}, None,
                                job) == "the belt is fine", text)
