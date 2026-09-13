@@ -4053,6 +4053,130 @@ def test_only_agent_runs_are_stoppable():
         check(what, not ffweb.is_stoppable(row))
 
 
+def test_a_silent_connection_does_not_stall_the_server():
+    """A client that connects and then says nothing is handled on its own worker thread, so the
+    accept loop — and everyone else's requests — is untouched. Before the TLS handshake moved
+    off the accept thread, one such socket blocked every other connection for the whole
+    handshake timeout.
+    """
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, tls=True)
+    try:
+        silent = socket.create_connection(("127.0.0.1", srv.port), timeout=20)
+        try:
+            started = time.monotonic()
+            code, _hdr, body = srv.get("/")
+            spent = time.monotonic() - started
+            check("a real request is served while a silent socket is open",
+                  code == 200 and b"conversations" in body, code)
+            check("and it does not wait for that socket's handshake to time out",
+                  spent < srv.httpd.handshake_timeout, round(spent, 2))
+        finally:
+            silent.close()
+    finally:
+        srv.stop()
+
+
+def test_slow_and_excess_connections_cannot_pile_up():
+    """Two bounds keep a flood of slow clients from exhausting the box: a per-request read
+    timeout drops a client that stops mid-request, and a ceiling on requests in flight sheds the
+    rest rather than growing the thread count without limit.
+
+    Both constants are shrunk here so the case costs about a second rather than the shipped
+    half-minute, and put back afterwards.
+    """
+    saved_max = ffweb.MAX_CONCURRENT_REQUESTS
+    saved_timeout = ffweb.FFWebHandler.timeout
+    check("the shipped ceilings are the generous ones",
+          saved_max == 128 and saved_timeout == 30, (saved_max, saved_timeout))
+    ffweb.MAX_CONCURRENT_REQUESTS = 2
+    ffweb.FFWebHandler.timeout = 0.5
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH)     # plaintext keeps the case simple
+    try:
+        # Fill every slot with a connection that completes TCP, sends a request line, and then
+        # stalls, holding its worker on the header read.
+        stalled = []
+        for _ in range(ffweb.MAX_CONCURRENT_REQUESTS):
+            s = socket.create_connection(("127.0.0.1", srv.port), timeout=5)
+            s.sendall(b"GET / HTTP/1.1\r\n")              # a request line, then nothing
+            stalled.append(s)
+        time.sleep(0.3)                                   # let the accept loop take the slots
+
+        # With every slot held, a further connection is shed — closed at once rather than
+        # queued behind a worker — so a client hits a dead connection, not a hang.
+        refused = None
+        try:
+            srv.get("/", headers={"Connection": "close"})
+        except Exception as exc:                          # noqa: BLE001 - reset/closed connection
+            refused = type(exc).__name__
+        check("a connection past the ceiling is shed rather than queued",
+              refused is not None, refused)
+
+        # The read timeout frees the stalled slots on its own; once it has, the server serves
+        # normally again. Without the timeout those slots would never come back.
+        time.sleep(saved_timeout and ffweb.FFWebHandler.timeout + 0.9)
+        code, _hdr, body = srv.get("/", headers={"Connection": "close"})
+        check("the server recovers once stalled clients time out and free their slots",
+              code == 200 and b"conversations" in body, code)
+        for s in stalled:
+            s.close()
+    finally:
+        srv.stop()
+        ffweb.MAX_CONCURRENT_REQUESTS = saved_max
+        ffweb.FFWebHandler.timeout = saved_timeout
+
+
+def test_a_hostile_content_length_is_refused_without_reading_the_socket():
+    """Content-Length: -1 slipped past the 64 KiB ceiling and then read the connection to EOF —
+    an unauthenticated way to make this process buffer an unbounded body. A negative or
+    unparseable length is a 400 now, an over-large one is still a 413, and none of them reads a
+    byte of body (which is what would have hung this case before the fix).
+    """
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
+    try:
+        for value, code, label in [
+            ("-1", b"400", "a negative Content-Length"),
+            ("banana", b"400", "a non-numeric Content-Length"),
+            ("999999", b"413", "an over-large Content-Length"),
+        ]:
+            reply = srv.raw("POST /login", extra=f"Content-Length: {value}\r\n")
+            check(f"{label} is refused", code in reply.split(b"\r\n", 1)[0], reply[:80])
+    finally:
+        srv.stop()
+
+
+def test_repeated_bad_logins_lock_the_source_out():
+    """The per-guess half-second does nothing to a script opening many sockets at once; the
+    failure counter does. Past the ceiling an address is refused outright — the right password
+    included — until the lockout lapses.
+    """
+    srv = Server(STATE, DB_PATH, BLOBS, STUB_FFWATCH, login=False)
+    # A small, brief lockout so the case is a second, not a minute. The App built its throttle
+    # from the shipped constants, so replace the instance with a test-sized one.
+    srv.app.login_throttle = ffweb.LoginThrottle(max_failures=3, window=60, lockout=1)
+    try:
+        for i in range(4):
+            code, _h, _b = srv.post("/login", {"user": "Ben", "password": "wrong"})
+            check(f"failure {i + 1} is a normal 401", code == 401, code)
+        code, hdr, _b = srv.post("/login", {"user": "Ben", "password": "wrong"})
+        check("an attempt past the ceiling is locked out with 429 and a Retry-After",
+              code == 429 and hdr.get("Retry-After"), (code, hdr.get("Retry-After")))
+        # The point is to cap attempts, not to check them faster: the RIGHT password is refused
+        # while the lockout stands.
+        code, hdr, _b = srv.post("/login", {"user": "Ben", "password": ffweb.DEFAULT_PASSWORD})
+        check("even correct credentials are refused during the lockout",
+              code == 429 and "Set-Cookie" not in hdr, (code, hdr.get("Set-Cookie")))
+        time.sleep(1.2)
+        code, hdr, _b = srv.post("/login", {"user": "Ben", "password": ffweb.DEFAULT_PASSWORD})
+        check("the lockout lapses and a real sign-in then succeeds",
+              code == 303 and "Set-Cookie" in hdr, code)
+        check("the shipped ceiling is generous enough a person never meets it",
+              (ffweb.LOGIN_MAX_FAILURES, ffweb.LOGIN_FAIL_WINDOW_SECS,
+               ffweb.LOGIN_LOCKOUT_SECS) == (10, 60, 60),
+              (ffweb.LOGIN_MAX_FAILURES, ffweb.LOGIN_FAIL_WINDOW_SECS, ffweb.LOGIN_LOCKOUT_SECS))
+    finally:
+        srv.stop()
+
+
 def main():
     print("ffweb — web UI")
     tests = [
@@ -4107,6 +4231,10 @@ def main():
         test_the_login_background_is_served_to_a_browser_with_no_session,
         test_the_password_is_the_only_way_in,
         test_a_refused_login_is_answered_slowly,
+        test_repeated_bad_logins_lock_the_source_out,
+        test_a_silent_connection_does_not_stall_the_server,
+        test_slow_and_excess_connections_cannot_pile_up,
+        test_a_hostile_content_length_is_refused_without_reading_the_socket,
         test_a_queued_prompt_says_one_thing_and_a_failure_says_everything,
         test_the_live_pages_reload_themselves,
         test_open_folds_survive_the_tick,

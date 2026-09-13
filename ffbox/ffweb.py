@@ -147,7 +147,7 @@ DEFAULT_GITHUB_REPO = "Final-Factory/FinalFactory"
 # Shown in the header so a person reading a page knows which build wrote it. The HTTP
 # server_version below is the protocol banner and moves for its own reasons; this is the
 # one a human is meant to read.
-VERSION = "0.9.6"
+VERSION = "0.9.7"
 
 # A turn in one of these has stopped; anything else is still on its way. Kept in step with
 # ffwatch's own list by hand, because this process deliberately imports nothing from it — it
@@ -331,10 +331,38 @@ SESSION_FILE = "ffweb-sessions.json"
 # ffwatch's mark_read and the column's comment in ffwatch_schema.sql. This file only reads it.
 READ_FILTERS = ("unread", "read", "all")
 DEFAULT_READ_FILTER = "unread"
-# A wrong password costs this much wall clock. Not a rate limiter — it is one constant-time
-# comparison against one password, so the only thing worth blunting is how fast a script on
-# the LAN can walk a dictionary through the form.
+# A wrong password costs this much wall clock. On its own this is NOT a rate limiter: it is one
+# sleep on one thread, and a script that opens fifty sockets at once sleeps fifty times in
+# parallel and is not slowed at all. It pairs with the failure counter below, which is — this is
+# just what makes a single sequential guess unpleasant on top of the counter's ceiling.
 LOGIN_FAILURE_DELAY_SECS = 0.5
+
+# THE ACTUAL BRUTE-FORCE CEILING, and the half-second above is not it. Failures are counted per
+# client address, and past LOGIN_MAX_FAILURES inside a rolling LOGIN_FAIL_WINDOW_SECS that
+# address is refused outright — the right password included — for LOGIN_LOCKOUT_SECS. That caps
+# how fast one source can walk a dictionary whether it guesses one at a time or a hundred at
+# once, which the per-guess sleep alone never did. Generous enough that a person fat-fingering
+# their password a few times never meets it. In memory only, forgotten on restart, like the
+# session store's own fallback: a lockout that had to survive a restart would need a store, and
+# the store would be one more thing to get wrong for a control whose whole job is to be a
+# nuisance to a script and invisible to whoever typed their password right.
+LOGIN_MAX_FAILURES = 10
+LOGIN_FAIL_WINDOW_SECS = 60
+LOGIN_LOCKOUT_SECS = 60
+
+# How long the whole of one request may take to arrive once its connection is up: the read
+# timeout the handler runs under. Without it, a client that sends one byte of a header and then
+# stalls holds its worker thread forever, and enough of those exhaust the worker threads and the
+# memory behind them (the classic slow-loris). It doubles as the idle keep-alive ceiling between
+# requests on a connection, which a browser simply reconnects past.
+REQUEST_TIMEOUT_SECS = 30
+
+# The most requests served at once. The accept loop sheds anything past this by closing the new
+# connection immediately rather than parking a worker on it, so a flood of slow or silent
+# connections cannot grow the thread count — and the memory with it — without bound. Generous
+# for a page a handful of operators read; low enough that ten thousand half-open sockets find
+# nothing to hold.
+MAX_CONCURRENT_REQUESTS = 128
 
 # The login form's backdrop, shipped beside this script rather than in the state directory:
 # it is part of the program, not part of an installation, so it travels with the checkout the
@@ -603,6 +631,76 @@ class Sessions:
         if self.on_error:
             self.on_error("ffweb: " + message + "\n")
             self.on_error = None                    # once, not on every request
+
+
+class LoginThrottle:
+    """Failed logins counted per client address, so parallel guessing hits a ceiling.
+
+    LOGIN_FAILURE_DELAY_SECS blunts ONE guess and nothing more: each guess sleeps on its own
+    thread, so a script that opens many sockets at once is not slowed by it at all. This is what
+    slows it — an address with more than `max_failures` failures inside `window` seconds is
+    locked out for `lockout` seconds, and while it is locked even the right password is refused.
+    The point is to cap how many attempts a source gets, not to check them faster.
+
+    In memory, under one lock, forgotten on restart, for the reason SESSION persistence is a
+    file and this is not: a lockout is a nuisance for a script and should never be a thing an
+    operator has to clear by hand after a bad night. ThreadingHTTPServer serves each request on
+    its own thread, so every method here takes the lock.
+    """
+
+    __slots__ = ("max_failures", "window", "lockout", "_lock", "_fails", "_locked_until")
+
+    def __init__(self, max_failures=LOGIN_MAX_FAILURES, window=LOGIN_FAIL_WINDOW_SECS,
+                 lockout=LOGIN_LOCKOUT_SECS):
+        self.max_failures = max_failures
+        self.window = window
+        self.lockout = lockout
+        self._lock = threading.Lock()
+        self._fails = {}            # addr -> [failure timestamps still inside the window]
+        self._locked_until = {}     # addr -> when its lockout ends
+
+    def retry_after(self, addr, now=None):
+        """Seconds this address must wait before an attempt is even looked at, or 0 if none."""
+        now = time.time() if now is None else now
+        with self._lock:
+            until = self._locked_until.get(addr)
+            if until is None:
+                return 0
+            if until <= now:
+                # Lapsed. Clear the lockout AND the failures that earned it, so a returning
+                # operator starts clean rather than one slip from tripping it again.
+                self._locked_until.pop(addr, None)
+                self._fails.pop(addr, None)
+                return 0
+            return int(until - now) + 1
+
+    def record_failure(self, addr, now=None):
+        now = time.time() if now is None else now
+        with self._lock:
+            hits = [t for t in self._fails.get(addr, ()) if t > now - self.window]
+            hits.append(now)
+            self._fails[addr] = hits
+            if len(hits) > self.max_failures:
+                self._locked_until[addr] = now + self.lockout
+            # A botnet would otherwise grow these maps one entry per source forever. Prune the
+            # ones that have gone quiet whenever the table gets large; the arithmetic is cheap
+            # next to the flood that would be filling it.
+            if len(self._fails) > 4096:
+                self._prune(now)
+
+    def record_success(self, addr):
+        """A right password clears the slate for this address."""
+        with self._lock:
+            self._fails.pop(addr, None)
+            self._locked_until.pop(addr, None)
+
+    def _prune(self, now):
+        """Caller holds the lock. Drop addresses with no recent failure and no live lockout."""
+        for addr in [a for a, ts in self._fails.items()
+                     if (not ts or ts[-1] <= now - self.window)
+                     and self._locked_until.get(addr, 0) <= now]:
+            self._fails.pop(addr, None)
+            self._locked_until.pop(addr, None)
 
 
 def credentials_ok(user, password):
@@ -1654,6 +1752,12 @@ class BoxStatus:
 class FFWebHandler(BaseHTTPRequestHandler):
     server_version = "ffweb/1.0"
     protocol_version = "HTTP/1.1"
+    # StreamRequestHandler.setup applies this to the connection, so every blocking read on it —
+    # the request line, the headers, the body — is bounded. A client that opens a connection and
+    # then dribbles or stalls is dropped rather than holding a worker thread forever.
+    # BaseHTTPRequestHandler catches the timeout on the request line itself and closes quietly,
+    # so an idle keep-alive connection just ends without a traceback.
+    timeout = REQUEST_TIMEOUT_SECS
 
     # -- plumbing ------------------------------------------------------------------------
 
@@ -1876,7 +1980,16 @@ class FFWebHandler(BaseHTTPRequestHandler):
 
         # The body is read FIRST, whatever the verdict turns out to be. This is HTTP/1.1 with
         # keep-alive: bytes left unread in the socket are the front of the next request.
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self._error(400, "a Content-Length that is not a number is not a request")
+        # BOTH ENDS are checked. A negative length slipped past the ceiling below — it is not
+        # greater than 64 KiB — and then `rfile.read(-1)` read the socket to EOF, so
+        # `Content-Length: -1` was an unauthenticated way to make this process buffer an
+        # unbounded body in memory. The ceiling alone never saw it.
+        if length < 0:
+            return self._error(400, "a negative Content-Length is not a request")
         if length > 64 * 1024:
             return self._error(413, "action body too large")
         raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
@@ -2113,15 +2226,27 @@ class FFWebHandler(BaseHTTPRequestHandler):
 
     def _do_login(self, form):
         wanted = safe_next((form.get("next") or ["/"])[0])
+        addr = self.client_address[0]
+        # The lockout is checked BEFORE the credentials, and refuses without comparing them: a
+        # flood of guesses cannot outrun the counter by going wide, and the comparison is not a
+        # thing an attacker gets to keep timing once they are over the ceiling.
+        wait = self.app.login_throttle.retry_after(addr)
+        if wait:
+            self.log_message("locked-out login from %s (%ss left)", addr, wait)
+            return self._send(429, login_page(wanted, "too many failed sign-ins from here; "
+                                              "wait a minute and try again"),
+                              extra=[("Retry-After", str(wait))])
         user = (form.get("user") or [""])[0]
         password = (form.get("password") or [""])[0]
         if not credentials_ok(user, password):
             # One message for both halves. "no such user" would turn the form into an oracle
             # for which usernames exist, and there is nothing to gain by being helpful about a
             # password on a page that says internal-only across the top of it.
+            self.app.login_throttle.record_failure(addr)
             time.sleep(LOGIN_FAILURE_DELAY_SECS)
-            self.log_message("failed login from %s", self.client_address[0])
+            self.log_message("failed login from %s", addr)
             return self._send(401, login_page(wanted, "wrong user or password"))
+        self.app.login_throttle.record_success(addr)
         token = self.app.sessions.issue()
         return self._send(303, b"", extra=[("Location", wanted),
                                            ("Set-Cookie", self._cookie_header(
@@ -2216,7 +2341,7 @@ def blob_content_type(filename, declared):
 class App:
     def __init__(self, db_path, blobs_dir, state_dir, ffwatch_py, enable_actions=False,
                  quiet=False, origins=(), scheme="https", sessions=None, ffstatus=None,
-                 claude_keys=None):
+                 claude_keys=None, login_throttle=None):
         self.db = ReadOnlyDb(db_path)
         self.blobs_dir = os.path.realpath(blobs_dir)
         self.state_dir = state_dir
@@ -2244,6 +2369,9 @@ class App:
         self.sessions = sessions if sessions is not None else Sessions(
             path=os.path.join(os.path.expanduser(state_dir), SESSION_FILE),
             on_error=sys.stderr.write)
+        # Per-address failed-login ceiling. In memory, so it is one object for the life of the
+        # process and shared across every request thread.
+        self.login_throttle = login_throttle if login_throttle is not None else LoginThrottle()
 
     # -- blobs ---------------------------------------------------------------------------
 
@@ -3892,9 +4020,10 @@ class FFWebServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    # How long a client gets to finish a TLS handshake. The accept loop is single-threaded —
-    # requests fan out to threads only after get_request returns — so a client that opens a
-    # socket and says nothing would otherwise stall every other connection.
+    # How long a client gets to finish a TLS handshake. This runs on the WORKER thread now (see
+    # process_request_thread), not the accept thread, so a client that connects and then stalls
+    # the handshake ties up one worker for this long and no longer stalls every other connection
+    # for it — but its own worker still needs a deadline, which is this.
     handshake_timeout = 15
 
     def __init__(self, addr, app, ssl_context=None):
@@ -3902,19 +4031,67 @@ class FFWebServer(ThreadingHTTPServer):
             self.address_family = socket.AF_INET6
         self.app = app
         self.ssl_context = ssl_context
+        # A ceiling on requests in flight, acquired non-blocking on the accept thread so a full
+        # pool sheds the new connection rather than parking the accept loop on it — which would
+        # be the very stall this exists to prevent.
+        self._slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
         super().__init__(addr, FFWebHandler)
 
-    def get_request(self):
-        """Accept, then wrap in TLS.
+    def process_request(self, request, client_address):
+        """Take a slot, or shed the connection. Runs on the accept thread, so it never blocks.
 
-        Wrapping here rather than wrapping the listening socket once is what makes a failed
-        handshake survivable: socketserver catches OSError out of get_request and moves on,
-        and ssl.SSLError is an OSError, so a probe or a stale http:// tab drops that one
-        connection instead of taking down the accept loop.
+        The slot is released in process_request_thread's finally. If the thread never starts —
+        super() raised before spawning it — the slot is released here instead, so a slot is
+        never lost on either path.
         """
-        sock, addr = super().get_request()
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.close()
+            except OSError:
+                pass
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        """Establish TLS and serve, on the worker thread rather than the accept thread.
+
+        Wrapping here — not in get_request — is what keeps one slow or silent client from
+        stalling every other connection: get_request returns the instant accept() does, and the
+        handshake's cost is paid on this thread. The wrapped socket is what both finish_request
+        and shutdown_request see, so the fd is torn down exactly once, on the object that owns it.
+        """
+        try:
+            conn = self._establish(request)
+            if conn is None:
+                return                       # a plaintext probe or a failed handshake, dealt with
+            try:
+                self.finish_request(conn, client_address)
+            finally:
+                self.shutdown_request(conn)
+        except (ConnectionError, TimeoutError, ssl.SSLError):
+            # The client's connection died or stalled out. That is not a server fault and does
+            # not warrant handle_error's traceback; just close what is left.
+            self.shutdown_request(request)
+        except Exception:                    # noqa: BLE001 - a real handler bug, logged as one
+            self.handle_error(request, client_address)
+            self.shutdown_request(request)
+        finally:
+            self._slots.release()
+
+    def _establish(self, sock):
+        """The accepted socket wrapped in TLS, or None when there is nothing left to serve.
+
+        None means the connection is already dealt with: a plaintext probe on the TLS port was
+        answered and closed, or a handshake failed and the socket was closed. get_request used to
+        raise ssl.SSLError for the plaintext case; returning None keeps a stale http:// tab from
+        being logged as a server error.
+        """
         if self.ssl_context is None:
-            return sock, addr
+            return sock
         sock.settimeout(self.handshake_timeout)
         try:
             if sock.recv(1, socket.MSG_PEEK) != b"\x16":   # not a TLS ClientHello
@@ -3922,18 +4099,14 @@ class FFWebServer(ThreadingHTTPServer):
                     sock.sendall(PLAINTEXT_REPLY)
                 finally:
                     sock.close()
-                raise ssl.SSLError("plaintext request on the TLS port")
-            wrapped = self.ssl_context.wrap_socket(sock, server_side=True)
+                return None
+            return self.ssl_context.wrap_socket(sock, server_side=True)
         except OSError:
             try:
                 sock.close()
             except OSError:
                 pass
-            raise
-        # Back to blocking for the request itself: a timeout left on here would cut off a
-        # keep-alive connection that is merely idle between page loads.
-        wrapped.settimeout(None)
-        return wrapped, addr
+            return None
 
 
 def is_loopback(host):
