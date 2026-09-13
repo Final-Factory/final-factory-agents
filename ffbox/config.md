@@ -136,8 +136,9 @@ already there:
     }
   },
   "rate_limits": {
-    "player": 5,
+    "player": 15,
     "operator": null,
+    "users": {},
     "send": { "per_hour": 60, "per_conversation_hour": 12 }
   },
   "state_dir": "~/ffbox-state",
@@ -323,19 +324,35 @@ and hold it until its TTL runs out.
 
 ## `rate_limits`
 
-Turns per rolling 24 hours, keyed on **who wrote the text** rather than which lane it took.
-`turn_trust()` answers that from a dictionary lookup on Discord's authenticated author id,
-with no model involved.
+Turns **per person** per rolling 24 hours. The person is the author of the message that triggered
+the turn: in a batch of several messages, the author of the last one. `turn_trust()` answers that
+from Discord's authenticated author id, with no model involved.
 
 ```json
-"rate_limits": { "player": 5, "operator": null, "send": { "per_hour": 60, "per_conversation_hour": 12 } }
+"rate_limits": {
+  "player": 15,
+  "operator": null,
+  "users": {
+    "junktion": { "discord": "419904541656350720", "limit": 40 },
+    "spammer":  { "discord": "1374974531147403397", "limit": 0 }
+  },
+  "send": { "per_hour": 60, "per_conversation_hour": 12 }
+}
 ```
 
-Anything here that is not `send` is a trust tier. `null` means no limit, which is what
-`operator` gets: nobody accidentally types two hundred prompts, and a person at a terminal
-watching a prompt refused because the tier is full is a worse failure than the one a cap
-prevents. Concurrency and the per-run clocks still bound what an operator can spend at any
-moment.
+The tier keys (`player`, `operator`) are the default limit for each person of that tier. Every
+player gets their own 15; one busy player does not use up anybody else's. `null` means no limit,
+which is what `operator` gets: nobody accidentally types two hundred prompts, and a person at a
+terminal watching a prompt refused is a worse failure than the one a cap prevents. Concurrency
+and the per-run clocks still bound what an operator can spend at any moment.
+
+`users` gives one person their own limit. Each entry is keyed by a label you choose, usually
+their handle, and nothing reads the label, so an out-of-date handle does no harm. `discord` is
+their numeric Discord id (Developer Mode, right-click the user, Copy User ID), which is what is
+matched. A listed `limit` wins whatever the person's tier: `null` is uncapped and `0` is no turns.
+An id listed under two labels logs a warning and the first entry in the file is used.
+
+A turn over the limit is blocked and never runs. The person is told once a day per channel.
 
 `send` is separate because it caps what reaches the wire. One run that loops writing intents
 would spray a thread no matter how few turns it took.
@@ -908,13 +925,13 @@ no `ffdev` block gets `ffwatch`'s built-in ffdev defaults, never whatever `ffage
 configured as, and editing one class's clocks does not move the other's. They exist in order
 to diverge, and they already do, on the pool and the network.
 
-A conversation picks its class when it is **opened** — the dropdown on the web page's
+A local conversation picks its class when it is **opened** — the dropdown on the web page's
 new-prompt box, or `ffwatch submit --agent ffdev` — and every later turn of it runs in the
 same kind of container, so there is no dropdown when replying. A Discord conversation has no
-dropdown either: `discord.user_pool` and `discord.operator_pool` pick by which side of the
-top-level `operators` block the account that opened it falls on — and a Discord conversation in
-an unfenced class is demoted to `user_pool` for good if anybody outside that table posts in it.
-Each class is staged into a pool of its own and neither can take the other's warm container.
+dropdown: **each turn** runs in `discord.operator_pool` when the message that triggered it came
+from an account in the top-level `operators` block, and in `discord.user_pool` otherwise, whoever
+opened the thread. Each class is staged into a pool of its own and neither can take the other's
+warm container.
 
 ### Two halves, answered by different questions
 
@@ -923,34 +940,25 @@ different things:
 
 | | Keys | Read from | Moves |
 |---|---|---|---|
-| **Resource budget** | the four clocks, `max_budget_usd` | the **turn's** trust tier | either way, every turn |
-| **Security boundary** | `network`, `github.container_token`, `plugins` | the **conversation's** class | downwards only, never back |
+| **Resource budget** | the four clocks, `max_budget_usd` | the **turn's** trust tier | every turn |
+| **Security boundary** | `network`, `github.container_token`, `plugins` | the **turn's** class | every turn |
 
-The budget is about *who asked*. `discord.operator_pool`'s numbers bound a turn whose every
-message came from an account in `operators`; `discord.user_pool`'s bound every other turn. Those
-are the same two keys, read against the same table, that decide the opening class — so a box that
-points both at one class has one budget and can stop reading here.
+Both are decided by the same person: the author of the message that triggered the turn (in a
+batch, the last message). `discord.operator_pool`'s numbers and container serve a turn an operator
+triggered; `discord.user_pool`'s serve every other turn. A box that points both at one class has
+one budget and one fence and can stop reading here.
 
-**Why the budget could not stay on the conversation.** A bug-report thread belongs to the player
-who opened it, so an operator asking in that thread for real work was held to the player's clock.
-Conversation 133 was killed on it with a fix half written. Nothing about who opened a thread says
-how long a developer's request inside it should take.
+**An operator gets the last say.** A conversation has ONE Claude session and every turn resumes
+it, so a player's words from turn 2 are in front of the model on turn 9. When an operator
+triggers turn 9, it runs in the operator's pool — open network, container git credential,
+`ff-agents` — with that text in the session. That is intended: the operator is steering the bot.
+The prompt still labels Discord user text as untrusted, the host opens pull requests, and nothing
+merges without review. An operator who does not trust where a thread is going **locks it**: `!lock`
+alone on a line stops every turn in the conversation until an operator sends `!unlock`. See the
+README's "Locking a thread".
 
-**Why the fence could not move to the turn.** A conversation has ONE Claude session and every turn
-resumes it — the transcript is mounted into the container on every launch — so a player's words
-from turn 2 are in front of the model on turn 9. Letting an operator's message pick the container
-would mean that session resuming on the open internet holding the container git credential, with
-a stranger's text already in it. That is why `demote_for_stranger` only ever moves a conversation
-downwards and has no promotion path at all. The agent's deny list does not hold this line; the
-absent credential and the absent network do. See `CREDENTIALS.md` section 4 on why
-`Bash(git push*)` is a tripwire rather than a fence.
-
-So an operator's request in a player's thread gets the long clocks and the fenced container.
-`ffwatch`'s journal names the budget only when the two differ: `agent=ffagent budget=ffdev`.
-
-If a turn genuinely needs the unfenced container, **fork it** — `!conv <id>` in a new thread, or
-`ffwatch fork`. That is the one sanctioned promotion path: operator-only, explicit, it says which
-class it landed in, and it leaves the original thread fenced.
+`ffwatch`'s journal names the budget only when it differs from the container:
+`agent=ffagent budget=ffdev`.
 
 **The pool is unaffected by any of it.** `ffbox` writes `<out>/clock` at **dispatch** rather than
 when a spare is staged, so one warm container of the right class serves either budget and
@@ -1359,16 +1367,11 @@ seeded: without it `ffdiscord ask` refuses to post rather than sending an anonym
 
 ## `user_pool`, `operator_pool`
 
-Which pool a Discord conversation opens in, decided by who opened it. A message whose
-Discord-authenticated author is in the top-level `operators` block opens its conversation in
-`operator_pool`; everybody else opens one in `user_pool`.
-
-It moves in exactly one direction afterwards. An operator answering in a player's thread does
-not promote it — nothing promotes anything — but a conversation that opened in an unfenced
-class is moved to `user_pool` on the first message from anybody outside `operators`, and
-stays there for the rest of its life. Our own bot's replies do not count; any other bot does.
-The change takes effect on the conversation's next turn, since a container's network is fixed
-when it is created. Local `shell` and `web` conversations are not subject to it.
+Which pool a Discord turn runs in, decided by who triggered it. A turn whose triggering message
+(the last message in its batch) has a Discord-authenticated author in the top-level `operators`
+block runs in `operator_pool`; every other turn runs in `user_pool`. A conversation opens in the
+pool of whoever opened it and then follows its latest turn. Local `shell` and `web`
+conversations keep the class they were opened with.
 
 Defaults `"ffagent"` and `"ffdev"`. This pair is a trust boundary rather than a scheduling
 preference: `ffagent`'s network is `limited` and `ffdev`'s is `full`, so pointing `user_pool`
@@ -1390,7 +1393,7 @@ The model aliases a turn and a classification ask for are in [`model`](#model).
 | Key | Default |
 |---|---|
 | `effort` | `null` |
-| `max_budget_usd` | `10` — bounds one container run. A class block may set its own (`pools.<class>.max_budget_usd`, `null` for the box's); it is the real ceiling on a run billed to the metered key |
+| `max_budget_usd` | `30` — bounds one container run, in Claude Code's own estimate, which prices a model it does not know at Opus rates. A class block may set its own (`pools.<class>.max_budget_usd`, `null` for the box's); it is the real ceiling on a run billed to the metered key |
 | `classifier_secs` | `120` |
 | `classifier_thinking_tokens` | `1024` — `0` turns thinking off and measurably changes what the selector decides |
 | `classifier_budget_usd` | `0.25` — a ceiling on one gate or selector call, not on a turn |

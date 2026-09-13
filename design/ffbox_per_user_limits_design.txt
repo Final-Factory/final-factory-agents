@@ -50,12 +50,13 @@ The pool moves from the conversation to the turn:
 
 - These read turn.agent_class instead of conversation.agent_class: launch() (network, plugins,
   container git token, which warm pool may serve it), the ceiling and warm-pool check in
-  schedule(), run_ref() (the class's base_ref), build_job(), and publish() with
-  record_branch_pull_request() (the token the run's pull request is opened with).
+  schedule(), run_ref() (the class's base_ref), build_job(), and publish() (the token the run's
+  pull request is opened with).
 - demote_for_stranger() and stranger_downgrade_class() are removed. A stranger's message no
   longer pins a conversation to ffagent; each turn gets the pool of whoever triggered it.
 - conversation.agent_class is set to each new turn's class, so the readers with no turn in hand
-  (reconcile_publication, send_github, ffweb's "agent" column) follow the latest turn.
+  (record_branch_pull_request, reconcile_publication, send_github, ffweb's "agent" column)
+  follow the latest turn.
 - A turn row older than the column reads the conversation's class.
 - fenced_history is unchanged. It decides how a fork's inherited text is framed in the prompt,
   not which pool runs it.

@@ -3822,6 +3822,44 @@ def test_the_session_store_survives_a_bad_file():
 
 
 
+def test_a_locked_conversation_says_so():
+    """An operator's `!lock` shows on the list, in its own column, and on the conversation page."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("UPDATE conversation SET locked=1, locked_by='193210319093497857',"
+                     " locked_at='2026-09-13T08:00:00Z' WHERE id=1")
+        conn.commit()
+    finally:
+        conn.close()
+    srv = serve()
+    try:
+        code, _h, body = srv.get("/")
+        page = text_of(body)
+        check("the list carries a locked column right after state",
+              "<th>state</th><th>locked</th>" in page, page[:900])
+        check("and the locked conversation says locked in it", ">locked</td>" in page,
+              [ln for ln in page.splitlines() if "locked" in ln][:3])
+        code, _h, body = srv.get("/conversation/1")
+        conv = text_of(body)
+        # THE NOTE'S OWN MARKUP, not the bare words: the page's stylesheet and a comment in it
+        # already say "locked by Anthropic" about subscription keys.
+        check("the conversation page says who locked it and when",
+              "class=\"note\">locked by " in conv and "at 2026-09-13T08:00:00Z" in conv,
+              [ln for ln in conv.splitlines() if "locked by" in ln][:3])
+        code, _h, body = srv.get("/conversation/2")
+        check("and a conversation nobody locked says nothing about it",
+              "class=\"note\">locked by" not in text_of(body),
+              [ln for ln in text_of(body).splitlines() if "note\">locked" in ln][:5])
+    finally:
+        srv.stop()
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            conn.execute("UPDATE conversation SET locked=0, locked_by=NULL, locked_at=NULL")
+            conn.commit()
+        finally:
+            conn.close()
+
+
 def test_the_branch_is_shown_as_the_conversations_own():
     """Where the code went, answerable at a glance and stated as a fact about the conversation.
 
@@ -4256,6 +4294,7 @@ def main():
         test_actions_are_off_by_default,
         test_actions_call_ffwatch_not_the_database,
         test_the_agent_class_is_chosen_only_when_a_conversation_opens,
+        test_a_locked_conversation_says_so,
         test_the_prompt_box_needs_no_flag,
         test_a_conversation_can_be_answered_back,
         test_the_reply_box_says_a_follow_up_will_wait,
