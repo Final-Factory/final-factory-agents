@@ -926,6 +926,10 @@ Default 5. A transient Discord failure stays retryable with exponential backoff 
 many attempts have failed; then the row is rejected, so it stops consuming send slots forever
 and shows up as a problem a human can see.
 
+With the default `send_backoff_secs` of 60 the gaps between attempts are 1, 2, 4 and 8 minutes,
+so a row rides out about a quarter of an hour of Discord trouble before it is rejected. Inside
+each attempt `ffdiscord` also waits out a 429 and retries a 5xx or a network error a few times.
+
 ---
 
 # `container`

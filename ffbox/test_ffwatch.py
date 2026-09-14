@@ -202,6 +202,10 @@ if cmd == "channel":
     print(json.dumps(fixture.get("channel_objects", {}).get(resolve(argv[1]),
                                                             {"id": resolve(argv[1]), "type": 0})))
 elif cmd == "dm":
+    if os.environ.get("FFD_FAIL_DM") == "401":
+        sys.stderr.write('error: HTTP 401 for https://discord.com/api/v10/users/@me/channels: '
+                         '{"message": "401: Unauthorized", "code": 0}  (bad or revoked bot token)\n')
+        sys.exit(1)
     if os.environ.get("FFD_FAIL_DM"):
         sys.stderr.write("403 Cannot send messages to this user\n")
         sys.exit(1)
@@ -251,6 +255,14 @@ elif cmd == "download":
             saved.append(path)
     print(json.dumps(saved))
 elif cmd in ("post", "react", "edit", "ask", "thread-create", "close"):
+    if os.environ.get("FFD_FAIL_SEND") == "401":
+        sys.stderr.write('error: HTTP 401 for https://discord.com/api/v10/channels/1/messages: '
+                         '{"message": "401: Unauthorized", "code": 0}  (bad or revoked bot token)\n')
+        sys.exit(1)
+    if os.environ.get("FFD_FAIL_SEND") == "closed-dm":
+        sys.stderr.write('error: HTTP 403 for https://discord.com/api/v10/channels/1/messages: '
+                         '{"message": "Cannot send messages to this user", "code": 50007}\n')
+        sys.exit(1)
     if os.environ.get("FFD_FAIL_SEND"):
         sys.stderr.write("stub ffdiscord: simulated Discord outage\n")
         sys.exit(1)
@@ -1283,6 +1295,76 @@ def test_an_undeliverable_private_half_never_becomes_public():
           "PerpendicularConnectorTransferSystem" not in
           json.loads(rows[0]["payload_json"])["text"])
 
+
+def test_only_a_closed_dm_makes_a_private_half_undeliverable():
+    """A 401 opening a DM is retried like any send. Only Discord's 50007 parks the row.
+
+    On 2026-09-14 the bot token was changed, which revoked the old one, and the DM half of a reply
+    got a 401 opening its channel. It was marked undeliverable on that first attempt -- a state
+    nothing retries -- and had to be put back by hand once the new token was live.
+    """
+    print("undeliverable: a refused token is not a closed DM")
+    case = Case("dmretry")
+    conv = seed_conversation(case)
+    case.watcher.cfg["send_backoff_secs"] = 0
+    case.watcher.record_outbound(None, conv, "post", {"dm_to": LOTHSAHN, "text": "the specifics",
+                                                      "private_half": True})
+    os.environ["FFD_FAIL_DM"] = "401"
+    try:
+        case.watcher.send_pending()
+    finally:
+        os.environ.pop("FFD_FAIL_DM", None)
+    row = case.rows("SELECT * FROM outbound")[0]
+    check("a 401 opening the DM leaves the row pending", row["status"] == "pending", dict(row))
+    check("with the error kept", "401" in (row["last_error"] or ""), dict(row))
+    case.watcher.send_pending()
+    check("and the next pass sends it",
+          case.rows("SELECT status FROM outbound")[0]["status"] == "sent",
+          case.rows("SELECT status, last_error FROM outbound"))
+
+    case.watcher.record_outbound(None, conv, "post", {"dm_to": LOTHSAHN, "text": "more specifics",
+                                                      "private_half": True})
+    os.environ["FFD_FAIL_SEND"] = "closed-dm"
+    try:
+        case.watcher.send_pending()
+    finally:
+        os.environ.pop("FFD_FAIL_SEND", None)
+    row = case.rows("SELECT * FROM outbound ORDER BY id")[-1]
+    check("a DM Discord refuses with 50007 is undeliverable on the first attempt",
+          row["status"] == "undeliverable" and row["attempts"] == 1, dict(row))
+
+
+def test_a_refused_thread_create_is_retried_and_an_ambiguous_one_is_not():
+    """NON_RETRYABLE_ACTIONS guards against doing a thing twice, and a 4xx did not do it once."""
+    print("sender: a refusal is not an ambiguous failure")
+    case = Case("refusedcreate")
+    conv = seed_conversation(case)
+    case.watcher.cfg["send_backoff_secs"] = 0
+    case.watcher.record_outbound(None, conv, "thread-create",
+                                 {"channel": ASK_CHANNEL, "message": "24000", "name": "job d1t1"})
+    os.environ["FFD_FAIL_SEND"] = "401"
+    try:
+        case.watcher.send_pending()
+    finally:
+        os.environ.pop("FFD_FAIL_SEND", None)
+    row = case.rows("SELECT * FROM outbound ORDER BY id")[-1]
+    check("a thread-create Discord refused with a 401 stays pending",
+          row["status"] == "pending" and row["attempts"] == 1, dict(row))
+    case.watcher.send_pending()
+    check("and goes out on the next pass",
+          case.rows("SELECT status FROM outbound ORDER BY id")[-1]["status"] == "sent",
+          case.rows("SELECT action, status, last_error FROM outbound"))
+
+    case.watcher.record_outbound(None, conv, "thread-create",
+                                 {"channel": ASK_CHANNEL, "message": "24001", "name": "job d1t2"})
+    os.environ["FFD_FAIL_SEND"] = "1"
+    try:
+        case.watcher.send_pending()
+    finally:
+        os.environ.pop("FFD_FAIL_SEND", None)
+    row = case.rows("SELECT * FROM outbound ORDER BY id")[-1]
+    check("an outage that may have made the thread is still rejected on the first attempt",
+          row["status"] == "rejected", dict(row))
 
 def test_an_operator_dm_is_a_private_venue():
     print("operator DM")
@@ -21595,6 +21677,8 @@ def main():
         test_a_details_channel_not_declared_private_is_refused,
         test_the_split_preamble_follows_the_hosts_decision,
         test_an_undeliverable_private_half_never_becomes_public,
+        test_only_a_closed_dm_makes_a_private_half_undeliverable,
+        test_a_refused_thread_create_is_retried_and_an_ambiguous_one_is_not,
         test_an_operator_dm_is_a_private_venue,
         test_a_group_dm_is_answered_by_nobody,
         test_a_player_who_dms_max_is_pointed_at_the_public_channels,

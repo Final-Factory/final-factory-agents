@@ -1531,7 +1531,10 @@ the skills merely advise:
 - **Retries are bounded.** A transient failure leaves the row `pending` with `attempts` and
   `last_error` recorded and an exponential backoff; after `max_send_attempts` it becomes
   `rejected` so it stops consuming send slots and shows up in `ffwatch status`. `ask` and
-  `thread-create` are never retried — a retry would ping a human twice or make a second thread.
+  `thread-create` are retried only after Discord answers with a 4xx, which means it did nothing;
+  after a timeout, a dropped connection or a 5xx they get one attempt, because a retry could ping
+  a human twice or make a second thread. The private DM half of a reply becomes `undeliverable`
+  only when Discord refuses the DM itself (code 50007); any other failure is retried like a post.
 
 Approval before send is a config flag, not a redesign — with `approve_before_send` on, rows
 wait at `pending` until a human releases them:

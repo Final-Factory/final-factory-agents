@@ -3807,11 +3807,37 @@ SENDABLE_ACTIONS = ("post", "react", "unreact", "edit", "ask", "thread-create", 
 # nonce + enforce_nonce, `react` (a PUT), `unreact` (a DELETE, and ffdiscord swallows the 404
 # of one already gone) and `edit` (a PATCH to fixed content) are naturally idempotent — these
 # two are neither. A retried thread-create makes a second thread; a retried ask pings a human
-# twice. One attempt, then rejected with the error kept for a human to read.
+# twice. One attempt after an AMBIGUOUS failure, then rejected with the error kept for a human to
+# read; a 4xx refusal is not ambiguous, and is retried (see discord_refused below).
 #
 # `close` is retryable and belongs with the first group: archiving an archived thread is the
 # state that was asked for, and ffdiscord treats it as one.
 NON_RETRYABLE_ACTIONS = ("ask", "thread-create")
+
+# A REFUSAL IS NOT AN AMBIGUOUS FAILURE. What makes a retried ask or thread-create dangerous is not
+# knowing whether Discord acted: a timeout, a dropped connection, a 5xx the client already retried.
+# An HTTP 4xx is Discord answering, and the answer is that it did nothing -- a 401 from a revoked
+# token created no thread and pinged nobody. So those two are retried after a refusal like any
+# other row, and a reply that follows its thread-create is not taken down by one bad minute.
+# A 429 never reaches here; ffdiscord sleeps out the rate limit inside the call.
+_HTTP_STATUS_RE = re.compile(r"\bHTTP (\d{3}) for ")
+
+
+def discord_refused(error):
+    """The HTTP status when `error` is Discord answering with a 4xx, else None."""
+    m = _HTTP_STATUS_RE.search(error or "")
+    status = int(m.group(1)) if m else None
+    return status if status is not None and 400 <= status < 500 else None
+
+
+def dm_closed(error):
+    """Discord refusing a DM because the recipient does not accept them: code 50007.
+
+    The one DM failure no retry fixes, so the only one that makes a private half undeliverable.
+    Matched as a whole number, because a snowflake in the URL can contain those digits.
+    """
+    text = error or ""
+    return bool(re.search(r"\b50007\b", text)) or "Cannot send messages to this user" in text
 
 
 class SendRejected(ValueError):
@@ -16437,9 +16463,14 @@ class Watcher:
             try:
                 dm = ffd_json(self.cfg, ["dm", str(payload["dm_to"])]) or {}
             except FFDiscordError as exc:
-                return self._undeliverable(row, f"could not open a DM: {exc}")
+                # ONLY A CLOSED DM IS UNDELIVERABLE. Anything else -- a revoked token, a network
+                # failure that outlasted the client's own retries -- is retried like any send. On
+                # 2026-09-14 a token change parked a DM here for good on its first 401.
+                if dm_closed(str(exc)):
+                    return self._undeliverable(row, f"could not open a DM: {exc}")
+                return self._send_failed(row, f"could not open a DM: {exc}"[:500])
             if not dm.get("id"):
-                return self._undeliverable(row, "Discord returned no DM channel")
+                return self._send_failed(row, "Discord returned no DM channel")
             payload["channel"] = str(dm["id"])
             self.db.execute("UPDATE outbound SET payload_json=? WHERE id=?",
                             (json.dumps(payload, ensure_ascii=False), row["id"]))
@@ -16456,7 +16487,12 @@ class Watcher:
         rc, out, err = ffdiscord_run(self.cfg, args)
 
         if rc != 0:
-            return self._send_failed(row, (err or out or f"exit {rc}").strip()[:500])
+            error = (err or out or f"exit {rc}").strip()[:500]
+            # Discord refuses a closed DM on the POST, not when the channel opens, so this is
+            # where the real case lands. Retrying it would only fail the same way five times.
+            if payload.get("dm_to") and dm_closed(error):
+                return self._undeliverable(row, f"the DM was refused: {error}")
+            return self._send_failed(row, error)
 
         discord_id = None
         if wants_id:
@@ -16726,7 +16762,8 @@ class Watcher:
         # that did not claim; what it must NOT do is add a second increment.
         attempts = int(row["attempts"] or 0) + 1
         limit = int(self.cfg["max_send_attempts"])
-        terminal = attempts >= limit or row["action"] in NON_RETRYABLE_ACTIONS
+        terminal = attempts >= limit or (row["action"] in NON_RETRYABLE_ACTIONS
+                                         and discord_refused(error) is None)
         if terminal:
             self.db.execute(
                 "UPDATE outbound SET status='rejected', reject_reason=?, attempts=?,"
