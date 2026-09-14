@@ -58,6 +58,11 @@ OPENROUTER_URL = os.environ.get("FFBOX_MODELPROXY_OPENROUTER_URL") or claude_key
 # A subscription token is refused by the API without this beta. Claude Code only sends it when it
 # holds the token itself, which behind a base URL it does not.
 OAUTH_BETA = "oauth-2025-04-20"
+# LONGER THAN CLAUDE CODE'S OWN 600s REQUEST TIMEOUT, so the client decides when a request has taken
+# too long and retries it. At 600s the two raced: on 2026-09-14 an OpenRouter request hung, the proxy
+# gave up the same moment claude did, and its 502 went to a socket nobody was reading any more.
+# Overridable only so the offline suite does not have to wait fifteen minutes.
+UPSTREAM_TIMEOUT = float(os.environ.get("FFBOX_MODELPROXY_UPSTREAM_TIMEOUT") or 900)
 # Never forwarded upstream. authorization and x-api-key are the container's placeholder; the rest is
 # per-hop. accept-encoding goes so the provider answers uncompressed and the stream relays as is.
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
@@ -106,11 +111,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _reply(self, status, error_type, message):
         body = json.dumps({"type": "error", "error": {"type": error_type, "message": message}}).encode()
-        self.send_response(status)
-        self.send_header("content-type", "application/json")
-        self.send_header("content-length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError:
+            # THE CLIENT HAS GONE: claude's own timeout fired, or the container was stopped. Nothing
+            # is waiting for this answer, and raising here printed a traceback into the journal.
+            self.close_connection = True
 
     def _read_body(self):
         if "chunked" in (self.headers.get("transfer-encoding") or "").lower():
@@ -148,10 +158,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         headers["content-length"] = str(len(body))
 
         if target.scheme == "https":
-            conn = http.client.HTTPSConnection(target.hostname, target.port, timeout=600,
+            conn = http.client.HTTPSConnection(target.hostname, target.port, timeout=UPSTREAM_TIMEOUT,
                                                context=ssl.create_default_context())
         else:
-            conn = http.client.HTTPConnection(target.hostname, target.port, timeout=600)
+            conn = http.client.HTTPConnection(target.hostname, target.port, timeout=UPSTREAM_TIMEOUT)
         started = time.monotonic()
         try:
             conn.request(self.command, target.path.rstrip("/") + self.path, body=body, headers=headers)
