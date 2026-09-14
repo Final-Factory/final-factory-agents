@@ -5764,6 +5764,24 @@ class GitHub:
             return False
 
 
+# The kernel's PF_EXITING, set on a process once it has left userspace for good.
+PF_EXITING = 0x4
+
+
+def _proc_stat(pid):
+    """(state, flags, starttime) from /proc/<pid>/stat, or None when there is no such process.
+
+    Split after the LAST ')', because the command name inside the parentheses can hold anything.
+    starttime is what tells a process from a later one that was given the same pid.
+    """
+    try:
+        with open(f"/proc/{int(pid)}/stat", encoding="utf-8", errors="replace") as fh:
+            rest = fh.read().rsplit(")", 1)[1].split()
+        return rest[0], int(rest[6]), int(rest[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 class ConversationLock:
     """flock on a per-conversation file.
 
@@ -17047,15 +17065,19 @@ class Watcher:
     # would re-arm a watcher that returns at once on every tick.
     EXIT_WATCH_RETRY_SECS = 30
 
+    # How often an exit watcher reads the kernel's view of a container's first process.
+    EXIT_POLL_SECS = 0.1
+
     def watch_exit(self, run):
-        """Put a thread on `docker wait` for this run's container. True when one was started.
+        """Put a thread on this run's container, finishing it once it has let go. True when one
+        was started.
 
         THE PASS WAS THE ONLY THING THAT NOTICED A CONTAINER HAD EXITED, and it looks once per
         poll_secs at best. Conversation 185's ping, 2026-09-14: the container exited at
         17:52:33.3, the pass found it gone at 40.3, and the reply was posted at 48.1 -- fifteen
         of the thirty-eight seconds between the question and the answer were the loop waiting,
-        against four for the model. The watcher starts the finish the moment `docker wait`
-        returns, and deliver_finished sends the reply from that same thread.
+        against four for the model. The watcher starts the finish as soon as the container has
+        let go (see _wait_for_exit), and deliver_finished sends the reply from that same thread.
 
         run()'S ONLY. `ffwatch once` and the offline suite leave _finish_promptly off and keep
         finishing on a pass, where what happened is visible when the call returns.
@@ -17078,19 +17100,87 @@ class Watcher:
                          name=f"ffwatch-exit-{run['ffbox_run_id']}", daemon=True).start()
         return True
 
-    def _wait_for_exit(self, run_row_id, ref):
-        """One exit watcher. Never raises into the thread runner."""
+    def container_init(self, ref):
+        """(host pid, starttime, cgroup dir or None) of a running container's first process, or
+        None when docker names no process this host can read -- a stopped container, an offline
+        suite with no /proc, a daemon in a pid namespace of its own."""
         try:
-            try:
-                # NO TIMEOUT. A run can take hours, and enforce_clocks on the pass bounds it.
-                subprocess.run([self.cfg["docker"], "wait", ref], capture_output=True, text=True,
-                               encoding="utf-8", errors="replace")
-            except (OSError, subprocess.SubprocessError):
-                pass
+            proc = subprocess.run([self.cfg["docker"], "inspect", "-f", "{{.State.Pid}}", ref],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=30)
+            pid = int((proc.stdout or "").strip())
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
+        stat = _proc_stat(pid) if pid > 0 else None
+        if stat is None:
+            return None
+        cgroup = None
+        try:
+            with open(f"/proc/{pid}/cgroup", encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("0::"):
+                        cgroup = "/sys/fs/cgroup" + line[3:].strip()
+        except OSError:
+            pass
+        return pid, stat[2], cgroup
+
+    def init_has_let_go(self, init):
+        """Has this container's first process left userspace with nothing else left beside it?
+
+        THE CONTAINER IS DONE BEFORE DOCKER SAYS SO. The last process in a container frees its
+        40 GB workspace tmpfs on the way out, inside the kernel, and docker records the exit only
+        after: 2.9s on both of conversation 185's measured pings, and 3.2s for a probe holding 20
+        GiB against 0.003s for one holding nothing. Nothing runs in the container in that time.
+        So this reads what the kernel says instead: the first process -- the task, whose trap has
+        already written everything the host reads -- is exiting (PF_EXITING), and the container's
+        cgroup holds no other process. Measured on this box the flag was readable 14ms after the
+        trap's last line and 2.7s before docker's FinishedAt.
+
+        BOTH HALVES OR NOTHING. A process still running could still write into out/, and the rule
+        that the host reads out/ only once nothing in the container can change it is what stops a
+        run forging its own verification. The trap kills everything else before it exits (see
+        _ffbox_reap_others in discord-task.sh), so the count reaches one promptly; a container
+        where it cannot, or with no pids.current to read, is left to the process actually going,
+        which is what docker waits for anyway. A starttime that no longer matches is a pid the
+        kernel has given to somebody else, and means ours is gone.
+        """
+        pid, starttime, cgroup = init
+        stat = _proc_stat(pid)
+        if stat is None or stat[2] != starttime or stat[0] in ("Z", "X"):
+            return True
+        if not stat[1] & PF_EXITING or not cgroup:
+            return False
+        try:
+            with open(os.path.join(cgroup, "pids.current"), encoding="utf-8") as fh:
+                return int(fh.read().strip()) <= 1
+        except (OSError, ValueError):
+            return False
+
+    def _wait_for_exit(self, run_row_id, ref):
+        """One exit watcher. Never raises into the thread runner.
+
+        The kernel's view when this host can read it, `docker wait` when it cannot. NO TIMEOUT on
+        either: a run can take hours, and enforce_clocks on the pass is what bounds it.
+        """
+        try:
+            let_go = False
+            init = self.container_init(ref)
+            if init is not None:
+                while not self.init_has_let_go(init):
+                    time.sleep(self.EXIT_POLL_SECS)
+                let_go = True
+            else:
+                try:
+                    subprocess.run([self.cfg["docker"], "wait", ref], capture_output=True,
+                                   text=True, encoding="utf-8", errors="replace")
+                except (OSError, subprocess.SubprocessError):
+                    pass
             run = self.db.one("SELECT * FROM run WHERE id=?", (run_row_id,))
             if run is None or run["terminal_state"] is not None:
                 return
-            if self.run_container_live(run):
+            # DOCKER STILL SAYS RUNNING through the tmpfs teardown, so its answer is only asked
+            # for when the kernel's was not available.
+            if not let_go and self.run_container_live(run):
                 time.sleep(self.EXIT_WATCH_RETRY_SECS)
                 return
             self.start_finish(run)
