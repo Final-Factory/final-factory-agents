@@ -1447,7 +1447,19 @@ DEFAULTS = {
     # and shows up as a problem a human can see.
     "max_send_attempts": 5,
     "send_backoff_secs": 60,
+    # THE MODEL PROXY (ffbox/modelproxy.py; config.md, `model_proxy`). On, no run's container holds
+    # a model credential: this daemon runs the proxy as a child, opens a socket for each run as it
+    # starts it, and stages spares with no credential, so any spare serves any turn. Off, or with
+    # the proxy's heartbeat stale, every run gets its credential in its environment as before.
+    "model_proxy": {"enabled": False},
 }
+
+# THE MODEL PROXY'S FIXED POINTS. MODEL_PROXY_KEY is what a spare staged with no credential records
+# in its `claude-key` file: not a variable anybody could set, so it can never be read as an account.
+MODEL_PROXY_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modelproxy.py")
+MODEL_PROXY_KEY = "model-proxy"
+# The proxy beats every second. Ten covers a slow pass without trusting a proxy that has died.
+MODEL_PROXY_STALE_SECS = 10
 
 # THE DOCKER NAME IS DERIVED, NEVER WRITTEN DOWN TWICE. Every per-class block carries the docker
 # network its mode resolves to, alongside the mode itself, and the defaults get theirs here for
@@ -9806,7 +9818,12 @@ class Watcher:
             self._pool_stage_error[agent_class] = self.pool_keyless_why(agent_class)
             shutil.rmtree(d, ignore_errors=True)
             return None
-        cmd += ["--claude-key", _staged_key]
+        if _staged_key == MODEL_PROXY_KEY:
+            # NO CREDENTIAL AT ALL. The socket directory is mounted now, while the container is
+            # created; the socket in it is opened at dispatch, for whoever that turn bills.
+            cmd += ["--model-proxy", self.model_socket_dir(d)]
+        else:
+            cmd += ["--claude-key", _staged_key]
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                                   errors="replace", timeout=180)
@@ -9892,10 +9909,18 @@ class Watcher:
         """
         if discord_pool(self.cfg, "user_pool") == agent_class:
             dflt, _why = self.claude_keys_now()[1]
+            if dflt and self.model_proxy_ready():
+                return MODEL_PROXY_KEY
             return dflt[0] if dflt else None
         routed = {name for _who, _id, name, _why in self.claude_routes() if name}
         if not routed:
             return None
+        # BEHIND THE PROXY THERE IS NOTHING TO GUESS. A spare staged with no credential serves
+        # whoever asks, so the question below -- which operator is likely to want the next one --
+        # stops mattering. Asked only after `routed`, because a box with nobody to bill still has
+        # nobody to stage for.
+        if self.model_proxy_ready():
+            return MODEL_PROXY_KEY
         staged = self.pool_spare_keys(agent_class)
         # MOST RECENTLY SPENT FIRST. `run.claude_key` is what the turn was actually billed to,
         # which is the only record of demand this box keeps, and a key that is not in `routed`
@@ -9930,6 +9955,113 @@ class Watcher:
                 return fh.read().strip() or None
         except OSError:
             return None
+
+    # -- the model proxy ---------------------------------------------------------------------------
+    #
+    # ffbox/modelproxy.py holds the model credentials; a run's container holds a socket. See that
+    # file for why a socket, and config.md's `model_proxy` for what an operator sees.
+
+    def model_proxy_enabled(self):
+        return bool((self.cfg.get("model_proxy") or {}).get("enabled"))
+
+    def model_proxy_home(self):
+        return os.path.join(self.state_dir, "modelproxy")
+
+    def model_routes_dir(self):
+        return os.path.join(self.model_proxy_home(), "routes")
+
+    def model_proxy_ready(self):
+        """Is the proxy answering? Read off its heartbeat file, not off the child handle.
+
+        THE FILE AND NOT THE PROCESS, so the answer holds for a follower that did not start the
+        proxy and for the tests, and so a proxy that is alive but wedged in its loop reads as down.
+        """
+        if not self.model_proxy_enabled():
+            return False
+        try:
+            age = time.time() - os.stat(os.path.join(self.model_proxy_home(), "alive")).st_mtime
+        except OSError:
+            return False
+        return age < MODEL_PROXY_STALE_SECS
+
+    def model_proxy_keep(self):
+        """Start the proxy if it should be running and is not. Every pass; a no-op while it runs.
+
+        A CHILD OF THIS DAEMON, not a unit of its own: it needs no install step, it restarts when the
+        updater restarts ffwatch, and a route it was serving is a file, so a new proxy reopens every
+        socket a moment after it starts. Claude Code retries a connection that dropped while that
+        happened.
+
+        ITS ENVIRONMENT IS THE MODEL CREDENTIALS AND NOTHING ELSE, read the way routing reads them
+        (claude_keys.claude_credentials). No Discord token, GitHub token or Unity password goes
+        into a process whose job is to talk to model providers.
+        """
+        if not self.model_proxy_enabled() or self.dry_run:
+            return
+        proc = getattr(self, "_model_proxy", None)
+        if proc is not None and proc.poll() is None:
+            return
+        if time.monotonic() < getattr(self, "_model_proxy_after", 0.0):
+            return
+        if proc is not None:
+            log(f"model proxy: exited with {proc.returncode}; starting it again")
+        self._model_proxy_after = time.monotonic() + 10
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+        for name, token, kind, _label, _rate, _model, url in claude_keys.claude_credentials():
+            env[name] = token
+            if kind == claude_keys.KIND_OPENROUTER and url:
+                env["OPENROUTER_URL_KEY" + name[len(claude_keys.OPENROUTER_KEY_PREFIX):]] = url
+        try:
+            os.makedirs(self.model_routes_dir(), exist_ok=True)
+            os.chmod(self.model_proxy_home(), 0o700)
+            self._model_proxy = subprocess.Popen(
+                [sys.executable, MODEL_PROXY_SCRIPT, "--routes", self.model_routes_dir(),
+                 "--heartbeat", os.path.join(self.model_proxy_home(), "alive")],
+                env=env, stdin=subprocess.DEVNULL)
+            log(f"model proxy: started (pid {self._model_proxy.pid})")
+        except OSError as exc:
+            self._model_proxy = None
+            log(f"model proxy: could not be started: {exc}")
+
+    def model_socket_dir(self, parent):
+        """The directory one run's socket lives in, created 0711.
+
+        MOUNTED INTO THAT CONTAINER AND NO OTHER, which is what makes the socket the authentication.
+        0711 so any uid inside the container can reach the socket by name while nobody can list the
+        directory; measured on this box's rootless daemon, where 0770 refused every non-root uid.
+        """
+        path = os.path.join(parent, "model")
+        os.makedirs(path, exist_ok=True)
+        os.chmod(path, 0o711)
+        return path
+
+    def model_route_open(self, run_id, socket_dir, claude_key):
+        """Tell the proxy to serve `run_id` on the socket in `socket_dir`, billing `claude_key`."""
+        routes = self.model_routes_dir()
+        os.makedirs(routes, exist_ok=True)
+        path = os.path.join(routes, f"{run_id}.json")
+        with open(f"{path}.tmp", "w", encoding="utf-8") as fh:
+            json.dump({"socket": os.path.join(socket_dir, "model.sock"), "credential": claude_key,
+                       "opened_at": now_iso()}, fh)
+        os.replace(f"{path}.tmp", path)
+
+    def model_route_sweep(self):
+        """Close the route of every run that has a terminal state, however it got one.
+
+        ONE SWEEP RATHER THAN A HOOK IN EACH FINISH PATH, because a run finishes through finish_run,
+        through finish_run_from_disk after a restart, and through recovery, and a route one of those
+        forgot would leave a socket billing an account for a container that is gone.
+        """
+        try:
+            names = os.listdir(self.model_routes_dir())
+        except OSError:
+            return
+        live = {row["ffbox_run_id"] for row in self.db.query(
+            "SELECT ffbox_run_id FROM run WHERE terminal_state IS NULL AND ffbox_run_id IS NOT NULL")}
+        for name in names:
+            if name.endswith(".json") and name[:-len(".json")] not in live:
+                with contextlib.suppress(OSError):
+                    os.unlink(os.path.join(self.model_routes_dir(), name))
 
     def pool_branch_activity(self, window_secs=None):
         """{(class, branch): when it was last wanted}, for every branch a conversation owns.
@@ -10876,7 +11008,12 @@ class Watcher:
         # A CALLER THAT NAMES NO KEY IS NOT ASKING ABOUT ONE. Nothing in the daemon launches
         # without a routed key any more, but `ffwatch pool` and the tests both ask this question
         # about branches alone and should keep getting an answer about branches.
-        if claude_key and self.pool_claude_key(container["id"]) != claude_key:
+        staged_key = self.pool_claude_key(container["id"])
+        # A SPARE STAGED BEHIND THE PROXY HOLDS NO CREDENTIAL, so it can bill whoever asks -- but
+        # only while the proxy is there to add one. With the proxy down it serves nobody.
+        if staged_key == MODEL_PROXY_KEY:
+            return self.model_proxy_ready()
+        if claude_key and staged_key != claude_key:
             return False
         return True
 
@@ -13508,7 +13645,10 @@ class Watcher:
         # staged on the key this turn routed to, so the two agree -- and the spare's own file is
         # what gets recorded, because it is what the container actually holds.
         if pool_id:
-            claude_key = self.pool_claude_key(pool_id) or claude_key
+            # A spare behind the proxy records no account, so the turn keeps the one it routed to.
+            staged_key = self.pool_claude_key(pool_id)
+            if staged_key != MODEL_PROXY_KEY:
+                claude_key = staged_key or claude_key
             claude_why = "the account this warm container was staged with"
         cur = self.db.execute(
             "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, resumed,"
@@ -13548,6 +13688,20 @@ class Watcher:
             # been up for hours — so there is nothing left for this to decide there; the
             # account went in when the spare was staged, and above is where it is read back.
             cmd += ["--claude-key", claude_key]
+        # THROUGH THE MODEL PROXY: a cold run while the proxy answers, and any spare that was staged
+        # behind it, which has no credential to fall back on. The route is written before ffbox
+        # runs, so the socket is open long before claude asks for it.
+        proxied = bool(claude_key) and (
+            (bool(pool_id) and self.pool_claude_key(pool_id) == MODEL_PROXY_KEY)
+            or (not pool_id and self.model_proxy_ready()))
+        if proxied:
+            socket_dir = self.model_socket_dir(self.pool_dir(pool_id) if pool_id else run_dir)
+            self.model_route_open(run_id, socket_dir, claude_key)
+            if pool_id:
+                # THE ONE DISPATCH THAT NAMES AN ACCOUNT. The spare was staged with none, and ffbox
+                # needs the name to write this run's kind into /ffbox/in/env. Still only a name.
+                cmd += ["--claude-key", claude_key]
+            cmd += ["--model-proxy", socket_dir]
         if pool_id:
             # Everything above that is a MOUNT is already on the staged container; what is left
             # is the job, and --dispatch is how it gets in. The turn task, ffverify, ffplaytest
@@ -17568,6 +17722,7 @@ class Watcher:
         # daemon does not call once(), so a hook added to one of them reaches half the callers.
         self.say_claude_routes()
         self.probe_down_credentials()
+        self.model_proxy_keep()
         self.claim_turns()
         # NO EARLY send_pending() HERE, AND run() HAS ONE. The difference is not an oversight:
         # this form runs the whole turn before it returns, so nothing is waiting on the
@@ -17597,6 +17752,7 @@ class Watcher:
         # this and the daemon, where a finish takes as long as a push and nobody is blocked on it.
         self.finish_runs()
         self.join_finishes()
+        self.model_route_sweep()
         # AFTER the join, so the runs this pass started have finished publishing and this sees
         # what they actually left behind rather than racing them for it.
         self.reconcile_publications()
@@ -19099,6 +19255,8 @@ class Watcher:
                     # asking. Latched inside; see say_claude_routes.
                     self.say_claude_routes()
                     self.probe_down_credentials()
+                    # BEFORE ANYTHING IS LAUNCHED, so the first turn after a start finds it up.
+                    self.model_proxy_keep()
                     self.claim_turns()
                     # BEFORE THE EXPENSIVE HALF, for the reason spelled out in once(): the
                     # acknowledgement create_turn just queued is worth nothing late, and
@@ -19127,6 +19285,8 @@ class Watcher:
                     self.enforce_clocks()
                     # Runs whose container is gone. On threads; this returns at once.
                     self.finish_runs()
+                    # Close the socket of every run that has ended. Cheap; see model_route_sweep.
+                    self.model_route_sweep()
                     # The box's Unity licence rolls forward about a day, and a container can now
                     # outlive that. Rate-limited inside; a no-op when there is nothing to do.
                     self.refresh_unity_licence()

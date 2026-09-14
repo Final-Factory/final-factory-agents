@@ -359,6 +359,13 @@ Options:
                        conversation was opened with. It does NOT pick the network — that comes
                        from --network, which ffwatch also passes, resolved from that pool's
                        "network" mode; see there.
+  --model-proxy DIR    Reach the model through the host's model proxy instead of handing the
+                       container a credential (ffbox/modelproxy.py). DIR is mounted read-only at
+                       /ffbox/model, where the proxy opens model.sock once ffwatch has chosen the
+                       account; the container is given only what is not secret: where the
+                       socket will be, the credential's kind, and an OpenRouter slot's model.
+                       With --stage-pool and no --claude-key the spare holds no credential and
+                       no kind, and both arrive at --dispatch.
   --claude-key NAME    Which credential pays for the container this creates, named as the
                        secrets.env variable holding it: CLAUDE_CODE_OAUTH_TOKEN2 (an Anthropic
                        subscription), ANTHROPIC_API_KEY or ANTHROPIC_API_KEY2 (an Anthropic API
@@ -421,6 +428,7 @@ while [ $# -gt 0 ]; do
         --idle-ttl)       IDLE_TTL=${2:?--idle-ttl needs seconds}; shift 2 ;;
         --pool-tier)      POOL_TIER=${2:?--pool-tier needs held or evictable}; shift 2 ;;
         --claude-key)     CLAUDE_KEY=${2:?--claude-key needs a variable name}; shift 2 ;;
+        --model-proxy)    MODEL_PROXY_DIR=${2:?--model-proxy needs a directory}; shift 2 ;;
         --agent-class)    AGENT_CLASS=${2:?--agent-class needs a name}; shift 2 ;;
         --agent-timeout)  AGENT_TIMEOUT=${2:?--agent-timeout needs seconds}; CLOCKS=1; shift 2 ;;
         --warmup-timeout) WARMUP_TIMEOUT=${2:?--warmup-timeout needs seconds}; CLOCKS=1; shift 2 ;;
@@ -700,6 +708,35 @@ case "$_ff_active_kind" in
         CLAUDE_ENV_ARGS=(-e CLAUDE_CODE_OAUTH_TOKEN)
         ;;
 esac
+# THE MODEL PROXY TAKES ALL OF THAT BACK. With --model-proxy the container is handed no credential:
+# the directory the host's proxy opens this run's socket in, and the three things that are not
+# secret -- where the socket will be, which kind of credential answers on it, and an OpenRouter
+# slot's model, which claude needs for its aliases. discord-task.sh turns those into claude's own
+# variables inside the container, and the proxy adds the credential on the far side of the socket.
+#
+# A SPARE STAGED WITH NO --claude-key GETS NO KIND EITHER. Nobody has chosen its account yet; the
+# kind arrives with the rest of the job in /ffbox/in/env at --dispatch (MODEL_ENV, below).
+MODEL_ENV=()
+if [ -n "${MODEL_PROXY_DIR:-}" ]; then
+    if [ ! -d "$MODEL_PROXY_DIR" ]; then
+        echo "ffbox: --model-proxy $MODEL_PROXY_DIR is not a directory" >&2
+        exit 2
+    fi
+    MODEL_ENV=("FFBOX_MODEL_SOCKET=/ffbox/model/model.sock")
+    if [ -n "$CLAUDE_KEY" ]; then
+        MODEL_ENV+=("FFBOX_MODEL_KIND=$_ff_active_kind")
+        [ "$_ff_active_kind" != openrouter ] \
+            || MODEL_ENV+=("FFBOX_MODEL_NAME=$ANTHROPIC_DEFAULT_FABLE_MODEL")
+    fi
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN \
+          ANTHROPIC_DEFAULT_FABLE_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL \
+          ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
+    CLAUDE_ENV_ARGS=(-v "$MODEL_PROXY_DIR:/ffbox/model:ro")
+    for _ff_kv in "${MODEL_ENV[@]}"; do
+        CLAUDE_ENV_ARGS+=(-e "$_ff_kv")
+    done
+    unset _ff_kv
+fi
 CLAUDE_KEY=$_ff_active_name
 unset _ff_active_token _ff_active_name _ff_active_kind _ff_active_slot _ff_v _ff_n _ff_name \
       _ff_wanted_ok _ff_kind _ff_slot
@@ -1610,6 +1647,10 @@ if [ -n "$DISPATCH" ]; then
         printf 'FFBOX_GIT_NAME=%s\n' "$FFBOX_GIT_NAME"
         printf 'FFBOX_GIT_EMAIL=%s\n' "$FFBOX_GIT_EMAIL"
         printf 'FFBOX_OUTPUT_FORMAT=%s\n' "$OUTPUT_FORMAT"
+        # The model proxy's settings, when this run goes through it. None of them is secret.
+        for _ff_kv in "${MODEL_ENV[@]}"; do
+            printf '%s\n' "$_ff_kv"
+        done
     } > "$POOL_IN/env"
 
     [ -f "$OUT/prompt.txt" ] && cp "$OUT/prompt.txt" "$POOL_IN/prompt.txt"
@@ -1688,7 +1729,7 @@ else
     fi
     RUN_MACHINE_ID=$(ffbox_agent_machine_id "$RUN_SLOT")
     echo "[ffbox] agent slot ${RUN_SLOT} (Unity sees this slot as its own machine)"
-    echo "[ffbox] claude account ${CLAUDE_KEY} pays for this run"
+    echo "[ffbox] claude account ${CLAUDE_KEY} pays for this run${MODEL_PROXY_DIR:+, through the model proxy on the host}"
     # 9>&- CLOSES THE ADMISSION LOCK IN THE CHILD, and it is not optional. fd 9 is the lock,
     # held open by `exec 9>>` in this shell, and a background command inherits every open
     # descriptor -- so the SUPERVISED `docker run` below, which stays up for the whole run, kept
