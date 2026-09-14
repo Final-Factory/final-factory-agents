@@ -70,11 +70,27 @@ git init -q "$SRC"
     printf 'the branch payload, which master never had\n' > asset.bin
     git add asset.bin
     git commit -qm 'branch asset'
+    # mixed: a second LFS file beside four small blobs that are NOT pointers and must not be listed.
+    # Each is one way a parser that reads blobs as pointers could be wrong. Their oids are made up,
+    # so one mistaken for a pointer is an object the mirror lacks, and the restore warns about it.
+    git checkout -q -b mixed
+    printf 'a second payload\n' > second.bin
+    printf 'oid sha256:%s\nsize 12\n' "$(printf 'ab%.0s' $(seq 32))" > oid-without-version.txt
+    printf 'version https://git-lfs.github.com/spec/v1\nsize 12\n' > version-without-oid.txt
+    printf 'version https://git-lfs.github.com/spec/v1\n\000\001oid sha256:\000\n' > binary.dat
+    { printf 'version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize 12\n' \
+          "$(printf 'cd%.0s' $(seq 32))"
+      head -c 2000 /dev/zero | tr '\000' x; } > too-big-to-be-a-pointer.txt
+    git add second.bin oid-without-version.txt version-without-oid.txt binary.dat \
+        too-big-to-be-a-pointer.txt
+    git commit -qm 'a second asset, and small blobs that are not pointers'
     git checkout -q master
 ) || { printf '  FAIL could not build the fixture repository\n'; exit 1; }
 
 BRANCH_OID=$(cd "$SRC" && git show feature:asset.bin | sed -n 's/^oid sha256://p')
 [ -n "$BRANCH_OID" ] || { printf '  FAIL the fixture did not produce an LFS pointer\n'; exit 1; }
+SECOND_OID=$(cd "$SRC" && git show mixed:second.bin | sed -n 's/^oid sha256://p')
+[ -n "$SECOND_OID" ] || { printf '  FAIL the fixture did not produce a second LFS pointer\n'; exit 1; }
 
 MIRROR=$TMP/mirror.git
 git clone -q --bare "$SRC" "$MIRROR"
@@ -89,17 +105,19 @@ fresh_workspace() {
     mkdir -p "$TMP/out"
     git clone -q "$SRC" "$TMP/ws"
     git -C "$TMP/ws" remote set-url origin https://127.0.0.1:1/Final-Factory/FinalFactory
-    _rest=${BRANCH_OID#??}
-    _d1=${BRANCH_OID%"$_rest"}
-    _d2=${_rest%"${_rest#??}"}
-    rm -f "$TMP/ws/.git/lfs/objects/$_d1/$_d2/$BRANCH_OID"
-    unset _rest _d1 _d2
+    for _oid in "$BRANCH_OID" "$SECOND_OID"; do
+        _rest=${_oid#??}
+        _d1=${_oid%"$_rest"}
+        _d2=${_rest%"${_rest#??}"}
+        rm -f "$TMP/ws/.git/lfs/objects/$_d1/$_d2/$_oid"
+    done
+    unset _oid _rest _d1 _d2
 }
 
-restore() {   # runs the real script against the fixture, capturing its output
+restore() {   # [ref] -- runs the real script against the fixture, capturing its output
     FFBOX_WORKSPACE=$TMP/ws \
     FFBOX_MIRROR=$MIRROR \
-    FFBOX_REF=feature \
+    FFBOX_REF=${1:-feature} \
     FFBOX_OUT=$TMP/out \
     sh "$SCRIPT" --resync > "$TMP/log" 2>&1
 }
@@ -131,6 +149,42 @@ if [ "$(cat "$TMP/out/base_sha.txt" 2>/dev/null)" = "$(git -C "$SRC" rev-parse f
     ok "base_sha.txt records the commit the run starts at"
 else
     bad "base_sha.txt is $(cat "$TMP/out/base_sha.txt" 2>/dev/null)"
+fi
+
+# --- the list is git-lfs's list ------------------------------------------------------------------
+#
+# The script lists LFS files with plain git rather than `git lfs ls-files`, which was seconds slower
+# at master's size. The two must agree: a pointer missed is an object not seeded, and a blob taken
+# for a pointer is a warning and a smudge switched off for nothing.
+printf '\nrestore: the LFS list is the one git-lfs gives, and nothing that only looks like a pointer\n'
+fresh_workspace
+if restore mixed; then
+    ok "the restore succeeds on a tree with decoys in it"
+else
+    bad "the restore failed: $(tail -3 "$TMP/log" | tr '\n' ' ')"
+fi
+_want=$(git -C "$SRC" lfs ls-files mixed | wc -l | tr -d ' ')
+_got=$(sed -n 's/^\[restore\] \([0-9][0-9]*\) LFS file(s) at .*/\1/p' "$TMP/log")
+if [ "$_want" = 2 ] && [ "$_got" = "$_want" ]; then
+    ok "it listed exactly as many LFS files as git lfs ls-files does ($_want)"
+else
+    bad "git lfs ls-files lists $_want, the restore listed '$_got': $(tr '\n' ' ' < "$TMP/log")"
+fi
+unset _want _got
+if grep -q 'seeded 2 LFS object' "$TMP/log"; then
+    ok "and both real objects came from the mirror"
+else
+    bad "no 'seeded 2' line in the log: $(tr '\n' ' ' < "$TMP/log")"
+fi
+if grep -q 'WARNING' "$TMP/log"; then
+    bad "a decoy was taken for a pointer: $(grep -m1 WARNING "$TMP/log")"
+else
+    ok "and none of the decoys was taken for a pointer"
+fi
+if [ "$(cat "$TMP/ws/second.bin" 2>/dev/null)" = "a second payload" ]; then
+    ok "the second LFS file holds its real content"
+else
+    bad "second.bin is $(head -c 60 "$TMP/ws/second.bin" 2>/dev/null)"
 fi
 
 # --- an object damaged through its hardlink ---------------------------------------------------
