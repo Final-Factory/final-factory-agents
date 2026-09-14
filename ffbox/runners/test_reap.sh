@@ -44,7 +44,8 @@ case "$1" in
   # the live daemon and assert against whatever containers happened to be running.
   ffghr-test-stub) echo stub ;;
   version) exit 0 ;;
-  ps)      for c in ${STUB_CONTAINERS:-}; do printf '%s\n' "${c%%|*}"; done ;;
+  ps)      printf '%s\n' "$*" >> "${STUB_PS_LOG:-/dev/null}"
+           for c in ${STUB_CONTAINERS:-}; do printf '%s\n' "${c%%|*}"; done ;;
   inspect)
     fmt=""; name=""
     while [ $# -gt 0 ]; do case "$1" in -f) fmt=$2; shift 2 ;; *) name=$1; shift ;; esac; done
@@ -211,6 +212,21 @@ case "$(grace no)" in
     *KEEP*) ok "down, up, down again is three sweeps and still no deletion" ;;
     *)      bad "an intermittent daemon must not accumulate towards a deletion" ;;
 esac
+
+# THE LIVE LIST COUNTS A CONTAINER THAT HAS EXITED. ffwatch promotes a job's archive out of its
+# staging directory after the container exits and before it removes it, and a sweep in those seconds
+# used to delete the directory under the promotion (2026-09-13). The staging sweep itself sits past
+# the GitHub call this suite cannot make, so what is held here is the question reap.sh asks docker.
+echo "reap: a container that has exited still counts as present"
+STUB_PS_LOG="$TMP/ps.log"; export STUB_PS_LOG
+: > "$STUB_PS_LOG"
+reap "ffghr-test-1-exited||1|exited" >/dev/null
+if grep -q -- '-a --filter label=ffghr.slot' "$STUB_PS_LOG"; then
+    ok "the live list asks docker for every container, not only running ones"
+else
+    bad "the live list asks docker for every container (it asked: $(tr '\n' ';' < "$STUB_PS_LOG"))"
+fi
+unset STUB_PS_LOG
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
