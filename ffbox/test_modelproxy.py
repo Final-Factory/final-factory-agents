@@ -64,6 +64,9 @@ class Provider(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length") or 0)
         Provider.seen.append({"path": self.path, "body": self.rfile.read(length),
                               "headers": {k.lower(): v for k, v in self.headers.items()}})
+        if "/hang" in self.path:
+            # A provider that sits on the request past the proxy's upstream timeout.
+            time.sleep(4)
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.send_header("anthropic-ratelimit-unified-status", "allowed")
@@ -83,7 +86,7 @@ class UnixHTTP(http.client.HTTPConnection):
 
     def connect(self):
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(10)
+        sock.settimeout(self.timeout)
         directory, name = os.path.split(self.unix_path)
         here = os.open(".", os.O_RDONLY)
         try:
@@ -128,7 +131,8 @@ def run(tmp):
         return os.path.join(directory, "model.sock")
 
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **SECRETS,
-           "OPENROUTER_URL_KEY1": base + "/api", "FFBOX_MODELPROXY_ANTHROPIC_URL": base}
+           "OPENROUTER_URL_KEY1": base + "/api", "FFBOX_MODELPROXY_ANTHROPIC_URL": base,
+           "FFBOX_MODELPROXY_UPSTREAM_TIMEOUT": "2"}
     log_path = os.path.join(tmp, "proxy.log")
     with open(log_path, "w", encoding="utf-8") as log_fh:
         proxy = subprocess.Popen(
@@ -147,6 +151,10 @@ def run(tmp):
     check("names the runs it served", "run r-sub:" in log and "billing CLAUDE_CODE_OAUTH_TOKEN1" in log, log)
     leaked = [name for name, value in SECRETS.items() if value in log]
     check("and carries no credential's value", not leaked, leaked)
+    check("says when a provider did not answer", "did not answer" in log or "could not reach" in log,
+          log[-400:])
+    check("and a client that hung up first never produced a traceback", "Traceback" not in log,
+          log[-800:])
 
 
 def exercise(tmp, base, socket_dir, route, heartbeat, routes, proxy):
@@ -214,6 +222,20 @@ def exercise(tmp, base, socket_dir, route, heartbeat, routes, proxy):
     except OSError:
         refused = True
     check("and nothing can connect to it afterwards", refused)
+
+    print("\nmodel proxy: a provider that does not answer")
+    status, _h, _b, _s = post(UnixHTTP(sub_sock), path="/v1/hang")
+    check("a request the provider sits on is answered 502 once the proxy gives up, which claude "
+          "retries", status == 502, status)
+    # THE CLIENT GONE FIRST, as when claude's own timeout fires before the proxy's: the proxy's
+    # answer has nowhere to go, and that must not be an exception.
+    impatient = UnixHTTP(sub_sock)
+    impatient.timeout = 0.5
+    try:
+        post(impatient, path="/v1/hang")
+    except OSError:
+        pass
+    time.sleep(3)
 
     print("\nmodel forwarder: a loopback port onto the socket")
     short = tempfile.mkdtemp(prefix="mf-")
