@@ -513,9 +513,8 @@ log "                 not from .claude/settings.json in the checkout (see the no
 # bridge is normally up, and the preamble tells it how to tell "still starting" from "gone".
 #
 # STILL BEFORE THE ARGV IS BUILT, because the tool list, --mcp-config and the preamble depend on
-# whether a boot is under way, and the argv is written once. What is waited for is only the part
-# that fails fast -- no MCP package in the workspace, no licence -- so a turn whose editor could never
-# start is still told so up front instead of discovering it one tool error at a time.
+# whether a boot is under way, and the argv is written once. Nothing is waited for, not even the
+# checks that fail fast; see the note at the boot below.
 #
 # NOT BEFORE THE WORKSPACE IS RESTORED, and it cannot be: that is done by now on both routes --
 # entrypoint.sh as root for a cold run, pool-task.sh --resync for a dispatched spare -- and an editor
@@ -554,31 +553,16 @@ if [ "${FFBOX_MCP_WANTED:-}" = 1 ]; then
         # process hunting (test_destructive_docker_calls_name_the_container).
         ffmcp start >>"$FFBOX_OUT/mcp.log" 2>&1 &
         FFBOX_MCP_BOOT_PID=$!
-        # THE FAST FAILURES ONLY. ffmcp says "booting the editor for the bridge" the moment it
-        # launches the editor, after its package and licence checks; a boot that exits before that
-        # line could never have come up, and an exit 0 that early is a bridge that was already up.
-        _mcp_waited=0
-        while [ "$_mcp_waited" -lt 30 ]; do
-            if ! kill -0 "$FFBOX_MCP_BOOT_PID" 2>/dev/null; then
-                if wait "$FFBOX_MCP_BOOT_PID"; then FFBOX_MCP_PORT=up; fi
-                FFBOX_MCP_BOOT_PID=
-                break
-            fi
-            if grep -q "booting the editor for the bridge" "$FFBOX_OUT/mcp.log" 2>/dev/null; then
-                FFBOX_MCP_PORT=booting
-                break
-            fi
-            sleep 1
-            _mcp_waited=$((_mcp_waited + 1))
-        done
-        # Thirty seconds with neither is a check that is slow, not one that failed: carry on as if
-        # the boot is under way, since the background waiter will say which it was.
-        [ -n "$FFBOX_MCP_PORT" ] || [ -z "$FFBOX_MCP_BOOT_PID" ] || FFBOX_MCP_PORT=booting
-        if [ -z "$FFBOX_MCP_PORT" ]; then
-            log "MCP bridge: could NOT be started; this turn is DEGRADED — no MCP tools, ffverify"
-            log "            unaffected (see mcp.log)"
-        fi
-        unset _mcp_waited
+        # NOT EVEN THE FAST FAILURES ARE WAITED FOR, since 2026-09-14. The agent used to be held
+        # until ffmcp printed "booting the editor for the bridge", after its checks -- the class
+        # enables it, a Unity project, the MCP package, the licence -- which ffmcp makes in
+        # milliseconds, but the loop looked once a second: 1.1s of conversation 185's ping, before
+        # an agent that never touched Unity. The editor and claude now start side by side, on the
+        # assumption the boot gets past those checks, and claude's MCP server does not need the
+        # editor to connect: it finds one on every call (No Unity Editor instances found until it
+        # is up, which is what a booting editor already looked like). A boot that fails its checks
+        # looks the same to the agent, and `ffmcp status` and mcp.log say why.
+        FFBOX_MCP_PORT=booting
     fi
 fi
 
