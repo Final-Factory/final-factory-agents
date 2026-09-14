@@ -181,6 +181,13 @@ _ffbox_finish() {
     # harvest-workspace.sh commits is a commit nobody authored, and an editor that outlives PID 1
     # holds the licence seat until the container teardown takes it. Teardown is the backstop here,
     # not the plan.
+    #
+    # A BOOT STILL WAITING IN THE BACKGROUND GOES FIRST, so it cannot record the editor as starting
+    # or up after `ffmcp stop` has recorded it down. The editor itself is in its own session and is
+    # not touched by this; `ffmcp stop` is what stops it.
+    if [ -n "${FFBOX_MCP_BOOT_PID:-}" ]; then
+        kill -TERM "$FFBOX_MCP_BOOT_PID" 2>/dev/null || :
+    fi
     if command -v ffmcp >/dev/null 2>&1; then
         ffmcp stop >>"$FFBOX_OUT/mcp.log" 2>&1 || :
     fi
@@ -466,20 +473,27 @@ log "                 not from .claude/settings.json in the checkout (see the no
 
 # --- THE LIVE EDITOR, IF THIS CLASS HAS ONE -------------------------------------------------------
 #
-# BEFORE THE ARGV IS BUILT, and that is the whole reason it is here rather than further down: the
-# tool list, the --mcp-config flag and the preamble all depend on whether the bridge actually came
-# up, and the argv is written once. A boot after it would mean advertising tools that may not work.
+# STARTED HERE, NOT WAITED FOR. The boot takes 45-85s and until 2026-09-14 the agent waited for all
+# of it, so an ffdev turn that never touched Unity still spent most of its minute watching an editor
+# come up (conversation 185 turn 3: 46s of a 76s reply, against 3.8s of model). The editor now boots
+# in the background and claude starts at once; by the time an agent reaches for a Unity tool the
+# bridge is normally up, and the preamble tells it how to tell "still starting" from "gone".
 #
-# BEFORE .agent-started TOO, so the minutes this costs are warm-up rather than the model's clock
-# (design/unitymcp_container_design.txt section 7). The workspace is already restored by now on both
-# routes -- entrypoint.sh as root for a cold run, pool-task.sh --resync for a dispatched spare --
-# which is exactly why the editor cannot be booted any earlier: an editor with the project open
-# while the working tree is rewritten underneath it is an asset database watching files move that
-# it did not change.
+# STILL BEFORE THE ARGV IS BUILT, because the tool list, --mcp-config and the preamble depend on
+# whether a boot is under way, and the argv is written once. What is waited for is only the part
+# that fails fast -- no MCP package in the workspace, no licence -- so a turn whose editor could never
+# start is still told so up front instead of discovering it one tool error at a time.
 #
-# A FAILURE HERE IS A DEGRADED TURN, NEVER A DEAD ONE. No bridge means no MCP tools in the argv, a
-# preamble that says so, and ffverify still there.
+# NOT BEFORE THE WORKSPACE IS RESTORED, and it cannot be: that is done by now on both routes --
+# entrypoint.sh as root for a cold run, pool-task.sh --resync for a dispatched spare -- and an editor
+# with the project open while the working tree is rewritten underneath it is an asset database
+# watching files move that it did not change.
+#
+# A FAILURE HERE IS A DEGRADED TURN, NEVER A DEAD ONE. No boot means no MCP tools in the argv, a
+# preamble that says so, and ffverify still there. FFBOX_MCP_PORT is a FLAG now, not a port: set
+# while a boot is under way or up, empty when there is none. Nothing reads a number out of it.
 FFBOX_MCP_PORT=
+FFBOX_MCP_BOOT_PID=
 # One parse, two answers: "<enabled> <timeout>", empty on any malformed job rather than a default
 # that pretends the job asked for something.
 read -r FFBOX_MCP_WANTED FFBOX_MCP_TIMEOUT <<EOF
@@ -501,15 +515,37 @@ if [ "${FFBOX_MCP_WANTED:-}" = 1 ]; then
         # not ask for a bridge cannot start one by hand either.
         export FFBOX_UNITY_MCP=1
         export FFMCP_READY_TIMEOUT=${FFBOX_MCP_TIMEOUT:-600}
-        MCP_START=$(date +%s)
-        log "MCP bridge: booting a headless editor (ready timeout ${FFMCP_READY_TIMEOUT}s)"
-        if ffmcp start >>"$FFBOX_OUT/mcp.log" 2>&1; then
-            FFBOX_MCP_PORT=$(ffmcp port 2>/dev/null)
-            log "MCP bridge: up on port ${FFBOX_MCP_PORT} after $(( $(date +%s) - MCP_START ))s"
-        else
-            log "MCP bridge: did NOT come up after $(( $(date +%s) - MCP_START ))s; this turn is"
-            log "            DEGRADED — no MCP tools, ffverify unaffected (see mcp.log)"
+        log "MCP bridge: booting a headless editor in the background (ready timeout ${FFMCP_READY_TIMEOUT}s); the agent does not wait for it, and mcp.log says when it came up"
+        # ffmcp ITSELF in the background, not a subshell around it, so $! is the one process there
+        # is to stop later and nothing ever has to go looking for it: design section 14 rule 2, no
+        # process hunting (test_destructive_docker_calls_name_the_container).
+        ffmcp start >>"$FFBOX_OUT/mcp.log" 2>&1 &
+        FFBOX_MCP_BOOT_PID=$!
+        # THE FAST FAILURES ONLY. ffmcp says "booting the editor for the bridge" the moment it
+        # launches the editor, after its package and licence checks; a boot that exits before that
+        # line could never have come up, and an exit 0 that early is a bridge that was already up.
+        _mcp_waited=0
+        while [ "$_mcp_waited" -lt 30 ]; do
+            if ! kill -0 "$FFBOX_MCP_BOOT_PID" 2>/dev/null; then
+                if wait "$FFBOX_MCP_BOOT_PID"; then FFBOX_MCP_PORT=up; fi
+                FFBOX_MCP_BOOT_PID=
+                break
+            fi
+            if grep -q "booting the editor for the bridge" "$FFBOX_OUT/mcp.log" 2>/dev/null; then
+                FFBOX_MCP_PORT=booting
+                break
+            fi
+            sleep 1
+            _mcp_waited=$((_mcp_waited + 1))
+        done
+        # Thirty seconds with neither is a check that is slow, not one that failed: carry on as if
+        # the boot is under way, since the background waiter will say which it was.
+        [ -n "$FFBOX_MCP_PORT" ] || [ -z "$FFBOX_MCP_BOOT_PID" ] || FFBOX_MCP_PORT=booting
+        if [ -z "$FFBOX_MCP_PORT" ]; then
+            log "MCP bridge: could NOT be started; this turn is DEGRADED — no MCP tools, ffverify"
+            log "            unaffected (see mcp.log)"
         fi
+        unset _mcp_waited
     fi
 fi
 
@@ -819,11 +855,16 @@ PREAMBLE_GIT = (
     "does not apply here."
 )
 
-# WHAT A TURN WITH A LIVE EDITOR IS TOLD. Added to the preamble only when the bridge is actually
-# answering, so the prompt never promises a tool that is not there.
+# WHAT A TURN WITH A LIVE EDITOR IS TOLD. Added when the editor's boot got under way. The agent
+# starts while it is still booting, so it is told how to tell "still starting" from "gone" -- the
+# same `No Unity Editor instances found` answers both.
 PREAMBLE_MCP = (
     " THIS CONTAINER HAS A LIVE UNITY EDITOR and you can drive it over the MCP tools "
-    "(mcp__UnityMCP__*): `execute_code` for arbitrary C# against the running world, "
+    "(mcp__UnityMCP__*), BUT IT IS STILL BOOTING WHEN YOU START: it comes up about a minute into "
+    "the turn. Before your first Unity tool call, run `ffmcp status`; while it says down with last "
+    "phase `starting`, do other work or wait ~20s and check again, and a tool answering "
+    "`No Unity Editor instances found` in that first minute means the same thing. The tools: "
+    "`execute_code` for arbitrary C# against the running world, "
     "`read_console`, `refresh_unity` to force a recompile, `run_tests`/`get_test_job` for the "
     "EditMode suite, plus scene/gameobject/asset tools. USE `run_tests` RATHER THAN `ffverify` "
     "while the bridge is up: one project cannot hold two editors, so ffverify would have to boot "
@@ -844,7 +885,7 @@ PREAMBLE_MCP = (
 # AND WHAT A TURN WHOSE BRIDGE FAILED IS TOLD -- explicitly, because a silent absence reads as a
 # tool the model simply failed to find and invites it to keep trying.
 PREAMBLE_MCP_DEGRADED = (
-    " A live editor was requested for this run and DID NOT COME UP, so there are no MCP tools on "
+    " A live editor was requested for this run and COULD NOT BE STARTED, so there are no MCP tools on "
     "your tool list and nothing you do will make them appear. This is a degraded turn, not a "
     "broken one: `ffverify` (EditMode suite) and `ffplaytest` (one play-mode session) both work "
     "normally. Say in your summary that the bridge was unavailable if it mattered to what you "
@@ -1420,6 +1461,10 @@ lift_result
 # So: stopped here, while nothing has been staged yet. Idempotent, a no-op when no bridge was ever
 # started, and repeated in _ffbox_finish for the run that never reaches this line.
 if [ -n "${FFBOX_MCP_PORT:-}" ] && command -v ffmcp >/dev/null 2>&1; then
+    # A boot still waiting in the background first; see the same lines in _ffbox_finish.
+    if [ -n "${FFBOX_MCP_BOOT_PID:-}" ]; then
+        kill -TERM "$FFBOX_MCP_BOOT_PID" 2>/dev/null || :
+    fi
     log "stopping the live MCP editor before the tree is read (it reserializes assets)"
     ffmcp stop >>"$FFBOX_OUT/mcp.log" 2>&1 || log "WARNING: ffmcp stop failed; see mcp.log"
 fi
