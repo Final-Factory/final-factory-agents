@@ -13647,9 +13647,12 @@ class Watcher:
         if pool_id:
             # A spare behind the proxy records no account, so the turn keeps the one it routed to.
             staged_key = self.pool_claude_key(pool_id)
-            if staged_key != MODEL_PROXY_KEY:
+            if staged_key == MODEL_PROXY_KEY:
+                # NOT "WHAT IT WAS STAGED WITH": a spare behind the proxy was staged with nothing.
+                claude_why += "; the model proxy adds it, and this warm container holds none"
+            else:
                 claude_key = staged_key or claude_key
-            claude_why = "the account this warm container was staged with"
+                claude_why = "the account this warm container was staged with"
         cur = self.db.execute(
             "INSERT INTO run(turn_id, ffbox_run_id, container_name, session_id, resumed,"
             " base_sha, unity, tools, disallowed, allowed, stream_path, branch,"
