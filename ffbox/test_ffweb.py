@@ -889,6 +889,66 @@ def test_timeline_reads_as_a_conversation():
         srv.stop()
 
 
+def test_the_test_run_is_on_the_timeline():
+    """The harness's Unity suite is part of what a reader waits on, so it is a conversation entry.
+
+    Conversation 186, 2026-09-14: the agent said it was done, the page showed nothing more, and
+    the reply came 93s later -- 79.6s of that was the EditMode suite, visible only once it had
+    finished and then only inside the folded turn.
+    """
+    print("timeline: the test run is an entry of its own")
+    srv = serve()
+    try:
+        page = text_of(srv.get("/conversation/1")[2]).split("timeline", 1)[1]
+        top = re.sub(r"<details.*?</details>", "[FOLDED]", page, flags=re.S)
+        check("a compile failure is on the timeline itself, not only one click down",
+              "item tests failed" in top and "compile failed" in top, top[:800])
+        check("with the compiler's errors, escaped",
+              "error CS0103" in top and "<script>alert" not in top, top[:800])
+        check("and it comes before the turn's own answer, which is where it happened",
+              "agent · turn 2" in top
+              and top.index("item tests") < top.index("agent · turn 2"), top[:800])
+    finally:
+        srv.stop()
+
+    state, db_path, blobs = live_fixture()
+    db = ffwatch.Db(db_path)
+    # Conversation 3's run 4 is in flight and its container has started the suite 95s ago.
+    out_dir = tempfile.mkdtemp(prefix="ffweb-verify-", dir=TMPROOT)
+    marker = os.path.join(out_dir, ".verify-started")
+    open(marker, "w").close()
+    os.utime(marker, (time.time() - 95, time.time() - 95))
+    db.execute("UPDATE run SET out_dir=? WHERE id=4", (out_dir,))
+    # Run 1 changed nothing, so the suite was skipped; run 3 (conversation 2) passed.
+    db.execute("INSERT INTO verification(run_id, ran, compiled, tests_run, tests_passed,"
+               " tests_failed, skipped) VALUES(1,0,NULL,NULL,NULL,NULL,1)")
+    db.execute("INSERT INTO verification(run_id, ran, compiled, tests_run, tests_passed,"
+               " tests_failed) VALUES(3,1,1,872,872,0)")
+    db.execute("UPDATE run SET verify_secs=79 WHERE id=3")
+    srv = Server(state, db_path, blobs, STUB_FFWATCH)
+    try:
+        running = text_of(srv.get("/conversation/3")[2])
+        check("a suite in progress shows as running, while it runs",
+              "item tests" in running and "running the EditMode suite" in running
+              and "so far" in running, running[-1500:])
+        with open(os.path.join(out_dir, "verification.json"), "w", encoding="utf-8") as fh:
+            json.dump({"ran": True, "compiled": True, "tests_run": 872, "tests_passed": 872,
+                       "tests_failed": 0}, fh)
+        finishing = text_of(srv.get("/conversation/3")[2])
+        check("and as finishing once the container has the result and ffwatch does not yet",
+              "872 passed" in finishing and "publishing" in finishing, finishing[-1500:])
+
+        passed = text_of(srv.get("/conversation/2")[2])
+        check("a passed suite says how many and how long",
+              "item tests" in passed and "872 of 872 passed in 79.0s" in passed
+              and "item tests failed" not in passed, passed[-1500:])
+        one = text_of(srv.get("/conversation/1")[2])
+        check("a run with nothing to test adds no entry",
+              one.count("item tests") == 1, one.count("item tests"))
+    finally:
+        srv.stop()
+
+
 def test_filters_actually_filter():
     srv = serve()
     try:
@@ -4264,6 +4324,7 @@ def main():
         test_a_fork_is_visible_from_both_ends_and_can_be_made_from_the_page,
         test_a_branch_name_cannot_carry_markup_into_the_page,
         test_timeline_reads_as_a_conversation,
+        test_the_test_run_is_on_the_timeline,
         test_filters_actually_filter,
         test_the_title_filter,
         test_the_list_is_most_recently_active_first,

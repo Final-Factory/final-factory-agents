@@ -1314,6 +1314,8 @@ h2 .count { color: #8f98a6; font-weight: 400; font-size: 13px; margin-left: 8px;
 .item.turn { border-left-color: #a83; }
 .item.run { border-left-color: #757; }
 .item.verification { border-left-color: #4a6; }
+.item.tests { border-left-color: #4a6; }
+.item.tests.failed { border-left-color: #a55; }
 .meta { color: #8f98a6; font-size: 12px; margin-bottom: 4px; }
 pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0; background: #101216;
       padding: 7px 9px; border-radius: 3px; overflow-x: auto; max-height: 32em; }
@@ -3526,6 +3528,10 @@ class App:
                 stamp = turn["ended_at"] or turn["started_at"] or turn["queued_at"] or ""
                 answers.append((stamp, 1, turn["id"],
                                 self._render_answer(turn, answer, detail)))
+            for run in runs:
+                tests = self._tests_entry(turn, run)
+                if tests is not None:
+                    answers.append(tests)
 
         kind = self.db.one("SELECT kind FROM conversation WHERE id = ?", (conv_id,))
         kind = kind["kind"] if kind else None
@@ -3753,6 +3759,91 @@ class App:
             out.append("<pre>" + esc(ver["evidence"]) + "</pre>")
         out.append("</div>")
         return "".join(out)
+
+    def _tests_entry(self, turn, run):
+        """The harness's own Unity test run as a conversation entry, or None. (stamp, rank, key, html)
+
+        ON THE TIMELINE ITSELF, unlike the verification row folded under the turn, because it is
+        part of what a reader is waiting on. Conversation 186, 2026-09-14: the agent said it was
+        done at 19:08:57, the page showed nothing more, and the reply came at 19:10:30 -- 79.6s
+        of that was this suite, invisible until it had finished.
+
+        Running while the container's .verify-started marker exists and no result has come back,
+        finishing once the container's own verification.json is written and ffwatch has not
+        recorded it yet, then whatever the verification row says. A run with nothing to test has
+        no entry: that is every run that changed no files, and saying so on each would bury the
+        runs that did.
+
+        Dated from the marker when there is one, which puts it after the agent's last words and
+        before the reply; with none, at the turn's end, just ahead of the turn's own answer.
+        """
+        out_dir = _row(run, "out_dir")
+        started = None
+        if out_dir:
+            try:
+                started = os.path.getmtime(os.path.join(out_dir, ".verify-started"))
+            except OSError:
+                started = None
+        ver = self.db.one("SELECT * FROM verification WHERE run_id = ? ORDER BY id DESC LIMIT 1",
+                          (run["id"],))
+        if ver is None and (run["terminal_state"] is not None or started is None):
+            return None
+        if ver is not None and not ver["ran"] and _row(ver, "skipped"):
+            return None
+
+        head = f"tests · turn {turn['seq']} · "
+        failed = False
+        if ver is None:
+            elapsed = fmt_secs(max(0, time.time() - started))
+            partial = None
+            try:
+                with open(os.path.join(out_dir, "verification.json"), encoding="utf-8") as fh:
+                    partial = json.load(fh)
+            except (OSError, ValueError):
+                partial = None
+            if isinstance(partial, dict) and partial.get("ran"):
+                state = "finishing"
+                line = (f"EditMode suite done: {fmt_int(partial.get('tests_passed'))} passed, "
+                        f"{fmt_int(partial.get('tests_failed'))} failed of "
+                        f"{fmt_int(partial.get('tests_run'))} -- publishing")
+            else:
+                state = "running"
+                line = f"running the EditMode suite -- {elapsed} so far"
+            body = ["<pre>", esc(line), "</pre>"]
+        else:
+            took = f" in {fmt_secs(run['verify_secs'])}" if run["verify_secs"] else ""
+            if not ver["ran"]:
+                state, failed = "could not run", True
+                line = "the harness could not run the EditMode suite"
+            elif not ver["compiled"]:
+                state, failed = "compile failed", True
+                line = f"the project did not compile{took}"
+            elif ver["tests_failed"]:
+                state, failed = f"{fmt_int(ver['tests_failed'])} failed", True
+                line = (f"EditMode suite: {fmt_int(ver['tests_failed'])} of "
+                        f"{fmt_int(ver['tests_run'])} failed{took}")
+            else:
+                state = "passed"
+                line = (f"EditMode suite: {fmt_int(ver['tests_passed'])} of "
+                        f"{fmt_int(ver['tests_run'])} passed{took}")
+            body = ["<pre>", esc(line), "</pre>"]
+            if failed and ver["compile_errors"]:
+                body += ["<pre>", esc(ver["compile_errors"]), "</pre>"]
+            if failed and ver["evidence"]:
+                body += ["<pre>", esc(ver["evidence"]), "</pre>"]
+
+        when = ""
+        if started is not None:
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started))
+            when = f" · started {stamp}"
+        else:
+            stamp = turn["ended_at"] or turn["started_at"] or turn["queued_at"] or ""
+        out = ["<div class=\"item tests", " failed" if failed else "", "\"><div class=\"meta\">",
+               esc(head), pill(state).markup, esc(when), " · ",
+               link(f"/run/{run['id']}", run["ffbox_run_id"] or f"run #{run['id']}").markup,
+               "</div>"] + body + ["</div>"]
+        # Just ahead of the turn's own answer when both fall back to the same timestamp.
+        return (stamp, 1, turn["id"] - 0.5, "".join(out))
 
     @staticmethod
     def run_clock_left(out_dir):
