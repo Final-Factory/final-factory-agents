@@ -307,6 +307,35 @@ docker_() { as_owner env DOCKER_HOST="unix://$FFBOX_DOCKER_SOCK" docker "$@"; }
 # this is "whose flag is it" rather than "is anybody draining".
 DRAIN_OWNED=$CONFIG_DIR/update.drain-owned
 
+# THE CONTAINER FENCE, RE-APPLIED ON EVERY PASS. Until 2026-09-14 nothing ran `ffbox-egress.sh up`
+# once a machine was set up, so a merged change to ffbox/egress/allowlist.txt went on being enforced
+# the old way until somebody recreated the proxy by hand -- which is how the model providers came off
+# it. `up` compares a fingerprint and leaves an unchanged fence alone, and it defers while a run is
+# behind the fence, so calling it every pass costs a `docker inspect`, and a deferred change lands on
+# the first pass with no fenced run in flight.
+#
+# QUIET WHEN NOTHING CHANGED, because this runs every five minutes. NEVER FATAL: a fence that could
+# not be recreated keeps enforcing the list it had, which is the safe way round.
+apply_fence() {
+    _fence="$REPO/ffbox/egress/ffbox-egress.sh"
+    [ -r "$_fence" ] || return 0
+    if [ "$DRY_RUN" = 1 ]; then
+        log "would re-apply the container fence (ffbox-egress.sh up)"
+        return 0
+    fi
+    _fence_out=$(as_owner env DOCKER_HOST="unix://$FFBOX_DOCKER_SOCK" sh "$_fence" up 2>&1)
+    _fence_rc=$?
+    if [ "$_fence_rc" -ne 0 ]; then
+        log "WARNING: ffbox-egress.sh up exited $_fence_rc; the fence keeps enforcing its current list"
+        printf '%s\n' "$_fence_out" | tail -5 | sed 's/^/    /'
+    elif ! printf '%s\n' "$_fence_out" | grep -q "leaving it alone"; then
+        log "container fence:"
+        printf '%s\n' "$_fence_out" | grep -v '^[[:space:]]*$' | sed 's/^/    /'
+    fi
+    unset _fence _fence_out _fence_rc
+    return 0
+}
+
 FLAG_LIFTED=0
 lift_drain() {
     [ "$FLAG_LIFTED" = 1 ] && return 0
@@ -454,6 +483,8 @@ if [ "$CONFIG_UNSTAMPED" = 1 ]; then
 fi
 
 if [ "$CODE_UPDATE" = 0 ] && [ "$CONFIG_CHANGED" = 0 ]; then
+    # Before the early exit, so a fence change that was deferred behind a fenced run lands here.
+    apply_fence
     log "already current at $(printf %.12s "$OLD_SHA"), watched files unchanged — nothing to do"
     exit 0
 fi
@@ -835,6 +866,9 @@ if [ -x "$REPO/ffbox/runners/setup.sh" ] || [ -r "$REPO/ffbox/runners/setup.sh" 
     fi
     rm -f "$_rsetup_out"
 fi
+
+# The container fence, inside the window while ffbox is stopped; see apply_fence.
+apply_fence
 
 # ------------------------------------------------------------------------------------------
 # 6. resume

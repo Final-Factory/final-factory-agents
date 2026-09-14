@@ -189,8 +189,14 @@ start_proxy() {
     #
     # The count is of containers on THIS network, not of every workload on the box: a run on the
     # open bridge is not behind this fence and has nothing to lose from it restarting.
-    _using=$(docker_ ps --filter "network=$NET" --filter "label=ffbox.workload" -q 2>/dev/null \
-             | grep -c . || true)
+    #
+    # AND NOT OF IDLE SPARES. A staged container waiting for a turn carries no traffic worth
+    # protecting, and there is nearly always one behind the fence, so counting it had `up` defer
+    # for good once the updater started calling it every pass (2026-09-14). A spare keeps its
+    # `-pool-` name until a turn is dispatched into it and renamed, so the name is what tells a
+    # waiting spare from work.
+    _using=$(docker_ ps --filter "network=$NET" --filter "label=ffbox.workload" \
+                 --format '{{.Names}}' 2>/dev/null | grep -v -- '-pool-' | grep -c . || true)
     case "${_using:-0}" in ''|*[!0-9]*) _using=0 ;; esac
     if [ "${FFBOX_EGRESS_FORCE:-0}" != 1 ] && [ "$_using" -gt 0 ] \
        && [ "$(docker_ inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = true ]; then
