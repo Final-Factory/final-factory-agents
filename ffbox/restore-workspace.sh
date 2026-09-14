@@ -80,6 +80,13 @@ if [ "$RESYNC" = 0 ]; then
     [ -d "$WORKSPACE/.git" ] || die "the archive contained no .git"
 fi
 
+# WHAT THE LAST SUCCESSFUL RESTORE OF THIS TREE LANDED ON, and nothing else may vouch for it. Read,
+# then removed before anything below can fail, and written again only as the last step: a restore
+# that dies half way leaves no marker, so the next resync does the whole job. See ALREADY_SYNCED.
+SYNCED_MARKER=$WORKSPACE/.git/ffbox-synced
+_synced=$(cat "$SYNCED_MARKER" 2>/dev/null || echo "")
+rm -f "$SYNCED_MARKER"
+
 # The archive was written by a CI job, so its .git is a tree a job controlled. Nothing on the host
 # will read it — the host never sees this workspace — but the AGENT is about to run git in it, and
 # a hook the archive carried would run as the agent. ffcache excludes .git/hooks at save time for
@@ -286,7 +293,22 @@ if [ -z "$_target" ] && [ -n "$REF" ]; then
     [ -n "$_target" ] || die "ref '$REF' resolves to nothing after the restore"
 fi
 
-if [ -n "$_target" ]; then
+# ALREADY THERE. A pooled container restores at staging and is dispatched later, usually onto the
+# same commit, and nothing touches the tree in between -- pool-task.sh only waits. So when HEAD is
+# the target and the marker says this script put it there, the seeding, the reset and the clean
+# have already been done to exactly this tree, and doing them again was 1.1s of a 20s ping on
+# 2026-09-14 (conversation 185). The fetch above still ran, so origin/* is current for the agent,
+# and everything cheap below still runs: the identity, the branch and base_sha.txt belong to the
+# dispatch, not to the staging.
+ALREADY_SYNCED=0
+if [ "$RESYNC" = 1 ] && [ -n "$_target" ] && [ -n "$_have" ] && [ "$_synced" = "$_have" ]; then
+    if [ "$(git -C "$WORKSPACE" rev-parse --verify --quiet "${_target}^{commit}" 2>/dev/null)" = "$_have" ]; then
+        ALREADY_SYNCED=1
+        log "already at $(printf %.10s "$_have") from the last restore; no seeding, reset or clean"
+    fi
+fi
+
+if [ -n "$_target" ] && [ "$ALREADY_SYNCED" = 0 ]; then
     git -C "$WORKSPACE" rev-parse --verify --quiet "${_target}^{commit}" >/dev/null 2>&1 \
         || die "target $_target is not in the workspace after restore (mirror missing or wrong)"
     lfs_seed_from_mirror "$_target"
@@ -312,7 +334,8 @@ fi
 # -fd AND NOT -x: ignored paths stay. Library/, Temp/, Logs/ and obj/ are what make a cached
 # workspace worth restoring instead of cloning, and every one of them is in the project's
 # .gitignore.
-_stray=$(git -C "$WORKSPACE" clean -fdn 2>/dev/null | wc -l)
+_stray=0
+[ "$ALREADY_SYNCED" = 1 ] || _stray=$(git -C "$WORKSPACE" clean -fdn 2>/dev/null | wc -l)
 if [ "$_stray" -gt 0 ]; then
     if git -C "$WORKSPACE" clean -fdq 2>/dev/null; then
         log "removed $_stray untracked path(s) the cache entry carried"
@@ -324,10 +347,16 @@ unset _stray
 
 # THE ENTRY'S CONFIG IS A CI JOB'S CONFIG. Hooks are already gone above; these keys name commands
 # that ordinary git operations fire, so they are a persistence channel in the same way.
-for _k in core.fsmonitor core.pager core.hooksPath diff.external \
-          filter.lfs.process filter.lfs.smudge filter.lfs.clean; do
-    git -C "$WORKSPACE" config --local --unset-all "$_k" 2>/dev/null || true
-done
+#
+# NOT WHEN ALREADY SYNCED: the last restore removed them, and it may then have set the smudge to
+# --skip below for objects it could not seed. Unsetting that here, with no seeding run to set it
+# again, would send a later checkout to GitHub.
+if [ "$ALREADY_SYNCED" = 0 ]; then
+    for _k in core.fsmonitor core.pager core.hooksPath diff.external \
+              filter.lfs.process filter.lfs.smudge filter.lfs.clean; do
+        git -C "$WORKSPACE" config --local --unset-all "$_k" 2>/dev/null || true
+    done
+fi
 
 # AND THE RUN INHERITS THE SAME DECISION THE RESET MADE. The keys just unset are the ENTRY's; the
 # image sets filter.lfs.* in SYSTEM config, so unsetting a local key does not stop the smudge --
@@ -368,8 +397,16 @@ fi
 # What the run started from, recorded before the agent can move HEAD. harvest-workspace.sh needs it
 # to know where the published range begins, and taking it here rather than at the end is the
 # difference between a known-good value and one the run chose.
+#
+# REMOVED FIRST. A pooled container's staging restore runs as root and leaves this file owned by
+# root at 0644; the dispatch-time resync runs as the run user, who can replace a file in that
+# group-writable directory but not write into this one ("cannot create ... Permission denied",
+# conversation 185 turns 5 and 6), so the run kept the staging's value instead of its own.
+rm -f "${FFBOX_OUT:-/ffbox/out}/base_sha.txt" 2>/dev/null || true
 git -C "$WORKSPACE" rev-parse HEAD > "${FFBOX_OUT:-/ffbox/out}/base_sha.txt" 2>/dev/null || true
 
 # Whoever runs next is not root; the tmpfs is 1777 but the extracted tree is not.
 chmod -R a+rwX "$WORKSPACE/.git" 2>/dev/null || true
+git -C "$WORKSPACE" rev-parse HEAD > "$SYNCED_MARKER" 2>/dev/null || true
+chmod a+rw "$SYNCED_MARKER" 2>/dev/null || true
 log "done"
