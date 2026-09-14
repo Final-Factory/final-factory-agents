@@ -527,8 +527,10 @@ spares staged behind the proxy stop matching until it is back. A config edit res
 and the proxy with it.
 
 Routes live in `<state_dir>/modelproxy/routes/<run id>.json`. ffwatch removes a route once its run
-has a terminal state, and the proxy closes the socket within a second. The container fence still
-allows the providers' hosts while this is being proven.
+has a terminal state, and the proxy closes the socket within a second. The container fence
+(`ffbox/egress/allowlist.txt`) no longer lists any provider's host, so a fenced ffagent run that
+falls back to credentials in its environment cannot reach a model. For that class the proxy is not
+optional.
 
 ### When a credential or a classification does not answer
 
